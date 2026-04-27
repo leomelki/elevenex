@@ -72,7 +72,8 @@
       "target": [
         "dmg",
         "zip"
-    ],
+      ],
+      "forceCodeSigning": true,
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "extendInfo": {
