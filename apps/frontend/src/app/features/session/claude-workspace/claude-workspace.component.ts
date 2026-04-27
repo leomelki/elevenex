@@ -17,7 +17,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, TimeoutError, timeout } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import {
   ClaudeAutocompleteItem,
@@ -83,6 +83,8 @@ type TranscriptRenderItem =
       stepCount: number;
       agentSummary: TurnAgentSummary | null;
     };
+
+const WORKTREE_CONTEXT_SEND_BUDGET_MS = 150;
 
 @Component({
   selector: 'app-claude-workspace',
@@ -486,25 +488,6 @@ readonly messageActionsDisabled = computed(
     const trimmed = prompt.trim();
     if (!trimmed || this.submitting()) return;
     const now = new Date().toISOString();
-    let runtimePrompt = trimmed;
-
-    if (!this.hasInjectedContext()) {
-      try {
-        const consume = await firstValueFrom(
-          this.worktreeContextService.consume(this.sessionId, this.firstPromptContextEnabled()),
-        );
-        if (consume.shouldInject && consume.contextSentence) {
-          runtimePrompt = buildWorktreeContextPrompt(consume.contextSentence, trimmed);
-          this.hasInjectedContext.set(true);
-          this.worktreeContext.update(snapshot =>
-            snapshot ? { ...snapshot, lastUsedAt: new Date().toISOString() } : snapshot,
-          );
-        }
-      } catch (error) {
-        toast.error(this.getHttpErrorMessage(error, 'Could not prepare worktree context.'));
-      }
-    }
-
     this.submitting.set(true);
     this.optimisticUserItems.update((items) => [
       ...items,
@@ -518,6 +501,7 @@ readonly messageActionsDisabled = computed(
     ]);
     this.cancelArmedEdit();
     this.prompt.set('');
+    const runtimePrompt = await this.prepareRuntimePrompt(trimmed);
     this.ws.send(this.sessionId, { type: 'submit_prompt', prompt: runtimePrompt });
   }
 
@@ -1123,6 +1107,34 @@ readonly messageActionsDisabled = computed(
   private enqueueDelta(itemId: string, delta: string): void {
     this.pendingDeltas.push({ itemId, delta });
     this.scheduleFlush();
+  }
+
+  private async prepareRuntimePrompt(prompt: string): Promise<string> {
+    if (this.hasInjectedContext()) {
+      return prompt;
+    }
+
+    try {
+      const consume = await firstValueFrom(
+        this.worktreeContextService
+          .consume(this.sessionId, this.firstPromptContextEnabled())
+          .pipe(timeout({ first: WORKTREE_CONTEXT_SEND_BUDGET_MS })),
+      );
+      if (consume.shouldInject && consume.contextSentence) {
+        this.hasInjectedContext.set(true);
+        this.worktreeContext.update(snapshot =>
+          snapshot ? { ...snapshot, lastUsedAt: new Date().toISOString() } : snapshot,
+        );
+        return buildWorktreeContextPrompt(consume.contextSentence, prompt);
+      }
+      return prompt;
+    } catch (error) {
+      if (error instanceof TimeoutError) {
+        return prompt;
+      }
+      toast.error(this.getHttpErrorMessage(error, 'Could not prepare worktree context.'));
+      return prompt;
+    }
   }
 
   private scheduleFlush(): void {

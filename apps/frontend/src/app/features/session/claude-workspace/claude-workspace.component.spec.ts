@@ -1,11 +1,12 @@
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
-import { of, Subject } from 'rxjs';
+import { NEVER, of, Subject } from 'rxjs';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { ClaudeWorkspaceComponent } from './claude-workspace.component';
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
 import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
+import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -66,6 +67,12 @@ describe('ClaudeWorkspaceComponent', () => {
     send: ReturnType<typeof vi.fn>;
     disconnect: ReturnType<typeof vi.fn>;
   };
+  let worktreeContextServiceMock: {
+    get: ReturnType<typeof vi.fn>;
+    generate: ReturnType<typeof vi.fn>;
+    updateRootRef: ReturnType<typeof vi.fn>;
+    consume: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     apiMock = {
@@ -114,12 +121,45 @@ describe('ClaudeWorkspaceComponent', () => {
       send: vi.fn(),
       disconnect: vi.fn(),
     };
+    worktreeContextServiceMock = {
+      get: vi.fn(() => of({
+        repoId: 1,
+        worktreePath: '/tmp/project',
+        contextSentence: null,
+        rootRef: null,
+        generationStatus: 'idle',
+        generatedAt: null,
+        lastUsedAt: null,
+        canGenerate: true,
+        hasChanges: false,
+        usingRepoDefaultRootRef: true,
+        errorMessage: null,
+        hasRecord: false,
+      })),
+      generate: vi.fn(() => of({
+        repoId: 1,
+        worktreePath: '/tmp/project',
+        contextSentence: null,
+        rootRef: null,
+        generationStatus: 'idle',
+        generatedAt: null,
+        lastUsedAt: null,
+        canGenerate: true,
+        hasChanges: false,
+        usingRepoDefaultRootRef: true,
+        errorMessage: null,
+        hasRecord: false,
+      })),
+      updateRootRef: vi.fn(() => of({})),
+      consume: vi.fn(() => of({ shouldInject: false, contextSentence: null })),
+    };
 
     await TestBed.configureTestingModule({
       imports: [ClaudeWorkspaceComponent],
       providers: [
         { provide: ClaudeRuntimeApiService, useValue: apiMock },
         { provide: ClaudeRuntimeWebsocketService, useValue: wsMock },
+        { provide: WorktreeContextService, useValue: worktreeContextServiceMock },
       ],
     }).compileComponents();
   });
@@ -345,6 +385,34 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.componentInstance.selectAgentInspectorAgent('agent-1');
     await Promise.resolve();
     expect(apiMock.getSubagentHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the composer immediately before worktree context preparation resolves', async () => {
+    vi.useFakeTimers();
+    worktreeContextServiceMock.consume.mockReturnValue(NEVER);
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+
+    fixture.componentInstance.prompt.set('Ship this change');
+    const submitPromise = fixture.componentInstance.submitPrompt('Ship this change');
+
+    expect(fixture.componentInstance.prompt()).toBe('');
+    expect(fixture.componentInstance.submitting()).toBe(true);
+    expect(fixture.componentInstance.optimisticUserItems()).toEqual([
+      expect.objectContaining({ content: 'Ship this change' }),
+    ]);
+    expect(wsMock.send).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(151);
+    await submitPromise;
+
+    expect(wsMock.send).toHaveBeenCalledWith(7, {
+      type: 'submit_prompt',
+      prompt: 'Ship this change',
+    });
+    vi.useRealTimers();
   });
 
   it('updates the live tool card when permission resolution arrives', async () => {
