@@ -1,7 +1,8 @@
 {
-  "name": "electron-app",
+  "name": "elevenex",
   "version": "0.0.0",
-  "private": true,
+  "publisher": "elevenex",
+  "author": "leomelki",
   "license": "CC-BY-NC-4.0",
   "main": "main.cjs",
   "scripts": {
@@ -12,7 +13,7 @@
     "package:mac:dir": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir"
   },
   "build": {
-    "appId": "com.elevenex.desktop",
+    "appId": "fr.leomelki.elevenex",
     "productName": "Elevenex",
     "asar": true,
     "compression": "maximum",
@@ -71,7 +72,7 @@
       "target": [
         "dmg",
         "zip"
-      ],
+    ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "extendInfo": {
@@ -81,7 +82,12 @@
         "NSRemovableVolumesUsageDescription": "Elevenex needs access to project files on removable volumes.",
         "NSNetworkVolumesUsageDescription": "Elevenex needs access to project files on network volumes.",
         "NSAppleEventsUsageDescription": "Elevenex uses Apple Events to integrate with your shell and external tools."
-      }
+      },
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.inherit.plist"
+    },
+    "dmg": {
+      "sign": false 
     }
   },
   "devDependencies": {

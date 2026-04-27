@@ -1,6 +1,7 @@
 {
   "name": "elevenex-filesystem-provider",
   "publisher": "elevenex",
+  "author": "leomelki",
   "version": "1.0.0",
   "description": "VS Code Web FileSystemProvider for ElevenEX worktree file browsing",
   "engines": {

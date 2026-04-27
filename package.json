@@ -1,7 +1,8 @@
 {
   "name": "elevenex",
   "version": "0.0.0",
-  "private": true,
+  "publisher": "elevenex",
+  "author": "leomelki",
   "license": "CC-BY-NC-4.0",
   "scripts": {
     "assets:icons": "node scripts/generate-icons.js",

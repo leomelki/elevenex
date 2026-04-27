@@ -1,9 +1,9 @@
 {
-  "name": "backend",
+  "name": "elevenex-backend",
   "version": "0.0.1",
   "description": "",
-  "author": "",
-  "private": true,
+  "publisher": "elevenex",
+  "author": "leomelki",
   "license": "CC-BY-NC-4.0",
   "scripts": {
     "build": "nest build",
