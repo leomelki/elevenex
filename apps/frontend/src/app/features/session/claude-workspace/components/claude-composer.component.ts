@@ -66,7 +66,7 @@ interface Range {
             @if (autocompleteOpen() && filtered().length) {
               ↑↓ navigate · ↵ insert
             } @else {
-              / commands · $ skills · ⌘↵ send
+              / commands · $ skills · ↵ send · ⇧↵ line break
             }
           </span>
 
@@ -276,6 +276,8 @@ export class ClaudeComposerComponent {
   }
 
   onKeydown(e: KeyboardEvent): void {
+    if (e.isComposing) return;
+
     const ac = this.autocompleteOpen() && this.filtered().length;
     if (ac) {
       if (e.key === 'ArrowDown') {
@@ -300,7 +302,7 @@ export class ClaudeComposerComponent {
         return;
       }
     }
-    if ((e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       this.submit();
     }
