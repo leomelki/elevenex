@@ -1,0 +1,462 @@
+.commit-entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.cx-shell {
+  position: relative;
+}
+
+// ── Trigger ──────────────────────────────────────────────────────────────────
+
+.cx-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background 120ms ease;
+
+  &:hover:not(:disabled) {
+    border-color: color-mix(in oklch, var(--primary) 50%, var(--border));
+    background: color-mix(in oklch, var(--primary) 6%, var(--background));
+  }
+
+  &.cx-trigger--open {
+    border-color: color-mix(in oklch, var(--primary) 60%, var(--border));
+    background: color-mix(in oklch, var(--primary) 8%, var(--background));
+  }
+
+  &.cx-trigger--busy {
+    cursor: wait;
+    opacity: 0.7;
+  }
+
+  &:disabled:not(.cx-trigger--busy) {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+.cx-trigger__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+// ── Popover ───────────────────────────────────────────────────────────────────
+
+.cx-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 70;
+  width: min(400px, calc(100vw - 32px));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--popover, var(--background));
+  color: var(--popover-foreground, var(--foreground));
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 10px 32px -4px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+
+  &.cx-popover--submitting {
+    cursor: wait;
+
+    .cx-body,
+    .cx-stats {
+      opacity: 0.55;
+      pointer-events: none;
+    }
+  }
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+
+.cx-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cx-header__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+
+  ng-icon {
+    color: var(--muted-foreground);
+  }
+}
+
+.cx-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.cx-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-foreground);
+  transition: background 100ms, color 100ms;
+
+  &:hover:not(:disabled) {
+    background: var(--accent);
+    color: var(--accent-foreground, var(--foreground));
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+// ── Stats bar ─────────────────────────────────────────────────────────────────
+
+.cx-stats {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--muted);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  gap: 0;
+}
+
+.cx-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  color: var(--muted-foreground);
+
+  strong {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--foreground);
+    letter-spacing: -0.01em;
+  }
+
+  &--add strong { color: oklch(0.52 0.14 151); }
+  &--del strong { color: oklch(0.56 0.17 28); }
+}
+
+.cx-stat-divider {
+  display: block;
+  width: 1px;
+  height: 10px;
+  background: var(--border);
+  margin: 0 8px;
+  flex-shrink: 0;
+}
+
+.cx-stat-scope {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+// ── Body ──────────────────────────────────────────────────────────────────────
+
+.cx-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 12px;
+}
+
+// ── Scope row (unstaged toggle) ───────────────────────────────────────────────
+
+.cx-scope-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cx-scope-row__info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+
+  span {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--foreground);
+  }
+
+  small {
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+}
+
+// ── Toggle switch ─────────────────────────────────────────────────────────────
+
+.cx-switch {
+  flex-shrink: 0;
+  padding: 0;
+  background: none;
+
+  &:focus-visible .cx-switch__track {
+    outline: 2px solid var(--ring, var(--primary));
+    outline-offset: 2px;
+  }
+
+  &:disabled .cx-switch__track {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.cx-switch__track {
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--input, var(--muted));
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background 150ms, border-color 150ms;
+  cursor: pointer;
+
+  &--on {
+    background: var(--primary);
+    border-color: var(--primary);
+  }
+}
+
+.cx-switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  .cx-switch__track--on & {
+    transform: translateX(16px);
+  }
+}
+
+// ── Field header ──────────────────────────────────────────────────────────────
+
+.cx-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.cx-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.cx-ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--primary) 12%, var(--muted));
+  color: color-mix(in oklch, var(--primary) 70%, var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.cx-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+// ── Message ───────────────────────────────────────────────────────────────────
+
+.cx-message textarea {
+  width: 100%;
+  resize: none;
+  font-size: 12px;
+  min-height: 76px;
+}
+
+// ── File list ─────────────────────────────────────────────────────────────────
+
+.cx-files__list {
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.cx-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+
+  &:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+  }
+
+  &:hover {
+    background: var(--accent);
+  }
+}
+
+.cx-file__dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  opacity: 0.4;
+
+  &--staged {
+    background: var(--primary);
+    opacity: 1;
+  }
+}
+
+.cx-file__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+  color: var(--foreground);
+}
+
+.cx-file__status {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-transform: capitalize;
+}
+
+.cx-files__overflow {
+  padding: 5px 9px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-align: center;
+  background: var(--muted);
+}
+
+.cx-files__empty {
+  padding: 14px 9px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+
+.cx-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.cx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 100ms, opacity 100ms;
+
+  &--ghost {
+    background: transparent;
+    color: var(--muted-foreground);
+
+    &:hover:not(:disabled) {
+      background: var(--accent);
+      color: var(--accent-foreground, var(--foreground));
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
+
+  &--primary {
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-weight: 600;
+    min-width: 128px;
+
+    &:hover:not(:disabled) {
+      background: color-mix(in oklch, var(--primary) 88%, black);
+    }
+
+    &:disabled:not(.cx-btn--loading) {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    &.cx-btn--loading {
+      opacity: 0.85;
+      cursor: wait;
+    }
+  }
+}
+
+@media (max-width: 640px) {
+  .cx-popover {
+    right: -44px;
+    width: min(380px, calc(100vw - 20px));
+  }
+}

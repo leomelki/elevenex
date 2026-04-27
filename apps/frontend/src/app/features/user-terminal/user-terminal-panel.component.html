@@ -1,0 +1,43 @@
+<div class="user-terminal-panel h-full flex flex-col">
+  <!-- Header with terminal tabs -->
+  <div class="panel-header">
+    <div class="terminal-tabs">
+      @for (terminal of terminals(); track terminal.id) {
+        <button
+          class="terminal-tab"
+          [class.active]="isActive(terminal.id)"
+          (click)="selectTerminal(terminal.id)"
+          [title]="terminal.name + ' (' + terminal.shell + ')'"
+        >
+          <ng-icon name="lucideTerminal" size="12" class="tab-icon" />
+          <span class="tab-name">{{ terminal.name }}</span>
+          <button
+            class="tab-close"
+            title="Kill terminal"
+            (click)="closeTerminal($event, terminal.id)"
+          >
+            <ng-icon name="lucideX" size="12" />
+          </button>
+        </button>
+      }
+      <button class="new-terminal-btn" title="New terminal" (click)="createTerminal()">
+        <ng-icon name="lucidePlus" size="14" />
+      </button>
+    </div>
+    <button class="close-panel-btn" title="Close panel" (click)="closePanel()">
+      <ng-icon name="lucideX" size="14" />
+    </button>
+  </div>
+
+  <!-- Terminal views -->
+  <div class="terminal-body">
+    @for (terminal of terminals(); track terminal.id) {
+      <div
+        class="terminal-view-wrapper"
+        [class.hidden]="!isActive(terminal.id)"
+      >
+        <app-user-terminal-view [terminalId]="terminal.id" />
+      </div>
+    }
+  </div>
+</div>

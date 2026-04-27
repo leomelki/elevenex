@@ -1,0 +1,13 @@
+<div class="terminal-wrapper h-full w-full relative bg-[#1a1b26] overflow-hidden">
+  @if (connecting()) {
+    <div class="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+      <span class="text-muted-foreground text-sm">Connecting...</span>
+    </div>
+  }
+  @if (!connected() && !connecting()) {
+    <div class="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+      <span class="text-destructive text-sm">Disconnected</span>
+    </div>
+  }
+  <div #terminalContainer class="h-full w-full"></div>
+</div>

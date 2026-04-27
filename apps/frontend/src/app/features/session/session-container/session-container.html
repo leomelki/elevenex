@@ -1,0 +1,209 @@
+<div class="session-container h-full flex flex-col">
+  @if (hasTabs()) {
+    <!-- Tab Bar -->
+      <app-tab-bar
+        [tabs]="tabs()"
+        [activeSessionId]="activeSessionId()"
+        [projectId]="projectId()"
+        [worktreePath]="worktreePath()"
+        [showFiles]="showFilesPanel()"
+        [showBrowser]="showBrowserPanel()"
+        [showGithub]="showGithubPanel()"
+        [showTerminal]="terminalPanelVisible()"
+        [showActions]="actionPanelVisible()"
+        [showClaudeTerminalFallback]="showClaudeTerminalFallback()"
+        [runningActionsCount]="runningActionsCount()"
+        [pendingTodosCount]="pendingTodosCount()"
+        (tabSelect)="onTabSelect($event)"
+        (tabClose)="onTabClose($event)"
+        (tabDelete)="onTabDeleteRequest($event)"
+        (closeAllTabs)="onCloseAllTabs()"
+        (closeOtherTabs)="onCloseOtherTabs($event)"
+        (closeTabsToRight)="onCloseTabsToRight($event)"
+        (closeTabsToLeft)="onCloseTabsToLeft($event)"
+        (toggleScratchpad)="toggleScratchpad()"
+        (toggleTodos)="toggleTodos()"
+        (toggleFiles)="toggleFilesPanel()"
+        (toggleBrowser)="toggleBrowserPanel()"
+        (toggleGithub)="toggleGithubPanel()"
+        (toggleTerminal)="toggleTerminalPanel()"
+        (toggleActions)="toggleActionsPanel()"
+        (toggleClaudeTerminalFallback)="toggleClaudeTerminalFallback()"
+      />
+
+    <!-- Main Content with Vertical + Horizontal Resizable Split -->
+    <div class="flex-1 min-h-0 relative">
+      <z-resizable zLayout="vertical" class="h-full" (zResizeEnd)="onVerticalResizeEnd($event)">
+        <!-- Top: Main panels -->
+        <z-resizable-panel [zDefaultSize]="bottomPanelVisible() ? 70 : 100" [zMin]="30">
+          <z-resizable zLayout="horizontal" class="h-full" (zResizeEnd)="onResizeEnd($event)">
+            <!-- Claude Terminal Panel (Primary) - Always visible -->
+            <z-resizable-panel [zDefaultSize]="sidePanelMode() !== 'none' ? 55 : 100" [zMin]="30" [zMax]="sidePanelMode() !== 'none' ? 70 : 100">
+              <div class="claude-terminal-area h-full">
+                @for (tab of tabs(); track tab.sessionId) {
+                  <div
+                    class="claude-terminal-wrapper h-full"
+                    [class.hidden]="tab.sessionId !== activeSessionId()"
+                  >
+                    @if (showClaudeTerminalFallback()) {
+                      <app-claude-terminal
+                        [sessionId]="tab.sessionId"
+                        [isVisible]="tab.sessionId === activeSessionId()"
+                        class="h-full block"
+                      />
+                    } @else {
+                      <app-claude-workspace
+                        [sessionId]="tab.sessionId"
+                        [repoId]="tab.repoId"
+                        [worktreePath]="tab.worktreePath"
+                        [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
+                        [isVisible]="tab.sessionId === activeSessionId()"
+                        (openTerminalFallback)="showClaudeTerminal()"
+                        class="h-full block"
+                      />
+                    }
+                  </div>
+                }
+              </div>
+            </z-resizable-panel>
+
+            <!-- Secondary Panel (Files or Browser) -->
+            @if (worktreePath() && sidePanelMode() !== 'none') {
+              <z-resizable-handle />
+
+              <z-resizable-panel [zDefaultSize]="45" [zMin]="25" [zMax]="70">
+                @if (showFilesPanel()) {
+                  <app-vscode-web-panel
+                    [sessionId]="activeSessionId()!"
+                    [projectId]="projectId()!"
+                    [worktreePath]="worktreePath()!"
+                    class="h-full"
+                  />
+                } @else if (showGithubPanel()) {
+                  <app-github-panel
+                    [worktreePath]="worktreePath()!"
+                    class="h-full"
+                  />
+                } @else if (shouldRenderBrowserPanel()) {
+                  <app-browser-panel
+                    [projectId]="projectId()!"
+                    [isolationConfig]="browserIsolationConfig()"
+                    (isolationConfigChanged)="onIsolationConfigChanged($event)"
+                    class="h-full"
+                  />
+                } @else if (shouldShowBrowserPlaceholder()) {
+                  <div class="relative h-full overflow-hidden bg-background">
+                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,color-mix(in_oklch,var(--primary)_16%,transparent),transparent_40%),linear-gradient(180deg,color-mix(in_oklch,var(--background)_92%,white),var(--background))]"></div>
+                    <div class="absolute -right-20 top-12 h-56 w-56 rounded-full bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] blur-3xl"></div>
+                    <div class="absolute bottom-0 left-0 h-40 w-40 rounded-full bg-[color-mix(in_oklch,var(--foreground)_6%,transparent)] blur-3xl"></div>
+
+                    <div class="relative flex h-full items-center justify-center p-8">
+                      <div class="w-full max-w-lg rounded-[28px] border border-[color-mix(in_oklch,var(--border)_86%,white)] bg-[color-mix(in_oklch,var(--background)_78%,white)] px-8 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.14)] backdrop-blur-xl">
+                        <div class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/40 bg-white/60 shadow-[0_10px_30px_rgba(255,255,255,0.35)]">
+                          <div class="h-6 w-6 rounded-full bg-[linear-gradient(135deg,color-mix(in_oklch,var(--primary)_72%,white),color-mix(in_oklch,var(--foreground)_16%,white))]"></div>
+                        </div>
+
+                        <div class="space-y-3">
+                          <p class="text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground/80">Focus Mode</p>
+                          <h3 class="text-2xl font-semibold tracking-tight text-foreground">A quieter view for what’s open now</h3>
+                          <p class="mx-auto max-w-md text-sm leading-6 text-muted-foreground">
+                            This area steps back while your side panel is open, then returns smoothly as soon as you close it.
+                          </p>
+                        </div>
+
+                        <div class="mt-8 flex items-center justify-center gap-2">
+                          <span class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--primary)_70%,white)]"></span>
+                          <span class="h-2 w-10 rounded-full bg-[color-mix(in_oklch,var(--border)_84%,white)]"></span>
+                          <span class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--foreground)_18%,white)]"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                }
+              </z-resizable-panel>
+            }
+          </z-resizable>
+        </z-resizable-panel>
+
+        <!-- Bottom: User Terminal Panel -->
+        @if (bottomPanelVisible() && worktreePath()) {
+          <z-resizable-handle />
+
+          <z-resizable-panel [zDefaultSize]="30" [zMin]="15" [zMax]="70">
+            @if (terminalPanelVisible()) {
+              <app-user-terminal-panel
+                [worktreePath]="worktreePath()!"
+                (close)="closeTerminalPanel()"
+              />
+            } @else if (actionPanelVisible()) {
+              <app-actions-panel
+                [worktreePath]="worktreePath()!"
+                (close)="closeActionsPanel()"
+              />
+            }
+          </z-resizable-panel>
+        }
+      </z-resizable>
+
+      <!-- Productivity Panels (overlay, outside resizable) -->
+      @if (showScratchpad() && projectId()) {
+        <app-scratchpad-panel
+          [projectId]="projectId()!"
+          [isOpen]="true"
+          (close)="toggleScratchpad()"
+        />
+      }
+      @if (showTodos() && projectId()) {
+        <app-todo-panel
+          [projectId]="projectId()!"
+          [isOpen]="true"
+          (close)="toggleTodos()"
+        />
+      }
+
+      <!-- Plannotator Panel (overlay) -->
+      @if (showPlannotator() && activePlannotatorPanel()) {
+        <app-plannotator-panel
+          [sessionId]="activePlannotatorPanel()!.sessionId"
+          [proxyUrl]="activePlannotatorPanel()!.proxyUrl"
+          [mode]="activePlannotatorPanel()!.mode"
+          [minimized]="activePlannotatorPanel()!.minimized"
+          (close)="closePlannotatorPanel()"
+          (softClose)="softClosePlannotatorPanel()"
+          (minimize)="minimizePlannotatorPanel()"
+          (restore)="restorePlannotatorPanel()"
+        />
+      }
+    </div>
+
+  } @else {
+    <!-- Empty state - navigate to projects or show message -->
+    <div class="flex-1 flex items-center justify-center">
+      <p class="text-muted-foreground">No sessions open. Select a session from the sidebar.</p>
+    </div>
+  }
+
+  <!-- Delete session confirmation dialog -->
+  @if (showDeleteDialog()) {
+    <dialog trackNativeModal open class="fixed inset-0 m-auto bg-background border border-border rounded-lg p-6 max-w-md shadow-xl z-50">
+      <h2 class="text-lg font-semibold mb-2">Delete session</h2>
+      <p class="text-sm text-muted-foreground mb-4">
+        This will permanently delete this session. The terminal process will be terminated and the session will be removed.
+      </p>
+      <div class="flex justify-end gap-2">
+        <button
+          (click)="cancelDeleteSession()"
+          class="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          (click)="confirmDeleteSession()"
+          class="px-4 py-2 text-sm bg-destructive text-white hover:bg-destructive/90 rounded transition-colors"
+        >
+          Delete Session
+        </button>
+      </div>
+    </dialog>
+  }
+</div>

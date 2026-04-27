@@ -1,0 +1,43 @@
+<div class="info-page">
+  <div class="info-page__backdrop"></div>
+
+  <section class="info-card" aria-labelledby="info-title">
+    <div class="info-card__eyebrow">
+      <ng-icon name="lucideInfo" size="14" />
+      <span>About the app</span>
+    </div>
+
+    <img
+      class="info-card__logo"
+      src="/11x.png"
+      alt="Elevenex logo"
+      width="104"
+      height="104"
+    />
+
+    <h1 id="info-title" class="info-card__title">Elevenex</h1>
+    <p class="info-card__description">
+      Elevenex is a workspace hub for managing projects, repositories, branches, and coding sessions in one place.
+    </p>
+
+    <div class="info-card__meta">
+      <div class="info-card__row">
+        <span>Developer</span>
+        <a href="https://x.com/leomelki" rel="noreferrer" (click)="openExternal('https://x.com/leomelki', $event)">
+          &#64;leomelki
+        </a>
+      </div>
+      <div class="info-card__row">
+        <span>Project</span>
+        <a
+          href="https://github.com/leomelki/elevenex"
+          rel="noreferrer"
+          (click)="openExternal('https://github.com/leomelki/elevenex', $event)"
+        >
+          <span>GitHub repository</span>
+          <ng-icon name="lucideArrowUpRight" size="14" />
+        </a>
+      </div>
+    </div>
+  </section>
+</div>

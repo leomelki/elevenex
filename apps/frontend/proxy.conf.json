@@ -1,0 +1,58 @@
+{
+  "/api": {
+    "target": "http://127.0.0.1:11111",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/vscode-static": {
+    "target": "http://127.0.0.1:11111",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/vscode-ext1": {
+    "target": "http://127.0.0.1:11111",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/vscode-ext2": {
+    "target": "http://127.0.0.1:11111",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/file-changes": {
+    "target": "ws://127.0.0.1:11111",
+    "ws": true,
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/terminal": {
+    "target": "ws://127.0.0.1:11111",
+    "ws": true,
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/user-terminal": {
+    "target": "ws://127.0.0.1:11111",
+    "ws": true,
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/socket.io": {
+    "target": "ws://127.0.0.1:11111",
+    "ws": true,
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/claude-status": {
+    "target": "ws://127.0.0.1:11111",
+    "ws": true,
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/claude-runtime": {
+    "target": "ws://127.0.0.1:11111",
+    "ws": true,
+    "secure": false,
+    "changeOrigin": true
+  }
+}

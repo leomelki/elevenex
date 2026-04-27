@@ -1,0 +1,384 @@
+<div
+  class="sidebar-shell h-full flex flex-col bg-sidebar"
+  [class.sidebar-shell--desktop]="desktopMode()"
+  [class.sidebar-shell--mac]="macNativeChrome()"
+>
+  <!-- Sidebar Header -->
+  <div
+    class="sidebar-brand"
+    [class.sidebar-brand--mac-controls-visible]="macTrafficLightsVisible()"
+    (dblclick)="onHeaderDoubleClick($event)"
+  >
+    <div class="sidebar-brand__content">
+      <a routerLink="/projects" class="sidebar-brand__link" aria-label="Go to Elevenex projects">
+        <img src="/11x.png" alt="" class="sidebar-brand__mark" aria-hidden="true" />
+
+        <span class="sidebar-brand__text">
+          <span class="sidebar-brand__eyebrow">Workspace Hub</span>
+          <span class="sidebar-brand__title">Elevenex</span>
+        </span>
+      </a>
+      <div class="flex items-center gap-1">
+      <a
+        routerLink="/info"
+        class="sidebar-brand__action sidebar-brand__action--info"
+        aria-label="Open app info"
+        title="App info">
+        <ng-icon name="lucideInfo" class="!w-4 !h-4" />
+      </a>
+      <button
+        class="sidebar-brand__action"
+        aria-label="Create project"
+        title="Create project"
+        (click)="openCreateProjectWizard()">
+        <ng-icon name="lucidePlus" class="!w-4 !h-4" />
+      </button>
+      <button
+        class="sidebar-brand__refresh"
+        aria-label="Refresh navigation tree"
+        title="Refresh navigation tree"
+        (click)="onRefresh()">
+        <ng-icon name="lucideRefreshCw" class="!w-4 !h-4" [class.animate-spin]="navService.loading()" />
+      </button>
+      </div>
+    </div>
+    <app-environment-switcher />
+  </div>
+
+  <!-- Loading state -->
+  @if (navService.loading()) {
+    <div class="p-4 space-y-2">
+      @for (i of [1,2,3,4]; track i) {
+        <div class="h-8 rounded bg-muted animate-pulse" [style.width]="[100,80,90,70][i-1] + '%'"></div>
+      }
+    </div>
+  }
+
+  <!-- Empty state -->
+  @if (!navService.loading() && navService.tree().length === 0) {
+    <div class="flex flex-col items-center justify-center py-12 px-4 text-center">
+      <ng-icon name="lucideFolder" class="!w-8 !h-8 text-muted-foreground mb-4" />
+      <p class="text-sm font-semibold text-foreground mb-1">No projects</p>
+      <p class="text-sm text-muted-foreground mb-4">Create a project to see your repos, branches, and sessions here.</p>
+      <button type="button" class="sidebar-empty-create" (click)="openCreateProjectWizard()">Create project</button>
+    </div>
+  }
+
+  <!-- Tree content -->
+  @if (!navService.loading() && navService.tree().length > 0) {
+    <div class="flex-1 overflow-y-auto py-2">
+      @for (project of navService.tree(); track project.id) {
+        <!-- Project node -->
+        <div class="project-row group">
+          <button
+            class="project-toggle"
+            [class.project-toggle--highlighted]="navService.highlightedProjectId() === project.id"
+            [attr.data-project-row-id]="project.id"
+            (click)="onProjectClick(project)">
+            <ng-icon [name]="isExpanded('project-' + project.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+            <ng-icon name="lucideFolder" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+            <span class="text-sm font-semibold text-foreground truncate">{{ project.name }}</span>
+          </button>
+          <span class="project-badges">
+            @if (getProjectTodoCount(project.id) > 0) {
+              <span class="project-todo-badge" [title]="getProjectTodoCount(project.id) + ' pending task' + (getProjectTodoCount(project.id) !== 1 ? 's' : '')">
+                <ng-icon name="lucideCheckSquare" class="project-todo-badge-icon" />
+                {{ getProjectTodoCount(project.id) }}
+              </span>
+            }
+            @if (hasProjectSsh(project.id)) {
+              <span class="project-ssh-badge" [class]="getProjectSshBadgeClass(project.id)" [title]="getProjectSshStats(project.id).active + ' active forwards, ' + getProjectSshStats(project.id).saved + ' saved'">
+                <span class="project-ssh-badge-pulse"></span>
+                <span class="project-ssh-badge-count">{{ getProjectSshStats(project.id).active }}</span>
+              </span>
+            }
+          </span>
+          <span class="sidebar-actions">
+            <button
+              class="project-ssh-button"
+              title="Open SSH forwarding"
+              aria-label="Open SSH forwarding"
+              (click)="openProjectSsh(project, $event)">
+              <ng-icon name="lucideServer" class="!w-3.5 !h-3.5" />
+            </button>
+          </span>
+        </div>
+
+        @if (isExpanded('project-' + project.id)) {
+          @for (repo of project.repos; track repo.id) {
+            <!-- Repo node -->
+            <div class="sidebar-tree-row w-full group" [style.padding-left]="'32px'">
+              <button class="flex items-center gap-1 flex-1 min-w-0" (click)="onRepoClick(repo)">
+                <ng-icon [name]="isExpanded('repo-' + repo.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                @if (repo.error) {
+                  <ng-icon name="lucideAlertCircle" class="!w-4 !h-4 text-destructive shrink-0" />
+                } @else {
+                  <ng-icon name="lucideGitBranch" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                }
+                <span
+                  class="w-2 h-2 rounded-full shrink-0"
+                  [style.background-color]="repo.color || getRepoColor(repo.id)"
+                  [attr.aria-hidden]="true"
+                ></span>
+                <div class="flex flex-col min-w-0">
+                  <span class="text-sm font-semibold text-foreground truncate">{{ repo.name }}</span>
+                  @if (repo.error) {
+                    <span class="text-xs text-destructive">{{ repo.errorMessage }}</span>
+                  }
+                </div>
+              </button>
+              @if (!repo.error) {
+                <span class="sidebar-actions">
+                  <button
+                    class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground"
+                    title="Add branch"
+                    aria-label="Add branch"
+                    (click)="openBranchSearchForRepo(repo)">
+                    <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                  </button>
+                </span>
+              }
+            </div>
+
+            @if (isExpanded('repo-' + repo.id) && !repo.error) {
+              @if (repo.branches.length === 0) {
+                <div class="text-xs text-muted-foreground" [style.padding-left]="'64px'">No local branches</div>
+              }
+              @for (branch of filterBranches(repo); track branch.name) {
+                <!-- Branch node -->
+                <button
+                  class="sidebar-tree-row w-full text-left group"
+                  [style.padding-left]="'48px'"
+                  (click)="onBranchClick(repo, branch)">
+                  @if (branch.sessions && branch.sessions.length > 0) {
+                    <ng-icon [name]="isExpanded('branch-' + repo.id + '-' + branch.name) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  } @else {
+                    <span class="w-4 shrink-0"></span>
+                  }
+                  @if (branch.isPendingCreation) {
+                    <span class="inline-block w-4 h-4 shrink-0 rounded-full border-2 border-muted-foreground/50 border-t-transparent animate-spin"></span>
+                  } @else if (branch.hasWorktree) {
+                    <ng-icon name="lucideGitBranch" class="!w-4 !h-4 text-foreground shrink-0" />
+                  } @else {
+                    <ng-icon name="lucideCircleDashed" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  }
+<span class="text-sm truncate flex-1" [class.text-foreground]="branch.hasWorktree || branch.isPendingCreation" [class.text-muted-foreground]="!branch.hasWorktree && !branch.isPendingCreation" [title]="branch.name">{{ branch.name }}</span>
+                   <!-- Action buttons (visible on hover) -->
+                   <span class="sidebar-actions">
+                     @if (branch.isPendingCreation) {
+                       <span class="text-xs text-muted-foreground" [attr.data-pending-worktree-branch]="branch.name">Creating…</span>
+                     } @else if (branch.hasWorktree) {
+                       <button
+                         class="sidebar-branch-action sidebar-branch-action--soft"
+                         title="Remove from project"
+                         aria-label="Remove from project"
+                         [attr.data-worktree-remove-trigger]="branch.worktreePath"
+                         (click)="$event.stopPropagation(); openRemoveFromProject(repo, branch)">
+                         <ng-icon name="lucideCircleMinus" class="!w-3.5 !h-3.5" />
+                       </button>
+                       <button
+                         class="sidebar-branch-action"
+                         title="Open in Cursor"
+                         aria-label="Open in Cursor"
+                         (click)="$event.stopPropagation(); openInCursor(repo, branch)">
+                         <ng-icon name="lucideSquareArrowOutUpRight" class="!w-3.5 !h-3.5" />
+                       </button>
+                       <button
+                         class="sidebar-branch-action"
+                         title="New Session"
+                         aria-label="New Session"
+                         (click)="$event.stopPropagation(); createSessionOnBranch(repo, branch)">
+                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                       </button>
+                       <button
+                         class="sidebar-branch-action sidebar-branch-action--danger"
+                         title="Delete Worktree"
+                         aria-label="Delete Worktree"
+                         [attr.data-worktree-delete-trigger]="branch.worktreePath"
+                         (click)="$event.stopPropagation(); openDeleteWorktree(repo, branch)">
+                         <ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" />
+                       </button>
+                     } @else {
+                       <button
+                         class="sidebar-branch-action"
+                         title="Create Worktree"
+                         aria-label="Create Worktree"
+                         (click)="$event.stopPropagation(); openCreateWorktree(repo, branch)">
+                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                       </button>
+                     }
+                   </span>
+                </button>
+
+                 @if (isExpanded('branch-' + repo.id + '-' + branch.name)) {
+                   @for (session of branch.sessions; track session.id) {
+<!-- Session node -->
+                      <div
+                        class="sidebar-tree-row w-full cursor-pointer group"
+                        [class.session-selected]="session.id === activeSessionId()"
+                        [attr.data-session-row-id]="session.id"
+                        [style.padding-left]="'64px'"
+                        (click)="onSessionClick(session)">
+                        <div
+                          class="flex items-center gap-1 flex-1 min-w-0">
+                          <span class="sidebar-status-dot"
+                                [class.status-running]="claudeStatus.getStatus(session.id) === 'running'"
+                                [class.status-waiting]="claudeStatus.getStatus(session.id) === 'waiting'"
+                                [class.status-idle]="claudeStatus.getStatus(session.id) === 'idle'"
+                                [title]="claudeStatus.getStatus(session.id)">
+                          </span>
+                          @if (editingSessionTitleId() === session.id) {
+                            <input
+                              #sessionTitleInput
+                              z-input
+                              type="text"
+                              class="session-title-input"
+                              [value]="session.name || ''"
+                              (blur)="saveSessionTitle(session.id, $event)"
+                              (keydown.enter)="saveSessionTitle(session.id, $event)"
+                              (keydown.escape)="cancelEditSessionTitle()"
+                              (click)="$event.stopPropagation()"
+                            />
+                          } @else {
+                            <span
+                              class="text-sm text-foreground truncate"
+                              (dblclick)="startEditSessionTitle(session.id, session.name || '', $event)">
+                              {{ session.name || 'Session ' + session.id }}
+                            </span>
+                          }
+                          @if (getSessionStatus(session) === 'archived') {
+                            <span class="text-xs text-muted-foreground opacity-60 ml-1">(archived)</span>
+                          }
+                          @if (plannotatorState.isPanelVisible(session.id)) {
+                            <span class="w-2 h-2 rounded-full shrink-0 ml-1 sidebar-review-dot" title="Review waiting"></span>
+                          }
+                          @if (hasUnreviewedCompletion(session)) {
+                            <span class="sidebar-completion-dot" title="Completed, not reviewed yet"></span>
+                          }
+                        </div>
+                        @if (getSessionLastStateChangeLabel(session); as stateChangeLabel) {
+                          <span
+                            class="sidebar-session-time"
+                            [title]="getSessionLastStateChangeTooltip(session)">
+                            {{ stateChangeLabel }}
+                          </span>
+                        }
+                        <span
+                          class="sidebar-actions session-actions"
+                          data-session-delete-controls="true"
+                          [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id)">
+                          @if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
+                            <span class="session-delete-inline" data-session-delete-controls="true">
+                              <button
+                                class="session-delete-confirm"
+                                [attr.data-session-delete-confirm-id]="session.id"
+                                data-session-delete-controls="true"
+                                [class.session-delete-confirm--ready]="isSessionDeleteConfirmReady(session.id)"
+                                [class.session-delete-confirm--loading]="isDeletingSession(session.id)"
+                                [attr.aria-label]="isDeletingSession(session.id) ? 'Deleting Session' : 'Confirm Delete Session'"
+                                [attr.title]="isDeletingSession(session.id) ? 'Deleting session' : (isSessionDeleteConfirmReady(session.id) ? 'Confirm delete' : 'Wait a moment before confirming')"
+                                [disabled]="!isSessionDeleteConfirmReady(session.id) || isDeletingSession(session.id)"
+                                (click)="confirmDeleteSession(session, $event)">
+                                @if (isDeletingSession(session.id)) {
+                                  <span class="session-delete-spinner" aria-hidden="true"></span>
+                                  <span>Deleting</span>
+                                } @else {
+                                  <span>Delete</span>
+                                }
+                              </button>
+                              @if (!isDeletingSession(session.id)) {
+                                <button
+                                  class="session-delete-cancel"
+                                  [attr.data-session-delete-cancel-id]="session.id"
+                                  data-session-delete-controls="true"
+                                  title="Cancel delete"
+                                  aria-label="Cancel delete"
+                                  (click)="cancelDeleteSession($event)">
+                                  <span aria-hidden="true">×</span>
+                                </button>
+                              }
+                            </span>
+                          } @else {
+                            <button
+                              class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-destructive"
+                              [attr.data-session-delete-trigger-id]="session.id"
+                              data-session-delete-controls="true"
+                              title="Delete Session"
+                              aria-label="Delete Session"
+                              (click)="armDeleteSession(session, $event)">
+                              <ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" />
+                            </button>
+                          }
+                        </span>
+                      </div>
+                   }
+                 }
+              }
+            }
+          }
+        }
+      }
+    </div>
+  }
+
+  <!-- Worktree creation sheet -->
+  <app-worktree-sheet #worktreeSheet />
+
+  <!-- Branch search -->
+  <app-branch-search #branchSearch (branchSelected)="onBranchSearchSelect($event)" />
+
+  @if (showCreateWizard()) {
+    <app-project-onboarding-wizard
+      heading="Create a project from the sidebar"
+      [showPortForwardStep]="showPortForwardStep()"
+      [subheading]="showPortForwardStep()
+        ? 'Add repositories now so the new project lands in the tree fully ready to use, with any optional port forwards.'
+        : 'Add repositories now so the new project lands in the tree fully ready to use.'"
+      ctaLabel="Create project"
+      (cancelled)="closeCreateProjectWizard()"
+      (completed)="handleProjectCreated($event)"
+    />
+  }
+
+  <!-- Remove from project confirmation dialog -->
+  <dialog #removeFromProjectDialog="trackedNativeModal" trackNativeModal class="worktree-dialog">
+    <div class="worktree-dialog__eyebrow">Non-destructive action</div>
+    <h2 class="worktree-dialog__title">Remove worktree from project</h2>
+    <p class="worktree-dialog__copy">
+      This removes the <span class="worktree-dialog__branch">{{ removeFromProjectBranch() }}</span> worktree from this project sidebar by deleting its sessions.
+      The folder stays on disk and can still be opened outside Elevenex.
+    </p>
+    <div class="worktree-dialog__path">{{ removeFromProjectPath() }}</div>
+    <div class="worktree-dialog__note">
+      Sessions in this worktree will be removed, and the branch will disappear from the project once no sessions remain.
+    </div>
+    <div class="worktree-dialog__actions">
+      <button class="worktree-dialog__button worktree-dialog__button--ghost" (click)="removeFromProjectDialog.close()" [disabled]="removingFromProject()">Cancel</button>
+      <button class="worktree-dialog__button worktree-dialog__button--soft" (click)="confirmRemoveFromProject()" [disabled]="removingFromProject()">
+        @if (removingFromProject()) { <span class="worktree-dialog__spinner" aria-hidden="true"></span> }
+        Remove from project
+      </button>
+    </div>
+  </dialog>
+
+  <!-- Delete worktree confirmation dialog -->
+  <dialog #deleteWorktreeDialog="trackedNativeModal" trackNativeModal class="worktree-dialog worktree-dialog--danger">
+    <div class="worktree-dialog__eyebrow">Destructive action</div>
+    <h2 class="worktree-dialog__title">Delete worktree</h2>
+    <p class="worktree-dialog__copy">
+      This permanently removes the <span class="worktree-dialog__branch">{{ deleteWorktreeBranch() }}</span> worktree from Git and disk.
+      Active sessions in this worktree will be stopped first.
+    </p>
+    <div class="worktree-dialog__path">{{ deleteWorktreePath() }}</div>
+    <div class="worktree-dialog__note">
+      The branch itself is not deleted, but the worktree folder is removed from this machine.
+    </div>
+    <div class="worktree-dialog__actions">
+      <button class="worktree-dialog__button worktree-dialog__button--ghost" (click)="deleteWorktreeDialog.close()" [disabled]="deleting()">Cancel</button>
+      <button class="worktree-dialog__button worktree-dialog__button--danger" (click)="confirmDeleteWorktree()" [disabled]="deleting()">
+        @if (deleting()) { <span class="worktree-dialog__spinner" aria-hidden="true"></span> }
+        Delete worktree
+      </button>
+    </div>
+  </dialog>
+</div>

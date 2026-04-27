@@ -1,0 +1,12 @@
+<div class="flex flex-col items-center justify-center h-full py-24 px-6 text-center">
+  @if (session()) {
+    <h1 class="text-xl font-semibold text-foreground mb-2">Session #{{ session()!.id }}</h1>
+    <p class="text-sm text-muted-foreground">
+      Terminal will be available when Phase 3 is complete.
+      This session is bound to <span class="font-mono">{{ session()!.branchName }}</span>
+      in <span class="font-mono">{{ session()!.worktreePath }}</span>.
+    </p>
+  } @else {
+    <p class="text-sm text-muted-foreground">Loading session...</p>
+  }
+</div>

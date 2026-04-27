@@ -1,0 +1,178 @@
+<div
+  class="app-shell h-screen"
+  [class.app-shell--desktop]="shouldUseDesktopShellPadding"
+  [class.app-shell--mac]="usesNativeMacControls()"
+  [class.app-shell--custom-controls]="shouldShowWindowControls"
+>
+  @if (!isOnboardingRoute() && startupPortForwardPrompt(); as prompt) {
+    <section
+      class="startup-forward-bar"
+      [class.startup-forward-bar--draggable]="shouldEnableWindowChromeInteractions"
+      [class.startup-forward-bar--mac]="usesNativeMacControls()"
+      aria-label="Startup port forwards"
+      (dblclick)="handleTopBarDoubleClick($event)"
+    >
+      <div class="startup-forward-bar__content">
+        <span class="startup-forward-bar__message">
+          {{ prompt.totalCount }} port{{ prompt.totalCount === 1 ? '' : 's' }} configured. Start forwarding?
+        </span>
+        <button
+          class="startup-forward-bar__button startup-forward-bar__button--primary"
+          type="button"
+          [disabled]="prompt.startingIds.length > 0"
+          (click)="startAllStartupForwards()"
+        >
+          <ng-icon name="lucidePlay" size="12" />
+          Start forwarding
+        </button>
+      </div>
+      <button
+        class="startup-forward-bar__close"
+        type="button"
+        aria-label="Dismiss startup forwarding prompt"
+        (click)="dismissStartupPortForwardPrompt()"
+      >
+        <ng-icon name="lucideX" size="14" />
+      </button>
+    </section>
+  }
+
+  @if (!isOnboardingRoute() && disconnectedForwardsBanner(); as prompt) {
+    <section
+      class="startup-forward-bar startup-forward-bar--alert"
+      [class.startup-forward-bar--draggable]="shouldEnableWindowChromeInteractions"
+      [class.startup-forward-bar--mac]="usesNativeMacControls()"
+      aria-label="Disconnected port forwards"
+      (dblclick)="handleTopBarDoubleClick($event)"
+    >
+      <div class="startup-forward-bar__content">
+        <span class="startup-forward-bar__message startup-forward-bar__message--strong">
+          {{ prompt.totalCount }} port{{ prompt.totalCount === 1 ? '' : 's' }} disconnected. Reconnect?
+        </span>
+        <button
+          class="startup-forward-bar__button startup-forward-bar__button--primary startup-forward-bar__button--alert"
+          type="button"
+          [disabled]="prompt.reconnectingIds.length > 0"
+          (click)="reconnectDisconnectedForwards()"
+        >
+          <ng-icon name="lucideRefreshCw" size="12" />
+          Reconnect
+        </button>
+      </div>
+      <button
+        class="startup-forward-bar__close"
+        type="button"
+        aria-label="Dismiss disconnected forwarding prompt"
+        (click)="dismissDisconnectedForwardsBanner()"
+      >
+        <ng-icon name="lucideX" size="14" />
+      </button>
+    </section>
+  }
+
+  <div class="app-shell__body">
+    @if (shouldShowWorkspaceSidebar) {
+      <div
+        class="app-shell__sidebar"
+        [style.width.px]="sidebarWidth()"
+      >
+        <app-sidebar
+          [desktopMode]="shouldUseDesktopShellPadding"
+          [macNativeChrome]="usesNativeMacControls()"
+          [macTrafficLightsVisible]="shouldReserveMacTrafficLightSpace"
+        />
+      </div>
+      <div
+        class="app-shell__resize-handle"
+        (mousedown)="onResizeStart($event)"
+      ></div>
+    }
+    <main class="app-shell__main">
+      @if (shouldShowDesktopChrome) {
+        <div class="desktop-chrome" [class.desktop-chrome--mac]="usesNativeMacControls()">
+          <div class="desktop-chrome__drag-region" (dblclick)="handleTopBarDoubleClick($event)">
+            @if (usesNativeMacControls()) {
+              <div class="desktop-chrome__mac-spacer" aria-hidden="true"></div>
+            }
+            <div class="desktop-chrome__meta">
+              <span class="desktop-chrome__eyebrow">Workspace</span>
+              <a routerLink="/projects" class="desktop-chrome__home-link">Elevenex</a>
+            </div>
+          </div>
+
+          @if (shouldShowWindowControls) {
+            <div class="desktop-chrome__controls">
+              <button class="window-control-button" type="button" aria-label="Minimize window" (click)="minimizeWindow()">
+                <ng-icon name="lucideMinus" class="window-control-button__icon" />
+              </button>
+              <button
+                class="window-control-button"
+                type="button"
+                [attr.aria-label]="isMaximized() ? 'Restore window' : 'Maximize window'"
+                (click)="toggleMaximizeWindow()"
+              >
+                <ng-icon [name]="isMaximized() ? 'lucideCopy' : 'lucideSquare'" class="window-control-button__icon" />
+              </button>
+              <button class="window-control-button window-control-button--close" type="button" aria-label="Close window" (click)="closeWindow()">
+                <ng-icon name="lucideX" class="window-control-button__icon" />
+              </button>
+            </div>
+          }
+        </div>
+      }
+
+      <div class="app-shell__content" [class.app-shell__content--onboarding]="isOnboardingRoute()">
+        <router-outlet />
+      </div>
+    </main>
+  </div>
+
+  @if (remoteDisconnect(); as disconnect) {
+    <section class="runtime-remote-overlay" aria-label="Remote connection lost">
+      <div class="runtime-remote-overlay__backdrop"></div>
+      <div class="runtime-remote-overlay__card">
+        <div class="runtime-remote-overlay__icon-ring">
+          <ng-icon name="lucideWifiOff" size="28" />
+        </div>
+
+        <div class="runtime-remote-overlay__eyebrow">Remote connection interrupted</div>
+        <h1 class="runtime-remote-overlay__title">Reconnect to continue</h1>
+        <p class="runtime-remote-overlay__subtitle">
+          Elevenex lost the tunnel to your remote server. Restore the connection to resume using the workspace.
+        </p>
+
+        <div class="runtime-remote-overlay__server-info">
+          <div class="runtime-remote-overlay__row">
+            <span>Server</span>
+            <strong>{{ disconnect.server.name }}</strong>
+          </div>
+          <div class="runtime-remote-overlay__row">
+            <span>Host</span>
+            <strong>{{ disconnect.server.sshUser ? disconnect.server.sshUser + '@' : '' }}{{ disconnect.server.sshHost }}:{{ disconnect.server.sshPort }}</strong>
+          </div>
+          <div class="runtime-remote-overlay__row">
+            <span>Local port</span>
+            <strong>127.0.0.1:{{ disconnect.localPort }}</strong>
+          </div>
+        </div>
+
+        <div class="runtime-remote-overlay__error">
+          <ng-icon name="lucideTriangleAlert" size="16" />
+          <span>{{ disconnect.message }}</span>
+        </div>
+
+        <button
+          class="runtime-remote-overlay__button"
+          type="button"
+          [disabled]="remoteDisconnectRetrying()"
+          (click)="retryRemoteConnection()"
+        >
+          <ng-icon name="lucideRefreshCw" size="16" />
+          {{ remoteDisconnectRetrying() ? 'Reconnecting...' : 'Reconnect now' }}
+        </button>
+      </div>
+    </section>
+  }
+</div>
+<ngx-sonner-toaster position="bottom-right" />
+<app-remote-install-modal />

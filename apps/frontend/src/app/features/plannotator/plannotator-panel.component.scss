@@ -1,0 +1,235 @@
+.plannotator-panel {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  min-width: 600px;
+  background: var(--color-bg-primary, #1e1e1e);
+  border-left: 1px solid var(--color-border, #333);
+  z-index: 100;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+  // Keep a strip of the panel visible as a visual reminder
+  &.panel-minimized {
+    transform: translateX(calc(100% - 24px));
+    pointer-events: none;
+    border-left: 3px solid oklch(0.65 0.15 270);
+    box-shadow: -10px 0 40px rgba(0, 0, 0, 0.6), -2px 0 8px oklch(0.75 0.18 55 / 0.3);
+  }
+
+  &.panel-fullscreen {
+    top: 0;
+    left: 0;
+    width: 100% !important;
+    max-width: none;
+    border-left: none;
+    box-shadow: none;
+  }
+}
+
+// Resize drag handle on left edge
+.resize-handle {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+  transition: background 0.15s ease;
+
+  &:hover,
+  &:active {
+    background: var(--color-accent, #0e639c);
+  }
+}
+
+// Minimized restore tab — fixed to right edge, slides in/out
+.minimized-tab {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  z-index: 101;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 14px 14px 16px;
+  background: oklch(0.65 0.15 270);
+  border: none;
+  border-radius: 10px 0 0 10px;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
+  writing-mode: vertical-lr;
+  // Start hidden off-screen — fast hide when restoring panel
+  transform: translateY(-50%) translateX(100%);
+  pointer-events: none;
+  opacity: 0;
+  transition: transform 0.05s ease,
+              opacity 0.05s ease,
+              padding 0.2s ease,
+              background 0.2s ease,
+              box-shadow 0.2s ease;
+
+  // Slide in slowly only when minimizing
+  &.minimized-tab-visible {
+    transform: translateY(-50%) translateX(0);
+    pointer-events: auto;
+    opacity: 1;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.15s,
+                opacity 0.3s ease 0.15s,
+                padding 0.2s ease,
+                background 0.2s ease,
+                box-shadow 0.2s ease;
+  }
+
+  &:hover {
+    padding-right: 20px;
+    background: oklch(0.72 0.15 270);
+    box-shadow: -6px 0 28px rgba(0, 0, 0, 0.35);
+  }
+}
+
+.minimized-tab-icon {
+  font-size: 20px;
+  animation: tab-pulse 2s ease-in-out infinite;
+}
+
+.minimized-tab-label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+@keyframes tab-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--color-bg-secondary, #252526);
+  border-bottom: 1px solid var(--color-border, #333);
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mode-icon {
+  font-size: 18px;
+  color: var(--color-accent, #0e639c);
+}
+
+.mode-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary, #ccc);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--color-text-secondary, #888);
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--color-bg-hover, #333);
+    color: var(--color-text-primary, #fff);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &.btn-close:hover {
+    color: var(--color-error, #f44336);
+  }
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.panel-content {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-primary, #1e1e1e);
+  z-index: 10;
+  gap: 16px;
+  color: var(--color-text-secondary, #888);
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border, #333);
+  border-top-color: var(--color-accent, #0e639c);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.plannotator-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: var(--color-bg-primary, #1e1e1e);
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  color: var(--color-text-secondary, #888);
+}
+
+.empty-icon {
+  font-size: 48px;
+  opacity: 0.5;
+}

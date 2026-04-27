@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `last_state_change_at` text;

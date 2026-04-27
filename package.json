@@ -1,0 +1,28 @@
+{
+  "name": "elevenex",
+  "version": "0.0.0",
+  "private": true,
+  "license": "CC-BY-NC-4.0",
+  "scripts": {
+    "assets:icons": "node scripts/generate-icons.js",
+    "postinstall": "node scripts/postinstall.js",
+    "backend:dev": "pnpm --dir apps/backend start:dev",
+    "backend:prod": "pnpm --dir apps/backend start:prod",
+    "backend:build": "pnpm --dir apps/backend build",
+    "backend:bundle": "pnpm backend:build && node scripts/bundle-electron-backend.js",
+    "frontend:dev": "pnpm --dir apps/frontend start",
+    "frontend:build": "pnpm --dir apps/frontend build",
+    "electron:backend:assets": "node scripts/prepare-vscode-web-runtime.js",
+    "electron:backend:stage": "node scripts/stage-electron-backend.js",
+    "electron:backend:rebuild-natives": "node scripts/rebuild-electron-backend-natives.js",
+    "electron:backend:archive": "node scripts/archive-electron-backend.js",
+    "electron:backend:prepare": "pnpm electron:backend:stage && pnpm electron:backend:rebuild-natives && pnpm electron:backend:archive",
+    "electron:remote-runtime:stage": "node scripts/stage-remote-runtime.js",
+    "electron:dev": "ELECTRON_FRONTEND_URL=http://127.0.0.1:4200 ELECTRON_BACKEND_URL=http://127.0.0.1:11111 pnpm electron:start",
+    "dev:tmux": "sh scripts/dev-tmux.sh",
+    "electron:start": "pnpm --dir apps/electron start",
+    "electron:debug": "pnpm --dir apps/electron start:debug",
+    "electron:package": "pnpm frontend:build && pnpm backend:bundle && pnpm electron:backend:prepare && pnpm --dir apps/electron package",
+    "electron:package:mac": "pnpm frontend:build && pnpm backend:bundle && pnpm electron:backend:prepare && pnpm --dir apps/electron package:mac"
+  }
+}

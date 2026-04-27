@@ -1,0 +1,97 @@
+@if (state(); as install) {
+  <section class="remote-install-overlay" aria-label="Remote server setup">
+    <div class="remote-install-overlay__backdrop"></div>
+
+    <div class="remote-install-overlay__card">
+      <header class="remote-install-overlay__header">
+        <div>
+          <div class="remote-install-overlay__eyebrow">Remote setup required</div>
+          <h2>Finish preparing the remote server</h2>
+          <p>
+            Elevenex connected over SSH but still needs the remote machine to be prepared before the backend can start.
+          </p>
+        </div>
+
+        <button
+          class="remote-install-overlay__close"
+          type="button"
+          aria-label="Close remote setup"
+          (click)="cancel()"
+        >
+          <ng-icon name="lucideX" size="16" />
+        </button>
+      </header>
+
+      <div class="remote-install-overlay__meta">
+        <div>
+          <span>Platform</span>
+          <strong>{{ install.result.remotePlatform }} / {{ install.result.remoteArch }}</strong>
+        </div>
+        <div>
+          <span>Missing</span>
+          <strong>{{ install.result.missingDependencies.join(', ') || 'none' }}</strong>
+        </div>
+        <div>
+          <span>Target version</span>
+          <strong>{{ install.result.version || 'unknown' }}</strong>
+        </div>
+      </div>
+
+      <div class="remote-install-overlay__body">
+        <div class="remote-install-overlay__instructions">
+          <div class="remote-install-overlay__message">
+            <ng-icon name="lucideTriangleAlert" size="16" />
+            <span>{{ install.result.message }}</span>
+          </div>
+
+          @if (install.result.suggestedCommands.length > 0) {
+            <div class="remote-install-overlay__commands">
+              <div class="remote-install-overlay__commands-title">Suggested `tmux` install commands</div>
+              @for (command of install.result.suggestedCommands; track command) {
+                <code>{{ command }}</code>
+              }
+            </div>
+          }
+
+          <div class="remote-install-overlay__claude-note">
+            <strong>`claude` note:</strong> if `claude` is missing, install it using your normal remote workflow, then use the terminal below to verify it is on the remote `PATH`.
+          </div>
+        </div>
+
+        <div class="remote-install-overlay__terminal-shell">
+          <div class="remote-install-overlay__terminal-label">
+            <ng-icon name="lucideTerminalSquare" size="14" />
+            <span>Remote installer terminal</span>
+          </div>
+          <div #terminalContainer class="remote-install-overlay__terminal"></div>
+        </div>
+      </div>
+
+      @if (install.terminalError) {
+        <div class="remote-install-overlay__terminal-error">
+          <ng-icon name="lucideTriangleAlert" size="14" />
+          <span>{{ install.terminalError }}</span>
+        </div>
+      }
+
+      <footer class="remote-install-overlay__actions">
+        <button class="remote-install-overlay__button remote-install-overlay__button--ghost" type="button" (click)="cancel()">
+          Cancel
+        </button>
+        <button
+          class="remote-install-overlay__button remote-install-overlay__button--primary"
+          type="button"
+          [disabled]="!canRetry()"
+          (click)="recheck()"
+        >
+          @if (install.checking) {
+            <ng-icon name="lucideLoaderCircle" size="14" class="remote-install-overlay__spin" />
+            <span>Checking…</span>
+          } @else {
+            <span>I installed them, re-check</span>
+          }
+        </button>
+      </footer>
+    </div>
+  </section>
+}

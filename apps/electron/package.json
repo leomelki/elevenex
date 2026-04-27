@@ -1,0 +1,92 @@
+{
+  "name": "electron-app",
+  "version": "0.0.0",
+  "private": true,
+  "license": "CC-BY-NC-4.0",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "start:debug": "ELECTRON_DEBUG_FRONTEND=1 electron .",
+    "package": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
+    "package:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
+    "package:mac:dir": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir"
+  },
+  "build": {
+    "appId": "com.elevenex.desktop",
+    "productName": "Elevenex",
+    "asar": true,
+    "compression": "maximum",
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist"
+    },
+    "icon": "assets/macos-runtime-icon.png",
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "settings-preload.cjs",
+      "remote-server-utils.cjs",
+      "assets/**/*",
+      {
+        "from": "../frontend/dist/frontend/browser",
+        "to": "frontend/dist/frontend/browser",
+        "filter": [
+          "**/*",
+          "!**/.git",
+          "!**/.git/**",
+          "!**/.github",
+          "!**/.github/**",
+          "!**/.gitignore",
+          "!**/.gitattributes",
+          "!**/.gitmodules",
+          "!**/.gitkeep"
+        ]
+      },
+      {
+        "from": "../../11x.png",
+        "to": "11x.png"
+      },
+      "!**/.git",
+      "!**/.git/**",
+      "!**/.github",
+      "!**/.github/**",
+      "!**/.gitignore",
+      "!**/.gitattributes",
+      "!**/.gitmodules",
+      "!**/.gitkeep"
+    ],
+    "extraResources": [
+      {
+        "from": ".stage/backend.tar.gz",
+        "to": "backend.tar.gz"
+      },
+      {
+        "from": ".stage/version",
+        "to": "version"
+      }
+    ],
+    "mac": {
+      "icon": "assets/macos-runtime-icon.png",
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSDocumentsFolderUsageDescription": "Elevenex needs access to your Documents folder to read and watch your project files.",
+        "NSDesktopFolderUsageDescription": "Elevenex needs access to your Desktop to read project files stored there.",
+        "NSDownloadsFolderUsageDescription": "Elevenex needs access to your Downloads to read project files stored there.",
+        "NSRemovableVolumesUsageDescription": "Elevenex needs access to project files on removable volumes.",
+        "NSNetworkVolumesUsageDescription": "Elevenex needs access to project files on network volumes.",
+        "NSAppleEventsUsageDescription": "Elevenex uses Apple Events to integrate with your shell and external tools."
+      }
+    }
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.1",
+    "electron": "^35.1.5",
+    "electron-builder": "^26.0.12"
+  }
+}

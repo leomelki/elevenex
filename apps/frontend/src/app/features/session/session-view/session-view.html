@@ -1,0 +1,131 @@
+<div class="h-full flex flex-col">
+  @if (loading()) {
+    <div class="flex-1 flex items-center justify-center">
+      <span class="text-muted-foreground">Loading session...</span>
+    </div>
+  } @else if (session()) {
+    <!-- Header -->
+    <div class="flex items-center justify-between px-4 py-2 border-b border-border bg-background">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-semibold text-foreground">{{ session()!.name ?? 'Session ' + session()!.id }}</span>
+        <span class="text-xs text-muted-foreground">•</span>
+        <span class="text-xs text-muted-foreground font-mono">{{ session()!.branchName }}</span>
+        @if (session()!.status === 'stopped') {
+          <span class="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">stopped</span>
+        }
+      </div>
+      <div class="flex items-center gap-2">
+        <!-- Fork button -->
+        @if (session()!.status === 'active' || session()!.status === 'created') {
+          <button
+            (click)="showForkDialog.set(true)"
+            class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+          >
+            <ng-icon [svg]="lucideGitFork" size="16" />
+            Fork
+          </button>
+        }
+        <!-- Kill button -->
+        @if (session()!.status === 'active' || session()!.status === 'created') {
+          <button
+            (click)="showKillDialog.set(true)"
+            class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
+          >
+            <ng-icon [svg]="lucideSquare" size="16" />
+            Kill
+          </button>
+        }
+        <!-- Reset button -->
+        <button
+          (click)="resetSession()"
+          class="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+        >
+          Reset
+        </button>
+        <!-- Archive button -->
+        <button
+          (click)="archiveSession()"
+          class="px-3 py-1.5 text-xs bg-destructive/10 text-destructive hover:bg-destructive/20 rounded transition-colors"
+        >
+          Archive
+        </button>
+      </div>
+    </div>
+
+    <!-- Terminal -->
+    <div class="flex-1 min-h-0 p-4">
+      @if (session()!.status === 'stopped') {
+        <div class="h-full flex items-center justify-center bg-muted/50 rounded-lg">
+          <div class="text-center">
+            <p class="text-muted-foreground">Session stopped</p>
+            <p class="text-xs text-muted-foreground mt-1">Use Reset to start a new session in this worktree</p>
+          </div>
+        </div>
+      } @else if (session()!.status === 'archived') {
+        <div class="h-full flex items-center justify-center bg-muted/50 rounded-lg">
+          <span class="text-muted-foreground">This session has been archived</span>
+        </div>
+      } @else {
+        <app-claude-terminal [sessionId]="session()!.id" class="h-full block" />
+      }
+    </div>
+
+    <!-- Kill Confirmation Dialog -->
+    <dialog trackNativeModal [trackNativeModalOpen]="showKillDialog()" #killDialog [open]="showKillDialog()" class="fixed inset-0 m-auto bg-background border border-border rounded-lg p-6 max-w-md shadow-xl">
+      <h2 class="text-lg font-semibold mb-2">Kill session</h2>
+      <p class="text-sm text-muted-foreground mb-4">
+        This will terminate the running process. The session will be marked as stopped and remain accessible from the sidebar. You cannot resume a stopped session.
+      </p>
+      <div class="flex justify-end gap-2">
+        <button
+          (click)="showKillDialog.set(false)"
+          class="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          (click)="killSession()"
+          class="px-4 py-2 text-sm bg-destructive text-white hover:bg-destructive/90 rounded transition-colors"
+        >
+          Kill Session
+        </button>
+      </div>
+    </dialog>
+
+    <!-- Fork Dialog -->
+    <dialog trackNativeModal [trackNativeModalOpen]="showForkDialog()" #forkDialog [open]="showForkDialog()" class="fixed inset-0 m-auto bg-background border border-border rounded-lg p-6 max-w-md shadow-xl">
+      <h2 class="text-lg font-semibold mb-2">Fork session</h2>
+      <p class="text-sm text-muted-foreground mb-4">
+        Creates a new Claude Code session in the same worktree ({{ session()?.branchName }}).
+      </p>
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">Session name (optional)</label>
+        <input
+          type="text"
+          [ngModel]="forkName()"
+          (ngModelChange)="forkName.set($event)"
+          placeholder="Session N"
+          class="w-full px-3 py-2 text-sm border border-border rounded bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+        />
+      </div>
+      <div class="flex justify-end gap-2">
+        <button
+          (click)="showForkDialog.set(false); forkName.set('')"
+          class="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          (click)="forkSession()"
+          class="px-4 py-2 text-sm bg-primary text-primary-foreground hover:bg-primary/90 rounded transition-colors"
+        >
+          Fork Session
+        </button>
+      </div>
+    </dialog>
+  } @else {
+    <div class="flex-1 flex items-center justify-center">
+      <span class="text-destructive">Session not found</span>
+    </div>
+  }
+</div>

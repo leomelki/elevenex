@@ -1,0 +1,145 @@
+.connection-lost {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  position: relative;
+}
+
+.connection-lost__backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 20% 20%, color-mix(in oklch, var(--destructive) 6%, transparent), transparent 50%),
+    radial-gradient(ellipse at 80% 80%, color-mix(in oklch, var(--primary) 6%, transparent), transparent 50%);
+  pointer-events: none;
+}
+
+.connection-lost__card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 480px;
+  background: color-mix(in oklch, var(--background) 88%, white 12%);
+  border: 1px solid color-mix(in oklch, var(--border) 82%, white 12%);
+  border-radius: 32px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 8px 24px rgba(15, 23, 42, 0.06),
+    0 28px 64px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(20px);
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.connection-lost__icon-ring {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklch, var(--destructive) 8%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--destructive) 16%, var(--background));
+  color: var(--destructive);
+  margin-bottom: 24px;
+}
+
+h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.connection-lost__subtitle {
+  margin: 12px 0 0;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+  font-size: 0.94rem;
+  max-width: 36ch;
+}
+
+.connection-lost__server-info {
+  width: 100%;
+  margin-top: 28px;
+  border-radius: 20px;
+  padding: 6px 18px;
+  background: color-mix(in oklch, var(--muted) 50%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--border) 80%, white 10%);
+  text-align: left;
+}
+
+.connection-lost__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 0;
+}
+
+.connection-lost__row + .connection-lost__row {
+  border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+}
+
+.connection-lost__row span {
+  font-size: 0.82rem;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.connection-lost__row strong {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.connection-lost__error {
+  width: 100%;
+  margin-top: 20px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: color-mix(in oklch, var(--destructive) 8%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--destructive) 16%, var(--background));
+  color: color-mix(in oklch, var(--destructive) 90%, var(--foreground) 10%);
+  font-size: 0.875rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  line-height: 1.55;
+}
+
+.connection-lost__error ng-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.connection-lost__actions {
+  margin-top: 28px;
+  display: flex;
+  gap: 12px;
+}
+
+@media (max-width: 560px) {
+  .connection-lost {
+    padding: 20px;
+  }
+
+  .connection-lost__card {
+    padding: 28px 22px;
+    border-radius: 24px;
+  }
+
+  .connection-lost__actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .connection-lost__actions button {
+    width: 100%;
+  }
+}

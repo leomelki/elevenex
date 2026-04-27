@@ -1,0 +1,19 @@
+packages:
+  - 'apps/*'
+  - 'vscode-filesystem-provider'
+  - 'vscode-scm-extension'
+allowBuilds:
+  '@nestjs/core': true
+  '@parcel/watcher': true
+  better-sqlite3: true
+  electron: true
+  esbuild: true
+  lmdb: true
+  mocha: true
+  msgpackr-extract: true
+  node-pty: true
+  ts-loader: true
+  typescript: true
+  unrs-resolver: true
+  webpack: true
+  webpack-cli: true

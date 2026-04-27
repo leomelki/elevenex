@@ -1,0 +1,480 @@
+.app-shell {
+  --shell-border: color-mix(in oklch, var(--border) 88%, white);
+  --shell-panel: color-mix(in oklch, var(--background) 92%, white 8%);
+  --shell-elevated: color-mix(in oklch, var(--background) 85%, white 15%);
+  --shell-highlight: color-mix(in oklch, var(--primary) 14%, white);
+  --shell-shadow: 0 24px 64px rgba(15, 23, 42, 0.08);
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top left, color-mix(in oklch, var(--primary) 10%, transparent), transparent 34%),
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 94%, white 6%), var(--background));
+}
+
+.startup-forward-bar {
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.75rem 0.35rem 1rem;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in oklch, var(--primary) 22%, white 8%), color-mix(in oklch, var(--primary) 14%, var(--background)));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.startup-forward-bar--draggable {
+  -webkit-app-region: drag;
+}
+
+.startup-forward-bar--mac {
+  padding-left: 5.75rem;
+}
+
+.startup-forward-bar--alert {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--destructive) 16%, white 8%),
+      color-mix(in oklch, var(--destructive) 10%, var(--background))
+    );
+}
+
+.startup-forward-bar__content {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  flex: 1;
+}
+
+.startup-forward-bar__message {
+  font-size: 0.8rem;
+  line-height: 1.3;
+  color: color-mix(in oklch, var(--foreground) 88%, black 6%);
+}
+
+.startup-forward-bar__message--strong {
+  font-weight: 600;
+}
+
+.startup-forward-bar__button {
+  -webkit-app-region: no-drag;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  min-height: 1.65rem;
+  padding: 0 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28rem;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+}
+
+.startup-forward-bar__button:disabled,
+.startup-forward-bar__close:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.startup-forward-bar__button--primary {
+  background: color-mix(in oklch, var(--primary) 88%, black 6%);
+  color: white;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.14) inset;
+}
+
+.startup-forward-bar__button--primary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 94%, black 10%);
+}
+
+.startup-forward-bar__button--alert {
+  background: color-mix(in oklch, var(--destructive) 88%, black 6%);
+}
+
+.startup-forward-bar__button--alert:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--destructive) 94%, black 10%);
+}
+
+.startup-forward-bar__close {
+  -webkit-app-region: no-drag;
+  width: 1.8rem;
+  height: 1.8rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in oklch, var(--foreground) 70%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.startup-forward-bar__close:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--foreground) 5%, transparent);
+  color: var(--foreground);
+}
+
+.app-shell__body {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-shell__sidebar {
+  border-right: 1px solid var(--shell-border);
+  background: var(--sidebar);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.app-shell__resize-handle {
+  width: 1px;
+  flex-shrink: 0;
+  position: relative;
+  cursor: col-resize;
+  background: var(--shell-border);
+  transition: background-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.app-shell__resize-handle::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  left: -3px;
+  right: -3px;
+}
+
+.app-shell__resize-handle:hover,
+.app-shell__resize-handle:active {
+  background: color-mix(in oklch, var(--primary) 46%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 14%, transparent);
+}
+
+.app-shell__main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: color-mix(in oklch, var(--background) 96%, white 4%);
+}
+
+.desktop-chrome {
+  height: 36px;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 78%, transparent);
+  background: linear-gradient(180deg, color-mix(in oklch, var(--background) 91%, white 9%), color-mix(in oklch, var(--background) 97%, transparent));
+  backdrop-filter: blur(18px);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+}
+
+.desktop-chrome--mac {
+  height: 34px;
+  border-bottom-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.desktop-chrome__drag-region {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 12px;
+  -webkit-app-region: drag;
+}
+
+.desktop-chrome__mac-spacer {
+  width: 84px;
+  flex-shrink: 0;
+}
+
+.desktop-chrome__meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.desktop-chrome__eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--muted-foreground) 80%, transparent);
+  font-weight: 700;
+}
+
+.desktop-chrome__home-link {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--background) 78%, white 22%);
+  border: 1px solid color-mix(in oklch, var(--border) 78%, white 12%);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.desktop-chrome__home-link:hover {
+  background: color-mix(in oklch, var(--background) 68%, white 32%);
+}
+
+.desktop-chrome__controls {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.window-control-button {
+  width: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-left: 1px solid color-mix(in oklch, var(--border) 74%, transparent);
+  background: transparent;
+  color: color-mix(in oklch, var(--muted-foreground) 92%, var(--foreground));
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.window-control-button:hover {
+  background: color-mix(in oklch, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+}
+
+.window-control-button--close:hover {
+  background: rgb(232 17 35 / 0.92);
+  color: white;
+}
+
+.window-control-button__icon {
+  width: 0.9rem !important;
+  height: 0.9rem !important;
+}
+
+.app-shell__content {
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-shell__content--onboarding {
+  background:
+    radial-gradient(circle at top, color-mix(in oklch, var(--primary) 12%, transparent), transparent 36%),
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 92%, white 8%), var(--background));
+}
+
+.runtime-remote-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.runtime-remote-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top left, color-mix(in oklch, var(--destructive) 12%, transparent), transparent 34%),
+    radial-gradient(circle at bottom right, color-mix(in oklch, var(--primary) 10%, transparent), transparent 40%),
+    color-mix(in oklch, var(--background) 72%, rgb(10 14 24 / 0.68));
+  backdrop-filter: blur(22px) saturate(0.92);
+}
+
+.runtime-remote-overlay__card {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 520px);
+  padding: 40px;
+  border-radius: 32px;
+  border: 1px solid color-mix(in oklch, var(--border) 76%, white 10%);
+  background:
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 88%, white 12%), color-mix(in oklch, var(--background) 94%, transparent));
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 16px 40px rgba(15, 23, 42, 0.12),
+    0 40px 96px rgba(15, 23, 42, 0.22);
+  backdrop-filter: blur(28px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.runtime-remote-overlay__icon-ring {
+  width: 68px;
+  height: 68px;
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklch, var(--destructive) 10%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--destructive) 20%, var(--background));
+  color: var(--destructive);
+  margin-bottom: 22px;
+}
+
+.runtime-remote-overlay__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--destructive) 52%, var(--foreground));
+}
+
+.runtime-remote-overlay__title {
+  margin: 10px 0 0;
+  font-size: 2rem;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  font-weight: 700;
+}
+
+.runtime-remote-overlay__subtitle {
+  margin: 14px 0 0;
+  max-width: 38ch;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+
+.runtime-remote-overlay__server-info {
+  width: 100%;
+  margin-top: 28px;
+  border-radius: 22px;
+  padding: 8px 18px;
+  background: color-mix(in oklch, var(--muted) 48%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--border) 76%, white 10%);
+  text-align: left;
+}
+
+.runtime-remote-overlay__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+}
+
+.runtime-remote-overlay__row + .runtime-remote-overlay__row {
+  border-top: 1px solid color-mix(in oklch, var(--border) 52%, transparent);
+}
+
+.runtime-remote-overlay__row span {
+  font-size: 0.82rem;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.runtime-remote-overlay__row strong {
+  font-size: 0.89rem;
+  font-weight: 600;
+}
+
+.runtime-remote-overlay__error {
+  width: 100%;
+  margin-top: 20px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: color-mix(in oklch, var(--destructive) 8%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--destructive) 16%, var(--background));
+  color: color-mix(in oklch, var(--destructive) 88%, var(--foreground) 12%);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  line-height: 1.55;
+}
+
+.runtime-remote-overlay__button {
+  margin-top: 24px;
+  min-width: 180px;
+  min-height: 2.9rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 1.15rem;
+  background: linear-gradient(180deg, color-mix(in oklch, var(--primary) 90%, white 8%), color-mix(in oklch, var(--primary) 82%, black 6%));
+  color: white;
+  font-size: 0.92rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  box-shadow:
+    0 10px 28px color-mix(in srgb, var(--primary) 26%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 0.18);
+  transition: transform 0.16s ease, opacity 0.16s ease, box-shadow 0.16s ease;
+}
+
+.runtime-remote-overlay__button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    0 14px 34px color-mix(in srgb, var(--primary) 32%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 0.18);
+}
+
+.runtime-remote-overlay__button:disabled {
+  opacity: 0.72;
+  cursor: wait;
+}
+
+@media (max-width: 900px) {
+  .startup-forward-bar {
+    flex-direction: column;
+    align-items: stretch;
+    padding-left: 1rem;
+  }
+
+  .startup-forward-bar__content {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .runtime-remote-overlay {
+    padding: 20px;
+  }
+
+  .runtime-remote-overlay__card {
+    padding: 28px 22px;
+    border-radius: 24px;
+  }
+
+  .runtime-remote-overlay__title {
+    font-size: 1.65rem;
+  }
+
+  .runtime-remote-overlay__row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .runtime-remote-overlay__button {
+    width: 100%;
+  }
+}

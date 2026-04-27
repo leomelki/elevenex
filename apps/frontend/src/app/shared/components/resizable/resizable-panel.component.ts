@@ -1,0 +1,59 @@
+import {
+  booleanAttribute,
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  ElementRef,
+  inject,
+  input,
+  ViewEncapsulation,
+} from '@angular/core';
+
+import type { ClassValue } from 'clsx';
+
+import { resizablePanelVariants } from '@/shared/components/resizable/resizable.variants';
+import { mergeClasses } from '@/shared/utils/merge-classes';
+
+@Component({
+  selector: 'z-resizable-panel',
+  standalone: true,
+  template: `
+    <ng-content />
+  `,
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  encapsulation: ViewEncapsulation.None,
+  host: {
+    '[class]': 'classes()',
+    '[attr.data-collapsed]': 'isCollapsed()',
+  },
+  exportAs: 'zResizablePanel',
+})
+export class ZardResizablePanelComponent {
+  readonly elementRef = inject(ElementRef);
+
+  readonly zDefaultSize = input<number | string | undefined>(undefined);
+  readonly zMin = input<number | string>(0);
+  readonly zMax = input<number | string>(100);
+  readonly zCollapsible = input(false, { transform: booleanAttribute });
+  readonly zResizable = input(true, { transform: booleanAttribute });
+  readonly class = input<ClassValue>('');
+
+  protected readonly isCollapsed = computed(() => {
+    const element = this.elementRef.nativeElement as HTMLElement;
+    const styleWidth = element.style.width;
+    const styleHeight = element.style.height;
+
+    // If no explicit width/height set yet, panel is not collapsed (still initializing)
+    if (!styleWidth && !styleHeight) {
+      return false;
+    }
+
+    const width = Number.parseFloat(styleWidth || '0');
+    const height = Number.parseFloat(styleHeight || '0');
+    return width === 0 || height === 0;
+  });
+
+  protected readonly classes = computed(() =>
+    mergeClasses(resizablePanelVariants({ zCollapsed: this.isCollapsed() }), this.class()),
+  );
+}

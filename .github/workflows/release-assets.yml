@@ -1,0 +1,78 @@
+name: Build and release assets
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'apps/backend/**'
+      - 'apps/electron/**'
+      - 'apps/frontend/**'
+      - 'apps/frontend/proxy.conf.json'
+      - 'vscode-filesystem-provider/**'
+      - 'vscode-scm-extension/**'
+      - 'scripts/stage-remote-runtime.js'
+      - 'scripts/prepare-vscode-web-runtime.js'
+      - 'scripts/bundle-electron-backend.js'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/release-assets.yml'
+      - '.github/workflows/reusable-build-runtime.yml'
+      - '.github/workflows/reusable-build-macos-desktop.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: release-assets-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-runtime:
+    name: Build runtime assets
+    uses: ./.github/workflows/reusable-build-runtime.yml
+
+  build-macos-dmg:
+    name: Build macOS desktop asset
+    uses: ./.github/workflows/reusable-build-macos-desktop.yml
+
+  release:
+    name: Publish release assets
+    needs:
+      - build-runtime
+      - build-macos-dmg
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR artifacts/
+
+      - name: Write manifest
+        run: |
+          cat > artifacts/manifest.json <<EOF
+          {
+            "version": "${{ github.sha }}",
+            "ref": "${{ github.ref }}",
+            "targets": [
+              { "key": "linux-x64",   "archive": "elevenex-runtime-linux-x64.tar.gz" },
+              { "key": "linux-arm64", "archive": "elevenex-runtime-linux-arm64.tar.gz" }
+            ],
+            "desktop": [
+              { "key": "macos-arm64", "archive": "elevenex-desktop-macos-arm64.dmg" }
+            ]
+          }
+          EOF
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: runtime-${{ github.sha }}
+          name: Release assets ${{ github.sha }}
+          prerelease: true
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          body: |
+            Auto-built release assets for commit `${{ github.sha }}`.
+            Includes remote runtime tarballs downloaded by the desktop app during remote install,
+            plus the macOS desktop DMG artifact.

@@ -1,0 +1,195 @@
+<dialog #searchDialog="trackedNativeModal" trackNativeModal class="fixed inset-0 m-auto w-full max-w-lg rounded-lg border border-border bg-background p-0 shadow-lg backdrop:bg-black/50" (keydown)="onKeyDown($event)">
+  @if (dialogStep() === 'search') {
+    <div class="p-4 border-b border-border">
+      <div class="flex items-center gap-2 mb-3">
+        <ng-icon name="lucideSearch" class="!w-5 !h-5 text-muted-foreground" />
+        <h2 class="text-lg font-semibold text-foreground">Add Branch</h2>
+      </div>
+      <input
+        #searchInput
+        type="text"
+        class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        placeholder="Type at least 3 characters to search..."
+        [ngModel]="searchQuery()"
+        (ngModelChange)="searchQuery.set($event)"
+        autocomplete="off" />
+      @if (repos().length > 1) {
+        <div class="flex gap-1 mt-2 flex-wrap">
+          @for (repo of reposWithSelection(); track repo.id) {
+            <button
+              class="px-2 py-1 text-xs rounded border transition-colors"
+              [class.border-primary]="repo.selected"
+              [class.bg-primary]="repo.selected"
+              [class.text-primary-foreground]="repo.selected"
+              [class.border-border]="!repo.selected"
+              [class.text-foreground]="!repo.selected"
+              [class.hover:bg-muted]="!repo.selected"
+              (click)="selectRepo(repo.id)">
+              {{ repo.name }}
+            </button>
+          }
+        </div>
+      }
+    </div>
+    <div class="max-h-80 overflow-y-auto">
+      @if (searching() && searchingRemote()) {
+        <div class="flex items-center justify-center py-8">
+          <ng-icon name="lucideLoader2" class="!w-5 !h-5 animate-spin text-muted-foreground" />
+        </div>
+      } @else if (searchQuery().length < 3) {
+        <div class="text-sm text-muted-foreground text-center py-8">
+          Type at least 3 characters to search
+        </div>
+      } @else {
+        @if (searchResults().length === 0 && visibleRemoteResults().length === 0 && !canCreateBranch() && !searching() && !searchingRemote()) {
+          <div class="text-sm text-muted-foreground text-center py-8">
+            No branches found
+          </div>
+        }
+        @if (searchResults().length > 0) {
+          <div class="px-4 py-1.5 text-xs text-muted-foreground font-medium uppercase tracking-wide">Local</div>
+          <ul class="py-1">
+            @for (branch of searchResults(); track branch.name; let i = $index) {
+              <li>
+                <button
+                  class="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-accent"
+                  [class.bg-accent]="i === selectedIndex()"
+                  (click)="selectBranch(branch)"
+                  (mouseenter)="selectedIndex.set(i)">
+                  @if (branch.hasWorktree) {
+                    <ng-icon name="lucideGitBranch" class="!w-4 !h-4 text-foreground shrink-0" />
+                  } @else {
+                    <ng-icon name="lucideCircleDashed" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  }
+                  <span class="text-sm truncate" [class.text-foreground]="branch.hasWorktree" [class.text-muted-foreground]="!branch.hasWorktree">{{ branch.name }}</span>
+                  @if (branch.current) {
+                    <span class="text-xs text-primary ml-auto">current</span>
+                  }
+                </button>
+              </li>
+            }
+          </ul>
+        }
+        @if (searchingRemote()) {
+          <div class="px-4 py-1.5 text-xs text-muted-foreground font-medium uppercase tracking-wide border-t border-border mt-1 pt-1.5">Remote</div>
+          <div class="flex items-center justify-center py-4">
+            <ng-icon name="lucideLoader2" class="!w-4 !h-4 animate-spin text-muted-foreground" />
+            <span class="text-xs text-muted-foreground ml-2">Loading remote branches...</span>
+          </div>
+        } @else if (visibleRemoteResults().length > 0) {
+          <div class="px-4 py-1.5 text-xs text-muted-foreground font-medium uppercase tracking-wide border-t border-border mt-1 pt-1.5">Remote</div>
+          <ul class="py-1">
+            @for (branch of visibleRemoteResults(); track branch.name; let i = $index) {
+              <li>
+                <button
+                  class="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-accent"
+                  [class.bg-accent]="(i + searchResults().length) === selectedIndex()"
+                  [disabled]="creating()"
+                  (click)="selectRemoteBranch(branch)"
+                  (mouseenter)="selectedIndex.set(i + searchResults().length)">
+                  <ng-icon name="lucideGlobe2" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  <span class="text-sm text-muted-foreground truncate">{{ branch.name }}</span>
+                </button>
+              </li>
+            }
+          </ul>
+        }
+        @if (canCreateBranch()) {
+          <ul class="py-1">
+            <li>
+              <button
+                class="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-accent border-t border-border mt-1"
+                [class.bg-accent]="selectedIndex() === searchResults().length + visibleRemoteResults().length"
+                (click)="createBranch()"
+                (mouseenter)="selectedIndex.set(searchResults().length + visibleRemoteResults().length)">
+                <ng-icon name="lucidePlus" class="!w-4 !h-4 text-primary shrink-0" />
+                <span class="text-sm text-primary">Create "{{ searchQuery() }}"</span>
+              </button>
+            </li>
+          </ul>
+        }
+      }
+    </div>
+  }
+
+  @if (dialogStep() === 'selectOrigin') {
+    <div class="p-4 border-b border-border">
+      <div class="flex items-center gap-2 mb-3">
+        <button (click)="goBackToSearch()" class="p-1 rounded hover:bg-muted transition-colors">
+          <ng-icon name="lucideArrowLeft" class="!w-4 !h-4 text-muted-foreground" />
+        </button>
+        <h2 class="text-sm font-semibold text-foreground">
+          Select origin for "<span class="text-primary">{{ pendingBranchName() }}</span>"
+        </h2>
+      </div>
+      <input
+        #originInput
+        type="text"
+        class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        placeholder="Filter branches..."
+        [ngModel]="originSearchQuery()"
+        (ngModelChange)="originSearchQuery.set($event)"
+        autocomplete="off" />
+    </div>
+    <div class="max-h-80 overflow-y-auto">
+      @if (originSearchingLocal()) {
+        <div class="flex items-center justify-center py-8">
+          <ng-icon name="lucideLoader2" class="!w-5 !h-5 animate-spin text-muted-foreground" />
+        </div>
+      } @else {
+        @if (originLocalResults().length > 0) {
+          <div class="px-4 py-1.5 text-xs text-muted-foreground font-medium uppercase tracking-wide">Local</div>
+          <ul class="py-1">
+            @for (branch of originLocalResults(); track branch.name; let i = $index) {
+              <li>
+                <button
+                  class="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-accent"
+                  [class.bg-accent]="i === originSelectedIndex()"
+                  [disabled]="creating()"
+                  (click)="selectOriginBranch(branch)"
+                  (mouseenter)="originSelectedIndex.set(i)">
+                  <ng-icon name="lucideGitBranch" class="!w-4 !h-4 text-foreground shrink-0" />
+                  <span class="text-sm text-foreground truncate">{{ branch.name }}</span>
+                  @if (branch.current) {
+                    <span class="text-xs text-primary ml-auto">current</span>
+                  }
+                </button>
+              </li>
+            }
+          </ul>
+        }
+
+        @if (originSearchingRemote()) {
+          <div class="px-4 py-1.5 text-xs text-muted-foreground font-medium uppercase tracking-wide border-t border-border mt-1 pt-1.5">Remote</div>
+          <div class="flex items-center justify-center py-4">
+            <ng-icon name="lucideLoader2" class="!w-4 !h-4 animate-spin text-muted-foreground" />
+            <span class="text-xs text-muted-foreground ml-2">Loading remote branches...</span>
+          </div>
+        } @else if (originRemoteResults().length > 0) {
+          <div class="px-4 py-1.5 text-xs text-muted-foreground font-medium uppercase tracking-wide border-t border-border mt-1 pt-1.5">Remote</div>
+          <ul class="py-1">
+            @for (branch of originRemoteResults(); track branch.name; let i = $index) {
+              <li>
+                <button
+                  class="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-accent"
+                  [class.bg-accent]="(i + originLocalResults().length) === originSelectedIndex()"
+                  [disabled]="creating()"
+                  (click)="selectOriginBranch(branch)"
+                  (mouseenter)="originSelectedIndex.set(i + originLocalResults().length)">
+                  <ng-icon name="lucideGlobe2" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  <span class="text-sm text-muted-foreground truncate">{{ branch.name }}</span>
+                </button>
+              </li>
+            }
+          </ul>
+        }
+
+        @if (!originSearchingLocal() && !originSearchingRemote() && originLocalResults().length === 0 && originRemoteResults().length === 0) {
+          <div class="text-sm text-muted-foreground text-center py-8">
+            No branches found
+          </div>
+        }
+      }
+    </div>
+  }
+</dialog>

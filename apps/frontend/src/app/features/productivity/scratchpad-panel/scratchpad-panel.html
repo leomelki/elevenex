@@ -1,0 +1,97 @@
+<div class="scratchpad-panel" [class.open]="isOpen()">
+  <div class="panel-header">
+    <h2 class="text-sm font-semibold">Scratchpad</h2>
+    <button z-button zType="ghost" class="h-8 w-8 p-0" (click)="onClose()">
+      <ng-icon name="lucideX" size="16" />
+    </button>
+  </div>
+
+  <div class="panel-content">
+    @if (loading()) {
+      <div class="p-4 text-center text-muted-foreground text-sm">Loading...</div>
+    } @else if (sections().length === 0) {
+      <div class="empty-state">
+        <p class="text-sm text-muted-foreground text-center">No sections yet.</p>
+      </div>
+    } @else {
+      <div class="sections-list">
+        @for (section of sections(); track section.id) {
+          <div class="section" [class.expanded]="expandedSectionId() === section.id">
+            <div class="section-header" (click)="toggleSection(section.id)">
+              @if (editingTitleId() === section.id) {
+                <input
+                  #titleInput
+                  z-input
+                  type="text"
+                  class="title-input"
+                  [value]="section.name"
+                  (blur)="saveTitle(section.id, $event)"
+                  (keydown.enter)="saveTitle(section.id, $event)"
+                  (keydown.escape)="cancelEditTitle()"
+                  (click)="$event.stopPropagation()"
+                />
+              } @else {
+                <span class="section-title" (dblclick)="startEditTitle(section.id, section.name)">
+                  {{ section.name }}
+                </span>
+              }
+              <div class="section-actions">
+                @if (savingSectionId() === section.id) {
+                  <span class="saving-indicator">Saving...</span>
+                }
+                <button
+                  z-button
+                  zType="ghost"
+                  class="delete-btn h-6 w-6 p-0"
+                  title="Delete section"
+                  (click)="onDeleteSection($event, section.id)"
+                >
+                  <ng-icon name="lucideX" size="14" />
+                </button>
+                <ng-icon 
+                  [name]="expandedSectionId() === section.id ? 'lucideChevronDown' : 'lucideChevronRight'" 
+                  size="16" 
+                  class="text-muted-foreground"
+                />
+              </div>
+            </div>
+
+            @if (expandedSectionId() === section.id) {
+              <div class="section-content">
+                <textarea
+                  #contentTextarea
+                  class="content-textarea"
+                  rows="1"
+                  [value]="section.content || ''"
+                  (input)="onContentInput($event)"
+                  (input.debounce.800)="onContentChange(section.id, $event)"
+                  placeholder="Write your notes here..."
+                ></textarea>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+
+    <div class="mt-4">
+      <button z-button zType="outline" class="w-full" (click)="addSection()">
+        <ng-icon name="lucidePlus" size="16" class="mr-1" />
+        Add Section
+      </button>
+    </div>
+  </div>
+</div>
+
+@if (showDeleteDialog()) {
+  <dialog #deleteDialog="trackedNativeModal" trackNativeModal class="delete-dialog">
+    <div class="p-4">
+      <h3 class="text-lg font-semibold mb-2">Delete Section</h3>
+      <p class="text-sm text-muted-foreground mb-4">Delete this section? This cannot be undone.</p>
+      <div class="flex justify-end gap-2">
+        <button z-button zType="outline" (click)="closeDeleteDialog()">Cancel</button>
+        <button z-button zType="destructive" (click)="deleteSection()">Delete</button>
+      </div>
+    </div>
+  </dialog>
+}

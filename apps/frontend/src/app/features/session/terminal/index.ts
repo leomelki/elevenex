@@ -1,0 +1,1 @@
+export { ClaudeTerminalComponent } from './claude-terminal.component';

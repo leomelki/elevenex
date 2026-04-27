@@ -1,0 +1,49 @@
+{
+  "rootFiles": [
+    "manifest.json",
+    "package.json",
+    "favicon.ico",
+    "code-192.png",
+    "code-512.png"
+  ],
+  "directories": [
+    "out"
+  ],
+  "builtinExtensions": [
+    "bat",
+    "configuration-editing",
+    "css",
+    "css-language-features",
+    "diff",
+    "git-base",
+    "handlebars",
+    "html",
+    "html-language-features",
+    "ini",
+    "javascript",
+    "json",
+    "json-language-features",
+    "log",
+    "markdown-basics",
+    "markdown-language-features",
+    "merge-conflict",
+    "scss",
+    "shellscript",
+    "sql",
+    "theme-abyss",
+    "theme-defaults",
+    "theme-kimbie-dark",
+    "theme-monokai",
+    "theme-monokai-dimmed",
+    "theme-quietlight",
+    "theme-red",
+    "theme-seti",
+    "theme-solarized-dark",
+    "theme-solarized-light",
+    "theme-tomorrow-night-blue",
+    "typescript-basics",
+    "typescript-language-features",
+    "xml",
+    "yaml"
+  ]
+}

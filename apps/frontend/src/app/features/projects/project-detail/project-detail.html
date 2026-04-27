@@ -1,0 +1,518 @@
+@if (loading()) {
+  <!-- Loading skeleton -->
+  <div class="flex items-center justify-between mb-8">
+    <z-skeleton class="h-8 w-48" />
+    <z-skeleton class="h-9 w-32" />
+  </div>
+  @for (i of [1,2]; track i) {
+    <div class="h-16 mb-2"><z-skeleton class="h-full w-full" /></div>
+  }
+}
+
+@if (!loading() && project()) {
+  <!-- Header: Back + Project Name + Actions -->
+  <div class="flex items-center justify-between mb-8">
+    <div class="flex items-center gap-3">
+      <button z-button zType="ghost" (click)="goBack()">
+        <ng-icon name="lucideArrowLeft" size="16" class="mr-1" />
+        Back
+      </button>
+      <h1 class="text-xl font-semibold">{{ project()!.name }}</h1>
+    </div>
+    <div class="flex items-center gap-2">
+      <button z-button zType="outline" (click)="toggleScratchpad()">
+        <ng-icon name="lucideFileText" size="16" class="mr-1" />
+        Scratchpad
+      </button>
+      <button z-button zType="outline" (click)="toggleTodos()">
+        <ng-icon name="lucideCheckSquare" size="16" class="mr-1" />
+        Tasks
+      </button>
+      <button z-button zType="destructive" (click)="openDeleteProjectDialog()">Delete Project</button>
+    </div>
+  </div>
+
+  <!-- Repos section -->
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-xl font-semibold">Repositories</h2>
+    <button z-button (click)="openAddRepoDialog()">Add Repository</button>
+  </div>
+
+  <!-- Empty repos state -->
+  @if (repos().length === 0) {
+    <div class="flex flex-col items-center justify-center py-24">
+      <ng-icon name="lucideGitBranch" size="48" class="text-muted-foreground" />
+      <h2 class="mt-4 text-base font-semibold">No repositories</h2>
+      <p class="mt-2 text-sm text-muted-foreground">Add a local folder to this project to begin working with its branches and worktrees.</p>
+      <button z-button class="mt-6" (click)="openAddRepoDialog()">Add Repository</button>
+    </div>
+  }
+
+  <!-- Repo list -->
+  @if (repos().length > 0) {
+    <div class="flex flex-col gap-2">
+      @for (repo of repos(); track repo.id) {
+        <div class="flex items-center justify-between px-4 py-3 border border-border rounded-lg">
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-semibold">{{ repo.name }}</div>
+            <div class="text-sm text-muted-foreground font-mono">{{ repo.path }}</div>
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <label class="text-xs text-muted-foreground">Default context root</label>
+              <input
+                z-input
+                class="h-8 w-44"
+                [value]="repoContextRootDrafts()[repo.id] || ''"
+                placeholder="origin/main"
+                (input)="updateRepoContextRootDraft(repo.id, $any($event.target).value)"
+              />
+              <button
+                z-button
+                zType="outline"
+                zSize="sm"
+                [zLoading]="savingRepoContextRootId() === repo.id"
+                (click)="saveRepoContextRoot(repo)"
+              >
+                Save Root
+              </button>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 pl-4">
+            <button z-button zType="ghost" class="text-destructive" [attr.aria-label]="'Remove ' + repo.name" (click)="openRemoveRepoDialog(repo)">
+              <ng-icon name="lucideTrash2" size="16" class="mr-1" />
+              Remove
+            </button>
+          </div>
+        </div>
+      }
+    </div>
+  }
+
+  <section class="ssh-section">
+    <div class="ssh-header-card">
+      <div>
+        <p class="ssh-eyebrow">GitHub</p>
+        <h2 class="ssh-title">GitHub Diagnostics</h2>
+        <p class="ssh-copy">Elevenex uses the backend host’s <code>gh</code> session for GitHub features. This section only shows setup health for the current machine.</p>
+      </div>
+    </div>
+
+    @if (githubDiagnosticsLoading()) {
+      <div class="h-20"><z-skeleton class="h-full w-full rounded-2xl" /></div>
+    } @else if (githubCapabilities()) {
+      <div class="ssh-forward-card">
+        <div class="ssh-forward-meta">
+          <div>
+            <span>gh CLI</span>
+            <strong>{{ githubCapabilities()!.ghInstalled ? 'Installed' : 'Missing' }}</strong>
+          </div>
+          <div>
+            <span>Authentication</span>
+            <strong>{{ githubCapabilities()!.authenticated ? 'Ready' : 'Not authenticated' }}</strong>
+          </div>
+          <div>
+            <span>GitHub remote</span>
+            <strong>{{ githubCapabilities()!.hasGitHubRemote ? 'Detected' : 'Not found' }}</strong>
+          </div>
+          <div>
+            <span>Branch linkage</span>
+            <strong>{{ githubCapabilities()!.linkedPullRequest ? 'PR linked' : 'No linked PR' }}</strong>
+          </div>
+        </div>
+
+        @if (githubCapabilities()!.message) {
+          <div class="ssh-inline-note mt-4">{{ githubCapabilities()!.message }}</div>
+        }
+      </div>
+    } @else {
+      <div class="ssh-inline-note">Add a repository to this project to inspect GitHub readiness.</div>
+    }
+  </section>
+
+  <section id="ssh-forwarding" class="ssh-section">
+    <div class="ssh-header-card">
+      <div>
+        <p class="ssh-eyebrow">Project networking</p>
+        <h2 class="ssh-title">SSH Port Forwarding</h2>
+        <p class="ssh-copy">Save repeatable SSH tunnels in the Electron app’s local storage, see which local ports are live, and stop or restart them without leaving the project screen.</p>
+      </div>
+      <button z-button (click)="openAddSshForwardDialog()">
+        <ng-icon name="lucidePlus" size="16" class="mr-1" />
+        New Forward
+      </button>
+    </div>
+
+    @if (!sshForwardingSupported()) {
+      <div class="ssh-inline-note">
+        Tunnels only run inside the Electron app. Saved definitions still stay local to this app instance.
+      </div>
+    }
+
+    <div class="ssh-metrics">
+      <div class="ssh-metric">
+        <span class="ssh-metric-label">Saved forwards</span>
+        <strong>{{ sshForwards().length }}</strong>
+      </div>
+      <div class="ssh-metric">
+        <span class="ssh-metric-label">Live now</span>
+        <strong>{{ activeForwardCount() }}</strong>
+      </div>
+      <div class="ssh-metric">
+        <span class="ssh-metric-label">Needs attention</span>
+        <strong>{{ forwardIssuesCount() }}</strong>
+      </div>
+    </div>
+
+    @if (sshForwardsLoading()) {
+      <div class="grid gap-3 mt-4">
+        @for (i of [1,2]; track i) {
+          <div class="h-40"><z-skeleton class="h-full w-full rounded-2xl" /></div>
+        }
+      </div>
+    }
+
+    @if (!sshForwardsLoading() && sshForwards().length === 0) {
+      <div class="ssh-empty-state">
+        <ng-icon name="lucideServer" size="42" />
+        <h3>No SSH forwards saved</h3>
+        <p>Use this for databases, private web apps, or any remote service you need on a stable local port.</p>
+        <button z-button (click)="openAddSshForwardDialog()">Create your first forward</button>
+      </div>
+    }
+
+    @if (!sshForwardsLoading() && sshForwards().length > 0) {
+      <div class="ssh-forward-grid">
+        @for (forward of sshForwards(); track forward.id) {
+          <article class="ssh-forward-card">
+            <div class="ssh-forward-topline">
+              <div>
+                <div class="ssh-forward-name-row">
+                  <h3>{{ forward.name }}</h3>
+                  <span class="ssh-status-chip" [class]="statusClass(forward.status)">{{ statusLabel(forward.status) }}</span>
+                </div>
+                <p class="ssh-forward-route">{{ forward.destinationLabel }}</p>
+              </div>
+              <div class="ssh-actions">
+                <button
+                  z-button
+                  zType="outline"
+                  [zLoading]="isForwardBusy(forward)"
+                  [zDisabled]="isForwardBusy(forward) || !canToggleForwarding()"
+                  (click)="toggleSshForward(forward)">
+                  <ng-icon [name]="forward.status === 'active' || forward.status === 'connecting' ? 'lucideSquare' : 'lucidePlay'" size="16" class="mr-1" />
+                  {{ forward.status === 'active' || forward.status === 'connecting' ? 'Stop' : 'Start' }}
+                </button>
+                <button
+                  z-button
+                  zType="ghost"
+                  class="text-destructive"
+                  [attr.aria-label]="'Remove ' + forward.name"
+                  (click)="openRemoveSshForwardDialog(forward)">
+                  <ng-icon name="lucideTrash2" size="16" class="mr-1" />
+                  Remove
+                </button>
+              </div>
+            </div>
+
+            <div class="ssh-forward-meta">
+              <div>
+                <span>SSH target</span>
+                <strong>{{ forward.connectionLabel }}</strong>
+              </div>
+              <div>
+                <span>Local bind</span>
+                <strong>{{ forward.bindAddress }}:{{ forward.localPort }}</strong>
+              </div>
+              <div>
+                <span>Remote service</span>
+                <strong>{{ forward.remoteHost }}:{{ forward.remotePort }}</strong>
+              </div>
+              <div>
+                <span>Process</span>
+                <strong>{{ forward.pid ?? 'Not running' }}</strong>
+              </div>
+            </div>
+
+            @if (forward.lastError) {
+              <div class="ssh-forward-alert">
+                <div class="ssh-forward-alert-header">
+                  <span>{{ forward.lastError }}</span>
+                  @if (forward.debugDetails) {
+                    <button type="button" class="ssh-debug-toggle" (click)="toggleForwardDebug(forward.id)">
+                      {{ isForwardDebugOpen(forward.id) ? 'Hide debug details' : 'Show debug details' }}
+                    </button>
+                  }
+                </div>
+                @if (forward.debugDetails && isForwardDebugOpen(forward.id)) {
+                  <div class="ssh-debug-panel">
+                    <div><span>Target</span><strong>{{ forward.debugDetails.target }}</strong></div>
+                    <div><span>Bind</span><strong>{{ forward.debugDetails.bindSpec }}</strong></div>
+                    <div><span>Event</span><strong>{{ forward.debugDetails.lastEvent }}</strong></div>
+                    <div><span>Exit</span><strong>{{ forward.debugDetails.exitCode ?? 'n/a' }} / {{ forward.debugDetails.signal ?? 'none' }}</strong></div>
+                    <div class="ssh-debug-command"><span>Command</span><code>{{ forward.debugDetails.command }} {{ forward.debugDetails.args.join(' ') }}</code></div>
+                    @if (forward.debugDetails.stderr.length > 0) {
+                      <div class="ssh-debug-stderr">
+                        <span>stderr</span>
+                        <pre>{{ forward.debugDetails.stderr.join('\n') }}</pre>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            }
+          </article>
+        }
+      </div>
+    }
+  </section>
+
+  <!-- Browser isolation section -->
+  <section id="browser-settings" class="browser-settings-section">
+    <div class="ssh-header-card">
+      <div>
+        <p class="ssh-eyebrow">Browser</p>
+        <h2 class="ssh-title">Cookie &amp; Storage Isolation</h2>
+        <p class="ssh-copy">Control whether this project's embedded browser shares cookies and storage with other projects, or keeps them isolated.</p>
+      </div>
+    </div>
+
+    @if (browserIsolationLoading()) {
+      <div class="h-16"><z-skeleton class="h-full w-full rounded-2xl" /></div>
+    }
+
+    @if (!browserIsolationLoading() && browserIsolationConfig()) {
+      <div class="browser-mode-toggle">
+        <button
+          type="button"
+          class="browser-mode-option"
+          [class.browser-mode-option--active]="browserIsolationConfig()!.mode === 'shared'"
+          [disabled]="savingBrowserIsolation()"
+          (click)="setBrowserIsolationMode('shared')">
+          <ng-icon name="lucideGlobe" size="20" />
+          <div>
+            <strong>Shared</strong>
+            <span>All browser navigations stay in the shared browser profile.</span>
+          </div>
+        </button>
+        <button
+          type="button"
+          class="browser-mode-option"
+          [class.browser-mode-option--active]="browserIsolationConfig()!.mode === 'isolated'"
+          [disabled]="savingBrowserIsolation()"
+          (click)="setBrowserIsolationMode('isolated')">
+          <ng-icon name="lucideShield" size="20" />
+          <div>
+            <strong>Isolated</strong>
+            <span>This project uses its own browser profile unless a URL is routed to shared mode.</span>
+          </div>
+        </button>
+      </div>
+
+      @if (browserIsolationConfig()!.mode === 'isolated') {
+        <div class="browser-globs-section">
+          <h3 class="browser-globs-title">Shared URL patterns</h3>
+          <p class="browser-globs-desc">Matching top-level URLs open in the shared browser profile. Use full URL globs like <code>https://accounts.google.com/*</code>; legacy host globs like <code>*.google.com</code> still work.</p>
+
+          @if (browserIsolationConfig()!.sharedGlobs.length > 0) {
+            <div class="browser-glob-list">
+              @for (glob of browserIsolationConfig()!.sharedGlobs; track glob; let i = $index) {
+                <div class="browser-glob-item">
+                  <code>{{ glob }}</code>
+                  <button type="button" class="browser-glob-remove" aria-label="Remove pattern" (click)="removeSharedGlob(i)">
+                    <ng-icon name="lucideX" size="14" />
+                  </button>
+                </div>
+              }
+            </div>
+          }
+
+          <div class="browser-glob-input-row">
+            <input
+              z-input
+              type="text"
+              placeholder="https://accounts.google.com/*"
+              [value]="newGlobInput()"
+              (input)="newGlobInput.set($any($event.target).value)"
+              (keydown.enter)="addSharedGlob()" />
+            <button z-button [zDisabled]="!newGlobInput().trim()" (click)="addSharedGlob()">
+              <ng-icon name="lucidePlus" size="16" class="mr-1" />
+              Add
+            </button>
+          </div>
+        </div>
+      }
+    }
+  </section>
+
+  <!-- Delete project confirmation dialog -->
+  @if (showDeleteProjectDialog()) {
+    <dialog #deleteProjectDialog="trackedNativeModal" trackNativeModal class="fixed inset-0 m-auto backdrop:bg-black/50 rounded-lg border border-border bg-background p-6 shadow-lg w-full max-w-[425px]" (close)="closeDeleteProjectDialog()">
+      <h4 class="text-lg font-semibold leading-none tracking-tight mb-1.5">Delete project</h4>
+      <p class="text-sm text-muted-foreground mt-2">This will permanently delete the project and remove all its repository links. This cannot be undone.</p>
+      <div class="flex justify-end gap-2 mt-6">
+        <button z-button zType="ghost" (click)="closeDeleteProjectDialog()">Cancel</button>
+        <button z-button zType="destructive" [zLoading]="deletingProject()" [zDisabled]="deletingProject()" (click)="deleteProject()">Delete Project</button>
+      </div>
+    </dialog>
+  }
+
+  <!-- Remove repo confirmation dialog -->
+  @if (showRemoveRepoDialog()) {
+    <dialog #removeRepoDialog="trackedNativeModal" trackNativeModal class="fixed inset-0 m-auto backdrop:bg-black/50 rounded-lg border border-border bg-background p-6 shadow-lg w-full max-w-[425px]" (close)="closeRemoveRepoDialog()">
+      <h4 class="text-lg font-semibold leading-none tracking-tight mb-1.5">Remove repository</h4>
+      <p class="text-sm text-muted-foreground mt-2">This will remove the repository link from the project. The folder on disk will not be affected.</p>
+      <div class="flex justify-end gap-2 mt-6">
+        <button z-button zType="ghost" (click)="closeRemoveRepoDialog()">Cancel</button>
+        <button z-button zType="destructive" [zLoading]="removingRepo()" [zDisabled]="removingRepo()" (click)="removeRepo()">Remove Repository</button>
+      </div>
+    </dialog>
+  }
+
+  @if (showRemoveSshForwardDialog()) {
+    <dialog #removeSshForwardDialog="trackedNativeModal" trackNativeModal class="fixed inset-0 m-auto backdrop:bg-black/50 rounded-lg border border-border bg-background p-6 shadow-lg w-full max-w-[425px]" (close)="closeRemoveSshForwardDialog()">
+      <h4 class="text-lg font-semibold leading-none tracking-tight mb-1.5">Remove SSH forward</h4>
+      <p class="text-sm text-muted-foreground mt-2">The saved configuration will be deleted and any active tunnel will be stopped first.</p>
+      <div class="flex justify-end gap-2 mt-6">
+        <button z-button zType="ghost" (click)="closeRemoveSshForwardDialog()">Cancel</button>
+        <button z-button zType="destructive" [zLoading]="removingSshForward()" [zDisabled]="removingSshForward()" (click)="removeSshForward()">Remove Forward</button>
+      </div>
+    </dialog>
+  }
+
+  <!-- Add repo dialog -->
+  @if (showAddRepoDialog()) {
+    <dialog #addRepoDialog="trackedNativeModal" trackNativeModal class="fixed inset-0 m-auto backdrop:bg-black/50 rounded-lg border border-border bg-background p-6 shadow-lg w-full max-w-[425px]" (close)="closeAddRepoDialog()">
+      <h4 class="text-lg font-semibold leading-none tracking-tight mb-1.5">Add Repository</h4>
+      <div class="flex flex-col gap-4 mt-4">
+        <div class="flex flex-col gap-2">
+          <label class="text-sm font-medium leading-none">Folder path</label>
+          <app-path-autocomplete-input
+            [value]="newRepoPath()"
+            pathKind="directory"
+            placeholder="/path/to/your/repo"
+            [preferredStartDirectory]="preferredNewRepoStartDirectory()"
+            (valueChange)="newRepoPath.set($event)"
+            (commit)="addRepo()"
+          />
+        </div>
+        <div class="flex justify-end gap-2">
+          <button z-button zType="ghost" (click)="closeAddRepoDialog()">Cancel</button>
+          <button z-button [zLoading]="addingRepo()" [zDisabled]="addingRepo() || !newRepoPath().trim()" (click)="addRepo()">Add Repository</button>
+        </div>
+      </div>
+    </dialog>
+  }
+
+  @if (showAddSshForwardDialog()) {
+    <dialog #addSshForwardDialog="trackedNativeModal" trackNativeModal class="fixed inset-0 m-auto backdrop:bg-black/50 rounded-2xl border border-border bg-background p-6 shadow-lg w-full max-w-[720px]" (close)="closeAddSshForwardDialog()">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h4 class="text-lg font-semibold leading-none tracking-tight mb-1.5">Quick SSH forward</h4>
+          <p class="text-sm text-muted-foreground">Pick the port you want locally. By default it forwards the same port on the remote side.</p>
+        </div>
+      </div>
+
+      <div class="ssh-quick-shell">
+        <div class="ssh-port-hero">
+          <div class="ssh-port-copy">
+            <span class="ssh-port-label">Port to forward</span>
+            <p>Local and remote port stay aligned unless you open advanced settings.</p>
+          </div>
+          <div class="ssh-port-input-wrap">
+            <input
+              z-input
+              class="ssh-port-input"
+              type="number"
+              min="1"
+              max="65535"
+              [value]="asText(quickForwardPort())"
+              (input)="updateQuickForwardPort($any($event.target).value)" />
+          </div>
+        </div>
+
+        <div class="ssh-default-summary" [class.is-empty]="!sshForwardDefaults()">
+          @if (sshForwardDefaults()) {
+            <div class="ssh-default-summary-header">
+              <span>{{ usingActiveServerDefaults() ? 'Using current server' : 'Using your last SSH defaults' }}</span>
+              <button type="button" class="ssh-advanced-toggle" (click)="toggleAdvancedSshSettings()">
+                {{ showAdvancedSshSettings() ? 'Hide advanced' : 'Advanced settings' }}
+              </button>
+            </div>
+            <p>{{ effectiveQuickSummary }}</p>
+          } @else {
+            <div class="ssh-default-summary-header">
+              <span>No global SSH defaults yet</span>
+              <button type="button" class="ssh-advanced-toggle" (click)="toggleAdvancedSshSettings()">
+                {{ showAdvancedSshSettings() ? 'Hide advanced' : 'Open setup' }}
+              </button>
+            </div>
+            <p>Set your SSH host once and the app will reuse it the next time, regardless of project.</p>
+          }
+        </div>
+      </div>
+
+      @if (showAdvancedSshSettings()) {
+        <div class="ssh-dialog-grid">
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium leading-none">Name</label>
+            <input z-input type="text" placeholder="Port 5432" [value]="newSshForward().name" (input)="updateSshForwardField('name', $any($event.target).value)" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium leading-none">SSH host</label>
+            <input z-input type="text" placeholder="bastion.example.com" [value]="newSshForward().sshHost" (input)="updateSshForwardField('sshHost', $any($event.target).value)" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium leading-none">SSH user</label>
+            <input z-input type="text" placeholder="deploy" [value]="newSshForward().sshUser || ''" (input)="updateSshForwardField('sshUser', $any($event.target).value)" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium leading-none">SSH port</label>
+            <input z-input type="number" min="1" max="65535" [value]="asText(newSshForward().sshPort)" (input)="updateSshForwardField('sshPort', +$any($event.target).value)" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium leading-none">Bind address</label>
+            <input z-input type="text" [value]="newSshForward().bindAddress" (input)="updateSshForwardField('bindAddress', $any($event.target).value)" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium leading-none">Local port</label>
+            <input z-input type="number" min="1" max="65535" [value]="asText(newSshForward().localPort)" (input)="updateSshForwardField('localPort', +$any($event.target).value)" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium leading-none">Remote host</label>
+            <input z-input type="text" [value]="newSshForward().remoteHost" (input)="updateSshForwardField('remoteHost', $any($event.target).value)" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-medium leading-none">Remote port</label>
+            <input z-input type="number" min="1" max="65535" [value]="asText(newSshForward().remotePort)" (input)="updateSshForwardField('remotePort', +$any($event.target).value)" />
+          </div>
+        </div>
+      }
+
+      <label class="ssh-checkbox-row">
+        <input
+          type="checkbox"
+          [checked]="newSshForward().startImmediately"
+          [disabled]="!sshForwardingSupported()"
+          (change)="updateSshForwardField('startImmediately', $any($event.target).checked)" />
+        <span>Start the tunnel immediately after saving</span>
+      </label>
+      <div class="flex justify-end gap-2 mt-6">
+        <button z-button zType="ghost" (click)="closeAddSshForwardDialog()">Cancel</button>
+        <button z-button [zLoading]="addingSshForward()" [zDisabled]="addingSshForward() || !canCreateSshForward()" (click)="addSshForward()">Save Forward</button>
+      </div>
+    </dialog>
+  }
+
+  <!-- Productivity panels -->
+  @if (showScratchpad() && project()) {
+    <app-scratchpad-panel
+      [projectId]="project()!.id"
+      [isOpen]="true"
+      (close)="toggleScratchpad()" />
+  }
+  @if (showTodos() && project()) {
+    <app-todo-panel
+      [projectId]="project()!.id"
+      [isOpen]="true"
+      (close)="toggleTodos()" />
+  }
+}

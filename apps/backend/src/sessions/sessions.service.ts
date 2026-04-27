@@ -1,0 +1,447 @@
+import {
+  Inject,
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  forwardRef,
+} from '@nestjs/common';
+import { eq, and, count } from 'drizzle-orm';
+import { EventEmitter } from 'events';
+import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
+import * as schema from '../database/schema/index.js';
+import { PtyManager } from '../terminal/pty-manager.service.js';
+import { TmuxManager } from '../terminal/tmux-manager.service.js';
+import { CLAUDE_RUNTIME_SERVICE } from '../claude-runtime/claude-runtime.tokens.js';
+
+interface ClaudeRuntimeCleanup {
+  cleanupSession(sessionId: number): Promise<void>;
+}
+
+const VALID_STATUSES = ['created', 'active', 'archived', 'stopped'] as const;
+type SessionStatus = (typeof VALID_STATUSES)[number];
+const VALID_COMPLETION_KINDS = ['completed'] as const;
+type SessionCompletionKind = (typeof VALID_COMPLETION_KINDS)[number];
+
+@Injectable()
+export class SessionsService extends EventEmitter {
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    @Inject(forwardRef(() => PtyManager)) private readonly ptyManager: PtyManager,
+    private readonly tmuxManager: TmuxManager,
+    @Inject(CLAUDE_RUNTIME_SERVICE)
+    private readonly claudeRuntimeService: ClaudeRuntimeCleanup,
+  ) {
+    super();
+  }
+
+  async create(dto: {
+    repoId: number;
+    branchName: string;
+    worktreePath: string;
+    name?: string;
+  }) {
+    let sessionName = dto.name;
+
+    // Auto-generate name if not provided
+    if (!sessionName) {
+      const sessionCount = await this.countByRepoAndBranch(
+        dto.repoId,
+        dto.branchName,
+      );
+      sessionName = `Session ${sessionCount + 1}`;
+    }
+
+    const rows = await this.db
+      .insert(schema.sessions)
+      .values({
+        repoId: dto.repoId,
+        branchName: dto.branchName,
+        worktreePath: dto.worktreePath,
+        name: sessionName,
+        status: 'created',
+        claudeSessionId: '-1',
+        hasInjectedWorktreeContext: false,
+      })
+      .returning();
+
+    return rows[0];
+  }
+
+  async findByRepo(repoId: number) {
+    return this.db
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.repoId, repoId));
+  }
+
+  async findAll() {
+    return this.db.select().from(schema.sessions);
+  }
+
+  async findAllCompletionStates() {
+    return this.db
+      .select({
+        id: schema.sessions.id,
+        hasUnreviewedCompletion: schema.sessions.hasUnreviewedCompletion,
+        lastCompletionAt: schema.sessions.lastCompletionAt,
+        lastCompletionKind: schema.sessions.lastCompletionKind,
+        lastStateChangeAt: schema.sessions.lastStateChangeAt,
+      })
+      .from(schema.sessions);
+  }
+
+  async findByWorktreePath(worktreePath: string) {
+    return this.db
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.worktreePath, worktreePath));
+  }
+
+  async findByRepoAndBranch(repoId: number, branchName: string) {
+    return this.db
+      .select()
+      .from(schema.sessions)
+      .where(
+        and(
+          eq(schema.sessions.repoId, repoId),
+          eq(schema.sessions.branchName, branchName),
+        ),
+      );
+  }
+
+  async findByRepoAndWorktreePath(repoId: number, worktreePath: string) {
+    return this.db
+      .select()
+      .from(schema.sessions)
+      .where(
+        and(
+          eq(schema.sessions.repoId, repoId),
+          eq(schema.sessions.worktreePath, worktreePath),
+        ),
+      );
+  }
+
+  async findOne(id: number) {
+    const rows = await this.db
+      .select({
+        session: schema.sessions,
+        projectId: schema.repos.projectId,
+        repoColor: schema.repos.color,
+      })
+      .from(schema.sessions)
+      .innerJoin(schema.repos, eq(schema.sessions.repoId, schema.repos.id))
+      .where(eq(schema.sessions.id, id));
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    const { session, projectId, repoColor } = rows[0];
+    return { ...session, projectId, repoColor };
+  }
+
+  async update(id: number, data: { name?: string }) {
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        ...data,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    return rows[0];
+  }
+
+  async updateClaudeSessionId(id: number, claudeSessionId: string) {
+    const session = await this.findOne(id);
+
+    if (session.claudeSessionId === claudeSessionId) {
+      return session;
+    }
+
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        claudeSessionId,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    return rows[0];
+  }
+
+  async markWorktreeContextInjected(id: number) {
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        hasInjectedWorktreeContext: true,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    return rows[0];
+  }
+
+  async updateStatus(id: number, status: string) {
+    if (!VALID_STATUSES.includes(status as SessionStatus)) {
+      throw new BadRequestException(
+        `Invalid status: ${status}. Must be one of: ${VALID_STATUSES.join(', ')}`,
+      );
+    }
+
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        status,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    this.emit('session-status-changed', { sessionId: id, status });
+    return rows[0];
+  }
+
+  async markCompletionUnreviewed(
+    id: number,
+    completionKind: SessionCompletionKind = 'completed',
+  ) {
+    if (!VALID_COMPLETION_KINDS.includes(completionKind)) {
+      throw new BadRequestException(
+        `Invalid completion kind: ${completionKind}. Must be one of: ${VALID_COMPLETION_KINDS.join(', ')}`,
+      );
+    }
+
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        hasUnreviewedCompletion: true,
+        lastCompletionAt: new Date().toISOString(),
+        lastCompletionKind: completionKind,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    const session = rows[0];
+    this.emit('session-completion-changed', {
+      sessionId: id,
+      hasUnreviewedCompletion: session.hasUnreviewedCompletion,
+      lastCompletionAt: session.lastCompletionAt,
+      lastCompletionKind: session.lastCompletionKind,
+    });
+    return session;
+  }
+
+  async markCompletionReviewed(id: number) {
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        hasUnreviewedCompletion: false,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    const session = rows[0];
+    this.emit('session-completion-changed', {
+      sessionId: id,
+      hasUnreviewedCompletion: session.hasUnreviewedCompletion,
+      lastCompletionAt: session.lastCompletionAt,
+      lastCompletionKind: session.lastCompletionKind,
+    });
+    return session;
+  }
+
+  async markLastStateChange(id: number, at: string = new Date().toISOString()) {
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        lastStateChangeAt: at,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    const session = rows[0];
+    this.emit('session-last-state-change-changed', {
+      sessionId: id,
+      lastStateChangeAt: session.lastStateChangeAt,
+    });
+    return session;
+  }
+
+  async delete(id: number) {
+    await this.findOne(id);
+
+    await this.claudeRuntimeService.cleanupSession(id);
+
+    // 1. Kill the PTY process if running
+    this.ptyManager.kill(id);
+
+    // 2. Kill the tmux session if exists
+    this.ptyManager.killTmuxSession(id);
+
+    // 3. Delete from database
+    const rows = await this.db
+      .delete(schema.sessions)
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    return rows[0];
+  }
+
+  async deleteByWorktreePath(worktreePath: string) {
+    // Kill PTY/tmux for all sessions in this worktree before deleting
+    const sessions = await this.findByWorktreePath(worktreePath);
+    for (const session of sessions) {
+      this.ptyManager.kill(session.id);
+      this.ptyManager.killTmuxSession(session.id);
+    }
+
+    await this.db
+      .delete(schema.sessions)
+      .where(eq(schema.sessions.worktreePath, worktreePath));
+  }
+
+  async deleteByRepoAndWorktreePath(repoId: number, worktreePath: string) {
+    const sessions = await this.findByRepoAndWorktreePath(repoId, worktreePath);
+    for (const session of sessions) {
+      this.ptyManager.kill(session.id);
+      this.ptyManager.killTmuxSession(session.id);
+    }
+
+    await this.db
+      .delete(schema.sessions)
+      .where(
+        and(
+          eq(schema.sessions.repoId, repoId),
+          eq(schema.sessions.worktreePath, worktreePath),
+        ),
+      );
+  }
+
+  async archive(id: number) {
+    // 1. Kill the PTY process if running
+    this.ptyManager.kill(id);
+
+    // 2. Kill the tmux session if exists
+    this.ptyManager.killTmuxSession(id);
+
+    // 3. Update status to archived
+    return this.updateStatus(id, 'archived');
+  }
+
+  async reset(id: number) {
+    const session = await this.findOne(id);
+
+    // 1. Archive current
+    await this.archive(id);
+
+    // 2. Create new session in same worktree
+    const newSession = await this.create({
+      repoId: session.repoId,
+      branchName: session.branchName,
+      worktreePath: session.worktreePath,
+      name: `${session.name} (reset)`,
+    });
+
+    return newSession;
+  }
+
+  /**
+   * Fork a session - creates a new session in the same worktree.
+   * The new session is independent and will spawn its own PTY.
+   */
+  async fork(id: number, name?: string) {
+    const session = await this.findOne(id);
+
+    // Generate fork name
+    const forkName = name ?? `${session.name ?? 'Session'} (fork)`;
+
+    // Create new session in same worktree
+    const newSession = await this.create({
+      repoId: session.repoId,
+      branchName: session.branchName,
+      worktreePath: session.worktreePath,
+      name: forkName,
+    });
+
+    return newSession;
+  }
+
+  /**
+   * Kill a session - terminates the PTY process but keeps session accessible.
+   * Session status is set to 'stopped' (distinct from 'archived').
+   */
+  async kill(id: number) {
+    // 1. Kill the PTY process if running
+    this.ptyManager.kill(id);
+
+    // 2. Kill the tmux session if exists
+    this.ptyManager.killTmuxSession(id);
+
+    // 3. Update status to stopped (NOT archived - session remains accessible)
+    return this.updateStatus(id, 'stopped');
+  }
+
+  async start(id: number): Promise<{ success: boolean; resumed: boolean; error?: string }> {
+    // Just return session info - actual PTY spawn happens via TerminalService
+    // when WebSocket connects
+    const session = await this.findOne(id);
+
+    // Update status to indicate starting
+    await this.updateStatus(id, 'active');
+
+    return { success: true, resumed: false };
+  }
+
+  private async countByRepoAndBranch(repoId: number, branchName: string) {
+    const result = await this.db
+      .select({ count: count() })
+      .from(schema.sessions)
+      .where(
+        and(
+          eq(schema.sessions.repoId, repoId),
+          eq(schema.sessions.branchName, branchName),
+        ),
+      );
+
+    return result[0].count;
+  }
+}

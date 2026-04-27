@@ -1,0 +1,44 @@
+{
+  "name": "elevenex-scm",
+  "publisher": "elevenex",
+  "version": "1.0.0",
+  "description": "VS Code Web SCM extension for ElevenEX git diff viewing",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "extensionKind": ["web"],
+  "browser": "./dist/extension.browser.js",
+  "contributes": {
+    "scm": {
+      "id": "elevenex-git",
+      "label": "ElevenEX Git"
+    }
+  },
+  "activationEvents": [
+    "onFileSystem:workspace-vfs"
+  ],
+  "scripts": {
+    "build": "pnpm exec webpack --mode production",
+    "vscode:prepublish": "pnpm exec webpack --mode production",
+    "compile": "pnpm exec webpack --mode development",
+    "watch": "pnpm exec webpack --mode development --watch",
+    "build:test": "tsc -p ./test",
+    "test": "node ./test/out/test/runTest.js",
+    "test:unit": "mocha ./test/suite/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.3.0",
+    "mocha": "^10.2.0",
+    "@types/mocha": "^10.0.0",
+    "typescript": "^5.0.0",
+    "webpack": "^5.90.0",
+    "webpack-cli": "^5.1.0",
+    "ts-loader": "^9.5.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/elevenex/elevenex"
+  },
+  "license": "MIT"
+}

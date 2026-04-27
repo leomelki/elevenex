@@ -1,0 +1,36 @@
+<dialog #worktreeDialog="trackedNativeModal" trackNativeModal class="fixed inset-0 m-auto w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg backdrop:bg-black/50">
+  <h2 class="text-xl font-semibold text-foreground mb-4">Create Worktree</h2>
+  <div class="space-y-4">
+    <div>
+      <label class="text-sm font-semibold text-foreground block mb-1">Branch</label>
+      <p class="text-sm font-mono text-muted-foreground">{{ branchName() }}</p>
+    </div>
+    <div>
+      <label for="worktreePath" class="text-sm font-semibold text-foreground block mb-1">Worktree path</label>
+      <app-path-autocomplete-input
+        inputId="worktreePath"
+        placeholder="/path/to/.worktrees/repo-name/branch-name"
+        pathKind="directory"
+        [value]="worktreePath()"
+        [preferredStartDirectory]="preferredWorktreeStartDirectory()"
+        (valueChange)="worktreePath.set($event)" />
+    </div>
+    <div class="flex justify-end gap-2 pt-2">
+      <button
+        class="rounded-md px-4 py-2 text-sm text-foreground hover:bg-muted"
+        (click)="close()"
+        [disabled]="creating()">
+        Cancel
+      </button>
+      <button
+        class="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        (click)="submit()"
+        [disabled]="creating() || !worktreePath()">
+        @if (creating()) {
+          <span class="animate-spin inline-block w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full mr-2"></span>
+        }
+        Create Worktree
+      </button>
+    </div>
+  </div>
+</dialog>

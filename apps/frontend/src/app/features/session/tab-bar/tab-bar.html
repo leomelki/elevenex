@@ -1,0 +1,188 @@
+<div class="tab-bar" role="tablist" aria-label="Session tabs">
+  <div class="tabs-container">
+    @for (tab of tabs(); track tab.sessionId) {
+      <button
+        class="tab"
+        [class.active]="isActive(tab)"
+        [class.tab-archived]="tab.status === 'archived'"
+        [class.same-project]="isSameProjectAsActive(tab)"
+        role="tab"
+        [attr.aria-label]="tab.sessionName + ' - ' + tab.branchName + ' - ' + tab.status"
+        [title]="getTooltip(tab)"
+        (click)="onTabClick(tab)"
+        (contextmenu)="onContextMenu($event, tab)"
+      >
+        <span
+          class="tab-color-indicator"
+          [style.background-color]="getRepoColor(tab)"
+          [attr.aria-hidden]="true"
+        ></span>
+        <span class="tab-content">
+          <span class="tab-branch">
+            {{ tab.branchName }}
+            @if (hasLinkedPullRequest(tab)) {
+              <span class="ml-2 inline-flex rounded-full bg-[color-mix(in_oklch,var(--primary)_16%,white)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">PR</span>
+            }
+          </span>
+          <span class="tab-name">{{ tab.sessionName }}</span>
+        </span>
+        <span class="tab-status">
+          <span class="tab-status-dot"
+                [class.status-running]="getClaudeStatus(tab) === 'running'"
+                [class.status-waiting]="getClaudeStatus(tab) === 'waiting'"
+                [class.status-idle]="getClaudeStatus(tab) === 'idle'"
+                [title]="getClaudeStatus(tab)">
+          </span>
+          @if (hasUnreviewedCompletion(tab)) {
+            <span class="completion-indicator" title="Completed, not reviewed yet">
+              <ng-icon name="lucideCheck" size="12" />
+            </span>
+          }
+          @if (hasReview(tab)) {
+            <span class="review-indicator" title="Review waiting">
+              <ng-icon name="lucideMessageSquare" size="14" />
+            </span>
+          }
+          <button
+            class="tab-close"
+            [attr.aria-label]="'Close tab for ' + tab.sessionName"
+            title="Close tab (session keeps running)"
+            (click)="onCloseClick($event, tab.sessionId)"
+          >
+            <ng-icon name="lucideX" size="16" />
+          </button>
+        </span>
+      </button>
+    }
+  </div>
+
+  @if (projectId()) {
+    <div class="panel-buttons">
+      @if (worktreePath()) {
+        <app-commit-button [worktreePath]="worktreePath()" />
+      }
+      <button
+        class="panel-btn"
+        [class.active]="showClaudeTerminalFallback()"
+        title="Claude Raw Terminal"
+        aria-label="Toggle Claude raw terminal fallback"
+        (click)="toggleClaudeTerminalFallback.emit()"
+      >
+        <ng-icon name="lucideMessageSquare" size="16" />
+      </button>
+      <button
+        class="panel-btn"
+        [class.active]="showTerminal()"
+        title="Terminal"
+        aria-label="Toggle Terminal panel"
+        (click)="toggleTerminal.emit()"
+      >
+        <ng-icon name="lucideTerminal" size="16" />
+      </button>
+      <button
+        class="panel-btn"
+        [class.active]="showActions()"
+        title="Actions"
+        aria-label="Toggle Actions panel"
+        (click)="toggleActions.emit()"
+      >
+        <ng-icon name="lucidePlay" size="16" />
+        @if (runningActionsCount() > 0) {
+          <span class="panel-btn-badge">{{ runningActionsCount() }}</span>
+        }
+      </button>
+      <button
+        class="panel-btn"
+        [class.active]="showFiles()"
+        title="Files"
+        aria-label="Toggle Files panel"
+        (click)="toggleFiles.emit()"
+      >
+        <ng-icon name="lucideFolderTree" size="16" />
+      </button>
+      <button
+        class="panel-btn"
+        [class.active]="showBrowser()"
+        title="Browser"
+        aria-label="Toggle Browser panel"
+        (click)="toggleBrowser.emit()"
+      >
+        <ng-icon name="lucideGlobe" size="16" />
+      </button>
+      <button
+        class="panel-btn"
+        [class.active]="showScratchpad()"
+        title="Scratchpad"
+        aria-label="Toggle Scratchpad panel"
+        (click)="toggleScratchpad.emit()"
+      >
+        <ng-icon name="lucideFileText" size="16" />
+      </button>
+      <button
+        class="panel-btn"
+        [class.active]="showTodos()"
+        title="Tasks"
+        aria-label="Toggle Tasks panel"
+        (click)="toggleTodos.emit()"
+      >
+        <ng-icon name="lucideCheckSquare" size="16" />
+        @if (pendingTodosCount() > 0) {
+          <span class="panel-btn-badge">{{ pendingTodosCount() }}</span>
+        }
+      </button>
+    </div>
+  }
+
+  <!-- Tab context menu -->
+  @if (contextMenuOpen()) {
+    <div
+      class="fixed z-50 min-w-[160px] rounded-md border border-border bg-popover p-1 shadow-md"
+      [style.left.px]="contextMenuPosition().x"
+      [style.top.px]="contextMenuPosition().y"
+      (click)="$event.stopPropagation()"
+    >
+      <button
+        class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground hover:bg-accent cursor-pointer"
+        (click)="onContextMenuClose()"
+      >
+        <ng-icon name="lucideX" size="14" />
+        Close
+      </button>
+      <button
+        class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        [disabled]="!canCloseOtherTabs()"
+        (click)="onContextMenuCloseOtherTabs()"
+      >
+        Close Other Tabs
+      </button>
+      <button
+        class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        [disabled]="!canCloseTabsToRight()"
+        (click)="onContextMenuCloseTabsToRight()"
+      >
+        Close Tabs to the Right
+      </button>
+      <button
+        class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        [disabled]="!canCloseTabsToLeft()"
+        (click)="onContextMenuCloseTabsToLeft()"
+      >
+        Close Tabs to the Left
+      </button>
+      <button
+        class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground hover:bg-accent cursor-pointer"
+        (click)="onContextMenuCloseAll()"
+      >
+        Close All Tabs
+      </button>
+      <div class="my-1 h-px bg-border"></div>
+      <button
+        class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 cursor-pointer"
+        (click)="onContextMenuDelete()"
+      >
+        <ng-icon name="lucideTrash2" size="14" />
+        Delete Session
+      </button>
+    </div>
+  }
+</div>

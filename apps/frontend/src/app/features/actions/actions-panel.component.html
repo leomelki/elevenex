@@ -1,0 +1,187 @@
+<div class="actions-panel">
+  <section class="actions-sidebar">
+    <div class="sidebar-toolbar">
+      <span class="toolbar-title">Actions</span>
+      @if (runningCount() > 0) {
+        <span class="running-badge">{{ runningCount() }}</span>
+      }
+      <button
+        class="toolbar-btn add-btn"
+        [class.active]="showCreateForm()"
+        title="New action"
+        (click)="toggleCreateForm()"
+      >
+        <ng-icon name="lucidePlus" size="14" />
+      </button>
+      <button class="toolbar-btn close-btn" title="Close panel" (click)="close.emit()">
+        <ng-icon name="lucideX" size="14" />
+      </button>
+    </div>
+
+    @if (showCreateForm()) {
+      <div class="create-form">
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input
+            #nameInput
+            type="text"
+            class="field-input"
+            placeholder="e.g. Dev server"
+            (keydown.enter)="commandInput.focus()"
+            (keydown.escape)="toggleCreateForm()"
+          />
+        </label>
+        <label class="field">
+          <span class="field-label">Command</span>
+          <input
+            #commandInput
+            type="text"
+            class="field-input mono"
+            placeholder="e.g. pnpm dev"
+            (keydown.enter)="createAction(nameInput.value, commandInput.value); nameInput.value=''; commandInput.value=''; toggleCreateForm()"
+            (keydown.escape)="toggleCreateForm()"
+          />
+        </label>
+        <div class="create-form__buttons">
+          <button
+            class="form-btn primary"
+            (click)="createAction(nameInput.value, commandInput.value); nameInput.value=''; commandInput.value=''; toggleCreateForm()"
+          >
+            <ng-icon name="lucidePlus" size="13" />
+            Add
+          </button>
+          <button class="form-btn" (click)="toggleCreateForm()">Cancel</button>
+        </div>
+      </div>
+    }
+
+    <div class="action-list">
+      @for (action of actions(); track action.id) {
+        <div
+          class="action-row"
+          [class.selected]="selectedActionId() === action.id"
+          (click)="selectAction(action.id)"
+        >
+          <span class="status-dot" [class]="statusTone(action)"></span>
+          <div class="action-info">
+            <div class="action-name-row">
+              <span class="action-name">{{ action.name }}</span>
+              @if (lastTriggeredLabel(action); as lastTriggered) {
+                <span class="action-time" [title]="lastTriggeredTooltip(action)">
+                  {{ lastTriggered }}
+                </span>
+              }
+            </div>
+            <span class="action-cmd">{{ action.command }}</span>
+          </div>
+          <div class="action-row__buttons">
+            @if (action.status === 'running') {
+              <button
+                class="icon-btn stop"
+                title="Stop"
+                (click)="$event.stopPropagation(); stopAction(action)"
+              >
+                <ng-icon name="lucideSquare" size="12" />
+              </button>
+            } @else {
+              <button
+                class="icon-btn"
+                title="Run"
+                (click)="$event.stopPropagation(); runAction(action)"
+              >
+                <ng-icon name="lucidePlay" size="12" />
+              </button>
+            }
+          </div>
+        </div>
+      } @empty {
+        @if (!showCreateForm()) {
+          <div class="empty-state" (click)="toggleCreateForm()">
+            <ng-icon name="lucidePlus" size="14" />
+            <span>Add your first action</span>
+          </div>
+        }
+      }
+    </div>
+  </section>
+
+  <section class="actions-viewer">
+    @if (selectedAction()) {
+      <div class="viewer-toolbar">
+        <span class="status-dot sm" [class]="statusTone(selectedAction()!)"></span>
+        <span class="viewer-name">{{ selectedAction()!.name }}</span>
+        <code class="viewer-cmd">{{ selectedAction()!.command }}</code>
+        <div class="viewer-toolbar__right">
+          @if (lastTriggeredLabel(selectedAction()!); as lastTriggered) {
+            <span class="pill neutral" [title]="lastTriggeredTooltip(selectedAction()!)">
+              Last triggered {{ lastTriggered }}
+            </span>
+          }
+          <span class="pill" [class]="statusTone(selectedAction()!)">{{ selectedAction()!.status }}</span>
+          @if (selectedAction()!.lastExitCode !== null) {
+            <span class="pill neutral">exit {{ selectedAction()!.lastExitCode }}</span>
+          }
+          @if (!isEditing()) {
+            <button class="toolbar-btn" title="Edit" (click)="startEditing()">
+              <ng-icon name="lucidePencil" size="12" />
+            </button>
+          }
+          <button
+            class="toolbar-btn danger"
+            title="Delete"
+            [disabled]="selectedAction()!.status === 'running'"
+            (click)="removeAction(selectedAction()!)"
+          >
+            <ng-icon name="lucideTrash2" size="12" />
+          </button>
+          <button class="toolbar-btn close-btn" title="Close panel" (click)="close.emit()">
+            <ng-icon name="lucideX" size="14" />
+          </button>
+        </div>
+      </div>
+
+      @if (isEditing()) {
+        <div class="edit-bar">
+          <input
+            #editNameInput
+            type="text"
+            class="compact-input"
+            placeholder="Name"
+            [value]="selectedAction()!.name"
+          />
+          <input
+            #editCommandInput
+            type="text"
+            class="compact-input mono"
+            placeholder="Command"
+            [value]="selectedAction()!.command"
+            (keydown.enter)="saveAction(selectedAction()!, editNameInput.value, editCommandInput.value); stopEditing()"
+          />
+          <button
+            class="toolbar-btn"
+            [disabled]="selectedAction()!.status === 'running'"
+            (click)="saveAction(selectedAction()!, editNameInput.value, editCommandInput.value); stopEditing()"
+          >
+            <ng-icon name="lucideCheck" size="12" />
+          </button>
+          <button class="toolbar-btn" (click)="stopEditing()">
+            <ng-icon name="lucideX" size="12" />
+          </button>
+        </div>
+      }
+
+      <div class="viewer-terminal">
+        <app-action-terminal-view
+          [actionId]="selectedAction()!.id"
+          [initialOutput]="outputFor(selectedAction())"
+          (statusChange)="handleActionStatus($event)"
+        />
+      </div>
+    } @else {
+      <div class="viewer-empty">
+        <ng-icon name="lucideTerminal" size="16" />
+        <span>Select an action to see output</span>
+      </div>
+    }
+  </section>
+</div>

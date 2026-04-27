@@ -1,0 +1,50 @@
+<!-- Header row -->
+<div class="flex items-center justify-between mb-8">
+  <h1 class="text-[28px] font-semibold leading-[1.2]">Projects</h1>
+  <button z-button (click)="openCreateWizard()">Create Project</button>
+</div>
+
+<!-- Loading state: 3 skeleton cards -->
+@if (loading()) {
+  @for (i of [1,2,3]; track i) {
+    <div class="h-12 mb-2"><z-skeleton class="h-full w-full" /></div>
+  }
+}
+
+<!-- Empty state (when loaded and no projects) -->
+@if (!loading() && projects().length === 0) {
+  <div class="flex flex-col items-center justify-center py-24">
+    <ng-icon name="lucideFolderOpen" size="48" class="text-muted-foreground" />
+    <h2 class="mt-4 text-base font-semibold">No projects yet</h2>
+    <p class="mt-2 text-sm text-muted-foreground">Create your first project to start managing Claude Code sessions across repos and branches.</p>
+    <button z-button class="mt-6" (click)="openCreateWizard()">Create Project</button>
+  </div>
+}
+
+<!-- Project list rows -->
+@if (!loading() && projects().length > 0) {
+  <div class="flex flex-col gap-2">
+    @for (project of projects(); track project.id) {
+      <div
+        class="flex items-center justify-between h-12 px-4 border border-border rounded-lg cursor-pointer hover:bg-muted transition-colors"
+        (click)="navigateToProject(project.id)"
+      >
+        <span class="text-sm font-semibold">{{ project.name }}</span>
+        <ng-icon name="lucideChevronRight" size="16" class="text-muted-foreground" />
+      </div>
+    }
+  </div>
+}
+
+@if (showCreateWizard()) {
+  <app-project-onboarding-wizard
+    heading="Create a project"
+    [showPortForwardStep]="showPortForwardStep()"
+    [subheading]="showPortForwardStep()
+      ? 'Start with the repos you need and any optional port forwards.'
+      : 'Start with the repos you need.'"
+    ctaLabel="Create project"
+    (cancelled)="closeCreateWizard()"
+    (completed)="handleWizardCompleted($event)"
+  />
+}

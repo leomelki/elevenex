@@ -1,0 +1,155 @@
+@if (hasChanges() || open()) {
+  <div class="cx-shell">
+    <button
+      class="cx-trigger"
+      type="button"
+      [class.cx-trigger--open]="open()"
+      [class.cx-trigger--busy]="submitting()"
+      [disabled]="(loading() && !summary()) || submitting()"
+      (click)="toggleOpen()"
+    >
+      @if ((loading() && !summary()) || submitting()) {
+        <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" />
+      } @else {
+        <ng-icon name="lucideGitCommitVertical" size="13" />
+      }
+      <span>{{ submitting() ? 'Committing…' : 'Commit' }}</span>
+      @if (!submitting()) {
+        <span class="cx-trigger__count">{{ selectedFileCount() || summary()?.total?.files || 0 }}</span>
+      }
+    </button>
+
+    @if (open()) {
+      <div class="cx-popover" [class.cx-popover--submitting]="submitting()">
+
+        <div class="cx-header">
+          <div class="cx-header__title">
+            <ng-icon name="lucideGitCommitVertical" size="14" />
+            <span>Commit changes</span>
+          </div>
+          <div class="cx-header__actions">
+            <button
+              class="cx-icon-btn"
+              type="button"
+              title="Refresh"
+              [disabled]="refreshing() || submitting()"
+              (click)="refresh()"
+            >
+              <ng-icon name="lucideRefreshCw" size="13" [class.animate-spin]="refreshing()" />
+            </button>
+            <button class="cx-icon-btn" type="button" title="Close" (click)="close()">
+              <ng-icon name="lucideX" size="13" />
+            </button>
+          </div>
+        </div>
+
+        <div class="cx-stats">
+          <span class="cx-stat">
+            <strong>{{ selectedStats().files }}</strong>
+            <span>{{ selectedStats().files === 1 ? 'file' : 'files' }}</span>
+          </span>
+          <span class="cx-stat-divider"></span>
+          <span class="cx-stat cx-stat--add">
+            <strong>+{{ selectedStats().additions }}</strong>
+          </span>
+          <span class="cx-stat-divider"></span>
+          <span class="cx-stat cx-stat--del">
+            <strong>-{{ selectedStats().deletions }}</strong>
+          </span>
+          <span class="cx-stat-scope">{{ includeUnstaged() ? 'staged + unstaged' : 'staged only' }}</span>
+        </div>
+
+        <div class="cx-body">
+
+          @if ((summary()?.unstaged?.files ?? 0) > 0) {
+            <div class="cx-scope-row">
+              <div class="cx-scope-row__info">
+                <span>Include unstaged</span>
+                <small>{{ summary()?.unstaged?.files }} unstaged change{{ (summary()?.unstaged?.files ?? 0) !== 1 ? 's' : '' }}</small>
+              </div>
+              <button
+                class="cx-switch"
+                type="button"
+                role="switch"
+                [attr.aria-checked]="includeUnstaged()"
+                [disabled]="submitting()"
+                (click)="includeUnstaged.set(!includeUnstaged())"
+              >
+                <div class="cx-switch__track" [class.cx-switch__track--on]="includeUnstaged()">
+                  <div class="cx-switch__thumb"></div>
+                </div>
+              </button>
+            </div>
+          }
+
+          <div class="cx-message">
+            <div class="cx-field-header">
+              <span class="cx-field-label">Message</span>
+              <span class="cx-ai-badge">
+                <ng-icon name="lucideSparkles" size="10" />
+                auto if blank
+              </span>
+            </div>
+            <textarea
+              z-input
+              rows="3"
+              [disabled]="submitting()"
+              [value]="commitMessage()"
+              (input)="commitMessage.set($any($event.target).value)"
+              placeholder="Leave blank — Claude will draft from the diff…"
+            ></textarea>
+          </div>
+
+          <div class="cx-files">
+            <div class="cx-field-header">
+              <span class="cx-field-label">{{ includeUnstaged() ? 'Staged + unstaged' : 'Staged' }}</span>
+              @if (selectedRows().length > 0) {
+                <span class="cx-count-badge">{{ selectedRows().length }}</span>
+              }
+            </div>
+            <div class="cx-files__list">
+              @for (file of visibleRows(); track trackFile($index, file)) {
+                <div class="cx-file">
+                  <span class="cx-file__dot" [class.cx-file__dot--staged]="file.staged"></span>
+                  <span class="cx-file__path">{{ file.path }}</span>
+                  <span class="cx-file__status">{{ statusLabel(file) }}</span>
+                </div>
+              }
+              @if (hiddenRowCount() > 0) {
+                <div class="cx-files__overflow">+{{ hiddenRowCount() }} more</div>
+              }
+              @if (selectedRows().length === 0) {
+                <div class="cx-files__empty">No staged changes. Stage files or enable "Include unstaged".</div>
+              }
+            </div>
+          </div>
+
+        </div>
+
+        <div class="cx-actions">
+          <button
+            class="cx-btn cx-btn--ghost"
+            type="button"
+            [disabled]="submitting()"
+            (click)="close()"
+          >
+            Cancel
+          </button>
+          <button
+            class="cx-btn cx-btn--primary"
+            type="button"
+            [disabled]="!canCommit()"
+            [class.cx-btn--loading]="submitting()"
+            (click)="submitCommit()"
+          >
+            @if (submitting()) {
+              <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" />
+            }
+            {{ primaryActionLabel() }}
+          </button>
+        </div>
+
+      </div>
+    }
+  </div>
+}

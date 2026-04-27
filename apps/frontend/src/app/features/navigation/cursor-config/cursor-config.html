@@ -1,0 +1,67 @@
+<dialog #cursorConfigDialog="trackedNativeModal" trackNativeModal class="fixed inset-0 m-auto w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg backdrop:bg-black/50">
+  <h2 class="text-xl font-semibold text-foreground mb-2">Open in Cursor</h2>
+  <p class="text-sm text-muted-foreground mb-4">Choose how to open worktrees in Cursor.</p>
+
+  <div class="space-y-3 mb-4">
+    <label
+      class="flex items-center gap-3 rounded-md border p-3 cursor-pointer transition-colors"
+      [class.border-primary]="mode() === 'local'"
+      [class.border-border]="mode() !== 'local'">
+      <input type="radio" name="cursorMode" value="local" class="accent-primary" [checked]="mode() === 'local'" (change)="mode.set('local')" />
+      <div>
+        <span class="text-sm font-semibold text-foreground">Local</span>
+        <p class="text-xs text-muted-foreground">Open the folder directly on this machine</p>
+      </div>
+    </label>
+
+    <label
+      class="flex items-center gap-3 rounded-md border p-3 cursor-pointer transition-colors"
+      [class.border-primary]="mode() === 'remote'"
+      [class.border-border]="mode() !== 'remote'">
+      <input type="radio" name="cursorMode" value="remote" class="accent-primary" [checked]="mode() === 'remote'" (change)="mode.set('remote')" />
+      <div>
+        <span class="text-sm font-semibold text-foreground">Remote SSH</span>
+        <p class="text-xs text-muted-foreground">Open via SSH on a remote server (requires Remote - SSH extension)</p>
+      </div>
+    </label>
+  </div>
+
+  @if (mode() === 'remote') {
+    <div class="space-y-3 mb-4">
+      <div>
+        <label for="cursorSshHost" class="text-sm font-semibold text-foreground block mb-1">SSH Host</label>
+        <input
+          id="cursorSshHost"
+          type="text"
+          class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          placeholder="hostname or IP"
+          [value]="sshHost()"
+          (input)="sshHost.set($any($event.target).value)" />
+      </div>
+      <div>
+        <label for="cursorSshUser" class="text-sm font-semibold text-foreground block mb-1">SSH User <span class="font-normal text-muted-foreground">(optional)</span></label>
+        <input
+          id="cursorSshUser"
+          type="text"
+          class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          placeholder="username"
+          [value]="sshUser()"
+          (input)="sshUser.set($any($event.target).value)" />
+      </div>
+    </div>
+  }
+
+  <div class="flex justify-end gap-2 pt-2">
+    <button
+      class="rounded-md px-4 py-2 text-sm text-foreground hover:bg-muted"
+      (click)="close()">
+      Cancel
+    </button>
+    <button
+      class="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+      (click)="submit()"
+      [disabled]="mode() === 'remote' && !sshHost()">
+      Open in Cursor
+    </button>
+  </div>
+</dialog>

@@ -1,0 +1,450 @@
+<div class="cw-root">
+  <div #transcriptContainer class="cw-transcript">
+    @if (showLoading()) {
+      <div class="cw-loading">
+        <div class="cw-loading__stream">
+          <div class="cw-loading__row cw-loading__row--user">
+            <div class="cw-loading__bubble"></div>
+          </div>
+          <div class="cw-loading__row">
+            <div class="cw-loading__lines">
+              <div class="cw-loading__line cw-loading__line--long"></div>
+              <div class="cw-loading__line cw-loading__line--medium"></div>
+              <div class="cw-loading__line cw-loading__line--short"></div>
+            </div>
+          </div>
+          <div class="cw-loading__row">
+            <div class="cw-loading__lines">
+              <div class="cw-loading__line cw-loading__line--long"></div>
+              <div class="cw-loading__line cw-loading__line--short"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    } @else if (!pairedTranscript().length) {
+      <div class="cw-empty">
+        <div class="cw-empty__title">Start with a prompt.</div>
+        <div class="cw-empty__hint">Type <code>/</code> for commands or <code>$</code> for skills. ⌘↵ to send.</div>
+      </div>
+    } @else {
+      <div class="cw-stream">
+        @if (firstMessageContext(); as fmc) {
+          <section
+            class="cw-first-ctx"
+            [class.cw-first-ctx--open]="firstMessageContextExpanded()"
+            aria-label="Context attached to this conversation"
+          >
+            <button
+              type="button"
+              class="cw-first-ctx__head"
+              [attr.aria-expanded]="firstMessageContextExpanded()"
+              (click)="toggleFirstMessageContext()"
+            >
+              <span class="cw-first-ctx__icon" aria-hidden="true">
+                <ng-icon name="lucideWandSparkles" size="13" />
+              </span>
+              <span class="cw-first-ctx__label">Context</span>
+              <span class="cw-first-ctx__summary">{{ fmc.sentence }}</span>
+              @if (fmc.rootRef) {
+                <span class="cw-first-ctx__ref" title="Compared against">
+                  <ng-icon name="lucideGitBranch" size="10" aria-hidden="true" />
+                  <code>{{ fmc.rootRef }}</code>
+                </span>
+              }
+              <ng-icon
+                class="cw-first-ctx__chevron"
+                name="lucideChevronDown"
+                size="12"
+                aria-hidden="true"
+              />
+            </button>
+            @if (firstMessageContextExpanded()) {
+              <div class="cw-first-ctx__panel">
+                <p class="cw-first-ctx__sentence">{{ fmc.sentence }}</p>
+                @if (fmc.rootRef) {
+                  <dl class="cw-first-ctx__meta">
+                    <dt>Comparing against</dt>
+                    <dd><code>{{ fmc.rootRef }}</code></dd>
+                  </dl>
+                }
+                <p class="cw-first-ctx__hint">
+                  This summary was attached to the first prompt to orient the assistant.
+                </p>
+              </div>
+            }
+          </section>
+        }
+        @for (item of renderItems(); track trackByRenderItem($index, item)) {
+          @switch (item.kind) {
+            @case ('unit') {
+              @switch (item.unit.kind) {
+                @case ('message') {
+                  <cw-message
+                    [item]="item.unit.item"
+                    [streaming]="isStreamingMessage(item.unit.item.id)"
+                    [showActions]="canShowMessageActions(item.unit.item)"
+                    [actionsDisabled]="messageActionsDisabled()"
+                    [editArmed]="isEditArmed(item.unit.item)"
+                    (copy)="copyMessage(item.unit.item)"
+                    (armEdit)="armEditMessage(item.unit.item)"
+                    (confirmEdit)="confirmEditMessage(item.unit.item)"
+                    (cancelEdit)="cancelArmedEdit()"
+                  />
+                }
+                @case ('thinking') {
+                  <cw-thinking [item]="item.unit.item" [streaming]="isStreamingMessage(item.unit.item.id)" />
+                }
+                @case ('tool') {
+                  <cw-tool-call
+                    [call]="item.unit.call"
+                    [result]="item.unit.result"
+                    [childItems]="childItemsForToolUse(item.unit.toolUseId)"
+                    [isLive]="isLiveToolUse(item.unit.toolUseId)"
+                    [permission]="permissionForToolUse(item.unit.toolUseId)"
+                    (approve)="approvePermission($event)"
+                    (deny)="denyPermission()"
+                  />
+                }
+                @case ('system') {
+                  <cw-message [item]="item.unit.item" />
+                }
+              }
+            }
+            @case ('collapsed-turn') {
+              <div class="cw-turn-gap">
+                <div class="cw-turn-gap__shell">
+                  <button
+                    type="button"
+                    class="cw-turn-gap__toggle"
+                    [attr.aria-expanded]="isTurnExpanded(item.turnId)"
+                    (click)="toggleTurn(item.turnId)"
+                  >
+                    <span class="cw-turn-gap__line"></span>
+                    <span class="cw-turn-gap__pill">
+                      <span
+                        class="cw-turn-gap__chevron"
+                        [class.cw-turn-gap__chevron--open]="isTurnExpanded(item.turnId)"
+                      ></span>
+                      <span class="cw-turn-gap__label">Worked for {{ item.durationLabel }}</span>
+                      <span class="cw-turn-gap__meta">
+                        {{ isTurnExpanded(item.turnId) ? 'Hide activity' : 'Show activity' }}
+                      </span>
+                      <span class="cw-turn-gap__count">{{ item.stepCount }} step{{ item.stepCount === 1 ? '' : 's' }}</span>
+                      @if (item.agentSummary; as summary) {
+                        <span class="cw-turn-gap__count cw-turn-gap__count--agents">
+                          {{ summary.agents.length }} agent{{ summary.agents.length === 1 ? '' : 's' }}
+                        </span>
+                      }
+                    </span>
+                    <span class="cw-turn-gap__line"></span>
+                  </button>
+
+                  @if (item.agentSummary; as summary) {
+                    <div class="cw-turn-gap__agents">
+                      <div class="cw-turn-gap__agents-header">
+                        <span class="cw-turn-gap__agents-label">
+                          {{ summary.agents.length === 1 ? '1 agent ran' : summary.agents.length + ' agents ran' }}
+                        </span>
+                        <button
+                          type="button"
+                          class="cw-turn-gap__inspect"
+                          (click)="openAgentInspector(item.turnId)"
+                        >
+                          Deep Dive →
+                        </button>
+                      </div>
+                      <div class="cw-turn-gap__agent-list">
+                        @for (agent of summary.agents; track agent.agentId) {
+                          <button
+                            type="button"
+                            class="cw-turn-gap__agent-chip"
+                            [attr.data-state]="agent.status"
+                            (click)="openAgentInspector(item.turnId)"
+                          >
+                            <span class="cw-turn-gap__agent-dot" [attr.data-state]="agent.status"></span>
+                            <span class="cw-turn-gap__agent-type">{{ agent.agentType }}</span>
+                            @if (agent.summary) {
+                              <span class="cw-turn-gap__agent-summary">{{ agent.summary }}</span>
+                            }
+                          </button>
+                        }
+                      </div>
+                    </div>
+                  }
+                </div>
+
+                @if (isTurnExpanded(item.turnId)) {
+                  <div class="cw-turn-gap__panel">
+                    @for (hiddenUnit of item.hiddenUnits; track hiddenUnit.id) {
+                      @switch (hiddenUnit.kind) {
+                        @case ('message') {
+                          <cw-message
+                            [item]="hiddenUnit.item"
+                            [streaming]="isStreamingMessage(hiddenUnit.item.id)"
+                            [showActions]="canShowMessageActions(hiddenUnit.item)"
+                            [actionsDisabled]="messageActionsDisabled()"
+                            [editArmed]="isEditArmed(hiddenUnit.item)"
+                            (copy)="copyMessage(hiddenUnit.item)"
+                            (armEdit)="armEditMessage(hiddenUnit.item)"
+                            (confirmEdit)="confirmEditMessage(hiddenUnit.item)"
+                            (cancelEdit)="cancelArmedEdit()"
+                          />
+                        }
+                        @case ('thinking') {
+                          <cw-thinking [item]="hiddenUnit.item" [streaming]="isStreamingMessage(hiddenUnit.item.id)" />
+                        }
+                        @case ('tool') {
+                          <cw-tool-call
+                            [call]="hiddenUnit.call"
+                            [result]="hiddenUnit.result"
+                            [childItems]="childItemsForToolUse(hiddenUnit.toolUseId)"
+                            [isLive]="isLiveToolUse(hiddenUnit.toolUseId)"
+                            [permission]="permissionForToolUse(hiddenUnit.toolUseId)"
+                            [turnId]="item.turnId"
+                            [hasAgentHistory]="!!item.agentSummary"
+                            (approve)="approvePermission($event)"
+                            (deny)="denyPermission()"
+                            (inspect)="openAgentInspector($event)"
+                          />
+                        }
+                        @case ('system') {
+                          <cw-message [item]="hiddenUnit.item" />
+                        }
+                      }
+                    }
+                  </div>
+                }
+              </div>
+            }
+          }
+        }
+
+        @if (hasUnmatchedPermission() && pendingPermissionRequest(); as req) {
+          <cw-permission-inline
+            [request]="req"
+            (approve)="approvePermission($event)"
+            (deny)="denyPermission()"
+          />
+        }
+
+        @if (isAwaitingFirstAssistantToken()) {
+          <cw-message
+            [item]="{
+              id: 'awaiting-first-token',
+              kind: 'assistant',
+              content: '',
+              timestamp: ''
+            }"
+            [streaming]="true"
+          />
+        }
+      </div>
+    }
+  </div>
+
+  <div class="cw-dock">
+    @if (showContextPin()) {
+      <div
+        class="cw-ctx"
+        [class.cw-ctx--expanded]="contextExpanded()"
+        [class.cw-ctx--enabled]="firstPromptContextEnabled() && canToggleContextEnabled()"
+        [class.cw-ctx--disabled]="!firstPromptContextEnabled() && canToggleContextEnabled()"
+        [attr.data-state]="contextPinState()"
+      >
+        <div class="cw-ctx__head">
+          <button
+            type="button"
+            class="cw-ctx__primary"
+            [attr.aria-pressed]="canToggleContextEnabled() ? firstPromptContextEnabled() : null"
+            [attr.aria-label]="canToggleContextEnabled()
+              ? (firstPromptContextEnabled() ? 'Disable context for next prompt' : 'Enable context for next prompt')
+              : 'Show context details'"
+            [title]="canToggleContextEnabled()
+              ? (firstPromptContextEnabled() ? 'Click to disable' : 'Click to enable')
+              : ''"
+            (click)="toggleContextEnabled()"
+          >
+            <span class="cw-ctx__icon" aria-hidden="true">
+              @switch (contextPinState()) {
+                @case ('loading') { <span class="cw-ctx__spinner"></span> }
+                @case ('generating') { <span class="cw-ctx__spinner"></span> }
+                @case ('failed') {
+                  <ng-icon name="lucideTriangleAlert" size="14" />
+                }
+                @default {
+                  <ng-icon name="lucideWandSparkles" size="14" aria-hidden="true" />
+                }
+              }
+            </span>
+
+            <span class="cw-ctx__body">
+              <span class="cw-ctx__label">{{ contextPinLabel() }}</span>
+              <span class="cw-ctx__summary">{{ contextPinSummary() }}</span>
+            </span>
+
+            @if (contextPinBadge(); as badge) {
+              <span class="cw-ctx__badge" [attr.data-variant]="badge.variant">{{ badge.text }}</span>
+            }
+          </button>
+
+          <button
+            type="button"
+            class="cw-ctx__expand"
+            [class.cw-ctx__expand--open]="contextExpanded()"
+            [attr.aria-expanded]="contextExpanded()"
+            [attr.aria-label]="contextExpanded() ? 'Hide details' : 'Show full context'"
+            [title]="contextExpanded() ? 'Hide details' : 'Show full context'"
+            (click)="toggleContextExpanded()"
+          >
+            <ng-icon name="lucideChevronDown" size="12" />
+          </button>
+        </div>
+
+        @if (contextExpanded() && worktreeContext(); as context) {
+          <div class="cw-ctx__panel">
+            @if (context.contextSentence) {
+              <p class="cw-ctx__sentence">{{ context.contextSentence }}</p>
+            } @else if (context.errorMessage) {
+              <p class="cw-ctx__sentence cw-ctx__sentence--error">
+                {{ context.errorMessage }}
+              </p>
+            } @else if (context.generationStatus === 'failed') {
+              <p class="cw-ctx__sentence cw-ctx__sentence--muted">
+                Context generation failed.
+              </p>
+            } @else if (context.generationStatus === 'generating') {
+              <p class="cw-ctx__sentence cw-ctx__sentence--muted">Generating a one-line summary…</p>
+            } @else if (!context.hasChanges) {
+              <p class="cw-ctx__sentence cw-ctx__sentence--muted">
+                No branch-specific changes compared to
+                <code>{{ context.rootRef || 'auto' }}</code> yet.
+              </p>
+            }
+
+            @if (context.contextSentence && context.errorMessage) {
+              <p class="cw-ctx__sentence cw-ctx__sentence--error">
+                {{ context.errorMessage }}
+              </p>
+            }
+
+            <dl class="cw-ctx__meta">
+              <div class="cw-ctx__meta-row">
+                <dt>Comparing against</dt>
+                <dd>
+                  @if (worktreeRootEditorOpen()) {
+                    <form class="cw-ctx__root-edit" (submit)="$event.preventDefault(); saveRootRef()">
+                      <input
+                        class="cw-ctx__input"
+                        [value]="draftRootRef()"
+                        placeholder="origin/main"
+                        autofocus
+                        (input)="onRootRefInput($any($event.target).value)"
+                      />
+                      <button
+                        type="submit"
+                        class="cw-ctx__btn cw-ctx__btn--primary"
+                        [disabled]="worktreeContextBusy()"
+                      >Save</button>
+                      <button
+                        type="button"
+                        class="cw-ctx__btn cw-ctx__btn--ghost"
+                        [disabled]="worktreeContextBusy()"
+                        (click)="cancelRootRefEditor()"
+                      >Cancel</button>
+                    </form>
+                  } @else {
+                    <button
+                      type="button"
+                      class="cw-ctx__ref"
+                      [disabled]="worktreeContextBusy()"
+                      (click)="openRootRefEditor()"
+                      title="Change comparison root"
+                    >
+                      <code>{{ context.rootRef || 'auto' }}</code>
+                      <span class="cw-ctx__ref-hint">Change</span>
+                    </button>
+                  }
+                </dd>
+              </div>
+            </dl>
+
+
+            <div class="cw-ctx__actions">
+              <button
+                type="button"
+                class="cw-ctx__btn cw-ctx__btn--ghost"
+                [disabled]="worktreeContextBusy()"
+                (click)="recomputeWorktreeContext()"
+              >
+                @if (worktreeContextBusy()) {
+                  <span class="cw-ctx__spinner cw-ctx__spinner--sm"></span>
+                } @else {
+                  <ng-icon name="lucideRefreshCw" size="12" />
+                }
+                Recompute
+              </button>
+            </div>
+          </div>
+        }
+      </div>
+    }
+
+    @if (pendingUserInputRequest(); as req) {
+      <cw-user-input [request]="req" (answer)="answerUserInput($event)" />
+    }
+
+    <cw-composer
+      [value]="prompt()"
+      [submitting]="submitting()"
+      [running]="runPhase() === 'running'"
+      [canInterrupt]="canInterrupt()"
+      [autocompleteItems]="autocompleteItems()"
+      (valueChange)="onPromptChange($event)"
+      (send)="submitPrompt($event)"
+      (interrupt)="interrupt()"
+    />
+
+    <cw-status-bar
+      [phase]="runPhase()"
+      [selectedModel]="selectedModel()"
+      [availableModels]="availableModels()"
+      [contextUsage]="contextUsage()"
+      [tasks]="tasks()"
+      [permissionMode]="permissionMode()"
+      [mcpSnapshot]="mcpSnapshot()"
+      (modelChange)="onModelChange($event)"
+      (permissionModeChange)="onPermissionModeChange($event)"
+      (openTerminal)="openTerminal()"
+      (openTasks)="tasksDrawerOpen.set(true)"
+      (openMcp)="openMcpDrawer()"
+    />
+  </div>
+
+  <cw-tasks-drawer
+    [open]="tasksDrawerOpen()"
+    [tasks]="tasks()"
+    (close)="tasksDrawerOpen.set(false)"
+  />
+
+  <cw-mcp-drawer
+    [open]="mcpDrawerOpen()"
+    [loading]="mcpLoading()"
+    [snapshot]="mcpSnapshot()"
+    [busyServerName]="mcpBusyServerName()"
+    (close)="closeMcpDrawer()"
+    (refresh)="refreshMcpSnapshot()"
+    (toggle)="toggleMcpServer($event)"
+    (recheck)="recheckMcpServer($event)"
+    (auth)="startMcpAuth($event)"
+  />
+
+  <cw-agent-inspector
+    [open]="!!selectedAgentInspectorTurn()"
+    [turn]="selectedAgentInspectorTurn()"
+    [selectedAgentId]="agentInspectorSelectedAgentId()"
+    [historyByAgent]="agentHistoryById()"
+    [hookEvents]="recentHookEvents()"
+    (selectAgent)="selectAgentInspectorAgent($event)"
+    (close)="closeAgentInspector()"
+  />
+</div>

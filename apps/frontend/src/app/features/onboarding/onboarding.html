@@ -1,0 +1,221 @@
+<div class="onboarding-shell">
+  <div class="onboarding-shell__backdrop"></div>
+
+  <section class="onboarding-hero">
+    <p class="onboarding-hero__eyebrow">First run</p>
+    <h1>Set up Elevenex for the way you work.</h1>
+    <p class="onboarding-hero__copy">
+      Start locally on this machine or connect a remote SSH server and forward Elevenex into the app.
+    </p>
+
+    <div class="onboarding-hero__rail">
+      <div class="onboarding-hero__step" [class.is-active]="activeStep() === 'choice'" [class.is-done]="selectedMode() !== null">
+        <span>1</span>
+        <strong>Target</strong>
+      </div>
+      <div class="onboarding-hero__step" [class.is-active]="activeStep() === 'ssh' || activeStep() === 'install'" [class.is-done]="serverSummary() !== null || selectedMode() === 'local'">
+        <span>2</span>
+        <strong>Connection</strong>
+      </div>
+      <div class="onboarding-hero__step" [class.is-active]="activeStep() === 'project'">
+        <span>3</span>
+        <strong>First project</strong>
+      </div>
+    </div>
+  </section>
+
+  <section class="onboarding-panel">
+    @if (loading()) {
+      <div class="onboarding-panel__loading">Preparing your workspace…</div>
+    } @else if (activeStep() === 'choice') {
+      <div class="onboarding-panel__header">
+        <p class="onboarding-panel__eyebrow">Choose a target</p>
+        <h2>Where should Elevenex run?</h2>
+        <p>Pick the local machine for the fastest start, or connect a server over SSH.</p>
+      </div>
+
+      <div class="onboarding-mode-grid">
+        <button type="button" class="onboarding-mode-card" (click)="chooseLocalMode()">
+          <ng-icon name="lucideHardDrive" size="22" />
+          <div>
+            <strong>Use locally</strong>
+            <p>Run Elevenex on this machine and go straight to creating your first project.</p>
+          </div>
+          <ng-icon name="lucideArrowRight" size="16" />
+        </button>
+
+        <button type="button" class="onboarding-mode-card" (click)="chooseSshMode()">
+          <ng-icon name="lucideServer" size="22" />
+          <div>
+            <strong>Connect an SSH server</strong>
+            <p>Forward a remote Elevenex instance and keep working from the same desktop app.</p>
+          </div>
+          <ng-icon name="lucideArrowRight" size="16" />
+        </button>
+      </div>
+    } @else if (activeStep() === 'ssh') {
+      <div class="onboarding-panel__header">
+        <p class="onboarding-panel__eyebrow">SSH connection</p>
+        <h2>Connect a server</h2>
+        <p>We’ll connect over SSH, then verify that Elevenex is reachable on the remote server.</p>
+      </div>
+
+      @if (!sshSupported()) {
+        <div class="onboarding-inline-error">
+          SSH onboarding is only available in the Electron app.
+        </div>
+      }
+
+      <div class="onboarding-form-grid">
+        <div class="onboarding-field">
+          <label for="serverName">Server name</label>
+          <input id="serverName" z-input [value]="serverName()" (input)="serverName.set($any($event.target).value)" placeholder="Production, staging, home lab…" />
+        </div>
+
+        <div class="onboarding-field">
+          <label for="sshHost">Host</label>
+          <input id="sshHost" z-input [value]="sshHost()" (input)="sshHost.set($any($event.target).value)" placeholder="server.example.com" />
+        </div>
+
+        <div class="onboarding-field">
+          <label for="sshUser">User</label>
+          <input id="sshUser" z-input [value]="sshUser()" (input)="sshUser.set($any($event.target).value)" placeholder="ubuntu" />
+        </div>
+
+        <div class="onboarding-field">
+          <label for="sshPort">Port</label>
+          <input id="sshPort" z-input type="number" [value]="sshPort().toString()" (input)="sshPort.set(+$any($event.target).value || 22)" />
+        </div>
+      </div>
+
+      <div class="onboarding-auth">
+        <div class="onboarding-auth__tabs">
+          <button type="button" class="onboarding-auth__tab" [class.is-active]="authMode() === 'agent'" (click)="authMode.set('agent')">
+            <ng-icon name="lucideShieldCheck" size="16" />
+            SSH config / agent
+          </button>
+          <button type="button" class="onboarding-auth__tab" [class.is-active]="authMode() === 'password'" (click)="authMode.set('password')">
+            <ng-icon name="lucideLock" size="16" />
+            Password
+          </button>
+          <button type="button" class="onboarding-auth__tab" [class.is-active]="authMode() === 'key'" (click)="authMode.set('key')">
+            <ng-icon name="lucideKeyRound" size="16" />
+            Private key
+          </button>
+        </div>
+
+        @if (authMode() === 'agent') {
+          <div class="onboarding-auth__body">
+            <p>Use the SSH config, agent, and keys already available on this machine.</p>
+          </div>
+        }
+
+        @if (authMode() === 'password') {
+          <div class="onboarding-auth__body onboarding-auth__body--grid">
+            <div class="onboarding-field">
+              <label for="sshPassword">Password</label>
+              <input id="sshPassword" z-input type="password" [value]="password()" (input)="password.set($any($event.target).value)" placeholder="Password is only used for this connection" />
+            </div>
+          </div>
+        }
+
+        @if (authMode() === 'key') {
+          <div class="onboarding-auth__body onboarding-auth__body--grid">
+            <div class="onboarding-field onboarding-field--wide">
+              <label for="sshKey">Private key</label>
+              <div class="onboarding-key-picker">
+                <app-path-autocomplete-input
+                  inputId="sshKey"
+                  [value]="identityFilePath()"
+                  pathKind="either"
+                  placeholder="~/.ssh/id_ed25519"
+                  preferredStartDirectory="~/.ssh"
+                  browseLabel="Browse"
+                  (valueChange)="identityFilePath.set($event)"
+                  (browse)="pickIdentityFile()"
+                />
+              </div>
+            </div>
+            <div class="onboarding-field">
+              <label for="sshPassphrase">Passphrase <span>(optional)</span></label>
+              <input id="sshPassphrase" z-input type="password" [value]="passphrase()" (input)="passphrase.set($any($event.target).value)" placeholder="Only if this key is encrypted" />
+            </div>
+          </div>
+        }
+      </div>
+
+      @if (connectionError()) {
+        <div class="onboarding-inline-error">{{ connectionError() }}</div>
+      }
+
+      <div class="onboarding-actions">
+        <button z-button zType="ghost" type="button" (click)="selectedMode.set(null); activeStep.set('choice')">Back</button>
+        <button z-button type="button" [zLoading]="connecting()" [zDisabled]="connecting() || !canConnect() || !sshSupported()" (click)="connectToServer()">
+          Connect and verify
+          <ng-icon name="lucideChevronsRight" size="16" class="ml-1" />
+        </button>
+      </div>
+    } @else if (activeStep() === 'install') {
+      <div class="onboarding-panel__header">
+        <p class="onboarding-panel__eyebrow">Remote setup needed</p>
+        <h2>Elevenex is not reachable on this server yet</h2>
+        <p>SSH worked, but the forwarded Elevenex port did not answer. Install Elevenex on the server first, then retry.</p>
+      </div>
+
+      <div class="onboarding-install-card">
+        <div class="onboarding-install-card__todo">
+          <strong>Remote setup is paused for manual prerequisites</strong>
+          <p>{{ installMessage() || 'Use the remote setup terminal to install the missing dependencies, then re-check.' }}</p>
+        </div>
+        <ul>
+          <li>Use the remote setup modal to install any missing pieces such as <code>tmux</code> or <code>claude</code>.</li>
+          <li>After the remote machine is ready, Elevenex will upload or update its runtime automatically.</li>
+          <li>If you close the modal, you can retry from here.</li>
+        </ul>
+      </div>
+
+      <div class="onboarding-actions">
+        <button z-button zType="ghost" type="button" (click)="retryConnection()">Edit connection</button>
+        <button z-button type="button" (click)="connectToServer()">
+          <ng-icon name="lucideRefreshCw" size="16" class="mr-1" />
+          Retry
+        </button>
+      </div>
+    } @else if (activeStep() === 'project') {
+      <div class="onboarding-panel__header">
+        <p class="onboarding-panel__eyebrow">First project</p>
+        <h2>Build your workspace in one pass</h2>
+        <p>{{ projectStepDescription() }}</p>
+      </div>
+
+      @if (selectedMode() === 'ssh' && serverSummary(); as server) {
+        <div class="onboarding-server-summary">
+          <div>
+            <span>Connected server</span>
+            <strong>{{ server.name }}</strong>
+          </div>
+          <div>
+            <span>Target</span>
+            <strong>{{ server.sshUser ? server.sshUser + '@' : '' }}{{ server.sshHost }}:{{ server.sshPort }}</strong>
+          </div>
+          <div>
+            <span>Forwarded locally</span>
+            <strong>127.0.0.1:{{ server.localPort }}</strong>
+          </div>
+        </div>
+      }
+
+      <div class="onboarding-project-wizard">
+        <app-project-onboarding-wizard
+          [embedded]="true"
+          [allowCancel]="false"
+          [showPortForwardStep]="shouldShowPortForwardStep()"
+          heading="Create your first project"
+          subheading="You need at least one repository before finishing onboarding."
+          ctaLabel="Finish setup"
+          (completed)="handleProjectCreated($event)"
+        />
+      </div>
+    }
+  </section>
+</div>

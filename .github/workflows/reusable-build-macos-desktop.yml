@@ -1,0 +1,50 @@
+name: Reusable macOS desktop build
+
+on:
+  workflow_call:
+
+jobs:
+  build-macos-dmg:
+    name: Build macOS DMG
+    permissions:
+      contents: read
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.4
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Initialize disk image subsystem
+        run: sudo hdiutil info > /dev/null
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build macOS desktop package
+        run: pnpm electron:package:mac
+
+      - name: Rename DMG for release
+        run: |
+          set -eu
+          mkdir -p dist-desktop
+          DMG_PATH="$(find apps/electron/dist -maxdepth 1 -type f -name '*.dmg' | head -n 1)"
+          test -n "$DMG_PATH" || { echo "No DMG artifact produced"; exit 1; }
+          cp "$DMG_PATH" "dist-desktop/elevenex-desktop-macos-arm64.dmg"
+          shasum -a 256 "dist-desktop/elevenex-desktop-macos-arm64.dmg" \
+            > "dist-desktop/elevenex-desktop-macos-arm64.dmg.sha256"
+          ls -lh dist-desktop/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-desktop-macos-arm64
+          path: dist-desktop/*
+          if-no-files-found: error
+          retention-days: 30

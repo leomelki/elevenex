@@ -1,0 +1,345 @@
+<div class="project-wizard-shell" [class.project-wizard-shell--embedded]="embedded()">
+  @if (!embedded()) {
+    <button
+      type="button"
+      class="project-wizard-backdrop"
+      aria-label="Close project creation"
+      (click)="close()"
+    ></button>
+  }
+
+  <section class="project-wizard-panel" [class.project-wizard-panel--embedded]="embedded()">
+    <header class="project-wizard-header">
+      <div>
+        <p class="project-wizard-eyebrow">Project onboarding</p>
+        <h2>{{ heading() }}</h2>
+        <p>{{ subheading() }}</p>
+      </div>
+
+      @if (allowCancel()) {
+        <button
+          type="button"
+          class="project-wizard-close"
+          aria-label="Close project creation"
+          (click)="close()"
+        >
+          <ng-icon name="lucideX" size="18" />
+        </button>
+      }
+    </header>
+
+    <div class="project-wizard-steps">
+      @for (step of steps(); track step; let i = $index) {
+        <div
+          class="project-wizard-step"
+          [class.is-active]="step === activeStep()"
+          [class.is-done]="i < stepIndex()"
+        >
+          <span>
+            @if (i < stepIndex()) {
+              <ng-icon name="lucideCheck" size="14" />
+            } @else {
+              {{ i + 1 }}
+            }
+          </span>
+          <strong>{{ getStepLabel(step) }}</strong>
+        </div>
+      }
+    </div>
+
+    @if (createdProject()) {
+      <div class="project-wizard-status">
+        <ng-icon name="lucideSparkles" size="16" />
+        <span><strong>{{ createdProject()!.name }}</strong> already exists. Finish the remaining setup and submit again.</span>
+      </div>
+    }
+
+    @if (submissionError()) {
+      <div class="project-wizard-error">{{ submissionError() }}</div>
+    }
+
+    <div class="project-wizard-body">
+      @if (activeStep() === 'project') {
+        <section class="project-wizard-section">
+          <div class="project-wizard-section__intro">
+            <ng-icon name="lucideFolderGit2" size="18" />
+            <div>
+              <strong>Name the project</strong>
+              <p>This is the label shown in the sidebar and project pages.</p>
+            </div>
+          </div>
+
+          <label class="project-wizard-field">
+            <span>Project name</span>
+            <input
+              z-input
+              type="text"
+              placeholder="Infra platform, storefront, mobile app..."
+              [value]="projectName()"
+              [disabled]="!!createdProject()"
+              (input)="updateProjectName($any($event.target).value)"
+            />
+          </label>
+        </section>
+      }
+
+      @if (activeStep() === 'repos') {
+        <section class="project-wizard-section">
+          <div class="project-wizard-section__intro">
+            <ng-icon name="lucideGitBranch" size="18" />
+            <div>
+              <strong>Add repositories</strong>
+              <p>Add at least one git repository. You can attach several now and avoid extra setup later.</p>
+            </div>
+          </div>
+
+          <div class="project-wizard-list">
+            @for (repo of repos(); track repo.id; let i = $index) {
+              <div class="project-wizard-card">
+                <div class="project-wizard-card__topline">
+                  <strong>Repository {{ i + 1 }}</strong>
+                  <button type="button" class="project-wizard-icon-button" aria-label="Remove repository" [disabled]="repo.status === 'created'" (click)="removeRepoRow(repo.id)">
+                    <ng-icon name="lucideTrash2" size="16" />
+                  </button>
+                </div>
+
+                <label class="project-wizard-field">
+                  <span>Local path</span>
+                  <app-path-autocomplete-input
+                    placeholder="/path/to/repository"
+                    pathKind="directory"
+                    [value]="repo.path"
+                    [disabled]="repo.status === 'created'"
+                    [preferredStartDirectory]="preferredRepoStartDirectory(repo.path)"
+                    (valueChange)="updateRepoPath(repo.id, $event)"
+                  />
+                </label>
+
+                @if (repo.status === 'created' && repo.repo) {
+                  <div class="project-wizard-inline project-wizard-inline--success">
+                    Added as <strong>{{ repo.repo.name }}</strong>
+                  </div>
+                }
+
+                @if (repo.error) {
+                  <div class="project-wizard-inline project-wizard-inline--error">{{ repo.error }}</div>
+                }
+              </div>
+            }
+          </div>
+
+          <button z-button zType="outline" type="button" (click)="addRepoRow()">
+            <ng-icon name="lucidePlus" size="16" class="mr-1" />
+            Add another repository
+          </button>
+        </section>
+      }
+
+      @if (showPortForwardStep() && activeStep() === 'ports') {
+        <section class="project-wizard-section">
+          <div class="project-wizard-section__intro">
+            <ng-icon name="lucideServer" size="18" />
+            <div>
+              <strong>Optional port forwards</strong>
+              <p>Save any remote services you want available locally. Skip this step if the project does not need tunnels.</p>
+            </div>
+          </div>
+
+          @if (!sshForwardingSupported()) {
+            <div class="project-wizard-inline">
+              Port forwarding is only available in the Electron app. Saved forwards still stay local to this machine.
+            </div>
+          }
+
+          @if (forwards().length === 0) {
+            <div class="project-wizard-empty-state">
+              <ng-icon name="lucideRocket" size="20" />
+              <div>
+                <strong>No forwards yet</strong>
+                <p>Add one if you want Elevenex to remember database or app tunnels for this project.</p>
+              </div>
+            </div>
+          }
+
+          <div class="project-wizard-list">
+            @for (forward of forwards(); track forward.id; let i = $index) {
+              <div class="project-wizard-card">
+                <div class="project-wizard-card__topline">
+                  <strong>Forward {{ i + 1 }}</strong>
+                  <div class="project-wizard-card__actions">
+                    <button
+                      type="button"
+                      class="project-wizard-text-button"
+                      [disabled]="forward.status === 'created'"
+                      (click)="toggleForwardAdvanced(forward.id)"
+                    >
+                      {{ forward.showAdvanced ? 'Hide advanced' : 'Advanced' }}
+                      <ng-icon [name]="forward.showAdvanced ? 'lucideChevronUp' : 'lucideChevronDown'" size="14" />
+                    </button>
+                    <button type="button" class="project-wizard-icon-button" aria-label="Remove forward" [disabled]="forward.status === 'created'" (click)="removeForwardRow(forward.id)">
+                      <ng-icon name="lucideTrash2" size="16" />
+                    </button>
+                  </div>
+                </div>
+
+                <div class="project-wizard-grid project-wizard-grid--ports">
+                  <label class="project-wizard-field">
+                    <span>Name</span>
+                    <input z-input type="text" [value]="forward.name" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'name', $any($event.target).value)" />
+                  </label>
+
+                  <label class="project-wizard-field">
+                    <span>Local port</span>
+                    <input z-input type="number" min="1" max="65535" [value]="asText(forward.localPort)" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'localPort', +$any($event.target).value)" />
+                  </label>
+
+                  <label class="project-wizard-field">
+                    <span>Remote port</span>
+                    <input z-input type="number" min="1" max="65535" [value]="asText(forward.remotePort)" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'remotePort', +$any($event.target).value)" />
+                  </label>
+                </div>
+
+                @if (forward.showAdvanced) {
+                  <div class="project-wizard-grid">
+                    <label class="project-wizard-field">
+                      <span>SSH host</span>
+                      <input z-input type="text" [value]="forward.sshHost" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'sshHost', $any($event.target).value)" />
+                    </label>
+
+                    <label class="project-wizard-field">
+                      <span>SSH user</span>
+                      <input z-input type="text" [value]="forward.sshUser || ''" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'sshUser', $any($event.target).value)" />
+                    </label>
+
+                    <label class="project-wizard-field">
+                      <span>SSH port</span>
+                      <input z-input type="number" min="1" max="65535" [value]="asText(forward.sshPort)" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'sshPort', +$any($event.target).value)" />
+                    </label>
+
+                    <label class="project-wizard-field">
+                      <span>Bind address</span>
+                      <input z-input type="text" [value]="forward.bindAddress" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'bindAddress', $any($event.target).value)" />
+                    </label>
+
+                    <label class="project-wizard-field">
+                      <span>Remote host</span>
+                      <input z-input type="text" [value]="forward.remoteHost" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'remoteHost', $any($event.target).value)" />
+                    </label>
+                  </div>
+                } @else {
+                  <div class="project-wizard-inline">{{ getForwardSummary(forward) }}</div>
+                }
+
+                <label class="project-wizard-checkbox">
+                  <input
+                    type="checkbox"
+                    [checked]="forward.startImmediately"
+                    [disabled]="!sshForwardingSupported() || forward.status === 'created'"
+                    (change)="updateForwardField(forward.id, 'startImmediately', $any($event.target).checked)"
+                  />
+                  <span>Start immediately after saving</span>
+                </label>
+
+                @if (forward.status === 'created' && forward.forward) {
+                  <div class="project-wizard-inline project-wizard-inline--success">
+                    Saved {{ forward.forward.destinationLabel }}
+                  </div>
+                }
+
+                @if (forward.error) {
+                  <div class="project-wizard-inline project-wizard-inline--error">{{ forward.error }}</div>
+                }
+              </div>
+            }
+          </div>
+
+          <button z-button zType="outline" type="button" (click)="addForwardRow()">
+            <ng-icon name="lucidePlus" size="16" class="mr-1" />
+            Add port forward
+          </button>
+        </section>
+      }
+
+      @if (activeStep() === 'review') {
+        <section class="project-wizard-section">
+          <div class="project-wizard-section__intro">
+            <ng-icon name="lucideRocket" size="18" />
+            <div>
+              <strong>Review and finish</strong>
+              <p>{{ showPortForwardStep()
+                ? 'Elevenex will create the project, attach repositories, and save any optional port forwards.'
+                : 'Elevenex will create the project and attach repositories.' }}</p>
+            </div>
+          </div>
+
+          <div class="project-wizard-review-grid">
+            <div class="project-wizard-review-card">
+              <span>Project</span>
+              <strong>{{ trimmedProjectName() }}</strong>
+            </div>
+            <div class="project-wizard-review-card">
+              <span>Repositories</span>
+              <strong>{{ readyRepos().length }}</strong>
+            </div>
+            @if (showPortForwardStep()) {
+              <div class="project-wizard-review-card">
+                <span>Port forwards</span>
+                <strong>{{ forwards().length }}</strong>
+              </div>
+            }
+          </div>
+
+          <div class="project-wizard-review-list">
+            @for (repo of readyRepos(); track repo.id) {
+              <div class="project-wizard-review-item">
+                <ng-icon name="lucideGitBranch" size="15" />
+                <span>{{ repo.path.trim() }}</span>
+              </div>
+            }
+
+            @if (showPortForwardStep()) {
+              @for (forward of forwards(); track forward.id) {
+                <div class="project-wizard-review-item">
+                  <ng-icon name="lucideServer" size="15" />
+                  <span>{{ forward.name }} • {{ forward.localPort }} → {{ forward.remoteHost }}:{{ forward.remotePort }}</span>
+                </div>
+              }
+            }
+          </div>
+        </section>
+      }
+    </div>
+
+    <footer class="project-wizard-footer">
+      <div class="project-wizard-footer__meta">
+        @if (activeStep() === 'repos') {
+          <span>{{ readyRepos().length }} repository{{ readyRepos().length === 1 ? '' : 'ies' }} ready</span>
+        } @else if (showPortForwardStep() && activeStep() === 'ports') {
+          <span>{{ forwards().length }} optional forward{{ forwards().length === 1 ? '' : 's' }}</span>
+        } @else if (activeStep() === 'review') {
+          <span>{{ createdReposCount() }} repo{{ createdReposCount() === 1 ? '' : 's' }} already linked</span>
+        }
+      </div>
+
+      <div class="project-wizard-footer__actions">
+        @if (canGoBack()) {
+          <button z-button zType="ghost" type="button" (click)="goToPreviousStep()">
+            <ng-icon name="lucideArrowLeft" size="16" class="mr-1" />
+            Back
+          </button>
+        }
+
+        @if (activeStep() !== 'review') {
+          <button z-button type="button" [zDisabled]="!canAdvance()" (click)="goToNextStep()">
+            Next
+            <ng-icon name="lucideArrowRight" size="16" class="ml-1" />
+          </button>
+        } @else {
+          <button z-button type="button" [zLoading]="submitting()" [zDisabled]="submitting()" (click)="submit()">
+            {{ ctaLabel() }}
+          </button>
+        }
+      </div>
+    </footer>
+  </section>
+</div>

@@ -1,0 +1,71 @@
+name: Reusable runtime build
+
+on:
+  workflow_call:
+
+jobs:
+  build-runtime:
+    name: Build ${{ matrix.target }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runs-on: ubuntu-22.04
+          - target: linux-arm64
+            runs-on: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 make g++
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.4
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build backend bundle
+        run: pnpm backend:bundle
+
+      - name: Stage remote runtime for ${{ matrix.target }}
+        run: node scripts/stage-remote-runtime.js --target=${{ matrix.target }}
+
+      - name: Verify native binaries are present
+        run: |
+          set -eu
+          ROOT="apps/electron/.stage/remote-runtime/${{ matrix.target }}"
+          test -f "$ROOT/node_modules/.pnpm/node-pty@"*"/node_modules/node-pty/build/Release/pty.node" \
+            || test -f "$ROOT/node_modules/.pnpm/node-pty@"*"/node_modules/node-pty/prebuilds/${{ matrix.target }}/pty.node" \
+            || { echo "node-pty native binary missing for ${{ matrix.target }}"; exit 1; }
+          test -f "$ROOT/node_modules/.pnpm/better-sqlite3@"*"/node_modules/better-sqlite3/build/Release/better_sqlite3.node" \
+            || { echo "better-sqlite3 native binary missing for ${{ matrix.target }}"; exit 1; }
+
+      - name: Rename archive for release
+        run: |
+          mkdir -p dist-runtime
+          cp "apps/electron/.stage/remote-runtime/${{ matrix.target }}.tar.gz" \
+             "dist-runtime/elevenex-runtime-${{ matrix.target }}.tar.gz"
+          (cd dist-runtime && sha256sum "elevenex-runtime-${{ matrix.target }}.tar.gz" \
+            > "elevenex-runtime-${{ matrix.target }}.tar.gz.sha256")
+          ls -lh dist-runtime/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-runtime-${{ matrix.target }}
+          path: dist-runtime/*
+          if-no-files-found: error
+          retention-days: 30

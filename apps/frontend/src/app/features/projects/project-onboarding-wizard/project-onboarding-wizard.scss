@@ -1,0 +1,398 @@
+.project-wizard-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.project-wizard-shell--embedded {
+  position: static;
+  inset: auto;
+  display: block;
+  padding: 0;
+}
+
+.project-wizard-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background:
+    radial-gradient(circle at top left, color-mix(in oklch, var(--primary) 18%, transparent), transparent 30%),
+    rgba(15, 23, 42, 0.54);
+}
+
+.project-wizard-panel {
+  position: relative;
+  width: min(920px, 100%);
+  max-height: min(880px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 32px;
+  border: 1px solid color-mix(in oklch, var(--border) 80%, white 18%);
+  background:
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 92%, white 8%), color-mix(in oklch, var(--background) 98%, transparent));
+  box-shadow: 0 36px 90px rgba(15, 23, 42, 0.28);
+}
+
+.project-wizard-panel--embedded {
+  width: 100%;
+  max-height: none;
+  border-radius: 26px;
+  box-shadow: 0 24px 54px rgba(15, 23, 42, 0.12);
+}
+
+.project-wizard-header,
+.project-wizard-footer {
+  padding: 24px 28px;
+}
+
+.project-wizard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 74%, white 16%);
+}
+
+.project-wizard-eyebrow {
+  margin: 0 0 10px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.project-wizard-header h2 {
+  margin: 0;
+  font-size: clamp(1.7rem, 3vw, 2.4rem);
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+}
+
+.project-wizard-header p {
+  margin: 12px 0 0;
+  max-width: 38rem;
+  color: color-mix(in oklch, var(--foreground) 74%, var(--muted-foreground));
+}
+
+.project-wizard-close,
+.project-wizard-icon-button,
+.project-wizard-text-button {
+  border: 0;
+  background: transparent;
+}
+
+.project-wizard-close,
+.project-wizard-icon-button {
+  width: 2.1rem;
+  height: 2.1rem;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.project-wizard-close:hover,
+.project-wizard-icon-button:hover {
+  background: color-mix(in oklch, var(--muted) 70%, white 30%);
+  color: var(--foreground);
+}
+
+.project-wizard-steps {
+  padding: 18px 28px 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.project-wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in oklch, var(--border) 74%, white 16%);
+  background: color-mix(in oklch, var(--muted) 40%, white 60%);
+}
+
+.project-wizard-step span {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklch, var(--background) 70%, white 30%);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.project-wizard-step strong {
+  font-size: 0.88rem;
+}
+
+.project-wizard-step.is-active {
+  border-color: color-mix(in oklch, var(--primary) 44%, white);
+  background: color-mix(in oklch, var(--primary) 12%, white);
+}
+
+.project-wizard-step.is-done span {
+  background: color-mix(in oklch, var(--primary) 84%, white 16%);
+  color: white;
+}
+
+.project-wizard-status,
+.project-wizard-error {
+  margin: 18px 28px 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.project-wizard-status {
+  color: color-mix(in oklch, var(--primary) 72%, var(--foreground));
+  background: color-mix(in oklch, var(--primary) 10%, white);
+  border: 1px solid color-mix(in oklch, var(--primary) 16%, var(--border));
+}
+
+.project-wizard-error {
+  color: color-mix(in oklch, var(--destructive) 84%, black);
+  background: color-mix(in oklch, var(--destructive) 10%, white);
+  border: 1px solid color-mix(in oklch, var(--destructive) 22%, var(--border));
+}
+
+.project-wizard-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 28px 12px;
+}
+
+.project-wizard-section {
+  display: grid;
+  gap: 18px;
+}
+
+.project-wizard-section__intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.project-wizard-section__intro strong {
+  display: block;
+  font-size: 1.02rem;
+}
+
+.project-wizard-section__intro p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+}
+
+.project-wizard-list {
+  display: grid;
+  gap: 14px;
+}
+
+.project-wizard-card,
+.project-wizard-empty-state,
+.project-wizard-review-card {
+  border-radius: 22px;
+  border: 1px solid color-mix(in oklch, var(--border) 76%, white 14%);
+  background: color-mix(in oklch, var(--background) 88%, white 12%);
+}
+
+.project-wizard-card {
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.project-wizard-card__topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-wizard-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-wizard-text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  color: var(--muted-foreground);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.project-wizard-field {
+  display: grid;
+  gap: 8px;
+}
+
+.project-wizard-field span {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.project-wizard-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.project-wizard-grid--ports {
+  grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 0.7fr));
+}
+
+.project-wizard-inline {
+  padding: 10px 12px;
+  border-radius: 14px;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--muted) 55%, white 45%);
+}
+
+.project-wizard-inline--success {
+  color: color-mix(in oklch, oklch(0.55 0.14 154) 70%, black);
+  background: color-mix(in oklch, oklch(0.9 0.05 154) 74%, white);
+}
+
+.project-wizard-inline--error {
+  color: color-mix(in oklch, var(--destructive) 80%, black);
+  background: color-mix(in oklch, var(--destructive) 10%, white);
+}
+
+.project-wizard-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+  color: var(--muted-foreground);
+}
+
+.project-wizard-empty-state {
+  padding: 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.project-wizard-empty-state p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+}
+
+.project-wizard-review-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.project-wizard-review-card {
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.project-wizard-review-card span {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.project-wizard-review-card strong {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.project-wizard-review-list {
+  display: grid;
+  gap: 10px;
+}
+
+.project-wizard-review-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: color-mix(in oklch, var(--muted) 42%, white 58%);
+}
+
+.project-wizard-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 74%, white 16%);
+}
+
+.project-wizard-footer__meta {
+  min-height: 1.2rem;
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+}
+
+.project-wizard-footer__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+@media (max-width: 860px) {
+  .project-wizard-shell {
+    padding: 14px;
+  }
+
+  .project-wizard-panel {
+    max-height: calc(100vh - 28px);
+  }
+
+  .project-wizard-steps,
+  .project-wizard-review-grid,
+  .project-wizard-grid,
+  .project-wizard-grid--ports {
+    grid-template-columns: 1fr;
+  }
+
+  .project-wizard-header,
+  .project-wizard-body,
+  .project-wizard-footer {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .project-wizard-status,
+  .project-wizard-error {
+    margin-left: 18px;
+    margin-right: 18px;
+  }
+
+  .project-wizard-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .project-wizard-footer__actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}

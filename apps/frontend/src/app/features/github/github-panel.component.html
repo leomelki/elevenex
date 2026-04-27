@@ -1,0 +1,246 @@
+<div class="gh-panel">
+  @if (refreshing()) {
+    <div class="gh-refresh-bar"></div>
+  }
+
+  <!-- Toolbar -->
+  <div class="gh-toolbar">
+    <span class="gh-toolbar-title">GitHub</span>
+
+    @if (branchContext()?.branch) {
+      <span class="gh-branch-chip">
+        <ng-icon name="lucideGitBranch" size="12" />
+        {{ branchContext()!.branch }}
+      </span>
+    }
+
+    @if (branchContext()?.upstream) {
+      <span class="gh-sync-info">
+        <span [class.has-value]="branchContext()!.ahead > 0">&uarr;{{ branchContext()!.ahead }}</span>
+        <span [class.has-value]="branchContext()!.behind > 0">&darr;{{ branchContext()!.behind }}</span>
+      </span>
+    }
+
+    <div class="gh-toolbar-right">
+      <button class="gh-icon-btn" title="Push" [class.loading]="pushing()" (click)="push()">
+        <ng-icon name="lucideArrowUp" size="14" />
+      </button>
+      <button class="gh-icon-btn" title="Refresh" [class.spinning]="refreshing()" (click)="refresh()">
+        <ng-icon name="lucideRefreshCw" size="14" />
+      </button>
+      @if (pullRequest()) {
+        <button class="gh-icon-btn" title="Open on GitHub" (click)="openPullRequest()">
+          <ng-icon name="lucideExternalLink" size="14" />
+        </button>
+      }
+    </div>
+  </div>
+
+  @if (loading()) {
+    <div class="gh-loading">
+      <z-skeleton class="h-8 w-full rounded-lg" />
+      <z-skeleton class="h-20 w-full rounded-lg" />
+      <z-skeleton class="h-12 w-full rounded-lg" />
+    </div>
+  } @else {
+    <!-- Warning bar -->
+    @if (capabilities()?.message) {
+      <div class="gh-warning">
+        <ng-icon name="lucideCircleAlert" size="14" />
+        <span>{{ capabilities()!.message }}</span>
+      </div>
+    }
+
+    <div class="gh-scroll">
+      @if (pullRequest()) {
+        <!-- PR Summary -->
+        <div class="gh-pr-summary">
+          <div class="gh-pr-title">
+            <span class="gh-pr-number">#{{ pullRequest()!.number }}</span>
+            <span class="gh-pr-title-text">{{ pullRequest()!.title }}</span>
+          </div>
+          <div class="gh-pr-meta">
+            <span class="gh-state-badge" [class]="pullRequest()!.state.toLowerCase()">{{ pullRequest()!.state }}</span>
+            <span class="gh-pr-branches">{{ pullRequest()!.baseRefName }} &larr; {{ pullRequest()!.headRefName }}</span>
+          </div>
+          <div class="gh-pr-chips">
+            @if (pullRequest()!.checksSummary.passing > 0) {
+              <span class="gh-chip pass">&check;{{ pullRequest()!.checksSummary.passing }}</span>
+            }
+            @if (pullRequest()!.checksSummary.pending > 0) {
+              <span class="gh-chip pending">&#9719;{{ pullRequest()!.checksSummary.pending }}</span>
+            }
+            @if (pullRequest()!.checksSummary.failing > 0) {
+              <span class="gh-chip fail">&cross;{{ pullRequest()!.checksSummary.failing }}</span>
+            }
+            @if (pullRequest()!.reviewDecision) {
+              <span class="gh-chip review">{{ pullRequest()!.reviewDecision }}</span>
+            }
+            <span class="gh-chip merge" [class]="pullRequest()!.mergeable.toLowerCase()">{{ pullRequest()!.mergeStateStatus }}</span>
+          </div>
+        </div>
+
+        <!-- Checks Section -->
+        @if (checks()?.checks?.length) {
+          <div class="gh-section">
+            <button class="gh-section-header" (click)="toggleSection('checks')">
+              <ng-icon name="lucideChevronRight" size="14" [class.rotated]="isSectionExpanded('checks')" />
+              <span class="gh-section-title">Checks</span>
+              <span class="gh-section-count">{{ checks()!.checks.length }}</span>
+              <div class="gh-section-summary">
+                @if (checks()!.summary.passing > 0) {
+                  <span class="pass">{{ checks()!.summary.passing }}&check;</span>
+                }
+                @if (checks()!.summary.pending > 0) {
+                  <span class="pending">{{ checks()!.summary.pending }}&#9719;</span>
+                }
+                @if (checks()!.summary.failing > 0) {
+                  <span class="fail">{{ checks()!.summary.failing }}&cross;</span>
+                }
+              </div>
+            </button>
+            @if (isSectionExpanded('checks')) {
+              <div class="gh-section-content">
+                @for (check of checks()!.checks; track check.name + check.workflow) {
+                  <a class="gh-check-row" [href]="check.link || null" [attr.target]="check.link ? '_blank' : null">
+                    <span class="gh-status-dot" [class]="statusTone(check.bucket)"></span>
+                    <span class="gh-check-name">{{ check.name }}</span>
+                    <span class="gh-check-workflow">{{ check.workflow || check.description || '' }}</span>
+                  </a>
+                }
+              </div>
+            }
+          </div>
+        }
+
+        <!-- Files Section -->
+        @if (diffFiles().length > 0) {
+          <div class="gh-section">
+            <button class="gh-section-header" (click)="toggleSection('files')">
+              <ng-icon name="lucideChevronRight" size="14" [class.rotated]="isSectionExpanded('files')" />
+              <span class="gh-section-title">Files changed</span>
+              <span class="gh-section-count">{{ diffFiles().length }}</span>
+              <div class="gh-section-summary">
+                <span class="additions">+{{ totalDiffStats().additions }}</span>
+                <span class="deletions">&minus;{{ totalDiffStats().deletions }}</span>
+              </div>
+            </button>
+            @if (isSectionExpanded('files')) {
+              <div class="gh-section-content">
+                @for (file of diffFiles(); track file.path) {
+                  <div class="gh-file-group" [class.expanded]="isFileExpanded(file.path)">
+                    <button class="gh-file-row" (click)="toggleFile(file.path)" [title]="file.path">
+                      <span class="gh-file-status" [class]="file.status">{{ statusLetter(file.status) }}</span>
+                      <span class="gh-file-name">{{ fileBasename(file.path) }}</span>
+                      <span class="gh-file-stats">
+                        <span class="additions">+{{ file.additions }}</span>
+                        <span class="deletions">&minus;{{ file.deletions }}</span>
+                      </span>
+                    </button>
+                    @if (isFileExpanded(file.path)) {
+                      <div class="gh-file-detail">
+                        <pre class="gh-diff-patch">{{ file.patch }}</pre>
+                        @if (file.threads.length > 0) {
+                          <div class="gh-thread-list">
+                            @for (thread of file.threads; track thread.id) {
+                              <div class="gh-thread" [class.resolved]="thread.isResolved">
+                                <div class="gh-thread-header">
+                                  <span>Line {{ thread.line || thread.originalLine || '?' }}</span>
+                                  @if (thread.isResolved) {
+                                    <span class="gh-resolved-badge">Resolved</span>
+                                  }
+                                </div>
+                                @for (comment of thread.comments; track comment.id) {
+                                  <div class="gh-thread-comment">
+                                    <strong>{{ comment.authorLogin }}</strong>
+                                    <p>{{ comment.body }}</p>
+                                  </div>
+                                }
+                              </div>
+                            }
+                          </div>
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        }
+
+        <!-- Activity Section -->
+        @if (activityCount() > 0) {
+          <div class="gh-section">
+            <button class="gh-section-header" (click)="toggleSection('activity')">
+              <ng-icon name="lucideChevronRight" size="14" [class.rotated]="isSectionExpanded('activity')" />
+              <span class="gh-section-title">Activity</span>
+              <span class="gh-section-count">{{ activityCount() }}</span>
+            </button>
+            @if (isSectionExpanded('activity')) {
+              <div class="gh-section-content">
+                @for (item of sortedActivity(); track item.id) {
+                  <div class="gh-activity-row">
+                    <strong>{{ item.authorLogin }}</strong>
+                    <span class="gh-activity-state" [class]="item.state.toLowerCase()">{{ item.state }}</span>
+                    @if (item.body) {
+                      <p class="gh-activity-body">{{ item.body }}</p>
+                    }
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        }
+      } @else {
+        <!-- Empty state -->
+        <div class="gh-empty">
+          <ng-icon name="lucideGitPullRequest" size="20" />
+          <p>No pull request linked</p>
+          <span>Push this branch and open a PR on GitHub to see review data here.</span>
+        </div>
+      }
+    </div>
+
+    <!-- Compose bar -->
+    @if (pullRequest()) {
+      <div class="gh-compose">
+        <textarea
+          class="gh-compose-input"
+          placeholder="Write a comment..."
+          [value]="composeBody()"
+          (input)="composeBody.set($any($event.target).value)"
+          rows="2"
+        ></textarea>
+        <div class="gh-compose-actions">
+          <div class="gh-compose-mode-wrapper">
+            <button
+              class="gh-compose-mode-btn"
+              [class]="composeMode()"
+              (click)="showComposeDropdown.set(!showComposeDropdown())"
+            >
+              {{ composeModeLabel() }}
+              <ng-icon name="lucideChevronRight" size="12" class="dropdown-chevron" [class.open]="showComposeDropdown()" />
+            </button>
+            @if (showComposeDropdown()) {
+              <div class="gh-compose-dropdown">
+                <button (click)="setComposeMode('comment')" [class.active]="composeMode() === 'comment'">Comment</button>
+                <button (click)="setComposeMode('approve')" [class.active]="composeMode() === 'approve'">Approve</button>
+                <button (click)="setComposeMode('request_changes')" [class.active]="composeMode() === 'request_changes'">Request changes</button>
+              </div>
+            }
+          </div>
+          <button
+            class="gh-compose-submit"
+            [class]="composeMode()"
+            [class.sending]="sendingCompose()"
+            [disabled]="sendingCompose() || (!composeBody().trim() && composeMode() === 'comment')"
+            (click)="submitAction()"
+          >
+            {{ sendingCompose() ? 'Sending...' : 'Send' }}
+          </button>
+        </div>
+      </div>
+    }
+  }
+</div>

@@ -1,0 +1,175 @@
+<div class="todo-panel" [class.open]="isOpen()">
+  <div class="panel-header">
+    <h2 class="text-sm font-semibold">Tasks</h2>
+    <button z-button zType="ghost" class="h-8 w-8 p-0" (click)="onClose()">
+      <ng-icon name="lucideX" size="16" />
+    </button>
+  </div>
+
+  <div class="panel-content">
+    <!-- Add todo input -->
+    <div class="add-todo mb-4">
+      <div class="flex gap-2">
+        <input
+          z-input
+          type="text"
+          [value]="newTodoText()"
+          (input)="newTodoText.set($any($event.target).value)"
+          (keydown)="onNewTodoKeydown($event)"
+          placeholder="Add a task..."
+          class="flex-1 text-sm"
+        />
+        <button z-button zType="default" (click)="addTodo()" [disabled]="!newTodoText().trim()">
+          <ng-icon name="lucidePlus" size="16" />
+        </button>
+      </div>
+    </div>
+
+    @if (loading()) {
+      <div class="p-4 text-center text-muted-foreground text-sm">Loading...</div>
+    } @else if (todos().length === 0) {
+      <div class="empty-state">
+        <p class="text-sm text-muted-foreground text-center">No tasks. Add one above.</p>
+      </div>
+    } @else {
+      <!-- Pending todos -->
+      <div cdkDropList (cdkDropListDropped)="onDrop($event)" class="todo-list">
+        @for (todo of pendingTodos(); track todo.id) {
+          <div 
+            cdkDrag
+            class="todo-item group flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted"
+            [class.editing]="editingTodoId() === todo.id"
+          >
+            <!-- Drag handle -->
+            <span cdkDragHandle class="cursor-grab text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+              <ng-icon name="lucideGripVertical" size="14" />
+            </span>
+
+            <!-- Checkbox -->
+            <input
+              type="checkbox"
+              [checked]="todo.completed"
+              (change)="toggleComplete(todo)"
+              class="h-4 w-4 rounded border-border cursor-pointer"
+            />
+
+            <!-- Text (editable) -->
+            @if (editingTodoId() === todo.id) {
+              <input
+                z-input
+                type="text"
+                [value]="editText()"
+                (input)="editText.set($any($event.target).value)"
+                (keydown)="onEditKeydown($event, todo.id)"
+                (blur)="saveEdit(todo.id)"
+                class="flex-1 text-sm"
+                #editInput
+              />
+            } @else {
+              <span 
+                class="flex-1 text-sm cursor-pointer" 
+                (click)="startEdit(todo)"
+              >
+                {{ todo.text }}
+              </span>
+            }
+
+            <!-- Delete button -->
+            <button
+              z-button
+              zType="ghost"
+              class="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              (click)="deleteTodo(todo.id)"
+            >
+              <ng-icon name="lucideX" size="14" class="text-muted-foreground" />
+            </button>
+          </div>
+        }
+      </div>
+
+      <!-- Completed todos -->
+      @if (completedTodos().length > 0) {
+        <div class="mt-4">
+          <button
+            class="flex items-center gap-1 text-sm text-muted-foreground mb-2 hover:text-foreground transition-colors"
+            (click)="toggleShowCompleted()"
+          >
+            <ng-icon 
+              name="lucideChevronDown" 
+              size="14" 
+              [class.rotate-[-90deg]]="!showCompleted()"
+              class="transition-transform"
+            />
+            Completed ({{ completedTodos().length }})
+          </button>
+
+          @if (showCompleted()) {
+            <div class="todo-list completed">
+              @for (todo of completedTodos(); track todo.id) {
+                <div class="todo-item completed flex items-center gap-2 px-2 py-1.5 rounded bg-muted/50">
+                  <!-- Checkbox -->
+                  <input
+                    type="checkbox"
+                    [checked]="todo.completed"
+                    (change)="toggleComplete(todo)"
+                    class="h-4 w-4 rounded border-border cursor-pointer"
+                  />
+
+                  <!-- Strikethrough text -->
+                  <span class="flex-1 text-sm line-through text-muted-foreground">
+                    {{ todo.text }}
+                  </span>
+
+                  <!-- Delete button -->
+                  <button
+                    z-button
+                    zType="ghost"
+                    class="h-6 w-6 p-0 opacity-0 hover:opacity-100 transition-opacity"
+                    (click)="deleteTodo(todo.id)"
+                  >
+                    <ng-icon name="lucideX" size="14" class="text-muted-foreground" />
+                  </button>
+                </div>
+              }
+            </div>
+          }
+
+          <!-- Clear completed button -->
+          <div class="mt-2">
+            <button
+              z-button
+              zType="outline"
+              zSize="sm"
+              class="text-xs"
+              (click)="openClearDialog()"
+            >
+              <ng-icon name="lucideTrash2" size="12" class="mr-1" />
+              Clear Completed
+            </button>
+          </div>
+        </div>
+      }
+
+      <!-- Footer -->
+      <div class="mt-4 pt-2 border-t border-border">
+        <span class="text-xs text-muted-foreground">
+          {{ remainingCount() }} task{{ remainingCount() !== 1 ? 's' : '' }} remaining
+        </span>
+      </div>
+    }
+  </div>
+</div>
+
+<!-- Clear completed confirmation dialog -->
+@if (showClearDialog()) {
+  <dialog #clearDialog="trackedNativeModal" trackNativeModal class="clear-dialog">
+    <div class="p-4">
+      <h3 class="text-lg font-semibold mb-2">Clear Completed Tasks</h3>
+      <p class="text-sm text-muted-foreground mb-4">Clear all completed tasks?</p>
+      <div class="flex justify-end gap-2">
+        <button z-button zType="outline" (click)="closeClearDialog()">Cancel</button>
+        <button z-button zType="destructive" (click)="clearCompleted()">Clear</button>
+      </div>
+    </div>
+  </dialog>
+}

@@ -1,0 +1,366 @@
+<button
+  #trigger
+  class="env-trigger"
+  type="button"
+  [class.env-trigger--open]="open()"
+  [class.env-trigger--remote]="statusVariant() === 'remote'"
+  [class.env-trigger--degraded]="statusVariant() === 'degraded'"
+  [class.env-trigger--switching]="statusVariant() === 'switching'"
+  [attr.aria-expanded]="open()"
+  [attr.aria-haspopup]="'menu'"
+  [title]="triggerLabel() + ' · ' + triggerSubtitle()"
+  (click)="toggle()"
+>
+  <span class="env-trigger__status" aria-hidden="true">
+    @if (switching()) {
+      <ng-icon name="lucideRefreshCw" class="env-trigger__spin" size="11" />
+    } @else {
+      <span class="env-trigger__dot"></span>
+    }
+  </span>
+  <span class="env-trigger__label">{{ triggerLabel() }}</span>
+  <ng-icon name="lucideChevronsUpDown" class="env-trigger__chev" size="13" />
+</button>
+
+@if (open()) {
+  <div
+    class="env-popover"
+    role="dialog"
+    aria-label="Switch environment"
+    [style.top]="popoverPos().top"
+    [style.left]="popoverPos().left"
+    [style.width]="popoverPos().width"
+  >
+    <header class="env-popover__header">
+      @if (view() === 'editor') {
+        <button type="button" class="env-iconbtn" aria-label="Back" (click)="cancelEditor()">
+          <ng-icon name="lucideArrowLeft" size="14" />
+        </button>
+        <div class="env-popover__title">
+          {{ editingServerId() === 'new' ? 'Add server' : 'Edit server' }}
+        </div>
+      } @else {
+        <div class="env-popover__title">Environments</div>
+        <div class="env-popover__header-actions">
+          <button
+            type="button"
+            class="env-iconbtn"
+            aria-label="Add server"
+            title="Add server"
+            [disabled]="switching()"
+            (click)="beginCreate($event)"
+          >
+            <ng-icon name="lucidePlus" size="14" />
+          </button>
+          <button type="button" class="env-iconbtn" aria-label="Close" (click)="close()">
+            <ng-icon name="lucideX" size="14" />
+          </button>
+        </div>
+      }
+    </header>
+
+    @if (switchError() && view() === 'list') {
+      <div class="env-alert" role="alert">
+        <ng-icon name="lucideTriangleAlert" size="13" class="env-alert__icon" />
+        <span>{{ switchError() }}</span>
+      </div>
+    }
+
+    @if (view() === 'list') {
+      <div class="env-list" role="menu">
+        <!-- Local row -->
+        <div
+          role="menuitemradio"
+          tabindex="0"
+          [attr.aria-checked]="isLocalActive()"
+          [attr.aria-disabled]="switching() ? 'true' : null"
+          class="env-row"
+          [class.env-row--active]="isLocalActive()"
+          [class.env-row--disabled]="switching()"
+          (click)="!switching() && selectLocal()"
+          (keydown.enter)="!switching() && selectLocal()"
+          (keydown.space)="$event.preventDefault(); !switching() && selectLocal()"
+        >
+          <span class="env-row__leading">
+            <span class="env-row__iconframe env-row__iconframe--local">
+              <ng-icon name="lucideHardDrive" size="14" />
+            </span>
+          </span>
+          <span class="env-row__body">
+            <span class="env-row__title">Local workspace</span>
+            <span class="env-row__subtitle">Embedded backend</span>
+          </span>
+          <span class="env-row__trailing">
+            @if (switchingId() === 'local') {
+              <ng-icon name="lucideRefreshCw" size="13" class="env-row__spin" />
+            } @else if (isLocalActive()) {
+              <ng-icon name="lucideCheck" size="14" class="env-row__check" />
+            }
+          </span>
+        </div>
+
+        @if (savedServers().length > 0) {
+          <div class="env-list__divider"></div>
+        }
+
+        @for (server of savedServers(); track trackServer($index, server)) {
+          <div
+            class="env-row-group"
+            [class.env-row-group--expanded]="isExpanded(server, 'password') || isExpanded(server, 'delete')"
+          >
+            <div
+              role="menuitemradio"
+              tabindex="0"
+              [attr.aria-checked]="isCurrent(server)"
+              [attr.aria-disabled]="(switching() && switchingId() !== server.id) ? 'true' : null"
+              class="env-row"
+              [class.env-row--active]="isCurrent(server)"
+              [class.env-row--warn]="server.installStatus !== 'available' && server.installStatus !== 'unknown'"
+              [class.env-row--disabled]="switching() && switchingId() !== server.id"
+              (click)="!(switching() && switchingId() !== server.id) && selectServer(server)"
+              (keydown.enter)="!(switching() && switchingId() !== server.id) && selectServer(server)"
+              (keydown.space)="$event.preventDefault(); !(switching() && switchingId() !== server.id) && selectServer(server)"
+            >
+              <span class="env-row__leading">
+                <span class="env-row__iconframe env-row__iconframe--remote">
+                  <ng-icon name="lucideServer" size="14" />
+                </span>
+              </span>
+              <span class="env-row__body">
+                <span class="env-row__title-row">
+                  <span class="env-row__title">{{ server.name || server.sshHost }}</span>
+                  @if (server.installStatus !== 'available' && server.installStatus !== 'unknown') {
+                    <span class="env-chip env-chip--warn">{{ installStatusLabel(server.installStatus) }}</span>
+                  }
+                </span>
+                <span class="env-row__subtitle">
+                  {{ server.sshUser ? server.sshUser + '@' : '' }}{{ server.sshHost }}@if (server.sshPort !== 22) {:{{ server.sshPort }}}
+                  <span class="env-row__dot">·</span>
+                  {{ authLabel(server.authMode) }}
+                </span>
+              </span>
+              <span class="env-row__trailing">
+                <span class="env-row__actions">
+                  <button
+                    type="button"
+                    class="env-iconbtn env-iconbtn--tiny"
+                    aria-label="Edit server"
+                    title="Edit"
+                    (click)="beginEdit(server, $event)"
+                  >
+                    <ng-icon name="lucidePencil" size="12" />
+                  </button>
+                  @if (!isCurrent(server)) {
+                    <button
+                      type="button"
+                      class="env-iconbtn env-iconbtn--tiny env-iconbtn--danger"
+                      aria-label="Delete server"
+                      title="Delete"
+                      (click)="requestDelete(server, $event)"
+                    >
+                      <ng-icon name="lucideTrash2" size="12" />
+                    </button>
+                  }
+                </span>
+                @if (switchingId() === server.id) {
+                  <ng-icon name="lucideRefreshCw" size="13" class="env-row__spin" />
+                } @else if (isCurrent(server)) {
+                  <ng-icon name="lucideCheck" size="14" class="env-row__check" />
+                }
+              </span>
+            </div>
+
+            @if (isExpanded(server, 'password')) {
+              <div class="env-expansion">
+                <div class="env-expansion__lead">
+                  <ng-icon name="lucideLock" size="12" />
+                  <span>Enter credentials for {{ server.name || server.sshHost }}</span>
+                </div>
+                <div class="env-expansion__fields">
+                  <input
+                    z-input
+                    type="password"
+                    placeholder="Password"
+                    autocomplete="current-password"
+                    [value]="password()"
+                    (input)="password.set(($any($event.target).value || '').toString())"
+                    (keydown.enter)="connectWithPassword(server)"
+                  />
+                  <input
+                    z-input
+                    type="password"
+                    placeholder="Key passphrase (optional)"
+                    autocomplete="off"
+                    [value]="passphrase()"
+                    (input)="passphrase.set(($any($event.target).value || '').toString())"
+                    (keydown.enter)="connectWithPassword(server)"
+                  />
+                </div>
+                <div class="env-expansion__actions">
+                  <button type="button" class="env-btn env-btn--ghost" [disabled]="switching()" (click)="cancelExpansion()">Cancel</button>
+                  <button
+                    type="button"
+                    class="env-btn env-btn--primary"
+                    [disabled]="switching() || !password().trim()"
+                    (click)="connectWithPassword(server)"
+                  >
+                    @if (switching()) {
+                      <ng-icon name="lucideRefreshCw" size="12" class="env-row__spin" />
+                      <span>Connecting…</span>
+                    } @else {
+                      <ng-icon name="lucideLock" size="12" />
+                      <span>Connect</span>
+                    }
+                  </button>
+                </div>
+              </div>
+            }
+
+            @if (isExpanded(server, 'delete')) {
+              <div class="env-expansion env-expansion--danger">
+                <div class="env-expansion__lead">
+                  <ng-icon name="lucideTriangleAlert" size="12" />
+                  <span>Remove <strong>{{ server.name || server.sshHost }}</strong>? Saved locally only.</span>
+                </div>
+                <div class="env-expansion__actions">
+                  <button type="button" class="env-btn env-btn--ghost" (click)="cancelExpansion()">Cancel</button>
+                  <button type="button" class="env-btn env-btn--danger" (click)="confirmDelete(server, $event)">
+                    <ng-icon name="lucideTrash2" size="12" />
+                    <span>Remove</span>
+                  </button>
+                </div>
+              </div>
+            }
+          </div>
+        }
+
+        @if (savedServers().length === 0) {
+          <div class="env-empty">
+            <ng-icon name="lucideServer" size="18" class="env-empty__icon" />
+            <div class="env-empty__title">No remote servers yet</div>
+            <div class="env-empty__copy">Save an SSH target to switch between environments without going through onboarding.</div>
+            <button type="button" class="env-btn env-btn--primary" (click)="beginCreate($event)">
+              <ng-icon name="lucidePlus" size="12" />
+              <span>Add server</span>
+            </button>
+          </div>
+        }
+      </div>
+    } @else {
+      <div class="env-editor">
+        <label class="env-field">
+          <span>Name</span>
+          <input
+            z-input
+            type="text"
+            placeholder="Production API"
+            [value]="draft().name"
+            (input)="updateDraft('name', ($any($event.target).value || '').toString())"
+          />
+        </label>
+
+        <div class="env-field-row">
+          <label class="env-field env-field--host">
+            <span>Host</span>
+            <input
+              z-input
+              type="text"
+              placeholder="server.example.com"
+              [value]="draft().sshHost"
+              (input)="updateDraft('sshHost', ($any($event.target).value || '').toString())"
+            />
+          </label>
+          <label class="env-field env-field--port">
+            <span>Port</span>
+            <input
+              z-input
+              type="number"
+              [value]="draft().sshPort.toString()"
+              (input)="updateDraft('sshPort', +($any($event.target).value || 0))"
+            />
+          </label>
+        </div>
+
+        <label class="env-field">
+          <span>User</span>
+          <input
+            z-input
+            type="text"
+            placeholder="deploy"
+            [value]="draft().sshUser || ''"
+            (input)="updateDraft('sshUser', ($any($event.target).value || '').toString())"
+          />
+        </label>
+
+        <div class="env-field">
+          <span>Authentication</span>
+          <div class="env-segment" role="radiogroup" aria-label="Authentication method">
+            <button
+              type="button"
+              role="radio"
+              [attr.aria-checked]="draft().authMode === 'agent'"
+              class="env-segment__option"
+              [class.env-segment__option--active]="draft().authMode === 'agent'"
+              (click)="updateDraft('authMode', 'agent')"
+            >
+              <ng-icon name="lucideKeyRound" size="12" />
+              <span>Agent</span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              [attr.aria-checked]="draft().authMode === 'key'"
+              class="env-segment__option"
+              [class.env-segment__option--active]="draft().authMode === 'key'"
+              (click)="updateDraft('authMode', 'key')"
+            >
+              <ng-icon name="lucideLock" size="12" />
+              <span>Key</span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              [attr.aria-checked]="draft().authMode === 'password'"
+              class="env-segment__option"
+              [class.env-segment__option--active]="draft().authMode === 'password'"
+              (click)="updateDraft('authMode', 'password')"
+            >
+              <ng-icon name="lucideServer" size="12" />
+              <span>Password</span>
+            </button>
+          </div>
+        </div>
+
+        @if (draft().authMode === 'key') {
+          <label class="env-field">
+            <span>Identity file</span>
+            <app-path-autocomplete-input
+              [value]="draft().identityFilePath || ''"
+              pathKind="either"
+              placeholder="~/.ssh/id_ed25519"
+              preferredStartDirectory="~/.ssh"
+              browseLabel="Browse"
+              (valueChange)="updateDraft('identityFilePath', $event)"
+              (browse)="pickIdentityFile()"
+            />
+          </label>
+        }
+
+        <div class="env-hint">
+          Passwords and passphrases are never stored. Password-authenticated servers prompt on every switch.
+          @if (editingCurrentServer()) {
+            <br />This server is active. Changes apply next reconnect.
+          }
+        </div>
+
+        <div class="env-editor__actions">
+          <button type="button" class="env-btn env-btn--ghost" (click)="cancelEditor()">Cancel</button>
+          <button type="button" class="env-btn env-btn--primary" [disabled]="!draftValid()" (click)="saveDraft()">
+            <ng-icon name="lucideCheck" size="12" />
+            <span>{{ editingServerId() === 'new' ? 'Save server' : 'Save changes' }}</span>
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+}

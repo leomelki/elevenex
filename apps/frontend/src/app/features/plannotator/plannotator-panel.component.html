@@ -1,0 +1,70 @@
+<!-- Minimized tab — always rendered, slides in/out -->
+<button
+  class="minimized-tab"
+  [class.minimized-tab-visible]="minimized"
+  (click)="restore.emit()"
+  [title]="'Restore ' + getModeLabel()">
+  <ng-icon name="lucideMessageSquare" class="minimized-tab-icon" />
+  <span class="minimized-tab-label">{{ getModeLabel() }}</span>
+</button>
+
+<!-- Full panel -->
+<div
+  class="plannotator-panel"
+  [class.panel-minimized]="minimized"
+  [class.panel-fullscreen]="isFullscreen()"
+  [style.width.px]="isFullscreen() ? null : panelWidth()">
+
+  <!-- Resize handle (left edge) -->
+  @if (!isFullscreen()) {
+    <div class="resize-handle" (mousedown)="onResizeStart($event)"></div>
+  }
+
+  <div class="panel-header">
+    <div class="header-left">
+      <ng-icon [name]="getModeIcon()" class="mode-icon" />
+      <span class="mode-label">{{ getModeLabel() }}</span>
+    </div>
+    <div class="header-actions">
+      <button class="btn-icon" (click)="refresh()" title="Refresh" [disabled]="isLoading">
+        <ng-icon name="lucideRefreshCw" [class.spinning]="isLoading" />
+      </button>
+      <button class="btn-icon" (click)="toggleFullscreen()" [title]="isFullscreen() ? 'Exit fullscreen' : 'Fullscreen'">
+        <ng-icon [name]="isFullscreen() ? 'lucideMinimize2' : 'lucideMaximize2'" />
+      </button>
+      @if (!isFullscreen()) {
+        <button class="btn-icon" (click)="minimize.emit()" title="Minimize">
+          <ng-icon name="lucideMinus" />
+        </button>
+      }
+      <button class="btn-icon btn-close" (click)="onClose()" title="Close">
+        <ng-icon name="lucideX" />
+      </button>
+    </div>
+  </div>
+
+  <div class="panel-content">
+    @if (isLoading) {
+      <div class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <span>Loading...</span>
+      </div>
+    }
+
+    @if (safeUrl) {
+      <iframe
+        #plannotatorIframe
+        [src]="safeUrl"
+        (load)="onIframeLoad()"
+        class="plannotator-iframe"
+        frameborder="0"
+        allowfullscreen
+      ></iframe>
+    } @else {
+      <div class="empty-state">
+        <ng-icon name="lucideFileText" class="empty-icon" />
+        <p>Waiting for Plannotator...</p>
+      </div>
+    }
+  </div>
+</div>

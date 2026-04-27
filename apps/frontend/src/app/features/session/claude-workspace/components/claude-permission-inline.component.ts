@@ -1,0 +1,537 @@
+import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { ClaudePermissionApproval, ClaudePermissionRequest } from '@/shared/models/claude-runtime.model';
+import { MarkdownPipe } from '../pipes/markdown.pipe';
+import { DiffSegment, normalizeToolName as normalizeToolNameForUi, simpleLineDiff } from '../util/tool-format';
+
+interface AskOption {
+  label: string;
+  description?: string;
+  preview?: string;
+}
+
+interface AskQuestion {
+  question: string;
+  header?: string;
+  options: AskOption[];
+  multiSelect?: boolean;
+}
+
+@Component({
+  selector: 'cw-permission-inline',
+  standalone: true,
+  imports: [CommonModule, FormsModule, MarkdownPipe],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <div class="cw-perm" [attr.data-kind]="kind()">
+      @switch (kind()) {
+        @case ('ask_user_question') {
+          <div class="cw-perm__copy">
+            <strong>{{ request().title || 'Claude needs your input' }}</strong>
+            <span class="cw-perm__desc">{{ request().description || 'Choose an option for each question.' }}</span>
+          </div>
+
+          <div class="cw-ask">
+            @for (question of questions(); track question.question) {
+              <section class="cw-ask__question">
+                <div class="cw-ask__head">
+                  @if (question.header) {
+                    <span class="cw-ask__chip">{{ question.header }}</span>
+                  }
+                  <strong>{{ question.question }}</strong>
+                </div>
+
+                <div class="cw-ask__options">
+                  @for (option of question.options; track option.label) {
+                    <label class="cw-ask__option" [class.cw-ask__option--selected]="isSelected(question, option.label)">
+                      <input
+                        [type]="question.multiSelect ? 'checkbox' : 'radio'"
+                        [name]="question.question"
+                        [checked]="isSelected(question, option.label)"
+                        (change)="toggleOption(question, option.label, $any($event.target).checked)"
+                      />
+                      <span class="cw-ask__option-body">
+                        <span class="cw-ask__option-label">{{ option.label }}</span>
+                        @if (option.description) {
+                          <span class="cw-ask__option-desc">{{ option.description }}</span>
+                        }
+                      </span>
+                    </label>
+                  }
+
+                  <label class="cw-ask__option" [class.cw-ask__option--selected]="isOtherSelected(question)">
+                    <input
+                      [type]="question.multiSelect ? 'checkbox' : 'radio'"
+                      [name]="question.question"
+                      [checked]="isOtherSelected(question)"
+                      (change)="toggleOther(question, $any($event.target).checked)"
+                    />
+                    <span class="cw-ask__option-body">
+                      <span class="cw-ask__option-label">Other</span>
+                      <span class="cw-ask__option-desc">Provide a custom answer.</span>
+                    </span>
+                  </label>
+
+                  @if (isOtherSelected(question)) {
+                    <textarea
+                      class="cw-ask__other"
+                      [ngModel]="otherAnswers()[question.question] || ''"
+                      (ngModelChange)="setOtherAnswer(question.question, $event)"
+                      placeholder="Type your answer"
+                    ></textarea>
+                  }
+                </div>
+
+                @if (selectedPreview(question); as preview) {
+                  <div class="cw-ask__preview" [innerHTML]="preview | cwMarkdown"></div>
+                }
+              </section>
+            }
+          </div>
+
+          <div class="cw-perm__actions">
+            <button type="button" class="cw-perm__btn cw-perm__btn--deny" (click)="deny.emit()">Decline</button>
+            <button
+              type="button"
+              class="cw-perm__btn cw-perm__btn--primary"
+              [disabled]="!canSubmitQuestions()"
+              (click)="submitQuestions()"
+            >
+              Submit answers
+            </button>
+          </div>
+        }
+        @case ('enter_plan_mode') {
+          <div class="cw-perm__copy">
+            <strong>{{ request().title || 'Enter plan mode?' }}</strong>
+            <span class="cw-perm__desc">
+              Claude will stay read-only, explore the codebase, and prepare an implementation plan before editing.
+            </span>
+          </div>
+          <div class="cw-perm__actions">
+            <button type="button" class="cw-perm__btn cw-perm__btn--deny" (click)="deny.emit()">Not now</button>
+            <button type="button" class="cw-perm__btn cw-perm__btn--primary" (click)="approve.emit({ remember: false })">
+              Start planning
+            </button>
+          </div>
+        }
+        @case ('exit_plan_mode') {
+          <div class="cw-perm__copy">
+            <strong>{{ request().title || 'Approve plan?' }}</strong>
+            <span class="cw-perm__desc">
+              Review Claude’s implementation plan before leaving plan mode.
+            </span>
+            @if (planPath(); as path) {
+              <span class="cw-perm__path">{{ path }}</span>
+            }
+          </div>
+
+          @if (planContent(); as plan) {
+            <div class="cw-plan" [innerHTML]="plan | cwMarkdown"></div>
+          }
+
+          <div class="cw-perm__actions">
+            <button type="button" class="cw-perm__btn cw-perm__btn--deny" (click)="deny.emit()">Keep planning</button>
+            <button type="button" class="cw-perm__btn cw-perm__btn--primary" (click)="approve.emit({ remember: false })">
+              Approve plan
+            </button>
+          </div>
+        }
+        @default {
+          <div class="cw-perm__copy">
+            <strong>{{ request().title || 'Needs your approval' }}</strong>
+            @if (request().blockedPath) {
+              <span class="cw-perm__path">{{ request().blockedPath }}</span>
+            } @else if (request().description) {
+              <span class="cw-perm__desc">{{ request().description }}</span>
+            }
+          </div>
+          @if (permDiffSegments().length) {
+            <pre class="cw-perm__diff">@for (seg of permDiffSegments(); track $index) {<span [class]="'cw-diff-' + seg.type">{{ permDiffPrefix(seg.type) }}{{ seg.text }}
+</span>}</pre>
+          }
+          @if (permWriteContent()) {
+            <pre class="cw-perm__file">{{ permWriteContent() }}</pre>
+          }
+          @if (permBashCommand()) {
+            <pre class="cw-perm__cmd">$ {{ permBashCommand() }}</pre>
+          }
+          <div class="cw-perm__actions">
+            <button type="button" class="cw-perm__btn cw-perm__btn--deny" (click)="deny.emit()">Deny</button>
+            <button type="button" class="cw-perm__btn" (click)="approve.emit({ remember: false })">Allow once</button>
+            <button type="button" class="cw-perm__btn cw-perm__btn--primary" (click)="approve.emit({ remember: true })">
+              Always
+            </button>
+          </div>
+        }
+      }
+    </div>
+  `,
+  styles: [
+    `
+      :host {
+        display: block;
+      }
+      .cw-perm {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        border-top: 1px solid color-mix(in oklab, #f59e0b 30%, var(--border));
+        background: color-mix(in oklab, #f59e0b 7%, transparent);
+        font-size: 0.75rem;
+      }
+      .cw-perm__copy {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1875rem;
+        min-width: 0;
+      }
+      .cw-perm__path {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--muted-foreground);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .cw-perm__desc {
+        color: var(--muted-foreground);
+      }
+      .cw-perm__diff,
+      .cw-perm__file,
+      .cw-perm__cmd {
+        margin: 0;
+        padding: 0.5rem 0.625rem;
+        border-radius: 0.375rem;
+        border: 1px solid var(--border);
+        background: var(--background);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.6875rem;
+        line-height: 1.5;
+        overflow-x: auto;
+        max-height: 14rem;
+        overflow-y: auto;
+        white-space: pre;
+      }
+      .cw-perm__diff .cw-diff-del {
+        color: #ef4444;
+        background: color-mix(in oklab, #ef4444 10%, transparent);
+      }
+      .cw-perm__diff .cw-diff-add {
+        color: #22c55e;
+        background: color-mix(in oklab, #22c55e 10%, transparent);
+      }
+      .cw-perm__diff .cw-diff-context {
+        color: var(--muted-foreground);
+      }
+      .cw-perm__actions {
+        display: flex;
+        gap: 0.375rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .cw-perm__btn {
+        padding: 0.375rem 0.75rem;
+        border-radius: 0.375rem;
+        border: 1px solid var(--border);
+        background: var(--background);
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+      .cw-perm__btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .cw-perm__btn:hover:not(:disabled) {
+        background: color-mix(in oklab, var(--foreground) 5%, var(--background));
+      }
+      .cw-perm__btn--primary {
+        background: var(--primary);
+        color: var(--primary-foreground);
+        border-color: var(--primary);
+      }
+      .cw-perm__btn--primary:hover:not(:disabled) {
+        opacity: 0.92;
+      }
+      .cw-perm__btn--deny {
+        color: var(--destructive);
+        border-color: color-mix(in oklab, var(--destructive) 40%, var(--border));
+      }
+      .cw-ask {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      .cw-ask__question {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.625rem;
+        border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+        border-radius: 0.5rem;
+        background: color-mix(in oklab, var(--card) 92%, transparent);
+      }
+      .cw-ask__head {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        flex-wrap: wrap;
+      }
+      .cw-ask__chip {
+        padding: 0.125rem 0.375rem;
+        border-radius: 999px;
+        background: color-mix(in oklab, var(--foreground) 6%, transparent);
+        color: var(--muted-foreground);
+        font-size: 0.6875rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .cw-ask__options {
+        display: grid;
+        gap: 0.375rem;
+      }
+      .cw-ask__option {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.5rem;
+        align-items: flex-start;
+        padding: 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        background: var(--background);
+        cursor: pointer;
+      }
+      .cw-ask__option--selected {
+        border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+        background: color-mix(in oklab, var(--primary) 7%, var(--background));
+      }
+      .cw-ask__option-body {
+        display: flex;
+        flex-direction: column;
+        gap: 0.125rem;
+      }
+      .cw-ask__option-label {
+        font-size: 0.8125rem;
+        font-weight: 600;
+      }
+      .cw-ask__option-desc {
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+        line-height: 1.45;
+      }
+      .cw-ask__other {
+        min-height: 4.5rem;
+        padding: 0.5rem 0.625rem;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        background: var(--background);
+        color: inherit;
+        font: inherit;
+        resize: vertical;
+      }
+      .cw-ask__preview,
+      .cw-plan {
+        padding: 0.625rem 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--border);
+        background: color-mix(in oklab, var(--background) 92%, transparent);
+        font-size: 0.8125rem;
+        line-height: 1.6;
+      }
+      .cw-ask__preview {
+        max-height: 18rem;
+        overflow: auto;
+      }
+      .cw-plan {
+        max-height: 22rem;
+        overflow: auto;
+      }
+      .cw-ask__preview :first-child,
+      .cw-plan :first-child {
+        margin-top: 0;
+      }
+      .cw-ask__preview :last-child,
+      .cw-plan :last-child {
+        margin-bottom: 0;
+      }
+    `,
+  ],
+})
+export class ClaudePermissionInlineComponent {
+  readonly request = input.required<ClaudePermissionRequest>();
+  readonly approve = output<ClaudePermissionApproval>();
+  readonly deny = output<void>();
+
+  readonly kind = computed<'generic' | 'ask_user_question' | 'enter_plan_mode' | 'exit_plan_mode'>(() => {
+    const name = normalizeToolName(this.request().toolName);
+    if (name === 'askuserquestion') return 'ask_user_question';
+    if (name === 'enterplanmode') return 'enter_plan_mode';
+    if (name === 'exitplanmode') return 'exit_plan_mode';
+    return 'generic';
+  });
+
+  readonly permToolKind = computed<string>(() => normalizeToolName(this.request().toolName));
+
+  readonly permDiffSegments = computed<DiffSegment[]>(() => {
+    if (this.kind() !== 'generic') return [];
+    const name = this.permToolKind();
+    if (name !== 'edit' && name !== 'multiedit' && name !== 'fileedit' && name !== 'fileedittool') return [];
+    const data = asRecord(this.request().input);
+    const oldStr = typeof data['old_string'] === 'string' ? data['old_string'] : '';
+    const newStr = typeof data['new_string'] === 'string' ? data['new_string'] : '';
+    if (!oldStr && !newStr) return [];
+    return simpleLineDiff(oldStr, newStr);
+  });
+
+  readonly permWriteContent = computed<string>(() => {
+    if (this.kind() !== 'generic') return '';
+    const name = this.permToolKind();
+    if (name !== 'write' && name !== 'filewrite' && name !== 'filewritetool') return '';
+    const data = asRecord(this.request().input);
+    return typeof data['content'] === 'string' ? data['content'] : '';
+  });
+
+  readonly permBashCommand = computed<string>(() => {
+    if (this.kind() !== 'generic') return '';
+    const name = this.permToolKind();
+    if (name !== 'bash' && name !== 'powershell') return '';
+    const data = asRecord(this.request().input);
+    return typeof data['command'] === 'string' ? String(data['command']).trim() : '';
+  });
+
+  readonly questions = computed<AskQuestion[]>(() => {
+    if (this.kind() !== 'ask_user_question') return [];
+    const input = asRecord(this.request().input);
+    return Array.isArray(input['questions']) ? (input['questions'] as AskQuestion[]) : [];
+  });
+
+  readonly planContent = computed(() => {
+    const input = asRecord(this.request().input);
+    return typeof input['plan'] === 'string' ? input['plan'] : '';
+  });
+
+  readonly planPath = computed(() => {
+    const input = asRecord(this.request().input);
+    return typeof input['planFilePath'] === 'string' ? input['planFilePath'] : '';
+  });
+
+  readonly selectedAnswers = signal<Record<string, string[]>>({});
+  readonly otherAnswers = signal<Record<string, string>>({});
+
+  readonly canSubmitQuestions = computed(() =>
+    this.questions().every((question) => {
+      const selections = this.selectedAnswers()[question.question] ?? [];
+      if (selections.length === 0) return false;
+      if (selections.includes('__other__')) {
+        return !!this.otherAnswers()[question.question]?.trim();
+      }
+      return true;
+    }),
+  );
+
+  private lastRequestId = '';
+
+  permDiffPrefix(type: 'context' | 'add' | 'del'): string {
+    if (type === 'add') return '+ ';
+    if (type === 'del') return '- ';
+    return '  ';
+  }
+
+  constructor() {
+    effect(() => {
+      const requestId = this.request().requestId;
+      if (requestId === this.lastRequestId) return;
+      this.lastRequestId = requestId;
+      this.selectedAnswers.set({});
+      this.otherAnswers.set({});
+    });
+  }
+
+  isSelected(question: AskQuestion, label: string): boolean {
+    return (this.selectedAnswers()[question.question] ?? []).includes(label);
+  }
+
+  isOtherSelected(question: AskQuestion): boolean {
+    return (this.selectedAnswers()[question.question] ?? []).includes('__other__');
+  }
+
+  toggleOption(question: AskQuestion, label: string, checked: boolean): void {
+    this.selectedAnswers.update((current) => ({
+      ...current,
+      [question.question]: nextSelections(
+        current[question.question] ?? [],
+        label,
+        checked,
+        !!question.multiSelect,
+      ),
+    }));
+  }
+
+  toggleOther(question: AskQuestion, checked: boolean): void {
+    this.selectedAnswers.update((current) => ({
+      ...current,
+      [question.question]: nextSelections(
+        current[question.question] ?? [],
+        '__other__',
+        checked,
+        !!question.multiSelect,
+      ),
+    }));
+  }
+
+  setOtherAnswer(questionText: string, value: string): void {
+    this.otherAnswers.update((current) => ({ ...current, [questionText]: value }));
+  }
+
+  selectedPreview(question: AskQuestion): string {
+    if (question.multiSelect) return '';
+    const selected = (this.selectedAnswers()[question.question] ?? []).find((value) => value !== '__other__');
+    if (!selected) return '';
+    return question.options.find((option) => option.label === selected)?.preview ?? '';
+  }
+
+  submitQuestions(): void {
+    if (!this.canSubmitQuestions()) return;
+    const answers = Object.fromEntries(
+      this.questions().map((question) => [question.question, this.serializeAnswer(question)]),
+    );
+    this.approve.emit({
+      remember: false,
+      content: { answers },
+    });
+  }
+
+  private serializeAnswer(question: AskQuestion): string {
+    const selections = this.selectedAnswers()[question.question] ?? [];
+    const mapped = selections.map((selection) =>
+      selection === '__other__' ? (this.otherAnswers()[question.question] ?? '').trim() : selection,
+    );
+    return mapped.filter(Boolean).join(', ');
+  }
+}
+
+function normalizeToolName(name: string | undefined): string {
+  return normalizeToolNameForUi(name ?? '');
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function nextSelections(
+  current: string[],
+  value: string,
+  checked: boolean,
+  multiSelect: boolean,
+): string[] {
+  if (!multiSelect) {
+    return checked ? [value] : [];
+  }
+  const without = current.filter((entry) => entry !== value);
+  return checked ? [...without, value] : without;
+}

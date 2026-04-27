@@ -1,0 +1,16 @@
+node_modules/
+dist/
+apps/electron/.stage/
+.angular/
+.env
+*.local
+.planning/
+*.db
+*.db-shm
+*.db-wal
+*.ts.map
+vscode-web-dist/
+vscode-filesystem-provider/test/out
+apps/backend/bundle/
+dev
+.DS_Store

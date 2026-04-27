@@ -1,0 +1,12 @@
+dist/
+node_modules/
+.vscode-test/
+*.vsix
+src/**/*.js
+src/**/*.d.ts
+src/**/*.js.map
+test/**/*.js
+test/**/*.d.ts
+test/**/*.js.map
+test/out/
+package-lock.json
