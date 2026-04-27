@@ -86,4 +86,65 @@ describe('RemoteInstallFlowService', () => {
     expect(result.localPort).toBe(4310);
     expect(service.state()).toBeNull();
   });
+
+  it('closes the active installer session when a later ensure-ready call resolves the flow', async () => {
+    remoteServerApi.ensureReady
+      .mockResolvedValueOnce({
+        status: 'waiting-for-user',
+        installPhase: 'missing-prereqs',
+        installStatus: 'missing-prereqs',
+        remotePlatform: 'linux',
+        remoteArch: 'x64',
+        missingDependencies: ['tmux'],
+        message: 'Install tmux first.',
+        localPort: null,
+        sessionId: 77,
+        osRelease: { ID: 'ubuntu' },
+        suggestedCommands: ['sudo apt install -y tmux'],
+        version: 'abc123',
+      })
+      .mockResolvedValueOnce({
+        status: 'ready',
+        installPhase: 'ready',
+        installStatus: 'available',
+        remotePlatform: 'linux',
+        remoteArch: 'x64',
+        missingDependencies: [],
+        message: '',
+        localPort: 4310,
+        sessionId: null,
+        osRelease: { ID: 'ubuntu' },
+        suggestedCommands: [],
+        version: 'abc123',
+      });
+
+    const service = TestBed.inject(RemoteInstallFlowService);
+    const pending = service.ensureReady({
+      id: 19,
+      sshHost: 'example.com',
+      sshPort: 22,
+      bindAddress: '127.0.0.1',
+      localPort: 4310,
+      remoteHost: '127.0.0.1',
+      remotePort: 11111,
+    });
+
+    await Promise.resolve();
+    expect(service.state()?.sessionId).toBe(77);
+
+    const result = await service.ensureReady({
+      id: 19,
+      sshHost: 'example.com',
+      sshPort: 22,
+      bindAddress: '127.0.0.1',
+      localPort: 4310,
+      remoteHost: '127.0.0.1',
+      remotePort: 11111,
+    });
+
+    expect(result.status).toBe('ready');
+    expect(await pending).toEqual(result);
+    expect(service.state()).toBeNull();
+    expect(remoteServerApi.closeSession).toHaveBeenCalledWith(77);
+  });
 });

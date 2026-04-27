@@ -148,9 +148,13 @@ export class RemoteInstallFlowService {
     result: ElectronRemoteServerEnsureReadyResult,
   ): Promise<ElectronRemoteServerEnsureReadyResult> {
     if (result.status !== 'waiting-for-user' || !result.sessionId) {
+      const currentSessionId = this._state()?.sessionId ?? null;
       const resolver = this.pendingResolver;
       this.pendingResolver = null;
       this._state.set(null);
+      if (currentSessionId !== null) {
+        void getElectronRemoteServerApi()?.closeSession(currentSessionId).catch(() => undefined);
+      }
       resolver?.(result);
       return result;
     }

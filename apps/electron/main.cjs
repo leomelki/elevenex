@@ -1166,6 +1166,16 @@ function destroyRemoteInstallerSession(sessionId) {
   emitRemoteInstallerEvent(sessionId, { type: 'closed' });
 }
 
+function destroyRemoteInstallerSessionForServer(serverId) {
+  const existing = Array.from(remoteInstallerSessions.values())
+    .find((session) => session.serverId === serverId);
+  if (!existing) {
+    return;
+  }
+
+  destroyRemoteInstallerSession(existing.id);
+}
+
 function createRemoteInstallerSession(forward, preflight) {
   const existing = Array.from(remoteInstallerSessions.values()).find((session) => session.serverId === forward.id);
   if (existing) {
@@ -2883,7 +2893,11 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (_event, payload) =>
     throw new Error('SSH host is required');
   }
 
-  return ensureRemoteServerReady(forward);
+  const result = await ensureRemoteServerReady(forward);
+  if (result.status === 'ready' || result.status === 'error' || result.status === 'unsupported') {
+    destroyRemoteInstallerSessionForServer(forward.id);
+  }
+  return result;
 });
 
 ipcMain.handle('elevenex-remote-server:recheck', async (_event, payload) => {
