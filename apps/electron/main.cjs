@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, session, shell } = require('electron');
-const { chmodSync, cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('fs');
+const { chmodSync, cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
@@ -506,6 +506,11 @@ function ensureEmbeddedBackendExtracted() {
 
   const destinationPath = path.join(runtimeRoot, 'backend');
   cpSync(sourcePath, destinationPath, { recursive: true });
+
+  const renamedModules = path.join(destinationPath, '_node_modules');
+  if (existsSync(renamedModules)) {
+    renameSync(renamedModules, path.join(destinationPath, 'node_modules'));
+  }
 
   if (process.platform === 'darwin') {
     spawnSync('xattr', ['-dr', 'com.apple.quarantine', runtimeRoot], { stdio: 'ignore' });
