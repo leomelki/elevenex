@@ -814,6 +814,117 @@ describe('ClaudeRuntimeService', () => {
     ]);
   });
 
+  it('reuses the streamed text item when finalized assistant content omits a prior thinking block', async () => {
+    (service as any).activeRuns.set(7, {
+      query: { close: jest.fn() },
+      permissionRequests: new Map(),
+      userInputRequests: new Map(),
+      partialAssistantItems: new Map(),
+      partialThinkingItems: new Map(),
+      currentStreamMessageId: null,
+    });
+
+    await (service as any).handleSdkMessage(7, {
+      type: 'stream_event',
+      uuid: 'wrap-think-1',
+      session_id: 'claude-session-1',
+      event: {
+        type: 'message_start',
+        message: {
+          id: 'assistant-msg-think-first',
+        },
+      },
+    });
+
+    await (service as any).handleSdkMessage(7, {
+      type: 'stream_event',
+      uuid: 'wrap-think-2',
+      session_id: 'claude-session-1',
+      event: {
+        type: 'content_block_start',
+        index: 0,
+        content_block: {
+          type: 'thinking',
+          thinking: '',
+        },
+      },
+    });
+
+    await (service as any).handleSdkMessage(7, {
+      type: 'stream_event',
+      uuid: 'wrap-think-3',
+      session_id: 'claude-session-1',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: {
+          type: 'thinking_delta',
+          thinking: 'Reasoning...',
+        },
+      },
+    });
+
+    await (service as any).handleSdkMessage(7, {
+      type: 'stream_event',
+      uuid: 'wrap-think-4',
+      session_id: 'claude-session-1',
+      event: {
+        type: 'content_block_start',
+        index: 1,
+        content_block: {
+          type: 'text',
+          text: '',
+        },
+      },
+    });
+
+    await (service as any).handleSdkMessage(7, {
+      type: 'stream_event',
+      uuid: 'wrap-think-5',
+      session_id: 'claude-session-1',
+      event: {
+        type: 'content_block_delta',
+        index: 1,
+        delta: {
+          type: 'text_delta',
+          text: 'Final answer',
+        },
+      },
+    });
+
+    await (service as any).handleSdkMessage(7, {
+      type: 'assistant',
+      uuid: 'final-think-wrapper',
+      session_id: 'claude-session-1',
+      message: {
+        id: 'assistant-msg-think-first',
+        content: [{ type: 'text', text: 'Final answer' }],
+      },
+    });
+
+    const state = await service.getRuntimeState(7);
+    const assistantItems = state.liveItems.filter((item) => item.kind === 'assistant');
+    const thinkingItems = state.liveItems.filter((item) => item.kind === 'thinking');
+
+    expect(assistantItems).toHaveLength(1);
+    expect(assistantItems[0]).toEqual(
+      expect.objectContaining({
+        id: 'assistant-msg-think-first:1',
+        content: 'Final answer',
+        sourceMessageId: 'assistant-msg-think-first',
+      }),
+    );
+    expect(thinkingItems).toHaveLength(1);
+    expect(thinkingItems[0]).toEqual(
+      expect.objectContaining({
+        id: 'assistant-msg-think-first:0',
+        content: 'Reasoning...',
+        sourceMessageId: 'assistant-msg-think-first',
+      }),
+    );
+    expect((service as any).activeRuns.get(7).partialAssistantItems.size).toBe(0);
+  });
+
   it('uses the SDK-managed Claude CLI by default when submitting prompts', async () => {
     (query as jest.Mock).mockReturnValue({
       supportedModels: jest.fn().mockResolvedValue([]),

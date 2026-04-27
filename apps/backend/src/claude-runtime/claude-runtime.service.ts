@@ -1112,6 +1112,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           id: blockKey,
           kind: 'assistant',
           content: '',
+          sourceMessageId: streamMessageId,
           timestamp: receivedAt,
           receivedAt,
         };
@@ -1122,6 +1123,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           id: blockKey,
           kind: 'thinking',
           content: '',
+          sourceMessageId: streamMessageId,
           timestamp: receivedAt,
           receivedAt,
         };
@@ -1184,13 +1186,22 @@ export class ClaudeRuntimeService extends EventEmitter {
     const run = this.activeRuns.get(sessionId);
     const receivedAt = this.resolveMessageTimestamp(message);
     const streamMessageId = message.message.id ?? run?.currentStreamMessageId ?? message.uuid;
+    let assistantPartOrdinal = 0;
+    let thinkingPartOrdinal = 0;
     for (const [partIndex, part] of (
       content as Array<Record<string, any>>
     ).entries()) {
       if (part.type === 'text' && typeof part.text === 'string') {
-        const partialId = run?.partialAssistantItems.get(
-          `${streamMessageId}:${partIndex}`,
+        const partialKey = this.resolvePartialContentBlockKey(
+          run,
+          'assistant',
+          streamMessageId,
+          partIndex,
+          assistantPartOrdinal,
         );
+        const partialId = partialKey
+          ? run?.partialAssistantItems.get(partialKey)
+          : undefined;
         if (partialId) {
           const item = this.findLiveItem(sessionId, partialId);
           if (item && item.content !== part.text) {
@@ -1199,33 +1210,42 @@ export class ClaudeRuntimeService extends EventEmitter {
               this.appendDelta(sessionId, partialId, suffix, 'message_delta');
             }
           }
-          run?.partialAssistantItems.delete(`${streamMessageId}:${partIndex}`);
+          run?.partialAssistantItems.delete(partialKey);
           this.emitEvent({
             type: 'message_complete',
             payload: { sessionId, itemId: partialId },
           });
         } else {
-        const item: ClaudeTranscriptItem = {
-          id: `${message.uuid}:text:${partIndex}`,
-          kind: 'assistant',
-          content: part.text,
-          parentToolUseId: message.parent_tool_use_id ?? undefined,
-          timestamp: receivedAt,
-          receivedAt,
-        };
+          const item: ClaudeTranscriptItem = {
+            id: `${message.uuid}:text:${partIndex}`,
+            kind: 'assistant',
+            content: part.text,
+            parentToolUseId: message.parent_tool_use_id ?? undefined,
+            sourceMessageId: streamMessageId,
+            timestamp: receivedAt,
+            receivedAt,
+          };
           this.pushItem(sessionId, item, 'message_start');
           this.emitEvent({
             type: 'message_complete',
             payload: { sessionId, itemId: item.id },
           });
         }
+        assistantPartOrdinal += 1;
       } else if (
         part.type === 'thinking' &&
         typeof part.thinking === 'string'
       ) {
-        const partialId = run?.partialThinkingItems.get(
-          `${streamMessageId}:${partIndex}`,
+        const partialKey = this.resolvePartialContentBlockKey(
+          run,
+          'thinking',
+          streamMessageId,
+          partIndex,
+          thinkingPartOrdinal,
         );
+        const partialId = partialKey
+          ? run?.partialThinkingItems.get(partialKey)
+          : undefined;
         if (partialId) {
           const item = this.findLiveItem(sessionId, partialId);
           if (item && item.content !== part.thinking) {
@@ -1234,26 +1254,28 @@ export class ClaudeRuntimeService extends EventEmitter {
               this.appendDelta(sessionId, partialId, suffix, 'thinking_delta');
             }
           }
-          run?.partialThinkingItems.delete(`${streamMessageId}:${partIndex}`);
+          run?.partialThinkingItems.delete(partialKey);
           this.emitEvent({
             type: 'thinking_complete',
             payload: { sessionId, itemId: partialId },
           });
         } else {
-        const item: ClaudeTranscriptItem = {
-          id: `${message.uuid}:thinking:${partIndex}`,
-          kind: 'thinking',
-          content: part.thinking,
-          parentToolUseId: message.parent_tool_use_id ?? undefined,
-          timestamp: receivedAt,
-          receivedAt,
-        };
+          const item: ClaudeTranscriptItem = {
+            id: `${message.uuid}:thinking:${partIndex}`,
+            kind: 'thinking',
+            content: part.thinking,
+            parentToolUseId: message.parent_tool_use_id ?? undefined,
+            sourceMessageId: streamMessageId,
+            timestamp: receivedAt,
+            receivedAt,
+          };
           this.pushItem(sessionId, item, 'thinking_start');
           this.emitEvent({
             type: 'thinking_complete',
             payload: { sessionId, itemId: item.id },
           });
         }
+        thinkingPartOrdinal += 1;
       } else if (part.type === 'tool_use') {
         const item: ClaudeTranscriptItem = {
           id: `${message.uuid}:tool:${part.id}`,
@@ -1262,6 +1284,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           parentToolUseId: message.parent_tool_use_id ?? undefined,
           toolName: part.name,
           toolInput: part.input,
+          sourceMessageId: streamMessageId,
           timestamp: receivedAt,
           receivedAt,
         };
@@ -2225,6 +2248,36 @@ export class ClaudeRuntimeService extends EventEmitter {
     return this.ensureRuntimeState(sessionId).liveItems.find(
       (item) => item.id === itemId,
     );
+  }
+
+  private resolvePartialContentBlockKey(
+    run: ActiveRunState | undefined,
+    kind: 'assistant' | 'thinking',
+    streamMessageId: string,
+    partIndex: number,
+    ordinal: number,
+  ): string | null {
+    const items = kind === 'assistant'
+      ? run?.partialAssistantItems
+      : run?.partialThinkingItems;
+    if (!items) {
+      return null;
+    }
+
+    const exactKey = `${streamMessageId}:${partIndex}`;
+    if (items.has(exactKey)) {
+      return exactKey;
+    }
+
+    const matchingKeys = [...items.keys()]
+      .filter((key) => key.startsWith(`${streamMessageId}:`))
+      .sort((left, right) => {
+        const leftIndex = Number.parseInt(left.slice(left.lastIndexOf(':') + 1), 10);
+        const rightIndex = Number.parseInt(right.slice(right.lastIndexOf(':') + 1), 10);
+        return leftIndex - rightIndex;
+      });
+
+    return matchingKeys[ordinal] ?? null;
   }
 
   private resolveSdkClaudePath(): string | null {
