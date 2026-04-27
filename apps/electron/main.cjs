@@ -94,6 +94,8 @@ const debugFrontend = process.env.ELECTRON_DEBUG_FRONTEND === '1';
 const EMBEDDED_BACKEND_READY_TIMEOUT_MS = 20000;
 const EMBEDDED_BACKEND_READY_POLL_INTERVAL_MS = 250;
 const APP_DISPLAY_NAME = 'Elevenex';
+const SHUTDOWN_FORCE_EXIT_TIMEOUT_MS = 4000;
+const CHILD_PROCESS_KILL_TIMEOUT_MS = 1500;
 
 let mainWindow = null;
 let settingsWindow = null;
@@ -107,6 +109,7 @@ let embeddedBackendRuntime = null;
 let isAppQuitting = false;
 let isReloadingMainWindow = false;
 let hasRunShutdownCleanup = false;
+let shutdownForceExitTimer = null;
 
 app.setName(APP_DISPLAY_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), APP_DISPLAY_NAME));
@@ -279,12 +282,69 @@ function closeAuxiliaryWindows() {
   }
 }
 
+function clearShutdownForceExitTimer() {
+  if (shutdownForceExitTimer) {
+    clearTimeout(shutdownForceExitTimer);
+    shutdownForceExitTimer = null;
+  }
+}
+
+function scheduleShutdownForceExit() {
+  if (shutdownForceExitTimer) {
+    return;
+  }
+
+  shutdownForceExitTimer = setTimeout(() => {
+    try {
+      closeAuxiliaryWindows();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.destroy();
+      }
+    } catch {
+      // Ignore best-effort window teardown errors.
+    }
+
+    app.exit(0);
+  }, SHUTDOWN_FORCE_EXIT_TIMEOUT_MS);
+
+  if (typeof shutdownForceExitTimer.unref === 'function') {
+    shutdownForceExitTimer.unref();
+  }
+}
+
+function terminateChildProcess(childProcess, graceMs = CHILD_PROCESS_KILL_TIMEOUT_MS) {
+  if (!childProcess || childProcess.exitCode !== null || childProcess.killed) {
+    return;
+  }
+
+  try {
+    childProcess.kill('SIGTERM');
+  } catch {
+    return;
+  }
+
+  const killTimer = setTimeout(() => {
+    if (childProcess.exitCode === null && !childProcess.killed) {
+      try {
+        childProcess.kill('SIGKILL');
+      } catch {
+        // Ignore best-effort kill errors.
+      }
+    }
+  }, graceMs);
+
+  if (typeof killTimer.unref === 'function') {
+    killTimer.unref();
+  }
+}
+
 function runShutdownCleanup() {
   if (hasRunShutdownCleanup) {
     return;
   }
 
   hasRunShutdownCleanup = true;
+  scheduleShutdownForceExit();
   closeAuxiliaryWindows();
 
   for (const browserKey of Array.from(browserViews.keys())) {
@@ -308,6 +368,7 @@ function requestAppQuit() {
   }
 
   isAppQuitting = true;
+  scheduleShutdownForceExit();
   app.quit();
 }
 
@@ -572,11 +633,7 @@ function startEmbeddedBackend(backendUrl) {
   });
 
   const ready = waitForBackendReady(backendUrl, EMBEDDED_BACKEND_READY_TIMEOUT_MS).catch((error) => {
-    try {
-      child.kill('SIGTERM');
-    } catch {
-      // Ignore shutdown errors on startup failure.
-    }
+    terminateChildProcess(child);
 
     const details = stderrBuffer.trim();
     throw new Error(details ? `${error.message}\n\n${details}` : error.message);
@@ -596,11 +653,7 @@ function stopEmbeddedBackend() {
     return;
   }
 
-  try {
-    embeddedBackendRuntime.child.kill('SIGTERM');
-  } catch {
-    // Ignore shutdown errors.
-  }
+  terminateChildProcess(embeddedBackendRuntime.child);
 }
 
 function getSettingsPath() {
@@ -951,13 +1004,7 @@ function destroyRemoteInstallerSession(sessionId) {
     return;
   }
 
-  if (existing.process && existing.process.exitCode === null && !existing.process.killed) {
-    try {
-      existing.process.kill('SIGTERM');
-    } catch {
-      // Ignore session shutdown errors.
-    }
-  }
+  terminateChildProcess(existing.process);
 
   cleanupSshArtifacts(existing);
   remoteInstallerSessions.delete(sessionId);
@@ -1479,13 +1526,17 @@ async function stopSshForwardRuntime(id) {
     };
 
     runtime.process.once('exit', cleanup);
-    runtime.process.kill('SIGTERM');
+    terminateChildProcess(runtime.process);
 
     runtime.stopTimer = setTimeout(() => {
       if (runtime.process.exitCode === null) {
-        runtime.process.kill('SIGKILL');
+        try {
+          runtime.process.kill('SIGKILL');
+        } catch {
+          // Ignore duplicate kill errors.
+        }
       }
-    }, 1500);
+    }, CHILD_PROCESS_KILL_TIMEOUT_MS);
   });
 
   return toSshRuntimeView(id, null);
@@ -2823,4 +2874,8 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   runShutdownCleanup();
+});
+
+app.on('quit', () => {
+  clearShutdownForceExitTimer();
 });
