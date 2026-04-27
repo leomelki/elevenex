@@ -83,8 +83,8 @@
         "NSNetworkVolumesUsageDescription": "Elevenex needs access to project files on network volumes.",
         "NSAppleEventsUsageDescription": "Elevenex uses Apple Events to integrate with your shell and external tools."
       },
-      "entitlements": "assets/entitlements.mac.plist",
-      "entitlementsInherit": "assets/entitlements.mac.inherit.plist"
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.inherit.plist"
     },
     "dmg": {
       "sign": false 
