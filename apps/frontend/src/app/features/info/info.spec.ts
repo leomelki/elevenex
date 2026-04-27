@@ -22,7 +22,7 @@ describe('Info', () => {
 
     expect(element.textContent).toContain('Elevenex');
     expect(element.textContent).toContain('@leomelki');
-    expect(logo?.getAttribute('src')).toBe('/11x.png');
+    expect(logo?.getAttribute('src')).toBe('11x.png');
     expect(links.some(link => link.getAttribute('href') === 'https://x.com/leomelki')).toBe(true);
     expect(links.some(link => link.getAttribute('href') === 'https://github.com/leomelki/elevenex')).toBe(true);
   });
