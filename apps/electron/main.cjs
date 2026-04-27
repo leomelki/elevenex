@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, session, shell } = require('electron');
-const { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('fs');
+const { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } = require('fs');
 const http = require('http');
 const https = require('https');
 const os = require('os');
@@ -591,6 +591,34 @@ function downloadToFile(url, destinationPath, onProgress, _redirectCount = 0) {
   });
 }
 
+const NATIVE_BINARY_EXTENSIONS = ['.node', '.dylib'];
+const NATIVE_EXECUTABLE_NAMES = ['spawn-helper'];
+
+function resignNativeBinaries(dir) {
+  if (!existsSync(dir)) {
+    return;
+  }
+
+  for (const entry of readdirSync(dir)) {
+    const fullPath = path.join(dir, entry);
+    const stats = statSync(fullPath);
+
+    if (stats.isDirectory()) {
+      resignNativeBinaries(fullPath);
+      continue;
+    }
+
+    const isNative = NATIVE_BINARY_EXTENSIONS.includes(path.extname(entry))
+      || NATIVE_EXECUTABLE_NAMES.includes(entry);
+
+    if (isNative) {
+      spawnSync('codesign', ['--sign', '-', '--force', '--timestamp=none', fullPath], {
+        stdio: 'ignore',
+      });
+    }
+  }
+}
+
 async function ensureEmbeddedBackendExtracted() {
   const embeddedBackendEntry = getEmbeddedBackendEntry();
   const runtimeRoot = getPackagedRuntimeRoot();
@@ -645,6 +673,7 @@ async function ensureEmbeddedBackendExtracted() {
 
     if (process.platform === 'darwin') {
       spawnSync('xattr', ['-dr', 'com.apple.quarantine', runtimeRoot], { stdio: 'ignore' });
+      resignNativeBinaries(path.join(runtimeRoot, 'backend', 'node_modules'));
     }
 
     if (bundledVersion) {
