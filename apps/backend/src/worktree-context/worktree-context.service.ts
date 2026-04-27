@@ -16,6 +16,7 @@ const CLAUDE_BIN = findBinary('claude') ?? 'claude';
 const MAX_CHANGED_FILES = 40;
 const MAX_COMMITS = 20;
 const MAX_DIFF_CHARS = 18_000;
+const EMPTY_SNAPSHOT_CACHE_TTL_MS = 60_000;
 const VALID_GENERATION_STATUSES = ['idle', 'generating', 'ready', 'failed'] as const;
 
 type GenerationStatus = (typeof VALID_GENERATION_STATUSES)[number];
@@ -46,10 +47,18 @@ interface BranchContextInput {
   errorMessage?: string;
 }
 
+interface CachedSnapshotEntry {
+  expiresAt: number;
+  fingerprint: string;
+  snapshot: WorktreeContextSnapshot;
+}
+
 @Injectable()
 export class WorktreeContextService {
   private readonly logger = new Logger(WorktreeContextService.name);
+  private readonly snapshotLocks = new Map<string, Promise<WorktreeContextSnapshot>>();
   private readonly generationLocks = new Map<string, Promise<WorktreeContextSnapshot>>();
+  private readonly emptySnapshotCache = new Map<string, CachedSnapshotEntry>();
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -57,24 +66,58 @@ export class WorktreeContextService {
   ) {}
 
   async getSnapshot(repoId: number, worktreePath: string): Promise<WorktreeContextSnapshot> {
+    const key = this.cacheKey(repoId, worktreePath);
+    const inFlight = this.snapshotLocks.get(key);
+    if (inFlight) {
+      this.logger.log(
+        `[worktree-context] join in-flight snapshot for ${worktreePath} (repo=${repoId})`,
+      );
+      return inFlight;
+    }
+
+    const promise = this.getSnapshotInternal(repoId, worktreePath)
+      .finally(() => {
+        this.snapshotLocks.delete(key);
+      });
+    this.snapshotLocks.set(key, promise);
+    return promise;
+  }
+
+  private async getSnapshotInternal(repoId: number, worktreePath: string): Promise<WorktreeContextSnapshot> {
     const repo = await this.getRepo(repoId);
     const existing = await this.findRecord(repoId, worktreePath);
+    const fingerprint = this.snapshotFingerprint(existing, repo.preferredContextRootRef ?? null);
 
     // Fast path: a previously generated sentence is cached. Return it without
     // running any git commands. The user can click Recompute to refresh.
     if (existing?.generationStatus === 'ready' && existing.contextSentence) {
+      this.clearEmptySnapshotCache(repoId, worktreePath);
       this.logger.log(
         `[worktree-context] snapshot fast-path for ${worktreePath} (cached sentence, skipping git)`,
       );
       return this.toCachedSnapshot(repoId, worktreePath, existing);
     }
 
-    const branchContext = await this.collectBranchContext(worktreePath,existing?.rootRef ?? null, repo.preferredContextRootRef ?? null);
+    const cachedEmptySnapshot = this.getCachedEmptySnapshot(repoId, worktreePath, fingerprint);
+    if (cachedEmptySnapshot) {
+      this.logger.log(
+        `[worktree-context] snapshot empty-cache hit for ${worktreePath} (repo=${repoId})`,
+      );
+      return cachedEmptySnapshot;
+    }
+
+    const branchContext = await this.collectBranchContext(
+      worktreePath,
+      existing?.rootRef ?? null,
+      repo.preferredContextRootRef ?? null,
+    );
     this.logger.log(
       `[worktree-context] snapshot for ${worktreePath} hasRecord=${!!existing} status=${existing?.generationStatus ?? 'none'} hasSentence=${!!existing?.contextSentence} hasChanges=${branchContext.hasChanges}`,
     );
 
-    return this.toSnapshot(repoId, worktreePath, existing, branchContext);
+    const snapshot = this.toSnapshot(repoId, worktreePath, existing, branchContext);
+    this.storeEmptySnapshotCache(repoId, worktreePath, fingerprint, snapshot);
+    return snapshot;
   }
 
   private toCachedSnapshot(
@@ -102,6 +145,7 @@ export class WorktreeContextService {
     await this.getRepo(repoId);
     const existing = await this.findRecord(repoId, worktreePath);
     const now = new Date().toISOString();
+    this.clearEmptySnapshotCache(repoId, worktreePath);
 
     await this.upsertRecord(repoId, worktreePath, {
       rootRef: this.normalizeOptionalText(rootRef),
@@ -172,6 +216,7 @@ export class WorktreeContextService {
   ): Promise<WorktreeContextSnapshot> {
     const repo = await this.getRepo(repoId);
     const existing = await this.findRecord(repoId, worktreePath);
+    this.clearEmptySnapshotCache(repoId, worktreePath);
     const requestedRootRef = options.rootRef !== undefined
       ? this.normalizeOptionalText(options.rootRef)
       : existing?.rootRef ?? null;
@@ -397,17 +442,29 @@ export class WorktreeContextService {
       to: 'HEAD',
       maxCount: MAX_COMMITS,
     });
-    const committedFilesOutput = await git.raw(['diff', '--name-only', '--find-renames', `${mergeBase}...HEAD`]);
-    const committedDiffSummary = await git.raw(['diff', '--stat', '--find-renames', `${mergeBase}...HEAD`]);
-
-    // Working tree: staged + unstaged + untracked relative to HEAD.
-    const workingDiffSummary = await git.raw(['diff', '--stat', '--find-renames', 'HEAD']);
     const workingChangedOutput = await git.raw([
       'status',
       '--porcelain=1',
       '--untracked-files=all',
       '--no-renames',
     ]);
+    if (commits.all.length === 0 && !workingChangedOutput.trim()) {
+      return {
+        rootRef: worktreeRootRef ?? repoPreferredRootRef ?? resolvedRootRef,
+        resolvedRootRef,
+        usingRepoDefaultRootRef,
+        hasChanges: false,
+        commits: [],
+        changedFiles: [],
+        diffSummary: '',
+      };
+    }
+
+    const committedFilesOutput = await git.raw(['diff', '--name-only', '--find-renames', `${mergeBase}...HEAD`]);
+    const committedDiffSummary = await git.raw(['diff', '--stat', '--find-renames', `${mergeBase}...HEAD`]);
+
+    // Working tree: staged + unstaged + untracked relative to HEAD.
+    const workingDiffSummary = await git.raw(['diff', '--stat', '--find-renames', 'HEAD']);
 
     const committedFiles = committedFilesOutput
       .split('\n')
@@ -521,6 +578,7 @@ export class WorktreeContextService {
   ) {
     const existing = await this.findRecord(repoId, worktreePath);
     const now = new Date().toISOString();
+    this.clearEmptySnapshotCache(repoId, worktreePath);
     await this.upsertRecord(repoId, worktreePath, {
       rootRef: input.rootRef,
       contextSentence: input.contextSentence,
@@ -536,6 +594,7 @@ export class WorktreeContextService {
   private async touchLastUsed(repoId: number, worktreePath: string): Promise<void> {
     const existing = await this.findRecord(repoId, worktreePath);
     if (!existing) return;
+    this.clearEmptySnapshotCache(repoId, worktreePath);
 
     await this.db
       .update(schema.worktreeContexts)
@@ -645,5 +704,61 @@ export class WorktreeContextService {
   private normalizeOptionalText(value: string | null | undefined): string | null {
     const trimmed = value?.trim();
     return trimmed ? trimmed : null;
+  }
+
+  private cacheKey(repoId: number, worktreePath: string): string {
+    return `${repoId}:${worktreePath}`;
+  }
+
+  private snapshotFingerprint(
+    record: typeof schema.worktreeContexts.$inferSelect | null,
+    repoPreferredRootRef: string | null,
+  ): string {
+    return JSON.stringify({
+      recordId: record?.id ?? null,
+      recordRootRef: record?.rootRef ?? null,
+      recordStatus: record?.generationStatus ?? null,
+      recordContext: record?.contextSentence ?? null,
+      repoPreferredRootRef,
+    });
+  }
+
+  private getCachedEmptySnapshot(
+    repoId: number,
+    worktreePath: string,
+    fingerprint: string,
+  ): WorktreeContextSnapshot | null {
+    const key = this.cacheKey(repoId, worktreePath);
+    const cached = this.emptySnapshotCache.get(key);
+    if (!cached) {
+      return null;
+    }
+    if (cached.expiresAt <= Date.now() || cached.fingerprint !== fingerprint) {
+      this.emptySnapshotCache.delete(key);
+      return null;
+    }
+    return cached.snapshot;
+  }
+
+  private storeEmptySnapshotCache(
+    repoId: number,
+    worktreePath: string,
+    fingerprint: string,
+    snapshot: WorktreeContextSnapshot,
+  ): void {
+    const key = this.cacheKey(repoId, worktreePath);
+    if (snapshot.contextSentence || snapshot.hasChanges) {
+      this.emptySnapshotCache.delete(key);
+      return;
+    }
+    this.emptySnapshotCache.set(key, {
+      expiresAt: Date.now() + EMPTY_SNAPSHOT_CACHE_TTL_MS,
+      fingerprint,
+      snapshot,
+    });
+  }
+
+  private clearEmptySnapshotCache(repoId: number, worktreePath: string): void {
+    this.emptySnapshotCache.delete(this.cacheKey(repoId, worktreePath));
   }
 }

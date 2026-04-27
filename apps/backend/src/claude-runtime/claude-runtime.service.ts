@@ -1202,7 +1202,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         const partialId = partialKey
           ? run?.partialAssistantItems.get(partialKey)
           : undefined;
-        if (partialId) {
+        if (partialId && partialKey) {
           const item = this.findLiveItem(sessionId, partialId);
           if (item && item.content !== part.text) {
             const suffix = part.text.slice(item.content?.length ?? 0);
@@ -1246,7 +1246,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         const partialId = partialKey
           ? run?.partialThinkingItems.get(partialKey)
           : undefined;
-        if (partialId) {
+        if (partialId && partialKey) {
           const item = this.findLiveItem(sessionId, partialId);
           if (item && item.content !== part.thinking) {
             const suffix = part.thinking.slice(item.content?.length ?? 0);
