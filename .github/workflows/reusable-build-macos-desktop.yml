@@ -35,20 +35,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID_EMAIL }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-            if [ -z "${{ secrets.APPLE_CERT_PASSWORD }}" ]; then
-              echo "❌ ERROR: GitHub Secrets are EMPTY! The workflow cannot see them."
-              exit 1
-            else
-              echo "✅ SUCCESS: GitHub Secrets are loaded!"
-            fi
-            if [ -z "${{ secrets.CSC_KEY_PASSWORD }}" ]; then
-              echo "❌ ERROR: CSC_KEY_PASSWORD are EMPTY! The workflow cannot see them."
-              exit 1
-            else
-              echo "✅ SUCCESS: CSC_KEY_PASSWORD is loaded, length is ${#CSC_KEY_PASSWORD} characters!"
-            fi
-            pnpm electron:package:mac
+        run: pnpm electron:package:mac
 
       - name: Rename DMG for release
         run: |
