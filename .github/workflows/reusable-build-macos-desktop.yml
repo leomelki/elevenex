@@ -27,28 +27,16 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
+      
       - name: Build, Sign, and Notarize macOS desktop package
         env:
-          CERT_B64: ${{ secrets.APPLE_CERT_BASE64 }}
-          CERT_PASS: ${{ secrets.APPLE_CERT_PASSWORD }}
           CSC_LINK: ${{ secrets.APPLE_CERT_BASE64 }}
+          CERT_PASS: ${{ secrets.APPLE_CERT_PASSWORD }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID_EMAIL }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          echo "1. Decoding Base64..."
-          echo "$CERT_B64" | base64 --decode > test_cert.p12
-          
-          echo "2. Checking file size..."
-          ls -lh test_cert.p12
-          
-          echo "3. Extracting Identities..."
-          # This will list what is actually inside the file. 
-          # We pass the password automatically so the build doesn't hang.
-          openssl pkcs12 -in test_cert.p12 -nokeys -passin pass:"$CERT_PASS" | grep "friendlyName" || echo "❌ FAILED TO UNLOCK OR EMPTY"
-          pnpm electron:package:mac
+        run: pnpm electron:package:mac
 
       - name: Rename DMG for release
         run: |

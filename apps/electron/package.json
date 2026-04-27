@@ -8,9 +8,9 @@
   "scripts": {
     "start": "electron .",
     "start:debug": "ELECTRON_DEBUG_FRONTEND=1 electron .",
-    "package": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
-    "package:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
-    "package:mac:dir": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir"
+    "package": "electron-builder",
+    "package:mac": "electron-builder --mac",
+    "package:mac:dir": "electron-builder --mac dir"
   },
   "build": {
     "appId": "fr.leomelki.elevenex",
