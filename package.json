@@ -17,13 +17,14 @@
     "electron:backend:stage": "node scripts/stage-electron-backend.js",
     "electron:backend:rebuild-natives": "node scripts/rebuild-electron-backend-natives.js",
     "electron:backend:archive": "node scripts/archive-electron-backend.js",
-    "electron:backend:prepare": "pnpm electron:backend:stage && pnpm electron:backend:rebuild-natives && node scripts/prepare-electron-backend-resources.js",
+    "electron:backend:prepare": "pnpm electron:backend:stage && pnpm electron:backend:rebuild-natives && pnpm electron:backend:archive",
     "electron:remote-runtime:stage": "node scripts/stage-remote-runtime.js",
     "electron:dev": "ELECTRON_FRONTEND_URL=http://127.0.0.1:4200 ELECTRON_BACKEND_URL=http://127.0.0.1:11111 pnpm electron:start",
     "dev:tmux": "sh scripts/dev-tmux.sh",
     "electron:start": "pnpm --dir apps/electron start",
     "electron:debug": "pnpm --dir apps/electron start:debug",
     "electron:package": "pnpm frontend:build && pnpm backend:bundle && pnpm electron:backend:prepare && pnpm --dir apps/electron package",
-    "electron:package:mac": "pnpm frontend:build && pnpm backend:bundle && pnpm electron:backend:prepare && pnpm --dir apps/electron package:mac"
+    "electron:stage-version": "node scripts/stage-version.js",
+    "electron:package:mac": "pnpm frontend:build && pnpm electron:stage-version && pnpm --dir apps/electron package:mac"
   }
 }

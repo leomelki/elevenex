@@ -58,10 +58,6 @@
     ],
     "extraResources": [
       {
-        "from": ".stage/backend",
-        "to": "backend"
-      },
-      {
         "from": ".stage/version",
         "to": "version"
       }

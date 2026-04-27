@@ -27,7 +27,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      
+
+      - name: Build backend bundle and macOS runtime tarball
+        run: pnpm backend:bundle && pnpm electron:backend:prepare
+
       - name: Build, Sign, and Notarize macOS desktop package
         env:
           CSC_LINK: ${{ secrets.APPLE_CERT_BASE64 }}
@@ -53,5 +56,22 @@ jobs:
         with:
           name: elevenex-desktop-macos-arm64
           path: dist-desktop/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Rename macOS runtime tarball for release
+        run: |
+          set -eu
+          mkdir -p dist-runtime
+          cp apps/electron/.stage/backend.tar.gz \
+             dist-runtime/elevenex-runtime-macos-arm64.tar.gz
+          shasum -a 256 dist-runtime/elevenex-runtime-macos-arm64.tar.gz \
+            > dist-runtime/elevenex-runtime-macos-arm64.tar.gz.sha256
+          ls -lh dist-runtime/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-runtime-macos-arm64
+          path: dist-runtime/*
           if-no-files-found: error
           retention-days: 30

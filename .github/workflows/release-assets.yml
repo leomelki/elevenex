@@ -58,7 +58,8 @@ jobs:
             "ref": "${{ github.ref }}",
             "targets": [
               { "key": "linux-x64",   "archive": "elevenex-runtime-linux-x64.tar.gz" },
-              { "key": "linux-arm64", "archive": "elevenex-runtime-linux-arm64.tar.gz" }
+              { "key": "linux-arm64", "archive": "elevenex-runtime-linux-arm64.tar.gz" },
+              { "key": "macos-arm64", "archive": "elevenex-runtime-macos-arm64.tar.gz" }
             ],
             "desktop": [
               { "key": "macos-arm64", "archive": "elevenex-desktop-macos-arm64.dmg" }

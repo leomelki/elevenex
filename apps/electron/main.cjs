@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, session, shell } = require('electron');
-const { chmodSync, cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } = require('fs');
+const { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('fs');
 const http = require('http');
+const https = require('https');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
@@ -95,6 +96,8 @@ const EMBEDDED_BACKEND_READY_TIMEOUT_MS = 20000;
 const EMBEDDED_BACKEND_READY_POLL_INTERVAL_MS = 250;
 const APP_DISPLAY_NAME = 'Elevenex';
 const SHUTDOWN_FORCE_EXIT_TIMEOUT_MS = 4000;
+const RUNTIME_RELEASE_BASE = process.env.ELEVENEX_RUNTIME_RELEASE_BASE
+  || 'https://github.com/leomelki/elevenex/releases/download';
 const CHILD_PROCESS_KILL_TIMEOUT_MS = 1500;
 
 let mainWindow = null;
@@ -237,8 +240,19 @@ function runtimeVersionNeedsUpdate() {
   return runtimeVersion !== bundledVersion;
 }
 
-function getEmbeddedBackendSourcePath() {
-  return path.join(process.resourcesPath, 'backend');
+function getLocalRuntimeTarget() {
+  return `${process.platform}-${process.arch}`;
+}
+
+function buildLocalRuntimeDownloadUrl(version) {
+  if (!version) {
+    return null;
+  }
+  if (!/^[a-f0-9]{7,64}$/i.test(version) && !/^v?\d+\.\d+\.\d+/.test(version)) {
+    return null;
+  }
+  const targetKey = getLocalRuntimeTarget();
+  return `${RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-runtime-${targetKey}.tar.gz`;
 }
 
 function getEmbeddedBackendRoot() {
@@ -445,21 +459,30 @@ function openInstallWindow() {
         line-height: 1.6;
         color: #cbd5e1;
       }
+      .status {
+        margin-top: 6px;
+        font-size: 12px;
+        color: #94a3b8;
+        min-height: 1.4em;
+      }
       .progress {
         position: relative;
         overflow: hidden;
-        margin-top: 18px;
+        margin-top: 12px;
         height: 6px;
         border-radius: 999px;
         background: rgba(148, 163, 184, 0.18);
       }
-      .progress::after {
-        content: "";
+      .progress-fill {
         position: absolute;
         inset: 0;
-        width: 38%;
+        width: 0%;
         border-radius: inherit;
         background: linear-gradient(90deg, #38bdf8 0%, #22c55e 100%);
+        transition: width 0.3s ease;
+      }
+      .progress.indeterminate .progress-fill {
+        width: 38%;
         animation: loading 1.1s ease-in-out infinite;
       }
       @keyframes loading {
@@ -472,8 +495,9 @@ function openInstallWindow() {
     <main class="card">
       <div class="eyebrow">Preparing Runtime</div>
       <h1>Installing Elevenex components</h1>
-      <p>Elevenex is extracting its local runtime. This happens once per version and may take a moment.</p>
-      <div class="progress" aria-hidden="true"></div>
+      <p>Elevenex is downloading and installing its local runtime. This happens once per version and may take a moment.</p>
+      <div class="status" id="status"></div>
+      <div class="progress indeterminate" id="progress"><div class="progress-fill" id="fill"></div></div>
     </main>
   </body>
 </html>`)}`);
@@ -481,7 +505,90 @@ function openInstallWindow() {
   return installWindow;
 }
 
-function ensureEmbeddedBackendExtracted() {
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function updateInstallProgress({ status, percent }) {
+  if (!installWindow || installWindow.isDestroyed()) {
+    return;
+  }
+  const js = percent != null
+    ? `document.getElementById('progress').classList.remove('indeterminate');document.getElementById('fill').style.width='${percent}%';document.getElementById('status').textContent=${JSON.stringify(status || '')};`
+    : `document.getElementById('progress').classList.add('indeterminate');document.getElementById('fill').style.width='';document.getElementById('status').textContent=${JSON.stringify(status || '')};`;
+  installWindow.webContents.executeJavaScript(js).catch(() => {});
+}
+
+const MAX_DOWNLOAD_REDIRECTS = 5;
+const PROGRESS_THROTTLE_MS = 150;
+
+function downloadToFile(url, destinationPath, onProgress, _redirectCount = 0) {
+  if (_redirectCount > MAX_DOWNLOAD_REDIRECTS) {
+    return Promise.reject(new Error(`Too many redirects downloading ${url}`));
+  }
+
+  return new Promise((resolve, reject) => {
+    mkdirSync(path.dirname(destinationPath), { recursive: true });
+    const file = createWriteStream(destinationPath);
+    let settled = false;
+
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      file.close(() => {
+        rmSync(destinationPath, { force: true });
+        reject(error);
+      });
+    };
+
+    const get = url.startsWith('https') ? https.get : http.get;
+
+    get(url, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        response.resume();
+        file.close();
+        rmSync(destinationPath, { force: true });
+        downloadToFile(response.headers.location, destinationPath, onProgress, _redirectCount + 1)
+          .then(resolve, reject);
+        return;
+      }
+
+      if (response.statusCode !== 200) {
+        response.resume();
+        fail(new Error(`Download failed (HTTP ${response.statusCode}): ${url}`));
+        return;
+      }
+
+      const totalBytes = parseInt(response.headers['content-length'], 10) || 0;
+      let receivedBytes = 0;
+      let lastProgressAt = 0;
+
+      if (onProgress && totalBytes > 0) {
+        response.on('data', (chunk) => {
+          receivedBytes += chunk.length;
+          const now = Date.now();
+          if (now - lastProgressAt >= PROGRESS_THROTTLE_MS || receivedBytes >= totalBytes) {
+            lastProgressAt = now;
+            onProgress(receivedBytes, totalBytes);
+          }
+        });
+      }
+
+      response.on('error', fail);
+      response.pipe(file);
+      file.on('finish', () => {
+        if (settled) return;
+        settled = true;
+        file.close(resolve);
+      });
+      file.on('error', fail);
+    }).on('error', fail);
+  });
+}
+
+async function ensureEmbeddedBackendExtracted() {
   const embeddedBackendEntry = getEmbeddedBackendEntry();
   const runtimeRoot = getPackagedRuntimeRoot();
   const runtimeMarkerPath = getPackagedRuntimeMarkerPath();
@@ -492,9 +599,10 @@ function ensureEmbeddedBackendExtracted() {
     return;
   }
 
-  const sourcePath = getEmbeddedBackendSourcePath();
-  if (!existsSync(sourcePath)) {
-    throw new Error(`Embedded backend not found at ${sourcePath}`);
+  const bundledVersion = getBundledVersion();
+  const downloadUrl = buildLocalRuntimeDownloadUrl(bundledVersion);
+  if (!downloadUrl) {
+    throw new Error('Cannot resolve runtime download URL — bundled version is missing.');
   }
 
   if (existsSync(runtimeRoot) && (needsVersionUpdate || !hasRuntimeMarker || !existsSync(embeddedBackendEntry))) {
@@ -504,25 +612,50 @@ function ensureEmbeddedBackendExtracted() {
   mkdirSync(runtimeRoot, { recursive: true });
   openInstallWindow();
 
-  const destinationPath = path.join(runtimeRoot, 'backend');
-  cpSync(sourcePath, destinationPath, { recursive: true });
+  const archivePath = path.join(runtimeRoot, 'runtime.tar.gz');
 
-  const renamedModules = path.join(destinationPath, '_node_modules');
-  if (existsSync(renamedModules)) {
-    renameSync(renamedModules, path.join(destinationPath, 'node_modules'));
+  try {
+    updateInstallProgress({ status: 'Downloading runtime…', percent: 0 });
+
+    await downloadToFile(downloadUrl, archivePath, (received, total) => {
+      const percent = Math.min(Math.round((received / total) * 100), 100);
+      updateInstallProgress({ status: `Downloading… ${formatBytes(received)} / ${formatBytes(total)}`, percent });
+    });
+
+    updateInstallProgress({ status: 'Extracting runtime…' });
+
+    const extracted = spawnSync('tar', ['-xzf', archivePath, '-C', runtimeRoot], {
+      stdio: 'pipe',
+    });
+
+    if (extracted.error) {
+      throw extracted.error;
+    }
+
+    if (extracted.status !== 0) {
+      throw new Error(
+        (extracted.stderr || extracted.stdout || `tar exited with code ${extracted.status ?? 'unknown'}`)
+          .toString()
+          .trim(),
+      );
+    }
+
+    if (process.platform === 'darwin') {
+      spawnSync('xattr', ['-dr', 'com.apple.quarantine', runtimeRoot], { stdio: 'ignore' });
+    }
+
+    if (bundledVersion) {
+      writeFileSync(getRuntimeVersionPath(), `${bundledVersion}\n`, 'utf8');
+    }
+
+    writeFileSync(runtimeMarkerPath, `${new Date().toISOString()}\n`, 'utf8');
+  } catch (error) {
+    rmSync(runtimeRoot, { recursive: true, force: true });
+    throw error;
+  } finally {
+    rmSync(archivePath, { force: true });
+    closeInstallWindow();
   }
-
-  if (process.platform === 'darwin') {
-    spawnSync('xattr', ['-dr', 'com.apple.quarantine', runtimeRoot], { stdio: 'ignore' });
-  }
-
-  const bundledVersion = getBundledVersion();
-  if (bundledVersion) {
-    writeFileSync(getRuntimeVersionPath(), `${bundledVersion}\n`, 'utf8');
-  }
-
-  writeFileSync(runtimeMarkerPath, `${new Date().toISOString()}\n`, 'utf8');
-  closeInstallWindow();
 }
 
 function hasExplicitBackendOverride(settings = readSettings()) {
@@ -546,7 +679,7 @@ function shouldUseEmbeddedBackend(settings = readSettings()) {
     return false;
   }
 
-  return existsSync(getEmbeddedBackendSourcePath()) || existsSync(getEmbeddedBackendEntry());
+  return getBundledVersion() !== null || existsSync(getEmbeddedBackendEntry());
 }
 
 function wait(ms) {
@@ -580,13 +713,13 @@ async function waitForBackendReady(backendUrl, timeoutMs) {
   throw new Error(`Embedded backend did not become ready within ${timeoutMs}ms`);
 }
 
-function startEmbeddedBackend(backendUrl) {
+async function startEmbeddedBackend(backendUrl) {
   if (embeddedBackendRuntime) {
     return embeddedBackendRuntime.ready;
   }
 
   const embeddedBackendRoot = getEmbeddedBackendRoot();
-  ensureEmbeddedBackendExtracted();
+  await ensureEmbeddedBackendExtracted();
   const embeddedBackendEntry = getEmbeddedBackendEntry();
 
   if (!existsSync(embeddedBackendEntry)) {
@@ -1110,9 +1243,6 @@ function toRemoteEnsureReadyResult(forward, preflight, overrides = {}) {
   };
 }
 
-const REMOTE_RUNTIME_RELEASE_BASE = process.env.ELEVENEX_RUNTIME_RELEASE_BASE
-  || 'https://github.com/leomelki/elevenex/releases/download';
-
 function buildRemoteRuntimeDownloadUrl(version, targetKey) {
   if (!version || !targetKey) {
     return null;
@@ -1120,7 +1250,7 @@ function buildRemoteRuntimeDownloadUrl(version, targetKey) {
   if (!/^[a-f0-9]{7,64}$/i.test(version) && !/^v?\d+\.\d+\.\d+/.test(version)) {
     return null;
   }
-  return `${REMOTE_RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-runtime-${targetKey}.tar.gz`;
+  return `${RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-runtime-${targetKey}.tar.gz`;
 }
 
 function tryRemoteDownload(forward, url, remoteDestination) {
