@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, session, shell } = require('electron');
-const { chmodSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('fs');
+const { chmodSync, cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
@@ -237,8 +237,8 @@ function runtimeVersionNeedsUpdate() {
   return runtimeVersion !== bundledVersion;
 }
 
-function getEmbeddedBackendArchivePath() {
-  return path.join(process.resourcesPath, 'backend.tar.gz');
+function getEmbeddedBackendSourcePath() {
+  return path.join(process.resourcesPath, 'backend');
 }
 
 function getEmbeddedBackendRoot() {
@@ -492,9 +492,9 @@ function ensureEmbeddedBackendExtracted() {
     return;
   }
 
-  const archivePath = getEmbeddedBackendArchivePath();
-  if (!existsSync(archivePath)) {
-    throw new Error(`Embedded backend archive not found at ${archivePath}`);
+  const sourcePath = getEmbeddedBackendSourcePath();
+  if (!existsSync(sourcePath)) {
+    throw new Error(`Embedded backend not found at ${sourcePath}`);
   }
 
   if (existsSync(runtimeRoot) && (needsVersionUpdate || !hasRuntimeMarker || !existsSync(embeddedBackendEntry))) {
@@ -504,23 +504,8 @@ function ensureEmbeddedBackendExtracted() {
   mkdirSync(runtimeRoot, { recursive: true });
   openInstallWindow();
 
-  const extracted = spawnSync('tar', ['-xzf', archivePath, '-C', runtimeRoot], {
-    stdio: 'pipe',
-  });
-
-  if (extracted.error) {
-    closeInstallWindow();
-    throw extracted.error;
-  }
-
-  if (extracted.status !== 0) {
-    closeInstallWindow();
-    throw new Error(
-      (extracted.stderr || extracted.stdout || `tar exited with code ${extracted.status ?? 'unknown'}`)
-        .toString()
-        .trim(),
-    );
-  }
+  const destinationPath = path.join(runtimeRoot, 'backend');
+  cpSync(sourcePath, destinationPath, { recursive: true });
 
   if (process.platform === 'darwin') {
     spawnSync('xattr', ['-dr', 'com.apple.quarantine', runtimeRoot], { stdio: 'ignore' });
@@ -556,7 +541,7 @@ function shouldUseEmbeddedBackend(settings = readSettings()) {
     return false;
   }
 
-  return existsSync(getEmbeddedBackendArchivePath()) || existsSync(getEmbeddedBackendEntry());
+  return existsSync(getEmbeddedBackendSourcePath()) || existsSync(getEmbeddedBackendEntry());
 }
 
 function wait(ms) {

@@ -58,8 +58,8 @@
     ],
     "extraResources": [
       {
-        "from": ".stage/backend.tar.gz",
-        "to": "backend.tar.gz"
+        "from": ".stage/backend",
+        "to": "backend"
       },
       {
         "from": ".stage/version",
