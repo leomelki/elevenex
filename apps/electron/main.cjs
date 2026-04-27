@@ -240,8 +240,11 @@ function runtimeVersionNeedsUpdate() {
   return runtimeVersion !== bundledVersion;
 }
 
+const PLATFORM_TARGET_NAMES = { darwin: 'macos', linux: 'linux', win32: 'windows' };
+
 function getLocalRuntimeTarget() {
-  return `${process.platform}-${process.arch}`;
+  const platformName = PLATFORM_TARGET_NAMES[process.platform] || process.platform;
+  return `${platformName}-${process.arch}`;
 }
 
 function buildLocalRuntimeDownloadUrl(version) {
