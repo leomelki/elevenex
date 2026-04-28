@@ -892,7 +892,17 @@ export class ClaudeRuntimeService extends EventEmitter {
         onElicitation,
       ),
     });
-    this.logStartupTiming(sessionId, startedAtMs, 'runtime_query_created');
+    this.logStartupTiming(sessionId, startedAtMs, 'runtime_query_created', {
+      resume:
+        Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1',
+      model: state.selectedModel ?? 'default',
+      permissionMode: state.selectedPermissionMode ?? 'default',
+      claudeBinary:
+        this.claudeCliOverride?.path
+        ?? this.resolveSdkClaudePath()
+        ?? findBinary('claude')
+        ?? 'sdk-default',
+    });
 
     this.activeRuns.set(sessionId, {
       query: runtimeQuery,
@@ -1055,7 +1065,16 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     if (run && !run.sawFirstSdkMessage) {
       run.sawFirstSdkMessage = true;
-      this.logStartupTiming(sessionId, run.startedAtMs, `first_sdk_message:${message.type}`);
+      const details =
+        message.type === 'system'
+          ? { subtype: message.subtype }
+          : undefined;
+      this.logStartupTiming(
+        sessionId,
+        run.startedAtMs,
+        `first_sdk_message:${message.type}`,
+        details,
+      );
     }
 
     await this.captureClaudeSessionId(sessionId, message);
