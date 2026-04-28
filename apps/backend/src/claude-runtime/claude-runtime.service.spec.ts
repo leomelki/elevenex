@@ -548,8 +548,14 @@ describe('ClaudeRuntimeService', () => {
       completionPromise: Promise.resolve(),
       resolveCompletion: jest.fn(),
       startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
       sawFirstSdkMessage: false,
       sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
     });
 
     await (service as any).handleSdkMessage(7, {
@@ -654,8 +660,14 @@ describe('ClaudeRuntimeService', () => {
       completionPromise: Promise.resolve(),
       resolveCompletion: jest.fn(),
       startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
       sawFirstSdkMessage: false,
       sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
     });
 
     await (service as any).handleSdkMessage(7, {
@@ -751,8 +763,14 @@ describe('ClaudeRuntimeService', () => {
       completionPromise: Promise.resolve(),
       resolveCompletion: jest.fn(),
       startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
       sawFirstSdkMessage: false,
       sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
     });
 
     await (service as any).handleSdkMessage(7, {
@@ -848,8 +866,14 @@ describe('ClaudeRuntimeService', () => {
       completionPromise: Promise.resolve(),
       resolveCompletion: jest.fn(),
       startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
       sawFirstSdkMessage: false,
       sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
     });
 
     await (service as any).handleSdkMessage(7, {
@@ -1061,6 +1085,232 @@ describe('ClaudeRuntimeService', () => {
 
     releaseIterator?.();
     await submitPromise;
+  });
+
+  it('coalesces repeated metadata refreshes for the same active run', async () => {
+    let resolveModels: ((value: unknown[]) => void) | null = null;
+    let resolveUsage:
+      ((value: {
+        model: string;
+        totalTokens: number;
+        maxTokens: number;
+        percentage: number;
+        apiUsage: undefined;
+        autoCompactThreshold: number;
+        isAutoCompactEnabled: boolean;
+        memoryFiles: never[];
+        mcpTools: never[];
+      }) => void) | null = null;
+
+    const supportedModels = jest.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveModels = resolve;
+        }),
+    );
+    const getContextUsage = jest.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUsage = resolve;
+        }),
+    );
+
+    (service as any).activeRuns.set(7, {
+      query: { supportedModels, getContextUsage, close: jest.fn() },
+      interruptRequested: false,
+      tornDown: false,
+      permissionRequests: new Map(),
+      userInputRequests: new Map(),
+      partialAssistantItems: new Map(),
+      partialThinkingItems: new Map(),
+      currentStreamMessageId: null,
+      completionPromise: Promise.resolve(),
+      resolveCompletion: jest.fn(),
+      startedAtMs: Date.now(),
+      runId: 'run-refresh',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
+      sawFirstSdkMessage: false,
+      sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
+    });
+
+    const first = (service as any).refreshRuntimeMetadata(7, { reason: 'test' });
+    const second = (service as any).refreshRuntimeMetadata(7, { reason: 'test' });
+
+    expect(supportedModels).toHaveBeenCalledTimes(1);
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+
+    resolveModels?.([]);
+    resolveUsage?.({
+      model: 'sonnet',
+      totalTokens: 0,
+      maxTokens: 0,
+      percentage: 0,
+      apiUsage: undefined,
+      autoCompactThreshold: 0,
+      isAutoCompactEnabled: false,
+      memoryFiles: [],
+      mcpTools: [],
+    });
+
+    await Promise.all([first, second]);
+  });
+
+  it('logs structured startup timing with resume diagnostics and first-visible buckets', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 7,
+      worktreePath: '/tmp/project',
+      claudeSessionId: 'claude-session-1',
+    });
+
+    const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
+    state.lastHistoryItemCount = 12;
+    state.lastHistoryLoadedAtMs = Date.now() - 500;
+    state.lastHistorySource = 'sdk';
+    state.transcriptFallbackUsed = false;
+    let step = 0;
+
+    (query as jest.Mock).mockReturnValue({
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest.fn().mockResolvedValue({
+        model: 'sonnet',
+        totalTokens: 0,
+        maxTokens: 0,
+        percentage: 0,
+        apiUsage: undefined,
+        autoCompactThreshold: 0,
+        isAutoCompactEnabled: false,
+        memoryFiles: [],
+        mcpTools: [],
+      }),
+      close: jest.fn(),
+      [Symbol.asyncIterator]: () => ({
+        next: async () => {
+          step += 1;
+          if (step === 1) {
+            return {
+              done: false,
+              value: {
+                type: 'system',
+                subtype: 'init',
+                apiKeySource: 'oauth',
+                claude_code_version: '1.2.3',
+                cwd: '/tmp/project',
+                tools: [],
+                mcp_servers: [],
+                model: 'sonnet',
+                permissionMode: 'default',
+                slash_commands: [],
+                output_style: 'default',
+                skills: [],
+                plugins: [],
+                agents: [],
+                fast_mode_state: null,
+                uuid: 'init-1',
+                session_id: 'claude-session-1',
+              },
+            };
+          }
+
+          if (step === 2) {
+            return {
+              done: false,
+              value: {
+                type: 'stream_event',
+                uuid: 'stream-1',
+                session_id: 'claude-session-1',
+                event: {
+                  type: 'message_start',
+                  message: { id: 'msg-1' },
+                },
+              },
+            };
+          }
+
+          if (step === 3) {
+            return {
+              done: false,
+              value: {
+                type: 'stream_event',
+                uuid: 'stream-2',
+                session_id: 'claude-session-1',
+                event: {
+                  type: 'content_block_start',
+                  index: 0,
+                  content_block: { type: 'text', text: '' },
+                },
+              },
+            };
+          }
+
+          if (step === 4) {
+            return {
+              done: false,
+              value: {
+                type: 'result',
+                subtype: 'success',
+                duration_ms: 10,
+                duration_api_ms: 10,
+                is_error: false,
+                num_turns: 1,
+                session_id: 'claude-session-1',
+                total_cost_usd: 0,
+                usage: {
+                  input_tokens: 0,
+                  cache_creation_input_tokens: 0,
+                  cache_read_input_tokens: 0,
+                  output_tokens: 0,
+                  server_tool_use: {
+                    web_search_requests: 0,
+                  },
+                },
+                result: 'Done',
+                stop_reason: 'end_turn',
+              },
+            };
+          }
+
+          return { done: true, value: undefined };
+        },
+      }),
+    });
+
+    await service.submitPrompt(7, 'Trace this');
+
+    const logMessages = loggerLogSpy.mock.calls.map(([message]) => String(message));
+    expect(logMessages.some((message) => message.includes('stage=submit_start'))).toBe(true);
+    expect(logMessages.some((message) => message.includes('stage=runtime_query_created'))).toBe(true);
+    expect(logMessages.some((message) => message.includes('stage=resume_diagnostics'))).toBe(true);
+    expect(logMessages.some((message) => message.includes('stage=first_sdk_message:system'))).toBe(true);
+    expect(logMessages.some((message) => message.includes('stage=pre_visible_system:init'))).toBe(true);
+    expect(logMessages.some((message) => message.includes('stage=first_visible_message_start'))).toBe(true);
+    expect(logMessages.some((message) => message.includes('preVisibleSummary'))).toBe(true);
+    expect(logMessages.some((message) => message.includes('stage=run_complete'))).toBe(true);
+  });
+
+  it('records history source and count for resumed-session diagnostics', async () => {
+    (getSessionMessages as jest.Mock).mockResolvedValue([
+      {
+        type: 'user',
+        uuid: 'user-1',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        message: {
+          content: [{ type: 'text', text: 'Hello' }],
+        },
+      },
+    ]);
+
+    const history = await service.getHistory(7);
+    const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
+
+    expect(history).toHaveLength(1);
+    expect(state.lastHistoryItemCount).toBe(1);
+    expect(state.lastHistorySource).toBe('sdk');
+    expect(state.transcriptFallbackUsed).toBe(false);
+    expect(state.lastHistoryLoadedAtMs).toEqual(expect.any(Number));
   });
 
   it('uses ELEVENEX_CLAUDE_BIN when configured', async () => {
@@ -1432,8 +1682,14 @@ describe('ClaudeRuntimeService', () => {
       completionPromise: Promise.resolve(),
       resolveCompletion: jest.fn(),
       startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
       sawFirstSdkMessage: false,
       sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
     });
     const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
     state.runPhase = 'waiting';
@@ -1486,8 +1742,14 @@ describe('ClaudeRuntimeService', () => {
       completionPromise: Promise.resolve(),
       resolveCompletion: jest.fn(),
       startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
       sawFirstSdkMessage: false,
       sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
     });
     const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
     state.runPhase = 'waiting';
@@ -1526,8 +1788,14 @@ describe('ClaudeRuntimeService', () => {
       completionPromise: Promise.resolve(),
       resolveCompletion: jest.fn(),
       startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
       sawFirstSdkMessage: false,
       sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
     };
     (service as any).activeRuns.set(7, run);
     (service as any).ensureRuntimeState(7, 'claude-session-1');

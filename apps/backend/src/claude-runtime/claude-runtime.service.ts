@@ -156,8 +156,14 @@ interface ActiveRunState {
   completionPromise: Promise<void>;
   resolveCompletion: () => void;
   startedAtMs: number;
+  runId: string;
+  queryCreatedAtMs: number;
+  firstSdkMessageAtMs: number | null;
+  firstVisibleAtMs: number | null;
   sawFirstSdkMessage: boolean;
   sawFirstVisibleItem: boolean;
+  systemSubtypesBeforeVisible: string[];
+  observedPreVisibleMarkers: Set<string>;
 }
 
 interface ClaudeTranscriptRecord {
@@ -203,6 +209,13 @@ interface RuntimeState {
   latestPromptSuggestion: ClaudePromptSuggestion | null;
   latestCompactBoundary: ClaudeCompactBoundary | null;
   latestMirrorError: ClaudeMirrorError | null;
+  metadataRefreshPromise: Promise<void> | null;
+  metadataRefreshStartedAtMs: number | null;
+  metadataRefreshCompletedAtMs: number | null;
+  lastHistoryItemCount: number | null;
+  lastHistoryLoadedAtMs: number | null;
+  lastHistorySource: 'sdk' | 'transcript' | null;
+  transcriptFallbackUsed: boolean;
 }
 
 type ClaudeSdkPackageMetadata = {
@@ -350,6 +363,8 @@ export class ClaudeRuntimeService extends EventEmitter {
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
     if (!session.claudeSessionId || session.claudeSessionId === '-1') {
+      const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+      this.recordHistorySnapshot(state, [], null);
       return [];
     }
 
@@ -360,7 +375,13 @@ export class ClaudeRuntimeService extends EventEmitter {
         dir: session.worktreePath,
       });
       if (messages.length > 0) {
-        return this.normalizeHistory(messages, interactionsByToolUseId);
+        const normalized = this.normalizeHistory(messages, interactionsByToolUseId);
+        this.recordHistorySnapshot(
+          this.ensureRuntimeState(sessionId, session.claudeSessionId),
+          normalized,
+          'sdk',
+        );
+        return normalized;
       }
     } catch (error) {
       this.logger.warn(
@@ -696,6 +717,7 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   async submitPrompt(sessionId: number, prompt: string): Promise<void> {
     const startedAtMs = Date.now();
+    const runId = randomUUID().slice(0, 8);
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt) {
       return;
@@ -706,7 +728,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const session = await this.sessionsService.findOne(sessionId);
-    this.logStartupTiming(sessionId, startedAtMs, 'session_loaded', {
+    this.logStartupTiming(sessionId, runId, startedAtMs, 'submit_start');
+    this.logStartupTiming(sessionId, runId, startedAtMs, 'session_loaded', {
       hasClaudeSessionId:
         Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1',
     });
@@ -719,11 +742,21 @@ export class ClaudeRuntimeService extends EventEmitter {
     state.sessionState = 'running';
     state.canInterrupt = true;
     await this.sessionsService.updateStatus(sessionId, 'active');
-    this.logStartupTiming(sessionId, startedAtMs, 'session_status_marked_active');
+    this.logStartupTiming(
+      sessionId,
+      runId,
+      startedAtMs,
+      'session_status_marked_active',
+    );
     await this.claudeHooksService.updateStatus(sessionId, 'running', {
       markCompletion: false,
     });
-    this.logStartupTiming(sessionId, startedAtMs, 'hook_status_marked_running');
+    this.logStartupTiming(
+      sessionId,
+      runId,
+      startedAtMs,
+      'hook_status_marked_running',
+    );
     this.emitRunState(sessionId);
 
     const canUseTool: CanUseTool = async (toolName, input, options) => {
@@ -892,9 +925,11 @@ export class ClaudeRuntimeService extends EventEmitter {
         onElicitation,
       ),
     });
-    this.logStartupTiming(sessionId, startedAtMs, 'runtime_query_created', {
+    const queryCreatedAtMs = Date.now();
+    const resume = Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1';
+    this.logStartupTiming(sessionId, runId, startedAtMs, 'runtime_query_created', {
       resume:
-        Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1',
+        resume,
       model: state.selectedModel ?? 'default',
       permissionMode: state.selectedPermissionMode ?? 'default',
       claudeBinary:
@@ -902,7 +937,26 @@ export class ClaudeRuntimeService extends EventEmitter {
         ?? this.resolveSdkClaudePath()
         ?? findBinary('claude')
         ?? 'sdk-default',
+      historyItems: state.lastHistoryItemCount,
+      historySource: state.lastHistorySource,
+      historyAgeMs:
+        state.lastHistoryLoadedAtMs == null
+          ? null
+          : startedAtMs - state.lastHistoryLoadedAtMs,
+      transcriptFallbackUsed: state.transcriptFallbackUsed,
     });
+    if (resume) {
+      this.logStartupTiming(sessionId, runId, startedAtMs, 'resume_diagnostics', {
+        hasClaudeSessionId: true,
+        historyItems: state.lastHistoryItemCount,
+        historySource: state.lastHistorySource,
+        historyAgeMs:
+          state.lastHistoryLoadedAtMs == null
+            ? null
+            : startedAtMs - state.lastHistoryLoadedAtMs,
+        transcriptFallbackUsed: state.transcriptFallbackUsed,
+      });
+    }
 
     this.activeRuns.set(sessionId, {
       query: runtimeQuery,
@@ -916,18 +970,33 @@ export class ClaudeRuntimeService extends EventEmitter {
       completionPromise,
       resolveCompletion,
       startedAtMs,
+      runId,
+      queryCreatedAtMs,
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
       sawFirstSdkMessage: false,
       sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
     });
 
     this.emitRunState(sessionId);
-    void this.refreshRuntimeMetadata(sessionId)
+    void this.refreshRuntimeMetadata(sessionId, {
+      reason: 'startup',
+      runId,
+      startedAtMs,
+    })
       .then(() => {
-        this.logStartupTiming(sessionId, startedAtMs, 'initial_metadata_refreshed');
+        this.logStartupTiming(
+          sessionId,
+          runId,
+          startedAtMs,
+          'initial_metadata_refreshed',
+        );
       })
       .catch((error) => {
         this.logger.debug(
-          `Claude startup metadata refresh failed session=${sessionId} elapsedMs=${Date.now() - startedAtMs} error=${String(error)}`,
+          `Claude startup metadata refresh failed session=${sessionId} run=${runId} elapsedMs=${Date.now() - startedAtMs} error=${String(error)}`,
         );
       })
       .finally(() => {
@@ -1065,16 +1134,22 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     if (run && !run.sawFirstSdkMessage) {
       run.sawFirstSdkMessage = true;
+      run.firstSdkMessageAtMs = Date.now();
       const details =
         message.type === 'system'
           ? { subtype: message.subtype }
           : undefined;
       this.logStartupTiming(
         sessionId,
+        run.runId,
         run.startedAtMs,
         `first_sdk_message:${message.type}`,
         details,
       );
+    }
+
+    if (run && !run.sawFirstVisibleItem) {
+      this.logPreVisibleMessage(sessionId, run, message);
     }
 
     await this.captureClaudeSessionId(sessionId, message);
@@ -2115,6 +2190,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       return;
     }
 
+    const run = this.activeRuns.get(sessionId);
     const state = this.ensureRuntimeState(sessionId);
     state.runPhase = state.lastError ? 'error' : 'idle';
     state.sessionState = 'idle';
@@ -2122,11 +2198,22 @@ export class ClaudeRuntimeService extends EventEmitter {
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.liveItems = [];
-    void this.refreshRuntimeMetadata(sessionId).finally(() => {
-      this.emitRunState(sessionId);
-      this.emitEvent({ type: 'complete', payload: { sessionId } });
-      void this.claudeHooksService.updateStatus(sessionId, 'idle');
-    });
+    if (run) {
+      this.logStartupTiming(sessionId, run.runId, run.startedAtMs, 'run_complete', {
+        hadError: Boolean(state.lastError),
+      });
+    }
+    void this.refreshRuntimeMetadata(sessionId, {
+      reason: 'finish_run',
+      runId: run?.runId,
+      startedAtMs: run?.startedAtMs,
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        this.emitRunState(sessionId);
+        this.emitEvent({ type: 'complete', payload: { sessionId } });
+        void this.claudeHooksService.updateStatus(sessionId, 'idle');
+      });
   }
 
   private finalizeInterruptedRun(sessionId: number): void {
@@ -2142,12 +2229,16 @@ export class ClaudeRuntimeService extends EventEmitter {
     state.pendingUserInputRequest = null;
     state.liveItems = [];
     state.lastError = null;
-    void this.refreshRuntimeMetadata(sessionId).finally(() => {
-      this.emitRunState(sessionId);
-      void this.claudeHooksService.updateStatus(sessionId, 'idle', {
-        markCompletion: false,
+    void this.refreshRuntimeMetadata(sessionId, {
+      reason: 'interrupt_finalize',
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        this.emitRunState(sessionId);
+        void this.claudeHooksService.updateStatus(sessionId, 'idle', {
+          markCompletion: false,
+        });
       });
-    });
   }
 
   private isIgnorableInterruptedRunError(error: unknown): boolean {
@@ -2211,6 +2302,13 @@ export class ClaudeRuntimeService extends EventEmitter {
       latestPromptSuggestion: null,
       latestCompactBoundary: null,
       latestMirrorError: null,
+      metadataRefreshPromise: null,
+      metadataRefreshStartedAtMs: null,
+      metadataRefreshCompletedAtMs: null,
+      lastHistoryItemCount: null,
+      lastHistoryLoadedAtMs: null,
+      lastHistorySource: null,
+      transcriptFallbackUsed: false,
     };
     this.runtimeStates.set(sessionId, state);
     return state;
@@ -2244,6 +2342,7 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   private logStartupTiming(
     sessionId: number,
+    runId: string,
     startedAtMs: number,
     stage: string,
     details?: Record<string, unknown>,
@@ -2251,8 +2350,97 @@ export class ClaudeRuntimeService extends EventEmitter {
     const elapsedMs = Date.now() - startedAtMs;
     const suffix = details ? ` details=${JSON.stringify(details)}` : '';
     this.logger.log(
-      `Claude startup session=${sessionId} stage=${stage} elapsedMs=${elapsedMs}${suffix}`,
+      `Claude startup session=${sessionId} run=${runId} stage=${stage} elapsedMs=${elapsedMs}${suffix}`,
     );
+  }
+
+  private logPreVisibleMessage(
+    sessionId: number,
+    run: ActiveRunState,
+    message: SDKMessage,
+  ): void {
+    if (message.type === 'system') {
+      run.systemSubtypesBeforeVisible.push(message.subtype);
+      run.observedPreVisibleMarkers.add(`system:${message.subtype}`);
+      this.logStartupTiming(
+        sessionId,
+        run.runId,
+        run.startedAtMs,
+        `pre_visible_system:${message.subtype}`,
+      );
+      return;
+    }
+
+    const marker = this.getPreVisibleMarker(message);
+    if (!marker || run.observedPreVisibleMarkers.has(marker)) {
+      return;
+    }
+
+    run.observedPreVisibleMarkers.add(marker);
+    this.logStartupTiming(
+      sessionId,
+      run.runId,
+      run.startedAtMs,
+      `pre_visible_${marker.replace(/[:]/g, '_')}`,
+    );
+  }
+
+  private getPreVisibleMarker(message: SDKMessage): string | null {
+    if (message.type === 'assistant') return 'assistant';
+    if (message.type === 'tool_progress') return 'tool_progress';
+    if (message.type === 'tool_use_summary') return 'tool_use_summary';
+    if (message.type === 'auth_status') return 'auth_status';
+    if (message.type === 'prompt_suggestion') return 'prompt_suggestion';
+    if (message.type === 'rate_limit_event') return 'rate_limit_event';
+    return null;
+  }
+
+  private summarizePreVisibleActivity(
+    run: ActiveRunState,
+  ): 'system_only' | 'tooling' | 'auth_or_mcp' | 'opaque' {
+    const markers = [...run.observedPreVisibleMarkers];
+    if (markers.length === 0) {
+      return 'opaque';
+    }
+    if (
+      markers.some((marker) =>
+        marker === 'tool_progress'
+        || marker === 'tool_use_summary'
+        || marker.startsWith('system:hook_')
+        || marker.startsWith('system:task_')
+        || marker === 'system:files_persisted'
+        || marker === 'system:memory_recall'
+      )
+    ) {
+      return 'tooling';
+    }
+    if (
+      markers.some((marker) =>
+        marker === 'auth_status'
+        || marker === 'system:auth_status'
+        || marker === 'system:plugin_install'
+        || marker === 'system:elicitation_complete'
+      )
+    ) {
+      return 'auth_or_mcp';
+    }
+    if (
+      markers.every((marker) =>
+        marker === 'assistant'
+        || marker === 'prompt_suggestion'
+        || marker === 'rate_limit_event'
+        || marker === 'system:init'
+        || marker === 'system:status'
+        || marker === 'system:session_state_changed'
+        || marker === 'system:notification'
+        || marker === 'system:api_retry'
+        || marker === 'system:compact_boundary'
+        || marker === 'system:mirror_error'
+      )
+    ) {
+      return 'system_only';
+    }
+    return 'opaque';
   }
 
   private pushItem(
@@ -2267,7 +2455,37 @@ export class ClaudeRuntimeService extends EventEmitter {
     const run = this.activeRuns.get(sessionId);
     if (run && !run.sawFirstVisibleItem) {
       run.sawFirstVisibleItem = true;
-      this.logStartupTiming(sessionId, run.startedAtMs, `first_visible_${eventType}`);
+      run.firstVisibleAtMs = Date.now();
+      const preVisibleSummary = this.summarizePreVisibleActivity(run);
+      const details: Record<string, unknown> = {
+        queryCreatedToFirstSdkMs:
+          run.firstSdkMessageAtMs == null
+            ? null
+            : run.firstSdkMessageAtMs - run.queryCreatedAtMs,
+        firstSdkToFirstVisibleMs:
+          run.firstSdkMessageAtMs == null
+            ? null
+            : run.firstVisibleAtMs - run.firstSdkMessageAtMs,
+        submitToFirstVisibleMs: run.firstVisibleAtMs - run.startedAtMs,
+        preVisibleSummary,
+        systemSubtypes: run.systemSubtypesBeforeVisible,
+      };
+      this.logStartupTiming(
+        sessionId,
+        run.runId,
+        run.startedAtMs,
+        `first_visible_${eventType}`,
+        details,
+      );
+      if (preVisibleSummary === 'opaque') {
+        this.logStartupTiming(
+          sessionId,
+          run.runId,
+          run.startedAtMs,
+          'opaque_startup_gap',
+          details,
+        );
+      }
     }
 
     const state = this.ensureRuntimeState(sessionId);
@@ -2387,6 +2605,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     canUseTool: CanUseTool,
     onElicitation: (request: ElicitationRequest) => Promise<ElicitationResult>,
   ): Options {
+    // This runtime uses short-lived SDK queries resumed by Claude session id.
+    // Keeping the last N Claude sessions truly warm would require a separate
+    // long-lived process/runtime model rather than more tuning at this boundary.
     const pathToClaudeCodeExecutable =
       this.claudeCliOverride?.path
       ?? this.resolveSdkClaudePath()
@@ -2553,7 +2774,15 @@ export class ClaudeRuntimeService extends EventEmitter {
     };
   }
 
-  private async refreshRuntimeMetadata(sessionId: number): Promise<void> {
+  private async refreshRuntimeMetadata(
+    sessionId: number,
+    options: {
+      force?: boolean;
+      reason?: string;
+      runId?: string;
+      startedAtMs?: number;
+    } = {},
+  ): Promise<void> {
     if (this.invalidatedSessions.has(sessionId)) {
       return;
     }
@@ -2563,33 +2792,73 @@ export class ClaudeRuntimeService extends EventEmitter {
       return;
     }
 
-    const startedAtMs = Date.now();
     const state = this.ensureRuntimeState(sessionId);
-    try {
-      const [models, contextUsage] = await Promise.all([
-        run.query.supportedModels(),
-        run.query.getContextUsage(),
-      ]);
-      state.availableModels = models.map((model) => this.toModelOption(model));
-      state.contextUsage = this.toContextUsage(contextUsage);
-      state.selectedModel = contextUsage.model || state.selectedModel;
-      if (state.sessionMetadata && contextUsage.model) {
-        state.sessionMetadata = {
-          ...state.sessionMetadata,
-          model: contextUsage.model,
-        };
-      }
-      this.logger.log(
-        `Claude runtime metadata refresh session=${sessionId} elapsedMs=${Date.now() - startedAtMs} models=${models.length}`,
-      );
-    } catch (error) {
+    if (state.metadataRefreshPromise) {
       this.logger.debug(
-        `Failed to refresh Claude runtime metadata for session ${sessionId} elapsedMs=${Date.now() - startedAtMs}: ${String(error)}`,
+        `Claude runtime metadata refresh coalesced session=${sessionId} reason=${options.reason ?? 'unspecified'}`,
       );
-      if (!state.availableModels.length) {
-        state.availableModels = [...FALLBACK_MODELS];
-      }
+      return state.metadataRefreshPromise;
     }
+
+    const now = Date.now();
+    if (
+      !options.force
+      && state.metadataRefreshCompletedAtMs != null
+      && now - state.metadataRefreshCompletedAtMs < 1500
+    ) {
+      this.logger.debug(
+        `Claude runtime metadata refresh skipped session=${sessionId} reason=${options.reason ?? 'unspecified'} ageMs=${now - state.metadataRefreshCompletedAtMs}`,
+      );
+      return;
+    }
+
+    const startedAtMs = now;
+    state.metadataRefreshStartedAtMs = startedAtMs;
+    if (options.runId && options.startedAtMs != null) {
+      this.logStartupTiming(
+        sessionId,
+        options.runId,
+        options.startedAtMs,
+        'metadata_refresh_started',
+        { reason: options.reason ?? 'unspecified' },
+      );
+    }
+
+    const refreshPromise = (async () => {
+      try {
+        const [models, contextUsage] = await Promise.all([
+          run.query.supportedModels(),
+          run.query.getContextUsage(),
+        ]);
+        state.availableModels = models.map((model) => this.toModelOption(model));
+        state.contextUsage = this.toContextUsage(contextUsage);
+        state.selectedModel = contextUsage.model || state.selectedModel;
+        if (state.sessionMetadata && contextUsage.model) {
+          state.sessionMetadata = {
+            ...state.sessionMetadata,
+            model: contextUsage.model,
+          };
+        }
+        state.metadataRefreshCompletedAtMs = Date.now();
+        this.logger.log(
+          `Claude runtime metadata refresh session=${sessionId} elapsedMs=${Date.now() - startedAtMs} models=${models.length} reason=${options.reason ?? 'unspecified'}`,
+        );
+      } catch (error) {
+        state.metadataRefreshCompletedAtMs = Date.now();
+        this.logger.debug(
+          `Failed to refresh Claude runtime metadata for session ${sessionId} elapsedMs=${Date.now() - startedAtMs} reason=${options.reason ?? 'unspecified'}: ${String(error)}`,
+        );
+        if (!state.availableModels.length) {
+          state.availableModels = [...FALLBACK_MODELS];
+        }
+        throw error;
+      } finally {
+        state.metadataRefreshPromise = null;
+      }
+    })();
+
+    state.metadataRefreshPromise = refreshPromise;
+    return refreshPromise;
   }
 
   private toModelOption(model: ModelInfo): ClaudeModelOption {
@@ -2860,6 +3129,17 @@ export class ClaudeRuntimeService extends EventEmitter {
     return this.normalizeHistory(messages, interactionsByToolUseId);
   }
 
+  private recordHistorySnapshot(
+    state: RuntimeState,
+    items: ClaudeTranscriptItem[],
+    source: 'sdk' | 'transcript' | null,
+  ): void {
+    state.lastHistoryItemCount = items.length;
+    state.lastHistoryLoadedAtMs = Date.now();
+    state.lastHistorySource = source;
+    state.transcriptFallbackUsed = source === 'transcript';
+  }
+
   private async loadHistoryFromTranscript(
     sessionId: number,
     worktreePath: string,
@@ -2877,10 +3157,24 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     try {
       const records = await this.loadTranscriptRecords(transcriptPath);
-      return this.normalizeTranscriptRecords(records, interactionsByToolUseId);
+      const normalized = this.normalizeTranscriptRecords(
+        records,
+        interactionsByToolUseId,
+      );
+      this.recordHistorySnapshot(
+        this.ensureRuntimeState(sessionId, claudeSessionId),
+        normalized,
+        'transcript',
+      );
+      return normalized;
     } catch (error) {
       this.logger.warn(
         `Failed to load Claude transcript fallback for session ${sessionId}: ${String(error)}`,
+      );
+      this.recordHistorySnapshot(
+        this.ensureRuntimeState(sessionId, claudeSessionId),
+        [],
+        null,
       );
       return [];
     }
@@ -3716,6 +4010,9 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     run.tornDown = true;
     run.interruptRequested = true;
+    this.logStartupTiming(sessionId, run.runId, run.startedAtMs, 'interrupt_requested', {
+      invalidateSession: Boolean(options.invalidateSession),
+    });
     if (options.invalidateSession) {
       this.invalidatedSessions.add(sessionId);
     }
