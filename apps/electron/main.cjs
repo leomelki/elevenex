@@ -2533,7 +2533,7 @@ function installMenu() {
         },
         {
           label: 'Reload App',
-          accelerator: 'CmdOrCtrl+R',
+          ...(!app.isPackaged ? { accelerator: 'CmdOrCtrl+R' } : {}),
           click: () => void reloadMainWindow(),
         },
         { type: 'separator' },
@@ -2554,7 +2554,7 @@ function installMenu() {
         },
         {
           label: 'Reload App',
-          accelerator: 'CmdOrCtrl+R',
+          ...(!app.isPackaged ? { accelerator: 'CmdOrCtrl+R' } : {}),
           click: () => void reloadMainWindow(),
         },
         { type: 'separator' },
@@ -2578,8 +2578,7 @@ function installMenu() {
     {
       label: 'View',
       submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
+        ...(!app.isPackaged ? [{ role: 'reload' }, { role: 'forceReload' }] : []),
         { role: 'toggleDevTools' },
         { type: 'separator' },
         { role: 'resetZoom' },
