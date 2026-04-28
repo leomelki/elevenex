@@ -22,6 +22,7 @@ import {
 } from './shared/runtime/electron-window-controls';
 import { OnboardingStartupService } from './shared/services/onboarding-startup.service';
 import { SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
+import { BackendLogsWebsocketService } from './shared/services/backend-logs-websocket.service';
 
 const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 420;
@@ -50,6 +51,7 @@ export class App implements OnInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly startupService = inject(OnboardingStartupService);
   private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
+  private readonly backendLogs = inject(BackendLogsWebsocketService);
   private readonly windowControls = getElectronWindowControlsApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
 
@@ -72,6 +74,8 @@ export class App implements OnInit, OnDestroy {
   private removeRouteListener: (() => void) | null = null;
 
   async ngOnInit() {
+    this.backendLogs.start();
+
     const subscription = this.router.events.subscribe((event) => {
       if (event instanceof NavigationEnd) {
         const url = event.urlAfterRedirects;

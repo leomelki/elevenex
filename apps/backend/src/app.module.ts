@@ -23,6 +23,7 @@ import { ActionsModule } from './actions/actions.module.js';
 import { GithubModule } from './github/github.module.js';
 import { ClaudeRuntimeModule } from './claude-runtime/claude-runtime.module.js';
 import { WorktreeContextModule } from './worktree-context/worktree-context.module.js';
+import { BackendLogsModule } from './backend-logs/backend-logs.module.js';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { WorktreeContextModule } from './worktree-context/worktree-context.modul
     GithubModule,
     ClaudeRuntimeModule,
     WorktreeContextModule,
+    BackendLogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
