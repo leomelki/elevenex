@@ -441,7 +441,7 @@ export class ClaudeStatusBarComponent {
     this.permissionModeChange.emit(mode);
   }
 
-  cyclePermissionMode(event: KeyboardEvent): void {
+  cyclePermissionMode(event: Event): void {
     event.preventDefault();
     const opts = this.permissionOptions();
     const current = this.permissionMode();
