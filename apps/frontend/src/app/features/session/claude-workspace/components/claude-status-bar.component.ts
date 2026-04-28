@@ -42,6 +42,7 @@ const PERMISSION_MODES: PermissionModeOption[] = [
   { id: 'default', label: 'Default', hint: 'Prompt for risky tools' },
   { id: 'plan', label: 'Plan mode', hint: 'Read-only — draft a plan before editing' },
   { id: 'acceptEdits', label: 'Accept edits', hint: 'Auto-allow file edits' },
+  { id: 'auto', label: 'Auto mode', hint: 'Continuous, autonomous execution' },
   { id: 'bypassPermissions', label: 'Bypass permissions', hint: 'Skip all prompts — danger' },
 ];
 
@@ -104,7 +105,7 @@ const PERMISSION_MODES: PermissionModeOption[] = [
         </button>
         @if (permissionOpen()) {
           <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-            @for (opt of permissionOptions; track opt.id) {
+            @for (opt of permissionOptions(); track opt.id) {
               <button
                 type="button"
                 class="cw-sb__menu-item"
@@ -385,7 +386,13 @@ export class ClaudeStatusBarComponent {
     this.menuOpen.set(next.overflow);
   }
 
-  readonly permissionOptions = PERMISSION_MODES;
+  readonly permissionOptions = computed(() => {
+    const modelId = this.selectedModel();
+    const model = modelId ? this.availableModels().find((m) => m.id === modelId) : null;
+    const supportsAuto = model?.supportsAutoMode ?? false;
+    const current = this.permissionMode();
+    return PERMISSION_MODES.filter((opt) => opt.id !== 'auto' || supportsAuto || current === 'auto');
+  });
   readonly activePermissionLabel = computed(() => {
     const mode = this.permissionMode();
     return PERMISSION_MODES.find((m) => m.id === mode)?.label ?? mode;
