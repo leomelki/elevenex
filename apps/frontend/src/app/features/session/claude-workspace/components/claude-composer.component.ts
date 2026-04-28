@@ -4,6 +4,7 @@ import {
   ElementRef,
   ViewChild,
   computed,
+  effect,
   inject,
   input,
   output,
@@ -276,6 +277,18 @@ export class ClaudeComposerComponent {
   });
 
   readonly placeholder = computed(() => this.placeholderText());
+
+  constructor() {
+    effect(() => {
+      const nextValue = this.value();
+      queueMicrotask(() => {
+        const ta = this.ta?.nativeElement;
+        if (!ta) return;
+        if (ta.value !== nextValue) ta.value = nextValue;
+        this.autoGrow(ta);
+      });
+    });
+  }
 
   onInput(e: Event): void {
     const ta = e.target as HTMLTextAreaElement;

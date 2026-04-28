@@ -4,6 +4,34 @@ import { describe, expect, it, vi } from 'vitest';
 import { ClaudeComposerComponent } from './claude-composer.component';
 
 describe('ClaudeComposerComponent', () => {
+  it('shrinks the textarea when the value is cleared programmatically', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('value', 'Line 1\nLine 2\nLine 3');
+    fixture.detectChanges();
+
+    const textarea = fixture.nativeElement.querySelector('.cw-comp__ta') as HTMLTextAreaElement;
+    let scrollHeight = 120;
+    Object.defineProperty(textarea, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+
+    fixture.componentInstance.onInput({ target: textarea } as Event);
+    expect(textarea.style.height).toBe('120px');
+
+    scrollHeight = 0;
+    fixture.componentRef.setInput('value', '');
+    fixture.detectChanges();
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+    expect(textarea.value).toBe('');
+    expect(textarea.style.height).toBe('0px');
+  });
+
   it('disables send while a permission request is pending', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeComposerComponent],
