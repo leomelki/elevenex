@@ -1,0 +1,40 @@
+<div class="plannotator-prompt-overlay">
+  <div class="plannotator-prompt-overlay__backdrop" (click)="service.dismiss()"></div>
+  <div class="plannotator-prompt-overlay__card" role="dialog" aria-modal="true" aria-labelledby="plannotator-prompt-title">
+    <div class="plannotator-prompt-overlay__icon-ring">
+      <ng-icon name="lucideSparkles" size="26" />
+    </div>
+
+    <p class="plannotator-prompt-overlay__eyebrow">Recommended</p>
+    <h2 id="plannotator-prompt-title" class="plannotator-prompt-overlay__title">Plannotator not found</h2>
+    <p class="plannotator-prompt-overlay__subtitle">
+      Plannotator is highly recommended for the best experience. Install it with:
+    </p>
+
+    <div class="plannotator-prompt-overlay__code-block">
+      <code>curl -fsSL https://plannotator.ai/install.sh | bash</code>
+    </div>
+
+    <div class="plannotator-prompt-overlay__note">
+      <ng-icon name="lucideServer" size="13" />
+      <span>If connecting via SSH, run this command on the <strong>server</strong>, not your local machine.</span>
+    </div>
+
+    <div class="plannotator-prompt-overlay__actions">
+      <button
+        class="plannotator-prompt-overlay__button plannotator-prompt-overlay__button--muted"
+        type="button"
+        (click)="service.neverShowAgain()"
+      >
+        Never show again
+      </button>
+      <button
+        class="plannotator-prompt-overlay__button plannotator-prompt-overlay__button--primary"
+        type="button"
+        (click)="service.dismiss()"
+      >
+        Dismiss
+      </button>
+    </div>
+  </div>
+</div>

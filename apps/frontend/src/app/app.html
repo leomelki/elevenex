@@ -176,3 +176,6 @@
 </div>
 <ngx-sonner-toaster position="bottom-right" />
 <app-remote-install-modal />
+@if (showPlannotatorInstallPrompt()) {
+  <app-plannotator-install-prompt />
+}

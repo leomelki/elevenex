@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { getElevenexProxyPort } from '../config/ports.js';
 import { PlannotatorRegistryService } from './plannotator-registry.service.js';
@@ -27,5 +28,15 @@ export class PlannotatorController {
       status: 'ok',
       proxyPort: getElevenexProxyPort(),
     };
+  }
+
+  @Get('installed')
+  isInstalled(): { installed: boolean } {
+    try {
+      execSync('which plannotator', { stdio: 'ignore' });
+      return { installed: true };
+    } catch {
+      return { installed: false };
+    }
   }
 }

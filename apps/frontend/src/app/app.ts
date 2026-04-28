@@ -23,6 +23,8 @@ import {
 import { OnboardingStartupService } from './shared/services/onboarding-startup.service';
 import { SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
 import { BackendLogsWebsocketService } from './shared/services/backend-logs-websocket.service';
+import { PlannotatorInstallPromptService } from './features/plannotator/plannotator-install-prompt.service';
+import { PlannotatorInstallPromptComponent } from './features/plannotator/plannotator-install-prompt.component';
 
 const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 420;
@@ -31,7 +33,7 @@ const STORAGE_KEY = 'sidebar-width';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent],
+  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, PlannotatorInstallPromptComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   viewProviders: [
@@ -52,6 +54,7 @@ export class App implements OnInit, OnDestroy {
   private readonly startupService = inject(OnboardingStartupService);
   private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private readonly backendLogs = inject(BackendLogsWebsocketService);
+  private readonly plannotatorInstallPrompt = inject(PlannotatorInstallPromptService);
   private readonly windowControls = getElectronWindowControlsApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
 
@@ -66,6 +69,7 @@ export class App implements OnInit, OnDestroy {
     this.router.url.startsWith('/onboarding') || this.router.url.startsWith('/connection-lost'),
   );
   readonly startupPortForwardPrompt = this.startupService.startupPortForwardPrompt;
+  readonly showPlannotatorInstallPrompt = this.plannotatorInstallPrompt.show;
   readonly disconnectedForwardsBanner = this.sshRuntimeRecovery.disconnectedForwardsBanner;
   readonly remoteDisconnect = this.sshRuntimeRecovery.remoteDisconnect;
   readonly remoteDisconnectRetrying = this.sshRuntimeRecovery.remoteRetrying;
@@ -75,6 +79,7 @@ export class App implements OnInit, OnDestroy {
 
   async ngOnInit() {
     this.backendLogs.start();
+    this.plannotatorInstallPrompt.initialize();
 
     const subscription = this.router.events.subscribe((event) => {
       if (event instanceof NavigationEnd) {
