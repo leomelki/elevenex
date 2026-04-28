@@ -1,5 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, forwardRef, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, forwardRef, inject, input, output, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+import hljs from 'highlight.js/lib/common';
+import DOMPurify from 'dompurify';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideBraces,
@@ -179,7 +182,16 @@ interface Todo {
               }
               @case ('write') {
                 @if (writeContent()) {
-                  <pre class="cw-tool__file">{{ writeContent() }}</pre>
+                  <pre class="cw-tool__write" [innerHTML]="writeContentHtml()"></pre>
+                  @if (writeHiddenLines() > 0) {
+                    <button type="button" class="cw-tool__write-expand" (click)="toggleWriteExpand()">
+                      @if (writeExpanded()) {
+                        Show less
+                      } @else {
+                        Show {{ writeHiddenLines() }} more {{ writeHiddenLines() === 1 ? 'line' : 'lines' }}
+                      }
+                    </button>
+                  }
                 }
               }
               @case ('task_agent') {
@@ -488,6 +500,58 @@ interface Todo {
       }
       :host-context(.dark) .cw-diff-del {
         background: color-mix(in oklab, #ef4444 25%, transparent);
+      }
+      .cw-tool__write {
+        margin: 0;
+        padding: 0.25rem 0;
+        background: color-mix(in oklab, var(--foreground) 4%, transparent);
+        border-radius: 0.375rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.75rem;
+        line-height: 1.55;
+        white-space: normal;
+        max-height: 24rem;
+        overflow: auto;
+      }
+      .cw-write__line {
+        display: grid;
+        grid-template-columns: 1.75rem 1fr;
+        background: color-mix(in oklab, #22c55e 12%, transparent);
+      }
+      :host-context(.dark) .cw-write__line {
+        background: color-mix(in oklab, #22c55e 18%, transparent);
+      }
+      .cw-write__sign {
+        user-select: none;
+        text-align: center;
+        color: color-mix(in oklab, #16a34a 90%, var(--muted-foreground));
+        background: color-mix(in oklab, #22c55e 22%, transparent);
+      }
+      :host-context(.dark) .cw-write__sign {
+        background: color-mix(in oklab, #22c55e 28%, transparent);
+      }
+      .cw-write__code {
+        padding: 0 0.5rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .cw-tool__write-expand {
+        align-self: flex-start;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.2rem 0.55rem;
+        background: transparent;
+        border: 1px dashed var(--border);
+        border-radius: 0.375rem;
+        cursor: pointer;
+        color: var(--muted-foreground);
+        font-size: 0.6875rem;
+        font-family: inherit;
+      }
+      .cw-tool__write-expand:hover {
+        color: var(--foreground);
+        border-color: color-mix(in oklab, var(--foreground) 25%, var(--border));
       }
       .cw-tool__kv {
         display: grid;
@@ -947,6 +1011,60 @@ export class ClaudeToolCallComponent {
     return data?.content ?? '';
   });
 
+  readonly writeFilePath = computed(() => {
+    if (this.display().kind !== 'write') return '';
+    const data = this.call().toolInput as { file_path?: string } | undefined;
+    return data?.file_path ?? '';
+  });
+
+  private readonly writeExpandedState = signal(false);
+  readonly writeExpanded = computed(() => this.writeExpandedState());
+
+  readonly writeLineCount = computed(() => {
+    const c = this.writeContent();
+    if (!c) return 0;
+    const parts = c.split('\n');
+    return c.endsWith('\n') ? parts.length - 1 : parts.length;
+  });
+
+  readonly writeHiddenLines = computed(() => {
+    const total = this.writeLineCount();
+    return total > WRITE_PREVIEW_LINES ? total - WRITE_PREVIEW_LINES : 0;
+  });
+
+  private readonly sanitizer = inject(DomSanitizer);
+
+  readonly writeContentHtml = computed<SafeHtml>(() => {
+    const content = this.writeContent();
+    if (!content) return '';
+    const expanded = this.writeExpanded();
+    const visible = expanded
+      ? content
+      : content.split('\n').slice(0, WRITE_PREVIEW_LINES).join('\n');
+    const lang = detectHljsLang(this.writeFilePath());
+    let highlighted: string;
+    try {
+      highlighted = lang
+        ? hljs.highlight(visible, { language: lang, ignoreIllegals: true }).value
+        : hljs.highlightAuto(visible).value;
+    } catch {
+      highlighted = escapeHtml(visible);
+    }
+    const lines = splitHighlightedLines(highlighted);
+    const wrapped = lines
+      .map(
+        (line) =>
+          `<span class="cw-write__line"><span class="cw-write__sign">+</span><span class="cw-write__code hljs">${line.length ? line : ' '}</span></span>`,
+      )
+      .join('\n');
+    const safe = DOMPurify.sanitize(wrapped, { USE_PROFILES: { html: true } });
+    return this.sanitizer.bypassSecurityTrustHtml(safe);
+  });
+
+  toggleWriteExpand(): void {
+    this.writeExpandedState.update((v) => !v);
+  }
+
   readonly agentPrompt = computed(() => {
     if (this.display().kind !== 'task_agent') return '';
     const parsedPrompt = this.parsedResult()?.['prompt'];
@@ -1135,6 +1253,81 @@ export class ClaudeToolCallComponent {
     if (!this.canExpand()) return;
     this.openState.set(!this.open());
   }
+}
+
+const WRITE_PREVIEW_LINES = 12;
+
+const EXTENSION_TO_LANG: Record<string, string> = {
+  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+  js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  json: 'json', jsonc: 'json',
+  html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml',
+  css: 'css', scss: 'scss', sass: 'scss', less: 'less',
+  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
+  kt: 'kotlin', kts: 'kotlin', swift: 'swift',
+  c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp',
+  cs: 'csharp', php: 'php',
+  sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
+  yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini',
+  md: 'markdown', markdown: 'markdown',
+  sql: 'sql', dockerfile: 'dockerfile',
+  vue: 'xml', svelte: 'xml',
+};
+
+function detectHljsLang(filePath: string): string | null {
+  if (!filePath) return null;
+  const base = filePath.split(/[\\/]/).pop() ?? '';
+  if (/^Dockerfile(\..+)?$/i.test(base)) return 'dockerfile';
+  if (/^Makefile$/i.test(base)) return 'makefile';
+  const dot = base.lastIndexOf('.');
+  if (dot < 0) return null;
+  const ext = base.slice(dot + 1).toLowerCase();
+  const lang = EXTENSION_TO_LANG[ext];
+  if (lang && hljs.getLanguage(lang)) return lang;
+  return hljs.getLanguage(ext) ? ext : null;
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
+}
+
+// hljs may emit spans that span multiple lines (multi-line strings, template
+// literals, block comments). A naive split on '\n' would leave orphan opening
+// or closing tags on each line. Walk the HTML, track open <span> tags, and
+// close/reopen them across line boundaries so each rendered line is valid HTML.
+function splitHighlightedLines(html: string): string[] {
+  const lines: string[] = [];
+  const open: string[] = [];
+  let current = '';
+  let i = 0;
+  while (i < html.length) {
+    const ch = html[i];
+    if (ch === '<') {
+      const end = html.indexOf('>', i);
+      if (end === -1) {
+        current += html.slice(i);
+        break;
+      }
+      const tag = html.slice(i, end + 1);
+      if (tag.startsWith('</')) {
+        open.pop();
+      } else if (!tag.endsWith('/>')) {
+        open.push(tag);
+      }
+      current += tag;
+      i = end + 1;
+    } else if (ch === '\n') {
+      const closers = '</span>'.repeat(open.length);
+      lines.push(current + closers);
+      current = open.join('');
+      i++;
+    } else {
+      current += ch;
+      i++;
+    }
+  }
+  lines.push(current);
+  return lines;
 }
 
 function extractTextBlocks(blocks: unknown[]): string {
