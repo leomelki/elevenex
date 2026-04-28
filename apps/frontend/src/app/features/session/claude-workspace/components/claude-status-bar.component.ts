@@ -41,6 +41,7 @@ interface PermissionModeOption {
 const PERMISSION_MODES: PermissionModeOption[] = [
   { id: 'default', label: 'Default', hint: 'Prompt for risky tools' },
   { id: 'plan', label: 'Plan mode', hint: 'Read-only — draft a plan before editing' },
+  { id: 'planBypass', label: 'Plan + bypass', hint: 'Auto-approve during planning, then review plan' },
   { id: 'acceptEdits', label: 'Accept edits', hint: 'Auto-allow file edits' },
   { id: 'auto', label: 'Auto mode', hint: 'Continuous, autonomous execution' },
   { id: 'bypassPermissions', label: 'Bypass permissions', hint: 'Skip all prompts — danger' },
@@ -54,6 +55,7 @@ const PERMISSION_MODES: PermissionModeOption[] = [
   host: {
     '(document:mousedown)': 'onDocumentMousedown($event)',
     '(document:keydown.escape)': 'closeAllMenus()',
+    '(document:keydown.shift.tab)': 'cyclePermissionMode($event)',
   },
   viewProviders: [
     provideIcons({
@@ -92,6 +94,7 @@ const PERMISSION_MODES: PermissionModeOption[] = [
           type="button"
           class="cw-sb__link cw-sb__mode"
           [class.cw-sb__mode--plan]="isPlanMode()"
+          [class.cw-sb__mode--plan-bypass]="isPlanBypassMode()"
           (click)="toggleMenu('permission')"
           [title]="'Permission mode'"
         >
@@ -319,6 +322,10 @@ const PERMISSION_MODES: PermissionModeOption[] = [
         color: color-mix(in oklab, var(--primary) 90%, var(--foreground));
         font-weight: 600;
       }
+      .cw-sb__mode--plan-bypass {
+        color: color-mix(in oklab, oklch(0.62 0.19 145) 90%, var(--foreground));
+        font-weight: 600;
+      }
       .cw-sb__link--mcp-warn {
         color: oklch(0.62 0.16 65);
       }
@@ -397,7 +404,8 @@ export class ClaudeStatusBarComponent {
     const mode = this.permissionMode();
     return PERMISSION_MODES.find((m) => m.id === mode)?.label ?? mode;
   });
-  readonly isPlanMode = computed(() => this.permissionMode() === 'plan');
+  readonly isPlanMode = computed(() => this.permissionMode() === 'plan' || this.permissionMode() === 'planBypass');
+  readonly isPlanBypassMode = computed(() => this.permissionMode() === 'planBypass');
 
   readonly phaseLabel = computed(() => {
     const p = this.phase();
@@ -431,5 +439,14 @@ export class ClaudeStatusBarComponent {
   pickPermissionMode(mode: ClaudePermissionMode): void {
     this.permissionOpen.set(false);
     this.permissionModeChange.emit(mode);
+  }
+
+  cyclePermissionMode(event: KeyboardEvent): void {
+    event.preventDefault();
+    const opts = this.permissionOptions();
+    const current = this.permissionMode();
+    const idx = opts.findIndex((o) => o.id === current);
+    const next = opts[(idx + 1) % opts.length];
+    this.permissionModeChange.emit(next.id as ClaudePermissionMode);
   }
 }

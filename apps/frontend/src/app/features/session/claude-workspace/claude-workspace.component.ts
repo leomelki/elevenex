@@ -172,9 +172,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly agentInspectorSelectedAgentId = signal<string | null>(null);
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
   readonly _permissionMode = signal<ClaudePermissionMode | null>(null);
-  readonly permissionMode = computed<ClaudePermissionMode>(
-    () => this._permissionMode() ?? this.sessionMetadata()?.permissionMode ?? 'default',
-  );
+  private readonly planBypassActive = signal(false);
+  readonly permissionMode = computed<ClaudePermissionMode>(() => {
+    const server = this._permissionMode() ?? this.sessionMetadata()?.permissionMode ?? 'default';
+    if (this.planBypassActive() && server === 'plan') return 'planBypass' as ClaudePermissionMode;
+    return server;
+  });
   readonly showLoading = computed(() => this.loading() || !this.hydrated());
   readonly canAppendContext = computed(
     () =>
@@ -500,6 +503,14 @@ readonly messageActionsDisabled = computed(
     this.ws.send(this.sessionId, { type: 'interrupt' });
   }
 
+  private autoApprovePermission(requestId: string): void {
+    this.ws.send(this.sessionId, {
+      type: 'approve_permission',
+      requestId,
+      remember: false,
+    });
+  }
+
   approvePermission(approval: ClaudePermissionApproval): void {
     const req = this.pendingPermissionRequest();
     if (!req) return;
@@ -538,8 +549,15 @@ readonly messageActionsDisabled = computed(
   }
 
   async onPermissionModeChange(mode: ClaudePermissionMode): Promise<void> {
-    const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, mode || null));
-    this.applyRuntimeState(next);
+    if (mode === ('planBypass' as ClaudePermissionMode)) {
+      this.planBypassActive.set(true);
+      const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, 'plan'));
+      this.applyRuntimeState(next);
+    } else {
+      this.planBypassActive.set(false);
+      const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, mode || null));
+      this.applyRuntimeState(next);
+    }
   }
 
   openTerminal(): void {
@@ -906,9 +924,20 @@ readonly messageActionsDisabled = computed(
       case 'thinking_delta':
         this.enqueueDelta(event.payload.itemId, event.payload.delta);
         return;
-      case 'permission_request':
-        this.pendingPermissionRequest.set(event.payload.request);
+      case 'permission_request': {
+        const req = event.payload.request;
+        if (this.planBypassActive()) {
+          const toolName = (req.toolName ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (toolName === 'exitplanmode') {
+            this.pendingPermissionRequest.set(req);
+          } else {
+            this.autoApprovePermission(req.requestId);
+          }
+          return;
+        }
+        this.pendingPermissionRequest.set(req);
         return;
+      }
       case 'permission_resolved':
         this.pendingPermissionRequest.set(null);
         this.liveItems.update((items) =>
@@ -1065,6 +1094,7 @@ readonly messageActionsDisabled = computed(
     this.availableModels.set([]);
     this.contextUsage.set(null);
     this._permissionMode.set(null);
+    this.planBypassActive.set(false);
     this.historyItems.set([]);
     this.liveItems.set([]);
     this.optimisticUserItems.set([]);
