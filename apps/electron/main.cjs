@@ -280,8 +280,21 @@ function closeInstallWindow() {
     return;
   }
 
-  installWindow.close();
+  const currentInstallWindow = installWindow;
   installWindow = null;
+
+  try {
+    currentInstallWindow.removeAllListeners('closed');
+    currentInstallWindow.hide();
+  } catch {
+    // Ignore best-effort teardown errors.
+  }
+
+  try {
+    currentInstallWindow.destroy();
+  } catch {
+    // Ignore best-effort teardown errors.
+  }
 }
 
 function closeAuxiliaryWindows() {
@@ -2288,7 +2301,10 @@ async function createMainWindow() {
   mainWindow.on('unmaximize', emitMainWindowState);
   mainWindow.on('enter-full-screen', emitMainWindowState);
   mainWindow.on('leave-full-screen', emitMainWindowState);
-  mainWindow.once('ready-to-show', emitMainWindowState);
+  mainWindow.once('ready-to-show', () => {
+    closeInstallWindow();
+    emitMainWindowState();
+  });
   mainWindow.on('close', (event) => {
     if (isReloadingMainWindow || isAppQuitting) {
       return;
