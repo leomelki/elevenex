@@ -471,6 +471,84 @@ describe('ClaudeWorkspaceComponent', () => {
     ]);
   });
 
+  it('deduplicates matching history and live tool items after hydrate snapshot reload', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+
+    events$.next({
+      type: 'session_snapshot',
+      payload: {
+        ...runtimeState(),
+        history: [
+          {
+            id: 'user-1',
+            kind: 'user',
+            content: 'Inspect repo state',
+            timestamp: '2026-04-28T08:00:00.000Z',
+            authoredAt: '2026-04-28T08:00:00.000Z',
+          },
+          {
+            id: 'msg-1:tool_use:toolu_1',
+            kind: 'tool_use',
+            toolUseId: 'toolu_1',
+            toolName: 'Bash',
+            toolInput: { command: 'pwd' },
+            sourceMessageId: 'msg-1',
+            timestamp: '2026-04-28T08:00:01.000Z',
+            receivedAt: '2026-04-28T08:00:01.000Z',
+          },
+          {
+            id: 'msg-2:tool_result:toolu_1',
+            kind: 'tool_result',
+            toolUseId: 'toolu_1',
+            content: '/workspace',
+            sourceMessageId: 'msg-2',
+            timestamp: '2026-04-28T08:00:02.000Z',
+            authoredAt: '2026-04-28T08:00:02.000Z',
+          },
+        ],
+        liveItems: [
+          {
+            id: 'msg-1:tool:toolu_1',
+            kind: 'tool_use',
+            toolUseId: 'toolu_1',
+            toolName: 'Bash',
+            toolInput: {},
+            timestamp: '2026-04-28T08:00:01.000Z',
+            receivedAt: '2026-04-28T08:00:01.000Z',
+          },
+          {
+            id: 'msg-2:tool:toolu_1',
+            kind: 'tool_result',
+            toolUseId: 'toolu_1',
+            content: '/work',
+            timestamp: '2026-04-28T08:00:02.000Z',
+            authoredAt: '2026-04-28T08:00:02.000Z',
+          },
+        ],
+      },
+    });
+    fixture.detectChanges();
+
+    const toolUnits = fixture.componentInstance.pairedTranscript().filter((unit) => unit.kind === 'tool');
+    expect(toolUnits).toHaveLength(1);
+    expect(toolUnits[0]).toMatchObject({
+      toolUseId: 'toolu_1',
+      call: expect.objectContaining({
+        id: 'msg-1:tool_use:toolu_1',
+        toolInput: { command: 'pwd' },
+      }),
+      result: expect.objectContaining({
+        id: 'msg-2:tool_result:toolu_1',
+        content: '/workspace',
+      }),
+    });
+  });
+
   it('renders pending permissions in the composer dock and disables send', async () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;

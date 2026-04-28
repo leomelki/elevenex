@@ -14,10 +14,11 @@ export type PairedTranscriptUnit =
     };
 
 export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptUnit[] {
+  const normalizedItems = dedupeTranscriptItems(items);
   const resultsByToolUseId = new Map<string, ClaudeTranscriptItem>();
   const hiddenToolUseIds = new Set<string>();
 
-  for (const item of items) {
+  for (const item of normalizedItems) {
     if (item.kind === 'system' && !item.content?.trim()) {
       continue;
     }
@@ -30,7 +31,7 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
     }
   }
 
-  for (const item of items) {
+  for (const item of normalizedItems) {
     if (item.kind === 'tool_result' && item.toolUseId) {
       if (hiddenToolUseIds.has(item.toolUseId)) {
         continue;
@@ -47,7 +48,7 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
   // (e.g. "msg_abc:0") differ from history IDs (e.g. "msg_abc:assistant:0").
   // Group by sourceMessageId when available, then by UUID prefix + kind as fallback.
   const groups = new Map<string, ClaudeTranscriptItem[]>();
-  for (const item of items) {
+  for (const item of normalizedItems) {
     if (item.kind !== 'assistant' && item.kind !== 'thinking') continue;
     const key = item.sourceMessageId
       ?? (item.id.includes(':') ? `${item.id.slice(0, item.id.indexOf(':'))}:${item.kind}` : null);
@@ -64,7 +65,7 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
     }
   }
 
-  for (const item of items) {
+  for (const item of normalizedItems) {
     if (dedupedItemIds.has(item.id)) continue;
     if (item.kind === 'system' && !item.content?.trim()) continue;
 
@@ -122,4 +123,101 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
   }
 
   return out;
+}
+
+function dedupeTranscriptItems(items: ClaudeTranscriptItem[]): ClaudeTranscriptItem[] {
+  const toolUseGroups = new Map<string, ClaudeTranscriptItem[]>();
+  const toolResultGroups = new Map<string, ClaudeTranscriptItem[]>();
+
+  for (const item of items) {
+    if (item.kind === 'tool_use' && item.toolUseId) {
+      let group = toolUseGroups.get(item.toolUseId);
+      if (!group) {
+        group = [];
+        toolUseGroups.set(item.toolUseId, group);
+      }
+      group.push(item);
+      continue;
+    }
+
+    if (item.kind === 'tool_result' && item.toolUseId) {
+      let group = toolResultGroups.get(item.toolUseId);
+      if (!group) {
+        group = [];
+        toolResultGroups.set(item.toolUseId, group);
+      }
+      group.push(item);
+    }
+  }
+
+  const keptIds = new Set<string>();
+  for (const group of toolUseGroups.values()) {
+    keptIds.add(pickCanonicalToolUse(group).id);
+  }
+  for (const group of toolResultGroups.values()) {
+    keptIds.add(pickCanonicalToolResult(group).id);
+  }
+
+  return items.filter(
+    (item) =>
+      (item.kind !== 'tool_use' && item.kind !== 'tool_result')
+      || !item.toolUseId
+      || keptIds.has(item.id),
+  );
+}
+
+function pickCanonicalToolUse(group: ClaudeTranscriptItem[]): ClaudeTranscriptItem {
+  return group.reduce((best, candidate) => {
+    const candidateScore = toolUseScore(candidate);
+    const bestScore = toolUseScore(best);
+    if (candidateScore !== bestScore) {
+      return candidateScore > bestScore ? candidate : best;
+    }
+    return compareHistoryStability(candidate, best) > 0 ? candidate : best;
+  });
+}
+
+function pickCanonicalToolResult(group: ClaudeTranscriptItem[]): ClaudeTranscriptItem {
+  return group.reduce((best, candidate) => {
+    const candidateScore = toolResultScore(candidate);
+    const bestScore = toolResultScore(best);
+    if (candidateScore !== bestScore) {
+      return candidateScore > bestScore ? candidate : best;
+    }
+    return compareHistoryStability(candidate, best) > 0 ? candidate : best;
+  });
+}
+
+function toolUseScore(item: ClaudeTranscriptItem): number {
+  let score = 0;
+  if (item.interaction) score += 8;
+  if (item.sourceMessageId) score += 4;
+  if (hasNonEmptyToolInput(item.toolInput)) score += 2;
+  return score;
+}
+
+function toolResultScore(item: ClaudeTranscriptItem): number {
+  return (item.content?.length ?? 0) * 10 + (item.sourceMessageId ? 1 : 0);
+}
+
+function hasNonEmptyToolInput(toolInput: unknown): boolean {
+  if (toolInput == null) return false;
+  if (typeof toolInput === 'string') return toolInput.trim().length > 0;
+  if (Array.isArray(toolInput)) return toolInput.length > 0;
+  if (typeof toolInput === 'object') return Object.keys(toolInput as Record<string, unknown>).length > 0;
+  return true;
+}
+
+function compareHistoryStability(left: ClaudeTranscriptItem, right: ClaudeTranscriptItem): number {
+  return historyStabilityScore(left.id) - historyStabilityScore(right.id);
+}
+
+function historyStabilityScore(id: string): number {
+  if (id.includes(':tool_use:') || id.includes(':tool_result:')) {
+    return 2;
+  }
+  if (id.includes(':tool:')) {
+    return 1;
+  }
+  return 0;
 }
