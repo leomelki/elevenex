@@ -100,7 +100,6 @@
                     [result]="item.unit.result"
                     [childItems]="childItemsForToolUse(item.unit.toolUseId)"
                     [isLive]="isLiveToolUse(item.unit.toolUseId)"
-                    [permission]="permissionForToolUse(item.unit.toolUseId)"
                     (approve)="approvePermission($event)"
                     (deny)="denyPermission()"
                   />
@@ -199,7 +198,6 @@
                             [result]="hiddenUnit.result"
                             [childItems]="childItemsForToolUse(hiddenUnit.toolUseId)"
                             [isLive]="isLiveToolUse(hiddenUnit.toolUseId)"
-                            [permission]="permissionForToolUse(hiddenUnit.toolUseId)"
                             [turnId]="item.turnId"
                             [hasAgentHistory]="!!item.agentSummary"
                             (approve)="approvePermission($event)"
@@ -217,14 +215,6 @@
               </div>
             }
           }
-        }
-
-        @if (hasUnmatchedPermission() && pendingPermissionRequest(); as req) {
-          <cw-permission-inline
-            [request]="req"
-            (approve)="approvePermission($event)"
-            (deny)="denyPermission()"
-          />
         }
 
         @if (isAwaitingFirstAssistantToken()) {
@@ -393,16 +383,31 @@
       <cw-user-input [request]="req" (answer)="answerUserInput($event)" />
     }
 
-    <cw-composer
-      [value]="prompt()"
-      [submitting]="submitting()"
-      [running]="runPhase() === 'running'"
-      [canInterrupt]="canInterrupt()"
-      [autocompleteItems]="autocompleteItems()"
-      (valueChange)="onPromptChange($event)"
-      (send)="submitPrompt($event)"
-      (interrupt)="interrupt()"
-    />
+    <div class="cw-compose-shell">
+      @if (pendingPermissionRequest(); as req) {
+        <cw-permission-inline
+          class="cw-compose-shell__permission"
+          [request]="req"
+          [appearance]="'dock'"
+          (approve)="approvePermission($event)"
+          (deny)="denyPermission()"
+        />
+      }
+
+      <cw-composer
+        [value]="prompt()"
+        [submitting]="submitting()"
+        [running]="runPhase() === 'running'"
+        [canInterrupt]="canInterrupt()"
+        [blockedByPermission]="!!pendingPermissionRequest()"
+        [sendDisabledReason]="composerPermissionDisabledReason()"
+        [attachedPanelOpen]="!!pendingPermissionRequest()"
+        [autocompleteItems]="autocompleteItems()"
+        (valueChange)="onPromptChange($event)"
+        (send)="submitPrompt($event)"
+        (interrupt)="interrupt()"
+      />
+    </div>
 
     <cw-status-bar
       [phase]="runPhase()"

@@ -470,4 +470,85 @@ describe('ClaudeWorkspaceComponent', () => {
       }),
     ]);
   });
+
+  it('renders pending permissions in the composer dock and disables send', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.prompt.set('Can you continue?');
+    fixture.componentInstance.pendingPermissionRequest.set({
+      requestId: 'perm-1',
+      toolUseId: 'tool-1',
+      toolName: 'Bash',
+      displayName: 'Bash',
+      description: 'Needs permission to read outside the workspace.',
+      blockedPath: '/outside-boundary/file.txt',
+      input: { command: 'cat /outside-boundary/file.txt' },
+      createdAt: '2026-04-24T08:00:02.000Z',
+    });
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const permissionCard = element.querySelector('.cw-compose-shell__permission');
+    const sendButton = element.querySelector('.cw-comp__btn--send') as HTMLButtonElement;
+    expect(permissionCard?.textContent).toContain('Approval required');
+    expect(permissionCard?.textContent).toContain('/outside-boundary/file.txt');
+    expect(sendButton.disabled).toBe(true);
+    expect(element.querySelector('.cw-stream .cw-perm')).toBeNull();
+  });
+
+  it('shows subagent permissions in the composer dock instead of nested tool cards', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.historyItems.set([
+      {
+        id: 'user-1',
+        kind: 'user',
+        content: 'Inspect files',
+        timestamp: '2026-04-24T08:00:00.000Z',
+      },
+      {
+        id: 'task-1',
+        kind: 'tool_use',
+        toolUseId: 'task-1',
+        toolName: 'Task',
+        toolInput: { description: 'Inspect files' },
+        timestamp: '2026-04-24T08:00:01.000Z',
+      },
+      {
+        id: 'child-bash-1',
+        kind: 'tool_use',
+        toolUseId: 'child-bash-1',
+        parentToolUseId: 'task-1',
+        toolName: 'Bash',
+        toolInput: { command: 'cat /outside-boundary/file.txt' },
+        timestamp: '2026-04-24T08:00:02.000Z',
+      },
+    ]);
+    fixture.componentInstance.pendingPermissionRequest.set({
+      requestId: 'perm-subagent-1',
+      toolUseId: 'child-bash-1',
+      toolName: 'Bash',
+      displayName: 'Bash',
+      agentId: 'agent-7',
+      description: 'The delegated agent needs workspace-external access.',
+      blockedPath: '/outside-boundary/file.txt',
+      input: { command: 'cat /outside-boundary/file.txt' },
+      createdAt: '2026-04-24T08:00:03.000Z',
+    });
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const permissionCard = element.querySelector('.cw-compose-shell__permission');
+    expect(permissionCard?.textContent).toContain('Subagent request');
+    expect(permissionCard?.textContent).toContain('agent-7');
+    expect(element.querySelector('.cw-tool .cw-perm')).toBeNull();
+  });
 });

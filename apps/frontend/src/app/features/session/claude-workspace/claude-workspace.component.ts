@@ -420,21 +420,12 @@ readonly messageActionsDisabled = computed(
       !this.lastLiveAssistantMessageId(),
   );
 
-  readonly permissionByToolUseId = computed(() => {
-    const req = this.pendingPermissionRequest();
-    if (!req || !req.toolUseId) return null;
-    return req.toolUseId;
-  });
-
-  readonly hasUnmatchedPermission = computed(() => {
-    const req = this.pendingPermissionRequest();
-    if (!req) return false;
-    const tid = req.toolUseId;
-    if (!tid) return true;
-    return !this.transcriptItems().some((item) => item.kind === 'tool_use' && item.toolUseId === tid);
-  });
-
   readonly hasPendingUserInput = computed(() => !!this.pendingUserInputRequest());
+  readonly composerPermissionDisabledReason = computed(() =>
+    this.pendingPermissionRequest()
+      ? 'Approve or deny the pending request to resume the conversation.'
+      : '',
+  );
 
   readonly selectedAgentInspectorTurn = computed(() => {
     const turnId = this.agentInspectorTurnId();
@@ -617,12 +608,6 @@ readonly messageActionsDisabled = computed(
 
   isLiveToolUse(toolUseId: string): boolean {
     return this.liveItems().some((item) => item.kind === 'tool_use' && item.toolUseId === toolUseId);
-  }
-
-  permissionForToolUse(toolUseId: string): ClaudePermissionRequest | null {
-    const req = this.pendingPermissionRequest();
-    if (!req) return null;
-    return req.toolUseId === toolUseId ? req : null;
   }
 
   childItemsForToolUse(toolUseId: string): ClaudeTranscriptItem[] {

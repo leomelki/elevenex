@@ -902,6 +902,16 @@
   margin: 0 auto;
 }
 
+.cw-compose-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cw-compose-shell__permission {
+  width: 100%;
+}
+
 @media (max-width: 640px) {
   .cw-turn-gap__toggle {
     gap: 0.625rem;

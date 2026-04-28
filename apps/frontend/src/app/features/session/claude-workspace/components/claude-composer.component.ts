@@ -49,7 +49,7 @@ interface Range {
         </div>
       }
 
-      <div class="cw-comp__box">
+      <div class="cw-comp__box" [class.cw-comp__box--attached]="attachedPanelOpen()">
         <textarea
           #input
           class="cw-comp__ta"
@@ -65,6 +65,8 @@ interface Range {
           <span class="cw-comp__hint">
             @if (autocompleteOpen() && filtered().length) {
               ↑↓ navigate · ↵ insert
+            } @else if (blockedByPermission()) {
+              {{ sendDisabledReason() || 'Respond to the approval request before sending another message.' }}
             } @else {
               / commands · $ skills · ↵ send · ⇧↵ line break
             }
@@ -85,7 +87,7 @@ interface Range {
             <button
               type="button"
               class="cw-comp__btn cw-comp__btn--send"
-              [disabled]="!value().trim() || submitting()"
+              [disabled]="!value().trim() || submitting() || blockedByPermission()"
               (click)="submit()"
             >
               @if (submitting()) {
@@ -117,6 +119,10 @@ interface Range {
         background: var(--background);
         box-shadow: 0 1px 0 color-mix(in oklab, var(--foreground) 4%, transparent);
         overflow: hidden;
+      }
+      .cw-comp__box--attached {
+        border-top-left-radius: 0;
+        border-top-right-radius: 0;
       }
       .cw-comp__box:focus-within {
         border-color: color-mix(in oklab, var(--primary) 50%, var(--border));
@@ -240,6 +246,9 @@ export class ClaudeComposerComponent {
   readonly submitting = input<boolean>(false);
   readonly running = input<boolean>(false);
   readonly canInterrupt = input<boolean>(false);
+  readonly blockedByPermission = input<boolean>(false);
+  readonly sendDisabledReason = input<string>('');
+  readonly attachedPanelOpen = input<boolean>(false);
   readonly autocompleteItems = input<ClaudeAutocompleteItem[]>([]);
   readonly placeholderText = input<string>('Tell Claude what to do…');
 
@@ -346,7 +355,7 @@ export class ClaudeComposerComponent {
 
   submit(): void {
     const v = this.value().trim();
-    if (!v || this.submitting()) return;
+    if (!v || this.submitting() || this.blockedByPermission()) return;
     this.send.emit(v);
   }
 

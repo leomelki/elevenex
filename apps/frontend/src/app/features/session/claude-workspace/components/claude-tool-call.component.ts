@@ -23,7 +23,6 @@ import {
 } from '@ng-icons/lucide';
 import {
   ClaudePermissionApproval,
-  ClaudePermissionRequest,
   ClaudeToolInteractionSummary,
   ClaudeTranscriptItem,
 } from '@/shared/models/claude-runtime.model';
@@ -39,7 +38,6 @@ import {
   simpleLineDiff,
 } from '../util/tool-format';
 import { PairedTranscriptUnit, pairTranscript } from '../util/paired-transcript';
-import { ClaudePermissionInlineComponent } from './claude-permission-inline.component';
 import { ClaudeMessageComponent } from './claude-message.component';
 import { ClaudeThinkingComponent } from './claude-thinking.component';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
@@ -53,7 +51,7 @@ interface Todo {
 @Component({
   selector: 'cw-tool-call',
   standalone: true,
-  imports: [CommonModule, NgIcon, ClaudePermissionInlineComponent, MarkdownPipe, ClaudeMessageComponent, ClaudeThinkingComponent, forwardRef(() => ClaudeToolCallComponent)],
+  imports: [CommonModule, NgIcon, MarkdownPipe, ClaudeMessageComponent, ClaudeThinkingComponent, forwardRef(() => ClaudeToolCallComponent)],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
@@ -239,7 +237,6 @@ interface Todo {
                               [result]="unit.result"
                               [childItems]="nestedChildItems(unit.toolUseId)"
                               [isLive]="isNestedLiveToolUse(unit.toolUseId)"
-                              [permission]="nestedPermissionForToolUse(unit.toolUseId)"
                               (approve)="approve.emit($event)"
                               (deny)="deny.emit()"
                             />
@@ -326,10 +323,6 @@ interface Todo {
             }
           </div>
         }
-      }
-
-      @if (permission(); as p) {
-        <cw-permission-inline [request]="p" (approve)="approve.emit($event)" (deny)="deny.emit()" />
       }
     </div>
   `,
@@ -861,7 +854,6 @@ export class ClaudeToolCallComponent {
   readonly result = input<ClaudeTranscriptItem | null>(null);
   readonly childItems = input<ClaudeTranscriptItem[]>([]);
   readonly isLive = input<boolean>(false);
-  readonly permission = input<ClaudePermissionRequest | null>(null);
   readonly turnId = input<string | null>(null);
   readonly hasAgentHistory = input<boolean>(false);
 
@@ -886,7 +878,6 @@ export class ClaudeToolCallComponent {
   readonly display = computed<ToolDisplay>(() => describeTool(this.call().toolName, this.call().toolInput));
 
   readonly state = computed<'running' | 'waiting' | 'error' | 'done'>(() => {
-    if (this.permission()) return 'waiting';
     if (!this.result() && this.isLive()) return 'running';
     if (isHardError(this.result())) return 'error';
     return 'done';
@@ -922,7 +913,7 @@ export class ClaudeToolCallComponent {
   readonly open = computed(() => {
     const explicit = this.openState();
     if (explicit !== null) return explicit;
-    return this.state() === 'error' || !!this.permission();
+    return this.state() === 'error';
   });
 
   readonly todos = computed<Todo[]>(() => {
@@ -1125,12 +1116,6 @@ export class ClaudeToolCallComponent {
 
   isNestedLiveToolUse(toolUseId: string): boolean {
     return this.childItems().some((item) => item.kind === 'tool_use' && item.toolUseId === toolUseId);
-  }
-
-  nestedPermissionForToolUse(toolUseId: string): ClaudePermissionRequest | null {
-    const request = this.permission();
-    if (!request) return null;
-    return request.toolUseId === toolUseId ? request : null;
   }
 
   contentAsString(content: unknown): string {

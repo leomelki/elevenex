@@ -75,48 +75,4 @@ describe('ClaudeToolCallComponent', () => {
     expect(text).toContain('Deny');
     expect(text).toContain('rm -rf tmp');
   });
-
-  it('renders nested subagent permission prompts inline', async () => {
-    await TestBed.configureTestingModule({
-      imports: [ClaudeToolCallComponent],
-    }).compileComponents();
-
-    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
-    fixture.componentRef.setInput('call', {
-      id: 'tool-agent',
-      kind: 'tool_use',
-      toolUseId: 'tool-agent',
-      toolName: 'Task',
-      toolInput: { description: 'Inspect files' },
-      timestamp: '2026-04-24T08:00:00.000Z',
-    });
-    fixture.componentRef.setInput('childItems', [
-      {
-        id: 'child-bash',
-        kind: 'tool_use',
-        toolUseId: 'child-bash',
-        parentToolUseId: 'tool-agent',
-        toolName: 'Bash',
-        toolInput: { command: 'cat /outside-boundary/file.txt' },
-        timestamp: '2026-04-24T08:00:01.000Z',
-      },
-    ]);
-    fixture.componentRef.setInput('permission', {
-      requestId: 'req-1',
-      toolUseId: 'child-bash',
-      toolName: 'Bash',
-      input: { command: 'cat /outside-boundary/file.txt' },
-      blockedPath: '/outside-boundary/file.txt',
-      createdAt: '2026-04-24T08:00:02.000Z',
-    });
-    fixture.detectChanges();
-
-    const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
-    button.click();
-    fixture.detectChanges();
-
-    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
-    expect(text).toContain('Needs your approval');
-    expect(text).toContain('/outside-boundary/file.txt');
-  });
 });
