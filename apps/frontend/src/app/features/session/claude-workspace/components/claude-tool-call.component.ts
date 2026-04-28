@@ -238,7 +238,7 @@ interface Todo {
                               [childItems]="nestedChildItems(unit.toolUseId)"
                               [isLive]="isNestedLiveToolUse(unit.toolUseId)"
                               (approve)="approve.emit($event)"
-                              (deny)="deny.emit()"
+                              (deny)="deny.emit($event)"
                             />
                           }
                         }
@@ -858,7 +858,7 @@ export class ClaudeToolCallComponent {
   readonly hasAgentHistory = input<boolean>(false);
 
   readonly approve = output<ClaudePermissionApproval>();
-  readonly deny = output<void>();
+  readonly deny = output<string | undefined>();
   readonly inspect = output<string>();
 
   private readonly openState = signal<boolean | null>(null);

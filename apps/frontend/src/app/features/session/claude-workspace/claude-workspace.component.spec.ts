@@ -547,7 +547,7 @@ describe('ClaudeWorkspaceComponent', () => {
 
     const element = fixture.nativeElement as HTMLElement;
     const permissionCard = element.querySelector('.cw-compose-shell__permission');
-    expect(permissionCard?.textContent).toContain('Subagent request');
+    expect(permissionCard?.textContent).toContain('Subagent');
     expect(permissionCard?.textContent).toContain('agent-7');
     expect(element.querySelector('.cw-tool .cw-perm')).toBeNull();
   });

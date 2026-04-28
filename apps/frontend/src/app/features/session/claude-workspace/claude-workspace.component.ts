@@ -511,10 +511,14 @@ readonly messageActionsDisabled = computed(
     });
   }
 
-  denyPermission(): void {
+  denyPermission(message?: string): void {
     const req = this.pendingPermissionRequest();
     if (!req) return;
-    this.ws.send(this.sessionId, { type: 'deny_permission', requestId: req.requestId });
+    this.ws.send(this.sessionId, {
+      type: 'deny_permission',
+      requestId: req.requestId,
+      message: message?.trim() || undefined,
+    });
   }
 
   answerUserInput(payload: { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> }): void {

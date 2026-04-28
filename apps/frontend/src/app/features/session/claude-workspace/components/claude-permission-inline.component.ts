@@ -1,6 +1,25 @@
-import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  ViewChild,
+  computed,
+  effect,
+  input,
+  output,
+  signal,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import {
+  lucideShield,
+  lucideMessageCircleQuestion,
+  lucideClipboardList,
+  lucideCheck,
+  lucideCheckCheck,
+  lucideX,
+} from '@ng-icons/lucide';
 import { ClaudePermissionApproval, ClaudePermissionRequest } from '@/shared/models/claude-runtime.model';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
 import { DiffSegment, normalizeToolName as normalizeToolNameForUi, simpleLineDiff } from '../util/tool-format';
@@ -21,55 +40,73 @@ interface AskQuestion {
 @Component({
   selector: 'cw-permission-inline',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownPipe],
+  imports: [CommonModule, FormsModule, MarkdownPipe, NgIcon],
+  viewProviders: [
+    provideIcons({
+      lucideShield,
+      lucideMessageCircleQuestion,
+      lucideClipboardList,
+      lucideCheck,
+      lucideCheckCheck,
+      lucideX,
+    }),
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="cw-perm" [attr.data-kind]="kind()" [class.cw-perm--dock]="appearance() === 'dock'">
       @switch (kind()) {
         @case ('ask_user_question') {
-          <div class="cw-perm__copy">
-            <strong>{{ request().title || 'Claude needs your input' }}</strong>
-            <span class="cw-perm__desc">{{ request().description || 'Choose an option for each question.' }}</span>
-          </div>
+          <header class="cw-perm__head">
+            <span class="cw-perm__icon" aria-hidden="true">
+              <ng-icon name="lucideMessageCircleQuestion" size="13" />
+            </span>
+            <span class="cw-perm__eyebrow">Input needed</span>
+            @if (request().agentId) {
+              <span class="cw-perm__agent" title="Delegated subagent">Subagent · {{ request().agentId }}</span>
+            }
+          </header>
+          <h3 class="cw-perm__title">{{ request().title || 'Claude needs your input' }}</h3>
+          @if (request().description) {
+            <p class="cw-perm__sub">{{ request().description }}</p>
+          }
 
           <div class="cw-ask">
             @for (question of questions(); track question.question) {
-              <section class="cw-ask__question">
-                <div class="cw-ask__head">
+              <section class="cw-ask__q">
+                <div class="cw-ask__qhead">
                   @if (question.header) {
                     <span class="cw-ask__chip">{{ question.header }}</span>
                   }
-                  <strong>{{ question.question }}</strong>
+                  <span class="cw-ask__qtext">{{ question.question }}</span>
                 </div>
 
                 <div class="cw-ask__options">
                   @for (option of question.options; track option.label) {
-                    <label class="cw-ask__option" [class.cw-ask__option--selected]="isSelected(question, option.label)">
+                    <label class="cw-ask__opt" [class.cw-ask__opt--on]="isSelected(question, option.label)">
                       <input
                         [type]="question.multiSelect ? 'checkbox' : 'radio'"
                         [name]="question.question"
                         [checked]="isSelected(question, option.label)"
                         (change)="toggleOption(question, option.label, $any($event.target).checked)"
                       />
-                      <span class="cw-ask__option-body">
-                        <span class="cw-ask__option-label">{{ option.label }}</span>
+                      <span class="cw-ask__opt-body">
+                        <span class="cw-ask__opt-label">{{ option.label }}</span>
                         @if (option.description) {
-                          <span class="cw-ask__option-desc">{{ option.description }}</span>
+                          <span class="cw-ask__opt-desc">{{ option.description }}</span>
                         }
                       </span>
                     </label>
                   }
 
-                  <label class="cw-ask__option" [class.cw-ask__option--selected]="isOtherSelected(question)">
+                  <label class="cw-ask__opt" [class.cw-ask__opt--on]="isOtherSelected(question)">
                     <input
                       [type]="question.multiSelect ? 'checkbox' : 'radio'"
                       [name]="question.question"
                       [checked]="isOtherSelected(question)"
                       (change)="toggleOther(question, $any($event.target).checked)"
                     />
-                    <span class="cw-ask__option-body">
-                      <span class="cw-ask__option-label">Other</span>
-                      <span class="cw-ask__option-desc">Provide a custom answer.</span>
+                    <span class="cw-ask__opt-body">
+                      <span class="cw-ask__opt-label">Other…</span>
                     </span>
                   </label>
 
@@ -84,126 +121,171 @@ interface AskQuestion {
                 </div>
 
                 @if (selectedPreview(question); as preview) {
-                  <div class="cw-ask__preview" [innerHTML]="preview | cwMarkdown"></div>
+                  <div class="cw-perm__preview cw-perm__preview--md" [innerHTML]="preview | cwMarkdown"></div>
                 }
               </section>
             }
           </div>
 
-          <div class="cw-perm__actions">
-            <button type="button" class="cw-perm__btn cw-perm__btn--deny" (click)="deny.emit()">Decline</button>
-            <button
-              type="button"
-              class="cw-perm__btn cw-perm__btn--primary"
-              [disabled]="!canSubmitQuestions()"
-              (click)="submitQuestions()"
-            >
-              Submit answers
-            </button>
-          </div>
+          @if (!denying()) {
+            <footer class="cw-perm__actions">
+              <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+                <ng-icon name="lucideX" size="13" aria-hidden="true" />
+                Decline
+              </button>
+              <button
+                type="button"
+                class="cw-btn cw-btn--primary"
+                [disabled]="!canSubmitQuestions()"
+                (click)="submitQuestions()"
+              >
+                <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+                Submit
+              </button>
+            </footer>
+          }
         }
+
         @case ('enter_plan_mode') {
-          <div class="cw-perm__copy">
-            <strong>{{ request().title || 'Enter plan mode?' }}</strong>
-            <span class="cw-perm__desc">
-              Claude will stay read-only, explore the codebase, and prepare an implementation plan before editing.
+          <header class="cw-perm__head">
+            <span class="cw-perm__icon" aria-hidden="true">
+              <ng-icon name="lucideClipboardList" size="13" />
             </span>
-          </div>
-          <div class="cw-perm__actions">
-            <button type="button" class="cw-perm__btn cw-perm__btn--deny" (click)="deny.emit()">Not now</button>
-            <button type="button" class="cw-perm__btn cw-perm__btn--primary" (click)="approve.emit({ remember: false })">
-              Start planning
-            </button>
-          </div>
+            <span class="cw-perm__eyebrow">Plan mode</span>
+          </header>
+          <h3 class="cw-perm__title">{{ request().title || 'Enter plan mode?' }}</h3>
+          <p class="cw-perm__sub">
+            Claude will stay read-only, explore the codebase, and prepare a plan before editing.
+          </p>
+          @if (!denying()) {
+            <footer class="cw-perm__actions">
+              <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+                <ng-icon name="lucideX" size="13" aria-hidden="true" />
+                Not now
+              </button>
+              <button type="button" class="cw-btn cw-btn--primary" (click)="approve.emit({ remember: false })">
+                <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+                Start planning
+              </button>
+            </footer>
+          }
         }
+
         @case ('exit_plan_mode') {
-          <div class="cw-perm__copy">
-            <strong>{{ request().title || 'Approve plan?' }}</strong>
-            <span class="cw-perm__desc">
-              Review Claude’s implementation plan before leaving plan mode.
+          <header class="cw-perm__head">
+            <span class="cw-perm__icon" aria-hidden="true">
+              <ng-icon name="lucideClipboardList" size="13" />
             </span>
+            <span class="cw-perm__eyebrow">Plan ready</span>
             @if (planPath(); as path) {
-              <span class="cw-perm__path">{{ path }}</span>
+              <span class="cw-perm__path" [title]="path">{{ path }}</span>
             }
-          </div>
+          </header>
+          <h3 class="cw-perm__title">{{ request().title || 'Approve plan?' }}</h3>
 
           @if (planContent(); as plan) {
-            <div class="cw-plan" [innerHTML]="plan | cwMarkdown"></div>
+            <div class="cw-perm__preview cw-perm__preview--md" [innerHTML]="plan | cwMarkdown"></div>
           }
 
-          <div class="cw-perm__actions">
-            <button type="button" class="cw-perm__btn cw-perm__btn--deny" (click)="deny.emit()">Keep planning</button>
-            <button type="button" class="cw-perm__btn cw-perm__btn--primary" (click)="approve.emit({ remember: false })">
-              Approve plan
-            </button>
-          </div>
+          @if (!denying()) {
+            <footer class="cw-perm__actions">
+              <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+                <ng-icon name="lucideX" size="13" aria-hidden="true" />
+                Keep planning
+              </button>
+              <button type="button" class="cw-btn cw-btn--primary" (click)="approve.emit({ remember: false })">
+                <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+                Approve plan
+              </button>
+            </footer>
+          }
         }
+
         @default {
-          <div class="cw-perm__hero">
-            <div class="cw-perm__eyebrow">
-              <span class="cw-perm__eyebrow-pill">{{ sourceLabel() }}</span>
-              <span class="cw-perm__eyebrow-copy">Approval required</span>
-            </div>
-            <div class="cw-perm__copy">
-              <strong>{{ requestTitle() }}</strong>
-              <span class="cw-perm__desc">{{ requestSubtitle() }}</span>
-            </div>
-          </div>
-          <div class="cw-perm__grid">
-            <section class="cw-perm__section">
-              <span class="cw-perm__section-label">Request</span>
-              <div class="cw-perm__meta">
-                <div class="cw-perm__meta-row">
-                  <span class="cw-perm__meta-key">Tool</span>
-                  <span class="cw-perm__meta-value">{{ requestToolLabel() }}</span>
-                </div>
-                <div class="cw-perm__meta-row">
-                  <span class="cw-perm__meta-key">Scope</span>
-                  <span class="cw-perm__meta-value">{{ sourceScopeCopy() }}</span>
-                </div>
-                @if (request().blockedPath) {
-                  <div class="cw-perm__meta-row">
-                    <span class="cw-perm__meta-key">Path</span>
-                    <span class="cw-perm__meta-value cw-perm__meta-value--mono">{{ request().blockedPath }}</span>
-                  </div>
-                }
-              </div>
-            </section>
+          <header class="cw-perm__head">
+            <span class="cw-perm__icon" aria-hidden="true">
+              <ng-icon name="lucideShield" size="13" />
+            </span>
+            <span class="cw-perm__eyebrow">Approval required</span>
+            <span class="cw-perm__tool">{{ requestToolLabel() }}</span>
+            @if (request().agentId) {
+              <span class="cw-perm__agent" title="Delegated subagent">Subagent · {{ request().agentId }}</span>
+            }
+          </header>
 
-            <section class="cw-perm__section">
-              <span class="cw-perm__section-label">Why Claude is asking</span>
-              <div class="cw-perm__reasons">
-                @for (reason of requestReasons(); track reason) {
-                  <p class="cw-perm__reason">{{ reason }}</p>
-                }
-              </div>
-            </section>
-          </div>
+          <h3 class="cw-perm__title">{{ requestTitle() }}</h3>
+          @if (requestSubline(); as line) {
+            <p class="cw-perm__path" [title]="line">{{ line }}</p>
+          }
+          @if (requestSubtitle(); as sub) {
+            <p class="cw-perm__sub">{{ sub }}</p>
+          }
+
           @if (permDiffSegments().length) {
-            <pre class="cw-perm__diff">@for (seg of permDiffSegments(); track $index) {<span [class]="'cw-diff-' + seg.type">{{ permDiffPrefix(seg.type) }}{{ seg.text }}
+            <pre class="cw-perm__preview cw-perm__preview--code"
+              >@for (seg of permDiffSegments(); track $index) {<span [class]="'cw-diff-' + seg.type">{{ permDiffPrefix(seg.type) }}{{ seg.text }}
 </span>}</pre>
+          } @else if (permWriteContent()) {
+            <pre class="cw-perm__preview cw-perm__preview--code">{{ permWriteContent() }}</pre>
+          } @else if (permBashCommand()) {
+            <pre class="cw-perm__preview cw-perm__preview--cmd">$ {{ permBashCommand() }}</pre>
           }
-          @if (permWriteContent()) {
-            <pre class="cw-perm__file">{{ permWriteContent() }}</pre>
+
+          @if (!denying()) {
+            <footer class="cw-perm__actions">
+              <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+                <ng-icon name="lucideX" size="13" aria-hidden="true" />
+                Deny
+              </button>
+              <span class="cw-perm__spacer"></span>
+              <button
+                type="button"
+                class="cw-btn cw-btn--secondary"
+                [title]="allowOnceCopy()"
+                (click)="approve.emit({ remember: false })"
+              >
+                <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+                Allow once
+              </button>
+              <button
+                type="button"
+                class="cw-btn cw-btn--primary"
+                [title]="allowAlwaysCopy()"
+                (click)="approve.emit({ remember: true })"
+              >
+                <ng-icon name="lucideCheckCheck" size="13" aria-hidden="true" />
+                Always allow
+              </button>
+            </footer>
           }
-          @if (permBashCommand()) {
-            <pre class="cw-perm__cmd">$ {{ permBashCommand() }}</pre>
-          }
-          <section class="cw-perm__section cw-perm__section--decision">
-            <span class="cw-perm__section-label">What happens if you approve</span>
-            <div class="cw-perm__decision-copy">
-              <p class="cw-perm__reason">{{ allowOnceCopy() }}</p>
-              <p class="cw-perm__reason">{{ allowAlwaysCopy() }}</p>
-            </div>
-          </section>
-          <div class="cw-perm__actions">
-            <button type="button" class="cw-perm__btn cw-perm__btn--deny" (click)="deny.emit()">Deny</button>
-            <button type="button" class="cw-perm__btn" (click)="approve.emit({ remember: false })">Allow once</button>
-            <button type="button" class="cw-perm__btn cw-perm__btn--primary" (click)="approve.emit({ remember: true })">
-              Always
+        }
+      }
+
+      @if (denying()) {
+        <div class="cw-perm__deny" role="group" aria-label="Decline with feedback">
+          <label class="cw-perm__deny-label" for="cw-perm-deny-msg">
+            Tell Claude what to do instead
+            <span class="cw-perm__deny-optional">(optional)</span>
+          </label>
+          <textarea
+            #denyTa
+            id="cw-perm-deny-msg"
+            class="cw-perm__deny-input"
+            rows="2"
+            [ngModel]="denyMessage()"
+            (ngModelChange)="denyMessage.set($event)"
+            (keydown)="onDenyKeydown($event)"
+            placeholder="e.g. don't run shell commands; ask me first…"
+          ></textarea>
+          <div class="cw-perm__deny-actions">
+            <span class="cw-perm__deny-hint">⌘↵ to send · Esc to cancel</span>
+            <button type="button" class="cw-btn cw-btn--ghost" (click)="cancelDeny()">Cancel</button>
+            <button type="button" class="cw-btn cw-btn--deny-confirm" (click)="confirmDeny()">
+              <ng-icon name="lucideX" size="13" aria-hidden="true" />
+              {{ denyMessage().trim() ? 'Send & deny' : 'Deny' }}
             </button>
           </div>
-        }
+        </div>
       }
     </div>
   `,
@@ -212,318 +294,421 @@ interface AskQuestion {
       :host {
         display: block;
       }
+
       .cw-perm {
         display: flex;
         flex-direction: column;
-        gap: 0.75rem;
-        padding: 0.75rem;
-        border-top: 1px solid color-mix(in oklab, #f59e0b 30%, var(--border));
-        background: color-mix(in oklab, #f59e0b 7%, transparent);
-        font-size: 0.75rem;
+        gap: 0.5rem;
+        padding: 0.75rem 0.9rem 0.8rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius, 0.625rem);
+        background: var(--card, var(--background));
+        color: var(--card-foreground, var(--foreground));
+        font-size: 0.8125rem;
+        line-height: 1.45;
       }
+
+      /* Dock variant: snug to composer above it */
       .cw-perm--dock {
-        gap: 0.85rem;
-        padding: 0.9rem 1rem 0.95rem;
-        border: 1px solid color-mix(in oklab, #f59e0b 40%, var(--border));
         border-bottom: 0;
-        border-radius: 0.95rem 0.95rem 0 0;
-        background:
-          linear-gradient(
-            180deg,
-            color-mix(in oklab, #f59e0b 11%, var(--card)) 0%,
-            color-mix(in oklab, var(--card) 96%, var(--background)) 100%
-          );
-        box-shadow: 0 14px 38px -28px color-mix(in oklab, #000 38%, transparent);
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
       }
-      .cw-perm__hero {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-      }
-      .cw-perm__eyebrow {
+
+      /* Header */
+      .cw-perm__head {
         display: flex;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.45rem;
         flex-wrap: wrap;
-      }
-      .cw-perm__eyebrow-pill {
-        display: inline-flex;
-        align-items: center;
-        padding: 0.16rem 0.5rem;
-        border-radius: 999px;
-        background: color-mix(in oklab, #f59e0b 14%, transparent);
-        color: color-mix(in oklab, #b45309 85%, var(--foreground));
-        border: 1px solid color-mix(in oklab, #f59e0b 24%, transparent);
-        font-size: 0.66rem;
-        font-weight: 700;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-      }
-      .cw-perm__eyebrow-copy {
-        color: var(--muted-foreground);
-        font-size: 0.7rem;
-        font-weight: 600;
-      }
-      .cw-perm__copy {
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
         min-width: 0;
       }
-      .cw-perm__copy strong {
-        font-size: 0.92rem;
-        line-height: 1.3;
+      .cw-perm__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.35rem;
+        height: 1.35rem;
+        border-radius: 0.4rem;
+        background: color-mix(in oklab, var(--foreground) 7%, transparent);
+        color: var(--foreground);
+        flex-shrink: 0;
+      }
+      .cw-perm__eyebrow {
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted-foreground);
+      }
+      .cw-perm__tool {
+        font-size: 0.72rem;
+        font-weight: 600;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--foreground);
+        padding: 0.1rem 0.45rem;
+        border-radius: 0.3rem;
+        background: color-mix(in oklab, var(--foreground) 6%, transparent);
+      }
+      .cw-perm__agent {
+        font-size: 0.7rem;
+        color: var(--muted-foreground);
+        padding: 0.05rem 0.4rem;
+        border-radius: 0.3rem;
+        border: 1px dashed color-mix(in oklab, var(--border) 80%, transparent);
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* Body */
+      .cw-perm__title {
+        margin: 0.05rem 0 0;
+        font-size: 0.9rem;
+        font-weight: 600;
+        line-height: 1.35;
+        color: var(--foreground);
+        letter-spacing: -0.005em;
+      }
+      .cw-perm__sub {
+        margin: 0;
+        color: var(--muted-foreground);
+        font-size: 0.78rem;
+        line-height: 1.5;
       }
       .cw-perm__path {
+        margin: 0;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.72rem;
         color: var(--muted-foreground);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        max-width: 100%;
       }
-      .cw-perm__desc {
-        color: var(--muted-foreground);
-        line-height: 1.5;
-      }
-      .cw-perm__grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.75rem;
-      }
-      .cw-perm__section {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        min-width: 0;
-        padding: 0.7rem 0.75rem;
-        border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
-        border-radius: 0.7rem;
-        background: color-mix(in oklab, var(--background) 88%, transparent);
-      }
-      .cw-perm__section--decision {
-        padding-top: 0.75rem;
-      }
-      .cw-perm__section-label {
-        font-size: 0.67rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: color-mix(in oklab, var(--foreground) 45%, var(--muted-foreground));
-      }
-      .cw-perm__meta {
-        display: flex;
-        flex-direction: column;
-        gap: 0.4rem;
-      }
-      .cw-perm__meta-row {
-        display: grid;
-        grid-template-columns: 3.5rem 1fr;
-        gap: 0.5rem;
-        align-items: start;
-      }
-      .cw-perm__meta-key {
-        color: var(--muted-foreground);
-        font-size: 0.72rem;
-      }
-      .cw-perm__meta-value {
-        font-size: 0.78rem;
-        line-height: 1.45;
-        color: var(--foreground);
-        word-break: break-word;
-      }
-      .cw-perm__meta-value--mono {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.72rem;
-      }
-      .cw-perm__reasons,
-      .cw-perm__decision-copy {
-        display: flex;
-        flex-direction: column;
-        gap: 0.42rem;
-      }
-      .cw-perm__reason {
-        margin: 0;
-        font-size: 0.78rem;
-        line-height: 1.5;
-      }
-      .cw-perm__diff,
-      .cw-perm__file,
-      .cw-perm__cmd {
-        margin: 0;
-        padding: 0.5rem 0.625rem;
-        border-radius: 0.7rem;
+
+      /* Preview area */
+      .cw-perm__preview {
+        margin: 0.2rem 0 0;
+        padding: 0.55rem 0.7rem;
         border: 1px solid var(--border);
-        background: var(--background);
+        border-radius: 0.5rem;
+        background: color-mix(in oklab, var(--foreground) 3%, var(--background));
+        max-height: 12rem;
+        overflow: auto;
+      }
+      .cw-perm__preview--code,
+      .cw-perm__preview--cmd {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.6875rem;
-        line-height: 1.5;
-        overflow-x: auto;
-        max-height: 14rem;
-        overflow-y: auto;
+        font-size: 0.7rem;
+        line-height: 1.55;
         white-space: pre;
+        overflow-x: auto;
+        color: var(--foreground);
       }
-      .cw-perm__diff .cw-diff-del {
-        color: #ef4444;
-        background: color-mix(in oklab, #ef4444 10%, transparent);
+      .cw-perm__preview--md {
+        font-size: 0.8125rem;
+        line-height: 1.6;
+        max-height: 18rem;
       }
-      .cw-perm__diff .cw-diff-add {
-        color: #22c55e;
-        background: color-mix(in oklab, #22c55e 10%, transparent);
+      .cw-perm__preview--md :first-child { margin-top: 0; }
+      .cw-perm__preview--md :last-child { margin-bottom: 0; }
+
+      .cw-diff-del {
+        display: inline-block;
+        width: 100%;
+        color: oklch(0.55 0.18 25);
+        background: oklch(0.55 0.18 25 / 0.1);
       }
-      .cw-perm__diff .cw-diff-context {
+      .cw-diff-add {
+        display: inline-block;
+        width: 100%;
+        color: oklch(0.55 0.16 145);
+        background: oklch(0.55 0.16 145 / 0.1);
+      }
+      .cw-diff-context {
         color: var(--muted-foreground);
       }
+      .dark .cw-diff-del {
+        color: oklch(0.78 0.16 25);
+        background: oklch(0.78 0.16 25 / 0.14);
+      }
+      .dark .cw-diff-add {
+        color: oklch(0.82 0.16 145);
+        background: oklch(0.82 0.16 145 / 0.14);
+      }
+
+      /* Actions */
       .cw-perm__actions {
         display: flex;
-        gap: 0.375rem;
+        align-items: center;
+        gap: 0.4rem;
         flex-wrap: wrap;
-        justify-content: flex-end;
+        margin-top: 0.35rem;
       }
-      .cw-perm__btn {
-        padding: 0.375rem 0.75rem;
-        border-radius: 0.375rem;
-        border: 1px solid var(--border);
-        background: var(--background);
-        color: inherit;
+      .cw-perm__spacer { flex: 1; }
+
+      .cw-btn {
+        appearance: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.35rem;
         font: inherit;
-        cursor: pointer;
         font-size: 0.75rem;
         font-weight: 500;
+        line-height: 1;
+        padding: 0.4rem 0.75rem;
+        border-radius: 0.45rem;
+        border: 1px solid var(--border);
+        background: var(--background);
+        color: var(--foreground);
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 80ms ease;
       }
-      .cw-perm__btn:disabled {
-        opacity: 0.5;
+      .cw-btn:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent);
+      }
+      .cw-btn:active:not(:disabled) {
+        transform: translateY(0.5px);
+      }
+      .cw-btn:disabled {
+        opacity: 0.45;
         cursor: not-allowed;
       }
-      .cw-perm__btn:hover:not(:disabled) {
-        background: color-mix(in oklab, var(--foreground) 5%, var(--background));
+      .cw-btn ng-icon {
+        flex-shrink: 0;
+        opacity: 0.85;
       }
-      .cw-perm__btn--primary {
+
+      /* Primary — solid, prominent (Always allow / Submit / Approve) */
+      .cw-btn--primary {
         background: var(--primary);
         color: var(--primary-foreground);
         border-color: var(--primary);
       }
-      .cw-perm__btn--primary:hover:not(:disabled) {
-        opacity: 0.92;
+      .cw-btn--primary:hover:not(:disabled) {
+        background: color-mix(in oklab, var(--primary) 88%, var(--background));
+        border-color: color-mix(in oklab, var(--primary) 88%, var(--background));
       }
-      .cw-perm__btn--deny {
+      .cw-btn--primary ng-icon { opacity: 1; }
+
+      /* Secondary — subtle filled (Allow once) */
+      .cw-btn--secondary {
+        background: var(--secondary, color-mix(in oklab, var(--foreground) 6%, var(--background)));
+        color: var(--secondary-foreground, var(--foreground));
+        border-color: transparent;
+      }
+      .cw-btn--secondary:hover:not(:disabled) {
+        background: color-mix(in oklab, var(--foreground) 10%, var(--background));
+      }
+
+      /* Deny — destructive ghost on the left */
+      .cw-btn--deny {
+        background: transparent;
+        color: var(--muted-foreground);
+        border-color: transparent;
+        padding-left: 0.55rem;
+        padding-right: 0.55rem;
+      }
+      .cw-btn--deny:hover:not(:disabled) {
+        background: color-mix(in oklab, var(--destructive) 9%, transparent);
         color: var(--destructive);
-        border-color: color-mix(in oklab, var(--destructive) 40%, var(--border));
       }
+
+      /* Confirm-deny — solid destructive */
+      .cw-btn--deny-confirm {
+        background: var(--destructive);
+        color: var(--primary-foreground, #fff);
+        border-color: var(--destructive);
+      }
+      .cw-btn--deny-confirm:hover:not(:disabled) {
+        background: color-mix(in oklab, var(--destructive) 88%, var(--background));
+        border-color: color-mix(in oklab, var(--destructive) 88%, var(--background));
+      }
+      .cw-btn--deny-confirm ng-icon { opacity: 1; }
+
+      /* Ghost — minimal */
+      .cw-btn--ghost {
+        background: transparent;
+        border-color: transparent;
+        color: var(--muted-foreground);
+      }
+      .cw-btn--ghost:hover:not(:disabled) {
+        background: color-mix(in oklab, var(--foreground) 6%, transparent);
+        color: var(--foreground);
+      }
+
+      /* Deny composer */
+      .cw-perm__deny {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        margin-top: 0.15rem;
+        padding: 0.6rem 0.7rem 0.65rem;
+        border: 1px solid color-mix(in oklab, var(--destructive) 25%, var(--border));
+        border-radius: 0.55rem;
+        background: color-mix(in oklab, var(--destructive) 4%, var(--background));
+      }
+      .cw-perm__deny-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: var(--foreground);
+      }
+      .cw-perm__deny-optional {
+        font-weight: 400;
+        color: var(--muted-foreground);
+        margin-left: 0.25rem;
+      }
+      .cw-perm__deny-input {
+        min-height: 2.5rem;
+        padding: 0.45rem 0.6rem;
+        border: 1px solid var(--border);
+        border-radius: 0.45rem;
+        background: var(--background);
+        color: inherit;
+        font: inherit;
+        font-size: 0.8125rem;
+        line-height: 1.45;
+        resize: vertical;
+        outline: none;
+        transition: border-color 120ms ease, box-shadow 120ms ease;
+      }
+      .cw-perm__deny-input:focus {
+        border-color: color-mix(in oklab, var(--destructive) 50%, var(--border));
+        box-shadow: 0 0 0 3px color-mix(in oklab, var(--destructive) 18%, transparent);
+      }
+      .cw-perm__deny-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .cw-perm__deny-hint {
+        flex: 1;
+        font-size: 0.68rem;
+        color: var(--muted-foreground);
+      }
+
+      /* Ask user question */
       .cw-ask {
         display: flex;
         flex-direction: column;
-        gap: 0.75rem;
+        gap: 0.7rem;
+        margin-top: 0.15rem;
       }
-      .cw-ask__question {
+      .cw-ask__q {
         display: flex;
         flex-direction: column;
-        gap: 0.5rem;
-        padding: 0.625rem;
-        border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
-        border-radius: 0.5rem;
-        background: color-mix(in oklab, var(--card) 92%, transparent);
+        gap: 0.45rem;
       }
-      .cw-ask__head {
+      .cw-ask__q + .cw-ask__q {
+        padding-top: 0.65rem;
+        border-top: 1px dashed color-mix(in oklab, var(--border) 70%, transparent);
+      }
+      .cw-ask__qhead {
         display: flex;
         align-items: center;
-        gap: 0.375rem;
+        gap: 0.45rem;
         flex-wrap: wrap;
       }
       .cw-ask__chip {
-        padding: 0.125rem 0.375rem;
-        border-radius: 999px;
-        background: color-mix(in oklab, var(--foreground) 6%, transparent);
-        color: var(--muted-foreground);
-        font-size: 0.6875rem;
+        font-size: 0.65rem;
         font-weight: 600;
         text-transform: uppercase;
-        letter-spacing: 0.03em;
+        letter-spacing: 0.04em;
+        padding: 0.1rem 0.4rem;
+        border-radius: 999px;
+        background: color-mix(in oklab, var(--foreground) 7%, transparent);
+        color: var(--muted-foreground);
+      }
+      .cw-ask__qtext {
+        font-size: 0.83rem;
+        font-weight: 600;
+        line-height: 1.4;
+        color: var(--foreground);
       }
       .cw-ask__options {
-        display: grid;
-        gap: 0.375rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
       }
-      .cw-ask__option {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 0.5rem;
+      .cw-ask__opt {
+        display: flex;
         align-items: flex-start;
-        padding: 0.5rem;
+        gap: 0.55rem;
+        padding: 0.45rem 0.6rem;
         border: 1px solid var(--border);
         border-radius: 0.5rem;
         background: var(--background);
         cursor: pointer;
+        transition: border-color 120ms ease, background 120ms ease;
       }
-      .cw-ask__option--selected {
-        border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
-        background: color-mix(in oklab, var(--primary) 7%, var(--background));
+      .cw-ask__opt:hover {
+        border-color: color-mix(in oklab, var(--foreground) 25%, var(--border));
       }
-      .cw-ask__option-body {
+      .cw-ask__opt input {
+        margin-top: 0.18rem;
+        accent-color: var(--foreground);
+      }
+      .cw-ask__opt--on {
+        border-color: var(--foreground);
+        background: color-mix(in oklab, var(--foreground) 5%, var(--background));
+      }
+      .cw-ask__opt-body {
         display: flex;
         flex-direction: column;
-        gap: 0.125rem;
+        gap: 0.1rem;
+        min-width: 0;
       }
-      .cw-ask__option-label {
+      .cw-ask__opt-label {
         font-size: 0.8125rem;
-        font-weight: 600;
+        font-weight: 500;
+        color: var(--foreground);
       }
-      .cw-ask__option-desc {
+      .cw-ask__opt-desc {
+        font-size: 0.72rem;
         color: var(--muted-foreground);
-        font-size: 0.75rem;
         line-height: 1.45;
       }
       .cw-ask__other {
-        min-height: 4.5rem;
-        padding: 0.5rem 0.625rem;
+        min-height: 3.5rem;
+        padding: 0.5rem 0.65rem;
         border: 1px solid var(--border);
         border-radius: 0.5rem;
         background: var(--background);
         color: inherit;
         font: inherit;
-        resize: vertical;
-      }
-      .cw-ask__preview,
-      .cw-plan {
-        padding: 0.625rem 0.75rem;
-        border-radius: 0.5rem;
-        border: 1px solid var(--border);
-        background: color-mix(in oklab, var(--background) 92%, transparent);
         font-size: 0.8125rem;
-        line-height: 1.6;
+        resize: vertical;
+        outline: none;
+        transition: border-color 120ms ease, box-shadow 120ms ease;
       }
-      .cw-ask__preview {
-        max-height: 18rem;
-        overflow: auto;
+      .cw-ask__other:focus {
+        border-color: color-mix(in oklab, var(--ring) 60%, var(--border));
+        box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 25%, transparent);
       }
-      .cw-plan {
-        max-height: 22rem;
-        overflow: auto;
-      }
-      @media (max-width: 720px) {
-        .cw-perm__grid {
-          grid-template-columns: 1fr;
-        }
-        .cw-perm__meta-row {
-          grid-template-columns: 1fr;
-          gap: 0.15rem;
-        }
-      }
-      .cw-ask__preview :first-child,
-      .cw-plan :first-child {
-        margin-top: 0;
-      }
-      .cw-ask__preview :last-child,
-      .cw-plan :last-child {
-        margin-bottom: 0;
+
+      @media (max-width: 540px) {
+        .cw-perm { padding: 0.7rem 0.75rem; }
+        .cw-perm__spacer { display: none; }
+        .cw-btn { flex: 1; }
       }
     `,
   ],
 })
 export class ClaudePermissionInlineComponent {
+  @ViewChild('denyTa') private denyTa?: ElementRef<HTMLTextAreaElement>;
+
   readonly request = input.required<ClaudePermissionRequest>();
   readonly appearance = input<'inline' | 'dock'>('inline');
   readonly approve = output<ClaudePermissionApproval>();
-  readonly deny = output<void>();
+  readonly deny = output<string | undefined>();
+
+  readonly denying = signal(false);
+  readonly denyMessage = signal('');
 
   readonly kind = computed<'generic' | 'ask_user_question' | 'enter_plan_mode' | 'exit_plan_mode'>(() => {
     const name = normalizeToolName(this.request().toolName);
@@ -535,22 +720,17 @@ export class ClaudePermissionInlineComponent {
 
   readonly permToolKind = computed<string>(() => normalizeToolName(this.request().toolName));
 
-  readonly sourceLabel = computed(() => (this.request().agentId ? 'Subagent request' : 'Claude request'));
-
   readonly requestTitle = computed(() => {
     const title = this.request().title?.trim();
     if (title) return title;
     const displayName = this.request().displayName?.trim();
-    if (displayName) return displayName;
+    if (displayName) return `Allow ${displayName}?`;
     return `Approve ${this.requestToolLabel()}`;
   });
 
   readonly requestSubtitle = computed(() => {
     const description = this.request().description?.trim();
-    if (description) return description;
-    return this.request().agentId
-      ? 'A delegated subagent needs approval before it can continue.'
-      : 'Claude needs approval before it can continue.';
+    return description || '';
   });
 
   readonly requestToolLabel = computed(() => {
@@ -560,30 +740,27 @@ export class ClaudePermissionInlineComponent {
     return toolName || 'requested tool';
   });
 
-  readonly sourceScopeCopy = computed(() =>
-    this.request().agentId
-      ? `Delegated agent ${this.request().agentId}`
-      : 'Main Claude session',
-  );
-
-  readonly requestReasons = computed(() => {
-    const reasons = [
-      this.request().description?.trim(),
-      this.request().decisionReason?.trim(),
-      this.request().blockedPath ? `The current sandbox blocked access to ${this.request().blockedPath}.` : null,
-    ].filter((value): value is string => !!value);
-    if (reasons.length) return reasons;
-    return ['This action needs explicit approval before Claude can continue.'];
+  readonly requestSubline = computed(() => {
+    const data = asRecord(this.request().input);
+    const path =
+      strField(data, 'file_path') ||
+      strField(data, 'path') ||
+      strField(data, 'notebook_path') ||
+      strField(data, 'url') ||
+      this.request().blockedPath ||
+      '';
+    return path;
   });
 
   readonly allowOnceCopy = computed(
-    () => `Allow once lets ${this.request().agentId ? 'this subagent' : 'Claude'} perform this one action now.`,
+    () =>
+      `Approve this single action only. ${this.request().agentId ? 'The subagent' : 'Claude'} will ask again next time.`,
   );
 
   readonly allowAlwaysCopy = computed(() =>
     this.request().suggestions?.length
-      ? 'Always also applies the suggested permission rule so similar requests can proceed without asking again.'
-      : 'Always saves a reusable permission decision for similar requests when the runtime supports it.',
+      ? 'Approve and apply the suggested permission rule so similar requests proceed without asking.'
+      : 'Approve and remember this decision for similar requests.',
   );
 
   readonly permDiffSegments = computed<DiffSegment[]>(() => {
@@ -658,7 +835,37 @@ export class ClaudePermissionInlineComponent {
       this.lastRequestId = requestId;
       this.selectedAnswers.set({});
       this.otherAnswers.set({});
+      this.denying.set(false);
+      this.denyMessage.set('');
     });
+  }
+
+  startDeny(): void {
+    this.denying.set(true);
+    queueMicrotask(() => this.denyTa?.nativeElement?.focus());
+  }
+
+  cancelDeny(): void {
+    this.denying.set(false);
+    this.denyMessage.set('');
+  }
+
+  confirmDeny(): void {
+    const msg = this.denyMessage().trim();
+    this.deny.emit(msg || undefined);
+  }
+
+  onDenyKeydown(event: KeyboardEvent): void {
+    if (event.isComposing) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.cancelDeny();
+      return;
+    }
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      this.confirmDeny();
+    }
   }
 
   isSelected(question: AskQuestion, label: string): boolean {
@@ -730,6 +937,11 @@ function normalizeToolName(name: string | undefined): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function strField(data: Record<string, unknown>, key: string): string {
+  const value = data[key];
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function nextSelections(

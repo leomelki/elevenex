@@ -101,7 +101,7 @@
                     [childItems]="childItemsForToolUse(item.unit.toolUseId)"
                     [isLive]="isLiveToolUse(item.unit.toolUseId)"
                     (approve)="approvePermission($event)"
-                    (deny)="denyPermission()"
+                    (deny)="denyPermission($event)"
                   />
                 }
                 @case ('system') {
@@ -201,7 +201,7 @@
                             [turnId]="item.turnId"
                             [hasAgentHistory]="!!item.agentSummary"
                             (approve)="approvePermission($event)"
-                            (deny)="denyPermission()"
+                            (deny)="denyPermission($event)"
                             (inspect)="openAgentInspector($event)"
                           />
                         }
@@ -390,7 +390,7 @@
           [request]="req"
           [appearance]="'dock'"
           (approve)="approvePermission($event)"
-          (deny)="denyPermission()"
+          (deny)="denyPermission($event)"
         />
       }
 
