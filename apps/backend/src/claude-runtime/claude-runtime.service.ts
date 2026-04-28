@@ -149,6 +149,7 @@ interface ActiveRunState {
   interruptRequested: boolean;
   tornDown: boolean;
   permissionRequests: Map<string, ActivePermissionRequest>;
+  permissionRequestOrder: string[];
   userInputRequests: Map<string, ActiveUserInputRequest>;
   partialAssistantItems: Map<string, string>;
   partialThinkingItems: Map<string, string>;
@@ -799,24 +800,17 @@ export class ClaudeRuntimeService extends EventEmitter {
             }),
           suggestions: options.suggestions,
         });
-        state.pendingPermissionRequest = request;
-        state.runPhase = 'waiting';
-        state.sessionState = 'requires_action';
-        this.emitEvent({
-          type: 'permission_request',
-          payload: { sessionId, request },
-        });
-        this.emitRunState(sessionId);
-        void this.claudeHooksService.updateStatus(sessionId, 'waiting', {
-          markCompletion: false,
-        });
+        run.permissionRequestOrder.push(requestId);
+        this.promoteNextPendingPermissionRequest(sessionId, state, run);
       });
 
       const run = this.activeRuns.get(sessionId);
       run?.permissionRequests.delete(requestId);
-      state.pendingPermissionRequest = null;
-      state.runPhase = 'running';
-      state.sessionState = 'running';
+      if (run) {
+        run.permissionRequestOrder = run.permissionRequestOrder.filter(
+          (queuedRequestId) => queuedRequestId !== requestId,
+        );
+      }
       this.emitEvent({
         type: 'permission_resolved',
         payload: {
@@ -836,10 +830,17 @@ export class ClaudeRuntimeService extends EventEmitter {
           ),
         },
       });
-      this.emitRunState(sessionId);
-      await this.claudeHooksService.updateStatus(sessionId, 'running', {
-        markCompletion: false,
-      });
+      if (run) {
+        this.promoteNextPendingPermissionRequest(sessionId, state, run);
+      } else {
+        state.pendingPermissionRequest = null;
+        state.runPhase = 'running';
+        state.sessionState = 'running';
+        this.emitRunState(sessionId);
+        await this.claudeHooksService.updateStatus(sessionId, 'running', {
+          markCompletion: false,
+        });
+      }
 
       if (decisionContext.decision.behavior === 'allow') {
         return {
@@ -963,6 +964,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       interruptRequested: false,
       tornDown: false,
       permissionRequests: new Map(),
+      permissionRequestOrder: [],
       userInputRequests: new Map(),
       partialAssistantItems: new Map(),
       partialThinkingItems: new Map(),
@@ -1096,6 +1098,47 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     request.resolve({ behavior: 'deny', message });
+  }
+
+  private promoteNextPendingPermissionRequest(
+    sessionId: number,
+    state: RuntimeState,
+    run: ActiveRunState,
+  ): void {
+    const nextRequestId = run.permissionRequestOrder[0];
+    if (!nextRequestId) {
+      state.pendingPermissionRequest = null;
+      state.runPhase = 'running';
+      state.sessionState = 'running';
+      this.emitRunState(sessionId);
+      void this.claudeHooksService.updateStatus(sessionId, 'running', {
+        markCompletion: false,
+      });
+      return;
+    }
+
+    const nextPermission = run.permissionRequests.get(nextRequestId);
+    if (!nextPermission) {
+      run.permissionRequestOrder.shift();
+      this.promoteNextPendingPermissionRequest(sessionId, state, run);
+      return;
+    }
+
+    if (state.pendingPermissionRequest?.requestId === nextPermission.request.requestId) {
+      return;
+    }
+
+    state.pendingPermissionRequest = nextPermission.request;
+    state.runPhase = 'waiting';
+    state.sessionState = 'requires_action';
+    this.emitEvent({
+      type: 'permission_request',
+      payload: { sessionId, request: nextPermission.request },
+    });
+    this.emitRunState(sessionId);
+    void this.claudeHooksService.updateStatus(sessionId, 'waiting', {
+      markCompletion: false,
+    });
   }
 
   async answerUserInput(
@@ -2210,6 +2253,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.liveItems = [];
+    run?.permissionRequests.clear();
+    if (run) {
+      run.permissionRequestOrder = [];
+    }
     if (run) {
       this.logStartupTiming(sessionId, run.runId, run.startedAtMs, 'run_complete', {
         hadError: Boolean(state.lastError),
@@ -2233,6 +2280,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       return;
     }
 
+    const run = this.activeRuns.get(sessionId);
     const state = this.ensureRuntimeState(sessionId);
     state.runPhase = 'idle';
     state.sessionState = 'idle';
@@ -2241,6 +2289,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     state.pendingUserInputRequest = null;
     state.liveItems = [];
     state.lastError = null;
+    run?.permissionRequests.clear();
+    if (run) {
+      run.permissionRequestOrder = [];
+    }
     void this.refreshRuntimeMetadata(sessionId, {
       reason: 'interrupt_finalize',
     })
@@ -4102,7 +4154,6 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const state = this.ensureRuntimeState(sessionId);
-    const pendingPermissionRequest = state.pendingPermissionRequest;
     const pendingUserInputRequest = state.pendingUserInputRequest;
 
     state.pendingPermissionRequest = null;
@@ -4113,16 +4164,14 @@ export class ClaudeRuntimeService extends EventEmitter {
       this.emitRunState(sessionId);
     }
 
-    if (pendingPermissionRequest) {
-      const permission = run.permissionRequests.get(
-        pendingPermissionRequest.requestId,
-      );
+    for (const [queuedPermissionRequestId, permission] of run.permissionRequests.entries()) {
       permission?.resolve({
         behavior: 'deny',
         message: 'Run interrupted by user',
       });
-      run.permissionRequests.delete(pendingPermissionRequest.requestId);
+      run.permissionRequests.delete(queuedPermissionRequestId);
     }
+    run.permissionRequestOrder = [];
 
     if (pendingUserInputRequest) {
       const userInput = run.userInputRequests.get(

@@ -541,6 +541,7 @@ describe('ClaudeRuntimeService', () => {
       interruptRequested: false,
       tornDown: false,
       permissionRequests: new Map(),
+      permissionRequestOrder: [],
       userInputRequests: new Map(),
       partialAssistantItems: new Map(),
       partialThinkingItems: new Map(),
@@ -653,6 +654,7 @@ describe('ClaudeRuntimeService', () => {
       interruptRequested: false,
       tornDown: false,
       permissionRequests: new Map(),
+      permissionRequestOrder: [],
       userInputRequests: new Map(),
       partialAssistantItems: new Map(),
       partialThinkingItems: new Map(),
@@ -756,6 +758,7 @@ describe('ClaudeRuntimeService', () => {
       interruptRequested: false,
       tornDown: false,
       permissionRequests: new Map(),
+      permissionRequestOrder: [],
       userInputRequests: new Map(),
       partialAssistantItems: new Map(),
       partialThinkingItems: new Map(),
@@ -859,6 +862,7 @@ describe('ClaudeRuntimeService', () => {
       interruptRequested: false,
       tornDown: false,
       permissionRequests: new Map(),
+      permissionRequestOrder: [],
       userInputRequests: new Map(),
       partialAssistantItems: new Map(),
       partialThinkingItems: new Map(),
@@ -1120,6 +1124,7 @@ describe('ClaudeRuntimeService', () => {
       interruptRequested: false,
       tornDown: false,
       permissionRequests: new Map(),
+      permissionRequestOrder: [],
       userInputRequests: new Map(),
       partialAssistantItems: new Map(),
       partialThinkingItems: new Map(),
@@ -1657,6 +1662,7 @@ describe('ClaudeRuntimeService', () => {
 
   it('interrupt clears a pending permission request immediately', async () => {
     const resolvePermission = jest.fn();
+    const resolveQueuedPermission = jest.fn();
     const interrupt = jest.fn().mockResolvedValue(undefined);
     const close = jest.fn();
     const emittedEvents: string[] = [];
@@ -1674,7 +1680,15 @@ describe('ClaudeRuntimeService', () => {
             resolve: resolvePermission,
           },
         ],
+        [
+          'perm-2',
+          {
+            request: { requestId: 'perm-2', toolName: 'Bash', input: {}, createdAt: 'later' },
+            resolve: resolveQueuedPermission,
+          },
+        ],
       ]),
+      permissionRequestOrder: ['perm-1', 'perm-2'],
       userInputRequests: new Map(),
       partialAssistantItems: new Map(),
       partialThinkingItems: new Map(),
@@ -1709,12 +1723,94 @@ describe('ClaudeRuntimeService', () => {
       behavior: 'deny',
       message: 'Run interrupted by user',
     });
+    expect(resolveQueuedPermission).toHaveBeenCalledWith({
+      behavior: 'deny',
+      message: 'Run interrupted by user',
+    });
     expect(interrupt).toHaveBeenCalled();
     expect(close).toHaveBeenCalled();
     expect(runtimeState.pendingPermissionRequest).toBeNull();
     expect(runtimeState.canInterrupt).toBe(false);
     expect(runtimeState.runPhase).toBe('idle');
     expect(emittedEvents).toContain('run_state');
+  });
+
+  it('promotes queued permission requests in order after the current one resolves', async () => {
+    const emittedEvents: Array<{ type: string; payload?: Record<string, unknown> }> = [];
+    service.on('event', (event: { type: string; payload?: Record<string, unknown> }) =>
+      emittedEvents.push(event),
+    );
+
+    const run = {
+      query: { close: jest.fn() },
+      interruptRequested: false,
+      tornDown: false,
+      permissionRequests: new Map([
+        [
+          'perm-1',
+          {
+            request: { requestId: 'perm-1', toolName: 'Edit', input: {}, createdAt: 'now' },
+            resolve: jest.fn(),
+          },
+        ],
+        [
+          'perm-2',
+          {
+            request: {
+              requestId: 'perm-2',
+              toolName: 'Bash',
+              input: { command: 'cat /tmp/file.txt' },
+              createdAt: 'later',
+            },
+            resolve: jest.fn(),
+          },
+        ],
+      ]),
+      permissionRequestOrder: ['perm-2'],
+      userInputRequests: new Map(),
+      partialAssistantItems: new Map(),
+      partialThinkingItems: new Map(),
+      currentStreamMessageId: null,
+      completionPromise: Promise.resolve(),
+      resolveCompletion: jest.fn(),
+      startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
+      sawFirstSdkMessage: false,
+      sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
+    };
+    const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
+    state.pendingPermissionRequest = {
+      requestId: 'perm-1',
+      toolName: 'Edit',
+      input: {},
+      createdAt: 'now',
+    };
+    state.runPhase = 'waiting';
+    state.sessionState = 'requires_action';
+
+    (service as any).promoteNextPendingPermissionRequest(7, state, run);
+
+    expect(state.pendingPermissionRequest).toEqual(
+      expect.objectContaining({
+        requestId: 'perm-2',
+        toolName: 'Bash',
+      }),
+    );
+    expect(state.runPhase).toBe('waiting');
+    expect(state.sessionState).toBe('requires_action');
+    expect(
+      emittedEvents.some(
+        (event) =>
+          event.type === 'permission_request'
+          && event.payload?.['request']
+          && (event.payload['request'] as { requestId?: string }).requestId === 'perm-2',
+      ),
+    ).toBe(true);
   });
 
   it('interrupt cancels a pending user input request immediately', async () => {
@@ -1727,6 +1823,7 @@ describe('ClaudeRuntimeService', () => {
       interruptRequested: false,
       tornDown: false,
       permissionRequests: new Map(),
+      permissionRequestOrder: [],
       userInputRequests: new Map([
         [
           'input-1',
@@ -1781,6 +1878,7 @@ describe('ClaudeRuntimeService', () => {
       interruptRequested: false,
       tornDown: false,
       permissionRequests: new Map(),
+      permissionRequestOrder: [],
       userInputRequests: new Map(),
       partialAssistantItems: new Map(),
       partialThinkingItems: new Map(),
