@@ -20,7 +20,11 @@ import {
   lucideCheckCheck,
   lucideX,
 } from '@ng-icons/lucide';
-import { ClaudePermissionApproval, ClaudePermissionRequest } from '@/shared/models/claude-runtime.model';
+import {
+  ClaudePermissionApproval,
+  ClaudePermissionRequest,
+  ClaudePermissionUpdate,
+} from '@/shared/models/claude-runtime.model';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
 import { DiffSegment, normalizeToolName as normalizeToolNameForUi, simpleLineDiff } from '../util/tool-format';
 
@@ -35,6 +39,12 @@ interface AskQuestion {
   header?: string;
   options: AskOption[];
   multiSelect?: boolean;
+}
+
+interface AlwaysAllowPattern {
+  label: string;
+  pattern: string;
+  detail: string;
 }
 
 @Component({
@@ -232,6 +242,32 @@ interface AskQuestion {
           }
 
           @if (!denying()) {
+            <section class="cw-perm__always" [attr.data-has-patterns]="alwaysAllowPatterns().length > 0">
+              <div class="cw-perm__always-head">
+                <span class="cw-perm__always-kicker">
+                  {{ alwaysAllowPatterns().length ? 'Always allow saves this pattern' : 'No always-allow pattern available' }}
+                </span>
+                @if (!alwaysAllowPatterns().length) {
+                  <span class="cw-perm__always-empty">No reusable pattern supplied</span>
+                }
+              </div>
+              @if (alwaysAllowPatterns().length) {
+                <div class="cw-perm__patterns">
+                  @for (entry of alwaysAllowPatterns(); track entry.pattern + entry.detail) {
+                    <div class="cw-perm__pattern">
+                      <span class="cw-perm__pattern-label">{{ entry.label }}</span>
+                      <code class="cw-perm__pattern-code">{{ entry.pattern }}</code>
+                      <span class="cw-perm__pattern-detail">{{ entry.detail }}</span>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <p class="cw-perm__always-note">
+                  Claude did not provide a reusable rule for this tool call, so this request can only be approved once.
+                </p>
+              }
+            </section>
+
             <footer class="cw-perm__actions">
               <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
                 <ng-icon name="lucideX" size="13" aria-hidden="true" />
@@ -247,15 +283,17 @@ interface AskQuestion {
                 <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
                 Allow once
               </button>
-              <button
-                type="button"
-                class="cw-btn cw-btn--primary"
-                [title]="allowAlwaysCopy()"
-                (click)="approve.emit({ remember: true })"
-              >
-                <ng-icon name="lucideCheckCheck" size="13" aria-hidden="true" />
-                Always allow
-              </button>
+              @if (alwaysAllowPatterns().length) {
+                <button
+                  type="button"
+                  class="cw-btn cw-btn--primary"
+                  [title]="allowAlwaysCopy()"
+                  (click)="approve.emit({ remember: true })"
+                >
+                  <ng-icon name="lucideCheckCheck" size="13" aria-hidden="true" />
+                  Always allow
+                </button>
+              }
             </footer>
           }
         }
@@ -414,6 +452,80 @@ interface AskQuestion {
       }
       .cw-perm__preview--md :first-child { margin-top: 0; }
       .cw-perm__preview--md :last-child { margin-bottom: 0; }
+
+      /* Always allow pattern */
+      .cw-perm__always {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        margin-top: 0.25rem;
+        padding: 0.55rem 0.65rem;
+        border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+        border-radius: 0.55rem;
+        background: color-mix(in oklab, var(--foreground) 3%, var(--background));
+      }
+      .cw-perm__always[data-has-patterns='false'] {
+        border-style: dashed;
+        background: transparent;
+      }
+      .cw-perm__always-head {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+      }
+      .cw-perm__always-kicker {
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted-foreground);
+      }
+      .cw-perm__always-empty {
+        font-size: 0.68rem;
+        color: var(--muted-foreground);
+      }
+      .cw-perm__patterns {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .cw-perm__pattern {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 0.45rem;
+        min-width: 0;
+      }
+      .cw-perm__pattern-label {
+        font-size: 0.68rem;
+        color: var(--muted-foreground);
+        white-space: nowrap;
+      }
+      .cw-perm__pattern-code {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding: 0.18rem 0.4rem;
+        border-radius: 0.35rem;
+        background: var(--background);
+        border: 1px solid color-mix(in oklab, var(--border) 75%, transparent);
+        color: var(--foreground);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.72rem;
+      }
+      .cw-perm__pattern-detail {
+        font-size: 0.68rem;
+        color: var(--muted-foreground);
+        white-space: nowrap;
+      }
+      .cw-perm__always-note {
+        margin: 0;
+        color: var(--muted-foreground);
+        font-size: 0.72rem;
+        line-height: 1.45;
+      }
 
       .cw-diff-del {
         display: inline-block;
@@ -695,6 +807,13 @@ interface AskQuestion {
         .cw-perm { padding: 0.7rem 0.75rem; }
         .cw-perm__spacer { display: none; }
         .cw-btn { flex: 1; }
+        .cw-perm__pattern {
+          grid-template-columns: 1fr;
+          gap: 0.2rem;
+        }
+        .cw-perm__pattern-detail {
+          white-space: normal;
+        }
       }
     `,
   ],
@@ -759,8 +878,12 @@ export class ClaudePermissionInlineComponent {
 
   readonly allowAlwaysCopy = computed(() =>
     this.request().suggestions?.length
-      ? 'Approve and apply the suggested permission rule so similar requests proceed without asking.'
-      : 'Approve and remember this decision for similar requests.',
+      ? `Approve and save ${this.alwaysAllowPatterns().length ? 'the displayed pattern' : 'Claude’s suggested permission rule'} for similar requests.`
+      : 'Approve this request, but Claude did not provide a reusable pattern to save.',
+  );
+
+  readonly alwaysAllowPatterns = computed<AlwaysAllowPattern[]>(() =>
+    (this.request().suggestions ?? []).flatMap((suggestion) => describePermissionSuggestion(suggestion)),
   );
 
   readonly permDiffSegments = computed<DiffSegment[]>(() => {
@@ -942,6 +1065,74 @@ function asRecord(value: unknown): Record<string, unknown> {
 function strField(data: Record<string, unknown>, key: string): string {
   const value = data[key];
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function describePermissionSuggestion(suggestion: ClaudePermissionUpdate): AlwaysAllowPattern[] {
+  switch (suggestion.type) {
+    case 'addRules':
+    case 'replaceRules':
+    case 'removeRules':
+      return suggestion.rules.map((rule) => ({
+        label: formatRuleAction(suggestion.type),
+        pattern: formatRulePattern(rule.toolName, rule.ruleContent),
+        detail: `${formatPermissionBehavior(suggestion.behavior)} in ${formatPermissionDestination(suggestion.destination)}`,
+      }));
+    case 'addDirectories':
+    case 'removeDirectories':
+      return suggestion.directories.map((directory) => ({
+        label: suggestion.type === 'addDirectories' ? 'Directory' : 'Remove directory',
+        pattern: directory,
+        detail: `Applies in ${formatPermissionDestination(suggestion.destination)}`,
+      }));
+    case 'setMode':
+      return [
+        {
+          label: 'Mode',
+          pattern: suggestion.mode,
+          detail: `Applies in ${formatPermissionDestination(suggestion.destination)}`,
+        },
+      ];
+  }
+}
+
+function formatRulePattern(toolName: string, ruleContent?: string): string {
+  const cleanTool = toolName.trim() || 'Tool';
+  const cleanRule = ruleContent?.trim();
+  return cleanRule ? `${cleanTool}(${cleanRule})` : cleanTool;
+}
+
+function formatRuleAction(type: 'addRules' | 'replaceRules' | 'removeRules'): string {
+  switch (type) {
+    case 'addRules':
+      return 'Rule';
+    case 'replaceRules':
+      return 'Replace';
+    case 'removeRules':
+      return 'Remove';
+  }
+}
+
+function formatPermissionBehavior(behavior: string): string {
+  const clean = behavior.trim();
+  if (!clean) return 'Saved';
+  if (clean.toLowerCase() === 'allow') return 'Allow';
+  if (clean.toLowerCase() === 'deny') return 'Deny';
+  return clean;
+}
+
+function formatPermissionDestination(destination: ClaudePermissionUpdate['destination']): string {
+  switch (destination) {
+    case 'userSettings':
+      return 'user settings';
+    case 'projectSettings':
+      return 'project settings';
+    case 'localSettings':
+      return 'local settings';
+    case 'session':
+      return 'this session';
+    case 'cliArg':
+      return 'the current run';
+  }
 }
 
 function nextSelections(

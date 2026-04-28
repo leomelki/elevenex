@@ -565,6 +565,14 @@ describe('ClaudeWorkspaceComponent', () => {
       description: 'Needs permission to read outside the workspace.',
       blockedPath: '/outside-boundary/file.txt',
       input: { command: 'cat /outside-boundary/file.txt' },
+      suggestions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'localSettings',
+          rules: [{ toolName: 'Bash', ruleContent: 'cat /outside-boundary/*' }],
+        },
+      ],
       createdAt: '2026-04-24T08:00:02.000Z',
     });
     fixture.detectChanges();
@@ -574,6 +582,9 @@ describe('ClaudeWorkspaceComponent', () => {
     const sendButton = element.querySelector('.cw-comp__btn--send') as HTMLButtonElement;
     expect(permissionCard?.textContent).toContain('Approval required');
     expect(permissionCard?.textContent).toContain('/outside-boundary/file.txt');
+    expect(permissionCard?.textContent).toContain('Always allow saves this pattern');
+    expect(permissionCard?.textContent).toContain('Bash(cat /outside-boundary/*)');
+    expect(permissionCard?.textContent).toContain('Always allow');
     expect(sendButton.disabled).toBe(true);
     expect(element.querySelector('.cw-stream .cw-perm')).toBeNull();
   });
