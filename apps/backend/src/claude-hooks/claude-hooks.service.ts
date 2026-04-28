@@ -106,6 +106,11 @@ export class ClaudeHooksService extends EventEmitter {
       return;
     }
 
+    const startedAtMs = Date.now();
+    this.logger.log(
+      `Hook bridge received session=${sessionId} event=${payload.hook_event_name ?? 'unknown'} details=${JSON.stringify(this.summarizeHookPayload(payload))}`,
+    );
+
     this.emit('hook-event', {
       sessionId,
       payload: payload as Record<string, unknown>,
@@ -155,6 +160,10 @@ export class ClaudeHooksService extends EventEmitter {
     if (status) {
       await this.updateStatus(sessionId, status);
     }
+
+    this.logger.log(
+      `Hook bridge processed session=${sessionId} event=${payload.hook_event_name ?? 'unknown'} elapsedMs=${Date.now() - startedAtMs} status=${status ?? 'unchanged'}`,
+    );
   }
 
   async handleInterrupt(sessionId: number): Promise<void> {
@@ -173,5 +182,43 @@ export class ClaudeHooksService extends EventEmitter {
     this.invalidatedSessions.add(sessionId);
     this.statuses.delete(sessionId);
     this.emit('status-changed', { sessionId, status: 'idle' });
+  }
+
+  private summarizeHookPayload(payload: ClaudeHookPayload): Record<string, unknown> {
+    const summary: Record<string, unknown> = {
+      source: payload.source ?? null,
+      notificationType: payload.notification_type ?? null,
+      sessionId: payload.session_id ?? null,
+      cwd: payload.cwd ?? null,
+      permissionMode: payload.permission_mode ?? null,
+      agentId: payload.agent_id ?? null,
+      agentType: payload.agent_type ?? null,
+    };
+
+    const interestingKeys = [
+      'tool_name',
+      'tool_use_id',
+      'matcher',
+      'hook_matcher',
+      'hook_name',
+      'command',
+      'commands',
+      'timeout_ms',
+      'mcp_server_name',
+    ];
+
+    for (const key of interestingKeys) {
+      const value = payload[key];
+      if (value == null) {
+        continue;
+      }
+      summary[key] =
+        typeof value === 'string' && value.length > 240
+          ? `${value.slice(0, 240)}...`
+          : value;
+    }
+
+    summary['payloadKeys'] = Object.keys(payload).sort();
+    return summary;
   }
 }

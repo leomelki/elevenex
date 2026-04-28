@@ -1701,14 +1701,18 @@ export class ClaudeRuntimeService extends EventEmitter {
     sessionId: number,
     message: SDKHookStartedMessage,
   ): void {
+    const startedAt = new Date().toISOString();
     const hook = this.upsertHookExecution(sessionId, {
       hookId: message.hook_id,
       hookName: message.hook_name,
       hookEvent: message.hook_event,
       status: 'running',
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      startedAt,
+      updatedAt: startedAt,
     });
+    this.logger.log(
+      `Claude hook started session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event}${this.formatHookMessageDetails(message as Record<string, unknown>)}`,
+    );
     this.emitEvent({ type: 'hook_started', payload: { sessionId, hook } });
   }
 
@@ -1716,6 +1720,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     sessionId: number,
     message: SDKHookProgressMessage,
   ): void {
+    const updatedAt = new Date().toISOString();
     const hook = this.upsertHookExecution(sessionId, {
       hookId: message.hook_id,
       hookName: message.hook_name,
@@ -1724,8 +1729,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       output: message.output,
       stdout: message.stdout,
       stderr: message.stderr,
-      updatedAt: new Date().toISOString(),
+      updatedAt,
     });
+    this.logger.log(
+      `Claude hook progress session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event} elapsedMs=${this.computeHookElapsedMs(hook, updatedAt)} outputBytes=${this.byteLength(message.output)} stdoutBytes=${this.byteLength(message.stdout)} stderrBytes=${this.byteLength(message.stderr)}${this.formatHookMessageDetails(message as Record<string, unknown>)}`,
+    );
     this.emitEvent({ type: 'hook_progress', payload: { sessionId, hook } });
   }
 
@@ -1733,6 +1741,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     sessionId: number,
     message: SDKHookResponseMessage,
   ): void {
+    const updatedAt = new Date().toISOString();
     const hook = this.upsertHookExecution(sessionId, {
       hookId: message.hook_id,
       hookName: message.hook_name,
@@ -1742,8 +1751,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       stdout: message.stdout,
       stderr: message.stderr,
       exitCode: message.exit_code,
-      updatedAt: new Date().toISOString(),
+      updatedAt,
     });
+    this.logger.log(
+      `Claude hook completed session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event} outcome=${message.outcome} exitCode=${String(message.exit_code ?? 'null')} elapsedMs=${this.computeHookElapsedMs(hook, updatedAt)} outputBytes=${this.byteLength(message.output)} stdoutBytes=${this.byteLength(message.stdout)} stderrBytes=${this.byteLength(message.stderr)}${this.formatHookMessageDetails(message as Record<string, unknown>)}`,
+    );
     this.emitEvent({ type: 'hook_complete', payload: { sessionId, hook } });
   }
 
@@ -2441,6 +2453,78 @@ export class ClaudeRuntimeService extends EventEmitter {
       return 'system_only';
     }
     return 'opaque';
+  }
+
+  private computeHookElapsedMs(
+    hook: ClaudeHookExecution,
+    updatedAt: string,
+  ): number | null {
+    if (!hook.startedAt) {
+      return null;
+    }
+    const started = Date.parse(hook.startedAt);
+    const updated = Date.parse(updatedAt);
+    if (Number.isNaN(started) || Number.isNaN(updated)) {
+      return null;
+    }
+    return Math.max(0, updated - started);
+  }
+
+  private byteLength(value: string | undefined): number {
+    return value ? Buffer.byteLength(value, 'utf8') : 0;
+  }
+
+  private formatHookMessageDetails(message: Record<string, unknown>): string {
+    const extras: Record<string, unknown> = {};
+    const interestingKeys = [
+      'hook_matcher',
+      'matcher',
+      'hook_source',
+      'source',
+      'command',
+      'commands',
+      'timeout',
+      'timeout_ms',
+      'cwd',
+      'mcp_server_name',
+    ];
+
+    for (const key of interestingKeys) {
+      const value = message[key];
+      if (value == null) {
+        continue;
+      }
+      extras[key] =
+        typeof value === 'string' && value.length > 240
+          ? `${value.slice(0, 240)}...`
+          : value;
+    }
+
+    const rawKeys = Object.keys(message).filter(
+      (key) =>
+        ![
+          'hook_id',
+          'hook_name',
+          'hook_event',
+          'outcome',
+          'output',
+          'stdout',
+          'stderr',
+          'exit_code',
+          'session_id',
+          'uuid',
+          'type',
+          'parent_tool_use_id',
+        ].includes(key),
+    );
+
+    if (rawKeys.length > 0) {
+      extras['rawKeys'] = rawKeys;
+    }
+
+    return Object.keys(extras).length > 0
+      ? ` details=${JSON.stringify(extras)}`
+      : '';
   }
 
   private pushItem(
