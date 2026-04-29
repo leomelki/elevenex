@@ -332,13 +332,8 @@ readonly messageActionsDisabled = computed(
         continue;
       }
 
-      let nextUserIndex = units.length;
-      for (let cursor = i + 1; cursor < units.length; cursor++) {
-        if (isUserMessageUnit(units[cursor])) {
-          nextUserIndex = cursor;
-          break;
-        }
-      }
+      const nextUserOffset = units.slice(i + 1).findIndex(isUserMessageUnit);
+      const nextUserIndex = nextUserOffset === -1 ? units.length : i + 1 + nextUserOffset;
 
       const turnUnits = units.slice(i, nextUserIndex);
       const lastAssistantIndex = findLastAssistantIndex(turnUnits);
@@ -350,8 +345,7 @@ readonly messageActionsDisabled = computed(
         continue;
       }
 
-      const assistantOffset = lastAssistantIndex;
-      const lastAssistantUnit = turnUnits[assistantOffset] as Extract<
+      const lastAssistantUnit = turnUnits[lastAssistantIndex] as Extract<
         PairedTranscriptUnit,
         { kind: 'message' }
       >;
@@ -362,7 +356,7 @@ readonly messageActionsDisabled = computed(
       //     stays visible after a turn settles.
       //   - everything else (tool calls, intermediate text) is the collapsible work.
       const lastAssistantSourceId = lastAssistantUnit.item.sourceMessageId;
-      const intermediateUnits = turnUnits.slice(1, assistantOffset);
+      const intermediateUnits = turnUnits.slice(1, lastAssistantIndex);
       const siblingThinkingUnits: PairedTranscriptUnit[] = [];
       const intermediateThinkingUnits: PairedTranscriptUnit[] = [];
       const collapsibleUnits: PairedTranscriptUnit[] = [];
@@ -380,10 +374,10 @@ readonly messageActionsDisabled = computed(
           collapsibleUnits.push(intermediate);
         }
       }
-      const tailUnits = turnUnits.slice(assistantOffset + 1);
+      const tailUnits = turnUnits.slice(lastAssistantIndex + 1);
       const isCurrentTurn = nextUserIndex === units.length;
       const hasToolCalls = collapsibleUnits.some((u) => u.kind === 'tool');
-      const canCollapse = collapsibleUnits.length > 0 && hasToolCalls && (!isCurrentTurn || isSessionSettled);
+      const canCollapse = hasToolCalls && (!isCurrentTurn || isSessionSettled);
 
       out.push({ kind: 'unit', id: unit.id, unit });
 
