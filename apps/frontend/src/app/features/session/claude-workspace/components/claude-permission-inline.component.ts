@@ -530,27 +530,26 @@ interface AlwaysAllowPattern {
       }
 
       .cw-diff-del {
-        display: inline-block;
-        width: 100%;
-        color: oklch(0.55 0.18 25);
-        background: oklch(0.55 0.18 25 / 0.1);
+        display: block;
+        color: oklch(0.45 0.2 20);
+        background: color-mix(in oklab, oklch(0.55 0.22 20) 10%, transparent);
       }
       .cw-diff-add {
-        display: inline-block;
-        width: 100%;
-        color: oklch(0.55 0.16 145);
-        background: oklch(0.55 0.16 145 / 0.1);
+        display: block;
+        color: oklch(0.42 0.18 240);
+        background: color-mix(in oklab, oklch(0.52 0.18 240) 10%, transparent);
       }
       .cw-diff-context {
+        display: block;
         color: var(--muted-foreground);
       }
       .dark .cw-diff-del {
-        color: oklch(0.78 0.16 25);
-        background: oklch(0.78 0.16 25 / 0.14);
+        color: oklch(0.78 0.18 20);
+        background: color-mix(in oklab, oklch(0.72 0.18 20) 15%, transparent);
       }
       .dark .cw-diff-add {
-        color: oklch(0.82 0.16 145);
-        background: oklch(0.82 0.16 145 / 0.14);
+        color: oklch(0.75 0.16 240);
+        background: color-mix(in oklab, oklch(0.68 0.16 240) 15%, transparent);
       }
 
       /* Actions */

@@ -505,17 +505,32 @@ interface Todo {
         max-height: 28rem;
         overflow: auto;
       }
+      .cw-tool__diff {
+        padding: 0.375rem 0;
+      }
+      .cw-diff-add,
+      .cw-diff-del,
+      .cw-diff-context {
+        display: block;
+        padding: 0.1rem 0.75rem;
+      }
       .cw-diff-add {
-        background: color-mix(in oklab, #22c55e 18%, transparent);
+        background: color-mix(in oklab, oklch(0.52 0.18 240) 10%, transparent);
+        border-left: 3px solid oklch(0.52 0.18 240 / 0.45);
+        padding-left: calc(0.75rem - 3px);
       }
       .cw-diff-del {
-        background: color-mix(in oklab, #ef4444 18%, transparent);
+        background: color-mix(in oklab, oklch(0.55 0.22 20) 10%, transparent);
+        border-left: 3px solid oklch(0.55 0.22 20 / 0.45);
+        padding-left: calc(0.75rem - 3px);
       }
       :host-context(.dark) .cw-diff-add {
-        background: color-mix(in oklab, #22c55e 25%, transparent);
+        background: color-mix(in oklab, oklch(0.68 0.16 240) 15%, transparent);
+        border-left-color: oklch(0.68 0.16 240 / 0.5);
       }
       :host-context(.dark) .cw-diff-del {
-        background: color-mix(in oklab, #ef4444 25%, transparent);
+        background: color-mix(in oklab, oklch(0.72 0.18 20) 15%, transparent);
+        border-left-color: oklch(0.72 0.18 20 / 0.5);
       }
       .cw-tool__write {
         margin: 0;
@@ -532,19 +547,20 @@ interface Todo {
       .cw-write__line {
         display: grid;
         grid-template-columns: 1.75rem 1fr;
-        background: color-mix(in oklab, #22c55e 12%, transparent);
+        background: color-mix(in oklab, oklch(0.52 0.18 240) 8%, transparent);
       }
       :host-context(.dark) .cw-write__line {
-        background: color-mix(in oklab, #22c55e 18%, transparent);
+        background: color-mix(in oklab, oklch(0.68 0.16 240) 13%, transparent);
       }
       .cw-write__sign {
         user-select: none;
         text-align: center;
-        color: color-mix(in oklab, #16a34a 90%, var(--muted-foreground));
-        background: color-mix(in oklab, #22c55e 22%, transparent);
+        color: oklch(0.45 0.2 240);
+        background: color-mix(in oklab, oklch(0.52 0.18 240) 16%, transparent);
       }
       :host-context(.dark) .cw-write__sign {
-        background: color-mix(in oklab, #22c55e 28%, transparent);
+        color: oklch(0.72 0.16 240);
+        background: color-mix(in oklab, oklch(0.68 0.16 240) 22%, transparent);
       }
       .cw-write__code {
         padding: 0 0.5rem;
@@ -1127,7 +1143,7 @@ export class ClaudeToolCallComponent {
     const wrapped = lines
       .map(
         (line) =>
-          `<span class="cw-write__line"><span class="cw-write__sign">+</span><span class="cw-write__code hljs">${line.length ? line : ' '}</span></span>`,
+          `<span class="cw-write__line"><span class="cw-write__sign">+</span><span class="cw-write__code">${line.length ? line : ' '}</span></span>`,
       )
       .join('\n');
     const safe = DOMPurify.sanitize(wrapped, { USE_PROFILES: { html: true } });

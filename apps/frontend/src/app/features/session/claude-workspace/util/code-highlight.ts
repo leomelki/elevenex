@@ -106,7 +106,7 @@ export function highlightedDiffHtml(
 
   const renderLine = (type: 'add' | 'del' | 'context', content: string): string => {
     const prefix = type === 'add' ? '+ ' : type === 'del' ? '- ' : '  ';
-    return `<span class="cw-diff-${type} hljs">${prefix}${content || ' '}\n</span>`;
+    return `<span class="cw-diff-${type}">${prefix}${content || ' '}</span>`;
   };
 
   const out: string[] = [];
