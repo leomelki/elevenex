@@ -46,13 +46,17 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
 
   // Deduplicate assistant/thinking messages that appear twice because streaming IDs
   // (e.g. "msg_abc:0") differ from history IDs (e.g. "msg_abc:assistant:0").
-  // Group by sourceMessageId when available, then by UUID prefix + kind as fallback.
+  // Key includes the trailing content-block index so distinct blocks of the same
+  // message (which share sourceMessageId) are not collapsed into one.
   const groups = new Map<string, ClaudeTranscriptItem[]>();
   for (const item of normalizedItems) {
     if (item.kind !== 'assistant' && item.kind !== 'thinking') continue;
-    const key = item.sourceMessageId
-      ?? (item.id.includes(':') ? `${item.id.slice(0, item.id.indexOf(':'))}:${item.kind}` : null);
-    if (!key) continue;
+    const lastColon = item.id.lastIndexOf(':');
+    if (lastColon < 0) continue;
+    const blockIndex = item.id.slice(lastColon + 1);
+    const firstColon = item.id.indexOf(':');
+    const prefix = item.sourceMessageId ?? item.id.slice(0, firstColon);
+    const key = `${prefix}:${item.kind}:${blockIndex}`;
     let group = groups.get(key);
     if (!group) { group = []; groups.set(key, group); }
     group.push(item);

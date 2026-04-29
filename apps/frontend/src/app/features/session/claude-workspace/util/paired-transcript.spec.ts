@@ -115,6 +115,92 @@ describe('pairTranscript', () => {
     ]);
   });
 
+  it('keeps distinct text blocks of the same assistant message as separate units', () => {
+    const units = pairTranscript([
+      {
+        id: 'msg_abc:assistant:0',
+        kind: 'assistant',
+        sourceMessageId: 'msg_abc',
+        content: 'Let me check this.',
+        timestamp: '2026-04-28T08:00:00.000Z',
+      },
+      {
+        id: 'msg_abc:tool_use:toolu_1',
+        kind: 'tool_use',
+        toolUseId: 'toolu_1',
+        toolName: 'Read',
+        toolInput: { file_path: '/tmp/x' },
+        sourceMessageId: 'msg_abc',
+        timestamp: '2026-04-28T08:00:01.000Z',
+      },
+      {
+        id: 'msg_abc:assistant:2',
+        kind: 'assistant',
+        sourceMessageId: 'msg_abc',
+        content: 'Found it.',
+        timestamp: '2026-04-28T08:00:02.000Z',
+      },
+    ]);
+
+    const messages = units.filter((u) => u.kind === 'message');
+    expect(messages).toHaveLength(2);
+    expect(messages.map((m) => m.kind === 'message' ? m.item.content : null)).toEqual([
+      'Let me check this.',
+      'Found it.',
+    ]);
+  });
+
+  it('dedupes streaming and history copies of the same assistant content block', () => {
+    const units = pairTranscript([
+      {
+        id: 'msg_abc:0',
+        kind: 'assistant',
+        sourceMessageId: 'msg_abc',
+        content: 'Streaming partial',
+        timestamp: '2026-04-28T08:00:00.000Z',
+      },
+      {
+        id: 'msg_abc:assistant:0',
+        kind: 'assistant',
+        sourceMessageId: 'msg_abc',
+        content: 'Streaming partial finalized',
+        timestamp: '2026-04-28T08:00:00.500Z',
+      },
+    ]);
+
+    const messages = units.filter((u) => u.kind === 'message');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].kind === 'message' && messages[0].item.content).toBe(
+      'Streaming partial finalized',
+    );
+  });
+
+  it('keeps distinct thinking blocks of the same assistant message as separate units', () => {
+    const units = pairTranscript([
+      {
+        id: 'msg_abc:thinking:0',
+        kind: 'thinking',
+        sourceMessageId: 'msg_abc',
+        content: 'First thought.',
+        timestamp: '2026-04-28T08:00:00.000Z',
+      },
+      {
+        id: 'msg_abc:thinking:2',
+        kind: 'thinking',
+        sourceMessageId: 'msg_abc',
+        content: 'Second thought.',
+        timestamp: '2026-04-28T08:00:02.000Z',
+      },
+    ]);
+
+    const thoughts = units.filter((u) => u.kind === 'thinking');
+    expect(thoughts).toHaveLength(2);
+    expect(thoughts.map((t) => t.kind === 'thinking' ? t.item.content : null)).toEqual([
+      'First thought.',
+      'Second thought.',
+    ]);
+  });
+
   it('preserves orphan tool result rendering', () => {
     const units = pairTranscript([
       {
