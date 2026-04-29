@@ -12,32 +12,34 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [provideIcons({ lucideBrain, lucideChevronRight })],
   template: `
-    @if (visible()) {
-      <div class="cw-think">
-        <button
-          type="button"
-          class="cw-think__head"
-          [class.cw-think__head--pulse]="streaming()"
-          (click)="toggle()"
-        >
-          <ng-icon name="lucideBrain" size="13" />
-          <span>{{ headerLabel() }}</span>
-          @if (preview()) {
-            <span class="cw-think__preview">— {{ preview() }}</span>
-          }
-          <ng-icon name="lucideChevronRight" size="13" class="cw-think__chev" [class.rotate-90]="open()" />
-        </button>
-        @if (open() && hasBody()) {
-          <div class="cw-think__body" #bodyEl (scroll)="onBodyScroll($event)">
-            @if (streaming()) {
-              <div class="cw-think__streaming">{{ content() }}</div>
-            } @else {
-              <div class="cw-think__md" [innerHTML]="content() | cwMarkdown"></div>
-            }
-          </div>
+    <div class="cw-think">
+      <button
+        type="button"
+        class="cw-think__head"
+        [class.cw-think__head--pulse]="streaming()"
+        [class.cw-think__head--muted]="!hasBody() && !streaming()"
+        [disabled]="!hasBody()"
+        (click)="toggle()"
+      >
+        <ng-icon name="lucideBrain" size="13" />
+        <span>{{ headerLabel() }}</span>
+        @if (preview()) {
+          <span class="cw-think__preview">— {{ preview() }}</span>
         }
-      </div>
-    }
+        @if (hasBody()) {
+          <ng-icon name="lucideChevronRight" size="13" class="cw-think__chev" [class.rotate-90]="open()" />
+        }
+      </button>
+      @if (open() && hasBody()) {
+        <div class="cw-think__body" #bodyEl (scroll)="onBodyScroll($event)">
+          @if (streaming()) {
+            <div class="cw-think__streaming">{{ content() }}</div>
+          } @else {
+            <div class="cw-think__md" [innerHTML]="content() | cwMarkdown"></div>
+          }
+        </div>
+      }
+    </div>
   `,
   styles: [
     `
@@ -67,6 +69,15 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
       }
       .cw-think__head--pulse {
         animation: cw-think-pulse 1.4s ease-in-out infinite;
+      }
+      .cw-think__head--muted {
+        opacity: 0.6;
+      }
+      .cw-think__head:disabled {
+        cursor: default;
+      }
+      .cw-think__head:disabled:hover {
+        background: transparent;
       }
       @keyframes cw-think-pulse {
         0%, 100% { opacity: 0.7; }
@@ -143,21 +154,20 @@ export class ClaudeThinkingComponent {
   readonly content = computed(() => this.item().content ?? '');
   readonly hasBody = computed(() => this.content().trim().length > 0);
 
-  // Render whenever there is content OR the block is still streaming (so an
-  // empty thinking_start shows "Thinking…" before the first delta arrives).
-  // After streaming ends with empty content (redacted thinking) the block is
-  // hidden — there is nothing meaningful to display.
-  readonly visible = computed(() => this.streaming() || this.hasBody());
-
   readonly open = computed(() => {
     const explicit = this.openState();
     if (explicit !== null) return explicit;
     return this.streaming();
   });
 
+  // Anthropic occasionally redacts the model's thinking content — the block
+  // arrives with an empty `thinking` string and only a signature, and no
+  // `thinking_delta` events follow. We still render an indicator so the user
+  // knows the model reasoned about this turn even when the text is encrypted.
   readonly headerLabel = computed(() => {
     if (this.streaming()) return 'Thinking…';
-    return 'Reasoning';
+    if (this.hasBody()) return 'Reasoning';
+    return 'Reasoning (encrypted)';
   });
 
   readonly preview = computed(() => {
