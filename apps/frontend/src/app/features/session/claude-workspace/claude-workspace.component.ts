@@ -352,7 +352,24 @@ readonly messageActionsDisabled = computed(
         PairedTranscriptUnit,
         { kind: 'message' }
       >;
-      const hiddenUnits = turnUnits.slice(1, assistantOffset);
+      // A thinking block that shares the last assistant message's sourceMessageId is
+      // a sibling content block of that final message — its reasoning belongs with the
+      // visible reply, not collapsed alongside intermediate tool work.
+      const lastAssistantSourceId = lastAssistantUnit.item.sourceMessageId;
+      const intermediateUnits = turnUnits.slice(1, assistantOffset);
+      const hiddenUnits: PairedTranscriptUnit[] = [];
+      const siblingThinkingUnits: PairedTranscriptUnit[] = [];
+      for (const intermediate of intermediateUnits) {
+        if (
+          intermediate.kind === 'thinking'
+          && lastAssistantSourceId
+          && intermediate.item.sourceMessageId === lastAssistantSourceId
+        ) {
+          siblingThinkingUnits.push(intermediate);
+        } else {
+          hiddenUnits.push(intermediate);
+        }
+      }
       const tailUnits = turnUnits.slice(assistantOffset + 1);
       const isCurrentTurn = nextUserIndex === units.length;
       const hasToolCalls = hiddenUnits.some(u => u.kind === 'tool');
@@ -386,6 +403,9 @@ readonly messageActionsDisabled = computed(
         }
       }
 
+      for (const siblingThinkingUnit of siblingThinkingUnits) {
+        out.push({ kind: 'unit', id: siblingThinkingUnit.id, unit: siblingThinkingUnit });
+      }
       out.push({ kind: 'unit', id: lastAssistantUnit.id, unit: lastAssistantUnit });
       for (const tailUnit of tailUnits) {
         out.push({ kind: 'unit', id: tailUnit.id, unit: tailUnit });
