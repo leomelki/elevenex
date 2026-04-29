@@ -355,36 +355,44 @@ readonly messageActionsDisabled = computed(
         PairedTranscriptUnit,
         { kind: 'message' }
       >;
-      const hiddenUnits = turnUnits.slice(1, assistantOffset);
+      const middleUnits = turnUnits.slice(1, assistantOffset);
       const tailUnits = turnUnits.slice(assistantOffset + 1);
       const isCurrentTurn = nextUserIndex === units.length;
-      const hasToolCalls = hiddenUnits.some(u => u.kind === 'tool');
-      const canCollapse = hiddenUnits.length > 0 && hasToolCalls && (!isCurrentTurn || isSessionSettled);
+      // Thinking blocks always render inline so reasoning stays visible after a
+      // turn settles; only tool steps and intermediate text get collapsed.
+      const thinkingUnits = middleUnits.filter((u) => u.kind === 'thinking');
+      const collapsibleUnits = middleUnits.filter((u) => u.kind !== 'thinking');
+      const hasToolCalls = collapsibleUnits.some((u) => u.kind === 'tool');
+      const canCollapse = collapsibleUnits.length > 0 && hasToolCalls && (!isCurrentTurn || isSessionSettled);
 
       out.push({ kind: 'unit', id: unit.id, unit });
+
+      for (const thinkingUnit of thinkingUnits) {
+        out.push({ kind: 'unit', id: thinkingUnit.id, unit: thinkingUnit });
+      }
 
       if (canCollapse) {
         out.push({
           kind: 'collapsed-turn',
           id: `collapsed-${unit.id}`,
           turnId: unit.id,
-          hiddenUnits,
+          hiddenUnits: collapsibleUnits,
           durationLabel: formatTurnDuration(
             getItemStartTimestamp(unit.item),
             getItemCompletionTimestamp(lastAssistantUnit.item),
           ),
-          stepCount: hiddenUnits.length,
+          stepCount: collapsibleUnits.length,
           agentSummary: buildTurnAgentSummary(
             unit.id,
             getItemStartTimestamp(unit.item),
             getItemCompletionTimestamp(lastAssistantUnit.item),
-            hiddenUnits.length,
+            collapsibleUnits.length,
             this.subagents(),
             this.recentHookEvents(),
           ),
         });
       } else {
-        for (const hiddenUnit of hiddenUnits) {
+        for (const hiddenUnit of collapsibleUnits) {
           out.push({ kind: 'unit', id: hiddenUnit.id, unit: hiddenUnit });
         }
       }
