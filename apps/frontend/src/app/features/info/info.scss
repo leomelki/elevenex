@@ -117,6 +117,14 @@
   color: var(--primary);
 }
 
+.info-card__sha {
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: 0.04em;
+}
+
 @media (max-width: 640px) {
   .info-page {
     padding: 20px;

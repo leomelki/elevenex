@@ -201,6 +201,32 @@ describe('pairTranscript', () => {
     ]);
   });
 
+  it('keeps both thinking and assistant text blocks that share a sourceMessageId', () => {
+    const units = pairTranscript([
+      {
+        id: 'msg_abc:thinking:0',
+        kind: 'thinking',
+        content: 'A long internal monologue that is much longer than the visible text reply.',
+        sourceMessageId: 'msg_abc',
+        timestamp: '2026-04-28T08:00:01.000Z',
+      },
+      {
+        id: 'msg_abc:assistant:0',
+        kind: 'assistant',
+        content: 'Let me look at the changed files.',
+        sourceMessageId: 'msg_abc',
+        timestamp: '2026-04-28T08:00:02.000Z',
+      },
+    ]);
+
+    expect(units).toHaveLength(2);
+    expect(units[0]).toMatchObject({ kind: 'thinking' });
+    expect(units[1]).toMatchObject({
+      kind: 'message',
+      item: expect.objectContaining({ content: 'Let me look at the changed files.' }),
+    });
+  });
+
   it('preserves orphan tool result rendering', () => {
     const units = pairTranscript([
       {

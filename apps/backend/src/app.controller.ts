@@ -9,4 +9,9 @@ export class AppController {
   getHello(): string {
     return this.appService.getHello();
   }
+
+  @Get('info')
+  getInfo(): { backendSha: string } {
+    return { backendSha: this.appService.gitSha };
+  }
 }

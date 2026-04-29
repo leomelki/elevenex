@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, ElementRef, input, signal, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideBrain, lucideChevronRight } from '@ng-icons/lucide';
@@ -21,7 +21,7 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
           <ng-icon name="lucideChevronRight" size="13" class="cw-think__chev" [class.rotate-90]="open()" />
         </button>
         @if (open()) {
-          <div class="cw-think__body">
+          <div class="cw-think__body" #bodyEl (scroll)="onBodyScroll($event)">
             @if (streaming()) {
               <div class="cw-think__streaming">{{ content() }}</div>
             } @else {
@@ -123,6 +123,9 @@ export class ClaudeThinkingComponent {
   readonly streaming = input<boolean>(false);
   readonly openState = signal<boolean | null>(null);
 
+  @ViewChild('bodyEl') private bodyEl?: ElementRef<HTMLElement>;
+  private _userScrolled = false;
+
   readonly content = computed(() => this.item().content ?? '');
 
   readonly open = computed(() => {
@@ -138,6 +141,28 @@ export class ClaudeThinkingComponent {
     const clean = firstLine.replace(/[*_`#>]+/g, '').trim();
     return clean.length > 80 ? clean.slice(0, 80) + '…' : clean;
   });
+
+  constructor() {
+    effect(() => {
+      const isStreaming = this.streaming();
+      void this.content(); // track content changes
+      if (!isStreaming) {
+        this._userScrolled = false;
+        return;
+      }
+      if (!this._userScrolled) {
+        setTimeout(() => {
+          const el = this.bodyEl?.nativeElement;
+          if (el) el.scrollTop = el.scrollHeight;
+        }, 0);
+      }
+    });
+  }
+
+  onBodyScroll(event: Event): void {
+    const el = event.currentTarget as HTMLElement;
+    this._userScrolled = el.scrollHeight - el.scrollTop - el.clientHeight > 32;
+  }
 
   toggle(): void {
     this.openState.set(!this.open());
