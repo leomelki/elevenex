@@ -177,7 +177,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly _permissionMode = signal<ClaudePermissionMode | null>(null);
   private readonly planBypassActive = signal(false);
   readonly permissionMode = computed<ClaudePermissionMode>(() => {
-    const server = this._permissionMode() ?? this.sessionMetadata()?.permissionMode ?? 'default';
+    const server = this._permissionMode() ?? this.sessionMetadata()?.permissionMode ?? 'auto';
     if (this.planBypassActive() && server === 'plan') return 'planBypass' as ClaudePermissionMode;
     return server;
   });

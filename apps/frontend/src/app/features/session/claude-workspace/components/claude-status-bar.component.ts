@@ -39,11 +39,11 @@ interface PermissionModeOption {
 }
 
 const PERMISSION_MODES: PermissionModeOption[] = [
+  { id: 'auto', label: 'Auto mode', hint: 'Continuous, autonomous execution' },
   { id: 'default', label: 'Default', hint: 'Prompt for risky tools' },
   { id: 'plan', label: 'Plan mode', hint: 'Read-only — draft a plan before editing' },
   { id: 'planBypass', label: 'Plan + bypass', hint: 'Auto-approve during planning, then review plan' },
   { id: 'acceptEdits', label: 'Accept edits', hint: 'Auto-allow file edits' },
-  { id: 'auto', label: 'Auto mode', hint: 'Continuous, autonomous execution' },
   { id: 'bypassPermissions', label: 'Bypass permissions', hint: 'Skip all prompts — danger' },
 ];
 
@@ -395,8 +395,9 @@ export class ClaudeStatusBarComponent {
 
   readonly permissionOptions = computed(() => {
     const modelId = this.selectedModel();
-    const model = modelId ? this.availableModels().find((m) => m.id === modelId) : null;
-    const supportsAuto = model?.supportsAutoMode ?? false;
+    const models = this.availableModels();
+    const effectiveModel = modelId ? models.find((m) => m.id === modelId) : models[0];
+    const supportsAuto = effectiveModel?.supportsAutoMode ?? false;
     const current = this.permissionMode();
     return PERMISSION_MODES.filter((opt) => opt.id !== 'auto' || supportsAuto || current === 'auto');
   });

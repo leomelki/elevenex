@@ -2343,7 +2343,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       liveItems: [],
       lastError: null,
       selectedModel: null,
-      selectedPermissionMode: null,
+      selectedPermissionMode: 'auto',
       availableModels: [...FALLBACK_MODELS],
       contextUsage: null,
       sessionMetadata: null,
