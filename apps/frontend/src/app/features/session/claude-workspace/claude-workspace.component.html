@@ -237,8 +237,8 @@
       <div
         class="cw-ctx"
         [class.cw-ctx--expanded]="contextExpanded()"
-        [class.cw-ctx--enabled]="firstPromptContextEnabled() && canToggleContextEnabled()"
-        [class.cw-ctx--disabled]="!firstPromptContextEnabled() && canToggleContextEnabled()"
+        [class.cw-ctx--enabled]="firstPromptContextEnabled() && canToggleContextEnabled() && !promptIsCommand()"
+        [class.cw-ctx--disabled]="(!firstPromptContextEnabled() && canToggleContextEnabled()) || (promptIsCommand() && canToggleContextEnabled())"
         [attr.data-state]="contextPinState()"
       >
         <div class="cw-ctx__head">
@@ -247,10 +247,14 @@
             class="cw-ctx__primary"
             [attr.aria-pressed]="canToggleContextEnabled() ? firstPromptContextEnabled() : null"
             [attr.aria-label]="canToggleContextEnabled()
-              ? (firstPromptContextEnabled() ? 'Disable context for next prompt' : 'Enable context for next prompt')
+              ? (promptIsCommand() && firstPromptContextEnabled()
+                  ? 'Context skipped for commands'
+                  : firstPromptContextEnabled() ? 'Disable context for next prompt' : 'Enable context for next prompt')
               : 'Show context details'"
             [title]="canToggleContextEnabled()
-              ? (firstPromptContextEnabled() ? 'Click to disable' : 'Click to enable')
+              ? (promptIsCommand() && firstPromptContextEnabled()
+                  ? 'Context is not sent with commands'
+                  : firstPromptContextEnabled() ? 'Click to disable' : 'Click to enable')
               : ''"
             (click)="toggleContextEnabled()"
           >

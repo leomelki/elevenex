@@ -179,10 +179,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     return server;
   });
   readonly showLoading = computed(() => this.loading() || !this.hydrated());
+  readonly promptIsCommand = computed(() => this.prompt().trimStart().startsWith('/'));
   readonly canAppendContext = computed(
     () =>
       this.firstPromptContextEnabled()
       && !this.hasInjectedContext()
+      && !this.promptIsCommand()
       && this.worktreeContext()?.generationStatus === 'ready'
       && !!this.worktreeContext()?.contextSentence,
   );
@@ -241,6 +243,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (this.contextPinState() === 'failed') return { text: 'Failed', variant: 'warn' };
     if (this.hasInjectedContext()) return { text: 'Used', variant: 'muted' };
     if (!ctx.contextSentence) return null;
+    if (this.promptIsCommand() && this.firstPromptContextEnabled()) return { text: 'Skip', variant: 'muted' };
     return this.firstPromptContextEnabled()
       ? { text: 'On', variant: 'accent' }
       : { text: 'Off', variant: 'muted' };
@@ -1129,7 +1132,7 @@ readonly messageActionsDisabled = computed(
   }
 
   private async prepareRuntimePrompt(prompt: string): Promise<string> {
-    if (this.hasInjectedContext()) {
+    if (this.hasInjectedContext() || prompt.trimStart().startsWith('/')) {
       return prompt;
     }
 
