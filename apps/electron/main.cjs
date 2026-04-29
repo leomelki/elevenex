@@ -1117,6 +1117,48 @@ function getSshBaseArgs(resolvedConfig, target) {
   return ['-F', resolvedConfig.configPath, target];
 }
 
+function runSshCommandAsync(forward, command) {
+  return new Promise((resolve, reject) => {
+    const resolvedConfig = buildResolvedSshConfig(forward);
+    const askPass = createSshAskPassRuntime(forward);
+    const target = buildSshTarget(forward);
+    const baseArgs = getSshBaseArgs(resolvedConfig, target);
+    const sshArgs = [...baseArgs, 'sh', '-lc', shellSingleQuote(command)];
+
+    let child;
+    try {
+      child = spawn('ssh', sshArgs, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: askPass?.env ?? process.env,
+      });
+    } catch (error) {
+      cleanupSshArtifacts({ resolvedConfig, askPass });
+      reject(error);
+      return;
+    }
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    child.once('exit', (code) => {
+      cleanupSshArtifacts({ resolvedConfig, askPass });
+      if (code !== 0) {
+        reject(new Error((stderr || stdout || `ssh exited with code ${code ?? 'unknown'}`).trim()));
+      } else {
+        resolve({ stdout, stderr, args: sshArgs, resolveArgs: resolvedConfig.resolveArgs });
+      }
+    });
+
+    child.once('error', (error) => {
+      cleanupSshArtifacts({ resolvedConfig, askPass });
+      reject(error);
+    });
+  });
+}
+
 function runSshCommand(forward, command, options = {}) {
   const resolvedConfig = buildResolvedSshConfig(forward);
   const askPass = createSshAskPassRuntime(forward);
@@ -1309,9 +1351,9 @@ function buildRemoteRuntimeDownloadUrl(version, targetKey) {
   return `${RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-runtime-${targetKey}.tar.gz`;
 }
 
-function tryRemoteDownload(forward, url, remoteDestination) {
+function buildDownloadScript(url, remoteDestination) {
   const safeUrl = url.replace(/'/g, `'\\''`);
-  const script = [
+  return [
     'set -eu',
     `URL='${safeUrl}'`,
     `DEST=${shellPathQuote(remoteDestination)}`,
@@ -1326,9 +1368,11 @@ function tryRemoteDownload(forward, url, remoteDestination) {
     'fi',
     'mv "$TMP" "$DEST"',
   ].join('\n');
+}
 
+function tryRemoteDownload(forward, url, remoteDestination) {
   try {
-    runSshCommand(forward, script);
+    runSshCommand(forward, buildDownloadScript(url, remoteDestination));
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : `${error}`;
@@ -1337,13 +1381,33 @@ function tryRemoteDownload(forward, url, remoteDestination) {
   }
 }
 
+async function tryRemoteDownloadAsync(forward, url, remoteDestination) {
+  try {
+    await runSshCommandAsync(forward, buildDownloadScript(url, remoteDestination));
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `${error}`;
+    console.warn(`[remote-runtime] download from ${url} failed: ${message.split('\n')[0]}`);
+    return false;
+  }
+}
+
+function emitRemoteServerPhaseEvent(serverId, phase) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send('elevenex-remote-server:phase-update', { serverId, phase });
+}
+
 async function ensureRemoteServerReady(forward) {
   const bundledVersion = getRemoteRuntimeVersion();
   if (!bundledVersion) {
     throw new Error('Remote runtime version is unavailable.');
   }
 
-  const preflightResult = runSshCommand(forward, buildRemotePreflightScript(forward.remotePort || 11111));
+  emitRemoteServerPhaseEvent(forward.id, 'checking');
+  const preflightResult = await runSshCommandAsync(forward, buildRemotePreflightScript(forward.remotePort || 11111));
   const preflight = parseRemotePreflight(preflightResult.stdout);
 
   if (preflight.remotePlatform !== 'linux') {
@@ -1382,13 +1446,14 @@ async function ensureRemoteServerReady(forward) {
   const remoteCurrentRoot = '~/.elevenex/current';
 
   if (installStatus === 'missing' || installStatus === 'needs-update') {
-    runSshCommand(forward, 'mkdir -p "$HOME/.elevenex/tmp" "$HOME/.elevenex/releases" "$HOME/.elevenex/logs"');
+    emitRemoteServerPhaseEvent(forward.id, 'uploading');
+    await runSshCommandAsync(forward, 'mkdir -p "$HOME/.elevenex/tmp" "$HOME/.elevenex/releases" "$HOME/.elevenex/logs"');
 
     const downloadUrl = buildRemoteRuntimeDownloadUrl(bundledVersion, preflight.remoteTarget);
     if (!downloadUrl) {
       throw new Error(`Remote runtime download URL could not be resolved for ${bundledVersion}.`);
     }
-    const downloaded = tryRemoteDownload(forward, downloadUrl, remoteArchivePath);
+    const downloaded = await tryRemoteDownloadAsync(forward, downloadUrl, remoteArchivePath);
 
     if (!downloaded) {
       throw new Error(
@@ -1396,7 +1461,8 @@ async function ensureRemoteServerReady(forward) {
       );
     }
 
-    runSshCommand(
+    emitRemoteServerPhaseEvent(forward.id, 'installing');
+    await runSshCommandAsync(
       forward,
       buildRemoteInstallCommand({
         remoteArchivePath,
@@ -1407,7 +1473,8 @@ async function ensureRemoteServerReady(forward) {
   }
 
   if (installStatus === 'missing' || installStatus === 'needs-update' || !preflight.backendReachable) {
-    runSshCommand(
+    emitRemoteServerPhaseEvent(forward.id, 'starting');
+    await runSshCommandAsync(
       forward,
       buildRemoteStartCommand({
         remoteRoot: remoteCurrentRoot,
@@ -1416,7 +1483,7 @@ async function ensureRemoteServerReady(forward) {
     );
   }
 
-  runSshCommand(
+  await runSshCommandAsync(
     forward,
     buildRemoteWaitForReadyCommand({
       remoteRoot: remoteCurrentRoot,
@@ -1424,6 +1491,7 @@ async function ensureRemoteServerReady(forward) {
     }),
   );
 
+  emitRemoteServerPhaseEvent(forward.id, 'probing');
   const runtime = await startSshForwardRuntime({
     ...forward,
     probeType: 'elevenex-backend',

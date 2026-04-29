@@ -90,6 +90,17 @@ contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
         ipcRenderer.removeListener('elevenex-remote-server:installer-event', listener);
       };
     },
+    onPhaseUpdate: (callback) => {
+      if (typeof callback !== 'function') {
+        return () => {};
+      }
+
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('elevenex-remote-server:phase-update', listener);
+      return () => {
+        ipcRenderer.removeListener('elevenex-remote-server:phase-update', listener);
+      };
+    },
   },
   cursor: {
     open: (payload) => ipcRenderer.invoke('elevenex-cursor:open', payload),

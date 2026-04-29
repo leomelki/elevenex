@@ -67,6 +67,11 @@ export interface ElectronRemoteServerInstallerEvent {
   message?: string;
 }
 
+export interface ElectronRemoteServerPhaseEvent {
+  serverId: number;
+  phase: RemoteInstallPhase;
+}
+
 export interface ElectronRemoteServerApi {
   ensureReady(payload: ElectronRemoteServerEnsureReadyPayload): Promise<ElectronRemoteServerEnsureReadyResult>;
   recheck(payload: ElectronRemoteServerEnsureReadyPayload): Promise<ElectronRemoteServerEnsureReadyResult>;
@@ -74,6 +79,7 @@ export interface ElectronRemoteServerApi {
   resize(payload: { sessionId: number; cols: number; rows: number }): Promise<boolean>;
   closeSession(sessionId: number): Promise<boolean>;
   onInstallerEvent(callback: (event: ElectronRemoteServerInstallerEvent) => void): () => void;
+  onPhaseUpdate(callback: (event: ElectronRemoteServerPhaseEvent) => void): () => void;
 }
 
 export function getElectronRemoteServerApi(): ElectronRemoteServerApi | null {

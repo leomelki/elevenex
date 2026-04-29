@@ -1,8 +1,8 @@
-import { Injectable } from '@angular/core';
+import { Injectable, signal } from '@angular/core';
 import { ELEVENEX_REMOTE_PORT } from '../constants/elevenex';
 import { SavedServer, ServerAuthMode, ServerInstallStatus } from '../models/onboarding.model';
 import { getElectronSshForwardingApi } from '../runtime/electron-ssh-forwarding';
-import { ElectronRemoteServerEnsureReadyPayload, getElectronRemoteServerApi } from '../runtime/electron-remote-server';
+import { ElectronRemoteServerEnsureReadyPayload, RemoteInstallPhase, getElectronRemoteServerApi } from '../runtime/electron-remote-server';
 import { RemoteInstallFlowService } from './remote-install-flow.service';
 
 export interface OnboardingConnectPayload {
@@ -39,7 +39,22 @@ function buildRandomPortSeed() {
 
 @Injectable({ providedIn: 'root' })
 export class OnboardingConnectionService {
-  constructor(private readonly remoteInstallFlow: RemoteInstallFlowService) {}
+  private readonly _currentPhase = signal<RemoteInstallPhase | null>(null);
+  readonly currentPhase = this._currentPhase.asReadonly();
+
+  private activeServerId: number | null = null;
+  private removePhaseListener: (() => void) | null = null;
+
+  constructor(private readonly remoteInstallFlow: RemoteInstallFlowService) {
+    const api = getElectronRemoteServerApi();
+    if (api?.onPhaseUpdate) {
+      this.removePhaseListener = api.onPhaseUpdate((event) => {
+        if (event.serverId === this.activeServerId) {
+          this._currentPhase.set(event.phase);
+        }
+      });
+    }
+  }
 
   async isSupported(): Promise<boolean> {
     const api = getElectronSshForwardingApi();
@@ -119,6 +134,9 @@ export class OnboardingConnectionService {
       };
     }
 
+    this.activeServerId = payload.id;
+    this._currentPhase.set(null);
+
     const runtimePayload: ElectronRemoteServerEnsureReadyPayload = {
       id: payload.id,
       sshHost: payload.sshHost,
@@ -134,9 +152,16 @@ export class OnboardingConnectionService {
       passphrase: payload.passphrase,
       sessionId: null,
     };
-    const runtime = options.interactive
-      ? await this.remoteInstallFlow.ensureReady(runtimePayload)
-      : await getElectronRemoteServerApi()?.ensureReady(runtimePayload);
+
+    let runtime;
+    try {
+      runtime = options.interactive
+        ? await this.remoteInstallFlow.ensureReady(runtimePayload)
+        : await getElectronRemoteServerApi()?.ensureReady(runtimePayload);
+    } finally {
+      this.activeServerId = null;
+      this._currentPhase.set(null);
+    }
 
     if (!runtime) {
       return {

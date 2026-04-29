@@ -160,14 +160,14 @@
           @for (phase of connectingPhases; track phase; let i = $index) {
             <li
               class="runtime-remote-overlay__step"
-              [class.runtime-remote-overlay__step--done]="i < connecting.phaseIndex"
-              [class.runtime-remote-overlay__step--active]="i === connecting.phaseIndex"
-              [class.runtime-remote-overlay__step--pending]="i > connecting.phaseIndex"
+              [class.runtime-remote-overlay__step--done]="i < remoteConnectingPhaseIndex()"
+              [class.runtime-remote-overlay__step--active]="i === remoteConnectingPhaseIndex()"
+              [class.runtime-remote-overlay__step--pending]="i > remoteConnectingPhaseIndex()"
             >
               <span class="runtime-remote-overlay__step-dot">
-                @if (i < connecting.phaseIndex) {
+                @if (i < remoteConnectingPhaseIndex()) {
                   <ng-icon name="lucideCheck" size="11" />
-                } @else if (i === connecting.phaseIndex) {
+                } @else if (i === remoteConnectingPhaseIndex()) {
                   <ng-icon name="lucideLoader" size="11" class="runtime-remote-overlay__spin" />
                 }
               </span>

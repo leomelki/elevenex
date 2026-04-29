@@ -77,6 +77,7 @@ export class App implements OnInit, OnDestroy {
   readonly disconnectedForwardsBanner = this.sshRuntimeRecovery.disconnectedForwardsBanner;
   readonly remoteDisconnect = this.sshRuntimeRecovery.remoteDisconnect;
   readonly remoteConnecting = this.sshRuntimeRecovery.remoteConnecting;
+  readonly remoteConnectingPhaseIndex = this.sshRuntimeRecovery.remoteConnectingPhaseIndex;
   readonly connectingPhases = CONNECTING_PHASES;
 
   private removeWindowListener: (() => void) | null = null;
