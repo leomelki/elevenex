@@ -141,6 +141,68 @@ describe('pairTranscript', () => {
     });
   });
 
+  it('dedupes streaming and history copies of the same assistant content block', () => {
+    const units = pairTranscript([
+      {
+        id: 'msg_abc:0',
+        kind: 'assistant',
+        sourceMessageId: 'msg_abc',
+        content: 'Streaming partial',
+        timestamp: '2026-04-28T08:00:00.000Z',
+      },
+      {
+        id: 'msg_abc:assistant:0',
+        kind: 'assistant',
+        sourceMessageId: 'msg_abc',
+        content: 'Streaming partial finalized',
+        timestamp: '2026-04-28T08:00:00.500Z',
+      },
+    ]);
+
+    const messages = units.filter((u) => u.kind === 'message');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].kind === 'message' && messages[0].item.content).toBe(
+      'Streaming partial finalized',
+    );
+  });
+
+  it('dedupes streaming text after a thinking block against the history-replay copy', () => {
+    // Reproduces the production case: when a model emits thinking → text within one
+    // Anthropic message, streaming gives the text id `msg_abc:1` (real content-block
+    // index) but JSONL history splits each block onto its own line whose `content`
+    // array has length 1, so replay assigns it `msg_abc:assistant:0`. Both refer to the
+    // same block and must collapse, otherwise the text re-renders after every reload.
+    const units = pairTranscript([
+      {
+        id: 'msg_abc:thinking:0',
+        kind: 'thinking',
+        sourceMessageId: 'msg_abc',
+        content: 'Let me think through this.',
+        timestamp: '2026-04-28T08:00:00.000Z',
+      },
+      {
+        id: 'msg_abc:1',
+        kind: 'assistant',
+        sourceMessageId: 'msg_abc',
+        content: 'Streaming reply',
+        timestamp: '2026-04-28T08:00:00.500Z',
+      },
+      {
+        id: 'msg_abc:assistant:0',
+        kind: 'assistant',
+        sourceMessageId: 'msg_abc',
+        content: 'Streaming reply finalized from history',
+        timestamp: '2026-04-28T08:00:01.000Z',
+      },
+    ]);
+
+    const messages = units.filter((u) => u.kind === 'message');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].kind === 'message' && messages[0].item.content).toBe(
+      'Streaming reply finalized from history',
+    );
+  });
+
   it('preserves orphan tool result rendering', () => {
     const units = pairTranscript([
       {
