@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, forwardRef, inject, input, output, signal } from '@angular/core';
+import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, effect, ElementRef, forwardRef, inject, input, output, signal, untracked, viewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import hljs from 'highlight.js/lib/common';
@@ -227,35 +227,48 @@ interface Todo {
                 }
                 @if (childUnits().length) {
                   <div class="cw-subagent-stream">
-                    <div class="cw-subagent-stream__header">
+                    <button
+                      type="button"
+                      class="cw-subagent-stream__header"
+                      (click)="toggleStream()"
+                      [attr.aria-expanded]="streamOpen()"
+                    >
+                      <ng-icon
+                        name="lucideChevronRight"
+                        size="10"
+                        class="cw-subagent-stream__chevron"
+                        [class.rotate-90]="streamOpen()"
+                      />
                       <span class="cw-subagent-stream__label">Agent activity</span>
                       <span class="cw-subagent-stream__count">{{ childUnits().length }}</span>
                       @if (isLive()) {
                         <span class="cw-subagent-stream__live">live</span>
                       }
-                    </div>
-                    <div class="cw-subagent-stream__body">
-                      @for (unit of childUnits(); track unit.id) {
-                        @switch (unit.kind) {
-                          @case ('message') {
-                            <cw-message [item]="unit.item" />
-                          }
-                          @case ('thinking') {
-                            <cw-thinking [item]="unit.item" />
-                          }
-                          @case ('tool') {
-                            <cw-tool-call
-                              [call]="unit.call"
-                              [result]="unit.result"
-                              [childItems]="nestedChildItems(unit.toolUseId)"
-                              [isLive]="isNestedLiveToolUse(unit.toolUseId)"
-                              (approve)="approve.emit($event)"
-                              (deny)="deny.emit($event)"
-                            />
+                    </button>
+                    @if (streamOpen()) {
+                      <div class="cw-subagent-stream__body" #streamBody (scroll)="onStreamScroll($event)">
+                        @for (unit of childUnits(); track unit.id) {
+                          @switch (unit.kind) {
+                            @case ('message') {
+                              <cw-message [item]="unit.item" />
+                            }
+                            @case ('thinking') {
+                              <cw-thinking [item]="unit.item" />
+                            }
+                            @case ('tool') {
+                              <cw-tool-call
+                                [call]="unit.call"
+                                [result]="unit.result"
+                                [childItems]="nestedChildItems(unit.toolUseId)"
+                                [isLive]="isNestedLiveToolUse(unit.toolUseId)"
+                                (approve)="approve.emit($event)"
+                                (deny)="deny.emit($event)"
+                              />
+                            }
                           }
                         }
-                      }
-                    </div>
+                      </div>
+                    }
                   </div>
                 }
                 @if (agentResponse()) {
@@ -779,6 +792,20 @@ interface Todo {
         padding: 0.3rem 0.625rem;
         background: color-mix(in oklab, var(--primary) 8%, var(--card));
         border-bottom: 1px solid color-mix(in oklab, var(--primary) 18%, var(--border));
+        width: 100%;
+        cursor: pointer;
+        border: none;
+        text-align: left;
+        font: inherit;
+        color: inherit;
+        &:not([aria-expanded='true']) {
+          border-bottom: none;
+        }
+      }
+      .cw-subagent-stream__chevron {
+        color: var(--muted-foreground);
+        transition: transform 120ms ease;
+        flex-shrink: 0;
       }
       .cw-subagent-stream__label {
         font-size: 0.6rem;
@@ -927,8 +954,43 @@ export class ClaudeToolCallComponent {
 
   private readonly openState = signal<boolean | null>(null);
   private readonly promptOpenState = signal<boolean>(false);
+  private readonly streamOpenState = signal<boolean | null>(null);
+  private userHasScrolledUp = false;
+  private readonly streamBodyEl = viewChild<ElementRef<HTMLElement>>('streamBody');
+
+  readonly streamOpen = computed(() => this.streamOpenState() ?? this.isLive());
 
   readonly promptOpen = computed(() => this.promptOpenState());
+
+  constructor() {
+    effect(() => {
+      const live = this.isLive();
+      untracked(() => {
+        if (!live) {
+          if (this.userHasScrolledUp && this.streamOpenState() === null) {
+            this.streamOpenState.set(true);
+          }
+          this.userHasScrolledUp = false;
+        }
+      });
+    });
+
+    afterRenderEffect(() => {
+      this.childUnits();
+      const el = this.streamBodyEl()?.nativeElement;
+      if (!el || !untracked(() => this.streamOpen()) || this.userHasScrolledUp) return;
+      el.scrollTop = el.scrollHeight;
+    });
+  }
+
+  toggleStream(): void {
+    this.streamOpenState.update((cur) => !(cur ?? this.isLive()));
+  }
+
+  onStreamScroll(event: Event): void {
+    const el = event.target as HTMLElement;
+    this.userHasScrolledUp = el.scrollTop + el.clientHeight < el.scrollHeight - 10;
+  }
 
   togglePrompt(): void {
     this.promptOpenState.update((v) => !v);
