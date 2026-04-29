@@ -4,6 +4,7 @@ import { SavedServer } from '../models/onboarding.model';
 import { SshForward } from '../models/ssh-forward.model';
 import { OnboardingConnectionService } from './onboarding-connection.service';
 import { OnboardingStateService } from './onboarding-state.service';
+import { NavigationService } from './navigation.service';
 import { SshForwardsService } from './ssh-forwards.service';
 
 export interface StartupConnectionFailure {
@@ -62,6 +63,7 @@ export class OnboardingStartupService {
     private readonly onboardingState: OnboardingStateService,
     private readonly onboardingConnection: OnboardingConnectionService,
     private readonly sshForwardsService: SshForwardsService,
+    private readonly navigationService: NavigationService,
   ) {}
 
   async initialize(): Promise<void> {
@@ -96,6 +98,7 @@ export class OnboardingStartupService {
         this.onboardingState.saveServer(nextServer);
         await this.prepareStartupPortForwardPrompt(nextServer);
         this._startupFailure.set(null);
+        this.navigationService.refreshTree();
         return;
       }
 

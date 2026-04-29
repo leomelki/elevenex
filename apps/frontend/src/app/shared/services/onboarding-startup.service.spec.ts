@@ -37,14 +37,20 @@ describe('OnboardingStartupService', () => {
     start: vi.fn(),
   };
 
+  const navigationServiceMock = {
+    refreshTree: vi.fn(),
+  };
+
   const createService = () => new OnboardingStartupService(
     onboardingStateMock as never,
     onboardingConnectionMock as never,
     sshForwardsServiceMock as never,
+    navigationServiceMock as never,
   );
 
   beforeEach(() => {
     vi.clearAllMocks();
+    navigationServiceMock.refreshTree.mockReturnValue(undefined);
     onboardingStateMock.readSnapshot.mockReturnValue({
       mode: 'ssh',
       currentStep: 'project',
@@ -121,6 +127,22 @@ describe('OnboardingStartupService', () => {
     expect(service.startupFailure()).toEqual({ server, message: 'Failed' });
     expect(onboardingStateMock.setRemoteConnectionReady).not.toHaveBeenCalled();
     expect(onboardingStateMock.setCurrentStep).not.toHaveBeenCalled();
+  });
+
+  it('should refresh the navigation tree after a successful startup reconnect', async () => {
+    const service = createService();
+    await service.initialize();
+
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
+  });
+
+  it('should not refresh the navigation tree when startup reconnect fails', async () => {
+    onboardingConnectionMock.reconnect.mockResolvedValue({ kind: 'error', message: 'nope' });
+
+    const service = createService();
+    await service.initialize();
+
+    expect(navigationServiceMock.refreshTree).not.toHaveBeenCalled();
   });
 
   it('should include only matching inactive forwards after successful startup reconnect', async () => {

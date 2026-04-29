@@ -5,6 +5,7 @@ import { ELEVENEX_REMOTE_PORT } from '../constants/elevenex';
 import { SavedServer } from '../models/onboarding.model';
 import { SshForward, SshForwardStatus } from '../models/ssh-forward.model';
 import { ElectronSshForwardRuntimeState, getElectronSshForwardingApi } from '../runtime/electron-ssh-forwarding';
+import { NavigationService } from './navigation.service';
 import { OnboardingConnectionService } from './onboarding-connection.service';
 import { OnboardingStartupService } from './onboarding-startup.service';
 import { OnboardingStateService } from './onboarding-state.service';
@@ -101,6 +102,7 @@ export class SshRuntimeRecoveryService {
     private readonly onboardingState: OnboardingStateService,
     private readonly onboardingConnection: OnboardingConnectionService,
     private readonly onboardingStartup: OnboardingStartupService,
+    private readonly navigationService: NavigationService,
   ) {
     effect(() => {
       const failure = this.onboardingStartup.startupFailure();
@@ -247,6 +249,7 @@ export class SshRuntimeRecoveryService {
         this.previousRemoteServerId = nextServer.id;
         this.previousRemoteStatus = 'active';
         this.remoteHydrated = true;
+        this.navigationService.refreshTree();
         return;
       }
 

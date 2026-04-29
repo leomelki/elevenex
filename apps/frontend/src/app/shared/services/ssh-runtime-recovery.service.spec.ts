@@ -1,3 +1,5 @@
+import '@angular/compiler';
+import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -62,14 +64,21 @@ describe('SshRuntimeRecoveryService', () => {
 
   const onboardingStartupMock = {
     prepareStartupPortForwardPrompt: vi.fn(),
+    clearStartupFailure: vi.fn(),
+    startupFailure: vi.fn().mockReturnValue(null),
   };
 
-  const createService = () => new SshRuntimeRecoveryService(
+  const navigationServiceMock = {
+    refreshTree: vi.fn(),
+  };
+
+  const createService = () => TestBed.runInInjectionContext(() => new SshRuntimeRecoveryService(
     sshForwardsServiceMock as never,
     onboardingStateMock as never,
     onboardingConnectionMock as never,
     onboardingStartupMock as never,
-  );
+    navigationServiceMock as never,
+  ));
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -233,6 +242,7 @@ describe('SshRuntimeRecoveryService', () => {
     expect(service.remoteDisconnect()).toBeNull();
     expect(onboardingStateMock.saveServer).toHaveBeenCalled();
     expect(onboardingStartupMock.prepareStartupPortForwardPrompt).toHaveBeenCalled();
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
   });
 
   it('returns reconnect failures for saved forwards without clearing the banner', async () => {
