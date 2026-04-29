@@ -6,10 +6,9 @@
   "license": "CC-BY-NC-4.0",
   "scripts": {
     "ng": "ng",
-    "prestart": "node ../../scripts/generate-build-info.js",
-    "start": "ng serve --host 0.0.0.0",
-    "prebuild": "node ../../scripts/generate-build-info.js",
-    "build": "ng build",
+    "build-info": "node ../../scripts/generate-build-info.js",
+    "start": "pnpm build-info && ng serve --host 0.0.0.0",
+    "build": "pnpm build-info && ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
   },
