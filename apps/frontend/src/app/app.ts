@@ -3,7 +3,9 @@ import { NavigationEnd, Router, RouterOutlet, RouterLink } from '@angular/router
 import { NgxSonnerToaster } from 'ngx-sonner';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideCheck,
   lucideCopy,
+  lucideLoader,
   lucideMinus,
   lucidePlay,
   lucideRefreshCw,
@@ -21,7 +23,7 @@ import {
   getElectronWindowControlsApi,
 } from './shared/runtime/electron-window-controls';
 import { OnboardingStartupService } from './shared/services/onboarding-startup.service';
-import { SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
+import { CONNECTING_PHASES, SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
 import { BackendLogsWebsocketService } from './shared/services/backend-logs-websocket.service';
 import { PlannotatorInstallPromptService } from './features/plannotator/plannotator-install-prompt.service';
 import { PlannotatorInstallPromptComponent } from './features/plannotator/plannotator-install-prompt.component';
@@ -38,14 +40,16 @@ const STORAGE_KEY = 'sidebar-width';
   styleUrl: './app.scss',
   viewProviders: [
     provideIcons({
-      lucideMinus,
-      lucideSquare,
+      lucideCheck,
       lucideCopy,
-      lucideX,
+      lucideLoader,
+      lucideMinus,
       lucidePlay,
       lucideRefreshCw,
+      lucideSquare,
       lucideTriangleAlert,
       lucideWifiOff,
+      lucideX,
     }),
   ],
 })
@@ -72,7 +76,8 @@ export class App implements OnInit, OnDestroy {
   readonly showPlannotatorInstallPrompt = this.plannotatorInstallPrompt.show;
   readonly disconnectedForwardsBanner = this.sshRuntimeRecovery.disconnectedForwardsBanner;
   readonly remoteDisconnect = this.sshRuntimeRecovery.remoteDisconnect;
-  readonly remoteDisconnectRetrying = this.sshRuntimeRecovery.remoteRetrying;
+  readonly remoteConnecting = this.sshRuntimeRecovery.remoteConnecting;
+  readonly connectingPhases = CONNECTING_PHASES;
 
   private removeWindowListener: (() => void) | null = null;
   private removeRouteListener: (() => void) | null = null;
@@ -213,6 +218,10 @@ export class App implements OnInit, OnDestroy {
 
   async retryRemoteConnection() {
     await this.sshRuntimeRecovery.retryRemoteConnection();
+  }
+
+  cancelRemoteConnection() {
+    this.sshRuntimeRecovery.cancelRemoteConnection();
   }
 
   onResizeStart(event: MouseEvent) {

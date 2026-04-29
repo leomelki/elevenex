@@ -124,6 +124,110 @@ h1 {
   gap: 12px;
 }
 
+.connection-lost__actions--connecting {
+  justify-content: center;
+}
+
+@keyframes connection-lost-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.connection-lost__spin {
+  display: inline-flex;
+  animation: connection-lost-spin 1s linear infinite;
+}
+
+.connection-lost__card--connecting {
+  border-color: color-mix(in oklch, var(--primary) 18%, var(--border) 82%);
+}
+
+.connection-lost__icon-ring--connecting {
+  background: color-mix(in oklch, var(--primary) 8%, var(--background));
+  border-color: color-mix(in oklch, var(--primary) 16%, var(--background));
+  color: var(--primary);
+}
+
+.connection-lost__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--primary) 60%, var(--foreground));
+  margin-bottom: 10px;
+}
+
+.connection-lost__steps {
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 0;
+  width: 100%;
+  border-radius: 20px;
+  border: 1px solid color-mix(in oklch, var(--border) 80%, white 10%);
+  background: color-mix(in oklch, var(--muted) 50%, var(--background));
+  overflow: hidden;
+}
+
+.connection-lost__step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+}
+
+.connection-lost__step + .connection-lost__step {
+  border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+}
+
+.connection-lost__step-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+}
+
+.connection-lost__step-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-align: left;
+  transition: color 0.2s ease;
+}
+
+.connection-lost__step--done .connection-lost__step-dot {
+  background: color-mix(in oklch, var(--primary) 14%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--primary) 28%, transparent);
+  color: var(--primary);
+}
+
+.connection-lost__step--done .connection-lost__step-label {
+  color: var(--foreground);
+}
+
+.connection-lost__step--active .connection-lost__step-dot {
+  background: color-mix(in oklch, var(--primary) 14%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--primary) 28%, transparent);
+  color: var(--primary);
+}
+
+.connection-lost__step--active .connection-lost__step-label {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.connection-lost__step--pending .connection-lost__step-dot {
+  background: color-mix(in oklch, var(--muted-foreground) 10%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  color: transparent;
+}
+
+.connection-lost__step--pending .connection-lost__step-label {
+  color: var(--muted-foreground);
+}
+
 @media (max-width: 560px) {
   .connection-lost {
     padding: 20px;

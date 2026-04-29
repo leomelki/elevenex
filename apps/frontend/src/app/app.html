@@ -127,7 +127,65 @@
     </main>
   </div>
 
-  @if (remoteDisconnect(); as disconnect) {
+  @if (remoteConnecting(); as connecting) {
+    <section class="runtime-remote-overlay runtime-remote-overlay--connecting" aria-label="Reconnecting to remote server" aria-live="polite">
+      <div class="runtime-remote-overlay__backdrop runtime-remote-overlay__backdrop--connecting"></div>
+      <div class="runtime-remote-overlay__card">
+        <div class="runtime-remote-overlay__icon-ring runtime-remote-overlay__icon-ring--connecting">
+          <ng-icon name="lucideLoader" size="26" class="runtime-remote-overlay__spin" />
+        </div>
+
+        <div class="runtime-remote-overlay__eyebrow runtime-remote-overlay__eyebrow--connecting">Establishing connection</div>
+        <h1 class="runtime-remote-overlay__title">Connecting to {{ connecting.server.name }}&hellip;</h1>
+        <p class="runtime-remote-overlay__subtitle">
+          Preparing the runtime environment on your remote server.
+        </p>
+
+        <div class="runtime-remote-overlay__server-info">
+          <div class="runtime-remote-overlay__row">
+            <span>Server</span>
+            <strong>{{ connecting.server.name }}</strong>
+          </div>
+          <div class="runtime-remote-overlay__row">
+            <span>Host</span>
+            <strong>{{ connecting.server.sshUser ? connecting.server.sshUser + '@' : '' }}{{ connecting.server.sshHost }}:{{ connecting.server.sshPort }}</strong>
+          </div>
+          <div class="runtime-remote-overlay__row">
+            <span>Local port</span>
+            <strong>127.0.0.1:{{ connecting.localPort }}</strong>
+          </div>
+        </div>
+
+        <ol class="runtime-remote-overlay__steps" aria-label="Connection progress">
+          @for (phase of connectingPhases; track phase; let i = $index) {
+            <li
+              class="runtime-remote-overlay__step"
+              [class.runtime-remote-overlay__step--done]="i < connecting.phaseIndex"
+              [class.runtime-remote-overlay__step--active]="i === connecting.phaseIndex"
+              [class.runtime-remote-overlay__step--pending]="i > connecting.phaseIndex"
+            >
+              <span class="runtime-remote-overlay__step-dot">
+                @if (i < connecting.phaseIndex) {
+                  <ng-icon name="lucideCheck" size="11" />
+                } @else if (i === connecting.phaseIndex) {
+                  <ng-icon name="lucideLoader" size="11" class="runtime-remote-overlay__spin" />
+                }
+              </span>
+              <span class="runtime-remote-overlay__step-label">{{ phase }}</span>
+            </li>
+          }
+        </ol>
+
+        <button
+          class="runtime-remote-overlay__button runtime-remote-overlay__button--cancel"
+          type="button"
+          (click)="cancelRemoteConnection()"
+        >
+          Cancel
+        </button>
+      </div>
+    </section>
+  } @else if (remoteDisconnect(); as disconnect) {
     <section class="runtime-remote-overlay" aria-label="Remote connection lost">
       <div class="runtime-remote-overlay__backdrop"></div>
       <div class="runtime-remote-overlay__card">
@@ -164,11 +222,10 @@
         <button
           class="runtime-remote-overlay__button"
           type="button"
-          [disabled]="remoteDisconnectRetrying()"
           (click)="retryRemoteConnection()"
         >
           <ng-icon name="lucideRefreshCw" size="16" />
-          {{ remoteDisconnectRetrying() ? 'Reconnecting...' : 'Reconnect now' }}
+          Reconnect now
         </button>
       </div>
     </section>

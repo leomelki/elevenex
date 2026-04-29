@@ -12,6 +12,16 @@ import { SshForwardsService } from './ssh-forwards.service';
 
 const POLL_INTERVAL_MS = 3000;
 
+export const CONNECTING_PHASES = [
+  'Connecting via SSH',
+  'Checking runtime',
+  'Downloading files',
+  'Starting service',
+  'Testing connection',
+] as const;
+
+const PHASE_DURATIONS_MS = [3000, 5000, 7000, 5000];
+
 export interface RuntimeDisconnectedForwardItem {
   id: number;
   projectId: number;
@@ -33,6 +43,12 @@ export interface RemoteRuntimeDisconnectState {
   server: SavedServer;
   message: string;
   localPort: number;
+}
+
+export interface RemoteRuntimeConnectingState {
+  server: SavedServer;
+  localPort: number;
+  phaseIndex: number;
 }
 
 function isLiveStatus(status: SshForwardStatus | ElectronSshForwardRuntimeState['status'] | null): boolean {
@@ -60,10 +76,10 @@ function toDisconnectedForwardItem(forward: SshForward): RuntimeDisconnectedForw
 export class SshRuntimeRecoveryService {
   private readonly _disconnectedForwardsBanner = signal<RuntimeDisconnectedForwardsBanner | null>(null);
   private readonly _remoteDisconnect = signal<RemoteRuntimeDisconnectState | null>(null);
-  private readonly _remoteRetrying = signal(false);
+  private readonly _remoteConnecting = signal<RemoteRuntimeConnectingState | null>(null);
   readonly disconnectedForwardsBanner = this._disconnectedForwardsBanner.asReadonly();
   readonly remoteDisconnect = this._remoteDisconnect.asReadonly();
-  readonly remoteRetrying = this._remoteRetrying.asReadonly();
+  readonly remoteConnecting = this._remoteConnecting.asReadonly();
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private savedHydrated = false;
@@ -76,6 +92,9 @@ export class SshRuntimeRecoveryService {
   private reconnectingSavedIds = new Set<number>();
   private previousRemoteStatus: ElectronSshForwardRuntimeState['status'] | null = null;
   private previousRemoteServerId: number | null = null;
+  private cancelToken = 0;
+  private phaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private savedDisconnect: RemoteRuntimeDisconnectState | null = null;
 
   constructor(
     private readonly sshForwardsService: SshForwardsService,
@@ -150,14 +169,39 @@ export class SshRuntimeRecoveryService {
 
   async retryRemoteConnection(): Promise<void> {
     const current = this._remoteDisconnect();
-    if (!current || this._remoteRetrying()) {
+    if (!current || this._remoteConnecting()) {
       return;
     }
 
-    this._remoteRetrying.set(true);
+    this.savedDisconnect = current;
+    this._remoteDisconnect.set(null);
+
+    const token = ++this.cancelToken;
+    this._remoteConnecting.set({ server: current.server, localPort: current.localPort, phaseIndex: 0 });
+    this.scheduleNextPhase(0, token);
+
     try {
       const result = await this.onboardingConnection.reconnect(current.server);
+
+      if (this.cancelToken !== token) {
+        return;
+      }
+
+      this.clearPhaseTimer();
+
       if (result.kind === 'success') {
+        this._remoteConnecting.set({
+          server: current.server,
+          localPort: current.localPort,
+          phaseIndex: CONNECTING_PHASES.length,
+        });
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 350));
+
+        if (this.cancelToken !== token) {
+          return;
+        }
+
         const nextServer: SavedServer = {
           ...current.server,
           localPort: result.localPort,
@@ -166,20 +210,68 @@ export class SshRuntimeRecoveryService {
         };
         this.onboardingState.saveServer(nextServer);
         await this.onboardingStartup.prepareStartupPortForwardPrompt(nextServer);
-        this._remoteDisconnect.set(null);
+        this._remoteConnecting.set(null);
+        this.savedDisconnect = null;
         this.previousRemoteServerId = nextServer.id;
         this.previousRemoteStatus = 'active';
         this.remoteHydrated = true;
         return;
       }
 
+      this._remoteConnecting.set(null);
+      this.savedDisconnect = null;
       this._remoteDisconnect.set({
         server: current.server,
         localPort: current.localPort,
         message: result.message || 'Could not reconnect to the remote Elevenex server.',
       });
-    } finally {
-      this._remoteRetrying.set(false);
+    } catch {
+      if (this.cancelToken !== token) {
+        return;
+      }
+      this.clearPhaseTimer();
+      this._remoteConnecting.set(null);
+      this.savedDisconnect = null;
+      this._remoteDisconnect.set({
+        server: current.server,
+        localPort: current.localPort,
+        message: 'Could not reconnect to the remote Elevenex server.',
+      });
+    }
+  }
+
+  cancelRemoteConnection(): void {
+    ++this.cancelToken;
+    this.clearPhaseTimer();
+    this._remoteConnecting.set(null);
+    if (this.savedDisconnect) {
+      this._remoteDisconnect.set(this.savedDisconnect);
+      this.savedDisconnect = null;
+    }
+  }
+
+  private scheduleNextPhase(currentIndex: number, token: number): void {
+    const duration = PHASE_DURATIONS_MS[currentIndex];
+    if (duration === undefined) {
+      return;
+    }
+
+    this.phaseTimer = setTimeout(() => {
+      if (this.cancelToken !== token) {
+        return;
+      }
+      const connecting = this._remoteConnecting();
+      if (connecting) {
+        this._remoteConnecting.set({ ...connecting, phaseIndex: currentIndex + 1 });
+      }
+      this.scheduleNextPhase(currentIndex + 1, token);
+    }, duration);
+  }
+
+  private clearPhaseTimer(): void {
+    if (this.phaseTimer !== null) {
+      clearTimeout(this.phaseTimer);
+      this.phaseTimer = null;
     }
   }
 
@@ -238,6 +330,10 @@ export class SshRuntimeRecoveryService {
   }
 
   private async refreshRemoteTunnel(): Promise<void> {
+    if (this._remoteConnecting()) {
+      return;
+    }
+
     const snapshot = this.onboardingState.readSnapshot();
     if (snapshot.mode !== 'ssh' || !snapshot.remoteConnectionReady) {
       this.remoteHydrated = false;
