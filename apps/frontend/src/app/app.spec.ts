@@ -6,28 +6,50 @@ import { App } from './app';
 import { OnboardingStartupService } from './shared/services/onboarding-startup.service';
 import { RemoteInstallFlowService } from './shared/services/remote-install-flow.service';
 import { SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
+import { EnvironmentConnectionManagerService } from './shared/services/environment-connection-manager.service';
 
 describe('App', () => {
   const prompt = signal<any>(null);
   const disconnectedBanner = signal<any>(null);
   const remoteDisconnect = signal<any>(null);
-  const remoteRetrying = signal(false);
+  const remoteConnecting = signal<any>(null);
   const remoteInstallState = signal<any>(null);
+  const switching = signal(false);
   const startupServiceMock = {
     startupPortForwardPrompt: prompt.asReadonly(),
     dismissStartupPortForwardPrompt: vi.fn(),
     startStartupPortForward: vi.fn(() => Promise.resolve()),
     startAllStartupPortForwards: vi.fn(() => Promise.resolve()),
+    initialize: vi.fn(() => Promise.resolve()),
   };
   const runtimeRecoveryServiceMock = {
     disconnectedForwardsBanner: disconnectedBanner.asReadonly(),
     remoteDisconnect: remoteDisconnect.asReadonly(),
-    remoteRetrying: remoteRetrying.asReadonly(),
+    remoteConnecting: remoteConnecting.asReadonly(),
     startMonitoring: vi.fn(() => Promise.resolve()),
     stopMonitoring: vi.fn(),
     dismissDisconnectedForwardsBanner: vi.fn(),
     reconnectAllDisconnectedForwards: vi.fn(() => Promise.resolve([])),
     retryRemoteConnection: vi.fn(() => Promise.resolve()),
+    cancelRemoteConnection: vi.fn(),
+  };
+  const connectionManagerMock = {
+    switching: switching.asReadonly(),
+    switchToLocal: vi.fn(() => Promise.resolve({ ok: true })),
+    snapshot: signal({
+      mode: 'local',
+      currentStep: 'project',
+      activeServerId: null,
+      remoteConnectionReady: true,
+      projectHandoffAcknowledged: true,
+      servers: [],
+      lastSshDefaults: null,
+    }).asReadonly(),
+    activeServer: signal(null).asReadonly(),
+    savedServers: signal([]).asReadonly(),
+    switchError: signal('').asReadonly(),
+    environmentLabel: signal('Local').asReadonly(),
+    clearError: vi.fn(),
   };
   const remoteInstallFlowMock = {
     state: remoteInstallState.asReadonly(),
@@ -81,8 +103,9 @@ describe('App', () => {
     prompt.set(null);
     disconnectedBanner.set(null);
     remoteDisconnect.set(null);
-    remoteRetrying.set(false);
+    remoteConnecting.set(null);
     remoteInstallState.set(null);
+    switching.set(false);
     vi.clearAllMocks();
     window.__ELEVENEX_ELECTRON__ = undefined;
     window.__ELEVENEX_RUNTIME__ = undefined;
@@ -115,6 +138,7 @@ describe('App', () => {
         { provide: OnboardingStartupService, useValue: startupServiceMock },
         { provide: RemoteInstallFlowService, useValue: remoteInstallFlowMock },
         { provide: SshRuntimeRecoveryService, useValue: runtimeRecoveryServiceMock },
+        { provide: EnvironmentConnectionManagerService, useValue: connectionManagerMock },
       ],
     }).compileComponents();
   });

@@ -17,6 +17,7 @@ import { NavigationService } from './navigation.service';
 import { OnboardingConnectionService } from './onboarding-connection.service';
 import { OnboardingStartupService } from './onboarding-startup.service';
 import { OnboardingStateService } from './onboarding-state.service';
+import { SshRuntimeRecoveryService } from './ssh-runtime-recovery.service';
 
 export interface SavedServerDraft {
   id?: number;
@@ -55,6 +56,7 @@ export class EnvironmentConnectionManagerService {
   private readonly browserViewState = inject(BrowserViewStateService);
   private readonly browserTabsState = inject(BrowserTabsStateService);
   private readonly navigationService = inject(NavigationService);
+  private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
 
   readonly switching = signal(false);
   readonly switchError = signal('');
@@ -82,6 +84,8 @@ export class EnvironmentConnectionManagerService {
     return this.runSwitch('Local workspace', async () => {
       await this.stopActiveRemoteTunnel();
       this.onboardingState.setMode('local');
+      this.sshRuntimeRecovery.clearRemoteDisconnect();
+      this.onboardingStartup.clearStartupFailure();
       await this.finalizeWorkspaceHandoff();
     });
   }
@@ -94,6 +98,8 @@ export class EnvironmentConnectionManagerService {
       const currentActive = this.activeServer();
       const wasActive = this.snapshot().mode === 'ssh' && currentActive?.id === server.id && this.snapshot().remoteConnectionReady;
       if (wasActive) {
+        this.sshRuntimeRecovery.clearRemoteDisconnect();
+        this.onboardingStartup.clearStartupFailure();
         await this.finalizeWorkspaceHandoff();
         return;
       }
@@ -130,9 +136,14 @@ export class EnvironmentConnectionManagerService {
           installStatus: result.installStatus,
           lastConnectedAt: new Date().toISOString(),
         });
+        this.sshRuntimeRecovery.clearRemoteDisconnect();
+        this.onboardingStartup.clearStartupFailure();
         await this.finalizeWorkspaceHandoff();
       } catch (error) {
-        await this.restorePreviousRemote(previousServer);
+        const restored = await this.restorePreviousRemote(previousServer);
+        const message = error instanceof Error ? error.message : 'Could not connect to the selected server.';
+        const overlayServer = restored ?? previousServer ?? server;
+        this.sshRuntimeRecovery.setRemoteDisconnect(overlayServer, message);
         throw error;
       }
     });
@@ -220,14 +231,22 @@ export class EnvironmentConnectionManagerService {
     await this.router.navigate(['/projects']);
   }
 
-  private async restorePreviousRemote(server: SavedServer | null): Promise<void> {
-    if (!server || server.authMode === 'password') {
-      return;
+  private async restorePreviousRemote(server: SavedServer | null): Promise<SavedServer | null> {
+    if (!server) {
+      return null;
+    }
+
+    if (server.authMode === 'password') {
+      // Can't auto-reconnect password servers, but keep them as the active context
+      // so the workspace stays mounted and the disconnect overlay can show.
+      this.onboardingState.upsertServer(server, { activate: true });
+      return server;
     }
 
     const result = await this.onboardingConnection.reconnect(server, { interactive: false }).catch(() => null);
     if (!result || result.kind !== 'success') {
-      return;
+      this.onboardingState.upsertServer(server, { activate: true });
+      return server;
     }
 
     const restoredServer: SavedServer = {
@@ -238,6 +257,7 @@ export class EnvironmentConnectionManagerService {
     };
     this.onboardingState.saveServer(restoredServer);
     await this.onboardingStartup.prepareStartupPortForwardPrompt(restoredServer).catch(() => undefined);
+    return restoredServer;
   }
 
   private clearWorkspaceState(): void {

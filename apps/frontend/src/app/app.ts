@@ -5,6 +5,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
   lucideCopy,
+  lucideHardDrive,
   lucideLoader,
   lucideMinus,
   lucidePlay,
@@ -16,6 +17,7 @@ import {
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { Sidebar } from './features/navigation/sidebar/sidebar';
+import { EnvironmentSwitcherComponent } from './features/navigation/environment-switcher/environment-switcher.component';
 import { RemoteInstallModalComponent } from './features/remote-install/remote-install-modal.component';
 import { getRuntimeConfig } from './shared/runtime/runtime-config';
 import {
@@ -25,6 +27,7 @@ import {
 import { OnboardingStartupService } from './shared/services/onboarding-startup.service';
 import { CONNECTING_PHASES, SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
 import { BackendLogsWebsocketService } from './shared/services/backend-logs-websocket.service';
+import { EnvironmentConnectionManagerService } from './shared/services/environment-connection-manager.service';
 import { PlannotatorInstallPromptService } from './features/plannotator/plannotator-install-prompt.service';
 import { PlannotatorInstallPromptComponent } from './features/plannotator/plannotator-install-prompt.component';
 
@@ -35,13 +38,14 @@ const STORAGE_KEY = 'sidebar-width';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, PlannotatorInstallPromptComponent],
+  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, PlannotatorInstallPromptComponent, EnvironmentSwitcherComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   viewProviders: [
     provideIcons({
       lucideCheck,
       lucideCopy,
+      lucideHardDrive,
       lucideLoader,
       lucideMinus,
       lucidePlay,
@@ -57,6 +61,7 @@ export class App implements OnInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly startupService = inject(OnboardingStartupService);
   private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
+  private readonly connectionManager = inject(EnvironmentConnectionManagerService);
   private readonly backendLogs = inject(BackendLogsWebsocketService);
   private readonly plannotatorInstallPrompt = inject(PlannotatorInstallPromptService);
   private readonly windowControls = getElectronWindowControlsApi();
@@ -69,16 +74,13 @@ export class App implements OnInit, OnDestroy {
   isFullScreen = signal(false);
   isFocused = signal(false);
   windowEnvironmentReady = signal(false);
-  isOnboardingRoute = signal(
-    this.router.url.startsWith('/onboarding') || this.router.url.startsWith('/connection-lost'),
-  );
+  isOnboardingRoute = signal(this.router.url.startsWith('/onboarding'));
+  switchingEnvironment = this.connectionManager.switching;
   readonly startupPortForwardPrompt = this.startupService.startupPortForwardPrompt;
-  readonly startupConnectingServer = this.startupService.startupConnectingServer;
   readonly showPlannotatorInstallPrompt = this.plannotatorInstallPrompt.show;
   readonly disconnectedForwardsBanner = this.sshRuntimeRecovery.disconnectedForwardsBanner;
   readonly remoteDisconnect = this.sshRuntimeRecovery.remoteDisconnect;
   readonly remoteConnecting = this.sshRuntimeRecovery.remoteConnecting;
-  readonly remoteConnectingPhaseIndex = this.sshRuntimeRecovery.remoteConnectingPhaseIndex;
   readonly connectingPhases = CONNECTING_PHASES;
 
   private removeWindowListener: (() => void) | null = null;
@@ -91,9 +93,7 @@ export class App implements OnInit, OnDestroy {
     const subscription = this.router.events.subscribe((event) => {
       if (event instanceof NavigationEnd) {
         const url = event.urlAfterRedirects;
-        this.isOnboardingRoute.set(
-          url.startsWith('/onboarding') || url.startsWith('/connection-lost'),
-        );
+        this.isOnboardingRoute.set(url.startsWith('/onboarding'));
       }
     });
     this.removeRouteListener = () => subscription.unsubscribe();
@@ -226,6 +226,16 @@ export class App implements OnInit, OnDestroy {
 
   cancelRemoteConnection() {
     this.sshRuntimeRecovery.cancelRemoteConnection();
+  }
+
+  async switchToLocalFromOverlay() {
+    if (this.switchingEnvironment()) {
+      return;
+    }
+    const result = await this.connectionManager.switchToLocal();
+    if (!result.ok && result.error) {
+      toast.error(result.error);
+    }
   }
 
   onResizeStart(event: MouseEvent) {

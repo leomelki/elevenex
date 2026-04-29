@@ -1,16 +1,26 @@
 import { inject } from '@angular/core';
 import { Router, Routes, UrlTree } from '@angular/router';
 import { readLastOpenedSessionId } from './features/session/tab-service';
-import { isOnboardingComplete, readOnboardingStateSnapshot } from './shared/services/onboarding-state.service';
-import { OnboardingStartupService } from './shared/services/onboarding-startup.service';
+import {
+  getActiveOnboardingServer,
+  readOnboardingStateSnapshot,
+} from './shared/services/onboarding-state.service';
+import { OnboardingStateSnapshot } from './shared/models/onboarding.model';
+
+function hasFunctionalOnboarding(snapshot: OnboardingStateSnapshot): boolean {
+  if (!snapshot.projectHandoffAcknowledged) {
+    return false;
+  }
+  if (snapshot.mode === 'local') {
+    return true;
+  }
+  // For SSH mode, allow workspace access whenever the user has an active server saved,
+  // even if the live tunnel isn't ready — the runtime overlay handles reconnect / change-server.
+  return snapshot.mode === 'ssh' && getActiveOnboardingServer(snapshot) !== null;
+}
 
 export function getDefaultRedirectPath(): string {
-  const startupService = inject(OnboardingStartupService);
-  if (startupService.startupFailure()) {
-    return '/connection-lost';
-  }
-
-  if (!isOnboardingComplete(readOnboardingStateSnapshot())) {
+  if (!hasFunctionalOnboarding(readOnboardingStateSnapshot())) {
     return '/onboarding';
   }
 
@@ -19,15 +29,11 @@ export function getDefaultRedirectPath(): string {
 }
 
 export function canAccessAppRoute(): boolean | UrlTree {
-  if (isOnboardingComplete(readOnboardingStateSnapshot())) {
+  if (hasFunctionalOnboarding(readOnboardingStateSnapshot())) {
     return true;
   }
 
   const router = inject(Router);
-  const startupService = inject(OnboardingStartupService);
-  if (startupService.startupFailure()) {
-    return router.createUrlTree(['/connection-lost']);
-  }
   return router.createUrlTree(['/onboarding']);
 }
 
@@ -37,11 +43,6 @@ export const routes: Routes = [
     path: 'onboarding',
     loadComponent: () =>
       import('./features/onboarding/onboarding').then(m => m.Onboarding),
-  },
-  {
-    path: 'connection-lost',
-    loadComponent: () =>
-      import('./features/connection-lost/connection-lost').then(m => m.ConnectionLost),
   },
   {
     path: 'info',

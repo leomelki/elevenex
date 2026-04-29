@@ -13,6 +13,7 @@ import { NavigationService } from './navigation.service';
 import { OnboardingConnectionService } from './onboarding-connection.service';
 import { OnboardingStartupService } from './onboarding-startup.service';
 import { OnboardingStateService } from './onboarding-state.service';
+import { SshRuntimeRecoveryService } from './ssh-runtime-recovery.service';
 import { OnboardingStateSnapshot } from '../models/onboarding.model';
 
 describe('EnvironmentConnectionManagerService', () => {
@@ -89,6 +90,12 @@ describe('EnvironmentConnectionManagerService', () => {
 
   const onboardingStartupMock = {
     prepareStartupPortForwardPrompt: vi.fn(),
+    clearStartupFailure: vi.fn(),
+  };
+
+  const sshRuntimeRecoveryMock = {
+    setRemoteDisconnect: vi.fn(),
+    clearRemoteDisconnect: vi.fn(),
   };
 
   const routerMock = {
@@ -177,6 +184,7 @@ describe('EnvironmentConnectionManagerService', () => {
         { provide: OnboardingStateService, useValue: onboardingStateMock },
         { provide: OnboardingConnectionService, useValue: onboardingConnectionMock },
         { provide: OnboardingStartupService, useValue: onboardingStartupMock },
+        { provide: SshRuntimeRecoveryService, useValue: sshRuntimeRecoveryMock },
         { provide: TabService, useValue: tabServiceMock },
         { provide: VSCodeWebStateService, useValue: vscodeWebStateMock },
         { provide: BrowserViewStateService, useValue: browserViewStateMock },

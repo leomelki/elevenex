@@ -1,4 +1,3 @@
-import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Router } from '@angular/router';
@@ -6,10 +5,8 @@ import { Router } from '@angular/router';
 import { canAccessAppRoute, getDefaultRedirectPath, routes } from './app.routes';
 import { LAST_OPENED_SESSION_STORAGE_KEY } from './features/session/tab-service';
 import { ONBOARDING_STORAGE_KEY } from './shared/services/onboarding-state.service';
-import { OnboardingStartupService } from './shared/services/onboarding-startup.service';
 
 describe('getDefaultRedirectPath', () => {
-  const startupFailure = signal<unknown>(null);
   const routerMock = {
     createUrlTree: vi.fn((commands: string[]) => commands.join('/')),
   };
@@ -30,19 +27,17 @@ describe('getDefaultRedirectPath', () => {
     });
     localStorage.clear();
 
-    startupFailure.set(null);
     routerMock.createUrlTree.mockClear();
 
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       providers: [
         { provide: Router, useValue: routerMock },
-        { provide: OnboardingStartupService, useValue: { startupFailure: startupFailure.asReadonly() } },
       ],
     });
   });
 
-  it('should redirect to projects when no last opened session is stored', () => {
+  it('should redirect to onboarding for a fresh install', () => {
     expect(TestBed.runInInjectionContext(() => getDefaultRedirectPath())).toBe('/onboarding');
   });
 
@@ -61,7 +56,7 @@ describe('getDefaultRedirectPath', () => {
     expect(TestBed.runInInjectionContext(() => getDefaultRedirectPath())).toBe('/sessions/42');
   });
 
-  it('should redirect to projects when onboarding is complete and no session is stored', () => {
+  it('should redirect to projects when local onboarding is complete and no session is stored', () => {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({
       mode: 'local',
       currentStep: 'project',
@@ -73,6 +68,35 @@ describe('getDefaultRedirectPath', () => {
     }));
 
     expect(TestBed.runInInjectionContext(() => getDefaultRedirectPath())).toBe('/projects');
+  });
+
+  it('should keep the workspace accessible for a saved SSH server even when the tunnel is not ready', () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({
+      mode: 'ssh',
+      currentStep: 'project',
+      activeServerId: 19,
+      remoteConnectionReady: false,
+      projectHandoffAcknowledged: true,
+      servers: [{
+        id: 19,
+        name: 'Prod',
+        sshHost: 'example.com',
+        sshUser: 'deploy',
+        sshPort: 22,
+        authMode: 'agent',
+        identityFilePath: null,
+        localPort: 4310,
+        remotePort: 11111,
+        installStatus: 'available',
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+        lastConnectedAt: '2024-01-01',
+      }],
+      lastSshDefaults: null,
+    }));
+
+    expect(TestBed.runInInjectionContext(() => getDefaultRedirectPath())).toBe('/projects');
+    expect(TestBed.runInInjectionContext(() => canAccessAppRoute())).toBe(true);
   });
 
   it('should block app routes before onboarding is complete', () => {

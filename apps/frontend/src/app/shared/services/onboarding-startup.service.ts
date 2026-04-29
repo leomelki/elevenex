@@ -55,10 +55,8 @@ function toPromptItem(forward: SshForward): StartupPortForwardPromptItem {
 export class OnboardingStartupService {
   private readonly _startupFailure = signal<StartupConnectionFailure | null>(null);
   private readonly _startupPortForwardPrompt = signal<StartupPortForwardPrompt | null>(null);
-  private readonly _startupConnectingServer = signal<SavedServer | null>(null);
   readonly startupFailure = this._startupFailure.asReadonly();
   readonly startupPortForwardPrompt = this._startupPortForwardPrompt.asReadonly();
-  readonly startupConnectingServer = this._startupConnectingServer.asReadonly();
 
   constructor(
     private readonly onboardingState: OnboardingStateService,
@@ -79,12 +77,13 @@ export class OnboardingStartupService {
     }
 
     if (server.authMode === 'password') {
-      this.onboardingState.setRemoteConnectionReady(false);
-      this.onboardingState.setCurrentStep('ssh');
+      this._startupFailure.set({
+        server,
+        message: 'Password-based SSH connections must be reconnected manually after restarting the app.',
+      });
       return;
     }
 
-    this._startupConnectingServer.set(server);
     try {
       const result = await this.onboardingConnection.reconnect(server, { interactive: false });
       if (result.kind === 'success') {
@@ -96,24 +95,19 @@ export class OnboardingStartupService {
         };
         this.onboardingState.saveServer(nextServer);
         await this.prepareStartupPortForwardPrompt(nextServer);
+        this._startupFailure.set(null);
         return;
       }
 
-      this.onboardingState.setRemoteConnectionReady(false);
-      this.onboardingState.setCurrentStep(result.kind === 'missing-install' ? 'install' : 'ssh');
       this._startupFailure.set({
         server,
         message: result.message || 'Could not connect to the SSH server.',
       });
     } catch {
-      this.onboardingState.setRemoteConnectionReady(false);
-      this.onboardingState.setCurrentStep('ssh');
       this._startupFailure.set({
         server,
         message: 'An unexpected error occurred while reconnecting.',
       });
-    } finally {
-      this._startupConnectingServer.set(null);
     }
   }
 

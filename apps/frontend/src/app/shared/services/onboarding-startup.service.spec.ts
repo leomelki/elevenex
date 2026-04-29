@@ -116,6 +116,11 @@ describe('OnboardingStartupService', () => {
 
     expect(service.startupPortForwardPrompt()).toBeNull();
     expect(onboardingConnectionMock.reconnect).toHaveBeenCalledWith(server, { interactive: false });
+    // Failures should surface via startupFailure so the runtime overlay can show them,
+    // and must NOT reset the saved onboarding state (no redirect to /onboarding).
+    expect(service.startupFailure()).toEqual({ server, message: 'Failed' });
+    expect(onboardingStateMock.setRemoteConnectionReady).not.toHaveBeenCalled();
+    expect(onboardingStateMock.setCurrentStep).not.toHaveBeenCalled();
   });
 
   it('should include only matching inactive forwards after successful startup reconnect', async () => {

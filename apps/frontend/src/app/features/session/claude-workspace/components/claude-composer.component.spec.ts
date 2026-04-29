@@ -20,7 +20,7 @@ describe('ClaudeComposerComponent', () => {
       get: () => scrollHeight,
     });
 
-    fixture.componentInstance.onInput({ target: textarea } as Event);
+    fixture.componentInstance.onInput({ target: textarea } as unknown as Event);
     expect(textarea.style.height).toBe('120px');
 
     scrollHeight = 0;
