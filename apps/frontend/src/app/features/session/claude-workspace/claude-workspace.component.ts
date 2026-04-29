@@ -205,15 +205,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   );
 
   readonly showContextPin = computed(() => {
+    const hasTranscript = this.transcriptItems().length > 0 || this.submitting();
+    if (hasTranscript) return false;
     if (this.worktreeContextLoading()) return true;
     const ctx = this.worktreeContext();
     if (!ctx) return false;
-    const hasTranscript = this.transcriptItems().length > 0 || this.submitting();
-    if (this.hasInjectedContext() && hasTranscript) return false;
     if (ctx.generationStatus === 'failed') return true;
     if (ctx.generationStatus === 'generating') return true;
     if (ctx.contextSentence) return true;
-    if (!ctx.hasChanges && !hasTranscript) return true;
+    if (!ctx.hasChanges) return true;
     return false;
   });
 
