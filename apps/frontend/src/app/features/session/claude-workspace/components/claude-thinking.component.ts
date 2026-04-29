@@ -12,15 +12,22 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [provideIcons({ lucideBrain, lucideChevronRight })],
   template: `
-    @if (content().trim()) {
+    @if (visible()) {
       <div class="cw-think">
-        <button type="button" class="cw-think__head" (click)="toggle()">
+        <button
+          type="button"
+          class="cw-think__head"
+          [class.cw-think__head--pulse]="streaming()"
+          (click)="toggle()"
+        >
           <ng-icon name="lucideBrain" size="13" />
-          <span>{{ streaming() ? 'Thinking…' : 'Reasoning' }}</span>
-          <span class="cw-think__preview">— {{ preview() }}</span>
+          <span>{{ headerLabel() }}</span>
+          @if (preview()) {
+            <span class="cw-think__preview">— {{ preview() }}</span>
+          }
           <ng-icon name="lucideChevronRight" size="13" class="cw-think__chev" [class.rotate-90]="open()" />
         </button>
-        @if (open()) {
+        @if (open() && hasBody()) {
           <div class="cw-think__body" #bodyEl (scroll)="onBodyScroll($event)">
             @if (streaming()) {
               <div class="cw-think__streaming">{{ content() }}</div>
@@ -35,7 +42,7 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
   styles: [
     `
       :host {
-        display: block;
+        display: contents;
       }
       .cw-think {
         color: var(--muted-foreground);
@@ -57,6 +64,13 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
       }
       .cw-think__head:hover {
         background: color-mix(in oklab, var(--foreground) 5%, transparent);
+      }
+      .cw-think__head--pulse {
+        animation: cw-think-pulse 1.4s ease-in-out infinite;
+      }
+      @keyframes cw-think-pulse {
+        0%, 100% { opacity: 0.7; }
+        50% { opacity: 1; }
       }
       .cw-think__preview {
         max-width: 24rem;
@@ -127,11 +141,23 @@ export class ClaudeThinkingComponent {
   private _userScrolled = false;
 
   readonly content = computed(() => this.item().content ?? '');
+  readonly hasBody = computed(() => this.content().trim().length > 0);
+
+  // Render whenever there is content OR the block is still streaming (so an
+  // empty thinking_start shows "Thinking…" before the first delta arrives).
+  // After streaming ends with empty content (redacted thinking) the block is
+  // hidden — there is nothing meaningful to display.
+  readonly visible = computed(() => this.streaming() || this.hasBody());
 
   readonly open = computed(() => {
     const explicit = this.openState();
     if (explicit !== null) return explicit;
     return this.streaming();
+  });
+
+  readonly headerLabel = computed(() => {
+    if (this.streaming()) return 'Thinking…';
+    return 'Reasoning';
   });
 
   readonly preview = computed(() => {

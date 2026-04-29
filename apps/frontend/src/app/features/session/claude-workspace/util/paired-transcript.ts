@@ -115,9 +115,10 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
       continue;
     }
     if (item.kind === 'thinking') {
-      if (!item.content?.trim()) {
-        continue;
-      }
+      // Empty thinking is kept so the streaming "Thinking…" indicator shows for a
+      // block that was just opened (no delta yet) and so that redacted-thinking
+      // signatures don't silently disappear. The view component decides whether
+      // to render based on content + streaming state.
       out.push({ kind: 'thinking', id: item.id, item });
       continue;
     }

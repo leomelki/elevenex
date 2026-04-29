@@ -349,30 +349,28 @@ readonly messageActionsDisabled = computed(
         PairedTranscriptUnit,
         { kind: 'message' }
       >;
-      // Split intermediate units three ways:
+      // Split intermediate units two ways, preserving original chronological order
+      // within each bucket:
       //   - sibling thinking shares the final assistant message's sourceMessageId, so
       //     it belongs right before that message as a content block of the same reply.
-      //   - other thinking renders inline above the collapsed tool work so reasoning
-      //     stays visible after a turn settles.
-      //   - everything else (tool calls, intermediate text) is the collapsible work.
+      //   - everything else (intermediate thinking, intermediate assistant text, tool
+      //     calls, system messages) is the work that happened during the turn. When
+      //     the turn settles it collapses into the "Worked for X" pill in natural
+      //     order; expanding the pill replays the work as it actually happened.
       const lastAssistantSourceId = lastAssistantUnit.item.sourceMessageId;
       const intermediateUnits = turnUnits.slice(1, lastAssistantIndex);
       const siblingThinkingUnits: PairedTranscriptUnit[] = [];
-      const intermediateThinkingUnits: PairedTranscriptUnit[] = [];
       const collapsibleUnits: PairedTranscriptUnit[] = [];
       for (const intermediate of intermediateUnits) {
-        if (intermediate.kind === 'thinking') {
-          if (
-            lastAssistantSourceId
-            && intermediate.item.sourceMessageId === lastAssistantSourceId
-          ) {
-            siblingThinkingUnits.push(intermediate);
-          } else {
-            intermediateThinkingUnits.push(intermediate);
-          }
-        } else {
-          collapsibleUnits.push(intermediate);
+        if (
+          intermediate.kind === 'thinking'
+          && lastAssistantSourceId
+          && intermediate.item.sourceMessageId === lastAssistantSourceId
+        ) {
+          siblingThinkingUnits.push(intermediate);
+          continue;
         }
+        collapsibleUnits.push(intermediate);
       }
       const tailUnits = turnUnits.slice(lastAssistantIndex + 1);
       const isCurrentTurn = nextUserIndex === units.length;
@@ -380,10 +378,6 @@ readonly messageActionsDisabled = computed(
       const canCollapse = hasToolCalls && (!isCurrentTurn || isSessionSettled);
 
       out.push({ kind: 'unit', id: unit.id, unit });
-
-      for (const thinkingUnit of intermediateThinkingUnits) {
-        out.push({ kind: 'unit', id: thinkingUnit.id, unit: thinkingUnit });
-      }
 
       if (canCollapse) {
         out.push({

@@ -229,6 +229,54 @@ describe('pairTranscript', () => {
     });
   });
 
+  it('keeps empty thinking blocks so streaming "Thinking…" indicator can render', () => {
+    // Anthropic's streaming protocol fires content_block_start (thinking) before any
+    // thinking_delta arrives. The view component shows a "Thinking…" pulse based on
+    // the streaming flag — pairTranscript must not drop the item just because content
+    // is still empty, otherwise the user sees nothing while the model is reasoning.
+    const units = pairTranscript([
+      {
+        id: 'msg_abc:0',
+        kind: 'thinking',
+        content: '',
+        sourceMessageId: 'msg_abc',
+        timestamp: '2026-04-29T08:00:00.000Z',
+      },
+    ]);
+
+    expect(units).toHaveLength(1);
+    expect(units[0]).toMatchObject({ kind: 'thinking' });
+  });
+
+  it('keeps redacted-thinking signature blocks (empty content) for visibility', () => {
+    // The Anthropic API can return thinking blocks with empty `thinking` text and a
+    // signature only (redacted/encrypted reasoning). Earlier code dropped these so
+    // the user could not tell that the model had reasoned at all. We pass them
+    // through; the view component decides whether to render a placeholder.
+    const units = pairTranscript([
+      {
+        id: 'msg_abc:thinking:0',
+        kind: 'thinking',
+        content: '',
+        sourceMessageId: 'msg_abc',
+        timestamp: '2026-04-29T08:00:00.000Z',
+      },
+      {
+        id: 'msg_abc:tool_use:toolu_1',
+        kind: 'tool_use',
+        toolUseId: 'toolu_1',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        sourceMessageId: 'msg_abc',
+        timestamp: '2026-04-29T08:00:01.000Z',
+      },
+    ]);
+
+    expect(units).toHaveLength(2);
+    expect(units[0]).toMatchObject({ kind: 'thinking' });
+    expect(units[1]).toMatchObject({ kind: 'tool' });
+  });
+
   it('preserves orphan tool result rendering', () => {
     const units = pairTranscript([
       {
