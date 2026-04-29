@@ -1,17 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { execSync } from 'child_process';
+import { GIT_SHA } from './generated/git-sha';
 
 @Injectable()
 export class AppService {
-  readonly gitSha: string;
-
-  constructor() {
-    try {
-      this.gitSha = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
-    } catch {
-      this.gitSha = 'unknown';
-    }
-  }
+  readonly gitSha: string = GIT_SHA;
 
   getHello(): string {
     return 'Hello World!';

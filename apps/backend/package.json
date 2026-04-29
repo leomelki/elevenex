@@ -6,6 +6,10 @@
   "author": "leomelki",
   "license": "CC-BY-NC-4.0",
   "scripts": {
+    "prebuild": "node scripts/write-git-sha.js",
+    "prestart": "node scripts/write-git-sha.js",
+    "prestart:dev": "node scripts/write-git-sha.js",
+    "prestart:debug": "node scripts/write-git-sha.js",
     "build": "nest build",
     "rebuild:native": "cd ../.. && pnpm rebuild node-pty && cd node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty && npx node-gyp rebuild",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
