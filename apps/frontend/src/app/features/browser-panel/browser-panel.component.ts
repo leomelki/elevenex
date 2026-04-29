@@ -1247,8 +1247,7 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  protected async submitUrl(event: Event): Promise<void> {
-    event.preventDefault();
+  async navigateToUrl(url: string): Promise<void> {
     if (!this.api || !this.isSupported()) {
       return;
     }
@@ -1262,14 +1261,8 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
     }
 
     const key = buildBrowserViewKey(this.projectId(), activeTab.tabId);
-    const url = this.urlInput().trim();
-    if (!url) {
-      return;
-    }
-
     const hadLivePageBefore = activeTab.url !== 'about:blank';
 
-    this.isEditing.set(false);
     try {
       const state = await this.api.navigate({
         key,
@@ -1292,6 +1285,16 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to open URL');
     }
+  }
+
+  protected async submitUrl(event: Event): Promise<void> {
+    event.preventDefault();
+    const url = this.urlInput().trim();
+    if (!url) {
+      return;
+    }
+    this.isEditing.set(false);
+    await this.navigateToUrl(url);
   }
 
   protected async goBack(): Promise<void> {

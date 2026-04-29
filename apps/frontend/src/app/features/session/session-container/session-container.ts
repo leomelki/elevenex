@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, OnDestroy, effect, signal, computed, viewChildren, untracked, HostListener } from '@angular/core';
+import { Component, inject, Injector, OnInit, OnDestroy, afterNextRender, effect, signal, computed, viewChild, viewChildren, untracked, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, NavigationEnd } from '@angular/router';
 import { filter, takeUntil, switchMap, catchError } from 'rxjs/operators';
@@ -22,6 +22,7 @@ import { ActionsPanelComponent, ActionsStateService } from '@/features/actions';
 import { UserTerminalPanelComponent, UserTerminalStateService } from '@/features/user-terminal';
 import { VSCodeWebStateService, buildVSCodeIframeKey } from '@/features/vscode-web/vscode-web-state.service';
 import { BrowserViewStateService, buildBrowserViewProjectPrefix } from '@/features/browser-panel/browser-view-state.service';
+import { getElectronBrowserApi } from '@/shared/runtime/electron-browser';
 import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-state.service';
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
 import { BrowserIsolationConfig } from '@/shared/models/browser-isolation.model';
@@ -78,6 +79,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private browserIsolationService = inject(BrowserIsolationService);
   private claudeStatusService = inject(ClaudeStatusService);
   private modalOverlayState = inject(ModalOverlayStateService);
+  private injector = inject(Injector);
   private destroy$ = new Subject<void>();
 
   private isolationConfigCache = new Map<number, BrowserIsolationConfig>();
@@ -89,6 +91,7 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   claudeTerminals = viewChildren(ClaudeTerminalComponent);
   claudeWorkspaces = viewChildren(ClaudeWorkspaceComponent);
+  private readonly browserPanel = viewChild(BrowserPanelComponent);
 
   tabs = this.tabService.tabs;
   activeSessionId = this.tabService.activeSessionId;
@@ -257,6 +260,32 @@ export class SessionContainer implements OnInit, OnDestroy {
     const nextMode = this.showBrowserPanel() ? 'none' : 'browser';
     this.sidePanelMode.set(nextMode);
     this.saveSidePanelPreference(nextMode);
+  }
+
+  onOpenInBrowser(url: string): void {
+    if (getElectronBrowserApi()) {
+      this.sidePanelMode.set('browser');
+      this.saveSidePanelPreference('browser');
+      afterNextRender(() => {
+        void this.browserPanel()?.navigateToUrl(url);
+      }, { injector: this.injector });
+      return;
+    }
+
+    // Web/SSH mode: proxy localhost URLs through the backend
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+        const port = parsed.port || '80';
+        const proxyUrl = `/api/mcp-auth-proxy/${port}${parsed.pathname}${parsed.search}`;
+        window.open(proxyUrl, '_blank');
+        return;
+      }
+    } catch {
+      // fall through to default
+    }
+
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   toggleGithubPanel(): void {

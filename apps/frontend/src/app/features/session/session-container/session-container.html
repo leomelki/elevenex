@@ -59,6 +59,7 @@
                         [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
                         [isVisible]="tab.sessionId === activeSessionId()"
                         (openTerminalFallback)="showClaudeTerminal()"
+                        (openInBrowser)="onOpenInBrowser($event)"
                         class="h-full block"
                       />
                     }

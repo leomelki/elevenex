@@ -62,7 +62,6 @@ import {
   TurnAgentSummary,
   buildTurnAgentSummary,
 } from './util/agent-deep-dive';
-import { getElectronExternalLinksApi } from '@/shared/runtime/electron-external-links';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideWandSparkles,
@@ -126,6 +125,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   @ViewChild(ClaudeComposerComponent) private composer?: ClaudeComposerComponent;
 
   readonly openTerminalFallback = output<void>();
+  readonly openInBrowser = output<string>();
 
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ClaudeRuntimeApiService);
@@ -616,8 +616,8 @@ readonly messageActionsDisabled = computed(
   startMcpAuth(server: ClaudeMcpServerEntry): void {
     this.mcpBusyServerName.set(server.name);
     void firstValueFrom(this.api.startMcpAuth(this.sessionId, server.name))
-      .then(async (result) => {
-        await this.openExternal(result.url);
+      .then((result) => {
+        this.openInBrowser.emit(result.url);
         toast.message(result.message);
       })
       .catch((error) => {
@@ -1236,14 +1236,6 @@ readonly messageActionsDisabled = computed(
     );
   }
 
-  private async openExternal(url: string): Promise<void> {
-    const electronLinks = getElectronExternalLinksApi();
-    if (electronLinks) {
-      await electronLinks.open(url);
-      return;
-    }
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }
 }
 
 function buildWorktreeContextPrompt(contextSentence: string, prompt: string): string {

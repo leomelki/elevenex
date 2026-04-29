@@ -319,6 +319,21 @@ export class ClaudeMcpService {
       return this.fetchAuthorizationEndpoint(metadataUrl);
     }
 
+    // Fall back to standard OAuth discovery endpoint for network transports
+    const serverUrl = config?.url;
+    if (
+      ['http', 'sse', 'ws'].includes(server.transport)
+      && typeof serverUrl === 'string'
+      && serverUrl.trim()
+    ) {
+      try {
+        const origin = new URL(serverUrl).origin;
+        return this.fetchAuthorizationEndpoint(`${origin}/.well-known/oauth-authorization-server`);
+      } catch {
+        return null;
+      }
+    }
+
     return null;
   }
 
@@ -652,6 +667,15 @@ function supportsBrowserAuth(
   config: McpServerConfigLike,
 ): boolean {
   if (transport === 'claudeai-proxy') {
+    return true;
+  }
+
+  // Network transports with a URL support OAuth discovery
+  if (
+    ['http', 'sse', 'ws'].includes(transport)
+    && typeof config.url === 'string'
+    && config.url.trim()
+  ) {
     return true;
   }
 

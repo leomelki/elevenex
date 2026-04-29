@@ -91,6 +91,7 @@ ensureUtf8Locale();
 const proxyPort = process.env.ELEVENEX_PROXY_PORT || process.env.FRONTEND_PORT || '11111';
 const defaultBackendUrl = process.env.ELECTRON_BACKEND_URL || `http://127.0.0.1:${proxyPort}`;
 const defaultFrontendUrl = process.env.ELECTRON_FRONTEND_URL || '';
+let currentBackendUrl = defaultBackendUrl;
 const debugFrontend = process.env.ELECTRON_DEBUG_FRONTEND === '1';
 const EMBEDDED_BACKEND_READY_TIMEOUT_MS = 20000;
 const EMBEDDED_BACKEND_READY_POLL_INTERVAL_MS = 250;
@@ -1780,6 +1781,18 @@ function toUrlPatternVariants(pattern) {
   return [`http://${normalized}/*`, `https://${normalized}/*`];
 }
 
+function rewriteLocalhostToProxy(url) {
+  try {
+    const parsed = new URL(url);
+    if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') && parsed.port) {
+      return `${currentBackendUrl}/api/mcp-auth-proxy/${parsed.port}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+  } catch {
+    // not a valid URL, return as-is
+  }
+  return url;
+}
+
 function matchesSharedPattern(targetUrl, sharedGlobs) {
   if (!targetUrl || targetUrl === 'about:blank' || !sharedGlobs?.length) {
     return false;
@@ -1940,7 +1953,7 @@ function getBrowserEntryNavigationState(browserKey) {
 }
 
 async function loadBrowserUrl(browserKey, targetUrl, options = {}) {
-  const normalizedUrl = normalizeBrowserUrl(targetUrl);
+  const normalizedUrl = rewriteLocalhostToProxy(normalizeBrowserUrl(targetUrl));
   const existing = browserViews.get(browserKey);
   const navigationState = options.navigationState
     || getBrowserEntryNavigationState(browserKey)
@@ -2015,10 +2028,11 @@ function registerBrowserViewEvents(browserKey, view) {
 
   view.lastError = null;
   view.webContents.setWindowOpenHandler(({ url }) => {
-    if (isInternalBrowserUrl(url)) {
-      routeTopLevelNavigation(browserKey, url, { source: 'window-open' });
+    const proxied = rewriteLocalhostToProxy(url);
+    if (isInternalBrowserUrl(proxied)) {
+      routeTopLevelNavigation(browserKey, proxied, { source: 'window-open' });
     } else {
-      handleNavigationOutsideApp(url);
+      handleNavigationOutsideApp(proxied);
     }
 
     return { action: 'deny' };
@@ -2026,6 +2040,13 @@ function registerBrowserViewEvents(browserKey, view) {
 
   view.webContents.on('will-navigate', (event, url, _isInPlace, isMainFrame) => {
     if (shouldIgnoreMainFrameFlag(isMainFrame)) {
+      return;
+    }
+
+    const proxied = rewriteLocalhostToProxy(url);
+    if (proxied !== url) {
+      event.preventDefault();
+      void view.webContents.loadURL(proxied);
       return;
     }
 
@@ -2049,6 +2070,13 @@ function registerBrowserViewEvents(browserKey, view) {
 
   view.webContents.on('will-redirect', (event, url, _isInPlace, isMainFrame) => {
     if (shouldIgnoreMainFrameFlag(isMainFrame)) {
+      return;
+    }
+
+    const proxied = rewriteLocalhostToProxy(url);
+    if (proxied !== url) {
+      event.preventDefault();
+      void view.webContents.loadURL(proxied);
       return;
     }
 
@@ -2240,6 +2268,7 @@ function destroyBrowserView(browserKey) {
 
 async function createMainWindow() {
   const frontendTarget = getFrontendTarget();
+  currentBackendUrl = frontendTarget.backendUrl;
   const isMac = process.platform === 'darwin';
   const appIconPath = getAppIconPath();
 

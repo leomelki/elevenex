@@ -14,6 +14,7 @@ import { ClaudeRuntimeGateway } from './claude-runtime/claude-runtime.gateway.js
 import { BackendLogsGateway } from './backend-logs/backend-logs.gateway.js';
 import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
 import { join } from 'path';
+import * as http from 'http';
 import * as express from 'express';
 import { createEdgeProxyServer } from './proxy/edge-proxy.server.js';
 import {
@@ -115,6 +116,32 @@ async function bootstrap() {
   // Serve SCM extension bundle
   const ext2Path = join(runtimeRoot, 'vscode-scm-extension');
   app.use('/vscode-ext2', express.static(ext2Path));
+
+  // Register MCP auth proxy BEFORE body-parser so req stream is readable
+  // Proxies localhost MCP auth servers for SSH/remote access: /api/mcp-auth-proxy/:port/*
+  app.use('/api/mcp-auth-proxy', (req: any, res: any) => {
+    const match = (req.url as string).match(/^\/(\d+)(\/[^?]*)?(\?.*)?$/);
+    if (!match) { res.writeHead(404); res.end('Invalid proxy path'); return; }
+    const port = parseInt(match[1], 10);
+    const upstreamPath = (match[2] || '/') + (match[3] || '');
+    const proxyReq = http.request(
+      { hostname: '127.0.0.1', port, path: upstreamPath, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${port}` } },
+      (proxyRes) => {
+        const headers = { ...proxyRes.headers };
+        // Rewrite localhost Location headers so redirects stay proxied
+        if (typeof headers.location === 'string') {
+          const locMatch = headers.location.match(/^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)(\/.*)?$/);
+          if (locMatch) {
+            headers.location = `/api/mcp-auth-proxy/${locMatch[1]}${locMatch[2] || '/'}`;
+          }
+        }
+        res.writeHead(proxyRes.statusCode || 200, headers);
+        proxyRes.pipe(res);
+      },
+    );
+    proxyReq.on('error', () => { if (!res.headersSent) { res.writeHead(502); res.end('Upstream unavailable'); } });
+    req.pipe(proxyReq);
+  });
 
   // Register plannotator proxy routes BEFORE body-parser so req stream is readable
   const cookieProxy = app.get(CookieProxyService);
