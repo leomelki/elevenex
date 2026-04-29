@@ -115,39 +115,30 @@ describe('pairTranscript', () => {
     ]);
   });
 
-  it('keeps distinct text blocks of the same assistant message as separate units', () => {
+  it('keeps both thinking and assistant text blocks that share a sourceMessageId', () => {
     const units = pairTranscript([
       {
-        id: 'msg_abc:assistant:0',
-        kind: 'assistant',
-        sourceMessageId: 'msg_abc',
-        content: 'Let me check this.',
-        timestamp: '2026-04-28T08:00:00.000Z',
-      },
-      {
-        id: 'msg_abc:tool_use:toolu_1',
-        kind: 'tool_use',
-        toolUseId: 'toolu_1',
-        toolName: 'Read',
-        toolInput: { file_path: '/tmp/x' },
+        id: 'msg_abc:thinking:0',
+        kind: 'thinking',
+        content: 'A long internal monologue that is much longer than the visible text reply.',
         sourceMessageId: 'msg_abc',
         timestamp: '2026-04-28T08:00:01.000Z',
       },
       {
-        id: 'msg_abc:assistant:2',
+        id: 'msg_abc:assistant:0',
         kind: 'assistant',
+        content: 'Let me look at the changed files.',
         sourceMessageId: 'msg_abc',
-        content: 'Found it.',
         timestamp: '2026-04-28T08:00:02.000Z',
       },
     ]);
 
-    const messages = units.filter((u) => u.kind === 'message');
-    expect(messages).toHaveLength(2);
-    expect(messages.map((m) => m.kind === 'message' ? m.item.content : null)).toEqual([
-      'Let me check this.',
-      'Found it.',
-    ]);
+    expect(units).toHaveLength(2);
+    expect(units[0]).toMatchObject({ kind: 'thinking' });
+    expect(units[1]).toMatchObject({
+      kind: 'message',
+      item: expect.objectContaining({ content: 'Let me look at the changed files.' }),
+    });
   });
 
   it('dedupes streaming and history copies of the same assistant content block', () => {
@@ -175,30 +166,41 @@ describe('pairTranscript', () => {
     );
   });
 
-  it('keeps distinct thinking blocks of the same assistant message as separate units', () => {
+  it('dedupes streaming text after a thinking block against the history-replay copy', () => {
+    // Reproduces the production case: when a model emits thinking → text within one
+    // Anthropic message, streaming gives the text id `msg_abc:1` (real content-block
+    // index) but JSONL history splits each block onto its own line whose `content`
+    // array has length 1, so replay assigns it `msg_abc:assistant:0`. Both refer to the
+    // same block and must collapse, otherwise the text re-renders after every reload.
     const units = pairTranscript([
       {
         id: 'msg_abc:thinking:0',
         kind: 'thinking',
         sourceMessageId: 'msg_abc',
-        content: 'First thought.',
+        content: 'Let me think through this.',
         timestamp: '2026-04-28T08:00:00.000Z',
       },
       {
-        id: 'msg_abc:thinking:2',
-        kind: 'thinking',
+        id: 'msg_abc:1',
+        kind: 'assistant',
         sourceMessageId: 'msg_abc',
-        content: 'Second thought.',
-        timestamp: '2026-04-28T08:00:02.000Z',
+        content: 'Streaming reply',
+        timestamp: '2026-04-28T08:00:00.500Z',
+      },
+      {
+        id: 'msg_abc:assistant:0',
+        kind: 'assistant',
+        sourceMessageId: 'msg_abc',
+        content: 'Streaming reply finalized from history',
+        timestamp: '2026-04-28T08:00:01.000Z',
       },
     ]);
 
-    const thoughts = units.filter((u) => u.kind === 'thinking');
-    expect(thoughts).toHaveLength(2);
-    expect(thoughts.map((t) => t.kind === 'thinking' ? t.item.content : null)).toEqual([
-      'First thought.',
-      'Second thought.',
-    ]);
+    const messages = units.filter((u) => u.kind === 'message');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].kind === 'message' && messages[0].item.content).toBe(
+      'Streaming reply finalized from history',
+    );
   });
 
   it('keeps both thinking and assistant text blocks that share a sourceMessageId', () => {

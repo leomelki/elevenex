@@ -355,19 +355,39 @@ readonly messageActionsDisabled = computed(
         PairedTranscriptUnit,
         { kind: 'message' }
       >;
-      const middleUnits = turnUnits.slice(1, assistantOffset);
+      // Split intermediate units three ways:
+      //   - sibling thinking shares the final assistant message's sourceMessageId, so
+      //     it belongs right before that message as a content block of the same reply.
+      //   - other thinking renders inline above the collapsed tool work so reasoning
+      //     stays visible after a turn settles.
+      //   - everything else (tool calls, intermediate text) is the collapsible work.
+      const lastAssistantSourceId = lastAssistantUnit.item.sourceMessageId;
+      const intermediateUnits = turnUnits.slice(1, assistantOffset);
+      const siblingThinkingUnits: PairedTranscriptUnit[] = [];
+      const intermediateThinkingUnits: PairedTranscriptUnit[] = [];
+      const collapsibleUnits: PairedTranscriptUnit[] = [];
+      for (const intermediate of intermediateUnits) {
+        if (intermediate.kind === 'thinking') {
+          if (
+            lastAssistantSourceId
+            && intermediate.item.sourceMessageId === lastAssistantSourceId
+          ) {
+            siblingThinkingUnits.push(intermediate);
+          } else {
+            intermediateThinkingUnits.push(intermediate);
+          }
+        } else {
+          collapsibleUnits.push(intermediate);
+        }
+      }
       const tailUnits = turnUnits.slice(assistantOffset + 1);
       const isCurrentTurn = nextUserIndex === units.length;
-      // Thinking blocks always render inline so reasoning stays visible after a
-      // turn settles; only tool steps and intermediate text get collapsed.
-      const thinkingUnits = middleUnits.filter((u) => u.kind === 'thinking');
-      const collapsibleUnits = middleUnits.filter((u) => u.kind !== 'thinking');
       const hasToolCalls = collapsibleUnits.some((u) => u.kind === 'tool');
       const canCollapse = collapsibleUnits.length > 0 && hasToolCalls && (!isCurrentTurn || isSessionSettled);
 
       out.push({ kind: 'unit', id: unit.id, unit });
 
-      for (const thinkingUnit of thinkingUnits) {
+      for (const thinkingUnit of intermediateThinkingUnits) {
         out.push({ kind: 'unit', id: thinkingUnit.id, unit: thinkingUnit });
       }
 
@@ -397,6 +417,9 @@ readonly messageActionsDisabled = computed(
         }
       }
 
+      for (const siblingThinkingUnit of siblingThinkingUnits) {
+        out.push({ kind: 'unit', id: siblingThinkingUnit.id, unit: siblingThinkingUnit });
+      }
       out.push({ kind: 'unit', id: lastAssistantUnit.id, unit: lastAssistantUnit });
       for (const tailUnit of tailUnits) {
         out.push({ kind: 'unit', id: tailUnit.id, unit: tailUnit });
