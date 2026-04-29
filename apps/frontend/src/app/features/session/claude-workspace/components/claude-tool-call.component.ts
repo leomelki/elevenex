@@ -3,6 +3,12 @@ import { CommonModule } from '@angular/common';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import hljs from 'highlight.js/lib/common';
 import DOMPurify from 'dompurify';
+import {
+  detectHljsLang,
+  escapeHtml,
+  highlightedDiffHtml,
+  splitHighlightedLines,
+} from '../util/code-highlight';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideBraces,
@@ -30,7 +36,6 @@ import {
   ClaudeTranscriptItem,
 } from '@/shared/models/claude-runtime.model';
 import {
-  DiffSegment,
   ResultSummary,
   ToolDisplay,
   contentToString,
@@ -38,7 +43,6 @@ import {
   extractToolError,
   isHardError,
   resultSummary,
-  simpleLineDiff,
 } from '../util/tool-format';
 import { PairedTranscriptUnit, pairTranscript } from '../util/paired-transcript';
 import { ClaudeMessageComponent } from './claude-message.component';
@@ -173,8 +177,7 @@ interface Todo {
               }
               @case ('edit') {
                 @if (isEditDiff()) {
-                  <pre class="cw-tool__diff">@for (seg of diffSegments(); track $index) {<span [class]="'cw-diff-' + seg.type">{{ diffPrefix(seg.type) }}{{ seg.text }}
-</span>}</pre>
+                  <pre class="cw-tool__diff" [innerHTML]="diffHtml()"></pre>
                 }
                 @if (resultText() && state() === 'error') {
                   <pre class="cw-tool__output cw-tool__output--error">{{ resultText() }}</pre>
@@ -1062,9 +1065,17 @@ export class ClaudeToolCallComponent {
     );
   });
 
-  readonly diffSegments = computed<DiffSegment[]>(() => {
+  readonly editFilePath = computed(() => {
+    if (this.display().kind !== 'edit') return '';
+    const data = this.call().toolInput as { file_path?: string } | undefined;
+    return data?.file_path ?? '';
+  });
+
+  readonly diffHtml = computed<SafeHtml>(() => {
     const data = this.call().toolInput as { old_string?: string; new_string?: string } | undefined;
-    return simpleLineDiff(data?.old_string ?? '', data?.new_string ?? '');
+    const html = highlightedDiffHtml(data?.old_string ?? '', data?.new_string ?? '', this.editFilePath());
+    const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+    return this.sanitizer.bypassSecurityTrustHtml(safe);
   });
 
   readonly writeContent = computed(() => {
@@ -1302,10 +1313,6 @@ export class ClaudeToolCallComponent {
     return contentToString(content);
   }
 
-  diffPrefix(type: DiffSegment['type']): string {
-    return type === 'add' ? '+ ' : type === 'del' ? '- ' : '  ';
-  }
-
   onDeepDiveClick(): void {
     const id = this.turnId();
     if (id) this.inspect.emit(id);
@@ -1318,79 +1325,6 @@ export class ClaudeToolCallComponent {
 }
 
 const WRITE_PREVIEW_LINES = 12;
-
-const EXTENSION_TO_LANG: Record<string, string> = {
-  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
-  js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
-  json: 'json', jsonc: 'json',
-  html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml',
-  css: 'css', scss: 'scss', sass: 'scss', less: 'less',
-  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
-  kt: 'kotlin', kts: 'kotlin', swift: 'swift',
-  c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp',
-  cs: 'csharp', php: 'php',
-  sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
-  yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini',
-  md: 'markdown', markdown: 'markdown',
-  sql: 'sql', dockerfile: 'dockerfile',
-  vue: 'xml', svelte: 'xml',
-};
-
-function detectHljsLang(filePath: string): string | null {
-  if (!filePath) return null;
-  const base = filePath.split(/[\\/]/).pop() ?? '';
-  if (/^Dockerfile(\..+)?$/i.test(base)) return 'dockerfile';
-  if (/^Makefile$/i.test(base)) return 'makefile';
-  const dot = base.lastIndexOf('.');
-  if (dot < 0) return null;
-  const ext = base.slice(dot + 1).toLowerCase();
-  const lang = EXTENSION_TO_LANG[ext];
-  if (lang && hljs.getLanguage(lang)) return lang;
-  return hljs.getLanguage(ext) ? ext : null;
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
-}
-
-// hljs may emit spans that span multiple lines (multi-line strings, template
-// literals, block comments). A naive split on '\n' would leave orphan opening
-// or closing tags on each line. Walk the HTML, track open <span> tags, and
-// close/reopen them across line boundaries so each rendered line is valid HTML.
-function splitHighlightedLines(html: string): string[] {
-  const lines: string[] = [];
-  const open: string[] = [];
-  let current = '';
-  let i = 0;
-  while (i < html.length) {
-    const ch = html[i];
-    if (ch === '<') {
-      const end = html.indexOf('>', i);
-      if (end === -1) {
-        current += html.slice(i);
-        break;
-      }
-      const tag = html.slice(i, end + 1);
-      if (tag.startsWith('</')) {
-        open.pop();
-      } else if (!tag.endsWith('/>')) {
-        open.push(tag);
-      }
-      current += tag;
-      i = end + 1;
-    } else if (ch === '\n') {
-      const closers = '</span>'.repeat(open.length);
-      lines.push(current + closers);
-      current = open.join('');
-      i++;
-    } else {
-      current += ch;
-      i++;
-    }
-  }
-  lines.push(current);
-  return lines;
-}
 
 function extractTextBlocks(blocks: unknown[]): string {
   return blocks

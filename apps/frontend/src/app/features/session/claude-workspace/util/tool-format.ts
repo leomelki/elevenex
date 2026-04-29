@@ -419,27 +419,3 @@ export function contentToString(content: unknown): string {
   }
 }
 
-// ---------- Simple line diff for edit previews ----------
-
-export interface DiffSegment {
-  type: 'context' | 'add' | 'del';
-  text: string;
-}
-
-export function simpleLineDiff(oldStr: string, newStr: string): DiffSegment[] {
-  const oldLines = oldStr.split('\n');
-  const newLines = newStr.split('\n');
-  const segs: DiffSegment[] = [];
-  const max = Math.max(oldLines.length, newLines.length);
-  for (let i = 0; i < max; i++) {
-    const o = oldLines[i];
-    const n = newLines[i];
-    if (o === n && o !== undefined) {
-      segs.push({ type: 'context', text: o });
-    } else {
-      if (o !== undefined) segs.push({ type: 'del', text: o });
-      if (n !== undefined) segs.push({ type: 'add', text: n });
-    }
-  }
-  return segs;
-}

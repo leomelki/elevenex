@@ -5,12 +5,15 @@ import {
   ViewChild,
   computed,
   effect,
+  inject,
   input,
   output,
   signal,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
+import DOMPurify from 'dompurify';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideShield,
@@ -26,7 +29,8 @@ import {
   ClaudePermissionUpdate,
 } from '@/shared/models/claude-runtime.model';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
-import { DiffSegment, normalizeToolName as normalizeToolNameForUi, simpleLineDiff } from '../util/tool-format';
+import { normalizeToolName as normalizeToolNameForUi } from '../util/tool-format';
+import { highlightedDiffHtml } from '../util/code-highlight';
 
 interface AskOption {
   label: string;
@@ -231,10 +235,8 @@ interface AlwaysAllowPattern {
             <p class="cw-perm__sub">{{ sub }}</p>
           }
 
-          @if (permDiffSegments().length) {
-            <pre class="cw-perm__preview cw-perm__preview--code"
-              >@for (seg of permDiffSegments(); track $index) {<span [class]="'cw-diff-' + seg.type">{{ permDiffPrefix(seg.type) }}{{ seg.text }}
-</span>}</pre>
+          @if (permDiffHtml(); as diff) {
+            <pre class="cw-perm__preview cw-perm__preview--code" [innerHTML]="diff"></pre>
           } @else if (permWriteContent()) {
             <pre class="cw-perm__preview cw-perm__preview--code">{{ permWriteContent() }}</pre>
           } @else if (permBashCommand()) {
@@ -886,15 +888,20 @@ export class ClaudePermissionInlineComponent {
     (this.request().suggestions ?? []).flatMap((suggestion) => describePermissionSuggestion(suggestion)),
   );
 
-  readonly permDiffSegments = computed<DiffSegment[]>(() => {
-    if (this.kind() !== 'generic') return [];
+  private readonly sanitizer = inject(DomSanitizer);
+
+  readonly permDiffHtml = computed<SafeHtml | null>(() => {
+    if (this.kind() !== 'generic') return null;
     const name = this.permToolKind();
-    if (name !== 'edit' && name !== 'multiedit' && name !== 'fileedit' && name !== 'fileedittool') return [];
+    if (name !== 'edit' && name !== 'multiedit' && name !== 'fileedit' && name !== 'fileedittool') return null;
     const data = asRecord(this.request().input);
     const oldStr = typeof data['old_string'] === 'string' ? data['old_string'] : '';
     const newStr = typeof data['new_string'] === 'string' ? data['new_string'] : '';
-    if (!oldStr && !newStr) return [];
-    return simpleLineDiff(oldStr, newStr);
+    if (!oldStr && !newStr) return null;
+    const filePath = typeof data['file_path'] === 'string' ? data['file_path'] : '';
+    const html = highlightedDiffHtml(oldStr, newStr, filePath);
+    const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+    return this.sanitizer.bypassSecurityTrustHtml(safe);
   });
 
   readonly permWriteContent = computed<string>(() => {
@@ -944,12 +951,6 @@ export class ClaudePermissionInlineComponent {
   );
 
   private lastRequestId = '';
-
-  permDiffPrefix(type: 'context' | 'add' | 'del'): string {
-    if (type === 'add') return '+ ';
-    if (type === 'del') return '- ';
-    return '  ';
-  }
 
   constructor() {
     effect(() => {
