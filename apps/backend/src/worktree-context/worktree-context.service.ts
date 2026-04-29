@@ -360,11 +360,16 @@ export class WorktreeContextService {
     try {
       for await (const message of runtimeQuery) {
         if (message.type !== 'assistant') continue;
-        const content = message.message.content;
-        for (const block of content) {
-          if (block.type === 'text') {
-            assistantText += block.text;
-          }
+        // Collect text within this turn. When the model attempts a tool call
+        // that gets denied, it produces a second assistant turn with the same
+        // sentence. Replacing rather than appending across turns ensures we
+        // always end up with the last (final) assistant response only.
+        const turnText = message.message.content
+          .filter(block => block.type === 'text')
+          .map(block => block.text)
+          .join('');
+        if (turnText) {
+          assistantText = turnText;
         }
       }
     } finally {
