@@ -1,6 +1,16 @@
 import { Injectable, NgZone } from '@angular/core';
-import { Subject, Observable } from 'rxjs';
+import { BehaviorSubject, Subject, Observable } from 'rxjs';
 import { getWebSocketUrl } from '../runtime/runtime-config';
+
+export type UserTerminalConnectionPhase = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
+
+export interface UserTerminalConnectionState {
+  phase: UserTerminalConnectionPhase;
+  retryAttempt: number;
+  retryActive: boolean;
+  nextRetryAt: number | null;
+  msUntilNextRetry: number | null;
+}
 
 interface Connection {
   ws: WebSocket;
@@ -8,18 +18,20 @@ interface Connection {
   openSubject: Subject<void>;
   closeSubject: Subject<CloseEvent>;
   errorSubject: Subject<Event>;
+  stateSubject: BehaviorSubject<UserTerminalConnectionState>;
   hasOpened: boolean;
   manuallyClosed: boolean;
   reconnectAttempts: number;
+  retryActive: boolean;
+  nextRetryAt: number | null;
   handshakeTimeoutId: ReturnType<typeof setTimeout> | null;
   reconnectTimeoutId: ReturnType<typeof setTimeout> | null;
+  retryCountdownIntervalId: ReturnType<typeof setInterval> | null;
 }
 
 @Injectable({ providedIn: 'root' })
 export class UserTerminalWebsocketService {
   private static readonly HANDSHAKE_TIMEOUT_MS = 8000;
-  private static readonly RECONNECT_DELAY_MS = 500;
-  private static readonly MAX_RECONNECT_ATTEMPTS = 2;
   private connections = new Map<number, Connection>();
 
   constructor(private readonly ngZone: NgZone) {}
@@ -29,6 +41,7 @@ export class UserTerminalWebsocketService {
     onOpen$: Observable<void>;
     onClose$: Observable<CloseEvent>;
     onError$: Observable<Event>;
+    state$: Observable<UserTerminalConnectionState>;
   } {
     const existing = this.connections.get(terminalId);
     if (existing) {
@@ -41,12 +54,12 @@ export class UserTerminalWebsocketService {
         return this.toObservers(existing);
       }
 
-      this.disposeConnection(terminalId, existing);
+      return this.toObservers(existing);
     }
 
     const connection = this.createConnection(terminalId);
     this.connections.set(terminalId, connection);
-    this.openSocket(terminalId, connection);
+    this.openSocket(terminalId, connection, 'connecting');
     return this.toObservers(connection);
   }
 
@@ -69,8 +82,35 @@ export class UserTerminalWebsocketService {
     if (conn) {
       conn.manuallyClosed = true;
       this.clearTimers(conn);
+      this.updateState(conn, {
+        phase: 'disconnected',
+        retryActive: false,
+        nextRetryAt: null,
+        msUntilNextRetry: null,
+      });
       conn.ws.close();
       this.connections.delete(terminalId);
+    }
+  }
+
+  setRetryActive(terminalId: number, active: boolean): void {
+    const connection = this.connections.get(terminalId);
+    if (!connection || connection.manuallyClosed) {
+      return;
+    }
+
+    connection.retryActive = active;
+    this.updateState(connection, { retryActive: active });
+
+    if (!active) {
+      this.clearReconnectTimeout(connection);
+      this.clearRetryCountdown(connection);
+      this.updateState(connection, { nextRetryAt: null, msUntilNextRetry: null });
+      return;
+    }
+
+    if (connection.stateSubject.value.phase === 'disconnected') {
+      this.retryNow(terminalId, connection);
     }
   }
 
@@ -87,11 +127,21 @@ export class UserTerminalWebsocketService {
       openSubject: new Subject<void>(),
       closeSubject: new Subject<CloseEvent>(),
       errorSubject: new Subject<Event>(),
+      stateSubject: new BehaviorSubject<UserTerminalConnectionState>({
+        phase: 'connecting',
+        retryAttempt: 0,
+        retryActive: true,
+        nextRetryAt: null,
+        msUntilNextRetry: null,
+      }),
       hasOpened: false,
       manuallyClosed: false,
       reconnectAttempts: 0,
+      retryActive: true,
+      nextRetryAt: null,
       handshakeTimeoutId: null,
       reconnectTimeoutId: null,
+      retryCountdownIntervalId: null,
     };
   }
 
@@ -103,13 +153,30 @@ export class UserTerminalWebsocketService {
     return new WebSocket(wsUrl);
   }
 
-  private openSocket(terminalId: number, connection: Connection): void {
+  private openSocket(
+    terminalId: number,
+    connection: Connection,
+    phase: Extract<UserTerminalConnectionPhase, 'connecting' | 'reconnecting'>,
+  ): void {
+    this.clearReconnectTimeout(connection);
+    this.clearRetryCountdown(connection);
+    connection.nextRetryAt = null;
+    this.updateState(connection, { phase, nextRetryAt: null, msUntilNextRetry: null });
+
     connection.ws.onopen = () => {
       console.log(`WebSocket connected for user terminal ${terminalId}`);
       connection.hasOpened = true;
       connection.reconnectAttempts = 0;
       this.clearHandshakeTimeout(connection);
+      this.clearReconnectTimeout(connection);
+      this.clearRetryCountdown(connection);
       this.ngZone.run(() => {
+        this.updateState(connection, {
+          phase: 'connected',
+          retryAttempt: 0,
+          nextRetryAt: null,
+          msUntilNextRetry: null,
+        });
         connection.openSubject.next();
       });
     };
@@ -123,18 +190,27 @@ export class UserTerminalWebsocketService {
     connection.ws.onclose = (event) => {
       console.log(`WebSocket closed for user terminal ${terminalId}:`, event.code, event.reason);
       this.clearHandshakeTimeout(connection);
-
-      if (this.shouldRetry(connection, event)) {
-        this.scheduleReconnect(terminalId, connection);
-        return;
-      }
+      this.clearReconnectTimeout(connection);
+      this.clearRetryCountdown(connection);
 
       this.ngZone.run(() => {
         connection.closeSubject.next(event);
-        if (this.connections.get(terminalId) === connection) {
-          this.connections.delete(terminalId);
-        }
       });
+
+      if (connection.manuallyClosed) {
+        this.ngZone.run(() => {
+          if (this.connections.get(terminalId) === connection) {
+            this.connections.delete(terminalId);
+          }
+        });
+        return;
+      }
+
+      this.updateState(connection, { phase: 'disconnected', nextRetryAt: null, msUntilNextRetry: null });
+
+      if (this.shouldRetry(connection, event)) {
+        this.scheduleReconnect(terminalId, connection);
+      }
     };
 
     connection.ws.onerror = (error) => {
@@ -164,24 +240,73 @@ export class UserTerminalWebsocketService {
   }
 
   private shouldRetry(connection: Connection, _event: CloseEvent): boolean {
-    return (
-      !connection.manuallyClosed &&
-      !connection.hasOpened &&
-      connection.reconnectAttempts < UserTerminalWebsocketService.MAX_RECONNECT_ATTEMPTS
-    );
+    return !connection.manuallyClosed && connection.retryActive;
   }
 
   private scheduleReconnect(terminalId: number, connection: Connection): void {
     connection.reconnectAttempts += 1;
+    const delay = this.getReconnectDelay(connection.reconnectAttempts);
+    connection.nextRetryAt = Date.now() + delay;
+    this.updateState(connection, {
+      retryAttempt: connection.reconnectAttempts,
+      nextRetryAt: connection.nextRetryAt,
+      msUntilNextRetry: delay,
+    });
+    this.startRetryCountdown(connection);
     connection.reconnectTimeoutId = setTimeout(() => {
       connection.reconnectTimeoutId = null;
       if (this.connections.get(terminalId) !== connection || connection.manuallyClosed) {
         return;
       }
 
+      connection.nextRetryAt = null;
       connection.ws = this.createWebSocket(terminalId);
-      this.openSocket(terminalId, connection);
-    }, UserTerminalWebsocketService.RECONNECT_DELAY_MS);
+      this.openSocket(terminalId, connection, 'reconnecting');
+    }, delay);
+  }
+
+  private retryNow(terminalId: number, connection: Connection): void {
+    if (
+      this.connections.get(terminalId) !== connection ||
+      connection.manuallyClosed ||
+      connection.ws.readyState === WebSocket.OPEN ||
+      connection.ws.readyState === WebSocket.CONNECTING
+    ) {
+      return;
+    }
+
+    this.clearReconnectTimeout(connection);
+    this.clearRetryCountdown(connection);
+    connection.nextRetryAt = null;
+    connection.ws = this.createWebSocket(terminalId);
+    this.openSocket(terminalId, connection, 'reconnecting');
+  }
+
+  private startRetryCountdown(connection: Connection): void {
+    this.clearRetryCountdown(connection);
+    connection.retryCountdownIntervalId = setInterval(() => {
+      this.updateRetryCountdown(connection);
+    }, 100);
+  }
+
+  private updateRetryCountdown(connection: Connection): void {
+    const nextRetryAt = connection.nextRetryAt;
+    if (!nextRetryAt) {
+      this.updateState(connection, { msUntilNextRetry: null });
+      return;
+    }
+
+    const msUntilNextRetry = Math.max(0, nextRetryAt - Date.now());
+    this.ngZone.run(() => {
+      this.updateState(connection, { msUntilNextRetry });
+    });
+  }
+
+  private clearRetryCountdown(connection: Connection): void {
+    if (connection.retryCountdownIntervalId) {
+      clearInterval(connection.retryCountdownIntervalId);
+      connection.retryCountdownIntervalId = null;
+    }
   }
 
   private clearHandshakeTimeout(connection: Connection): void {
@@ -201,20 +326,7 @@ export class UserTerminalWebsocketService {
   private clearTimers(connection: Connection): void {
     this.clearHandshakeTimeout(connection);
     this.clearReconnectTimeout(connection);
-  }
-
-  private disposeConnection(terminalId: number, connection: Connection): void {
-    this.clearTimers(connection);
-    if (
-      connection.ws.readyState === WebSocket.CONNECTING ||
-      connection.ws.readyState === WebSocket.OPEN
-    ) {
-      connection.manuallyClosed = true;
-      connection.ws.close();
-    }
-    if (this.connections.get(terminalId) === connection) {
-      this.connections.delete(terminalId);
-    }
+    this.clearRetryCountdown(connection);
   }
 
   private toObservers(connection: Connection) {
@@ -223,6 +335,24 @@ export class UserTerminalWebsocketService {
       onOpen$: connection.openSubject.asObservable(),
       onClose$: connection.closeSubject.asObservable(),
       onError$: connection.errorSubject.asObservable(),
+      state$: connection.stateSubject.asObservable(),
     };
+  }
+
+  private updateState(
+    connection: Connection,
+    patch: Partial<UserTerminalConnectionState>,
+  ): void {
+    connection.stateSubject.next({
+      ...connection.stateSubject.value,
+      ...patch,
+    });
+  }
+
+  private getReconnectDelay(attempt: number): number {
+    if (attempt <= 2) return 500;
+    if (attempt <= 4) return 1000;
+    if (attempt <= 6) return 2000;
+    return 4000;
   }
 }

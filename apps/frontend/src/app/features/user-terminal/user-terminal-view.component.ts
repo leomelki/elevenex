@@ -8,12 +8,16 @@ import {
   OnChanges,
   SimpleChanges,
   signal,
+  computed,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { UserTerminalWebsocketService } from '@/shared/services/user-terminal-websocket.service';
+import {
+  UserTerminalConnectionPhase,
+  UserTerminalWebsocketService,
+} from '@/shared/services/user-terminal-websocket.service';
 import { Subscription } from 'rxjs';
 import { TabService } from '@/features/session/tab-service';
 import { Router } from '@angular/router';
@@ -34,10 +38,23 @@ export class UserTerminalViewComponent implements AfterViewInit, OnDestroy, OnCh
   private resizeObserver?: ResizeObserver;
   private subscriptions: Subscription[] = [];
   private initialized = false;
-  private hasOpenedConnection = false;
 
-  connected = signal(false);
-  connecting = signal(false);
+  connectionPhase = signal<UserTerminalConnectionPhase>('connecting');
+  retryMsUntilNext = signal<number | null>(null);
+  retryActive = signal(false);
+  connected = computed(() => this.connectionPhase() === 'connected');
+  connecting = computed(() => {
+    const phase = this.connectionPhase();
+    return phase === 'connecting' || phase === 'reconnecting';
+  });
+  retryLabel = computed(() => {
+    const remainingMs = this.retryMsUntilNext();
+    if (remainingMs === null) return null;
+    const roundedTenths = Math.ceil(remainingMs / 100) / 10;
+    return Number.isInteger(roundedTenths)
+      ? `${roundedTenths.toFixed(0)}s`
+      : `${roundedTenths.toFixed(1)}s`;
+  });
 
   constructor(
     private readonly wsService: UserTerminalWebsocketService,
@@ -174,18 +191,24 @@ export class UserTerminalViewComponent implements AfterViewInit, OnDestroy, OnCh
   }
 
   private connectWebSocket(): void {
-    this.hasOpenedConnection = false;
-    this.connecting.set(true);
-
     const connection = this.wsService.connect(this.terminalId);
+
+    this.subscriptions.push(
+      connection.state$.subscribe({
+        next: (state) => {
+          this.connectionPhase.set(state.phase);
+          this.retryMsUntilNext.set(state.msUntilNextRetry);
+          this.retryActive.set(state.retryActive);
+          if (state.phase === 'connected') {
+            this.fit();
+          }
+        },
+      }),
+    );
 
     this.subscriptions.push(
       connection.onOpen$.subscribe({
         next: () => {
-          this.hasOpenedConnection = true;
-          this.connected.set(true);
-          this.connecting.set(false);
-          this.fit();
           if (this.terminal) {
             this.wsService.resize(this.terminalId, this.terminal.cols, this.terminal.rows);
           }
@@ -202,22 +225,9 @@ export class UserTerminalViewComponent implements AfterViewInit, OnDestroy, OnCh
     );
 
     this.subscriptions.push(
-      connection.onClose$.subscribe({
-        next: () => {
-          this.connected.set(false);
-          this.connecting.set(false);
-          this.hasOpenedConnection = false;
-        },
-      }),
-    );
-
-    this.subscriptions.push(
       connection.onError$.subscribe({
         next: (error) => {
           console.error('User terminal WebSocket error:', error);
-          if (this.hasOpenedConnection) {
-            this.connected.set(false);
-          }
         },
       }),
     );
@@ -227,9 +237,9 @@ export class UserTerminalViewComponent implements AfterViewInit, OnDestroy, OnCh
     this.subscriptions.forEach(sub => sub.unsubscribe());
     this.subscriptions = [];
     this.wsService.disconnect(this.terminalId);
-    this.connected.set(false);
-    this.connecting.set(false);
-    this.hasOpenedConnection = false;
+    this.connectionPhase.set('disconnected');
+    this.retryMsUntilNext.set(null);
+    this.retryActive.set(false);
   }
 
   private setupResizeObserver(): void {
