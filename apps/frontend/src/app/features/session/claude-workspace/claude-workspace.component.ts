@@ -14,6 +14,7 @@ import {
   inject,
   output,
   signal,
+  untracked,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -43,6 +44,7 @@ import {
 import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model';
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
+import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { ClaudeMessageComponent } from './components/claude-message.component';
 import { ClaudeThinkingComponent } from './components/claude-thinking.component';
@@ -130,6 +132,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ClaudeRuntimeApiService);
   private readonly ws = inject(ClaudeRuntimeWebsocketService);
+  private readonly claudeStatusService = inject(ClaudeStatusService);
   private readonly worktreeContextService = inject(WorktreeContextService);
 
   readonly loading = signal(true);
@@ -469,6 +472,19 @@ readonly messageActionsDisabled = computed(
       queueMicrotask(() => this.scrollToBottom());
     });
 
+    // Re-hydrate the runtime WS after server reconnection to catch any missed events.
+    // Guarded by hydrated() to skip the initial bootstrap — only fires on subsequent reconnects.
+    effect(() => {
+      const reconnectCount = this.claudeStatusService.onReconnect();
+      if (reconnectCount > 0) {
+        untracked(() => {
+          if (this.hydrated()) {
+            this.rehydrate();
+          }
+        });
+      }
+    });
+
     this.destroyRef.onDestroy(() => {
       if (this.flushRafId !== null) {
         cancelAnimationFrame(this.flushRafId);
@@ -778,6 +794,15 @@ readonly messageActionsDisabled = computed(
   @HostListener('document:keydown.escape')
   onEscape(): void {
     this.cancelArmedEdit();
+  }
+
+  private rehydrate(): void {
+    this.ws.disconnect(this.sessionId);
+    this.ws
+      .connect(this.sessionId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((event) => this.handleRuntimeEvent(event));
+    this.ws.send(this.sessionId, { type: 'hydrate' });
   }
 
   private async bootstrap(): Promise<void> {
