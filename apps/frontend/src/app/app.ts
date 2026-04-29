@@ -73,6 +73,7 @@ export class App implements OnInit, OnDestroy {
     this.router.url.startsWith('/onboarding') || this.router.url.startsWith('/connection-lost'),
   );
   readonly startupPortForwardPrompt = this.startupService.startupPortForwardPrompt;
+  readonly startupConnectingServer = this.startupService.startupConnectingServer;
   readonly showPlannotatorInstallPrompt = this.plannotatorInstallPrompt.show;
   readonly disconnectedForwardsBanner = this.sshRuntimeRecovery.disconnectedForwardsBanner;
   readonly remoteDisconnect = this.sshRuntimeRecovery.remoteDisconnect;
@@ -100,6 +101,7 @@ export class App implements OnInit, OnDestroy {
     if (!this.windowControls) {
       this.isElectronDesktop.set(this.runtimeMode === 'electron-local' || this.runtimeMode === 'electron-debug');
       this.windowEnvironmentReady.set(true);
+      void this.startupService.initialize();
       await this.sshRuntimeRecovery.startMonitoring();
       return;
     }
@@ -116,6 +118,7 @@ export class App implements OnInit, OnDestroy {
     this.removeWindowListener = this.windowControls.onStateChanged((nextState) => {
       this.syncWindowState(nextState);
     });
+    void this.startupService.initialize();
     await this.sshRuntimeRecovery.startMonitoring();
   }
 

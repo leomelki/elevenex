@@ -55,8 +55,10 @@ function toPromptItem(forward: SshForward): StartupPortForwardPromptItem {
 export class OnboardingStartupService {
   private readonly _startupFailure = signal<StartupConnectionFailure | null>(null);
   private readonly _startupPortForwardPrompt = signal<StartupPortForwardPrompt | null>(null);
+  private readonly _startupConnectingServer = signal<SavedServer | null>(null);
   readonly startupFailure = this._startupFailure.asReadonly();
   readonly startupPortForwardPrompt = this._startupPortForwardPrompt.asReadonly();
+  readonly startupConnectingServer = this._startupConnectingServer.asReadonly();
 
   constructor(
     private readonly onboardingState: OnboardingStateService,
@@ -82,6 +84,7 @@ export class OnboardingStartupService {
       return;
     }
 
+    this._startupConnectingServer.set(server);
     try {
       const result = await this.onboardingConnection.reconnect(server, { interactive: false });
       if (result.kind === 'success') {
@@ -109,6 +112,8 @@ export class OnboardingStartupService {
         server,
         message: 'An unexpected error occurred while reconnecting.',
       });
+    } finally {
+      this._startupConnectingServer.set(null);
     }
   }
 
