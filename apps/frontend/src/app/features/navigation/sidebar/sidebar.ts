@@ -37,6 +37,7 @@ import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
 import { SshForward } from '@/shared/models/ssh-forward.model';
 import { CursorService } from '@/shared/services/cursor.service';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
+import { SshRuntimeRecoveryService } from '@/shared/services/ssh-runtime-recovery.service';
 import { TodosService } from '@/features/productivity/todos.service';
 import { getElectronWindowControlsApi } from '@/shared/runtime/electron-window-controls';
 import { Project } from '@/shared/models/project.model';
@@ -90,6 +91,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private sshForwardsService = inject(SshForwardsService);
   private cursorService = inject(CursorService);
   private onboardingState = inject(OnboardingStateService);
+  private sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private todosService = inject(TodosService);
   pendingWorktreeCreations = inject(PendingWorktreeCreationsService);
   private windowControls = getElectronWindowControlsApi();
@@ -111,6 +113,19 @@ export class Sidebar implements OnInit, OnDestroy {
       this.todosService.getTodos(project.id).subscribe();
     }
   });
+  private wasConnecting = false;
+  private readonly remoteConnectingEffect = effect(() => {
+    const connecting = this.sshRuntimeRecovery.remoteConnecting();
+    if (connecting) {
+      this.wasConnecting = true;
+      return;
+    }
+    if (this.wasConnecting) {
+      this.wasConnecting = false;
+      this.navService.refreshTree();
+    }
+  });
+
   private readonly projectRevealEffect = effect(() => {
     const projectId = this.navService.revealProjectId();
     const projects = this.navService.tree();
@@ -171,7 +186,9 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
-    this.navService.loadTree();
+    if (!this.sshRuntimeRecovery.remoteConnecting()) {
+      this.navService.loadTree();
+    }
     this.sshStatsTimer = window.setInterval(() => {
       void this.refreshSshProjectStats(this.navService.tree());
     }, 4000);

@@ -33,6 +33,7 @@ import { Session } from '@/shared/models/session.model';
 import { shouldAutoReviewSessionCompletion } from '../session-completion-review.util';
 import { shouldCloseActiveSessionTab } from '../close-tab-shortcut.util';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
+import { SshRuntimeRecoveryService } from '@/shared/services/ssh-runtime-recovery.service';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 
 @Component({
@@ -78,6 +79,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private browserTabsState = inject(BrowserTabsStateService);
   private browserIsolationService = inject(BrowserIsolationService);
   private claudeStatusService = inject(ClaudeStatusService);
+  private sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private modalOverlayState = inject(ModalOverlayStateService);
   private injector = inject(Injector);
   private destroy$ = new Subject<void>();
@@ -448,15 +450,16 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    // Restore saved tabs, or fall back to URL session
-    const urlSessionId = this.getSessionIdFromUrl();
-    const saved = this.tabService.getSavedState();
+    this.runWhenConnected(() => {
+      const urlSessionId = this.getSessionIdFromUrl();
+      const saved = this.tabService.getSavedState();
 
-    if (saved && saved.sessionIds.length > 0) {
-      this.restoreSavedTabs(saved, urlSessionId);
-    } else if (urlSessionId) {
-      this.loadAndOpenSession(urlSessionId);
-    }
+      if (saved && saved.sessionIds.length > 0) {
+        this.restoreSavedTabs(saved, urlSessionId);
+      } else if (urlSessionId) {
+        this.loadAndOpenSession(urlSessionId);
+      }
+    });
 
     // Listen for navigation to new sessions
     this.router.events.pipe(
@@ -588,6 +591,21 @@ export class SessionContainer implements OnInit, OnDestroy {
 
     event.preventDefault();
     this.router.navigate(['/sessions', nextSessionId], { replaceUrl: true });
+  }
+
+  private runWhenConnected(action: () => void): void {
+    if (!this.sshRuntimeRecovery.remoteConnecting()) {
+      action();
+      return;
+    }
+
+    const ref = effect(() => {
+      if (this.sshRuntimeRecovery.remoteConnecting()) {
+        return;
+      }
+      ref.destroy();
+      action();
+    }, { injector: this.injector });
   }
 
   private getSessionIdFromUrl(): number | null {
