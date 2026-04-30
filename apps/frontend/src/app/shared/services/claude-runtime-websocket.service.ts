@@ -16,7 +16,7 @@ export class ClaudeRuntimeWebsocketService {
 
   connect(sessionId: number): Observable<ClaudeRuntimeEvent> {
     const existing = this.connections.get(sessionId);
-    if (existing) {
+    if (existing && existing.ws.readyState !== WebSocket.CLOSED && existing.ws.readyState !== WebSocket.CLOSING) {
       return existing.subject.asObservable();
     }
 
@@ -24,6 +24,7 @@ export class ClaudeRuntimeWebsocketService {
       getWebSocketUrl('/claude-runtime', new URLSearchParams({ sessionId: String(sessionId) })),
     );
     const subject = new Subject<ClaudeRuntimeEvent>();
+    const connection: Connection = { ws, subject };
 
     ws.onmessage = (event) => {
       this.ngZone.run(() => {
@@ -38,7 +39,12 @@ export class ClaudeRuntimeWebsocketService {
     ws.onclose = () => {
       this.ngZone.run(() => {
         subject.complete();
-        this.connections.delete(sessionId);
+        // Only clear the slot if it still points at THIS connection — a
+        // newer connect() may have replaced us already (e.g. after a
+        // tunnel reconnect rehydrate), and we must not evict it.
+        if (this.connections.get(sessionId) === connection) {
+          this.connections.delete(sessionId);
+        }
       });
     };
 
@@ -46,7 +52,7 @@ export class ClaudeRuntimeWebsocketService {
       ws.close();
     };
 
-    this.connections.set(sessionId, { ws, subject });
+    this.connections.set(sessionId, connection);
     return subject.asObservable();
   }
 
@@ -72,7 +78,7 @@ export class ClaudeRuntimeWebsocketService {
       return;
     }
 
-    connection.ws.close();
     this.connections.delete(sessionId);
+    connection.ws.close();
   }
 }
