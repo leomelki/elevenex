@@ -182,16 +182,52 @@ export class EnvironmentSwitcherComponent {
   toggle() {
     if (this.open() && this.switching()) return;
     if (!this.open()) {
-      const rect = this.triggerEl?.nativeElement?.getBoundingClientRect();
-      if (rect) {
-        this.popoverPos.set({
-          top: `${rect.bottom + 7}px`,
-          left: `${rect.left}px`,
-          width: `${rect.width}px`,
-        });
-      }
+      this.recomputePosition();
     }
     this.open.update(v => !v);
+  }
+
+  private recomputePosition() {
+    const rect = this.triggerEl?.nativeElement?.getBoundingClientRect();
+    if (!rect) return;
+
+    const margin = 8;
+    const gap = 7;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    // Match CSS: min-width 18rem, max-height 70vh. Use the larger of trigger
+    // width and 18rem so the popover never appears narrower than its content.
+    const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const popoverWidth = Math.max(rect.width, 18 * remPx);
+    const estimatedHeight = Math.min(viewportHeight * 0.7, 480);
+
+    let left = rect.left;
+    if (left + popoverWidth + margin > viewportWidth) {
+      left = Math.max(margin, viewportWidth - popoverWidth - margin);
+    }
+    if (left < margin) left = margin;
+
+    const spaceBelow = viewportHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const placeAbove = spaceBelow < estimatedHeight + gap + margin && spaceAbove > spaceBelow;
+    const top = placeAbove
+      ? Math.max(margin, rect.top - gap - estimatedHeight)
+      : rect.bottom + gap;
+
+    this.popoverPos.set({
+      top: `${top}px`,
+      left: `${left}px`,
+      width: `${popoverWidth}px`,
+    });
+  }
+
+  @HostListener('window:resize')
+  @HostListener('window:scroll')
+  onViewportChange() {
+    if (this.open()) {
+      this.recomputePosition();
+    }
   }
 
   close() {
