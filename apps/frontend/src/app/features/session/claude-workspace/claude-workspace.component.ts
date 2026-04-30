@@ -559,14 +559,15 @@ readonly messageActionsDisabled = computed(
       consumed.push(item);
     }
     if (consumed.length) {
+      const now = new Date().toISOString();
       this.optimisticUserItems.update((items) => [
         ...items,
         ...consumed.map<ClaudeTranscriptItem>((p) => ({
           id: `opt-${p.id}`,
           kind: 'user',
           content: p.prompt,
-          timestamp: p.queuedAt,
-          authoredAt: p.queuedAt,
+          timestamp: now,
+          authoredAt: now,
         })),
       ]);
     }
