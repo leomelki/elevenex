@@ -160,6 +160,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly pendingPermissionRequest = signal<ClaudePermissionRequest | null>(null);
   readonly pendingUserInputRequest = signal<ClaudeUserInputRequest | null>(null);
   readonly pendingPrompts = signal<ClaudePendingPrompt[]>([]);
+  private readonly cancelledPendingPromptIds = new Set<string>();
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
   readonly tasksDrawerOpen = signal(false);
@@ -544,7 +545,38 @@ readonly messageActionsDisabled = computed(
   }
 
   cancelPendingPrompt(id: string): void {
+    this.cancelledPendingPromptIds.add(id);
     this.ws.send(this.sessionId, { type: 'cancel_pending_prompt', id });
+  }
+
+  private updatePendingPrompts(next: ClaudePendingPrompt[]): void {
+    const nextIds = new Set(next.map((p) => p.id));
+    const prev = this.pendingPrompts();
+    const consumed: ClaudePendingPrompt[] = [];
+    for (const item of prev) {
+      if (nextIds.has(item.id)) continue;
+      if (this.cancelledPendingPromptIds.delete(item.id)) continue;
+      consumed.push(item);
+    }
+    if (consumed.length) {
+      this.optimisticUserItems.update((items) => [
+        ...items,
+        ...consumed.map<ClaudeTranscriptItem>((p) => ({
+          id: `opt-${p.id}`,
+          kind: 'user',
+          content: p.prompt,
+          timestamp: p.queuedAt,
+          authoredAt: p.queuedAt,
+        })),
+      ]);
+    }
+    // Drop cancellation memory for ids no longer referenced (defensive cleanup).
+    if (this.cancelledPendingPromptIds.size) {
+      for (const id of [...this.cancelledPendingPromptIds]) {
+        if (!nextIds.has(id)) this.cancelledPendingPromptIds.delete(id);
+      }
+    }
+    this.pendingPrompts.set(next);
   }
 
   interrupt(): void {
@@ -960,7 +992,7 @@ readonly messageActionsDisabled = computed(
         if (event.payload.permissionMode != null) {
           this._permissionMode.set(event.payload.permissionMode);
         }
-        this.pendingPrompts.set(event.payload.pendingPrompts ?? []);
+        this.updatePendingPrompts(event.payload.pendingPrompts ?? []);
         if (event.payload.runPhase !== 'running') this.submitting.set(false);
         return;
       case 'task_started':
@@ -1117,7 +1149,7 @@ readonly messageActionsDisabled = computed(
     this._permissionMode.set(state.permissionMode);
     this.pendingPermissionRequest.set(state.pendingPermissionRequest);
     this.pendingUserInputRequest.set(state.pendingUserInputRequest);
-    this.pendingPrompts.set(state.pendingPrompts ?? []);
+    this.updatePendingPrompts(state.pendingPrompts ?? []);
     this.lastError.set(state.lastError);
     this.tasks.set(state.tasks);
     this.sessionMetadata.set(state.sessionMetadata);
@@ -1160,6 +1192,7 @@ readonly messageActionsDisabled = computed(
     this.pendingPermissionRequest.set(null);
     this.pendingUserInputRequest.set(null);
     this.pendingPrompts.set([]);
+    this.cancelledPendingPromptIds.clear();
     this.autocompleteItems.set([]);
     this.tasks.set([]);
     this.tasksDrawerOpen.set(false);
