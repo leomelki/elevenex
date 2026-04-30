@@ -2797,6 +2797,49 @@ ipcMain.handle('elevenex-external-links:open', async (_event, url) => {
   return true;
 });
 
+const authWindows = new Map();
+
+ipcMain.handle('elevenex-auth-window:open', async (_event, payload) => {
+  const url = typeof payload === 'string' ? payload : payload?.url;
+  if (typeof url !== 'string' || !url.trim()) {
+    return false;
+  }
+
+  const key = `${payload?.key || 'default'}`;
+
+  let authWindow = authWindows.get(key);
+  if (authWindow && !authWindow.isDestroyed()) {
+    authWindow.focus();
+    void authWindow.loadURL(url);
+    return true;
+  }
+
+  authWindow = new BrowserWindow({
+    width: 520,
+    height: 720,
+    minWidth: 400,
+    minHeight: 500,
+    parent: mainWindow ?? undefined,
+    title: typeof payload?.title === 'string' && payload.title ? payload.title : 'Authentication',
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      partition: `persist:elevenex-auth:${key}`,
+    },
+  });
+
+  authWindows.set(key, authWindow);
+  authWindow.on('closed', () => {
+    if (authWindows.get(key) === authWindow) {
+      authWindows.delete(key);
+    }
+  });
+
+  await authWindow.loadURL(url);
+  return true;
+});
+
 ipcMain.handle('elevenex-browser:show', (_event, payload) => {
   const browserKey = `${payload?.key || ''}`;
   if (!browserKey) {

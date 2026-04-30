@@ -108,4 +108,7 @@ contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
   externalLinks: {
     open: (url) => ipcRenderer.invoke('elevenex-external-links:open', url),
   },
+  authWindow: {
+    open: (payload) => ipcRenderer.invoke('elevenex-auth-window:open', payload),
+  },
 });

@@ -22,7 +22,7 @@ import { ActionsPanelComponent, ActionsStateService } from '@/features/actions';
 import { UserTerminalPanelComponent, UserTerminalStateService } from '@/features/user-terminal';
 import { VSCodeWebStateService, buildVSCodeIframeKey } from '@/features/vscode-web/vscode-web-state.service';
 import { BrowserViewStateService, buildBrowserViewProjectPrefix } from '@/features/browser-panel/browser-view-state.service';
-import { getElectronBrowserApi } from '@/shared/runtime/electron-browser';
+import { getElectronAuthWindowApi } from '@/shared/runtime/electron-auth-window';
 import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-state.service';
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
 import { BrowserIsolationConfig } from '@/shared/models/browser-isolation.model';
@@ -265,29 +265,27 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   onOpenInBrowser(url: string): void {
-    if (getElectronBrowserApi()) {
-      this.sidePanelMode.set('browser');
-      this.saveSidePanelPreference('browser');
-      afterNextRender(() => {
-        void this.browserPanel()?.navigateToUrl(url);
-      }, { injector: this.injector });
+    const authWindowApi = getElectronAuthWindowApi();
+    if (authWindowApi) {
+      void authWindowApi.open({ url, key: 'mcp-auth', title: 'MCP Authentication' });
       return;
     }
 
-    // Web/SSH mode: proxy localhost URLs through the backend
+    // Web/SSH mode: proxy localhost URLs through the backend, open in a popup window
+    const popupFeatures = 'popup=yes,width=520,height=720,noopener,noreferrer';
     try {
       const parsed = new URL(url);
       if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
         const port = parsed.port || '80';
         const proxyUrl = `/api/mcp-auth-proxy/${port}${parsed.pathname}${parsed.search}`;
-        window.open(proxyUrl, '_blank');
+        window.open(proxyUrl, 'elevenex-mcp-auth', popupFeatures);
         return;
       }
     } catch {
       // fall through to default
     }
 
-    window.open(url, '_blank', 'noopener,noreferrer');
+    window.open(url, 'elevenex-mcp-auth', popupFeatures);
   }
 
   toggleGithubPanel(): void {
