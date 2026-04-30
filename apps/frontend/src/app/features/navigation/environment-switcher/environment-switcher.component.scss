@@ -630,3 +630,114 @@
     opacity: 0.5;
   }
 }
+
+/* ====== Switching panel ====== */
+
+.env-switching {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.85rem 0.85rem 0.95rem;
+}
+
+.env-switching__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.env-switching__iconframe {
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklch, var(--primary) 14%, transparent);
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.env-switching__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.env-switching__title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.env-switching__subtitle {
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+}
+
+.env-switching__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.env-switching__step {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  transition: color 0.18s ease;
+}
+
+.env-switching__step--done {
+  color: color-mix(in oklch, var(--foreground) 80%, transparent);
+}
+
+.env-switching__step--active {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.env-switching__dot {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklch, var(--muted) 60%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.env-switching__step--done .env-switching__dot {
+  background: color-mix(in oklch, var(--primary) 22%, transparent);
+  border-color: color-mix(in oklch, var(--primary) 40%, transparent);
+  color: var(--primary);
+}
+
+.env-switching__step--active .env-switching__dot {
+  background: color-mix(in oklch, var(--primary) 18%, transparent);
+  border-color: color-mix(in oklch, var(--primary) 55%, transparent);
+  color: var(--primary);
+}
+
+.env-switching__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-switching__spin {
+  animation: env-spin 0.85s linear infinite;
+}

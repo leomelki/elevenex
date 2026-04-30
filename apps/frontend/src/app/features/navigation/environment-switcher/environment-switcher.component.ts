@@ -35,7 +35,11 @@ import {
   SavedServerDraft,
 } from '@/shared/services/environment-connection-manager.service';
 import { OnboardingConnectionService } from '@/shared/services/onboarding-connection.service';
-import { SshRuntimeRecoveryService } from '@/shared/services/ssh-runtime-recovery.service';
+import {
+  CONNECTING_PHASES,
+  SshRuntimeRecoveryService,
+  remoteInstallPhaseToIndex,
+} from '@/shared/services/ssh-runtime-recovery.service';
 
 type PopoverView = 'list' | 'editor';
 type RowExpansion =
@@ -92,6 +96,11 @@ export class EnvironmentSwitcherComponent {
   readonly switching = this.connectionManager.switching;
   readonly switchError = this.connectionManager.switchError;
   readonly remoteDisconnect = this.sshRuntimeRecovery.remoteDisconnect;
+  readonly pendingTargetLabel = this.connectionManager.pendingTargetLabel;
+  readonly connectingPhases = CONNECTING_PHASES;
+  readonly connectingPhaseIndex = computed(() =>
+    remoteInstallPhaseToIndex(this.onboardingConnection.currentPhase()),
+  );
 
   readonly open = signal(false);
   readonly popoverPos = signal({ top: '0px', left: '0px', width: '0px' });
@@ -149,6 +158,7 @@ export class EnvironmentSwitcherComponent {
   @HostListener('document:mousedown', ['$event'])
   onDocumentMouseDown(event: MouseEvent) {
     if (!this.open()) return;
+    if (this.switching()) return;
     const target = event.target as Node | null;
     if (target && this.host.nativeElement.contains(target)) return;
     this.open.set(false);
@@ -157,6 +167,7 @@ export class EnvironmentSwitcherComponent {
   @HostListener('document:keydown.escape')
   onEscape() {
     if (!this.open()) return;
+    if (this.switching()) return;
     if (this.view() === 'editor') {
       this.cancelEditor();
       return;
@@ -169,6 +180,7 @@ export class EnvironmentSwitcherComponent {
   }
 
   toggle() {
+    if (this.open() && this.switching()) return;
     if (!this.open()) {
       const rect = this.triggerEl?.nativeElement?.getBoundingClientRect();
       if (rect) {
@@ -183,6 +195,7 @@ export class EnvironmentSwitcherComponent {
   }
 
   close() {
+    if (this.switching()) return;
     this.open.set(false);
   }
 

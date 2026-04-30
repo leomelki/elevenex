@@ -32,7 +32,9 @@
     [style.width]="popoverPos().width"
   >
     <header class="env-popover__header">
-      @if (view() === 'editor') {
+      @if (switching()) {
+        <div class="env-popover__title">Connecting…</div>
+      } @else if (view() === 'editor') {
         <button type="button" class="env-iconbtn" aria-label="Back" (click)="cancelEditor()">
           <ng-icon name="lucideArrowLeft" size="14" />
         </button>
@@ -59,14 +61,46 @@
       }
     </header>
 
-    @if (switchError() && view() === 'list') {
-      <div class="env-alert" role="alert">
-        <ng-icon name="lucideTriangleAlert" size="13" class="env-alert__icon" />
-        <span>{{ switchError() }}</span>
+    @if (switching()) {
+      <div class="env-switching" role="status" aria-live="polite">
+        <div class="env-switching__head">
+          <span class="env-switching__iconframe">
+            <ng-icon name="lucideRefreshCw" size="14" class="env-switching__spin" />
+          </span>
+          <div class="env-switching__meta">
+            <div class="env-switching__title">{{ pendingTargetLabel() || 'Switching environment' }}</div>
+            <div class="env-switching__subtitle">Establishing connection</div>
+          </div>
+        </div>
+        <ol class="env-switching__steps" aria-label="Connection progress">
+          @for (phase of connectingPhases; track phase; let i = $index) {
+            <li
+              class="env-switching__step"
+              [class.env-switching__step--done]="i < connectingPhaseIndex()"
+              [class.env-switching__step--active]="i === connectingPhaseIndex()"
+              [class.env-switching__step--pending]="i > connectingPhaseIndex()"
+            >
+              <span class="env-switching__dot">
+                @if (i < connectingPhaseIndex()) {
+                  <ng-icon name="lucideCheck" size="10" />
+                } @else if (i === connectingPhaseIndex()) {
+                  <ng-icon name="lucideRefreshCw" size="10" class="env-switching__spin" />
+                }
+              </span>
+              <span class="env-switching__label">{{ phase }}</span>
+            </li>
+          }
+        </ol>
       </div>
-    }
+    } @else {
+      @if (switchError() && view() === 'list') {
+        <div class="env-alert" role="alert">
+          <ng-icon name="lucideTriangleAlert" size="13" class="env-alert__icon" />
+          <span>{{ switchError() }}</span>
+        </div>
+      }
 
-    @if (view() === 'list') {
+      @if (view() === 'list') {
       <div class="env-list" role="menu">
         <!-- Local row -->
         <div
@@ -361,6 +395,7 @@
           </button>
         </div>
       </div>
+      }
     }
   </div>
 }
