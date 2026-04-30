@@ -106,6 +106,9 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
             action.content as Record<string, string | number | boolean | string[]> | undefined,
           );
           return;
+        case 'cancel_pending_prompt':
+          await this.runtimeService.cancelPendingPrompt(sessionId, action.id);
+          return;
         case 'open_terminal_fallback':
           await this.runtimeService.openTerminalFallback(sessionId);
           return;

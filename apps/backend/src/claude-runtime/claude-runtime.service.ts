@@ -71,6 +71,7 @@ import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
 import { getElevenexProxyPort } from '../config/ports.js';
 import { getBackendHelperPath, getBackendRuntimeRoot } from '../config/runtime-paths.js';
 import {
+  ClaudePendingPrompt,
   ClaudePermissionRequest,
   ClaudeAutocompleteItem,
   ClaudeAuthStatus,
@@ -184,6 +185,7 @@ interface RuntimeState {
   canInterrupt: boolean;
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
+  pendingPrompts: ClaudePendingPrompt[];
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
@@ -725,7 +727,21 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     if (this.activeRuns.has(sessionId)) {
-      throw new Error('Claude is already running for this session.');
+      const existingSession = await this.sessionsService.findOne(sessionId);
+      const existingState = this.ensureRuntimeState(
+        sessionId,
+        existingSession.claudeSessionId,
+      );
+      existingState.pendingPrompts = [
+        ...existingState.pendingPrompts,
+        {
+          id: randomUUID(),
+          prompt: trimmedPrompt,
+          queuedAt: new Date().toISOString(),
+        },
+      ];
+      this.emitRunState(sessionId);
+      return;
     }
 
     const session = await this.sessionsService.findOne(sessionId);
@@ -1054,6 +1070,33 @@ export class ClaudeRuntimeService extends EventEmitter {
       if (interrupted) {
         this.finalizeInterruptedRun(sessionId);
       }
+      if (
+        !interrupted
+        && !state.lastError
+        && state.pendingPrompts.length > 0
+      ) {
+        const [next, ...rest] = state.pendingPrompts;
+        state.pendingPrompts = rest;
+        this.emitRunState(sessionId);
+        setImmediate(() => {
+          this.submitPrompt(sessionId, next.prompt).catch((err) => {
+            this.logger.error(
+              `Pending prompt drain failed session=${sessionId}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          });
+        });
+      }
+    }
+  }
+
+  async cancelPendingPrompt(sessionId: number, id: string): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    const before = state.pendingPrompts.length;
+    state.pendingPrompts = state.pendingPrompts.filter((p) => p.id !== id);
+    if (state.pendingPrompts.length !== before) {
+      this.emitRunState(sessionId);
     }
   }
 
@@ -2340,6 +2383,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       canInterrupt: false,
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
+      pendingPrompts: [],
       liveItems: [],
       lastError: null,
       selectedModel: null,
@@ -2396,6 +2440,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         permissionMode: state.sessionMetadata?.permissionMode ?? state.selectedPermissionMode ?? null,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
+        pendingPrompts: state.pendingPrompts,
       },
     });
   }
@@ -2881,6 +2926,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       sessionState: state.sessionState,
       pendingPermissionRequest: state.pendingPermissionRequest,
       pendingUserInputRequest: state.pendingUserInputRequest,
+      pendingPrompts: state.pendingPrompts,
       liveItems: state.liveItems,
       lastError: state.lastError,
       selectedModel: state.selectedModel,

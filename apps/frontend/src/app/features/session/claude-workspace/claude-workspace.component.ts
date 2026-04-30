@@ -27,6 +27,7 @@ import {
   ClaudeMcpServerEntry,
   ClaudeMcpSnapshot,
   ClaudeModelOption,
+  ClaudePendingPrompt,
   ClaudePermissionApproval,
   ClaudePermissionMode,
   ClaudePermissionRequest,
@@ -158,6 +159,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly optimisticUserItems = signal<ClaudeTranscriptItem[]>([]);
   readonly pendingPermissionRequest = signal<ClaudePermissionRequest | null>(null);
   readonly pendingUserInputRequest = signal<ClaudeUserInputRequest | null>(null);
+  readonly pendingPrompts = signal<ClaudePendingPrompt[]>([]);
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
   readonly tasksDrawerOpen = signal(false);
@@ -518,23 +520,31 @@ readonly messageActionsDisabled = computed(
 
   async submitPrompt(prompt: string): Promise<void> {
     const trimmed = prompt.trim();
-    if (!trimmed || this.submitting()) return;
+    if (!trimmed) return;
+    const isIdle = this.runPhase() === 'idle';
+    if (isIdle && this.submitting()) return;
     const now = new Date().toISOString();
-    this.submitting.set(true);
-    this.optimisticUserItems.update((items) => [
-      ...items,
-      {
-        id: `opt-${Date.now()}`,
-        kind: 'user',
-        content: trimmed,
-        timestamp: now,
-        authoredAt: now,
-      },
-    ]);
+    if (isIdle) {
+      this.submitting.set(true);
+      this.optimisticUserItems.update((items) => [
+        ...items,
+        {
+          id: `opt-${Date.now()}`,
+          kind: 'user',
+          content: trimmed,
+          timestamp: now,
+          authoredAt: now,
+        },
+      ]);
+    }
     this.cancelArmedEdit();
     this.prompt.set('');
     const runtimePrompt = await this.prepareRuntimePrompt(trimmed);
     this.ws.send(this.sessionId, { type: 'submit_prompt', prompt: runtimePrompt });
+  }
+
+  cancelPendingPrompt(id: string): void {
+    this.ws.send(this.sessionId, { type: 'cancel_pending_prompt', id });
   }
 
   interrupt(): void {
@@ -950,6 +960,7 @@ readonly messageActionsDisabled = computed(
         if (event.payload.permissionMode != null) {
           this._permissionMode.set(event.payload.permissionMode);
         }
+        this.pendingPrompts.set(event.payload.pendingPrompts ?? []);
         if (event.payload.runPhase !== 'running') this.submitting.set(false);
         return;
       case 'task_started':
@@ -1106,6 +1117,7 @@ readonly messageActionsDisabled = computed(
     this._permissionMode.set(state.permissionMode);
     this.pendingPermissionRequest.set(state.pendingPermissionRequest);
     this.pendingUserInputRequest.set(state.pendingUserInputRequest);
+    this.pendingPrompts.set(state.pendingPrompts ?? []);
     this.lastError.set(state.lastError);
     this.tasks.set(state.tasks);
     this.sessionMetadata.set(state.sessionMetadata);
@@ -1147,6 +1159,7 @@ readonly messageActionsDisabled = computed(
     this.optimisticUserItems.set([]);
     this.pendingPermissionRequest.set(null);
     this.pendingUserInputRequest.set(null);
+    this.pendingPrompts.set([]);
     this.autocompleteItems.set([]);
     this.tasks.set([]);
     this.tasksDrawerOpen.set(false);

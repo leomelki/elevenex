@@ -500,6 +500,12 @@ export interface ClaudeMirrorError {
   timestamp: string;
 }
 
+export interface ClaudePendingPrompt {
+  id: string;
+  prompt: string;
+  queuedAt: string;
+}
+
 export interface ClaudeRuntimeStatePayload {
   sessionId: number;
   claudeSessionId: string | null;
@@ -508,6 +514,7 @@ export interface ClaudeRuntimeStatePayload {
   canInterrupt: boolean;
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
+  pendingPrompts: ClaudePendingPrompt[];
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
@@ -558,6 +565,7 @@ export type ClaudeRuntimeEvent =
         permissionMode: ClaudePermissionMode | null;
         availableModels: ClaudeModelOption[];
         contextUsage: ClaudeContextUsage | null;
+        pendingPrompts: ClaudePendingPrompt[];
       };
     }
   | {
@@ -724,4 +732,5 @@ export type ClaudeRuntimeClientAction =
       action?: 'accept' | 'decline' | 'cancel';
       content?: Record<string, unknown>;
     }
+  | { type: 'cancel_pending_prompt'; id: string }
   | { type: 'open_terminal_fallback' };

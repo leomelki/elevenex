@@ -488,6 +488,12 @@ export interface ClaudeMirrorError {
   timestamp: string;
 }
 
+export interface ClaudePendingPrompt {
+  id: string;
+  prompt: string;
+  queuedAt: string;
+}
+
 export interface ClaudeRuntimeState {
   sessionId: number;
   claudeSessionId: string | null;
@@ -496,6 +502,7 @@ export interface ClaudeRuntimeState {
   canInterrupt: boolean;
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
+  pendingPrompts: ClaudePendingPrompt[];
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
@@ -543,6 +550,7 @@ export type ClaudeRuntimeEvent =
         permissionMode: ClaudePermissionMode | null;
         availableModels: ClaudeModelOption[];
         contextUsage: ClaudeContextUsage | null;
+        pendingPrompts: ClaudePendingPrompt[];
       };
     }
   | { type: 'session_metadata'; payload: { sessionId: number; metadata: ClaudeRuntimeSessionMetadata } }

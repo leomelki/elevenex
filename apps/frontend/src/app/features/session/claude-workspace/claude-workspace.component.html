@@ -407,9 +407,11 @@
         [sendDisabledReason]="composerPermissionDisabledReason()"
         [attachedPanelOpen]="!!pendingPermissionRequest()"
         [autocompleteItems]="autocompleteItems()"
+        [pendingPrompts]="pendingPrompts()"
         (valueChange)="onPromptChange($event)"
         (send)="submitPrompt($event)"
         (interrupt)="interrupt()"
+        (cancelPending)="cancelPendingPrompt($event)"
       />
     </div>
 

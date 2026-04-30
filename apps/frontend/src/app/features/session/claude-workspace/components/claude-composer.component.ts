@@ -13,8 +13,11 @@ import {
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideLoaderCircle, lucideSend, lucideSquare } from '@ng-icons/lucide';
-import { ClaudeAutocompleteItem } from '@/shared/models/claude-runtime.model';
+import { lucideLoaderCircle, lucideSend, lucideSquare, lucideX } from '@ng-icons/lucide';
+import {
+  ClaudeAutocompleteItem,
+  ClaudePendingPrompt,
+} from '@/shared/models/claude-runtime.model';
 
 interface Range {
   start: number;
@@ -29,7 +32,7 @@ interface Range {
   host: {
     '(document:mousedown)': 'onDocumentMousedown($event)',
   },
-  viewProviders: [provideIcons({ lucideLoaderCircle, lucideSend, lucideSquare })],
+  viewProviders: [provideIcons({ lucideLoaderCircle, lucideSend, lucideSquare, lucideX })],
   template: `
     <div class="cw-comp">
       @if (autocompleteOpen() && filtered().length) {
@@ -51,6 +54,24 @@ interface Range {
       }
 
       <div class="cw-comp__box" [class.cw-comp__box--attached]="attachedPanelOpen()">
+        @if (pendingPrompts().length) {
+          <div class="cw-comp__pending" role="list" aria-label="Queued messages">
+            @for (p of pendingPrompts(); track p.id) {
+              <div class="cw-comp__pending-item" role="listitem">
+                <span class="cw-comp__pending-text">{{ p.prompt }}</span>
+                <button
+                  type="button"
+                  class="cw-comp__pending-remove"
+                  title="Cancel queued message"
+                  aria-label="Cancel queued message"
+                  (click)="cancelPending.emit(p.id)"
+                >
+                  <ng-icon name="lucideX" size="12" />
+                </button>
+              </div>
+            }
+          </div>
+        }
         <textarea
           #input
           class="cw-comp__ta"
@@ -73,32 +94,34 @@ interface Range {
             }
           </span>
 
-          @if (running()) {
-            <button
-              type="button"
-              class="cw-comp__btn cw-comp__btn--stop"
-              [disabled]="!canInterrupt()"
-              (click)="interrupt.emit()"
-              title="Interrupt"
-            >
-              <ng-icon name="lucideSquare" size="14" />
-              Stop
-            </button>
-          } @else {
+          <div class="cw-comp__btns">
+            @if (running()) {
+              <button
+                type="button"
+                class="cw-comp__btn cw-comp__btn--stop"
+                [disabled]="!canInterrupt()"
+                (click)="interrupt.emit()"
+                title="Interrupt"
+              >
+                <ng-icon name="lucideSquare" size="14" />
+                Stop
+              </button>
+            }
             <button
               type="button"
               class="cw-comp__btn cw-comp__btn--send"
-              [disabled]="!value().trim() || submitting() || blockedByPermission()"
+              [disabled]="!value().trim() || (submitting() && !running()) || blockedByPermission()"
               (click)="submit()"
+              [title]="running() ? 'Queue message' : 'Send'"
             >
-              @if (submitting()) {
+              @if (submitting() && !running()) {
                 <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
               } @else {
                 <ng-icon name="lucideSend" size="14" />
               }
-              Send
+              {{ running() ? 'Queue' : 'Send' }}
             </button>
-          }
+          </div>
         </div>
       </div>
     </div>
@@ -149,6 +172,50 @@ interface Range {
         justify-content: space-between;
         gap: 0.5rem;
         padding: 0.375rem 0.625rem 0.375rem 0.875rem;
+      }
+      .cw-comp__btns {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+      }
+      .cw-comp__pending {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        padding: 0.5rem 0.625rem 0.25rem 0.875rem;
+        border-bottom: 1px dashed color-mix(in oklab, var(--foreground) 12%, transparent);
+      }
+      .cw-comp__pending-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.5rem;
+        background: color-mix(in oklab, var(--foreground) 5%, transparent);
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+      }
+      .cw-comp__pending-text {
+        flex: 1 1 auto;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .cw-comp__pending-remove {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.25rem;
+        height: 1.25rem;
+        border-radius: 0.375rem;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      .cw-comp__pending-remove:hover {
+        background: color-mix(in oklab, var(--foreground) 10%, transparent);
+        color: var(--foreground);
       }
       .cw-comp__hint {
         font-size: 0.6875rem;
@@ -252,10 +319,12 @@ export class ClaudeComposerComponent {
   readonly attachedPanelOpen = input<boolean>(false);
   readonly autocompleteItems = input<ClaudeAutocompleteItem[]>([]);
   readonly placeholderText = input<string>('Tell Claude what to do…');
+  readonly pendingPrompts = input<ClaudePendingPrompt[]>([]);
 
   readonly send = output<string>();
   readonly valueChange = output<string>();
   readonly interrupt = output<void>();
+  readonly cancelPending = output<string>();
 
   readonly activeTrigger = signal<'/' | '$' | null>(null);
   readonly activeQuery = signal('');
@@ -368,7 +437,8 @@ export class ClaudeComposerComponent {
 
   submit(): void {
     const v = this.value().trim();
-    if (!v || this.submitting() || this.blockedByPermission()) return;
+    if (!v || this.blockedByPermission()) return;
+    if (this.submitting() && !this.running()) return;
     this.send.emit(v);
   }
 
