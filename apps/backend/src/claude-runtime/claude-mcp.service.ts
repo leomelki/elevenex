@@ -8,6 +8,7 @@ import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
+import { discoverOAuthServerInfo } from '@modelcontextprotocol/sdk/client/auth.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
 import {
@@ -319,22 +320,35 @@ export class ClaudeMcpService {
       return this.fetchAuthorizationEndpoint(metadataUrl);
     }
 
-    // Fall back to standard OAuth discovery endpoint for network transports
+    // Fall back to MCP-spec OAuth discovery (RFC 9728 + RFC 8414 + OIDC) for network transports
     const serverUrl = config?.url;
     if (
       ['http', 'sse', 'ws'].includes(server.transport)
       && typeof serverUrl === 'string'
       && serverUrl.trim()
     ) {
-      try {
-        const origin = new URL(serverUrl).origin;
-        return this.fetchAuthorizationEndpoint(`${origin}/.well-known/oauth-authorization-server`);
-      } catch {
-        return null;
-      }
+      return this.discoverAuthorizationEndpoint(serverUrl);
     }
 
     return null;
+  }
+
+  private async discoverAuthorizationEndpoint(serverUrl: string): Promise<string> {
+    let info: Awaited<ReturnType<typeof discoverOAuthServerInfo>>;
+    try {
+      info = await discoverOAuthServerInfo(serverUrl);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(`Could not load OAuth metadata: ${reason}`);
+    }
+
+    const endpoint = info.authorizationServerMetadata?.authorization_endpoint;
+    if (typeof endpoint !== 'string' || !endpoint.trim()) {
+      throw new BadRequestException(
+        'OAuth metadata does not include an authorization endpoint.',
+      );
+    }
+    return endpoint;
   }
 
   private async fetchAuthorizationEndpoint(metadataUrl: string): Promise<string> {
