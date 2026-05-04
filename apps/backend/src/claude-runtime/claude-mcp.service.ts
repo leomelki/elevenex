@@ -8,7 +8,6 @@ import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
-import { discoverOAuthServerInfo } from '@modelcontextprotocol/sdk/client/auth.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
 import {
@@ -236,19 +235,40 @@ export class ClaudeMcpService {
       throw new BadRequestException(`MCP server "${serverName}" does not expose browser auth.`);
     }
 
-    const authUrl = await this.resolveAuthUrl(server, config);
-    if (!authUrl) {
-      throw new BadRequestException(`MCP server "${serverName}" does not provide an auth URL.`);
+    if (server.transport === 'claudeai-proxy') {
+      return {
+        serverName,
+        url: CLAUDE_AI_CONNECTORS_URL,
+        mode: 'external',
+        message: 'Open the Claude connectors page, complete authentication, then recheck the server.',
+      };
     }
 
+    // Honor user-provided authorization URL when explicitly set in the MCP config.
+    const directAuthUrl =
+      config?.oauth?.authorizationUrl
+      || config?.oauth?.authorizationEndpoint
+      || config?.oauth?.authUrl
+      || null;
+    if (typeof directAuthUrl === 'string' && directAuthUrl.trim()) {
+      return {
+        serverName,
+        url: directAuthUrl,
+        mode: 'external',
+        message:
+          'Open the authorization page, complete authentication in the browser, then recheck the server.',
+      };
+    }
+
+    // Delegate the OAuth flow (discovery, dynamic client registration, PKCE,
+    // local callback server, keychain storage) to Claude itself, which exposes
+    // a `mcp__<name>__authenticate` pseudo-tool when a server is in needs-auth.
+    const { authUrl } = await this.runtimeService.triggerMcpAuthFlow(sessionId, serverName);
     return {
       serverName,
       url: authUrl,
       mode: 'external',
-      message:
-        server.transport === 'claudeai-proxy'
-          ? 'Open the Claude connectors page, complete authentication, then recheck the server.'
-          : 'Open the authorization page, complete authentication in the browser, then recheck the server.',
+      message: 'Complete authentication in the browser. Tokens are stored by Claude automatically.',
     };
   }
 
@@ -298,86 +318,6 @@ export class ClaudeMcpService {
     };
   }
 
-  private async resolveAuthUrl(
-    server: ClaudeMcpServerEntry,
-    config: McpServerConfigLike | null,
-  ): Promise<string | null> {
-    if (server.transport === 'claudeai-proxy') {
-      return CLAUDE_AI_CONNECTORS_URL;
-    }
-
-    const directAuthUrl =
-      config?.oauth?.authorizationUrl
-      || config?.oauth?.authorizationEndpoint
-      || config?.oauth?.authUrl
-      || null;
-    if (typeof directAuthUrl === 'string' && directAuthUrl.trim()) {
-      return directAuthUrl;
-    }
-
-    const metadataUrl = config?.oauth?.authServerMetadataUrl;
-    if (typeof metadataUrl === 'string' && metadataUrl.trim()) {
-      return this.fetchAuthorizationEndpoint(metadataUrl);
-    }
-
-    // Fall back to MCP-spec OAuth discovery (RFC 9728 + RFC 8414 + OIDC) for network transports
-    const serverUrl = config?.url;
-    if (
-      ['http', 'sse', 'ws'].includes(server.transport)
-      && typeof serverUrl === 'string'
-      && serverUrl.trim()
-    ) {
-      return this.discoverAuthorizationEndpoint(serverUrl);
-    }
-
-    return null;
-  }
-
-  private async discoverAuthorizationEndpoint(serverUrl: string): Promise<string> {
-    let info: Awaited<ReturnType<typeof discoverOAuthServerInfo>>;
-    try {
-      info = await discoverOAuthServerInfo(serverUrl);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Could not load OAuth metadata: ${reason}`);
-    }
-
-    const endpoint = info.authorizationServerMetadata?.authorization_endpoint;
-    if (typeof endpoint !== 'string' || !endpoint.trim()) {
-      throw new BadRequestException(
-        'OAuth metadata does not include an authorization endpoint.',
-      );
-    }
-    return endpoint;
-  }
-
-  private async fetchAuthorizationEndpoint(metadataUrl: string): Promise<string> {
-    let response: Response;
-    try {
-      response = await fetch(metadataUrl, {
-        headers: {
-          accept: 'application/json',
-        },
-      });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Could not load OAuth metadata: ${reason}`);
-    }
-
-    if (!response.ok) {
-      throw new BadRequestException(
-        `Could not load OAuth metadata: ${response.status} ${response.statusText}`.trim(),
-      );
-    }
-
-    const payload = await response.json() as Record<string, unknown>;
-    const candidate = payload.authorization_endpoint;
-    if (typeof candidate !== 'string' || !candidate.trim()) {
-      throw new BadRequestException('OAuth metadata does not include an authorization endpoint.');
-    }
-
-    return new URL(candidate, metadataUrl).toString();
-  }
 
   private buildRuntimeOnlyEntry(
     name: string,

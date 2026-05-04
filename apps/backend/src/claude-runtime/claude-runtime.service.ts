@@ -1205,6 +1205,177 @@ export class ClaudeRuntimeService extends EventEmitter {
     request.resolve({ action, content });
   }
 
+  /**
+   * Drive Claude's built-in OAuth flow for an MCP server. Spawns a short-lived
+   * helper Query that asks Claude to invoke the `mcp__<name>__authenticate`
+   * pseudo-tool — Claude handles discovery, dynamic client registration, PKCE,
+   * the local OAuth callback server, and token storage in its own keychain.
+   *
+   * Returns the authorization URL extracted from the tool result. The helper
+   * Query is kept alive via a streaming-input prompt so Claude's in-process
+   * OAuth callback server stays bound long enough for the user to complete
+   * authentication; it auto-closes after `mcpAuthFlowTtlMs` or when the URL
+   * is captured, whichever is later.
+   *
+   * Limitation: only works when the server is currently in `needs-auth` —
+   * Claude only registers the auth tool for unauthenticated servers.
+   */
+  async triggerMcpAuthFlow(
+    sessionId: number,
+    serverName: string,
+  ): Promise<{ authUrl: string }> {
+    const session = await this.sessionsService.findOne(sessionId);
+    if (!session.worktreePath) {
+      throw new BadRequestException('Session has no worktree path.');
+    }
+
+    const toolName = `mcp__${serverName}__authenticate`;
+    const promptText =
+      `Use the ${toolName} tool now to start OAuth for the "${serverName}" MCP server. `
+      + `Reply with just "ok" once the tool returns. Do not call any other tools.`;
+
+    type StreamCloser = { close: () => void };
+    const streamState: {
+      queue: SDKUserMessage[];
+      pending: ((v: IteratorResult<SDKUserMessage>) => void) | null;
+      closed: boolean;
+    } = { queue: [], pending: null, closed: false };
+
+    const inputStream: AsyncIterable<SDKUserMessage> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            if (streamState.queue.length > 0) {
+              return Promise.resolve({ value: streamState.queue.shift()!, done: false });
+            }
+            if (streamState.closed) {
+              return Promise.resolve({ value: undefined as unknown as SDKUserMessage, done: true });
+            }
+            return new Promise<IteratorResult<SDKUserMessage>>((resolve) => {
+              streamState.pending = resolve;
+            });
+          },
+        };
+      },
+    };
+    const enqueueInput = (msg: SDKUserMessage): void => {
+      if (streamState.pending) {
+        const resolver = streamState.pending;
+        streamState.pending = null;
+        resolver({ value: msg, done: false });
+      } else {
+        streamState.queue.push(msg);
+      }
+    };
+    const closeInput = (): void => {
+      if (streamState.closed) return;
+      streamState.closed = true;
+      if (streamState.pending) {
+        const resolver = streamState.pending;
+        streamState.pending = null;
+        resolver({ value: undefined as unknown as SDKUserMessage, done: true });
+      }
+    };
+
+    enqueueInput({
+      type: 'user',
+      message: { role: 'user', content: promptText },
+      parent_tool_use_id: null,
+    });
+
+    const claudeBin =
+      this.claudeCliOverride?.path
+      ?? this.resolveSdkClaudePath()
+      ?? findBinary('claude')
+      ?? undefined;
+
+    const helperQuery = query({
+      prompt: inputStream,
+      options: {
+        cwd: session.worktreePath,
+        includePartialMessages: false,
+        canUseTool: async (_name, input) => ({ behavior: 'allow', updatedInput: input }),
+        onElicitation: async () => ({ action: 'cancel' as const }),
+        settingSources: ['project', 'user', 'local'],
+        systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
+        tools: { type: 'preset' as const, preset: 'claude_code' as const },
+        ...(claudeBin ? { pathToClaudeCodeExecutable: claudeBin } : {}),
+        env: buildAugmentedEnv(),
+      },
+    });
+
+    const TTL_MS = 10 * 60 * 1000;
+    const URL_TIMEOUT_MS = 30_000;
+    const closer: StreamCloser = {
+      close: () => {
+        closeInput();
+        try {
+          helperQuery.close();
+        } catch {
+          // already closed
+        }
+      },
+    };
+    const ttlTimer = setTimeout(closer.close, TTL_MS);
+
+    let resolveUrl: (value: string) => void = () => {};
+    let rejectUrl: (reason: Error) => void = () => {};
+    const urlPromise = new Promise<string>((resolve, reject) => {
+      resolveUrl = resolve;
+      rejectUrl = reject;
+    });
+
+    void (async () => {
+      try {
+        for await (const message of helperQuery) {
+          if (
+            message.type === 'user'
+            && Array.isArray((message as SDKUserMessage).message?.content)
+          ) {
+            const blocks = (message as SDKUserMessage).message.content as unknown as Array<Record<string, unknown>>;
+            for (const block of blocks) {
+              if (block['type'] !== 'tool_result') continue;
+              const text = serializeToolResultContent(block['content']);
+              const match = text.match(/https?:\/\/[^\s)\]"']+/);
+              if (match) {
+                resolveUrl(match[0]);
+                return; // URL captured; allow background OAuth callback to fire
+              }
+            }
+          }
+        }
+        rejectUrl(new Error('Auth helper finished without surfacing an authorization URL.'));
+      } catch (error) {
+        rejectUrl(error instanceof Error ? error : new Error(String(error)));
+      }
+    })();
+
+    try {
+      return {
+        authUrl: await Promise.race([
+          urlPromise,
+          new Promise<string>((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `Timed out waiting for auth URL. The "${serverName}" MCP server may already be authenticated; disconnect it via "claude /mcp" first to force re-auth.`,
+                  ),
+                ),
+              URL_TIMEOUT_MS,
+            ),
+          ),
+        ]),
+      };
+    } catch (error) {
+      closer.close();
+      clearTimeout(ttlTimer);
+      throw error instanceof BadRequestException
+        ? error
+        : new BadRequestException(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   private async handleSdkMessage(
     sessionId: number,
     message: SDKMessage,

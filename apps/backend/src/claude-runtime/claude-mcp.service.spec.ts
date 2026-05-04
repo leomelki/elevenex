@@ -16,6 +16,7 @@ describe('ClaudeMcpService', () => {
   };
   let runtimeService: {
     getRuntimeState: jest.Mock;
+    triggerMcpAuthFlow: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -37,6 +38,7 @@ describe('ClaudeMcpService', () => {
           mcpTools: [],
         },
       }),
+      triggerMcpAuthFlow: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -87,7 +89,7 @@ describe('ClaudeMcpService', () => {
     expect(authRequiredSnapshot.servers[0]?.actions.canAuth).toBe(true);
   });
 
-  it('opens the OAuth authorization endpoint from metadata instead of the MCP url', async () => {
+  it('delegates OAuth start to the runtime service for HTTP MCP servers', async () => {
     jest.spyOn(service, 'getSnapshot').mockResolvedValue({
       servers: [
         {
@@ -123,32 +125,62 @@ describe('ClaudeMcpService', () => {
     jest.spyOn(service as never, 'findConfigByServerName' as never).mockResolvedValue({
       type: 'http',
       url: 'https://mcp.example.com',
-      oauth: {
-        authServerMetadataUrl: 'https://auth.example.com/.well-known/oauth-authorization-server',
-      },
     });
 
-    const fetchMock = jest.spyOn(globalThis, 'fetch' as never).mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        authorization_endpoint: '/authorize',
-      }),
-    } as Response);
+    runtimeService.triggerMcpAuthFlow.mockResolvedValue({
+      authUrl: 'https://auth.example.com/authorize?client_id=abc&state=xyz',
+    });
 
     await expect(service.startAuth(7, 'linear')).resolves.toEqual(
       expect.objectContaining({
-        url: 'https://auth.example.com/authorize',
+        url: 'https://auth.example.com/authorize?client_id=abc&state=xyz',
       }),
     );
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://auth.example.com/.well-known/oauth-authorization-server',
-      expect.objectContaining({
-        headers: {
-          accept: 'application/json',
+    expect(runtimeService.triggerMcpAuthFlow).toHaveBeenCalledWith(7, 'linear');
+  });
+
+  it('uses an explicit oauth.authorizationUrl from config when provided', async () => {
+    jest.spyOn(service, 'getSnapshot').mockResolvedValue({
+      servers: [
+        {
+          entryId: 'user:linear',
+          name: 'linear',
+          scope: 'user',
+          transport: 'http',
+          configLocation: '/tmp/.claude.json',
+          enabled: true,
+          connectionStatus: 'needs-auth',
+          configStatus: 'valid',
+          actions: {
+            canToggle: true,
+            canRecheck: true,
+            canAuth: true,
+            canReauth: false,
+            canViewTools: false,
+          },
         },
+      ],
+      diagnostics: [],
+      summary: { connected: 0, needsAuth: 1, failed: 0, disabled: 0, malformed: 0, total: 1 },
+      lastUpdatedAt: new Date().toISOString(),
+    });
+
+    jest.spyOn(service as never, 'findConfigByServerName' as never).mockResolvedValue({
+      type: 'http',
+      url: 'https://mcp.example.com',
+      oauth: {
+        authorizationUrl: 'https://override.example.com/authorize?client_id=preset',
+      },
+    });
+
+    await expect(service.startAuth(7, 'linear')).resolves.toEqual(
+      expect.objectContaining({
+        url: 'https://override.example.com/authorize?client_id=preset',
       }),
     );
+
+    expect(runtimeService.triggerMcpAuthFlow).not.toHaveBeenCalled();
   });
 
   it('rejects auth start when there is no browser auth endpoint to open', async () => {
