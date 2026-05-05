@@ -21,6 +21,7 @@ import {
   lucideClipboardList,
   lucideCheck,
   lucideCheckCheck,
+  lucideChevronLeft,
   lucideX,
 } from '@ng-icons/lucide';
 import {
@@ -62,6 +63,7 @@ interface AlwaysAllowPattern {
       lucideClipboardList,
       lucideCheck,
       lucideCheckCheck,
+      lucideChevronLeft,
       lucideX,
     }),
   ],
@@ -85,7 +87,20 @@ interface AlwaysAllowPattern {
           }
 
           <div class="cw-ask">
-            @for (question of questions(); track question.question) {
+            <div class="cw-ask__nav">
+              <span class="cw-ask__progress">{{ askProgressLabel() }}</span>
+            </div>
+
+            @if (isAskReviewing()) {
+              <section class="cw-ask__recap" aria-label="Review answers">
+                @for (question of questions(); track question.question) {
+                  <div class="cw-ask__recap-item">
+                    <span class="cw-ask__recap-question">{{ question.question }}</span>
+                    <span class="cw-ask__recap-answer">{{ serializeAnswer(question) }}</span>
+                  </div>
+                }
+              </section>
+            } @else if (activeQuestion(); as question) {
               <section class="cw-ask__q">
                 <div class="cw-ask__qhead">
                   @if (question.header) {
@@ -120,12 +135,13 @@ interface AlwaysAllowPattern {
                       (change)="toggleOther(question, $any($event.target).checked)"
                     />
                     <span class="cw-ask__opt-body">
-                      <span class="cw-ask__opt-label">Other…</span>
+                      <span class="cw-ask__opt-label">Other...</span>
                     </span>
                   </label>
 
                   @if (isOtherSelected(question)) {
                     <textarea
+                      #otherTa
                       class="cw-ask__other"
                       [ngModel]="otherAnswers()[question.question] || ''"
                       (ngModelChange)="setOtherAnswer(question.question, $event)"
@@ -147,15 +163,35 @@ interface AlwaysAllowPattern {
                 <ng-icon name="lucideX" size="13" aria-hidden="true" />
                 Decline
               </button>
-              <button
-                type="button"
-                class="cw-btn cw-btn--primary"
-                [disabled]="!canSubmitQuestions()"
-                (click)="submitQuestions()"
-              >
-                <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
-                Submit
-              </button>
+              <span class="cw-perm__spacer"></span>
+              @if (canGoBack()) {
+                <button type="button" class="cw-btn cw-btn--secondary" (click)="goBack()">
+                  <ng-icon name="lucideChevronLeft" size="13" aria-hidden="true" />
+                  Back
+                </button>
+              }
+              @if (showAskNextButton()) {
+                <button
+                  type="button"
+                  class="cw-btn cw-btn--primary"
+                  [disabled]="!canAdvanceActiveQuestion()"
+                  (click)="advanceAskFlow()"
+                >
+                  <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+                  Next
+                </button>
+              }
+              @if (isAskReviewing()) {
+                <button
+                  type="button"
+                  class="cw-btn cw-btn--primary"
+                  [disabled]="!canSubmitQuestions()"
+                  (click)="submitQuestions()"
+                >
+                  <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+                  Submit
+                </button>
+              }
             </footer>
           }
         }
@@ -709,17 +745,26 @@ interface AlwaysAllowPattern {
       .cw-ask {
         display: flex;
         flex-direction: column;
-        gap: 0.7rem;
+        gap: 0.55rem;
         margin-top: 0.15rem;
+      }
+      .cw-ask__nav {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-height: 1rem;
+      }
+      .cw-ask__progress {
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted-foreground);
       }
       .cw-ask__q {
         display: flex;
         flex-direction: column;
         gap: 0.45rem;
-      }
-      .cw-ask__q + .cw-ask__q {
-        padding-top: 0.65rem;
-        border-top: 1px dashed color-mix(in oklab, var(--border) 70%, transparent);
       }
       .cw-ask__qhead {
         display: flex;
@@ -803,6 +848,37 @@ interface AlwaysAllowPattern {
         border-color: color-mix(in oklab, var(--ring) 60%, var(--border));
         box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 25%, transparent);
       }
+      .cw-ask__recap {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        max-height: 12rem;
+        overflow: auto;
+      }
+      .cw-ask__recap-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+        gap: 0.5rem;
+        align-items: start;
+        padding: 0.45rem 0.55rem;
+        border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+        border-radius: 0.45rem;
+        background: color-mix(in oklab, var(--foreground) 3%, var(--background));
+      }
+      .cw-ask__recap-question {
+        min-width: 0;
+        color: var(--muted-foreground);
+        font-size: 0.74rem;
+        line-height: 1.35;
+      }
+      .cw-ask__recap-answer {
+        min-width: 0;
+        color: var(--foreground);
+        font-size: 0.78rem;
+        font-weight: 500;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
 
       @media (max-width: 540px) {
         .cw-perm { padding: 0.7rem 0.75rem; }
@@ -815,12 +891,17 @@ interface AlwaysAllowPattern {
         .cw-perm__pattern-detail {
           white-space: normal;
         }
+        .cw-ask__recap-item {
+          grid-template-columns: 1fr;
+          gap: 0.2rem;
+        }
       }
     `,
   ],
 })
 export class ClaudePermissionInlineComponent {
   @ViewChild('denyTa') private denyTa?: ElementRef<HTMLTextAreaElement>;
+  @ViewChild('otherTa') private otherTa?: ElementRef<HTMLTextAreaElement>;
 
   readonly request = input.required<ClaudePermissionRequest>();
   readonly appearance = input<'inline' | 'dock'>('inline');
@@ -829,6 +910,7 @@ export class ClaudePermissionInlineComponent {
 
   readonly denying = signal(false);
   readonly denyMessage = signal('');
+  readonly currentQuestionIndex = signal(0);
 
   readonly kind = computed<'generic' | 'ask_user_question' | 'enter_plan_mode' | 'exit_plan_mode'>(() => {
     const name = normalizeToolName(this.request().toolName);
@@ -938,6 +1020,24 @@ export class ClaudePermissionInlineComponent {
   readonly selectedAnswers = signal<Record<string, string[]>>({});
   readonly otherAnswers = signal<Record<string, string>>({});
 
+  readonly isAskReviewing = computed(() => {
+    const questions = this.questions();
+    return questions.length > 0 && this.currentQuestionIndex() >= questions.length;
+  });
+
+  readonly activeQuestion = computed<AskQuestion | null>(() => {
+    const questions = this.questions();
+    if (!questions.length || this.isAskReviewing()) return null;
+    return questions[this.currentQuestionIndex()] ?? null;
+  });
+
+  readonly askProgressLabel = computed(() => {
+    const questions = this.questions();
+    if (!questions.length) return 'No questions';
+    if (this.isAskReviewing()) return 'Review answers';
+    return `Question ${this.currentQuestionIndex() + 1} of ${questions.length}`;
+  });
+
   readonly canSubmitQuestions = computed(() =>
     this.questions().every((question) => {
       const selections = this.selectedAnswers()[question.question] ?? [];
@@ -958,6 +1058,7 @@ export class ClaudePermissionInlineComponent {
       this.lastRequestId = requestId;
       this.selectedAnswers.set({});
       this.otherAnswers.set({});
+      this.currentQuestionIndex.set(0);
       this.denying.set(false);
       this.denyMessage.set('');
     });
@@ -1009,6 +1110,9 @@ export class ClaudePermissionInlineComponent {
         !!question.multiSelect,
       ),
     }));
+    if (checked && !question.multiSelect) {
+      this.advanceAskFlow();
+    }
   }
 
   toggleOther(question: AskQuestion, checked: boolean): void {
@@ -1021,6 +1125,9 @@ export class ClaudePermissionInlineComponent {
         !!question.multiSelect,
       ),
     }));
+    if (checked) {
+      queueMicrotask(() => this.otherTa?.nativeElement?.focus());
+    }
   }
 
   setOtherAnswer(questionText: string, value: string): void {
@@ -1034,8 +1141,34 @@ export class ClaudePermissionInlineComponent {
     return question.options.find((option) => option.label === selected)?.preview ?? '';
   }
 
+  canGoBack(): boolean {
+    return this.currentQuestionIndex() > 0;
+  }
+
+  goBack(): void {
+    this.currentQuestionIndex.update((index) => Math.max(index - 1, 0));
+  }
+
+  canAdvanceActiveQuestion(): boolean {
+    const question = this.activeQuestion();
+    return !!question && this.canAdvanceQuestion(question);
+  }
+
+  showAskNextButton(): boolean {
+    const question = this.activeQuestion();
+    if (!question) return false;
+    return (this.selectedAnswers()[question.question] ?? []).length > 0;
+  }
+
+  advanceAskFlow(): void {
+    const question = this.activeQuestion();
+    if (!question || !this.canAdvanceQuestion(question)) return;
+    const questions = this.questions();
+    this.currentQuestionIndex.set(Math.min(this.currentQuestionIndex() + 1, questions.length));
+  }
+
   submitQuestions(): void {
-    if (!this.canSubmitQuestions()) return;
+    if (!this.isAskReviewing() || !this.canSubmitQuestions()) return;
     const answers = Object.fromEntries(
       this.questions().map((question) => [question.question, this.serializeAnswer(question)]),
     );
@@ -1045,12 +1178,21 @@ export class ClaudePermissionInlineComponent {
     });
   }
 
-  private serializeAnswer(question: AskQuestion): string {
+  serializeAnswer(question: AskQuestion): string {
     const selections = this.selectedAnswers()[question.question] ?? [];
     const mapped = selections.map((selection) =>
       selection === '__other__' ? (this.otherAnswers()[question.question] ?? '').trim() : selection,
     );
     return mapped.filter(Boolean).join(', ');
+  }
+
+  private canAdvanceQuestion(question: AskQuestion): boolean {
+    const selections = this.selectedAnswers()[question.question] ?? [];
+    if (selections.length === 0) return false;
+    if (selections.includes('__other__')) {
+      return !!this.otherAnswers()[question.question]?.trim();
+    }
+    return true;
   }
 }
 

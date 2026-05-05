@@ -37,6 +37,16 @@ import { SshRuntimeRecoveryService } from '@/shared/services/ssh-runtime-recover
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { buildMcpAuthPopupUrl } from './mcp-auth-url';
 
+type CompletionMarkerSource = Pick<Session, 'hasUnreviewedCompletion' | 'lastCompletionAt' | 'lastCompletionKind' | 'lastStateChangeAt'>
+  | Pick<Tab, 'hasUnreviewedCompletion' | 'lastCompletionAt' | 'lastCompletionKind'>;
+
+interface CompletionMarkerState {
+  hasUnreviewedCompletion: boolean;
+  lastCompletionAt: string | null;
+  lastCompletionKind: Session['lastCompletionKind'];
+  lastStateChangeAt: string | null;
+}
+
 @Component({
   selector: 'app-session-container',
   standalone: true,
@@ -639,6 +649,11 @@ export class SessionContainer implements OnInit, OnDestroy {
         this.router.navigate(['/sessions', openIds[0]], { replaceUrl: true });
       }
 
+      const selectedTab = this.activeTab();
+      if (selectedTab) {
+        this.clearCompletionMarkerForOpenSession(selectedTab.sessionId, selectedTab);
+      }
+
       // Register worktrees now that tabs are loaded, then catch up on active panels
       this.registerOpenWorktrees();
       this.plannotatorService.requestActivePanels();
@@ -649,7 +664,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.sessionsService.getOne(id).subscribe({
       next: (session) => {
         this.tabService.openTab(session);
-        this.clearCompletionMarker(session.id, session);
+        this.clearCompletionMarkerForOpenSession(session.id, session);
         if (session.worktreePath) {
           this.plannotatorService.registerWorktree(session.worktreePath, session.id);
         }
@@ -666,98 +681,79 @@ export class SessionContainer implements OnInit, OnDestroy {
     });
   }
 
-  private clearCompletionMarker(sessionId: number, session: Session): void {
-    if (!session.hasUnreviewedCompletion) {
+  private clearCompletionMarkerForOpenSession(sessionId: number, source?: CompletionMarkerSource): void {
+    const previous = this.getCompletionMarkerState(sessionId, source);
+    if (!previous.hasUnreviewedCompletion) {
       return;
     }
 
-    this.tabService.updateTabCompletion(sessionId, {
+    const cleared: CompletionMarkerState = {
+      ...previous,
       hasUnreviewedCompletion: false,
-      lastCompletionAt: session.lastCompletionAt,
-      lastCompletionKind: session.lastCompletionKind,
-    });
-    this.claudeStatusService.setSessionCompletion(sessionId, {
-      hasUnreviewedCompletion: false,
-      lastCompletionAt: session.lastCompletionAt,
-      lastCompletionKind: session.lastCompletionKind,
-      lastStateChangeAt: session.lastStateChangeAt,
-    });
+    };
+    this.applyCompletionMarkerState(sessionId, cleared);
 
     this.sessionsService.markReviewed(sessionId).subscribe({
       next: (updated) => {
-        this.tabService.updateTabCompletion(sessionId, {
-          hasUnreviewedCompletion: updated.hasUnreviewedCompletion,
-          lastCompletionAt: updated.lastCompletionAt,
-          lastCompletionKind: updated.lastCompletionKind,
-        });
-        this.claudeStatusService.setSessionCompletion(sessionId, {
+        this.applyCompletionMarkerState(sessionId, {
           hasUnreviewedCompletion: updated.hasUnreviewedCompletion,
           lastCompletionAt: updated.lastCompletionAt,
           lastCompletionKind: updated.lastCompletionKind,
           lastStateChangeAt: updated.lastStateChangeAt,
         });
       },
-      error: () => {
-        this.tabService.updateTabCompletion(sessionId, {
-          hasUnreviewedCompletion: session.hasUnreviewedCompletion,
-          lastCompletionAt: session.lastCompletionAt,
-          lastCompletionKind: session.lastCompletionKind,
-        });
-        this.claudeStatusService.setSessionCompletion(sessionId, {
-          hasUnreviewedCompletion: session.hasUnreviewedCompletion,
-          lastCompletionAt: session.lastCompletionAt,
-          lastCompletionKind: session.lastCompletionKind,
-          lastStateChangeAt: session.lastStateChangeAt,
-        });
-      },
+      error: () => this.applyCompletionMarkerState(sessionId, previous),
+    });
+  }
+
+  private getCompletionMarkerState(sessionId: number, source?: CompletionMarkerSource): CompletionMarkerState {
+    const live = this.claudeStatusService.getSessionCompletion(sessionId);
+    const tab = this.tabs().find(currentTab => currentTab.sessionId === sessionId);
+    const sourceState = source ?? null;
+    const sourceLastStateChangeAt = sourceState && 'lastStateChangeAt' in sourceState && typeof sourceState.lastStateChangeAt === 'string'
+      ? sourceState.lastStateChangeAt
+      : null;
+
+    return {
+      hasUnreviewedCompletion: Boolean(
+        live?.hasUnreviewedCompletion
+          || sourceState?.hasUnreviewedCompletion
+          || tab?.hasUnreviewedCompletion,
+      ),
+      lastCompletionAt: live?.lastCompletionAt
+        ?? sourceState?.lastCompletionAt
+        ?? tab?.lastCompletionAt
+        ?? null,
+      lastCompletionKind: (live?.lastCompletionKind
+        ?? sourceState?.lastCompletionKind
+        ?? tab?.lastCompletionKind
+        ?? null) as Session['lastCompletionKind'],
+      lastStateChangeAt: live?.lastStateChangeAt ?? sourceLastStateChangeAt,
+    };
+  }
+
+  private applyCompletionMarkerState(sessionId: number, state: CompletionMarkerState): void {
+    this.tabService.updateTabCompletion(sessionId, {
+      hasUnreviewedCompletion: state.hasUnreviewedCompletion,
+      lastCompletionAt: state.lastCompletionAt,
+      lastCompletionKind: state.lastCompletionKind,
+    });
+    this.claudeStatusService.setSessionCompletion(sessionId, {
+      hasUnreviewedCompletion: state.hasUnreviewedCompletion,
+      lastCompletionAt: state.lastCompletionAt,
+      lastCompletionKind: state.lastCompletionKind,
+      lastStateChangeAt: state.lastStateChangeAt,
+    });
+    this.navService.patchSessionCompletion(sessionId, {
+      hasUnreviewedCompletion: state.hasUnreviewedCompletion,
+      lastCompletionAt: state.lastCompletionAt,
+      lastCompletionKind: state.lastCompletionKind,
+      lastStateChangeAt: state.lastStateChangeAt,
     });
   }
 
   private clearCompletionMarkerFromTab(tab: Tab): void {
-    if (!tab.hasUnreviewedCompletion) {
-      return;
-    }
-
-    this.tabService.updateTabCompletion(tab.sessionId, {
-      hasUnreviewedCompletion: false,
-      lastCompletionAt: tab.lastCompletionAt,
-      lastCompletionKind: tab.lastCompletionKind,
-    });
-    this.claudeStatusService.setSessionCompletion(tab.sessionId, {
-      hasUnreviewedCompletion: false,
-      lastCompletionAt: tab.lastCompletionAt,
-      lastCompletionKind: tab.lastCompletionKind,
-      lastStateChangeAt: this.claudeStatusService.getSessionCompletion(tab.sessionId)?.lastStateChangeAt ?? null,
-    });
-
-    this.sessionsService.markReviewed(tab.sessionId).subscribe({
-      next: (updated) => {
-        this.tabService.updateTabCompletion(tab.sessionId, {
-          hasUnreviewedCompletion: updated.hasUnreviewedCompletion,
-          lastCompletionAt: updated.lastCompletionAt,
-          lastCompletionKind: updated.lastCompletionKind,
-        });
-        this.claudeStatusService.setSessionCompletion(tab.sessionId, {
-          hasUnreviewedCompletion: updated.hasUnreviewedCompletion,
-          lastCompletionAt: updated.lastCompletionAt,
-          lastCompletionKind: updated.lastCompletionKind,
-          lastStateChangeAt: updated.lastStateChangeAt,
-        });
-      },
-      error: () => {
-        this.tabService.updateTabCompletion(tab.sessionId, {
-          hasUnreviewedCompletion: tab.hasUnreviewedCompletion,
-          lastCompletionAt: tab.lastCompletionAt,
-          lastCompletionKind: tab.lastCompletionKind,
-        });
-        this.claudeStatusService.setSessionCompletion(tab.sessionId, {
-          hasUnreviewedCompletion: tab.hasUnreviewedCompletion,
-          lastCompletionAt: tab.lastCompletionAt,
-          lastCompletionKind: tab.lastCompletionKind,
-          lastStateChangeAt: this.claudeStatusService.getSessionCompletion(tab.sessionId)?.lastStateChangeAt ?? null,
-        });
-      },
-    });
+    this.clearCompletionMarkerForOpenSession(tab.sessionId, tab);
   }
 
   /**
@@ -817,6 +813,8 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   onTabSelect(sessionId: number): void {
     this.tabService.selectTab(sessionId);
+    const tab = this.tabs().find(currentTab => currentTab.sessionId === sessionId);
+    this.clearCompletionMarkerForOpenSession(sessionId, tab);
     // Update URL to reflect active session
     this.router.navigate(['/sessions', sessionId], { replaceUrl: true });
   }

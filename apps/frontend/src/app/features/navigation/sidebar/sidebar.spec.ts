@@ -28,7 +28,7 @@ import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
 import { CursorService } from '@/shared/services/cursor.service';
 import { TodosService } from '@/features/productivity/todos.service';
-import { NavigationProject } from '../../../shared/models/navigation-tree.model';
+import { NavigationBranch, NavigationProject } from '../../../shared/models/navigation-tree.model';
 import { Project } from '@/shared/models/project.model';
 import { PendingWorktreeCreationsService } from '@/shared/services/pending-worktree-creations.service';
 
@@ -43,7 +43,7 @@ class MockTrackNativeModalDirective {
 }
 
 describe('Sidebar', () => {
-  function makeBranch() {
+  function makeBranch(): NavigationBranch {
     return {
       name: 'main',
       commit: 'abc123',
@@ -533,6 +533,64 @@ describe('Sidebar', () => {
     const el = fixture.nativeElement as HTMLElement;
 
     expect(el.querySelector('[data-pending-worktree-branch="feature"]')?.textContent).toContain('Creating');
+  });
+
+  it('removes the completion dot when live and tree completion state are cleared', () => {
+    const completedBranch = makeBranch();
+    completedBranch.sessions[0] = {
+      ...completedBranch.sessions[0],
+      hasUnreviewedCompletion: true,
+      lastCompletionAt: '2026-01-01T00:00:00.000Z',
+      lastCompletionKind: 'completed',
+    };
+    tree.set([
+      {
+        id: 1,
+        name: 'Project One',
+        repos: [
+          {
+            id: 1,
+            name: 'Repo One',
+            path: '/tmp/repo-one',
+            branches: [completedBranch],
+          },
+        ],
+      },
+    ]);
+    const fixture = createSidebar();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.sidebar-completion-dot')).toBeTruthy();
+
+    claudeStatusMock.getSessionCompletion.mockReturnValue({
+      hasUnreviewedCompletion: false,
+      lastCompletionAt: '2026-01-01T00:00:00.000Z',
+      lastCompletionKind: 'completed',
+      lastStateChangeAt: null,
+    } as any);
+    tree.set([
+      {
+        id: 1,
+        name: 'Project One',
+        repos: [
+          {
+            id: 1,
+            name: 'Repo One',
+            path: '/tmp/repo-one',
+            branches: [{
+              ...completedBranch,
+              sessions: completedBranch.sessions.map(session =>
+                session.id === 11
+                  ? { ...session, hasUnreviewedCompletion: false }
+                  : session,
+              ),
+            }],
+          },
+        ],
+      },
+    ]);
+    fixture.detectChanges();
+
+    expect(el.querySelector('.sidebar-completion-dot')).toBeFalsy();
   });
 
   it('suppresses a duplicate pending branch when the real branch is already in the tree', () => {

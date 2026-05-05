@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { signal } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { Subject, of } from 'rxjs';
 import { SessionContainer } from './session-container';
 import { TabService, type Tab } from '../tab-service';
@@ -18,6 +18,13 @@ import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-s
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
+import { Session } from '@/shared/models/session.model';
+
+@Component({
+  standalone: true,
+  template: '',
+})
+class DummyRouteComponent {}
 
 describe('SessionContainer modal browser gating', () => {
   const tabsSignal = signal<Tab[]>([]);
@@ -34,12 +41,30 @@ describe('SessionContainer modal browser gating', () => {
     activeSessionId: activeSessionIdSignal.asReadonly(),
     hasTabs: () => tabsSignal().length > 0,
     activeTab: () => tabsSignal().find(tab => tab.sessionId === activeSessionIdSignal()) ?? null,
+    openTab: vi.fn((session: Session) => {
+      const tab: Tab = {
+        sessionId: session.id,
+        sessionName: session.name ?? `Session ${session.id}`,
+        branchName: session.branchName,
+        worktreePath: session.worktreePath,
+        status: session.status,
+        hasUnreviewedCompletion: session.hasUnreviewedCompletion,
+        lastCompletionAt: session.lastCompletionAt,
+        lastCompletionKind: session.lastCompletionKind,
+        hasInjectedWorktreeContext: session.hasInjectedWorktreeContext,
+        repoId: session.repoId,
+        projectId: session.projectId,
+        repoColor: session.repoColor,
+      };
+      tabsSignal.set([...tabsSignal().filter(current => current.sessionId !== session.id), tab]);
+      activeSessionIdSignal.set(session.id);
+    }),
     updateTabStatus: vi.fn(),
     updateTabCompletion: vi.fn(),
     updateTabName: vi.fn(),
-    getOpenSessionIds: vi.fn(() => []),
+    getOpenSessionIds: vi.fn(() => tabsSignal().map(tab => tab.sessionId)),
     getSavedState: vi.fn(() => null),
-    selectTab: vi.fn(),
+    selectTab: vi.fn((sessionId: number) => activeSessionIdSignal.set(sessionId)),
     closeTab: vi.fn(),
     selectPreviousTab: vi.fn(() => null),
     selectNextTab: vi.fn(() => null),
@@ -50,7 +75,9 @@ describe('SessionContainer modal browser gating', () => {
     markReviewed: vi.fn(() => of(null)),
   };
 
-  const navigationServiceMock = {};
+  const navigationServiceMock = {
+    patchSessionCompletion: vi.fn(),
+  };
 
   const productivityStateMock = {
     states: signal(new Map<number, { scratchpad: boolean; todos: boolean }>()),
@@ -107,12 +134,35 @@ describe('SessionContainer modal browser gating', () => {
     sessionCompletions: claudeCompletionsSignal.asReadonly(),
     sessionTitles: claudeTitlesSignal.asReadonly(),
     onReconnect: reconnectSignal.asReadonly(),
+    getSessionCompletion: vi.fn((sessionId: number) => claudeCompletionsSignal().get(sessionId) ?? null),
     setSessionCompletion: vi.fn(),
   };
 
   const modalOverlayStateMock = {
     hasOpenModal: modalActiveSignal.asReadonly(),
   };
+
+  function makeSession(overrides: Partial<Session> = {}): Session {
+    return {
+      id: 42,
+      repoId: 1,
+      projectId: 10,
+      branchName: 'main',
+      worktreePath: '/tmp/main',
+      name: 'Session 42',
+      status: 'active',
+      claudeSessionId: '-1',
+      hasInjectedWorktreeContext: false,
+      hasUnreviewedCompletion: false,
+      lastCompletionAt: null,
+      lastCompletionKind: null,
+      lastStateChangeAt: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      repoColor: null,
+      ...overrides,
+    };
+  }
 
   beforeEach(async () => {
     tabsSignal.set([
@@ -140,6 +190,9 @@ describe('SessionContainer modal browser gating', () => {
     reconnectSignal.set(0);
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    sessionsServiceMock.getOne.mockReturnValue(of(null));
+    sessionsServiceMock.markReviewed.mockReturnValue(of(makeSession()) as any);
+    tabServiceMock.getSavedState.mockReturnValue(null);
     window.__ELEVENEX_ELECTRON__ = undefined;
 
     Object.defineProperty(globalThis, 'localStorage', {
@@ -166,7 +219,7 @@ describe('SessionContainer modal browser gating', () => {
     await TestBed.configureTestingModule({
       imports: [SessionContainer],
       providers: [
-        provideRouter([]),
+        provideRouter([{ path: 'sessions/:id', component: DummyRouteComponent }]),
         { provide: TabService, useValue: tabServiceMock },
         { provide: SessionsService, useValue: sessionsServiceMock },
         { provide: NavigationService, useValue: navigationServiceMock },
@@ -222,6 +275,96 @@ describe('SessionContainer modal browser gating', () => {
     fixture.detectChanges();
 
     expect(tabServiceMock.updateTabName).toHaveBeenCalledWith(42, 'Implement Auto Names');
+  });
+
+  it('clears an unreviewed completion when opening a session from the route loader', () => {
+    const completedSession = makeSession({
+      hasUnreviewedCompletion: true,
+      lastCompletionAt: '2026-01-01T00:00:00.000Z',
+      lastCompletionKind: 'completed',
+      lastStateChangeAt: '2026-01-01T00:01:00.000Z',
+    });
+    sessionsServiceMock.getOne.mockReturnValue(of(completedSession) as any);
+    sessionsServiceMock.markReviewed.mockReturnValue(of({ ...completedSession, hasUnreviewedCompletion: false }) as any);
+    tabsSignal.set([]);
+    activeSessionIdSignal.set(null);
+    const fixture = TestBed.createComponent(SessionContainer);
+
+    (fixture.componentInstance as any).loadAndOpenSession(42);
+
+    expect(sessionsServiceMock.markReviewed).toHaveBeenCalledWith(42);
+    expect(tabServiceMock.updateTabCompletion).toHaveBeenCalledWith(42, {
+      hasUnreviewedCompletion: false,
+      lastCompletionAt: '2026-01-01T00:00:00.000Z',
+      lastCompletionKind: 'completed',
+    });
+    expect(claudeStatusServiceMock.setSessionCompletion).toHaveBeenCalledWith(42, {
+      hasUnreviewedCompletion: false,
+      lastCompletionAt: '2026-01-01T00:00:00.000Z',
+      lastCompletionKind: 'completed',
+      lastStateChangeAt: '2026-01-01T00:01:00.000Z',
+    });
+    expect(navigationServiceMock.patchSessionCompletion).toHaveBeenCalledWith(42, {
+      hasUnreviewedCompletion: false,
+      lastCompletionAt: '2026-01-01T00:00:00.000Z',
+      lastCompletionKind: 'completed',
+      lastStateChangeAt: '2026-01-01T00:01:00.000Z',
+    });
+  });
+
+  it('clears an unreviewed completion when selecting an already-open session', () => {
+    tabsSignal.set([
+      {
+        sessionId: 42,
+        sessionName: 'Session 42',
+        branchName: 'main',
+        worktreePath: '/tmp/main',
+        status: 'active',
+        hasUnreviewedCompletion: true,
+        lastCompletionAt: '2026-01-01T00:00:00.000Z',
+        lastCompletionKind: 'completed',
+        hasInjectedWorktreeContext: false,
+        repoId: 1,
+        projectId: 10,
+        repoColor: null,
+      },
+    ]);
+    const fixture = TestBed.createComponent(SessionContainer);
+
+    fixture.componentInstance.onTabSelect(42);
+
+    expect(tabServiceMock.selectTab).toHaveBeenCalledWith(42);
+    expect(sessionsServiceMock.markReviewed).toHaveBeenCalledWith(42);
+    expect(tabServiceMock.updateTabCompletion).toHaveBeenCalledWith(42, {
+      hasUnreviewedCompletion: false,
+      lastCompletionAt: '2026-01-01T00:00:00.000Z',
+      lastCompletionKind: 'completed',
+    });
+  });
+
+  it('clears an unreviewed completion after restoring saved tabs', () => {
+    const completedSession = makeSession({
+      hasUnreviewedCompletion: true,
+      lastCompletionAt: '2026-01-01T00:00:00.000Z',
+      lastCompletionKind: 'completed',
+      lastStateChangeAt: '2026-01-01T00:01:00.000Z',
+    });
+    sessionsServiceMock.getOne.mockReturnValue(of(completedSession) as any);
+    tabServiceMock.getSavedState.mockReturnValue({ sessionIds: [42], activeSessionId: 42 } as any);
+    tabsSignal.set([]);
+    activeSessionIdSignal.set(null);
+    const fixture = TestBed.createComponent(SessionContainer);
+
+    fixture.detectChanges();
+
+    expect(tabServiceMock.openTab).toHaveBeenCalledWith(completedSession);
+    expect(tabServiceMock.selectTab).toHaveBeenCalledWith(42);
+    expect(sessionsServiceMock.markReviewed).toHaveBeenCalledWith(42);
+    expect(tabServiceMock.updateTabCompletion).toHaveBeenCalledWith(42, {
+      hasUnreviewedCompletion: false,
+      lastCompletionAt: '2026-01-01T00:00:00.000Z',
+      lastCompletionKind: 'completed',
+    });
   });
 
   it('opens external MCP auth URLs unchanged in browser mode', () => {

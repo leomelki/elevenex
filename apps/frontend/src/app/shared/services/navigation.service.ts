@@ -2,6 +2,9 @@ import { inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { NavigationProject } from '../models/navigation-tree.model';
+import { Session } from '../models/session.model';
+
+type SessionCompletionPatch = Pick<Session, 'hasUnreviewedCompletion' | 'lastCompletionAt' | 'lastCompletionKind' | 'lastStateChangeAt'>;
 
 @Injectable({ providedIn: 'root' })
 export class NavigationService {
@@ -77,6 +80,23 @@ export class NavigationService {
 
   openSession(sessionId: number) {
     this.router.navigate(['/sessions', sessionId]);
+  }
+
+  patchSessionCompletion(sessionId: number, completion: SessionCompletionPatch): void {
+    this.tree.update(projects => projects.map(project => ({
+      ...project,
+      repos: project.repos.map(repo => ({
+        ...repo,
+        branches: repo.branches.map(branch => ({
+          ...branch,
+          sessions: branch.sessions.map(session =>
+            session.id === sessionId
+              ? { ...session, ...completion }
+              : session,
+          ),
+        })),
+      })),
+    })));
   }
 
   refreshTree() {
