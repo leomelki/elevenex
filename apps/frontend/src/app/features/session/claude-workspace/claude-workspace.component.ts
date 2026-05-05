@@ -54,7 +54,11 @@ import { ClaudeThinkingComponent } from './components/claude-thinking.component'
 import { ClaudeToolCallComponent } from './components/claude-tool-call.component';
 import { ClaudePermissionInlineComponent } from './components/claude-permission-inline.component';
 import { ClaudeUserInputComponent } from './components/claude-user-input.component';
-import { ClaudeComposerComponent } from './components/claude-composer.component';
+import {
+  ClaudeComposerComponent,
+  ComposerImageAttachment,
+  ComposerSendPayload,
+} from './components/claude-composer.component';
 import { ClaudeStatusBarComponent } from './components/claude-status-bar.component';
 import { ClaudeTasksDrawerComponent } from './components/claude-tasks-drawer.component';
 import { ClaudeMcpDrawerComponent } from './components/claude-mcp-drawer.component';
@@ -532,20 +536,27 @@ readonly messageActionsDisabled = computed(
     this.prompt.set(value);
   }
 
-  async submitPrompt(prompt: string): Promise<void> {
-    const trimmed = prompt.trim();
-    if (!trimmed) return;
+  async submitPrompt(payload: ComposerSendPayload | string): Promise<void> {
+    const normalized: ComposerSendPayload =
+      typeof payload === 'string' ? { text: payload, images: [] } : payload;
+    const trimmed = normalized.text.trim();
+    const images = normalized.images;
+    if (!trimmed && !images.length) return;
     const isIdle = this.runPhase() === 'idle';
     if (isIdle && this.submitting()) return;
     const now = new Date().toISOString();
     if (isIdle) {
       this.submitting.set(true);
+      const optimisticContent =
+        images.length
+          ? [trimmed, ...images.map(() => '[image]')].filter(Boolean).join('\n')
+          : trimmed;
       this.optimisticUserItems.update((items) => [
         ...items,
         {
           id: `opt-${Date.now()}`,
           kind: 'user',
-          content: trimmed,
+          content: optimisticContent,
           timestamp: now,
           authoredAt: now,
         },
@@ -558,7 +569,19 @@ readonly messageActionsDisabled = computed(
       type: 'submit_prompt',
       prompt: runtimePrompt,
       titlePrompt: trimmed,
+      ...(images.length
+        ? { images: images.map((i) => this.toRuntimeImage(i)) }
+        : {}),
     });
+  }
+
+  private toRuntimeImage(img: ComposerImageAttachment): {
+    mediaType: ComposerImageAttachment['mediaType'];
+    data: string;
+  } {
+    const commaIdx = img.dataUrl.indexOf(',');
+    const data = commaIdx >= 0 ? img.dataUrl.slice(commaIdx + 1) : img.dataUrl;
+    return { mediaType: img.mediaType, data };
   }
 
   cancelPendingPrompt(id: string): void {

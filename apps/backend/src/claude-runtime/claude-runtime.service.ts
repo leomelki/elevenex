@@ -74,6 +74,8 @@ import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
 import { getBackendHelperPath, getBackendRuntimeRoot } from '../config/runtime-paths.js';
 import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
 import {
+  ClaudeImageInput,
+  ClaudeImageMediaType,
   ClaudePendingPrompt,
   ClaudePermissionRequest,
   ClaudeAutocompleteItem,
@@ -733,11 +735,13 @@ export class ClaudeRuntimeService extends EventEmitter {
     sessionId: number,
     prompt: string,
     titlePrompt?: string,
+    images?: ClaudeImageInput[],
   ): Promise<void> {
     const startedAtMs = Date.now();
     const runId = randomUUID().slice(0, 8);
     const trimmedPrompt = prompt.trim();
-    if (!trimmedPrompt) {
+    const validatedImages = this.validateImageInputs(sessionId, images);
+    if (!trimmedPrompt && !validatedImages.length) {
       return;
     }
 
@@ -753,6 +757,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           id: randomUUID(),
           prompt: trimmedPrompt,
           queuedAt: new Date().toISOString(),
+          ...(validatedImages.length ? { images: validatedImages } : {}),
         },
       ];
       this.emitRunState(sessionId);
@@ -949,18 +954,24 @@ export class ClaudeRuntimeService extends EventEmitter {
       resolveCompletion = resolve;
     });
 
-    const runtimeQuery = query({
-      prompt: trimmedPrompt,
-      options: this.buildQueryOptions(
-        sessionId,
-        session.worktreePath,
-        session.claudeSessionId,
-        state.selectedModel,
-        state.selectedPermissionMode,
-        canUseTool,
-        onElicitation,
-      ),
-    });
+    const queryOptions = this.buildQueryOptions(
+      sessionId,
+      session.worktreePath,
+      session.claudeSessionId,
+      state.selectedModel,
+      state.selectedPermissionMode,
+      canUseTool,
+      onElicitation,
+    );
+    const runtimeQuery = validatedImages.length
+      ? query({
+          prompt: this.buildMultimodalPromptIterable(trimmedPrompt, validatedImages),
+          options: queryOptions,
+        })
+      : query({
+          prompt: trimmedPrompt,
+          options: queryOptions,
+        });
     const queryCreatedAtMs = Date.now();
     const resume = Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1';
     this.logStartupTiming(sessionId, runId, startedAtMs, 'runtime_query_created', {
@@ -1111,7 +1122,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         state.pendingPrompts = rest;
         this.emitRunState(sessionId);
         setImmediate(() => {
-          this.submitPrompt(sessionId, next.prompt).catch((err) => {
+          this.submitPrompt(sessionId, next.prompt, undefined, next.images).catch((err) => {
             this.logger.error(
               `Pending prompt drain failed session=${sessionId}: ${
                 err instanceof Error ? err.message : String(err)
@@ -1121,6 +1132,87 @@ export class ClaudeRuntimeService extends EventEmitter {
         });
       }
     }
+  }
+
+  private static readonly IMAGE_MIME_ALLOWLIST: readonly ClaudeImageMediaType[] = [
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+  ];
+  private static readonly IMAGE_MAX_BYTES_PER_IMAGE = 5 * 1024 * 1024;
+  private static readonly IMAGE_MAX_BYTES_TOTAL = 20 * 1024 * 1024;
+
+  private validateImageInputs(
+    sessionId: number,
+    images: ClaudeImageInput[] | undefined,
+  ): ClaudeImageInput[] {
+    if (!images || !images.length) return [];
+    const allowlist = ClaudeRuntimeService.IMAGE_MIME_ALLOWLIST;
+    const result: ClaudeImageInput[] = [];
+    let total = 0;
+    for (const image of images) {
+      if (!image || typeof image.data !== 'string' || !image.data.length) {
+        this.emitImageRejection(sessionId, 'Image attachment is empty.');
+        return [];
+      }
+      if (!allowlist.includes(image.mediaType)) {
+        this.emitImageRejection(
+          sessionId,
+          `Unsupported image type: ${image.mediaType}. Allowed: ${allowlist.join(', ')}.`,
+        );
+        return [];
+      }
+      const approxBytes = Math.floor((image.data.length * 3) / 4);
+      if (approxBytes > ClaudeRuntimeService.IMAGE_MAX_BYTES_PER_IMAGE) {
+        this.emitImageRejection(
+          sessionId,
+          'One of the images exceeds the 5 MB per-image limit.',
+        );
+        return [];
+      }
+      total += approxBytes;
+      if (total > ClaudeRuntimeService.IMAGE_MAX_BYTES_TOTAL) {
+        this.emitImageRejection(
+          sessionId,
+          'Attached images exceed the 20 MB total limit.',
+        );
+        return [];
+      }
+      result.push({ mediaType: image.mediaType, data: image.data });
+    }
+    return result;
+  }
+
+  private emitImageRejection(sessionId: number, message: string): void {
+    this.emitEvent({ type: 'error', payload: { sessionId, message } });
+  }
+
+  private buildMultimodalPromptIterable(
+    text: string,
+    images: ClaudeImageInput[],
+  ): AsyncIterable<SDKUserMessage> {
+    const content: Array<
+      | { type: 'text'; text: string }
+      | {
+          type: 'image';
+          source: { type: 'base64'; media_type: ClaudeImageMediaType; data: string };
+        }
+    > = [];
+    if (text) content.push({ type: 'text', text });
+    for (const img of images) {
+      content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: img.mediaType, data: img.data },
+      });
+    }
+    return (async function* () {
+      yield {
+        type: 'user',
+        message: { role: 'user', content },
+        parent_tool_use_id: null,
+      } as SDKUserMessage;
+    })();
   }
 
   async cancelPendingPrompt(sessionId: number, id: string): Promise<void> {

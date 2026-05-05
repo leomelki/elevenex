@@ -500,10 +500,22 @@ export interface ClaudeMirrorError {
   timestamp: string;
 }
 
+export type ClaudeImageMediaType =
+  | 'image/png'
+  | 'image/jpeg'
+  | 'image/gif'
+  | 'image/webp';
+
+export interface ClaudeImageInput {
+  mediaType: ClaudeImageMediaType;
+  data: string;
+}
+
 export interface ClaudePendingPrompt {
   id: string;
   prompt: string;
   queuedAt: string;
+  images?: ClaudeImageInput[];
 }
 
 export interface ClaudeRuntimeStatePayload {
@@ -717,7 +729,12 @@ export type ClaudeRuntimeEvent =
 
 export type ClaudeRuntimeClientAction =
   | { type: 'hydrate' }
-  | { type: 'submit_prompt'; prompt: string; titlePrompt?: string }
+  | {
+      type: 'submit_prompt';
+      prompt: string;
+      titlePrompt?: string;
+      images?: ClaudeImageInput[];
+    }
   | { type: 'interrupt' }
   | {
       type: 'approve_permission';

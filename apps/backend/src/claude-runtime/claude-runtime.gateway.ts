@@ -82,7 +82,12 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           return;
         }
         case 'submit_prompt':
-          await this.runtimeService.submitPrompt(sessionId, action.prompt, action.titlePrompt);
+          await this.runtimeService.submitPrompt(
+            sessionId,
+            action.prompt,
+            action.titlePrompt,
+            action.images,
+          );
           return;
         case 'interrupt':
           await this.runtimeService.interrupt(sessionId);
