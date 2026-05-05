@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { readFile } from 'node:fs/promises';
 import { execFile, type ExecFileOptions } from 'node:child_process';
 import simpleGit, { SimpleGit, StatusResult, LogResult } from 'simple-git';
@@ -19,7 +19,13 @@ export function isValidGitRef(ref: string): boolean {
 
 export interface FileStatus {
   path: string;
-  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
+  status:
+    | 'modified'
+    | 'added'
+    | 'deleted'
+    | 'renamed'
+    | 'untracked'
+    | 'conflicted';
   staged: boolean;
   oldPath?: string;
 }
@@ -74,27 +80,37 @@ export interface CommitResult {
 
 @Injectable()
 export class GitService {
+  private readonly logger = new Logger(GitService.name);
+
   async getStatus(worktreePath: string): Promise<FileStatus[]> {
     const git: SimpleGit = simpleGit(worktreePath);
     const status: StatusResult = await git.status();
 
     const files: FileStatus[] = [];
 
-    status.staged.forEach(path => {
-      if (status.renamed.some(r => r.to === path)) return;
-      files.push({ path, status: this.getFileStatus(status, path), staged: true });
+    status.staged.forEach((path) => {
+      if (status.renamed.some((r) => r.to === path)) return;
+      files.push({
+        path,
+        status: this.getFileStatus(status, path),
+        staged: true,
+      });
     });
 
-    status.modified.forEach(path => {
+    status.modified.forEach((path) => {
       files.push({ path, status: 'modified', staged: false });
     });
 
-    status.not_added.forEach(path => {
+    status.not_added.forEach((path) => {
       files.push({ path, status: 'untracked', staged: false });
     });
 
-    status.deleted.forEach(path => {
-      files.push({ path, status: 'deleted', staged: status.staged.includes(path) });
+    status.deleted.forEach((path) => {
+      files.push({
+        path,
+        status: 'deleted',
+        staged: status.staged.includes(path),
+      });
     });
 
     status.renamed.forEach(({ from, to }) => {
@@ -125,7 +141,7 @@ export class GitService {
       staged: stagedStats,
       unstaged: unstagedStats,
       total: {
-        files: new Set(files.map(file => file.path)).size,
+        files: new Set(files.map((file) => file.path)).size,
         additions: stagedStats.additions + unstagedStats.additions,
         deletions: stagedStats.deletions + unstagedStats.deletions,
       },
@@ -144,114 +160,229 @@ export class GitService {
 
   async commit(
     worktreePath: string,
-    options: { message?: string; includeUnstaged?: boolean } = {},
+    options: {
+      message?: string;
+      includeUnstaged?: boolean;
+      requestId?: string;
+    } = {},
   ): Promise<CommitResult> {
+    const requestId = options.requestId ?? this.createRequestId();
     const git: SimpleGit = simpleGit(worktreePath);
 
-    if (options.includeUnstaged) {
-      await git.raw(['add', '--all']);
-    }
+    this.logger.log(
+      `[commit:${requestId}] service started worktreePath="${worktreePath}" includeUnstaged=${Boolean(options.includeUnstaged)}`,
+    );
 
-    const stagedFiles = await this.getCommitCandidateFiles(worktreePath);
-    if (stagedFiles.length === 0) {
-      throw new BadRequestException(
-        options.includeUnstaged
-          ? 'No changes are available to commit.'
-          : 'No staged changes are available to commit.',
+    try {
+      if (options.includeUnstaged) {
+        this.logger.log(
+          `[commit:${requestId}] staging all changes with git add --all`,
+        );
+        await git.raw(['add', '--all']);
+        this.logger.log(`[commit:${requestId}] git add --all completed`);
+      }
+
+      const status = await git.status();
+      const stagedFiles = this.getUniqueStagedFiles(status);
+      this.logger.log(
+        `[commit:${requestId}] status loaded branch="${status.current || 'HEAD'}" staged=${stagedFiles.length} modified=${status.modified.length} deleted=${status.deleted.length} renamed=${status.renamed.length} untracked=${status.not_added.length} conflicted=${status.conflicted.length} stagedFiles=${this.previewList(stagedFiles)}`,
       );
+
+      if (stagedFiles.length === 0) {
+        this.logger.warn(
+          `[commit:${requestId}] aborting: no commit candidates after status check includeUnstaged=${Boolean(options.includeUnstaged)}`,
+        );
+        throw new BadRequestException(
+          options.includeUnstaged
+            ? 'No changes are available to commit.'
+            : 'No staged changes are available to commit.',
+        );
+      }
+
+      let message = options.message?.trim() ?? '';
+      let generatedMessage = false;
+
+      if (!message) {
+        this.logger.log(
+          `[commit:${requestId}] no message provided; generating commit message`,
+        );
+        const suggestion = await this.suggestCommitMessage(worktreePath);
+        message = suggestion.body?.trim()
+          ? `${suggestion.subject.trim()}\n\n${suggestion.body.trim()}`
+          : suggestion.subject.trim();
+        generatedMessage = true;
+        this.logger.log(
+          `[commit:${requestId}] generated commit message source=${suggestion.source} confidence=${suggestion.confidence} subject="${this.preview(suggestion.subject)}"`,
+        );
+      } else {
+        this.logger.log(
+          `[commit:${requestId}] using provided commit message chars=${message.length} lines=${this.countLines(message)} subject="${this.preview(message.split(/\r?\n/, 1)[0] ?? '')}"`,
+        );
+      }
+
+      this.logger.log(`[commit:${requestId}] running git commit`);
+      const result = await git.commit(message);
+      this.logger.log(
+        `[commit:${requestId}] git commit completed hash=${result.commit || 'unknown'} generatedMessage=${generatedMessage}`,
+      );
+      return {
+        hash: result.commit,
+        message,
+        generatedMessage,
+      };
+    } catch (error: any) {
+      this.logger.error(
+        `[commit:${requestId}] failed ${this.formatGitError(error)}`,
+        error?.stack,
+      );
+      throw error;
     }
-
-    let message = options.message?.trim() ?? '';
-    let generatedMessage = false;
-
-    if (!message) {
-      const suggestion = await this.suggestCommitMessage(worktreePath);
-      message = suggestion.body?.trim()
-        ? `${suggestion.subject.trim()}\n\n${suggestion.body.trim()}`
-        : suggestion.subject.trim();
-      generatedMessage = true;
-    }
-
-    const result = await git.commit(message);
-    return {
-      hash: result.commit,
-      message,
-      generatedMessage,
-    };
   }
 
-  async suggestCommitMessage(worktreePath: string): Promise<CommitMessageSuggestion> {
+  async suggestCommitMessage(
+    worktreePath: string,
+  ): Promise<CommitMessageSuggestion> {
+    const requestId = this.createRequestId();
+    this.logger.log(
+      `[commit-message:${requestId}] suggestion started worktreePath="${worktreePath}"`,
+    );
+
     const git: SimpleGit = simpleGit(worktreePath);
-    const status = await git.status();
-    const stagedFiles = this.getUniqueStagedFiles(status);
+    try {
+      const status = await git.status();
+      const stagedFiles = this.getUniqueStagedFiles(status);
+      this.logger.log(
+        `[commit-message:${requestId}] status loaded branch="${status.current || 'HEAD'}" staged=${stagedFiles.length} stagedFiles=${this.previewList(stagedFiles)}`,
+      );
 
-    if (stagedFiles.length === 0) {
-      throw new BadRequestException('No staged changes available to generate a commit message.');
+      if (stagedFiles.length === 0) {
+        this.logger.warn(
+          `[commit-message:${requestId}] aborting: no staged files available for suggestion`,
+        );
+        throw new BadRequestException(
+          'No staged changes available to generate a commit message.',
+        );
+      }
+
+      const [diff, branchSummary, log] = await Promise.all([
+        this.getDiff(worktreePath, { staged: true }),
+        git.branchLocal(),
+        this.getLog(worktreePath, MAX_COMMIT_MESSAGE_LOG_ENTRIES),
+      ]);
+
+      const currentBranch = branchSummary.current || 'HEAD';
+      const compressedStatus = this.buildCompactStatusSummary(stagedFiles);
+      const compressedLog = this.buildCompactLog(log);
+      const truncatedDiff = this.truncateDiffForPrompt(diff);
+      this.logger.log(
+        `[commit-message:${requestId}] context loaded branch="${currentBranch}" diffChars=${diff.length} truncatedDiffChars=${truncatedDiff.length} recentCommits=${log.length}`,
+      );
+
+      const claudeSuggestion = await this.generateCommitMessageWithClaude({
+        worktreePath,
+        branchName: currentBranch,
+        files: stagedFiles,
+        diff: truncatedDiff,
+        compactStatus: compressedStatus,
+        compactLog: compressedLog,
+      });
+
+      if (claudeSuggestion) {
+        this.logger.log(
+          `[commit-message:${requestId}] suggestion completed source=claude confidence=${claudeSuggestion.confidence} subject="${this.preview(claudeSuggestion.subject)}"`,
+        );
+        return claudeSuggestion;
+      }
+
+      const externalSuggestion = await this.runExternalCommitMessageGenerator({
+        worktreePath,
+        branchName: currentBranch,
+        files: stagedFiles,
+        diff: truncatedDiff,
+      });
+
+      if (externalSuggestion) {
+        this.logger.log(
+          `[commit-message:${requestId}] suggestion completed source=external confidence=${externalSuggestion.confidence} subject="${this.preview(externalSuggestion.subject)}"`,
+        );
+        return externalSuggestion;
+      }
+
+      const fallbackSuggestion = this.buildFallbackCommitMessage(
+        stagedFiles,
+        diff,
+        currentBranch,
+      );
+      this.logger.log(
+        `[commit-message:${requestId}] suggestion completed source=fallback confidence=${fallbackSuggestion.confidence} subject="${this.preview(fallbackSuggestion.subject)}"`,
+      );
+      return fallbackSuggestion;
+    } catch (error: any) {
+      this.logger.error(
+        `[commit-message:${requestId}] failed ${this.formatGitError(error)}`,
+        error?.stack,
+      );
+      throw error;
     }
-
-    const [diff, branchSummary, log] = await Promise.all([
-      this.getDiff(worktreePath, { staged: true }),
-      git.branchLocal(),
-      this.getLog(worktreePath, MAX_COMMIT_MESSAGE_LOG_ENTRIES),
-    ]);
-
-    const currentBranch = branchSummary.current || 'HEAD';
-    const compressedStatus = this.buildCompactStatusSummary(stagedFiles);
-    const compressedLog = this.buildCompactLog(log);
-    const truncatedDiff = this.truncateDiffForPrompt(diff);
-
-    const claudeSuggestion = await this.generateCommitMessageWithClaude({
-      worktreePath,
-      branchName: currentBranch,
-      files: stagedFiles,
-      diff: truncatedDiff,
-      compactStatus: compressedStatus,
-      compactLog: compressedLog,
-    });
-
-    if (claudeSuggestion) {
-      return claudeSuggestion;
-    }
-
-    const externalSuggestion = await this.runExternalCommitMessageGenerator({
-      worktreePath,
-      branchName: currentBranch,
-      files: stagedFiles,
-      diff: truncatedDiff,
-    });
-
-    if (externalSuggestion) {
-      return externalSuggestion;
-    }
-
-    return this.buildFallbackCommitMessage(stagedFiles, diff, currentBranch);
   }
 
   async push(worktreePath: string): Promise<PushResult> {
+    const requestId = this.createRequestId();
     const git: SimpleGit = simpleGit(worktreePath);
+    this.logger.log(
+      `[push:${requestId}] service started worktreePath="${worktreePath}"`,
+    );
     const branchSummary = await git.branchLocal();
     const branch = branchSummary.current;
+    this.logger.log(
+      `[push:${requestId}] branch loaded branch="${branch || 'HEAD'}"`,
+    );
 
     if (!branch) {
+      this.logger.warn(`[push:${requestId}] aborting: detached HEAD`);
       throw new BadRequestException('Cannot push from detached HEAD.');
     }
 
     let upstream: string | null = null;
     try {
-      upstream = (await git.raw(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])).trim();
+      upstream = (
+        await git.raw([
+          'rev-parse',
+          '--abbrev-ref',
+          '--symbolic-full-name',
+          '@{u}',
+        ])
+      ).trim();
+      this.logger.log(
+        `[push:${requestId}] upstream detected upstream="${upstream}"`,
+      );
     } catch {
       upstream = null;
+      this.logger.log(`[push:${requestId}] no upstream configured`);
     }
 
     try {
       if (!upstream) {
         const remotes = await git.getRemotes(true);
-        const remote = remotes.find(candidate => candidate.name === 'origin') ?? remotes[0];
+        const remote =
+          remotes.find((candidate) => candidate.name === 'origin') ??
+          remotes[0];
         if (!remote) {
-          throw new BadRequestException('No git remote is configured for this repository.');
+          this.logger.warn(
+            `[push:${requestId}] aborting: no git remote configured`,
+          );
+          throw new BadRequestException(
+            'No git remote is configured for this repository.',
+          );
         }
 
+        this.logger.log(
+          `[push:${requestId}] pushing branch="${branch}" remote="${remote.name}" setUpstream=true`,
+        );
         await git.push(remote.name, branch, { '--set-upstream': null });
+        this.logger.log(
+          `[push:${requestId}] push completed remote="${remote.name}" upstream="${remote.name}/${branch}"`,
+        );
         return {
           pushed: true,
           remote: remote.name,
@@ -265,7 +396,13 @@ export class GitService {
       }
 
       const [remoteName] = upstream.split('/', 1);
+      this.logger.log(
+        `[push:${requestId}] pushing branch="${branch}" remote="${remoteName}" upstream="${upstream}"`,
+      );
       await git.push(remoteName);
+      this.logger.log(
+        `[push:${requestId}] push completed remote="${remoteName}" upstream="${upstream}"`,
+      );
       return {
         pushed: true,
         remote: remoteName || null,
@@ -279,7 +416,14 @@ export class GitService {
     } catch (error: any) {
       const message = error?.message || 'Git push failed';
       const rejected = /rejected|failed to push/i.test(message);
-      const nonFastForward = /non-fast-forward|fetch first|tip of your current branch is behind/i.test(message);
+      const nonFastForward =
+        /non-fast-forward|fetch first|tip of your current branch is behind/i.test(
+          message,
+        );
+      this.logger.error(
+        `[push:${requestId}] failed rejected=${rejected} nonFastForward=${nonFastForward} ${this.formatGitError(error)}`,
+        error?.stack,
+      );
 
       return {
         pushed: false,
@@ -294,11 +438,14 @@ export class GitService {
     }
   }
 
-  async getLog(worktreePath: string, maxCount: number = 50): Promise<CommitInfo[]> {
+  async getLog(
+    worktreePath: string,
+    maxCount: number = 50,
+  ): Promise<CommitInfo[]> {
     const git: SimpleGit = simpleGit(worktreePath);
     const log: LogResult = await git.log({ maxCount });
 
-    return log.all.map(commit => ({
+    return log.all.map((commit) => ({
       hash: commit.hash,
       shortHash: commit.hash.substring(0, 7),
       message: commit.message,
@@ -308,7 +455,10 @@ export class GitService {
     }));
   }
 
-  async getDiff(worktreePath: string, options: { staged?: boolean; file?: string; commit?: string }): Promise<string> {
+  async getDiff(
+    worktreePath: string,
+    options: { staged?: boolean; file?: string; commit?: string },
+  ): Promise<string> {
     const git: SimpleGit = simpleGit(worktreePath);
 
     if (options.commit) {
@@ -340,20 +490,66 @@ export class GitService {
       const content = await git.show([`${ref}:${path}`]);
       return content;
     } catch (error: any) {
-      throw new Error(`Failed to retrieve file from git history: ${error.message}`);
+      throw new Error(
+        `Failed to retrieve file from git history: ${error.message}`,
+      );
     }
   }
 
-  private async getCommitCandidateFiles(worktreePath: string): Promise<string[]> {
-    const git: SimpleGit = simpleGit(worktreePath);
-    const status = await git.status();
-    return this.getUniqueStagedFiles(status);
+  private createRequestId(): string {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  private countLines(value: string): number {
+    return value ? value.split(/\r?\n/).length : 0;
+  }
+
+  private preview(value: string, maxLength = 120): string {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    return normalized.length > maxLength
+      ? `${normalized.slice(0, maxLength)}...`
+      : normalized;
+  }
+
+  private previewList(values: string[], maxItems = 12): string {
+    if (values.length === 0) {
+      return '[]';
+    }
+
+    const visible = values.slice(0, maxItems);
+    const suffix =
+      values.length > visible.length
+        ? `, ...+${values.length - visible.length}`
+        : '';
+    return `[${visible.map((value) => `"${this.preview(value, 80)}"`).join(', ')}${suffix}]`;
+  }
+
+  private formatGitError(error: any): string {
+    const details = [
+      `name=${error?.name || 'Error'}`,
+      `message="${this.preview(error?.message || String(error))}"`,
+    ];
+
+    if (error?.task?.commands) {
+      details.push(`commands=${JSON.stringify(error.task.commands)}`);
+    }
+    if (error?.git?.command) {
+      details.push(`command="${error.git.command}"`);
+    }
+    if (typeof error?.git?.exitCode !== 'undefined') {
+      details.push(`exitCode=${error.git.exitCode}`);
+    }
+    if (error?.git?.stdErr) {
+      details.push(`stderr="${this.preview(error.git.stdErr, 240)}"`);
+    }
+
+    return details.join(' ');
   }
 
   private getUniqueStagedFiles(status: StatusResult): string[] {
     const stagedFiles = [
       ...status.staged,
-      ...status.renamed.map(file => file.to),
+      ...status.renamed.map((file) => file.to),
     ];
     return Array.from(new Set(stagedFiles)).sort();
   }
@@ -363,19 +559,29 @@ export class GitService {
     staged: boolean,
   ): Promise<GitScopeSummary> {
     const files = await this.getStatus(worktreePath);
-    const scopeFiles = files.filter(file => file.staged === staged);
+    const scopeFiles = files.filter((file) => file.staged === staged);
     const diffStats = await this.readNumstat(worktreePath, staged);
 
     let additions = diffStats.additions;
     let deletions = diffStats.deletions;
 
     if (!staged) {
-      const untrackedFiles = scopeFiles.filter(file => file.status === 'untracked');
-      const untrackedStats = await Promise.all(
-        untrackedFiles.map(file => this.readUntrackedFileStats(worktreePath, file.path)),
+      const untrackedFiles = scopeFiles.filter(
+        (file) => file.status === 'untracked',
       );
-      additions += untrackedStats.reduce((sum, stat) => sum + stat.additions, 0);
-      deletions += untrackedStats.reduce((sum, stat) => sum + stat.deletions, 0);
+      const untrackedStats = await Promise.all(
+        untrackedFiles.map((file) =>
+          this.readUntrackedFileStats(worktreePath, file.path),
+        ),
+      );
+      additions += untrackedStats.reduce(
+        (sum, stat) => sum + stat.additions,
+        0,
+      );
+      deletions += untrackedStats.reduce(
+        (sum, stat) => sum + stat.deletions,
+        0,
+      );
     }
 
     return {
@@ -394,16 +600,25 @@ export class GitService {
       ? ['diff', '--cached', '--numstat', '--find-renames']
       : ['diff', '--numstat', '--find-renames'];
     const output = await git.raw(args);
-    const lines = output.split('\n').map(line => line.trim()).filter(Boolean);
+    const lines = output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
 
     return lines.reduce(
       (stats, line) => {
         const [additions, deletions] = line.split('\t');
-        const parsedAdditions = additions === '-' ? 0 : Number.parseInt(additions, 10);
-        const parsedDeletions = deletions === '-' ? 0 : Number.parseInt(deletions, 10);
+        const parsedAdditions =
+          additions === '-' ? 0 : Number.parseInt(additions, 10);
+        const parsedDeletions =
+          deletions === '-' ? 0 : Number.parseInt(deletions, 10);
         return {
-          additions: stats.additions + (Number.isFinite(parsedAdditions) ? parsedAdditions : 0),
-          deletions: stats.deletions + (Number.isFinite(parsedDeletions) ? parsedDeletions : 0),
+          additions:
+            stats.additions +
+            (Number.isFinite(parsedAdditions) ? parsedAdditions : 0),
+          deletions:
+            stats.deletions +
+            (Number.isFinite(parsedDeletions) ? parsedDeletions : 0),
         };
       },
       { additions: 0, deletions: 0 },
@@ -425,7 +640,9 @@ export class GitService {
         return { additions: 0, deletions: 0 };
       }
 
-      const additions = text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length;
+      const additions = text.endsWith('\n')
+        ? text.split('\n').length - 1
+        : text.split('\n').length;
       return { additions, deletions: 0 };
     } catch {
       return { additions: 0, deletions: 0 };
@@ -434,7 +651,7 @@ export class GitService {
 
   private buildCompactStatusSummary(files: string[]): string {
     const visibleFiles = files.slice(0, MAX_COMMIT_MESSAGE_STATUS_FILES);
-    const lines = visibleFiles.map(file => `- ${file}`);
+    const lines = visibleFiles.map((file) => `- ${file}`);
     if (files.length > visibleFiles.length) {
       lines.push(`- ...and ${files.length - visibleFiles.length} more`);
     }
@@ -444,7 +661,7 @@ export class GitService {
   private buildCompactLog(commits: CommitInfo[]): string {
     return commits
       .slice(0, MAX_COMMIT_MESSAGE_LOG_ENTRIES)
-      .map(commit => `- ${commit.shortHash} ${commit.message}`)
+      .map((commit) => `- ${commit.shortHash} ${commit.message}`)
       .join('\n');
   }
 
@@ -494,7 +711,10 @@ export class GitService {
         cwd: input.worktreePath,
         model: 'haiku',
         permissionMode: 'plan',
-        canUseTool: async () => ({ behavior: 'deny' as const, message: 'Tool use disabled' }),
+        canUseTool: async () => ({
+          behavior: 'deny' as const,
+          message: 'Tool use disabled',
+        }),
         pathToClaudeCodeExecutable: CLAUDE_BIN,
         systemPrompt: {
           type: 'preset',
@@ -537,10 +757,19 @@ export class GitService {
       return '';
     }
 
-    const content = Array.isArray(message.message?.content) ? message.message.content : [];
+    const content = Array.isArray(message.message?.content)
+      ? message.message.content
+      : [];
     return content
       .map((part: unknown) => {
-        if (typeof part === 'object' && part && 'type' in part && part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+        if (
+          typeof part === 'object' &&
+          part &&
+          'type' in part &&
+          part.type === 'text' &&
+          'text' in part &&
+          typeof part.text === 'string'
+        ) {
           return part.text;
         }
         return '';
@@ -560,13 +789,20 @@ export class GitService {
 
     try {
       const parsed = JSON.parse(normalized);
-      if (!parsed || typeof parsed.subject !== 'string' || !parsed.subject.trim()) {
+      if (
+        !parsed ||
+        typeof parsed.subject !== 'string' ||
+        !parsed.subject.trim()
+      ) {
         return null;
       }
 
       return {
         subject: parsed.subject.trim().slice(0, 72),
-        body: typeof parsed.body === 'string' && parsed.body.trim() ? parsed.body.trim() : null,
+        body:
+          typeof parsed.body === 'string' && parsed.body.trim()
+            ? parsed.body.trim()
+            : null,
         confidence: 'medium',
         source: 'claude',
       };
@@ -582,10 +818,13 @@ export class GitService {
     }
   }
 
-  private getFileStatus(status: StatusResult, path: string): FileStatus['status'] {
+  private getFileStatus(
+    status: StatusResult,
+    path: string,
+  ): FileStatus['status'] {
     if (status.created.includes(path)) return 'added';
     if (status.deleted.includes(path)) return 'deleted';
-    if (status.renamed.some(r => r.to === path)) return 'renamed';
+    if (status.renamed.some((r) => r.to === path)) return 'renamed';
     if (status.conflicted.includes(path)) return 'conflicted';
     return 'modified';
   }
@@ -612,7 +851,8 @@ export class GitService {
     files: string[];
     diff: string;
   }): Promise<CommitMessageSuggestion | null> {
-    const generatorBin = process.env.ELEVENEX_COMMIT_MESSAGE_GENERATOR_BIN?.trim();
+    const generatorBin =
+      process.env.ELEVENEX_COMMIT_MESSAGE_GENERATOR_BIN?.trim();
     if (!generatorBin) {
       return null;
     }
@@ -622,7 +862,10 @@ export class GitService {
     if (rawArgs) {
       try {
         const parsed = JSON.parse(rawArgs);
-        if (Array.isArray(parsed) && parsed.every(value => typeof value === 'string')) {
+        if (
+          Array.isArray(parsed) &&
+          parsed.every((value) => typeof value === 'string')
+        ) {
           extraArgs = parsed;
         }
       } catch {
@@ -647,14 +890,24 @@ export class GitService {
         },
       );
       const parsed = JSON.parse(stdout);
-      if (!parsed || typeof parsed.subject !== 'string' || !parsed.subject.trim()) {
+      if (
+        !parsed ||
+        typeof parsed.subject !== 'string' ||
+        !parsed.subject.trim()
+      ) {
         return null;
       }
 
       return {
         subject: parsed.subject.trim(),
-        body: typeof parsed.body === 'string' && parsed.body.trim().length > 0 ? parsed.body.trim() : null,
-        confidence: parsed.confidence === 'high' || parsed.confidence === 'medium' ? parsed.confidence : 'low',
+        body:
+          typeof parsed.body === 'string' && parsed.body.trim().length > 0
+            ? parsed.body.trim()
+            : null,
+        confidence:
+          parsed.confidence === 'high' || parsed.confidence === 'medium'
+            ? parsed.confidence
+            : 'low',
         source: 'external',
       };
     } catch {
@@ -667,12 +920,16 @@ export class GitService {
     diff: string,
     branchName: string,
   ): CommitMessageSuggestion {
-    const filenames = stagedFiles.map(file => file.split('/').pop() || file);
+    const filenames = stagedFiles.map((file) => file.split('/').pop() || file);
     const scope = this.extractBranchScope(branchName);
     const lineCount = diff
       .split('\n')
-      .filter(line => (line.startsWith('+') || line.startsWith('-')) && !line.startsWith('+++') && !line.startsWith('---'))
-      .length;
+      .filter(
+        (line) =>
+          (line.startsWith('+') || line.startsWith('-')) &&
+          !line.startsWith('+++') &&
+          !line.startsWith('---'),
+      ).length;
 
     let verb = 'update';
     if (stagedFiles.length === 1 && diff.includes('new file mode')) {
@@ -681,24 +938,28 @@ export class GitService {
       verb = 'remove';
     } else if (diff.includes('rename from ')) {
       verb = 'rename';
-    } else if (stagedFiles.some(file => /test|spec/i.test(file))) {
+    } else if (stagedFiles.some((file) => /test|spec/i.test(file))) {
       verb = 'test';
-    } else if (stagedFiles.some(file => /readme|docs?\//i.test(file))) {
+    } else if (stagedFiles.some((file) => /readme|docs?\//i.test(file))) {
       verb = 'document';
     } else if (lineCount > 120) {
       verb = 'refactor';
     }
 
-    const target = stagedFiles.length === 1
-      ? filenames[0]
-      : stagedFiles.length <= 3
-        ? filenames.join(', ')
-        : `${stagedFiles.length} files`;
+    const target =
+      stagedFiles.length === 1
+        ? filenames[0]
+        : stagedFiles.length <= 3
+          ? filenames.join(', ')
+          : `${stagedFiles.length} files`;
 
     const subject = scope ? `${verb} ${scope} ${target}` : `${verb} ${target}`;
     return {
       subject: this.capitalize(subject).slice(0, 72),
-      body: stagedFiles.length > 1 ? `Files:\n${stagedFiles.map(file => `- ${file}`).join('\n')}` : null,
+      body:
+        stagedFiles.length > 1
+          ? `Files:\n${stagedFiles.map((file) => `- ${file}`).join('\n')}`
+          : null,
       confidence: 'low',
       source: 'fallback',
     };

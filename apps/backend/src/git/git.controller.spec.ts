@@ -35,7 +35,11 @@ describe('GitController', () => {
       const worktreePath = '/test/repo';
       const path = 'initial.txt';
 
-      const result = await controller.getOriginalContent(worktreePath, path, undefined);
+      const result = await controller.getOriginalContent(
+        worktreePath,
+        path,
+        undefined,
+      );
 
       expect(result).toEqual({ content: mockContent });
       expect(mockShow).toHaveBeenCalledWith(worktreePath, 'HEAD', path);
@@ -50,22 +54,29 @@ describe('GitController', () => {
       const ref = 'develop';
       const path = 'file.txt';
 
-      const result = await controller.getOriginalContent(worktreePath, path, ref);
+      const result = await controller.getOriginalContent(
+        worktreePath,
+        path,
+        ref,
+      );
 
       expect(result).toEqual({ content: mockContent });
       expect(mockShow).toHaveBeenCalledWith(worktreePath, ref, path);
     });
 
     it('should return 400 for invalid ref', async () => {
-      const mockShow = jest.fn().mockRejectedValue(new BadRequestException('Invalid git ref'));
+      const mockShow = jest
+        .fn()
+        .mockRejectedValue(new BadRequestException('Invalid git ref'));
       service.show = mockShow;
 
       const worktreePath = '/test/repo';
       const ref = ';rm -rf /';
       const path = 'file.txt';
 
-      await expect(controller.getOriginalContent(worktreePath, path, ref))
-        .rejects.toThrow(BadRequestException);
+      await expect(
+        controller.getOriginalContent(worktreePath, path, ref),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should return 500 for non-existent file', async () => {
@@ -75,8 +86,9 @@ describe('GitController', () => {
       const worktreePath = '/test/repo';
       const path = 'nonexistent.txt';
 
-      await expect(controller.getOriginalContent(worktreePath, path, undefined))
-        .rejects.toThrow('File not found');
+      await expect(
+        controller.getOriginalContent(worktreePath, path, undefined),
+      ).rejects.toThrow('File not found');
     });
 
     it('should decode URI-encoded worktreePath and path', async () => {
@@ -87,10 +99,18 @@ describe('GitController', () => {
       const encodedWorktreePath = encodeURIComponent('/test/path with spaces');
       const encodedPath = encodeURIComponent('file with spaces.txt');
 
-      const result = await controller.getOriginalContent(encodedWorktreePath, encodedPath, undefined);
+      const result = await controller.getOriginalContent(
+        encodedWorktreePath,
+        encodedPath,
+        undefined,
+      );
 
       expect(result).toEqual({ content: mockContent });
-      expect(mockShow).toHaveBeenCalledWith('/test/path with spaces', 'HEAD', 'file with spaces.txt');
+      expect(mockShow).toHaveBeenCalledWith(
+        '/test/path with spaces',
+        'HEAD',
+        'file with spaces.txt',
+      );
     });
 
     it('should use HEAD as default when ref is undefined', async () => {
@@ -101,7 +121,11 @@ describe('GitController', () => {
       const worktreePath = '/test/repo';
       const path = 'file.txt';
 
-      const result = await controller.getOriginalContent(worktreePath, path, undefined);
+      const result = await controller.getOriginalContent(
+        worktreePath,
+        path,
+        undefined,
+      );
 
       expect(mockShow).toHaveBeenCalledWith(worktreePath, 'HEAD', path);
     });
@@ -120,10 +144,14 @@ describe('GitController', () => {
       const mockGetStatusSummary = jest.fn().mockResolvedValue(mockSummary);
       service.getStatusSummary = mockGetStatusSummary;
 
-      const result = await controller.getSummary(encodeURIComponent('/test/path with spaces'));
+      const result = await controller.getSummary(
+        encodeURIComponent('/test/path with spaces'),
+      );
 
       expect(result).toEqual(mockSummary);
-      expect(mockGetStatusSummary).toHaveBeenCalledWith('/test/path with spaces');
+      expect(mockGetStatusSummary).toHaveBeenCalledWith(
+        '/test/path with spaces',
+      );
     });
   });
 
@@ -146,6 +174,7 @@ describe('GitController', () => {
       expect(mockCommit).toHaveBeenCalledWith('/test/repo', {
         message: 'Test commit',
         includeUnstaged: true,
+        requestId: expect.any(String),
       });
     });
   });
