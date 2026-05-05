@@ -27,6 +27,9 @@ export class NavigationService {
 
     this.http.get<NavigationProject[]>('/api/navigation/tree/light').subscribe({
       next: (data) => {
+        if (hasData) {
+          this.expandNewTreeItems(this.tree(), data);
+        }
         this.tree.set(data);
         this.loading.set(false);
       },
@@ -121,5 +124,63 @@ export class NavigationService {
     } catch {
       // Ignore storage errors
     }
+  }
+
+  private expandNewTreeItems(previous: NavigationProject[], next: NavigationProject[]): void {
+    const previousProjectIds = new Set(previous.map(project => project.id));
+    const previousRepoIds = new Set(previous.flatMap(project => project.repos.map(repo => repo.id)));
+    const previousBranchKeys = new Set(previous.flatMap(project =>
+      project.repos.flatMap(repo => repo.branches.map(branch => this.branchKey(repo.id, branch.name))),
+    ));
+    const previousSessionIds = new Set(previous.flatMap(project =>
+      project.repos.flatMap(repo =>
+        repo.branches.flatMap(branch => branch.sessions.map(session => session.id)),
+      ),
+    ));
+
+    const expanded = new Set(this.expandedKeys());
+    let changed = false;
+    const add = (key: string) => {
+      if (expanded.has(key)) {
+        return;
+      }
+
+      expanded.add(key);
+      changed = true;
+    };
+
+    for (const project of next) {
+      if (!previousProjectIds.has(project.id)) {
+        add(`project-${project.id}`);
+      }
+
+      for (const repo of project.repos) {
+        if (!previousRepoIds.has(repo.id)) {
+          add(`project-${project.id}`);
+          add(`repo-${repo.id}`);
+        }
+
+        for (const branch of repo.branches) {
+          const branchKey = this.branchKey(repo.id, branch.name);
+          const hasNewBranch = !previousBranchKeys.has(branchKey);
+          const hasNewSession = branch.sessions.some(session => !previousSessionIds.has(session.id));
+
+          if (hasNewBranch || hasNewSession) {
+            add(`project-${project.id}`);
+            add(`repo-${repo.id}`);
+            add(branchKey);
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      this.expandedKeys.set(expanded);
+      this.saveExpandedKeys(expanded);
+    }
+  }
+
+  private branchKey(repoId: number, branchName: string): string {
+    return `branch-${repoId}-${branchName}`;
   }
 }
