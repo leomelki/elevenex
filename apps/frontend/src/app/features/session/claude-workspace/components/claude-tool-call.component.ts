@@ -32,6 +32,7 @@ import {
 } from '@ng-icons/lucide';
 import {
   ClaudePermissionApproval,
+  ClaudeToolProgress,
   ClaudeToolInteractionSummary,
   ClaudeTranscriptItem,
 } from '@/shared/models/claude-runtime.model';
@@ -964,6 +965,7 @@ export class ClaudeToolCallComponent {
   readonly result = input<ClaudeTranscriptItem | null>(null);
   readonly childItems = input<ClaudeTranscriptItem[]>([]);
   readonly isLive = input<boolean>(false);
+  readonly progress = input<ClaudeToolProgress | null>(null);
   readonly turnId = input<string | null>(null);
   readonly hasAgentHistory = input<boolean>(false);
 
@@ -974,6 +976,7 @@ export class ClaudeToolCallComponent {
   private readonly openState = signal<boolean | null>(null);
   private readonly promptOpenState = signal<boolean>(false);
   private readonly streamOpenState = signal<boolean | null>(null);
+  private readonly timerTick = signal(Date.now());
   private userHasScrolledUp = false;
   private readonly streamBodyEl = viewChild<ElementRef<HTMLElement>>('streamBody');
 
@@ -992,6 +995,13 @@ export class ClaudeToolCallComponent {
           this.userHasScrolledUp = false;
         }
       });
+    });
+
+    effect((onCleanup) => {
+      if (this.display().kind !== 'bash' || this.state() !== 'running') return;
+      this.timerTick.set(Date.now());
+      const id = window.setInterval(() => this.timerTick.set(Date.now()), 1000);
+      onCleanup(() => window.clearInterval(id));
     });
 
     afterRenderEffect(() => {
@@ -1029,8 +1039,33 @@ export class ClaudeToolCallComponent {
   });
 
   readonly summary = computed<ResultSummary | null>(() => {
-    if (this.state() === 'running' || this.state() === 'waiting') return null;
+    if (this.state() === 'running') {
+      if (this.display().kind === 'bash') {
+        return {
+          text: `Running ${formatElapsedSeconds(this.runningElapsedSeconds())}`,
+          tone: 'neutral',
+        };
+      }
+      return null;
+    }
+    if (this.state() === 'waiting') return null;
     return resultSummary(this.display().kind, this.result(), this.interaction());
+  });
+
+  readonly runningElapsedSeconds = computed(() => {
+    const progress = this.progress();
+    if (progress && Number.isFinite(progress.elapsedTimeSeconds)) {
+      const updatedAt = Date.parse(progress.timestamp);
+      const secondsSinceProgress =
+        Number.isFinite(updatedAt)
+          ? Math.floor((this.timerTick() - updatedAt) / 1000)
+          : 0;
+      return Math.max(0, Math.floor(progress.elapsedTimeSeconds) + secondsSinceProgress);
+    }
+
+    const startedAt = Date.parse(this.call().receivedAt ?? this.call().timestamp);
+    if (!Number.isFinite(startedAt)) return 0;
+    return Math.max(0, Math.floor((this.timerTick() - startedAt) / 1000));
   });
 
   readonly resultText = computed(() => {
@@ -1376,6 +1411,16 @@ function formatDuration(durationMs: number): string {
   const seconds = totalSeconds % 60;
 
   if (minutes <= 0) return `${totalSeconds}s`;
+  if (seconds === 0) return `${minutes}m`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatElapsedSeconds(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+
+  if (minutes <= 0) return `${seconds}s`;
   if (seconds === 0) return `${minutes}m`;
   return `${minutes}m ${seconds}s`;
 }

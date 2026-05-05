@@ -100,6 +100,7 @@
                     [result]="item.unit.result"
                     [childItems]="childItemsForToolUse(item.unit.toolUseId)"
                     [isLive]="isLiveToolUse(item.unit.toolUseId)"
+                    [progress]="toolProgressForToolUse(item.unit.toolUseId)"
                     (approve)="approvePermission($event)"
                     (deny)="denyPermission($event)"
                   />
@@ -206,6 +207,7 @@
                             [result]="hiddenUnit.result"
                             [childItems]="childItemsForToolUse(hiddenUnit.toolUseId)"
                             [isLive]="isLiveToolUse(hiddenUnit.toolUseId)"
+                            [progress]="toolProgressForToolUse(hiddenUnit.toolUseId)"
                             [turnId]="item.turnId"
                             [hasAgentHistory]="!!item.agentSummary"
                             (approve)="approvePermission($event)"

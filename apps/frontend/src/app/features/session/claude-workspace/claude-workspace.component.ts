@@ -38,6 +38,7 @@ import {
   ClaudeSessionExecutionState,
   ClaudeTaskState,
   ClaudeSubagentState,
+  ClaudeToolProgress,
   ClaudeTranscriptItemKind,
   ClaudeTranscriptItem,
   ClaudeUserInputRequest,
@@ -170,6 +171,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly cancelledPendingPromptIds = new Set<string>();
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
+  readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
   readonly tasksDrawerOpen = signal(false);
   readonly mcpDrawerOpen = signal(false);
   readonly mcpLoading = signal(false);
@@ -726,6 +728,10 @@ readonly messageActionsDisabled = computed(
     return this.liveItems().some((item) => item.kind === 'tool_use' && item.toolUseId === toolUseId);
   }
 
+  toolProgressForToolUse(toolUseId: string): ClaudeToolProgress | null {
+    return this.toolProgressByToolUseId()[toolUseId] ?? null;
+  }
+
   childItemsForToolUse(toolUseId: string): ClaudeTranscriptItem[] {
     return this.childTranscriptItemsByParentToolUseId()[toolUseId] ?? [];
   }
@@ -1019,6 +1025,12 @@ readonly messageActionsDisabled = computed(
           ...items.filter((t) => t.taskId !== event.payload.task.taskId),
         ]);
         return;
+      case 'tool_progress':
+        this.toolProgressByToolUseId.update((items) => ({
+          ...items,
+          [event.payload.progress.toolUseId]: event.payload.progress,
+        }));
+        return;
       case 'message_start':
       case 'thinking_start':
       case 'tool_use':
@@ -1207,6 +1219,11 @@ readonly messageActionsDisabled = computed(
     this.updatePendingPrompts(state.pendingPrompts ?? []);
     this.lastError.set(state.lastError);
     this.tasks.set(state.tasks);
+    this.toolProgressByToolUseId.set(
+      state.latestToolProgress
+        ? { [state.latestToolProgress.toolUseId]: state.latestToolProgress }
+        : {},
+    );
     this.sessionMetadata.set(state.sessionMetadata);
     this.subagents.set(state.subagents);
     this.recentHookEvents.set(state.recentHookEvents);
@@ -1250,6 +1267,7 @@ readonly messageActionsDisabled = computed(
     this.cancelledPendingPromptIds.clear();
     this.autocompleteItems.set([]);
     this.tasks.set([]);
+    this.toolProgressByToolUseId.set({});
     this.tasksDrawerOpen.set(false);
     this.mcpDrawerOpen.set(false);
     this.mcpLoading.set(false);

@@ -1,9 +1,13 @@
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeToolCallComponent } from './claude-tool-call.component';
 
 describe('ClaudeToolCallComponent', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('renders structured ask-user-question answers from interaction metadata', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeToolCallComponent],
@@ -74,5 +78,41 @@ describe('ClaudeToolCallComponent', () => {
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
     expect(text).toContain('Deny');
     expect(text).toContain('rm -rf tmp');
+  });
+
+  it('shows a running timer for live Bash tool calls', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-24T08:00:20.000Z'));
+
+    await TestBed.configureTestingModule({
+      imports: [ClaudeToolCallComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'tool-3',
+      kind: 'tool_use',
+      toolUseId: 'tool-3',
+      toolName: 'Bash',
+      toolInput: { command: 'pnpm test' },
+      timestamp: '2026-04-24T08:00:00.000Z',
+      receivedAt: '2026-04-24T08:00:00.000Z',
+    });
+    fixture.componentRef.setInput('isLive', true);
+    fixture.componentRef.setInput('progress', {
+      toolUseId: 'tool-3',
+      toolName: 'Bash',
+      parentToolUseId: null,
+      elapsedTimeSeconds: 12,
+      timestamp: '2026-04-24T08:00:15.000Z',
+    });
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement as HTMLElement).textContent ?? '').toContain('Running 17s');
+
+    vi.advanceTimersByTime(3000);
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement as HTMLElement).textContent ?? '').toContain('Running 20s');
   });
 });
