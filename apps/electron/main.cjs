@@ -1316,14 +1316,6 @@ function getRemoteInstallStatus(preflight, bundledVersion) {
     return 'needs-update';
   }
 
-  if (
-    bundledVersion
-    && preflight.backendReachable
-    && preflight.runningBackendVersion !== bundledVersion
-  ) {
-    return 'needs-update';
-  }
-
   return 'available';
 }
 
@@ -1401,6 +1393,7 @@ async function tryRemoteDownloadAsync(forward, url, remoteDestination) {
 }
 
 function emitRemoteServerPhaseEvent(serverId, phase) {
+  console.info('[remote-runtime] phase', { serverId, phase });
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
@@ -1414,9 +1407,27 @@ async function ensureRemoteServerReady(forward) {
     throw new Error('Remote runtime version is unavailable.');
   }
 
+  console.info('[remote-runtime] ensure ready', {
+    serverId: forward.id,
+    host: forward.sshHost,
+    localPort: forward.localPort,
+    remotePort: forward.remotePort,
+    bundledVersion,
+  });
   emitRemoteServerPhaseEvent(forward.id, 'checking');
   const preflightResult = await runSshCommandAsync(forward, buildRemotePreflightScript(forward.remotePort || 11111));
   const preflight = parseRemotePreflight(preflightResult.stdout);
+  console.info('[remote-runtime] preflight result', {
+    serverId: forward.id,
+    remotePlatform: preflight.remotePlatform,
+    remoteArch: preflight.remoteArch,
+    remoteTarget: preflight.remoteTarget,
+    currentVersion: preflight.currentVersion,
+    runningBackendVersion: preflight.runningBackendVersion,
+    backendReachable: preflight.backendReachable,
+    tmuxSessionPresent: preflight.tmuxSessionPresent,
+    missingDependencies: preflight.missingDependencies,
+  });
 
   if (preflight.remotePlatform !== 'linux') {
     return toRemoteEnsureReadyResult(forward, preflight, {
@@ -1448,6 +1459,15 @@ async function ensureRemoteServerReady(forward) {
   }
 
   const installStatus = getRemoteInstallStatus(preflight, bundledVersion);
+  const runningVersionMismatch = Boolean(
+    bundledVersion
+    && preflight.backendReachable
+    && preflight.runningBackendVersion !== bundledVersion,
+  );
+  const needsRuntimeRestart = installStatus === 'missing'
+    || installStatus === 'needs-update'
+    || !preflight.backendReachable
+    || runningVersionMismatch;
   const remoteArchivePath = `~/.elevenex/tmp/elevenex-${bundledVersion}-${preflight.remoteTarget}.tar.gz`;
   const remoteReleaseDir = `~/.elevenex/releases/${bundledVersion}-${preflight.remoteTarget}`;
   const remoteCurrentLink = '~/.elevenex/current';
@@ -1480,13 +1500,17 @@ async function ensureRemoteServerReady(forward) {
     );
   }
 
-  if (installStatus === 'missing' || installStatus === 'needs-update' || !preflight.backendReachable) {
+  if (needsRuntimeRestart) {
     emitRemoteServerPhaseEvent(forward.id, 'starting');
     await runSshCommandAsync(
       forward,
       buildRemoteStartCommand({
         remoteRoot: remoteCurrentRoot,
         remotePort: forward.remotePort || 11111,
+        forcePortCleanup: preflight.backendReachable && (
+          installStatus === 'needs-update'
+          || runningVersionMismatch
+        ),
       }),
     );
   }
@@ -3057,7 +3081,29 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (_event, payload) =>
     throw new Error('SSH host is required');
   }
 
-  const result = await ensureRemoteServerReady(forward);
+  let result;
+  try {
+    result = await ensureRemoteServerReady(forward);
+  } catch (error) {
+    console.error('[remote-runtime] ensure-ready failed', {
+      serverId: forward.id,
+      message: error instanceof Error ? error.message : `${error}`,
+    });
+    result = {
+      status: 'error',
+      installPhase: 'starting',
+      installStatus: 'unknown',
+      remotePlatform: 'unknown',
+      remoteArch: 'unknown',
+      missingDependencies: [],
+      message: error instanceof Error ? error.message : 'Remote runtime setup failed.',
+      localPort: null,
+      sessionId: null,
+      osRelease: {},
+      suggestedCommands: [],
+      version: getRemoteRuntimeVersion(),
+    };
+  }
   if (result.status === 'ready' || result.status === 'error' || result.status === 'unsupported') {
     destroyRemoteInstallerSessionForServer(forward.id);
   }
@@ -3071,7 +3117,29 @@ ipcMain.handle('elevenex-remote-server:recheck', async (_event, payload) => {
     throw new Error('Remote installer session not found');
   }
 
-  const result = await ensureRemoteServerReady(payload);
+  let result;
+  try {
+    result = await ensureRemoteServerReady(payload);
+  } catch (error) {
+    console.error('[remote-runtime] recheck failed', {
+      sessionId,
+      message: error instanceof Error ? error.message : `${error}`,
+    });
+    result = {
+      status: 'error',
+      installPhase: 'starting',
+      installStatus: 'unknown',
+      remotePlatform: 'unknown',
+      remoteArch: 'unknown',
+      missingDependencies: [],
+      message: error instanceof Error ? error.message : 'Remote runtime setup failed.',
+      localPort: null,
+      sessionId,
+      osRelease: {},
+      suggestedCommands: [],
+      version: getRemoteRuntimeVersion(),
+    };
+  }
   if (result.status === 'ready' || result.status === 'error' || result.status === 'unsupported') {
     destroyRemoteInstallerSession(sessionId);
   }
