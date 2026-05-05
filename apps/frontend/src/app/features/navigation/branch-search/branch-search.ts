@@ -57,6 +57,7 @@ export class BranchSearch {
   searchingRemote = signal(false);
   selectedIndex = signal(0);
   creating = signal(false);
+  selectingBranchName = signal<string | null>(null);
 
   // Step 2: origin selection
   dialogStep = signal<'search' | 'selectOrigin'>('search');
@@ -167,6 +168,7 @@ export class BranchSearch {
     this.searchRemoteResults.set([]);
     this.selectedIndex.set(0);
     this.creating.set(false);
+    this.selectingBranchName.set(null);
     this.dialogStep.set('search');
     this.pendingBranchName.set('');
     this.originSearchQuery.set('');
@@ -263,14 +265,26 @@ export class BranchSearch {
   }
 
   selectBranch(branch: BranchInfo) {
+    if (this.creating()) {
+      return;
+    }
+
     const repo = this.repos().find((r) => r.id === this.selectedRepoId());
     if (repo) {
-      this.branchSelected.emit({ repo, branch });
-      this.close();
+      this.creating.set(true);
+      this.selectingBranchName.set(branch.name);
+      setTimeout(() => {
+        this.branchSelected.emit({ repo, branch });
+        this.close();
+      }, 0);
     }
   }
 
   selectRemoteBranch(branch: BranchInfo) {
+    if (this.creating()) {
+      return;
+    }
+
     const repoId = this.selectedRepoId();
     if (!repoId) return;
 
@@ -279,6 +293,7 @@ export class BranchSearch {
     if (!repo) return;
 
     this.creating.set(true);
+    this.selectingBranchName.set(branch.name);
     this.branchesService
       .createBranch(repoId, localName, branch.name)
       .subscribe({
@@ -290,6 +305,7 @@ export class BranchSearch {
         },
         error: (err) => {
           this.creating.set(false);
+          this.selectingBranchName.set(null);
           const msg = err?.error?.message || 'Unknown error';
           toast.error(`Could not create branch. ${msg}`);
         },
@@ -297,6 +313,10 @@ export class BranchSearch {
   }
 
   createBranch() {
+    if (this.creating()) {
+      return;
+    }
+
     const repoId = this.selectedRepoId();
     const branchName = this.searchQuery().trim();
 
@@ -314,12 +334,17 @@ export class BranchSearch {
   }
 
   selectOriginBranch(branch: BranchInfo) {
+    if (this.creating()) {
+      return;
+    }
+
     const repoId = this.selectedRepoId();
     const branchName = this.pendingBranchName();
 
     if (!repoId || !branchName) return;
 
     this.creating.set(true);
+    this.selectingBranchName.set(branch.name);
     this.branchesService
       .createBranch(repoId, branchName, branch.name)
       .subscribe({
@@ -334,6 +359,7 @@ export class BranchSearch {
         },
         error: (err) => {
           this.creating.set(false);
+          this.selectingBranchName.set(null);
           const msg = err?.error?.message || 'Unknown error';
           toast.error(`Could not create branch. ${msg}`);
         },

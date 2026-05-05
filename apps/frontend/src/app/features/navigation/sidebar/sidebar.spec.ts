@@ -587,6 +587,34 @@ describe('Sidebar', () => {
     expect(el.textContent).toContain('Feature Session');
   });
 
+  it('shows an opening state and ignores duplicate worktree sheet opens', () => {
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const repo = tree()[0].repos[0];
+    const branch = {
+      ...makeBranch(),
+      name: 'feature',
+      label: 'feature',
+      hasWorktree: false,
+      worktreePath: null,
+      sessions: [],
+    };
+    const worktreeSheet = { open: vi.fn() };
+    component.worktreeSheet = worktreeSheet as any;
+
+    component.openCreateWorktree(repo, branch);
+
+    expect(component.openingWorktreeBranchKey()).toBe('1:feature');
+    expect(component.isOpeningWorktree(repo, branch)).toBe(true);
+
+    component.openCreateWorktree(repo, { ...branch, name: 'other', label: 'other' });
+    vi.advanceTimersByTime(0);
+
+    expect(worktreeSheet.open).toHaveBeenCalledOnce();
+    expect(worktreeSheet.open).toHaveBeenCalledWith(1, 'feature', '/tmp/repo-one', false);
+    expect(component.openingWorktreeBranchKey()).toBeNull();
+  });
+
   it('removes a worktree from the project without calling destructive worktree deletion', () => {
     tabServiceMock.getTabsByWorktree.mockReturnValue([
       {

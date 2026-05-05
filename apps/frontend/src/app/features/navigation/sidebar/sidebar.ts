@@ -169,6 +169,7 @@ export class Sidebar implements OnInit, OnDestroy {
   removeFromProjectPath = signal('');
   removeFromProjectBranch = signal('');
   removingFromProject = signal(false);
+  openingWorktreeBranchKey = signal<string | null>(null);
 
   armedDeleteSessionId = signal<number | null>(null);
   deleteSessionConfirmEnabled = signal(false);
@@ -177,6 +178,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private sessionDeleteDismissTimer: number | null = null;
   private projectRevealTimer: number | null = null;
   private projectHighlightTimer: number | null = null;
+  private openWorktreeTimer: number | null = null;
 
   private getOpenWorktreePathForSession(sessionId: number): string | null {
     return this.tabService.tabs().find(tab => tab.sessionId === sessionId)?.worktreePath ?? null;
@@ -224,6 +226,10 @@ export class Sidebar implements OnInit, OnDestroy {
 
     if (this.projectHighlightTimer !== null) {
       window.clearTimeout(this.projectHighlightTimer);
+    }
+
+    if (this.openWorktreeTimer !== null) {
+      window.clearTimeout(this.openWorktreeTimer);
     }
   }
 
@@ -478,6 +484,10 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   createSessionOnBranch(repo: NavigationRepo, branch: NavigationBranch) {
+    if (this.openingWorktreeBranchKey() !== null) {
+      return;
+    }
+
     if (branch.hasWorktree) {
       // Branch has worktree - create session directly
       this.sessionsService.create({
@@ -496,12 +506,16 @@ export class Sidebar implements OnInit, OnDestroy {
       });
     } else {
       // Branch has no worktree - prompt worktree creation first
-      this.worktreeSheet.open(repo.id, branch.name, repo.path, true);
+      this.openCreateWorktreeSheet(repo, branch.name, true);
     }
   }
 
   openCreateWorktree(repo: NavigationRepo, branch: NavigationBranch) {
-    this.worktreeSheet.open(repo.id, branch.name, repo.path, false);
+    this.openCreateWorktreeSheet(repo, branch.name, false);
+  }
+
+  isOpeningWorktree(repo: NavigationRepo, branch: NavigationBranch): boolean {
+    return this.openingWorktreeBranchKey() === this.getWorktreeBranchKey(repo.id, branch.name);
   }
 
   async openInCursor(repo: NavigationRepo, branch: NavigationBranch) {
@@ -841,8 +855,28 @@ export class Sidebar implements OnInit, OnDestroy {
         },
       });
     } else {
-      this.worktreeSheet.open(repo.id, branch.name, repo.path, true);
+      this.openCreateWorktreeSheet(repo, branch.name, true);
     }
+  }
+
+  private openCreateWorktreeSheet(repo: NavigationRepo, branchName: string, autoCreateSession: boolean) {
+    if (this.openingWorktreeBranchKey() !== null) {
+      return;
+    }
+
+    this.openingWorktreeBranchKey.set(this.getWorktreeBranchKey(repo.id, branchName));
+    this.openWorktreeTimer = window.setTimeout(() => {
+      this.openWorktreeTimer = null;
+      try {
+        this.worktreeSheet.open(repo.id, branchName, repo.path, autoCreateSession);
+      } finally {
+        this.openingWorktreeBranchKey.set(null);
+      }
+    }, 0);
+  }
+
+  private getWorktreeBranchKey(repoId: number, branchName: string): string {
+    return `${repoId}:${branchName}`;
   }
 
   private revealProjectRow(projectId: number) {

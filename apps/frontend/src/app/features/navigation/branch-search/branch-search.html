@@ -54,9 +54,12 @@
                 <button
                   class="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-accent"
                   [class.bg-accent]="i === selectedIndex()"
+                  [disabled]="creating()"
                   (click)="selectBranch(branch)"
                   (mouseenter)="selectedIndex.set(i)">
-                  @if (branch.hasWorktree) {
+                  @if (selectingBranchName() === branch.name) {
+                    <ng-icon name="lucideLoader2" class="!w-4 !h-4 animate-spin text-muted-foreground shrink-0" />
+                  } @else if (branch.hasWorktree) {
                     <ng-icon name="lucideGitBranch" class="!w-4 !h-4 text-foreground shrink-0" />
                   } @else {
                     <ng-icon name="lucideCircleDashed" class="!w-4 !h-4 text-muted-foreground shrink-0" />
@@ -87,7 +90,11 @@
                   [disabled]="creating()"
                   (click)="selectRemoteBranch(branch)"
                   (mouseenter)="selectedIndex.set(i + searchResults().length)">
-                  <ng-icon name="lucideGlobe2" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  @if (selectingBranchName() === branch.name) {
+                    <ng-icon name="lucideLoader2" class="!w-4 !h-4 animate-spin text-muted-foreground shrink-0" />
+                  } @else {
+                    <ng-icon name="lucideGlobe2" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  }
                   <span class="text-sm text-muted-foreground truncate">{{ branch.name }}</span>
                 </button>
               </li>
@@ -100,6 +107,7 @@
               <button
                 class="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-accent border-t border-border mt-1"
                 [class.bg-accent]="selectedIndex() === searchResults().length + visibleRemoteResults().length"
+                [disabled]="creating()"
                 (click)="createBranch()"
                 (mouseenter)="selectedIndex.set(searchResults().length + visibleRemoteResults().length)">
                 <ng-icon name="lucidePlus" class="!w-4 !h-4 text-primary shrink-0" />
@@ -148,7 +156,11 @@
                   [disabled]="creating()"
                   (click)="selectOriginBranch(branch)"
                   (mouseenter)="originSelectedIndex.set(i)">
-                  <ng-icon name="lucideGitBranch" class="!w-4 !h-4 text-foreground shrink-0" />
+                  @if (selectingBranchName() === branch.name) {
+                    <ng-icon name="lucideLoader2" class="!w-4 !h-4 animate-spin text-muted-foreground shrink-0" />
+                  } @else {
+                    <ng-icon name="lucideGitBranch" class="!w-4 !h-4 text-foreground shrink-0" />
+                  }
                   <span class="text-sm text-foreground truncate">{{ branch.name }}</span>
                   @if (branch.current) {
                     <span class="text-xs text-primary ml-auto">current</span>
@@ -176,7 +188,11 @@
                   [disabled]="creating()"
                   (click)="selectOriginBranch(branch)"
                   (mouseenter)="originSelectedIndex.set(i + originLocalResults().length)">
-                  <ng-icon name="lucideGlobe2" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  @if (selectingBranchName() === branch.name) {
+                    <ng-icon name="lucideLoader2" class="!w-4 !h-4 animate-spin text-muted-foreground shrink-0" />
+                  } @else {
+                    <ng-icon name="lucideGlobe2" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  }
                   <span class="text-sm text-muted-foreground truncate">{{ branch.name }}</span>
                 </button>
               </li>

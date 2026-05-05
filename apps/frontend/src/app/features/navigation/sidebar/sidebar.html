@@ -155,6 +155,8 @@
                 <!-- Branch node -->
                 <button
                   class="sidebar-tree-row w-full text-left group"
+                  [class.sidebar-tree-row--busy]="isOpeningWorktree(repo, branch)"
+                  [disabled]="branch.isPendingCreation || openingWorktreeBranchKey() !== null"
                   [style.padding-left]="'48px'"
                   (click)="onBranchClick(repo, branch)">
                   @if (branch.sessions && branch.sessions.length > 0) {
@@ -162,17 +164,19 @@
                   } @else {
                     <span class="w-4 shrink-0"></span>
                   }
-                  @if (branch.isPendingCreation) {
+                  @if (branch.isPendingCreation || isOpeningWorktree(repo, branch)) {
                     <span class="inline-block w-4 h-4 shrink-0 rounded-full border-2 border-muted-foreground/50 border-t-transparent animate-spin"></span>
                   } @else if (branch.hasWorktree) {
                     <ng-icon name="lucideGitBranch" class="!w-4 !h-4 text-foreground shrink-0" />
                   } @else {
                     <ng-icon name="lucideCircleDashed" class="!w-4 !h-4 text-muted-foreground shrink-0" />
                   }
-<span class="text-sm truncate flex-1" [class.text-foreground]="branch.hasWorktree || branch.isPendingCreation" [class.text-muted-foreground]="!branch.hasWorktree && !branch.isPendingCreation" [title]="branch.name">{{ branch.name }}</span>
+<span class="text-sm truncate flex-1" [class.text-foreground]="branch.hasWorktree || branch.isPendingCreation || isOpeningWorktree(repo, branch)" [class.text-muted-foreground]="!branch.hasWorktree && !branch.isPendingCreation && !isOpeningWorktree(repo, branch)" [title]="branch.name">{{ branch.name }}</span>
                    <!-- Action buttons (visible on hover) -->
                    <span class="sidebar-actions">
-                     @if (branch.isPendingCreation) {
+                     @if (isOpeningWorktree(repo, branch)) {
+                       <span class="text-xs text-muted-foreground" [attr.data-opening-worktree-branch]="branch.name">Opening…</span>
+                     } @else if (branch.isPendingCreation) {
                        <span class="text-xs text-muted-foreground" [attr.data-pending-worktree-branch]="branch.name">Creating…</span>
                      } @else if (branch.hasWorktree) {
                        <button
@@ -210,6 +214,7 @@
                          class="sidebar-branch-action"
                          title="Create Worktree"
                          aria-label="Create Worktree"
+                         [disabled]="openingWorktreeBranchKey() !== null"
                          (click)="$event.stopPropagation(); openCreateWorktree(repo, branch)">
                          <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                        </button>

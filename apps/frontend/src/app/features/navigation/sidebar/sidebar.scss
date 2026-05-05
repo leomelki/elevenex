@@ -485,6 +485,17 @@
   transform: translateY(-1px);
 }
 
+.sidebar-tree-row:disabled,
+.sidebar-branch-action:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  transform: none;
+}
+
+.sidebar-tree-row--busy {
+  background: color-mix(in oklch, var(--sidebar-accent) 64%, transparent);
+}
+
 .sidebar-branch-action--soft {
   color: color-mix(in oklch, var(--muted-foreground) 92%, oklch(0.62 0.06 210));
   background: linear-gradient(180deg, color-mix(in oklch, var(--background) 92%, transparent), color-mix(in oklch, var(--muted) 48%, transparent));
