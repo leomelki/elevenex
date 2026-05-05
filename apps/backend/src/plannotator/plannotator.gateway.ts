@@ -199,6 +199,7 @@ export class PlannotatorGateway
 
   private handleProxyClose(upstreamPort: number): void {
     this.registry.handleProxyClose(upstreamPort);
+    this.sessionWatcher.terminateSessionByPort(upstreamPort);
   }
 
   private handlePanelClosed(sessionId: number, upstreamPort: number): void {
@@ -239,7 +240,10 @@ export class PlannotatorGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { sessionId: number },
   ): void {
-    this.registry.handleClientClose(data.sessionId);
+    const panel = this.registry.handleClientClose(data.sessionId);
+    if (panel) {
+      this.sessionWatcher.terminateSessionByPort(panel.upstreamPort);
+    }
     client.emit('panel-closed', { sessionId: data.sessionId });
   }
 

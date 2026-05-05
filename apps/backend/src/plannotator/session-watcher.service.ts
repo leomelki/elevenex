@@ -205,6 +205,34 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
     return this.knownSessions.get(pid) || null;
   }
 
+  terminateSessionByPort(port: number): boolean {
+    const session = this.getSessionByPort(port);
+    if (!session) {
+      return false;
+    }
+
+    try {
+      process.kill(session.pid, 'SIGTERM');
+    } catch (error) {
+      this.logger.warn(`Failed to terminate plannotator pid=${session.pid}: ${error}`);
+      return false;
+    }
+
+    setTimeout(() => {
+      if (!this.isProcessAlive(session.pid)) {
+        return;
+      }
+
+      try {
+        process.kill(session.pid, 'SIGKILL');
+      } catch {
+        // Process already exited.
+      }
+    }, 5000);
+
+    return true;
+  }
+
   getMatchingSessionId(port: number): number | null {
     const session = this.getSessionByPort(port);
     if (!session) return null;
