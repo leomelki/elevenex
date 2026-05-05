@@ -41,6 +41,13 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
         this.broadcast({ type: 'session-last-state-change-changed', ...data });
       },
     );
+
+    this.sessionsService.on(
+      'session-title-changed',
+      (data: { sessionId: number; name: string | null }) => {
+        this.broadcast({ type: 'session-title-changed', ...data });
+      },
+    );
   }
 
   attachToServer(server: HttpServer): void {

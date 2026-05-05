@@ -31,6 +31,7 @@ describe('ClaudeRuntimeService', () => {
     findOne: jest.Mock;
     updateStatus: jest.Mock;
     updateClaudeSessionId: jest.Mock;
+    renameFromGeneratedTitle: jest.Mock;
   };
   let hooksService: EventEmitter & {
     updateStatus: jest.Mock;
@@ -93,6 +94,7 @@ describe('ClaudeRuntimeService', () => {
       }),
       updateStatus: jest.fn(),
       updateClaudeSessionId: jest.fn(),
+      renameFromGeneratedTitle: jest.fn(),
     };
 
     hooksService = Object.assign(new EventEmitter(), {
@@ -1055,6 +1057,188 @@ describe('ClaudeRuntimeService', () => {
     expect((query as jest.Mock).mock.calls[0][0].options).not.toHaveProperty(
       'pathToClaudeCodeExecutable',
     );
+  });
+
+  it('generates a Haiku title for the first prompt of an auto-named session', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 7,
+      name: 'Session 7',
+      worktreePath: '/tmp/project',
+      claudeSessionId: '-1',
+    });
+    const runtimeClose = jest.fn();
+    const titleClose = jest.fn();
+    (query as jest.Mock).mockImplementation(({ prompt }) => {
+      const isTitleQuery = String(prompt).includes('Name this Claude Code session');
+      return {
+        supportedModels: jest.fn().mockResolvedValue([]),
+        getContextUsage: jest.fn().mockResolvedValue({
+          model: 'sonnet',
+          totalTokens: 0,
+          maxTokens: 0,
+          percentage: 0,
+          apiUsage: undefined,
+          autoCompactThreshold: 0,
+          isAutoCompactEnabled: false,
+          memoryFiles: [],
+          mcpTools: [],
+        }),
+        close: isTitleQuery ? titleClose : runtimeClose,
+        [Symbol.asyncIterator]: () => {
+          let emitted = false;
+          return {
+            next: async () => {
+              if (!isTitleQuery) {
+                return { done: true, value: undefined };
+              }
+
+              if (emitted) {
+                return { done: true, value: undefined };
+              }
+              emitted = true;
+              return {
+                done: false,
+                value: {
+                  type: 'assistant',
+                  message: {
+                    content: [{ type: 'text', text: 'Implement Auto Names' }],
+                  },
+                },
+              };
+            },
+          };
+        },
+      };
+    });
+
+    await service.submitPrompt(7, 'Please implement auto names', 'Please implement auto names');
+    await new Promise((resolve) => setImmediate(resolve));
+    await Promise.resolve();
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect((query as jest.Mock).mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          model: 'haiku',
+          permissionMode: 'plan',
+          cwd: '/tmp/project',
+        }),
+      }),
+    );
+    expect(sessionsService.renameFromGeneratedTitle).toHaveBeenCalledWith(
+      7,
+      'Implement Auto Names',
+    );
+    expect(titleClose).toHaveBeenCalled();
+  });
+
+  it('does not generate a title for resumed sessions', async () => {
+    (query as jest.Mock).mockReturnValue({
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest.fn().mockResolvedValue({
+        model: 'sonnet',
+        totalTokens: 0,
+        maxTokens: 0,
+        percentage: 0,
+        apiUsage: undefined,
+        autoCompactThreshold: 0,
+        isAutoCompactEnabled: false,
+        memoryFiles: [],
+        mcpTools: [],
+      }),
+      close: jest.fn(),
+      [Symbol.asyncIterator]: () => ({
+        next: async () => ({ done: true, value: undefined }),
+      }),
+    });
+
+    await service.submitPrompt(7, 'Continue this');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(sessionsService.renameFromGeneratedTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not generate a title for manually named first-message sessions', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 7,
+      name: 'Manual Session Name',
+      worktreePath: '/tmp/project',
+      claudeSessionId: '-1',
+    });
+    (query as jest.Mock).mockReturnValue({
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest.fn().mockResolvedValue({
+        model: 'sonnet',
+        totalTokens: 0,
+        maxTokens: 0,
+        percentage: 0,
+        apiUsage: undefined,
+        autoCompactThreshold: 0,
+        isAutoCompactEnabled: false,
+        memoryFiles: [],
+        mcpTools: [],
+      }),
+      close: jest.fn(),
+      [Symbol.asyncIterator]: () => ({
+        next: async () => ({ done: true, value: undefined }),
+      }),
+    });
+
+    await service.submitPrompt(7, 'Start this');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(sessionsService.renameFromGeneratedTitle).not.toHaveBeenCalled();
+  });
+
+  it('normalizes generated titles to five words without markdown or punctuation', () => {
+    expect(
+      (service as any).normalizeGeneratedSessionTitle(
+        '```text\n"Implement Auto Session Names Quickly Now Please!"\n```',
+      ),
+    ).toBe('Implement Auto Session Names Quickly');
+  });
+
+  it('leaves the session name unchanged when Haiku title generation fails', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 7,
+      name: 'Session 7',
+      worktreePath: '/tmp/project',
+      claudeSessionId: '-1',
+    });
+    (query as jest.Mock).mockImplementation(({ prompt }) => {
+      const isTitleQuery = String(prompt).includes('Name this Claude Code session');
+      return {
+        supportedModels: jest.fn().mockResolvedValue([]),
+        getContextUsage: jest.fn().mockResolvedValue({
+          model: 'sonnet',
+          totalTokens: 0,
+          maxTokens: 0,
+          percentage: 0,
+          apiUsage: undefined,
+          autoCompactThreshold: 0,
+          isAutoCompactEnabled: false,
+          memoryFiles: [],
+          mcpTools: [],
+        }),
+        close: jest.fn(),
+        [Symbol.asyncIterator]: () => ({
+          next: async () => {
+            if (isTitleQuery) {
+              throw new Error('title failed');
+            }
+            return { done: true, value: undefined };
+          },
+        }),
+      };
+    });
+
+    await service.submitPrompt(7, 'Start this');
+    await new Promise((resolve) => setImmediate(resolve));
+    await Promise.resolve();
+
+    expect(sessionsService.renameFromGeneratedTitle).not.toHaveBeenCalled();
   });
 
   it('does not block the first Claude stream event on initial metadata refresh', async () => {

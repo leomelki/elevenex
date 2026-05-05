@@ -717,7 +717,7 @@ export type ClaudeRuntimeEvent =
 
 export type ClaudeRuntimeClientAction =
   | { type: 'hydrate' }
-  | { type: 'submit_prompt'; prompt: string }
+  | { type: 'submit_prompt'; prompt: string; titlePrompt?: string }
   | { type: 'interrupt' }
   | {
       type: 'approve_permission';

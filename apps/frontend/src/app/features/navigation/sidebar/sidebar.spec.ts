@@ -191,6 +191,7 @@ describe('Sidebar', () => {
     getStatus: vi.fn(() => 'idle'),
     getSessionStatus: vi.fn(() => null),
     getSessionCompletion: vi.fn(() => null),
+    sessionTitles: signal(new Map<number, string>()).asReadonly(),
   };
   const pendingWorktreeCreationsMock = {
     getByRepo: vi.fn<(repoId: number) => any[]>(() => []),

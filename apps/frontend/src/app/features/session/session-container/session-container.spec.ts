@@ -26,6 +26,7 @@ describe('SessionContainer modal browser gating', () => {
   const modalActiveSignal = signal(false);
   const claudeStatusesSignal = signal(new Map<number, string>());
   const claudeCompletionsSignal = signal(new Map<number, any>());
+  const claudeTitlesSignal = signal(new Map<number, string>());
   const reconnectSignal = signal(0);
 
   const tabServiceMock = {
@@ -35,6 +36,7 @@ describe('SessionContainer modal browser gating', () => {
     activeTab: () => tabsSignal().find(tab => tab.sessionId === activeSessionIdSignal()) ?? null,
     updateTabStatus: vi.fn(),
     updateTabCompletion: vi.fn(),
+    updateTabName: vi.fn(),
     getOpenSessionIds: vi.fn(() => []),
     getSavedState: vi.fn(() => null),
     selectTab: vi.fn(),
@@ -103,6 +105,7 @@ describe('SessionContainer modal browser gating', () => {
   const claudeStatusServiceMock = {
     sessionStatuses: claudeStatusesSignal.asReadonly(),
     sessionCompletions: claudeCompletionsSignal.asReadonly(),
+    sessionTitles: claudeTitlesSignal.asReadonly(),
     onReconnect: reconnectSignal.asReadonly(),
     setSessionCompletion: vi.fn(),
   };
@@ -133,6 +136,7 @@ describe('SessionContainer modal browser gating', () => {
     modalActiveSignal.set(false);
     claudeStatusesSignal.set(new Map());
     claudeCompletionsSignal.set(new Map());
+    claudeTitlesSignal.set(new Map());
     reconnectSignal.set(0);
     vi.clearAllMocks();
 
@@ -206,5 +210,15 @@ describe('SessionContainer modal browser gating', () => {
     element = fixture.nativeElement as HTMLElement;
     expect(element.querySelector('.browser-panel-live')).toBeTruthy();
     expect(element.querySelector('.browser-panel-placeholder')).toBeNull();
+  });
+
+  it('mirrors generated session titles into open tabs', () => {
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    claudeTitlesSignal.set(new Map([[42, 'Implement Auto Names']]));
+    fixture.detectChanges();
+
+    expect(tabServiceMock.updateTabName).toHaveBeenCalledWith(42, 'Implement Auto Names');
   });
 });

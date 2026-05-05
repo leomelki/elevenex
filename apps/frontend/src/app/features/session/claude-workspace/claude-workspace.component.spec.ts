@@ -465,6 +465,7 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(wsMock.send).toHaveBeenCalledWith(7, {
       type: 'submit_prompt',
       prompt: 'Ship this change',
+      titlePrompt: 'Ship this change',
     });
     vi.useRealTimers();
   });

@@ -25,6 +25,9 @@ export class ClaudeStatusService implements OnDestroy {
   private _sessionCompletions = signal(new Map<number, SessionCompletionState>());
   readonly sessionCompletions = this._sessionCompletions.asReadonly();
 
+  private _sessionTitles = signal(new Map<number, string>());
+  readonly sessionTitles = this._sessionTitles.asReadonly();
+
   private _onReconnect = signal(0);
   readonly onReconnect = this._onReconnect.asReadonly();
 
@@ -52,6 +55,12 @@ export class ClaudeStatusService implements OnDestroy {
     const map = new Map(this._sessionCompletions());
     map.set(sessionId, completion);
     this._sessionCompletions.set(map);
+  }
+
+  setSessionTitle(sessionId: number, name: string): void {
+    const map = new Map(this._sessionTitles());
+    map.set(sessionId, name);
+    this._sessionTitles.set(map);
   }
 
   private connect(): void {
@@ -105,6 +114,10 @@ export class ClaudeStatusService implements OnDestroy {
               lastCompletionKind: current?.lastCompletionKind ?? null,
               lastStateChangeAt: data.lastStateChangeAt ?? null,
             });
+          } else if (data.type === 'session-title-changed') {
+            if (typeof data.name === 'string' && data.name.trim()) {
+              this.setSessionTitle(data.sessionId, data.name);
+            }
           }
         } catch {
           // Ignore malformed messages

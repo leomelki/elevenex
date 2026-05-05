@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, OnDestroy, signal, ViewChild, ElementRef, effect, input, HostListener, computed } from '@angular/core';
+import { Component, inject, OnInit, OnDestroy, signal, ViewChild, ElementRef, effect, input, HostListener, computed, untracked } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -124,6 +124,15 @@ export class Sidebar implements OnInit, OnDestroy {
       this.wasConnecting = false;
       this.navService.refreshTree();
     }
+  });
+
+  private readonly sessionTitleEffect = effect(() => {
+    const sessionTitles = this.claudeStatus.sessionTitles();
+    if (sessionTitles.size === 0) {
+      return;
+    }
+
+    untracked(() => this.navService.refreshTree());
   });
 
   private readonly projectRevealEffect = effect(() => {

@@ -541,7 +541,11 @@ readonly messageActionsDisabled = computed(
     this.cancelArmedEdit();
     this.prompt.set('');
     const runtimePrompt = await this.prepareRuntimePrompt(trimmed);
-    this.ws.send(this.sessionId, { type: 'submit_prompt', prompt: runtimePrompt });
+    this.ws.send(this.sessionId, {
+      type: 'submit_prompt',
+      prompt: runtimePrompt,
+      titlePrompt: trimmed,
+    });
   }
 
   cancelPendingPrompt(id: string): void {
