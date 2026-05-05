@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/zsh
 
 set -eu
 
@@ -9,7 +9,12 @@ if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
   exec tmux attach-session -t "$SESSION_NAME"
 fi
 
+# Start the session with a login shell so each pane inherits the full user
+# environment (PATH, Volta, nvm, etc.) from ~/.zshrc / ~/.zprofile.
 tmux new-session -d -s "$SESSION_NAME" -c "$ROOT_DIR"
+tmux set-option -t "$SESSION_NAME" default-shell "$SHELL"
+tmux set-option -t "$SESSION_NAME" default-command "exec $SHELL -l"
+
 tmux send-keys -t "$SESSION_NAME:0.0" "pnpm backend:dev" C-m
 
 tmux split-window -h -t "$SESSION_NAME:0" -c "$ROOT_DIR"

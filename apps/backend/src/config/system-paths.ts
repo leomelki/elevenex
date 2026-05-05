@@ -17,6 +17,43 @@ export const COMMON_BINARY_PATHS: readonly string[] = [
   '/bin',
 ];
 
+// Load the user's full login-shell environment once at module init time.
+// This matters when the process was NOT started from a login shell (e.g. the
+// packaged Electron app launched from Finder/DMG, or launchd service). We
+// parse `zsh -l -c env` output and use it as a baseline so that user-defined
+// exports (VOLTA_HOME, GOPATH, tokens, custom PATHs …) are available to every
+// child process we spawn.
+let _shellEnvCache: NodeJS.ProcessEnv | null = null;
+
+function loadLoginShellEnv(): NodeJS.ProcessEnv {
+  if (_shellEnvCache) return _shellEnvCache;
+
+  const shell = process.env.SHELL || '/bin/zsh';
+  try {
+    const raw = execSync(`${shell} -l -c 'env'`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+      // Minimal env so the shell can start even if PATH is stripped.
+      env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin' },
+    });
+
+    const parsed: NodeJS.ProcessEnv = {};
+    for (const line of raw.split('\n')) {
+      const eq = line.indexOf('=');
+      if (eq === -1) continue;
+      const key = line.slice(0, eq);
+      const value = line.slice(eq + 1);
+      if (key) parsed[key] = value;
+    }
+    _shellEnvCache = parsed;
+  } catch {
+    // Shell not available or timed out — fall back to an empty baseline.
+    _shellEnvCache = {};
+  }
+
+  return _shellEnvCache;
+}
+
 export function findBinary(name: string): string | null {
   for (const dir of COMMON_BINARY_PATHS) {
     const candidate = join(dir, name);
@@ -81,8 +118,13 @@ function ensureUtf8Locale(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 export function buildAugmentedEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  // Merge order: login-shell baseline → caller's env (higher priority) → augmented PATH.
+  // This ensures user-defined exports (tokens, tool homes, custom vars) are present
+  // even when the backend was started without a login shell (Electron / Finder launch).
+  const shellEnv = loadLoginShellEnv();
+  const merged = { ...shellEnv, ...base };
   return ensureUtf8Locale({
-    ...base,
-    PATH: buildAugmentedPath(base.PATH || ''),
+    ...merged,
+    PATH: buildAugmentedPath(merged.PATH || ''),
   });
 }
