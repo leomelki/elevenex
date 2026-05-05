@@ -1,5 +1,5 @@
 <div class="cw-root">
-  <div #transcriptContainer class="cw-transcript">
+  <div #transcriptContainer class="cw-transcript" (scroll)="onTranscriptScroll()">
     @if (showLoading()) {
       <div class="cw-loading">
         <div class="cw-loading__stream">

@@ -188,6 +188,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly agentInspectorSelectedAgentId = signal<string | null>(null);
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
   readonly _permissionMode = signal<ClaudePermissionMode | null>(null);
+  private shouldAutoScrollTranscript = true;
+  private readonly transcriptBottomThresholdPx = 48;
   private readonly planBypassActive = signal(false);
   readonly permissionMode = computed<ClaudePermissionMode>(() => {
     const server = this._permissionMode() ?? this.sessionMetadata()?.permissionMode ?? 'auto';
@@ -483,7 +485,7 @@ readonly messageActionsDisabled = computed(
     effect(() => {
       this.pairedTranscript();
       this.runPhase();
-      queueMicrotask(() => this.scrollToBottom());
+      queueMicrotask(() => this.scrollTranscriptToBottomIfPinned());
     });
 
     // Re-hydrate the runtime WS after server reconnection to catch any missed events.
@@ -1282,12 +1284,28 @@ readonly messageActionsDisabled = computed(
     this.rewindingMessageId.set(null);
     this.closeAgentInspector();
     this.agentHistoryById.set({});
+    this.shouldAutoScrollTranscript = true;
+  }
+
+  onTranscriptScroll(): void {
+    const el = this.transcriptContainer?.nativeElement;
+    if (!el) return;
+    this.shouldAutoScrollTranscript = this.isTranscriptScrolledToBottom(el);
+  }
+
+  private scrollTranscriptToBottomIfPinned(): void {
+    if (!this.shouldAutoScrollTranscript) return;
+    this.scrollToBottom();
   }
 
   private scrollToBottom(): void {
     const el = this.transcriptContainer?.nativeElement;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
+  }
+
+  private isTranscriptScrolledToBottom(el: HTMLDivElement): boolean {
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= this.transcriptBottomThresholdPx;
   }
 
   private enqueueDelta(itemId: string, delta: string): void {

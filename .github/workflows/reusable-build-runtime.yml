@@ -58,14 +58,14 @@ jobs:
         run: |
           mkdir -p dist-runtime
           cp "apps/electron/.stage/remote-runtime/${{ matrix.target }}.tar.gz" \
-             "dist-runtime/elevenex-runtime-${{ matrix.target }}.tar.gz"
-          (cd dist-runtime && sha256sum "elevenex-runtime-${{ matrix.target }}.tar.gz" \
-            > "elevenex-runtime-${{ matrix.target }}.tar.gz.sha256")
+             "dist-runtime/elevenex-remote-runtime-${{ matrix.target }}.tar.gz"
+          (cd dist-runtime && sha256sum "elevenex-remote-runtime-${{ matrix.target }}.tar.gz" \
+            > "elevenex-remote-runtime-${{ matrix.target }}.tar.gz.sha256")
           ls -lh dist-runtime/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: elevenex-runtime-${{ matrix.target }}
+          name: elevenex-remote-runtime-${{ matrix.target }}
           path: dist-runtime/*
           if-no-files-found: error
           retention-days: 30

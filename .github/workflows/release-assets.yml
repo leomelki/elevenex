@@ -11,12 +11,16 @@ on:
       - 'vscode-filesystem-provider/**'
       - 'vscode-scm-extension/**'
       - 'scripts/stage-remote-runtime.js'
+      - 'scripts/stage-electron-backend.js'
       - 'scripts/prepare-vscode-web-runtime.js'
       - 'scripts/bundle-electron-backend.js'
+      - 'scripts/rebuild-electron-backend-natives.js'
+      - 'scripts/archive-electron-backend.js'
       - 'pnpm-lock.yaml'
       - '.github/workflows/release-assets.yml'
       - '.github/workflows/reusable-build-runtime.yml'
       - '.github/workflows/reusable-build-macos-desktop.yml'
+      - '.github/workflows/reusable-build-linux-desktop.yml'
   workflow_dispatch:
 
 concurrency:
@@ -33,11 +37,16 @@ jobs:
     uses: ./.github/workflows/reusable-build-macos-desktop.yml
     secrets: inherit
 
+  build-linux-desktop:
+    name: Build Linux desktop assets
+    uses: ./.github/workflows/reusable-build-linux-desktop.yml
+
   release:
     name: Publish release assets
     needs:
       - build-runtime
       - build-macos-dmg
+      - build-linux-desktop
     permissions:
       contents: write
     runs-on: ubuntu-22.04
@@ -57,12 +66,17 @@ jobs:
             "version": "${{ github.sha }}",
             "ref": "${{ github.ref }}",
             "targets": [
-              { "key": "linux-x64",   "archive": "elevenex-runtime-linux-x64.tar.gz" },
-              { "key": "linux-arm64", "archive": "elevenex-runtime-linux-arm64.tar.gz" },
-              { "key": "macos-arm64", "archive": "elevenex-runtime-macos-arm64.tar.gz" }
+              { "key": "linux-x64",   "archive": "elevenex-remote-runtime-linux-x64.tar.gz" },
+              { "key": "linux-arm64", "archive": "elevenex-remote-runtime-linux-arm64.tar.gz" }
+            ],
+            "desktopRuntime": [
+              { "key": "macos-arm64", "archive": "elevenex-runtime-macos-arm64.tar.gz" },
+              { "key": "linux-x64",   "archive": "elevenex-runtime-linux-x64.tar.gz" }
             ],
             "desktop": [
-              { "key": "macos-arm64", "archive": "elevenex-desktop-macos-arm64.dmg" }
+              { "key": "macos-arm64", "archive": "elevenex-desktop-macos-arm64.dmg" },
+              { "key": "linux-x64",   "archive": "elevenex-desktop-linux-x64.AppImage" },
+              { "key": "linux-x64",   "archive": "elevenex-desktop-linux-x64.deb" }
             ]
           }
           EOF
@@ -76,5 +90,6 @@ jobs:
           fail_on_unmatched_files: true
           body: |
             Auto-built release assets for commit `${{ github.sha }}`.
-            Includes remote runtime tarballs downloaded by the desktop app during remote install,
-            plus the macOS desktop DMG artifact.
+            Includes remote runtime tarballs downloaded during SSH setup,
+            local desktop runtime tarballs downloaded by packaged desktop apps,
+            plus macOS and Linux desktop artifacts.

@@ -1348,7 +1348,7 @@ function buildRemoteRuntimeDownloadUrl(version, targetKey) {
   if (!/^[a-f0-9]{7,64}$/i.test(version) && !/^v?\d+\.\d+\.\d+/.test(version)) {
     return null;
   }
-  return `${RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-runtime-${targetKey}.tar.gz`;
+  return `${RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-remote-runtime-${targetKey}.tar.gz`;
 }
 
 function buildDownloadScript(url, remoteDestination) {

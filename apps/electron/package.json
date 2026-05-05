@@ -10,7 +10,9 @@
     "start:debug": "ELECTRON_DEBUG_FRONTEND=1 electron .",
     "package": "electron-builder",
     "package:mac": "electron-builder --mac",
-    "package:mac:dir": "electron-builder --mac dir"
+    "package:mac:dir": "electron-builder --mac dir",
+    "package:linux": "electron-builder --linux",
+    "package:linux:dir": "electron-builder --linux dir"
   },
   "build": {
     "appId": "fr.leomelki.elevenex",
@@ -83,8 +85,16 @@
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.inherit.plist"
     },
+    "linux": {
+      "icon": "assets/macos-runtime-icon.png",
+      "category": "Development",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
     "dmg": {
-      "sign": false 
+      "sign": false
     }
   },
   "devDependencies": {

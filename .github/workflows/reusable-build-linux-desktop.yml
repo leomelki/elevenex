@@ -1,0 +1,75 @@
+name: Reusable Linux desktop build
+
+on:
+  workflow_call:
+
+jobs:
+  build-linux-desktop:
+    name: Build Linux desktop
+    permissions:
+      contents: read
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native build and packaging toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 make g++ fakeroot rpm
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.4
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build backend bundle and Linux runtime tarball
+        run: pnpm backend:bundle && pnpm electron:backend:prepare
+
+      - name: Build Linux desktop packages
+        run: pnpm frontend:build && pnpm electron:stage-version && pnpm --dir apps/electron package:linux
+
+      - name: Rename Linux desktop packages for release
+        run: |
+          set -eu
+          mkdir -p dist-desktop
+          APPIMAGE_PATH="$(find apps/electron/dist -maxdepth 1 -type f -name '*.AppImage' | head -n 1)"
+          DEB_PATH="$(find apps/electron/dist -maxdepth 1 -type f -name '*.deb' | head -n 1)"
+          test -n "$APPIMAGE_PATH" || { echo "No AppImage artifact produced"; exit 1; }
+          test -n "$DEB_PATH" || { echo "No deb artifact produced"; exit 1; }
+          cp "$APPIMAGE_PATH" "dist-desktop/elevenex-desktop-linux-x64.AppImage"
+          cp "$DEB_PATH" "dist-desktop/elevenex-desktop-linux-x64.deb"
+          (cd dist-desktop && sha256sum elevenex-desktop-linux-x64.AppImage > elevenex-desktop-linux-x64.AppImage.sha256)
+          (cd dist-desktop && sha256sum elevenex-desktop-linux-x64.deb > elevenex-desktop-linux-x64.deb.sha256)
+          ls -lh dist-desktop/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-desktop-linux-x64
+          path: dist-desktop/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Rename Linux desktop runtime tarball for release
+        run: |
+          set -eu
+          mkdir -p dist-runtime
+          cp apps/electron/.stage/backend.tar.gz \
+             dist-runtime/elevenex-runtime-linux-x64.tar.gz
+          (cd dist-runtime && sha256sum elevenex-runtime-linux-x64.tar.gz \
+            > elevenex-runtime-linux-x64.tar.gz.sha256)
+          ls -lh dist-runtime/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-runtime-linux-x64
+          path: dist-runtime/*
+          if-no-files-found: error
+          retention-days: 30

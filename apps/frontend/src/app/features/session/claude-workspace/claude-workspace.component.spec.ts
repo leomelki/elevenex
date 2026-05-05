@@ -145,6 +145,21 @@ describe('ClaudeWorkspaceComponent', () => {
     await Promise.resolve();
   };
 
+  const setScrollMetrics = (
+    el: HTMLElement,
+    metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  ) => {
+    Object.defineProperty(el, 'scrollHeight', {
+      configurable: true,
+      value: metrics.scrollHeight,
+    });
+    Object.defineProperty(el, 'clientHeight', {
+      configurable: true,
+      value: metrics.clientHeight,
+    });
+    el.scrollTop = metrics.scrollTop;
+  };
+
   beforeEach(async () => {
     apiMock = {
       getAutocompleteItems: vi.fn(() => of([])),
@@ -397,6 +412,115 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('.cw-caret--waiting')).not.toBeNull();
+  });
+
+  it('keeps transcript auto-scroll pinned while the user is at the bottom', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.detectChanges();
+    await flushPromises();
+
+    const transcript = fixture.nativeElement.querySelector('.cw-transcript') as HTMLElement;
+    setScrollMetrics(transcript, { scrollTop: 800, scrollHeight: 1000, clientHeight: 200 });
+    transcript.dispatchEvent(new Event('scroll'));
+
+    setScrollMetrics(transcript, { scrollTop: 800, scrollHeight: 1200, clientHeight: 200 });
+    fixture.componentInstance.historyItems.set([
+      {
+        id: 'user-1',
+        kind: 'user',
+        content: 'Keep following output',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        authoredAt: '2026-04-24T08:00:00.000Z',
+      },
+    ]);
+    fixture.detectChanges();
+    await flushPromises();
+
+    expect(transcript.scrollTop).toBe(1200);
+  });
+
+  it('does not force transcript auto-scroll while the user is reading older messages', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.historyItems.set([
+      {
+        id: 'user-1',
+        kind: 'user',
+        content: 'Older message',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        authoredAt: '2026-04-24T08:00:00.000Z',
+      },
+    ]);
+    fixture.detectChanges();
+    await flushPromises();
+
+    const transcript = fixture.nativeElement.querySelector('.cw-transcript') as HTMLElement;
+    setScrollMetrics(transcript, { scrollTop: 500, scrollHeight: 1000, clientHeight: 200 });
+    transcript.dispatchEvent(new Event('scroll'));
+
+    setScrollMetrics(transcript, { scrollTop: 500, scrollHeight: 1200, clientHeight: 200 });
+    fixture.componentInstance.historyItems.set([
+      ...fixture.componentInstance.historyItems(),
+      {
+        id: 'assistant-1',
+        kind: 'assistant',
+        content: 'New output',
+        timestamp: '2026-04-24T08:00:01.000Z',
+        receivedAt: '2026-04-24T08:00:01.000Z',
+      },
+    ]);
+    fixture.detectChanges();
+    await flushPromises();
+
+    expect(transcript.scrollTop).toBe(500);
+  });
+
+  it('resumes transcript auto-scroll after the user scrolls back to the bottom', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.historyItems.set([
+      {
+        id: 'user-1',
+        kind: 'user',
+        content: 'Older message',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        authoredAt: '2026-04-24T08:00:00.000Z',
+      },
+    ]);
+    fixture.detectChanges();
+    await flushPromises();
+
+    const transcript = fixture.nativeElement.querySelector('.cw-transcript') as HTMLElement;
+    setScrollMetrics(transcript, { scrollTop: 500, scrollHeight: 1200, clientHeight: 200 });
+    transcript.dispatchEvent(new Event('scroll'));
+    setScrollMetrics(transcript, { scrollTop: 1000, scrollHeight: 1200, clientHeight: 200 });
+    transcript.dispatchEvent(new Event('scroll'));
+
+    setScrollMetrics(transcript, { scrollTop: 1000, scrollHeight: 1400, clientHeight: 200 });
+    fixture.componentInstance.historyItems.set([
+      ...fixture.componentInstance.historyItems(),
+      {
+        id: 'assistant-1',
+        kind: 'assistant',
+        content: 'New output',
+        timestamp: '2026-04-24T08:00:01.000Z',
+        receivedAt: '2026-04-24T08:00:01.000Z',
+      },
+    ]);
+    fixture.detectChanges();
+    await flushPromises();
+
+    expect(transcript.scrollTop).toBe(1400);
   });
 
   it('rewinds conversation and restores the prompt into the composer state', async () => {
