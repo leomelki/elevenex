@@ -2,7 +2,11 @@
   "name": "elevenex",
   "version": "0.0.0",
   "publisher": "elevenex",
-  "author": "leomelki",
+  "author": {
+    "name": "leomelki",
+    "email": "melkileo@gmail.com"
+  },
+  "homepage": "https://github.com/leomelki/elevenex",
   "license": "CC-BY-NC-4.0",
   "main": "main.cjs",
   "scripts": {
