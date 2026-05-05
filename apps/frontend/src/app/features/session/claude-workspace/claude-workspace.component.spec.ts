@@ -604,6 +604,80 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(fixture.componentInstance.armedEditMessageId()).toBeNull();
   });
 
+  it('restores the last prompt when an interrupted run only produced thinking', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    apiMock.getHistory.mockReturnValueOnce(of([
+      {
+        id: 'user-1',
+        kind: 'user',
+        content: 'Change the stopped prompt',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        authoredAt: '2026-04-24T08:00:00.000Z',
+        sourceMessageId: 'source-user-1',
+      },
+      {
+        id: 'thinking-1',
+        kind: 'thinking',
+        content: 'Internal planning',
+        timestamp: '2026-04-24T08:00:01.000Z',
+        receivedAt: '2026-04-24T08:00:01.000Z',
+      },
+    ]));
+    apiMock.rewindConversation.mockReturnValueOnce(of([]));
+
+    fixture.componentInstance.interrupt();
+    (fixture.componentInstance as any).handleRuntimeEvent({
+      type: 'complete',
+      payload: { sessionId: 7 },
+    });
+    await flushPromises();
+
+    expect(apiMock.rewindConversation).toHaveBeenCalledWith(7, 'source-user-1');
+    expect(fixture.componentInstance.prompt()).toBe('Change the stopped prompt');
+    expect(fixture.componentInstance.historyItems()).toEqual([]);
+  });
+
+  it('keeps the stopped prompt editable when Claude already responded', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    const userItem = {
+      id: 'user-1',
+      kind: 'user' as const,
+      content: 'Prompt with partial response',
+      timestamp: '2026-04-24T08:00:00.000Z',
+      authoredAt: '2026-04-24T08:00:00.000Z',
+      sourceMessageId: 'source-user-1',
+    };
+    apiMock.getHistory.mockReturnValueOnce(of([
+      userItem,
+      {
+        id: 'assistant-1',
+        kind: 'assistant',
+        content: 'Started answering',
+        timestamp: '2026-04-24T08:00:01.000Z',
+        receivedAt: '2026-04-24T08:00:01.000Z',
+      },
+    ]));
+
+    fixture.componentInstance.interrupt();
+    (fixture.componentInstance as any).handleRuntimeEvent({
+      type: 'complete',
+      payload: { sessionId: 7 },
+    });
+    await flushPromises();
+
+    expect(apiMock.rewindConversation).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.canShowMessageActions(userItem)).toBe(true);
+    expect(fixture.componentInstance.messageActionsDisabled()).toBe(false);
+  });
+
   it('opens agent inspector from a collapsed turn and lazy-loads subagent history once', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
