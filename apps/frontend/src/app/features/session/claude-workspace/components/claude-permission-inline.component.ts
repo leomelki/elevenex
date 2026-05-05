@@ -529,25 +529,25 @@ interface AlwaysAllowPattern {
         line-height: 1.45;
       }
 
-      .cw-diff-del {
+      :host ::ng-deep .cw-diff-del {
         display: block;
         color: oklch(0.45 0.2 20);
         background: color-mix(in oklab, oklch(0.55 0.22 20) 10%, transparent);
       }
-      .cw-diff-add {
+      :host ::ng-deep .cw-diff-add {
         display: block;
         color: oklch(0.42 0.18 240);
         background: color-mix(in oklab, oklch(0.52 0.18 240) 10%, transparent);
       }
-      .cw-diff-context {
+      :host ::ng-deep .cw-diff-context {
         display: block;
         color: var(--muted-foreground);
       }
-      .dark .cw-diff-del {
+      :host-context(.dark) ::ng-deep .cw-diff-del {
         color: oklch(0.78 0.18 20);
         background: color-mix(in oklab, oklch(0.72 0.18 20) 15%, transparent);
       }
-      .dark .cw-diff-add {
+      :host-context(.dark) ::ng-deep .cw-diff-add {
         color: oklch(0.75 0.16 240);
         background: color-mix(in oklab, oklch(0.68 0.16 240) 15%, transparent);
       }

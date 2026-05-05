@@ -509,27 +509,27 @@ interface Todo {
       .cw-tool__diff {
         padding: 0.375rem 0;
       }
-      .cw-diff-add,
-      .cw-diff-del,
-      .cw-diff-context {
+      :host ::ng-deep .cw-diff-add,
+      :host ::ng-deep .cw-diff-del,
+      :host ::ng-deep .cw-diff-context {
         display: block;
         padding: 0.1rem 0.75rem;
       }
-      .cw-diff-add {
+      :host ::ng-deep .cw-diff-add {
         background: color-mix(in oklab, oklch(0.52 0.18 240) 10%, transparent);
         border-left: 3px solid oklch(0.52 0.18 240 / 0.45);
         padding-left: calc(0.75rem - 3px);
       }
-      .cw-diff-del {
+      :host ::ng-deep .cw-diff-del {
         background: color-mix(in oklab, oklch(0.55 0.22 20) 10%, transparent);
         border-left: 3px solid oklch(0.55 0.22 20 / 0.45);
         padding-left: calc(0.75rem - 3px);
       }
-      :host-context(.dark) .cw-diff-add {
+      :host-context(.dark) ::ng-deep .cw-diff-add {
         background: color-mix(in oklab, oklch(0.68 0.16 240) 15%, transparent);
         border-left-color: oklch(0.68 0.16 240 / 0.5);
       }
-      :host-context(.dark) .cw-diff-del {
+      :host-context(.dark) ::ng-deep .cw-diff-del {
         background: color-mix(in oklab, oklch(0.72 0.18 20) 15%, transparent);
         border-left-color: oklch(0.72 0.18 20 / 0.5);
       }
