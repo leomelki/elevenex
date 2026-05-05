@@ -436,6 +436,70 @@
   }
 }
 
+.sidebar-empty-branch-action {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: calc(100% - 3.5rem);
+  min-height: 2.55rem;
+  margin: 0.2rem 0 0.4rem;
+  padding: 0.42rem 0.6rem 0.42rem 0.48rem;
+  border: 1px solid color-mix(in oklch, var(--sidebar-border) 82%, var(--primary) 18%);
+  border-radius: 0.5rem;
+  background:
+    linear-gradient(180deg, color-mix(in oklch, var(--sidebar-accent) 84%, var(--background)), color-mix(in oklch, var(--background) 92%, var(--sidebar-accent)));
+  color: var(--foreground);
+  text-align: left;
+  transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.sidebar-empty-branch-action:hover {
+  border-color: color-mix(in oklch, var(--primary) 38%, var(--sidebar-border));
+  background:
+    linear-gradient(180deg, color-mix(in oklch, var(--sidebar-accent) 90%, var(--primary) 10%), color-mix(in oklch, var(--background) 88%, var(--sidebar-accent)));
+  box-shadow: 0 8px 18px -16px color-mix(in oklch, var(--primary) 55%, black);
+  transform: translateY(-1px);
+}
+
+.sidebar-empty-branch-action:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--primary) 55%, white);
+  outline-offset: 2px;
+}
+
+.sidebar-empty-branch-action__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--primary) 12%, var(--sidebar-accent));
+  color: var(--primary);
+}
+
+.sidebar-empty-branch-action__copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.sidebar-empty-branch-action__title {
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--foreground);
+}
+
+.sidebar-empty-branch-action__hint {
+  margin-top: 0.12rem;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sidebar-session-time {
   margin-left: auto;
   padding-right: 0.5rem;

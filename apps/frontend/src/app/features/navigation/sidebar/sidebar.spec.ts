@@ -403,6 +403,65 @@ describe('Sidebar', () => {
     expect(navigationServiceMock.revealProject).toHaveBeenCalledWith(1);
   });
 
+  it('shows a visible add-branch action for a repo with no branches even when the repo is collapsed', () => {
+    expandedKeys.set(new Set(['project-1']));
+    tree.set([
+      {
+        id: 1,
+        name: 'Project One',
+        repos: [
+          {
+            id: 1,
+            name: 'Repo One',
+            path: '/tmp/repo-one',
+            branches: [],
+          },
+        ],
+      },
+    ]);
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const el = fixture.nativeElement as HTMLElement;
+    const branchSearch = { open: vi.fn() };
+    component.branchSearch = branchSearch as any;
+
+    const addBranchButton = el.querySelector('[data-empty-repo-add-branch="1"]') as HTMLButtonElement | null;
+    expect(addBranchButton?.textContent).toContain('Add branch');
+    expect(addBranchButton?.textContent).toContain('Create a worktree');
+
+    addBranchButton?.click();
+
+    expect(branchSearch.open).toHaveBeenCalledWith([tree()[0].repos[0]]);
+  });
+
+  it('shows the add-branch action when a repo has Git branches but none added to elevenex', () => {
+    expandedKeys.set(new Set(['project-1']));
+    tree.set([
+      {
+        id: 1,
+        name: 'Project One',
+        repos: [
+          {
+            id: 1,
+            name: 'Repo One',
+            path: '/tmp/repo-one',
+            branches: [{
+              ...makeBranch(),
+              hasWorktree: false,
+              worktreePath: null,
+              sessions: [],
+            }],
+          },
+        ],
+      },
+    ]);
+
+    const fixture = createSidebar();
+    const el = fixture.nativeElement as HTMLElement;
+
+    expect(el.querySelector('[data-empty-repo-add-branch="1"]')).toBeTruthy();
+  });
+
   it('requires the 300ms guard before confirming delete', () => {
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;

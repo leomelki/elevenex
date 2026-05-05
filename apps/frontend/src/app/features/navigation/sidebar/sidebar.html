@@ -147,10 +147,23 @@
               }
             </div>
 
+            @if (!repo.error && filterBranches(repo).length === 0) {
+              <button
+                class="sidebar-empty-branch-action"
+                [style.margin-left]="'48px'"
+                [attr.data-empty-repo-add-branch]="repo.id"
+                (click)="openBranchSearchForRepo(repo)">
+                <span class="sidebar-empty-branch-action__icon">
+                  <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                </span>
+                <span class="sidebar-empty-branch-action__copy">
+                  <span class="sidebar-empty-branch-action__title">Add branch</span>
+                  <span class="sidebar-empty-branch-action__hint">Create a worktree or start from an existing branch</span>
+                </span>
+              </button>
+            }
+
             @if (isExpanded('repo-' + repo.id) && !repo.error) {
-              @if (repo.branches.length === 0) {
-                <div class="text-xs text-muted-foreground" [style.padding-left]="'64px'">No local branches</div>
-              }
               @for (branch of filterBranches(repo); track branch.name) {
                 <!-- Branch node -->
                 <button
