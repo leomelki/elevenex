@@ -134,6 +134,16 @@ describe('Sidebar', () => {
       expandedKeys.set(next);
     }),
     isExpanded: vi.fn((key: string) => expandedKeys().has(key)),
+    expandKey: vi.fn((key: string) => {
+      const next = new Set(expandedKeys());
+      next.add(key);
+      expandedKeys.set(next);
+    }),
+    revealProject: vi.fn((projectId: number) => {
+      navigationServiceMock.expandKey(`project-${projectId}`);
+      revealProjectId.set(projectId);
+      highlightedProjectId.set(projectId);
+    }),
   };
 
   const sessionsServiceMock = {
@@ -237,6 +247,8 @@ describe('Sidebar', () => {
     navigationServiceMock.openSession.mockReset();
     navigationServiceMock.toggleExpand.mockClear();
     navigationServiceMock.isExpanded.mockClear();
+    navigationServiceMock.expandKey.mockClear();
+    navigationServiceMock.revealProject.mockClear();
     sessionsServiceMock.delete.mockReset();
     sessionsServiceMock.delete.mockReturnValue(of({}));
     worktreesServiceMock.remove.mockReset();
@@ -339,6 +351,32 @@ describe('Sidebar', () => {
     expect(confirmButton).toBeTruthy();
     expect(confirmButton?.disabled).toBe(true);
     expect(sessionsServiceMock.delete).not.toHaveBeenCalled();
+  });
+
+  it('opens the add repository wizard for a project without toggling the project row', () => {
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const event = { stopPropagation: vi.fn() } as unknown as Event;
+    const project = tree()[0];
+
+    component.openAddRepoWizard(project, event);
+
+    expect(event.stopPropagation).toHaveBeenCalled();
+    expect(navigationServiceMock.expandKey).toHaveBeenCalledWith('project-1');
+    expect(navigationServiceMock.toggleExpand).not.toHaveBeenCalled();
+    expect(component.addRepoProject()).toBe(project);
+  });
+
+  it('refreshes and reveals the project after adding repositories', () => {
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    component.addRepoProject.set(tree()[0]);
+
+    component.handleRepoAdded({ id: 1, name: 'Project One', createdAt: '', updatedAt: '' });
+
+    expect(component.addRepoProject()).toBeNull();
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
+    expect(navigationServiceMock.revealProject).toHaveBeenCalledWith(1);
   });
 
   it('requires the 300ms guard before confirming delete', () => {

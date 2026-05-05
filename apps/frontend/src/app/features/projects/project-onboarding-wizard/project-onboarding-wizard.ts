@@ -31,6 +31,7 @@ import { ReposService } from '@/shared/services/repos.service';
 import { CreateSshForwardPayload, SshForwardDefaults, SshForwardsService } from '@/shared/services/ssh-forwards.service';
 
 type WizardStep = 'project' | 'repos' | 'ports' | 'review';
+type ExistingProjectTarget = Pick<Project, 'id' | 'name'>;
 
 interface WizardRepoDraft {
   id: number;
@@ -86,6 +87,7 @@ export class ProjectOnboardingWizard implements OnInit {
   ctaLabel = input('Create project');
   allowCancel = input(true);
   showPortForwardStep = input(true);
+  existingProject = input<ExistingProjectTarget | null>(null);
 
   cancelled = output<void>();
   completed = output<Project>();
@@ -103,10 +105,17 @@ export class ProjectOnboardingWizard implements OnInit {
   private nextRepoId = 1;
   private nextForwardId = 1;
 
-  readonly steps = computed(() => this.showPortForwardStep() ? STEPS_WITH_PORTS : STEPS_WITHOUT_PORTS);
+  readonly steps = computed(() => {
+    if (this.existingProject()) {
+      return ['repos', 'review'] satisfies WizardStep[];
+    }
+
+    return this.showPortForwardStep() ? STEPS_WITH_PORTS : STEPS_WITHOUT_PORTS;
+  });
   readonly stepIndex = computed(() => this.steps().indexOf(this.activeStep()));
   readonly canGoBack = computed(() => this.stepIndex() > 0 && !this.submitting());
   readonly trimmedProjectName = computed(() => this.projectName().trim());
+  readonly projectDisplayName = computed(() => this.existingProject()?.name ?? this.trimmedProjectName());
   readonly readyRepos = computed(() => this.repos().filter(repo => repo.path.trim()));
   readonly canAdvance = computed(() => {
     switch (this.activeStep()) {
@@ -131,6 +140,9 @@ export class ProjectOnboardingWizard implements OnInit {
 
   async ngOnInit() {
     this.repos.set([this.createRepoDraft()]);
+    if (this.existingProject()) {
+      this.activeStep.set('repos');
+    }
     this.sshDefaults.set(this.sshForwardsService.getLastDefaults());
     this.sshForwardingSupported.set(await this.sshForwardsService.isSupported());
   }
@@ -257,7 +269,7 @@ export class ProjectOnboardingWizard implements OnInit {
 
       this.navigationService.refreshTree();
       this.navigationService.revealProject(project.id);
-      toast.success('Project ready');
+      toast.success(this.existingProject() ? 'Repository added' : 'Project ready');
       this.completed.emit(project);
     } catch (error) {
       const message = this.getErrorMessage(error, 'Could not finish creating the project.');
@@ -324,6 +336,16 @@ export class ProjectOnboardingWizard implements OnInit {
   }
 
   private async ensureProjectCreated() {
+    const target = this.existingProject();
+    if (target) {
+      return {
+        id: target.id,
+        name: target.name,
+        createdAt: '',
+        updatedAt: '',
+      };
+    }
+
     const existing = this.createdProject();
     if (existing) {
       return existing;

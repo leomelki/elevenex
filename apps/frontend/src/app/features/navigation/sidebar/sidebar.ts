@@ -149,6 +149,7 @@ export class Sidebar implements OnInit, OnDestroy {
 
   editingSessionTitleId = signal<number | null>(null);
   showCreateWizard = signal(false);
+  addRepoProject = signal<NavigationProject | null>(null);
   showPortForwardStep = computed(() => this.onboardingState.snapshotState().mode !== 'local');
 
   deleteWorktreeRepoId = signal(0);
@@ -228,6 +229,22 @@ export class Sidebar implements OnInit, OnDestroy {
   handleProjectCreated(project: Project) {
     this.showCreateWizard.set(false);
     void this.router.navigate(['/projects', project.id]);
+  }
+
+  openAddRepoWizard(project: NavigationProject, event: Event) {
+    event.stopPropagation();
+    this.navService.expandKey(`project-${project.id}`);
+    this.addRepoProject.set(project);
+  }
+
+  closeAddRepoWizard() {
+    this.addRepoProject.set(null);
+  }
+
+  handleRepoAdded(project: Project) {
+    this.addRepoProject.set(null);
+    this.navService.refreshTree();
+    this.navService.revealProject(project.id);
   }
 
   onProjectClick(project: NavigationProject) {

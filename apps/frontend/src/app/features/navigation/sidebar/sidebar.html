@@ -95,7 +95,14 @@
           </span>
           <span class="sidebar-actions">
             <button
-              class="project-ssh-button"
+              class="project-action-button"
+              title="Add repository"
+              aria-label="Add repository"
+              (click)="openAddRepoWizard(project, $event)">
+              <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+            </button>
+            <button
+              class="project-action-button"
               title="Open SSH forwarding"
               aria-label="Open SSH forwarding"
               (click)="openProjectSsh(project, $event)">
@@ -337,6 +344,18 @@
       ctaLabel="Create project"
       (cancelled)="closeCreateProjectWizard()"
       (completed)="handleProjectCreated($event)"
+    />
+  }
+
+  @if (addRepoProject(); as project) {
+    <app-project-onboarding-wizard
+      [existingProject]="project"
+      [showPortForwardStep]="false"
+      heading="Add repositories"
+      subheading="Choose one or more local git folders to attach to this project."
+      ctaLabel="Add repositories"
+      (cancelled)="closeAddRepoWizard()"
+      (completed)="handleRepoAdded($event)"
     />
   }
 

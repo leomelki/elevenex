@@ -14,6 +14,7 @@ import { Repo } from '@/shared/models/repo.model';
 import { SshForward } from '@/shared/models/ssh-forward.model';
 import { ProjectsService } from '@/shared/services/projects.service';
 import { ReposService } from '@/shared/services/repos.service';
+import { NavigationService } from '@/shared/services/navigation.service';
 import { CreateSshForwardPayload, SshForwardDefaults, SshForwardsService } from '@/shared/services/ssh-forwards.service';
 import { HttpErrorResponse } from '@angular/common/http';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
@@ -47,6 +48,7 @@ import { TrackNativeModalDirective } from '@/shared/core/directives/track-native
 export class ProjectDetail implements OnInit, OnDestroy {
   private projectsService = inject(ProjectsService);
   private reposService = inject(ReposService);
+  private navigationService = inject(NavigationService);
   private sshForwardsService = inject(SshForwardsService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -242,6 +244,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
           ...current,
           [repo.id]: repo.preferredContextRootRef ?? '',
         }));
+        this.navigationService.refreshTree();
+        this.navigationService.revealProject(projectId);
         toast.success('Repository added');
         this.closeAddRepoDialog();
         this.addingRepo.set(false);

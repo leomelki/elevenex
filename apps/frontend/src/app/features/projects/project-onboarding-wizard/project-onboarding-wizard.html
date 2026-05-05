@@ -11,7 +11,7 @@
   <section class="project-wizard-panel" [class.project-wizard-panel--embedded]="embedded()">
     <header class="project-wizard-header">
       <div>
-        <p class="project-wizard-eyebrow">Project onboarding</p>
+        <p class="project-wizard-eyebrow">{{ existingProject() ? 'Project repositories' : 'Project onboarding' }}</p>
         <h2>{{ heading() }}</h2>
         <p>{{ subheading() }}</p>
       </div>
@@ -28,7 +28,7 @@
       }
     </header>
 
-    <div class="project-wizard-steps">
+    <div class="project-wizard-steps" [style.grid-template-columns]="'repeat(' + steps().length + ', minmax(0, 1fr))'">
       @for (step of steps(); track step; let i = $index) {
         <div
           class="project-wizard-step"
@@ -89,7 +89,9 @@
             <ng-icon name="lucideGitBranch" size="18" />
             <div>
               <strong>Add repositories</strong>
-              <p>Add at least one git repository. You can attach several now and avoid extra setup later.</p>
+              <p>{{ existingProject()
+                ? 'Attach one or more local git repositories to this project.'
+                : 'Add at least one git repository. You can attach several now and avoid extra setup later.' }}</p>
             </div>
           </div>
 
@@ -268,14 +270,16 @@
               <strong>Review and finish</strong>
               <p>{{ showPortForwardStep()
                 ? 'Elevenex will create the project, attach repositories, and save any optional port forwards.'
-                : 'Elevenex will create the project and attach repositories.' }}</p>
+                : (existingProject()
+                  ? 'Elevenex will attach these repositories to the existing project.'
+                  : 'Elevenex will create the project and attach repositories.') }}</p>
             </div>
           </div>
 
           <div class="project-wizard-review-grid">
             <div class="project-wizard-review-card">
               <span>Project</span>
-              <strong>{{ trimmedProjectName() }}</strong>
+              <strong>{{ projectDisplayName() }}</strong>
             </div>
             <div class="project-wizard-review-card">
               <span>Repositories</span>
