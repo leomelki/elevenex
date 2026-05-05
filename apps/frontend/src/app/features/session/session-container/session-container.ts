@@ -978,16 +978,6 @@ export class SessionContainer implements OnInit, OnDestroy {
         this.plannotatorState.openPanel(targetSessionId, absoluteProxyUrl, upstreamPort, mode);
 
         console.log('[SessionContainer] Panel opened. showPlannotator=', this.showPlannotator(), 'activePlannotatorPanel=', JSON.stringify(this.activePlannotatorPanel()));
-        if (targetSessionId !== this.activeSessionId()) {
-          const tab = this.tabs().find(t => t.sessionId === targetSessionId);
-          const projectName = tab
-            ? this.navService.tree().find(p => p.id === tab.projectId)?.name
-            : undefined;
-          const label = projectName
-            ? `${projectName} / ${tab!.branchName} / ${tab!.sessionName}`
-            : tab ? `${tab.branchName} / ${tab.sessionName}` : `Session ${targetSessionId}`;
-          toast.info(`Review waiting in ${label}`);
-        }
       } else {
         console.log('[SessionContainer] NOT opening panel: targetSessionId=', targetSessionId, 'proxyUrl=', proxyUrl);
       }
