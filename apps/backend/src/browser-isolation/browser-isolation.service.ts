@@ -2,6 +2,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import {
+  DEFAULT_BROWSER_ISOLATION_MODE,
+  DEFAULT_BROWSER_ISOLATION_SHARED_GLOBS,
+} from './browser-isolation.defaults.js';
 
 @Injectable()
 export class BrowserIsolationService {
@@ -16,7 +20,11 @@ export class BrowserIsolationService {
 
     const row = rows[0];
     if (!row) {
-      return { projectId, mode: 'shared', sharedGlobs: [] as string[] };
+      return {
+        projectId,
+        mode: DEFAULT_BROWSER_ISOLATION_MODE,
+        sharedGlobs: [...DEFAULT_BROWSER_ISOLATION_SHARED_GLOBS],
+      };
     }
 
     return {

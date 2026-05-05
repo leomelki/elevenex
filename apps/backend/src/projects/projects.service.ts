@@ -7,6 +7,10 @@ import {
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import {
+  DEFAULT_BROWSER_ISOLATION_MODE,
+  DEFAULT_BROWSER_ISOLATION_SHARED_GLOBS,
+} from '../browser-isolation/browser-isolation.defaults.js';
 
 @Injectable()
 export class ProjectsService {
@@ -30,11 +34,24 @@ export class ProjectsService {
 
   async create(name: string) {
     try {
-      const rows = await this.db
-        .insert(schema.projects)
-        .values({ name })
-        .returning();
-      return rows[0];
+      return this.db.transaction((tx) => {
+        const rows = tx
+          .insert(schema.projects)
+          .values({ name })
+          .returning()
+          .all();
+        const project = rows[0];
+
+        tx.insert(schema.browserIsolationSettings)
+          .values({
+            projectId: project.id,
+            mode: DEFAULT_BROWSER_ISOLATION_MODE,
+            sharedGlobs: JSON.stringify(DEFAULT_BROWSER_ISOLATION_SHARED_GLOBS),
+          })
+          .run();
+
+        return project;
+      });
     } catch (error: unknown) {
       if (
         error instanceof Error &&
