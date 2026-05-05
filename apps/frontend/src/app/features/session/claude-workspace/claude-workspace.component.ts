@@ -47,7 +47,6 @@ import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model'
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
-import { GitService } from '@/shared/services/git.service';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { ClaudeMessageComponent } from './components/claude-message.component';
 import { ClaudeThinkingComponent } from './components/claude-thinking.component';
@@ -71,6 +70,7 @@ import {
   TurnAgentSummary,
   buildTurnAgentSummary,
 } from './util/agent-deep-dive';
+import { TurnChangeSummary, computeTurnChangeSummary } from './util/turn-change-stats';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideWandSparkles,
@@ -79,12 +79,6 @@ import {
   lucideTriangleAlert,
   lucideRefreshCw,
 } from '@ng-icons/lucide';
-
-interface TurnChangeSummary {
-  files: number;
-  additions: number;
-  deletions: number;
-}
 
 type TranscriptRenderItem =
   | { kind: 'unit'; id: string; unit: PairedTranscriptUnit }
@@ -145,7 +139,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly api = inject(ClaudeRuntimeApiService);
   private readonly ws = inject(ClaudeRuntimeWebsocketService);
   private readonly claudeStatusService = inject(ClaudeStatusService);
-  private readonly gitService = inject(GitService);
   private readonly worktreeContextService = inject(WorktreeContextService);
 
   readonly loading = signal(true);
@@ -1137,33 +1130,22 @@ readonly messageActionsDisabled = computed(
       );
     if (!latestCollapsedTurn) return;
 
-    try {
-      const summary = await firstValueFrom(this.gitService.getSummary(this.worktreePath));
-      if (version !== this.bootstrapVersion) return;
-
-      const changeSummary = summary.total;
-      if (changeSummary.files <= 0) {
-        this.turnChangeStatsById.update((stats) => {
-          const { [latestCollapsedTurn.turnId]: _removed, ...rest } = stats;
-          return rest;
-        });
-        return;
-      }
-
-      this.turnChangeStatsById.update((stats) => ({
-        ...stats,
-        [latestCollapsedTurn.turnId]: {
-          files: changeSummary.files,
-          additions: changeSummary.additions,
-          deletions: changeSummary.deletions,
-        },
-      }));
-    } catch {
+    // Stats are derived from the file-writing tool calls in the turn (Edit, Write,
+    // MultiEdit, NotebookEdit) rather than from `git diff` so the pill reflects what
+    // Claude actually did this turn — independent of unrelated working-tree changes.
+    // Identical retried edits collapse to a single entry to avoid double-counting lines.
+    const summary = computeTurnChangeSummary(latestCollapsedTurn.hiddenUnits);
+    if (!summary) {
       this.turnChangeStatsById.update((stats) => {
         const { [latestCollapsedTurn.turnId]: _removed, ...rest } = stats;
         return rest;
       });
+      return;
     }
+    this.turnChangeStatsById.update((stats) => ({
+      ...stats,
+      [latestCollapsedTurn.turnId]: summary,
+    }));
   }
 
   private async syncHistoryAfterCompletion(): Promise<void> {
