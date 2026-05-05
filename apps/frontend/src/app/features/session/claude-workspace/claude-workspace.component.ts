@@ -921,6 +921,7 @@ readonly messageActionsDisabled = computed(
   }
 
   async recomputeWorktreeContext(): Promise<void> {
+    if (this.worktreeContextBusy()) return;
     this.worktreeContextBusy.set(true);
     try {
       const snapshot = await firstValueFrom(
@@ -946,7 +947,9 @@ readonly messageActionsDisabled = computed(
       const shouldAutoGenerate =
         triggerGenerate
         && !snapshot.hasRecord
-        && snapshot.canGenerate;
+        && snapshot.canGenerate
+        && snapshot.generationStatus !== 'generating'
+        && !this.worktreeContextBusy();
 
       if (shouldAutoGenerate) {
         console.info(
