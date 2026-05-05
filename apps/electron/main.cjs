@@ -1885,7 +1885,13 @@ function toUrlPatternVariants(pattern) {
 function rewriteLocalhostToProxy(url) {
   try {
     const parsed = new URL(url);
-    if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') && parsed.port) {
+    if (
+      (parsed.hostname === 'localhost'
+        || parsed.hostname === '127.0.0.1'
+        || parsed.hostname === '[::1]'
+        || parsed.hostname === '::1')
+      && parsed.port
+    ) {
       return `${currentBackendUrl}/api/mcp-auth-proxy/${parsed.port}${parsed.pathname}${parsed.search}${parsed.hash}`;
     }
   } catch {
@@ -2832,6 +2838,34 @@ ipcMain.handle('elevenex-external-links:open', async (_event, url) => {
 
 const authWindows = new Map();
 
+function registerAuthWindowNavigationHandlers(authWindow) {
+  authWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const proxied = rewriteLocalhostToProxy(url);
+    if (proxied !== url) {
+      void authWindow.loadURL(proxied);
+      return { action: 'deny' };
+    }
+
+    return { action: 'allow' };
+  });
+
+  authWindow.webContents.on('will-navigate', (event, url) => {
+    const proxied = rewriteLocalhostToProxy(url);
+    if (proxied !== url) {
+      event.preventDefault();
+      void authWindow.loadURL(proxied);
+    }
+  });
+
+  authWindow.webContents.on('will-redirect', (event, url) => {
+    const proxied = rewriteLocalhostToProxy(url);
+    if (proxied !== url) {
+      event.preventDefault();
+      void authWindow.loadURL(proxied);
+    }
+  });
+}
+
 ipcMain.handle('elevenex-auth-window:open', async (_event, payload) => {
   const url = typeof payload === 'string' ? payload : payload?.url;
   if (typeof url !== 'string' || !url.trim()) {
@@ -2843,7 +2877,7 @@ ipcMain.handle('elevenex-auth-window:open', async (_event, payload) => {
   let authWindow = authWindows.get(key);
   if (authWindow && !authWindow.isDestroyed()) {
     authWindow.focus();
-    void authWindow.loadURL(url);
+    void authWindow.loadURL(rewriteLocalhostToProxy(url));
     return true;
   }
 
@@ -2863,13 +2897,14 @@ ipcMain.handle('elevenex-auth-window:open', async (_event, payload) => {
   });
 
   authWindows.set(key, authWindow);
+  registerAuthWindowNavigationHandlers(authWindow);
   authWindow.on('closed', () => {
     if (authWindows.get(key) === authWindow) {
       authWindows.delete(key);
     }
   });
 
-  await authWindow.loadURL(url);
+  await authWindow.loadURL(rewriteLocalhostToProxy(url));
   return true;
 });
 

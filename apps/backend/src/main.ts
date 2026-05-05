@@ -30,6 +30,11 @@ import {
   buildVSCodeWebLauncherHtml,
   renderVSCodeWorkbenchHtml,
 } from './config/vscode-web-launcher.js';
+import {
+  buildMcpAuthProxyUnavailableHtml,
+  parseMcpAuthProxyRequestUrl,
+  rewriteMcpAuthLocationHeader,
+} from './proxy/mcp-auth-proxy.js';
 
 function listenServer(
   server: {
@@ -120,26 +125,26 @@ async function bootstrap() {
   // Register MCP auth proxy BEFORE body-parser so req stream is readable
   // Proxies localhost MCP auth servers for SSH/remote access: /api/mcp-auth-proxy/:port/*
   app.use('/api/mcp-auth-proxy', (req: any, res: any) => {
-    const match = (req.url as string).match(/^\/(\d+)(\/[^?]*)?(\?.*)?$/);
-    if (!match) { res.writeHead(404); res.end('Invalid proxy path'); return; }
-    const port = parseInt(match[1], 10);
-    const upstreamPath = (match[2] || '/') + (match[3] || '');
+    const parsedProxyUrl = parseMcpAuthProxyRequestUrl(req.url as string);
+    if (!parsedProxyUrl) { res.writeHead(404); res.end('Invalid proxy path'); return; }
+    const { port, upstreamPath } = parsedProxyUrl;
     const proxyReq = http.request(
       { hostname: '127.0.0.1', port, path: upstreamPath, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${port}` } },
       (proxyRes) => {
         const headers = { ...proxyRes.headers };
-        // Rewrite localhost Location headers so redirects stay proxied
         if (typeof headers.location === 'string') {
-          const locMatch = headers.location.match(/^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)(\/.*)?$/);
-          if (locMatch) {
-            headers.location = `/api/mcp-auth-proxy/${locMatch[1]}${locMatch[2] || '/'}`;
-          }
+          headers.location = rewriteMcpAuthLocationHeader(headers.location, port, upstreamPath);
         }
         res.writeHead(proxyRes.statusCode || 200, headers);
         proxyRes.pipe(res);
       },
     );
-    proxyReq.on('error', () => { if (!res.headersSent) { res.writeHead(502); res.end('Upstream unavailable'); } });
+    proxyReq.on('error', () => {
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(buildMcpAuthProxyUnavailableHtml(port));
+      }
+    });
     req.pipe(proxyReq);
   });
 

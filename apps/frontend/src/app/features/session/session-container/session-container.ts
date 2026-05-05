@@ -35,6 +35,7 @@ import { shouldCloseActiveSessionTab } from '../close-tab-shortcut.util';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
 import { SshRuntimeRecoveryService } from '@/shared/services/ssh-runtime-recovery.service';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
+import { buildMcpAuthPopupUrl } from './mcp-auth-url';
 
 @Component({
   selector: 'app-session-container',
@@ -273,19 +274,7 @@ export class SessionContainer implements OnInit, OnDestroy {
 
     // Web/SSH mode: proxy localhost URLs through the backend, open in a popup window
     const popupFeatures = 'popup=yes,width=520,height=720,noopener,noreferrer';
-    try {
-      const parsed = new URL(url);
-      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-        const port = parsed.port || '80';
-        const proxyUrl = `/api/mcp-auth-proxy/${port}${parsed.pathname}${parsed.search}`;
-        window.open(proxyUrl, 'elevenex-mcp-auth', popupFeatures);
-        return;
-      }
-    } catch {
-      // fall through to default
-    }
-
-    window.open(url, 'elevenex-mcp-auth', popupFeatures);
+    window.open(buildMcpAuthPopupUrl(url), 'elevenex-mcp-auth', popupFeatures);
   }
 
   toggleGithubPanel(): void {

@@ -138,7 +138,9 @@ describe('SessionContainer modal browser gating', () => {
     claudeCompletionsSignal.set(new Map());
     claudeTitlesSignal.set(new Map());
     reconnectSignal.set(0);
+    vi.restoreAllMocks();
     vi.clearAllMocks();
+    window.__ELEVENEX_ELECTRON__ = undefined;
 
     Object.defineProperty(globalThis, 'localStorage', {
       value: {
@@ -220,5 +222,44 @@ describe('SessionContainer modal browser gating', () => {
     fixture.detectChanges();
 
     expect(tabServiceMock.updateTabName).toHaveBeenCalledWith(42, 'Implement Auto Names');
+  });
+
+  it('opens external MCP auth URLs unchanged in browser mode', () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const fixture = TestBed.createComponent(SessionContainer);
+
+    fixture.componentInstance.onOpenInBrowser('https://auth.example.com/authorize?client_id=abc');
+
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://auth.example.com/authorize?client_id=abc',
+      'elevenex-mcp-auth',
+      'popup=yes,width=520,height=720,noopener,noreferrer',
+    );
+  });
+
+  it('proxies localhost MCP auth URLs with query and hash in browser mode', () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const fixture = TestBed.createComponent(SessionContainer);
+
+    fixture.componentInstance.onOpenInBrowser('http://localhost:49152/callback?code=abc&state=def#done');
+
+    expect(openSpy).toHaveBeenCalledWith(
+      '/api/mcp-auth-proxy/49152/callback?code=abc&state=def#done',
+      'elevenex-mcp-auth',
+      'popup=yes,width=520,height=720,noopener,noreferrer',
+    );
+  });
+
+  it('proxies 127.0.0.1 MCP auth URLs in browser mode', () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const fixture = TestBed.createComponent(SessionContainer);
+
+    fixture.componentInstance.onOpenInBrowser('http://127.0.0.1:49152/callback?code=abc');
+
+    expect(openSpy).toHaveBeenCalledWith(
+      '/api/mcp-auth-proxy/49152/callback?code=abc',
+      'elevenex-mcp-auth',
+      'popup=yes,width=520,height=720,noopener,noreferrer',
+    );
   });
 });
