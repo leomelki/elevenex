@@ -152,6 +152,7 @@ function parseRemotePreflight(raw) {
     hasClaude: data.has_claude === '1',
     hasTmux: data.has_tmux === '1',
     currentVersion: `${data.current_version || ''}`.trim(),
+    runningBackendVersion: `${data.running_backend_version || ''}`.trim(),
     tmuxSessionPresent: data.tmux_session_present === '1',
     backendReachable: data.backend_reachable === '1',
     missingDependencies,
@@ -179,16 +180,19 @@ function buildRemotePreflightScript(remotePort) {
     '  TMUX_PRESENT=1',
     'fi',
     'BACKEND_REACHABLE=0',
+    'RUNNING_BACKEND_VERSION=""',
     'if [ -x "$HOME/.elevenex/current/node/bin/node" ]; then',
     `  if "$HOME/.elevenex/current/node/bin/node" -e "const http=require('http');const req=http.get({host:'127.0.0.1',port:${Number.isFinite(safePort) ? safePort : 11111},path:'/api/projects',timeout:1200},(res)=>{process.exit(res.statusCode&&res.statusCode<500?0:1)});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));" >/dev/null 2>&1; then`,
     '    BACKEND_REACHABLE=1',
     '  fi',
+    `  RUNNING_BACKEND_VERSION="$("$HOME/.elevenex/current/node/bin/node" -e "const http=require('http');const req=http.get({host:'127.0.0.1',port:${Number.isFinite(safePort) ? safePort : 11111},path:'/api/info',timeout:1200},(res)=>{let body='';res.setEncoding('utf8');res.on('data',(chunk)=>body+=chunk);res.on('end',()=>{try{const data=JSON.parse(body);process.stdout.write(typeof data.backendSha==='string'?data.backendSha:'')}catch{process.exit(1)}})});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));" 2>/dev/null || true)"`,
     'fi',
     'printf "uname_s=%s\\n" "$UNAME_S"',
     'printf "uname_m=%s\\n" "$UNAME_M"',
     'printf "has_claude=%s\\n" "$HAS_CLAUDE"',
     'printf "has_tmux=%s\\n" "$HAS_TMUX"',
     'printf "current_version=%s\\n" "$CURRENT_VERSION"',
+    'printf "running_backend_version=%s\\n" "$RUNNING_BACKEND_VERSION"',
     'printf "tmux_session_present=%s\\n" "$TMUX_PRESENT"',
     'printf "backend_reachable=%s\\n" "$BACKEND_REACHABLE"',
     'printf "os_release_raw=%s\\n" "$(printf %s "$OS_RELEASE_RAW" | tr \'\\n\' \'\\t\')"',
@@ -241,8 +245,9 @@ function buildRemoteStartCommand({ remoteRoot, remotePort }) {
   ].join('\n');
 }
 
-function buildRemoteWaitForReadyCommand({ remoteRoot, remotePort }) {
+function buildRemoteWaitForReadyCommand({ remoteRoot, remotePort, expectedVersion }) {
   const safePort = Number.isFinite(Number(remotePort)) ? Number(remotePort) : 11111;
+  const expectedVersionLiteral = JSON.stringify(`${expectedVersion || ''}`);
   return [
     'set -eu',
     `cd ${shellPathQuote(remoteRoot)}`,
@@ -252,7 +257,7 @@ function buildRemoteWaitForReadyCommand({ remoteRoot, remotePort }) {
     'fi',
     'ATTEMPTS=90',
     'while [ "$ATTEMPTS" -gt 0 ]; do',
-    `  if ./node/bin/node -e "const http=require('http');const req=http.get({host:'127.0.0.1',port:${safePort},path:'/api/projects',timeout:1200},(res)=>{process.exit(res.statusCode&&res.statusCode<500?0:1)});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));" >/dev/null 2>&1; then`,
+    `  if ./node/bin/node -e "const expected=${expectedVersionLiteral};const http=require('http');const req=http.get({host:'127.0.0.1',port:${safePort},path:'/api/info',timeout:1200},(res)=>{let body='';res.setEncoding('utf8');res.on('data',(chunk)=>body+=chunk);res.on('end',()=>{try{const data=JSON.parse(body);process.exit(res.statusCode&&res.statusCode<500&&(!expected||data.backendSha===expected)?0:1)}catch{process.exit(1)}})});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));" >/dev/null 2>&1; then`,
     '    exit 0',
     '  fi',
     '  ATTEMPTS=$((ATTEMPTS - 1))',

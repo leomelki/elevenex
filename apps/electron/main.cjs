@@ -1316,6 +1316,14 @@ function getRemoteInstallStatus(preflight, bundledVersion) {
     return 'needs-update';
   }
 
+  if (
+    bundledVersion
+    && preflight.backendReachable
+    && preflight.runningBackendVersion !== bundledVersion
+  ) {
+    return 'needs-update';
+  }
+
   return 'available';
 }
 
@@ -1488,6 +1496,7 @@ async function ensureRemoteServerReady(forward) {
     buildRemoteWaitForReadyCommand({
       remoteRoot: remoteCurrentRoot,
       remotePort: forward.remotePort || 11111,
+      expectedVersion: bundledVersion,
     }),
   );
 
