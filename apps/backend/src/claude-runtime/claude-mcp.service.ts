@@ -235,7 +235,7 @@ export class ClaudeMcpService {
       throw new BadRequestException(`MCP server "${serverName}" does not expose browser auth.`);
     }
 
-    const authUrl = await this.resolveAuthUrl(server, config);
+    const authUrl = await this.resolveAuthUrl(sessionId, server, config);
     if (!authUrl) {
       throw new BadRequestException(`MCP server "${serverName}" does not provide an auth URL.`);
     }
@@ -298,6 +298,7 @@ export class ClaudeMcpService {
   }
 
   private async resolveAuthUrl(
+    sessionId: number,
     server: ClaudeMcpServerEntry,
     config: McpServerConfigLike | null,
   ): Promise<string | null> {
@@ -305,64 +306,11 @@ export class ClaudeMcpService {
       return CLAUDE_AI_CONNECTORS_URL;
     }
 
-    const directAuthUrl =
-      config?.oauth?.authorizationUrl
-      || config?.oauth?.authorizationEndpoint
-      || config?.oauth?.authUrl
-      || null;
-    if (typeof directAuthUrl === 'string' && directAuthUrl.trim()) {
-      return directAuthUrl;
+    if (!config || !['http', 'sse'].includes(server.transport)) {
+      return null;
     }
 
-    const metadataUrl = config?.oauth?.authServerMetadataUrl;
-    if (typeof metadataUrl === 'string' && metadataUrl.trim()) {
-      return this.fetchAuthorizationEndpoint(metadataUrl);
-    }
-
-    // Fall back to standard OAuth discovery endpoint for network transports
-    const serverUrl = config?.url;
-    if (
-      ['http', 'sse', 'ws'].includes(server.transport)
-      && typeof serverUrl === 'string'
-      && serverUrl.trim()
-    ) {
-      try {
-        const origin = new URL(serverUrl).origin;
-        return this.fetchAuthorizationEndpoint(`${origin}/.well-known/oauth-authorization-server`);
-      } catch {
-        return null;
-      }
-    }
-
-    return null;
-  }
-
-  private async fetchAuthorizationEndpoint(metadataUrl: string): Promise<string> {
-    let response: Response;
-    try {
-      response = await fetch(metadataUrl, {
-        headers: {
-          accept: 'application/json',
-        },
-      });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Could not load OAuth metadata: ${reason}`);
-    }
-
-    if (!response.ok) {
-      throw new BadRequestException(
-        `Could not load OAuth metadata: ${response.status} ${response.statusText}`.trim(),
-      );
-    }
-
-    const payload = await response.json() as Record<string, unknown>;
-    const candidate = payload.authorization_endpoint;
-    if (typeof candidate !== 'string' || !candidate.trim()) {
-      throw new BadRequestException('OAuth metadata does not include an authorization endpoint.');
-    }
-
-    return new URL(candidate, metadataUrl).toString();
+    return this.runtimeService.startMcpAuthFlow(sessionId, server.name);
   }
 
   private buildRuntimeOnlyEntry(
@@ -670,9 +618,9 @@ function supportsBrowserAuth(
     return true;
   }
 
-  // Network transports with a URL support OAuth discovery
+  // Claude Code handles OAuth auth flows for HTTP/SSE network transports.
   if (
-    ['http', 'sse', 'ws'].includes(transport)
+    ['http', 'sse'].includes(transport)
     && typeof config.url === 'string'
     && config.url.trim()
   ) {

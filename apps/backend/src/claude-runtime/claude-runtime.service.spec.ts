@@ -142,6 +142,54 @@ describe('ClaudeRuntimeService', () => {
     expect(loadClaudeSdkPackageMetadata()).toEqual({ version: 'unknown' });
   });
 
+  it('returns a pending MCP URL elicitation for the requested server', () => {
+    const state = (service as any).ensureRuntimeState(7);
+    state.pendingUserInputRequest = {
+      requestId: 'input-1',
+      serverName: 'linear',
+      message: 'Authenticate Linear',
+      mode: 'url',
+      url: 'https://auth.example.com/authorize?client_id=claude-code&state=pending',
+      createdAt: new Date().toISOString(),
+    };
+
+    expect(service.getPendingMcpAuthUrl(7, 'linear')).toBe(
+      'https://auth.example.com/authorize?client_id=claude-code&state=pending',
+    );
+    expect(service.getPendingMcpAuthUrl(7, 'other')).toBeNull();
+  });
+
+  it('starts MCP auth through the Claude Code SDK control channel', async () => {
+    const close = jest.fn();
+    const mcpAuthenticate = jest.fn().mockResolvedValue({
+      authUrl: 'https://auth.example.com/authorize?client_id=claude-code&redirect_uri=http%3A%2F%2Flocalhost%3A49152%2Fcallback&state=abc',
+      requiresUserAction: true,
+    });
+    (query as jest.Mock).mockReturnValue({
+      initializationResult: jest.fn().mockResolvedValue({}),
+      mcpAuthenticate,
+      close,
+    });
+
+    try {
+      await expect(service.startMcpAuthFlow(7, 'linear')).resolves.toBe(
+        'https://auth.example.com/authorize?client_id=claude-code&redirect_uri=http%3A%2F%2Flocalhost%3A49152%2Fcallback&state=abc',
+      );
+
+      expect(query).toHaveBeenCalledWith(expect.objectContaining({
+        options: expect.objectContaining({
+          cwd: '/tmp/project',
+          persistSession: false,
+          settingSources: ['project', 'user', 'local'],
+        }),
+      }));
+      expect(mcpAuthenticate).toHaveBeenCalledWith('linear');
+      expect(close).toHaveBeenCalled();
+    } finally {
+      (query as jest.Mock).mockReset();
+    }
+  });
+
   it('hydrates richer SDK runtime state and emits normalized events', async () => {
     const emittedTypes: string[] = [];
     service.on('event', (event: { type: string }) =>

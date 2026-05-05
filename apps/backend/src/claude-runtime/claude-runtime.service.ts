@@ -168,6 +168,13 @@ interface ActiveRunState {
   observedPreVisibleMarkers: Set<string>;
 }
 
+type McpAuthControlQuery = Query & {
+  mcpAuthenticate(serverName: string): Promise<{
+    authUrl?: string;
+    requiresUserAction?: boolean;
+  }>;
+};
+
 interface ClaudeTranscriptRecord {
   type?: unknown;
   uuid?: unknown;
@@ -1203,6 +1210,59 @@ export class ClaudeRuntimeService extends EventEmitter {
     state.sessionState = 'running';
     this.emitRunState(sessionId);
     request.resolve({ action, content });
+  }
+
+  getPendingMcpAuthUrl(sessionId: number, serverName: string): string | null {
+    const pendingRequest = this.runtimeStates.get(sessionId)?.pendingUserInputRequest;
+    if (
+      pendingRequest?.serverName === serverName
+      && pendingRequest.mode === 'url'
+      && typeof pendingRequest.url === 'string'
+      && pendingRequest.url.trim()
+    ) {
+      return pendingRequest.url;
+    }
+
+    return null;
+  }
+
+  async startMcpAuthFlow(sessionId: number, serverName: string): Promise<string | null> {
+    const pendingUrl = this.getPendingMcpAuthUrl(sessionId, serverName);
+    if (pendingUrl) {
+      return pendingUrl;
+    }
+
+    const session = await this.sessionsService.findOne(sessionId);
+    const abortController = new AbortController();
+    const runtimeQuery = query({
+      prompt: this.createIdlePrompt(abortController.signal),
+      options: this.buildMcpAuthQueryOptions(
+        sessionId,
+        session.worktreePath,
+        serverName,
+        abortController,
+      ),
+    }) as McpAuthControlQuery;
+
+    try {
+      await withTimeout(
+        runtimeQuery.initializationResult(),
+        15_000,
+        `Timed out initializing Claude Code for MCP auth on "${serverName}".`,
+      );
+      const result = await withTimeout(
+        runtimeQuery.mcpAuthenticate(serverName),
+        30_000,
+        `Timed out starting MCP auth for "${serverName}".`,
+      );
+
+      return typeof result.authUrl === 'string' && result.authUrl.trim()
+        ? result.authUrl
+        : null;
+    } finally {
+      abortController.abort();
+      runtimeQuery.close();
+    }
   }
 
   private async handleSdkMessage(
@@ -2827,6 +2887,68 @@ export class ClaudeRuntimeService extends EventEmitter {
     };
   }
 
+  private buildMcpAuthQueryOptions(
+    sessionId: number,
+    worktreePath: string,
+    serverName: string,
+    abortController: AbortController,
+  ): Options {
+    const pathToClaudeCodeExecutable =
+      this.claudeCliOverride?.path
+      ?? this.resolveSdkClaudePath()
+      ?? findBinary('claude')
+      ?? undefined;
+
+    return {
+      abortController,
+      cwd: worktreePath,
+      permissionMode: 'auto',
+      persistSession: false,
+      ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
+      settingSources: ['project', 'user', 'local'],
+      systemPrompt: {
+        type: 'preset' as const,
+        preset: 'claude_code' as const,
+      },
+      tools: {
+        type: 'preset' as const,
+        preset: 'claude_code' as const,
+      },
+      onElicitation: async (request) => {
+        if (
+          request.serverName === serverName
+          && request.mode === 'url'
+          && typeof request.url === 'string'
+          && request.url.trim()
+        ) {
+          return { action: 'accept' };
+        }
+
+        return { action: 'decline' };
+      },
+      env: {
+        ...buildAugmentedEnv(),
+        ELEVENEX_SESSION_ID: String(sessionId),
+        ELEVENEX_PORT: String(getElevenexProxyPort()),
+        PLANNOTATOR_BROWSER: this.wrapperScriptPath,
+      },
+    };
+  }
+
+  private createIdlePrompt(signal: AbortSignal): AsyncIterable<SDKUserMessage> {
+    return {
+      async *[Symbol.asyncIterator]() {
+        if (signal.aborted) {
+          return;
+        }
+
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      },
+    };
+  }
+
   private resolveClaudeCliOverride(): { path: string; version: string | null } | null {
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     if (!configuredPath) {
@@ -4299,6 +4421,23 @@ function hashString(str: string): number {
 
 function flushIo(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<T>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
 }
 
 export function loadClaudeSdkPackageMetadata(): ClaudeSdkPackageMetadata {
