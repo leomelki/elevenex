@@ -1,12 +1,14 @@
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { toast } from 'ngx-sonner';
 import { ClaudeWorkspaceComponent } from './claude-workspace.component';
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
 import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
+import { GitService } from '@/shared/services/git.service';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -81,6 +83,9 @@ describe('ClaudeWorkspaceComponent', () => {
     updateRootRef: ReturnType<typeof vi.fn>;
     consume: ReturnType<typeof vi.fn>;
   };
+  let gitServiceMock: {
+    getSummary: ReturnType<typeof vi.fn>;
+  };
 
   const readyWorktreeContext = () => ({
     repoId: 1,
@@ -96,6 +101,49 @@ describe('ClaudeWorkspaceComponent', () => {
     errorMessage: null,
     hasRecord: true,
   });
+
+  const timestampAfter = (start: string, ms: number) =>
+    new Date(new Date(start).getTime() + ms).toISOString();
+
+  const collapsibleTurnHistory = (suffix = '1', start = '2026-04-24T08:00:00.000Z') => [
+    {
+      id: `user-${suffix}`,
+      kind: 'user' as const,
+      content: `Ship change ${suffix}`,
+      timestamp: start,
+      authoredAt: start,
+    },
+    {
+      id: `tool-${suffix}`,
+      kind: 'tool_use' as const,
+      toolUseId: `tool-${suffix}`,
+      toolName: 'Bash',
+      toolInput: { command: 'pnpm test' },
+      timestamp: timestampAfter(start, 1000),
+      receivedAt: timestampAfter(start, 1000),
+    },
+    {
+      id: `tool-result-${suffix}`,
+      kind: 'tool_result' as const,
+      toolUseId: `tool-${suffix}`,
+      content: 'done',
+      timestamp: timestampAfter(start, 2000),
+      authoredAt: timestampAfter(start, 2000),
+    },
+    {
+      id: `assistant-${suffix}`,
+      kind: 'assistant' as const,
+      content: `Done ${suffix}`,
+      timestamp: timestampAfter(start, 3000),
+      receivedAt: timestampAfter(start, 3000),
+    },
+  ];
+
+  const flushPromises = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  };
 
   beforeEach(async () => {
     apiMock = {
@@ -176,6 +224,16 @@ describe('ClaudeWorkspaceComponent', () => {
       updateRootRef: vi.fn(() => of({})),
       consume: vi.fn(() => of({ shouldInject: false, contextSentence: null })),
     };
+    gitServiceMock = {
+      getSummary: vi.fn(() => of({
+        branch: 'feature',
+        hasChanges: false,
+        files: [],
+        staged: { files: 0, additions: 0, deletions: 0 },
+        unstaged: { files: 0, additions: 0, deletions: 0 },
+        total: { files: 0, additions: 0, deletions: 0 },
+      })),
+    };
 
     await TestBed.configureTestingModule({
       imports: [ClaudeWorkspaceComponent],
@@ -183,6 +241,7 @@ describe('ClaudeWorkspaceComponent', () => {
         { provide: ClaudeRuntimeApiService, useValue: apiMock },
         { provide: ClaudeRuntimeWebsocketService, useValue: wsMock },
         { provide: WorktreeContextService, useValue: worktreeContextServiceMock },
+        { provide: GitService, useValue: gitServiceMock },
       ],
     }).compileComponents();
   });
@@ -344,6 +403,8 @@ describe('ClaudeWorkspaceComponent', () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
     fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
 
     await fixture.componentInstance.confirmEditMessage({
       id: 'user-1',
@@ -438,6 +499,7 @@ describe('ClaudeWorkspaceComponent', () => {
         ],
       },
     });
+    fixture.componentInstance.loading.set(false);
     fixture.detectChanges();
 
     const inspect = Array.from(
@@ -454,6 +516,118 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.componentInstance.selectAgentInspectorAgent('agent-1');
     await Promise.resolve();
     expect(apiMock.getSubagentHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders completed turn change stats after Git summary loads', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+    apiMock.getHistory.mockReturnValue(of(collapsibleTurnHistory()));
+    gitServiceMock.getSummary.mockReturnValue(of({
+      branch: 'feature',
+      hasChanges: true,
+      files: [],
+      staged: { files: 0, additions: 0, deletions: 0 },
+      unstaged: { files: 3, additions: 42, deletions: 8 },
+      total: { files: 3, additions: 42, deletions: 8 },
+    }));
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.worktreePath = '/tmp/project';
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+
+    events$.next({ type: 'complete', payload: { sessionId: 7 } });
+    await flushPromises();
+    fixture.detectChanges();
+
+    const changes = fixture.nativeElement.querySelector('.cw-turn-gap__changes') as HTMLElement | null;
+    expect(gitServiceMock.getSummary).toHaveBeenCalledWith('/tmp/project');
+    expect(changes?.textContent).toContain('3 files');
+    expect(changes?.textContent).toContain('+42');
+    expect(changes?.textContent).toContain('-8');
+  });
+
+  it('omits completed turn change stats when no files changed', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+    apiMock.getHistory.mockReturnValue(of(collapsibleTurnHistory()));
+    gitServiceMock.getSummary.mockReturnValue(of({
+      branch: 'feature',
+      hasChanges: false,
+      files: [],
+      staged: { files: 0, additions: 0, deletions: 0 },
+      unstaged: { files: 0, additions: 0, deletions: 0 },
+      total: { files: 0, additions: 0, deletions: 0 },
+    }));
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.worktreePath = '/tmp/project';
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+
+    events$.next({ type: 'complete', payload: { sessionId: 7 } });
+    await flushPromises();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.cw-turn-gap__changes')).toBeNull();
+  });
+
+  it('quietly omits completed turn change stats when Git summary fails', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+    apiMock.getHistory.mockReturnValue(of(collapsibleTurnHistory()));
+    gitServiceMock.getSummary.mockReturnValue(throwError(() => new Error('git failed')));
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.worktreePath = '/tmp/project';
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+
+    events$.next({ type: 'complete', payload: { sessionId: 7 } });
+    await flushPromises();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.cw-turn-gap__changes')).toBeNull();
+    expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('git failed'));
+  });
+
+  it('attaches completed turn change stats to the latest collapsed turn', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+    apiMock.getHistory.mockReturnValue(of([
+      ...collapsibleTurnHistory('1', '2026-04-24T08:00:00.000Z'),
+      ...collapsibleTurnHistory('2', '2026-04-24T08:01:00.000Z'),
+    ]));
+    gitServiceMock.getSummary.mockReturnValue(of({
+      branch: 'feature',
+      hasChanges: true,
+      files: [],
+      staged: { files: 0, additions: 0, deletions: 0 },
+      unstaged: { files: 2, additions: 9, deletions: 1 },
+      total: { files: 2, additions: 9, deletions: 1 },
+    }));
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.worktreePath = '/tmp/project';
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+
+    events$.next({ type: 'complete', payload: { sessionId: 7 } });
+    await flushPromises();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.turnChangeStatsById()).toEqual({
+      'user-2': { files: 2, additions: 9, deletions: 1 },
+    });
+    expect(fixture.nativeElement.querySelectorAll('.cw-turn-gap__changes')).toHaveLength(1);
   });
 
   it('injects the already-fetched ready context into the first prompt', async () => {

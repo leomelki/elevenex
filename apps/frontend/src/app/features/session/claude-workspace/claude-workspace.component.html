@@ -125,6 +125,14 @@
                         [class.cw-turn-gap__chevron--open]="isTurnExpanded(item.turnId)"
                       ></span>
                       <span class="cw-turn-gap__label">Worked for {{ item.durationLabel }}</span>
+                      @if (item.changeSummary; as changeSummary) {
+                        <span class="cw-turn-gap__changes" aria-label="Changed files and lines">
+                          <span>{{ changeSummary.files }} file{{ changeSummary.files === 1 ? '' : 's' }}</span>
+                          <span class="cw-turn-gap__changes-separator">·</span>
+                          <span class="cw-turn-gap__changes-additions">+{{ changeSummary.additions }}</span>
+                          <span class="cw-turn-gap__changes-deletions">-{{ changeSummary.deletions }}</span>
+                        </span>
+                      }
                       <span class="cw-turn-gap__meta">
                         {{ isTurnExpanded(item.turnId) ? 'Hide activity' : 'Show activity' }}
                       </span>

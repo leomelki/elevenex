@@ -46,6 +46,7 @@ import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model'
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
+import { GitService } from '@/shared/services/git.service';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { ClaudeMessageComponent } from './components/claude-message.component';
 import { ClaudeThinkingComponent } from './components/claude-thinking.component';
@@ -74,6 +75,12 @@ import {
   lucideRefreshCw,
 } from '@ng-icons/lucide';
 
+interface TurnChangeSummary {
+  files: number;
+  additions: number;
+  deletions: number;
+}
+
 type TranscriptRenderItem =
   | { kind: 'unit'; id: string; unit: PairedTranscriptUnit }
   | {
@@ -82,6 +89,7 @@ type TranscriptRenderItem =
       turnId: string;
       hiddenUnits: PairedTranscriptUnit[];
       durationLabel: string;
+      changeSummary: TurnChangeSummary | null;
       stepCount: number;
       agentSummary: TurnAgentSummary | null;
     };
@@ -132,6 +140,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly api = inject(ClaudeRuntimeApiService);
   private readonly ws = inject(ClaudeRuntimeWebsocketService);
   private readonly claudeStatusService = inject(ClaudeStatusService);
+  private readonly gitService = inject(GitService);
   private readonly worktreeContextService = inject(WorktreeContextService);
 
   readonly loading = signal(true);
@@ -170,6 +179,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly subagents = signal<ClaudeSubagentState[]>([]);
   readonly recentHookEvents = signal<ClaudeHookEvent[]>([]);
   readonly expandedTurns = signal<Record<string, boolean>>({});
+  readonly turnChangeStatsById = signal<Record<string, TurnChangeSummary>>({});
   readonly armedEditMessageId = signal<string | null>(null);
   readonly rewindingMessageId = signal<string | null>(null);
   readonly agentInspectorTurnId = signal<string | null>(null);
@@ -393,6 +403,7 @@ readonly messageActionsDisabled = computed(
             getItemStartTimestamp(unit.item),
             getItemCompletionTimestamp(lastAssistantUnit.item),
           ),
+          changeSummary: this.turnChangeStatsById()[unit.id] ?? null,
           stepCount: collapsibleUnits.length,
           agentSummary: buildTurnAgentSummary(
             unit.id,
@@ -1068,10 +1079,50 @@ readonly messageActionsDisabled = computed(
         if (this.mcpDrawerOpen()) {
           void this.loadMcpSnapshot(true);
         }
-        void this.syncHistoryAfterCompletion();
+        void this.handleCompletion();
         return;
       default:
         return;
+    }
+  }
+
+  private async handleCompletion(version: number = this.bootstrapVersion): Promise<void> {
+    await this.syncHistoryAfterCompletion();
+    if (version !== this.bootstrapVersion) return;
+
+    const latestCollapsedTurn = [...this.renderItems()]
+      .reverse()
+      .find((entry): entry is Extract<TranscriptRenderItem, { kind: 'collapsed-turn' }> =>
+        entry.kind === 'collapsed-turn',
+      );
+    if (!latestCollapsedTurn) return;
+
+    try {
+      const summary = await firstValueFrom(this.gitService.getSummary(this.worktreePath));
+      if (version !== this.bootstrapVersion) return;
+
+      const changeSummary = summary.total;
+      if (changeSummary.files <= 0) {
+        this.turnChangeStatsById.update((stats) => {
+          const { [latestCollapsedTurn.turnId]: _removed, ...rest } = stats;
+          return rest;
+        });
+        return;
+      }
+
+      this.turnChangeStatsById.update((stats) => ({
+        ...stats,
+        [latestCollapsedTurn.turnId]: {
+          files: changeSummary.files,
+          additions: changeSummary.additions,
+          deletions: changeSummary.deletions,
+        },
+      }));
+    } catch {
+      this.turnChangeStatsById.update((stats) => {
+        const { [latestCollapsedTurn.turnId]: _removed, ...rest } = stats;
+        return rest;
+      });
     }
   }
 
@@ -1208,6 +1259,7 @@ readonly messageActionsDisabled = computed(
     this.subagents.set([]);
     this.recentHookEvents.set([]);
     this.expandedTurns.set({});
+    this.turnChangeStatsById.set({});
     this.armedEditMessageId.set(null);
     this.rewindingMessageId.set(null);
     this.closeAgentInspector();

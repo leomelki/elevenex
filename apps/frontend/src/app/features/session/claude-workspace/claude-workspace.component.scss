@@ -709,6 +709,8 @@
 .cw-turn-gap__pill {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 0.625rem;
   min-width: 0;
   padding: 0.475rem 0.875rem;
@@ -747,6 +749,7 @@
 
 .cw-turn-gap__label,
 .cw-turn-gap__meta,
+.cw-turn-gap__changes,
 .cw-turn-gap__count {
   white-space: nowrap;
 }
@@ -759,6 +762,28 @@
 
 .cw-turn-gap__meta {
   font-size: 0.75rem;
+}
+
+.cw-turn-gap__changes {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.cw-turn-gap__changes-separator {
+  color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+  font-weight: 500;
+}
+
+.cw-turn-gap__changes-additions {
+  color: color-mix(in oklab, #0f9f6e 82%, var(--foreground));
+}
+
+.cw-turn-gap__changes-deletions {
+  color: color-mix(in oklab, var(--destructive) 78%, var(--foreground));
 }
 
 .cw-turn-gap__count {
