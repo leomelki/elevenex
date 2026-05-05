@@ -120,4 +120,28 @@ describe('ClaudeMessageComponent', () => {
 
     expect(copySpy).toHaveBeenCalledWith('only this');
   });
+
+  it('renders markdown while assistant text is streaming', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeMessageComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeMessageComponent);
+    fixture.componentRef.setInput('item', {
+      id: 'assistant-1',
+      kind: 'assistant',
+      content: '**Bold** and `code`',
+      timestamp: '2026-04-24T08:00:01.000Z',
+      receivedAt: '2026-04-24T08:00:01.000Z',
+      sourceMessageId: 'source-assistant-1',
+    });
+    fixture.componentRef.setInput('streaming', true);
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('.cw-md--streaming strong')?.textContent).toBe('Bold');
+    expect(element.querySelector('.cw-md--streaming code')?.textContent).toBe('code');
+    expect(element.textContent).not.toContain('**Bold**');
+    expect(element.querySelector('.cw-caret')).not.toBeNull();
+  });
 });

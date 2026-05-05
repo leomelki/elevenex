@@ -104,7 +104,7 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
           <div class="cw-msg__body">
             @if (item().content) {
               @if (streaming()) {
-                <div class="cw-msg__streaming">{{ item().content }}</div>
+                <div class="cw-md cw-md--streaming" [innerHTML]="item().content | cwMarkdown"></div>
                 <span class="cw-caret"></span>
               } @else {
                 <div class="cw-md" [innerHTML]="item().content | cwMarkdown"></div>
@@ -261,10 +261,6 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
         opacity: 1;
         transform: translateY(0);
       }
-      .cw-msg__streaming {
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
       .cw-msg--system {
         font-size: 0.75rem;
         color: var(--muted-foreground);
@@ -286,6 +282,9 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
       }
       .cw-md :last-child {
         margin-bottom: 0;
+      }
+      .cw-md--streaming {
+        word-break: break-word;
       }
       .cw-md p {
         margin: 0.5rem 0;
