@@ -3,6 +3,13 @@ import { EventEmitter } from 'events';
 import { SessionsService } from '../sessions/sessions.service.js';
 
 export type ClaudeActivityStatus = 'running' | 'idle' | 'waiting';
+export type ClaudeActivityActionKind = 'permission' | 'user_input' | null;
+
+export interface ClaudeSessionActivity {
+  activityStatus: ClaudeActivityStatus;
+  actionKind: ClaudeActivityActionKind;
+  actionLabel: string | null;
+}
 
 interface StatusEntry {
   status: ClaudeActivityStatus;
@@ -29,6 +36,7 @@ interface ClaudeHookPayload {
 export class ClaudeHooksService extends EventEmitter {
   private readonly logger = new Logger('ClaudeHooksService');
   private statuses = new Map<number, StatusEntry>();
+  private runtimeActivities = new Map<number, ClaudeSessionActivity>();
   private readonly invalidatedSessions = new Set<number>();
 
   constructor(
@@ -74,7 +82,7 @@ export class ClaudeHooksService extends EventEmitter {
     this.logger.log(
       `Session ${sessionId}: ${prev?.status ?? 'unknown'} → ${status}`,
     );
-    this.emit('status-changed', { sessionId, status });
+    this.emitStatusChanged(sessionId);
 
     if (
       markCompletion &&
@@ -95,7 +103,40 @@ export class ClaudeHooksService extends EventEmitter {
   }
 
   getStatus(sessionId: number): ClaudeActivityStatus {
-    return this.statuses.get(sessionId)?.status ?? 'idle';
+    return this.getActivity(sessionId).activityStatus;
+  }
+
+  getActivity(sessionId: number): ClaudeSessionActivity {
+    const runtimeActivity = this.runtimeActivities.get(sessionId);
+    if (runtimeActivity && runtimeActivity.activityStatus !== 'idle') {
+      return runtimeActivity;
+    }
+
+    return {
+      activityStatus: this.statuses.get(sessionId)?.status ?? 'idle',
+      actionKind: null,
+      actionLabel: null,
+    };
+  }
+
+  updateRuntimeActivity(sessionId: number, activity: ClaudeSessionActivity): void {
+    const previous = this.getActivity(sessionId);
+    if (activity.activityStatus === 'idle') {
+      this.runtimeActivities.delete(sessionId);
+    } else {
+      this.runtimeActivities.set(sessionId, activity);
+    }
+
+    const current = this.getActivity(sessionId);
+    if (
+      previous.activityStatus === current.activityStatus
+      && previous.actionKind === current.actionKind
+      && previous.actionLabel === current.actionLabel
+    ) {
+      return;
+    }
+
+    this.emitStatusChanged(sessionId);
   }
 
   async handleHookEvent(
@@ -172,8 +213,24 @@ export class ClaudeHooksService extends EventEmitter {
 
   getAllStatuses(): Record<number, ClaudeActivityStatus> {
     const result: Record<number, ClaudeActivityStatus> = {};
-    for (const [id, entry] of this.statuses) {
-      result[id] = entry.status;
+    const ids = new Set([
+      ...this.statuses.keys(),
+      ...this.runtimeActivities.keys(),
+    ]);
+    for (const id of ids) {
+      result[id] = this.getActivity(id).activityStatus;
+    }
+    return result;
+  }
+
+  getAllActivities(): Record<number, ClaudeSessionActivity> {
+    const result: Record<number, ClaudeSessionActivity> = {};
+    const ids = new Set([
+      ...this.statuses.keys(),
+      ...this.runtimeActivities.keys(),
+    ]);
+    for (const id of ids) {
+      result[id] = this.getActivity(id);
     }
     return result;
   }
@@ -181,7 +238,17 @@ export class ClaudeHooksService extends EventEmitter {
   clearStatus(sessionId: number): void {
     this.invalidatedSessions.add(sessionId);
     this.statuses.delete(sessionId);
-    this.emit('status-changed', { sessionId, status: 'idle' });
+    this.runtimeActivities.delete(sessionId);
+    this.emitStatusChanged(sessionId);
+  }
+
+  private emitStatusChanged(sessionId: number): void {
+    const activity = this.getActivity(sessionId);
+    this.emit('status-changed', {
+      sessionId,
+      status: activity.activityStatus,
+      ...activity,
+    });
   }
 
   private summarizeHookPayload(payload: ClaudeHookPayload): Record<string, unknown> {

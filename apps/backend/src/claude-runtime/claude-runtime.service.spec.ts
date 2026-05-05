@@ -35,6 +35,7 @@ describe('ClaudeRuntimeService', () => {
   };
   let hooksService: EventEmitter & {
     updateStatus: jest.Mock;
+    updateRuntimeActivity: jest.Mock;
     clearStatus: jest.Mock;
   };
   let terminalService: {
@@ -99,6 +100,7 @@ describe('ClaudeRuntimeService', () => {
 
     hooksService = Object.assign(new EventEmitter(), {
       updateStatus: jest.fn().mockResolvedValue(undefined),
+      updateRuntimeActivity: jest.fn(),
       clearStatus: jest.fn(),
     });
 
@@ -159,6 +161,68 @@ describe('ClaudeRuntimeService', () => {
       'https://auth.example.com/authorize?client_id=claude-code&state=pending',
     );
     expect(service.getPendingMcpAuthUrl(7, 'other')).toBeNull();
+  });
+
+  it('publishes sidebar activity for running, action, resumed, and idle runtime states', () => {
+    const state = (service as any).ensureRuntimeState(7);
+
+    state.runPhase = 'running';
+    state.sessionState = 'running';
+    (service as any).emitRunState(7);
+    expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(7, {
+      activityStatus: 'running',
+      actionKind: null,
+      actionLabel: null,
+    });
+
+    state.pendingPermissionRequest = {
+      requestId: 'perm-1',
+      toolUseId: 'tool-1',
+      toolName: 'Edit',
+      input: {},
+      createdAt: '2024-01-01T00:00:00.000Z',
+    };
+    state.runPhase = 'waiting';
+    state.sessionState = 'requires_action';
+    (service as any).emitRunState(7);
+    expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(7, {
+      activityStatus: 'waiting',
+      actionKind: 'permission',
+      actionLabel: 'Permission needed',
+    });
+
+    state.pendingPermissionRequest = null;
+    state.pendingUserInputRequest = {
+      requestId: 'input-1',
+      serverName: 'linear',
+      message: 'Authenticate Linear',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    };
+    (service as any).emitRunState(7);
+    expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(7, {
+      activityStatus: 'waiting',
+      actionKind: 'user_input',
+      actionLabel: 'Input needed',
+    });
+
+    state.pendingUserInputRequest = null;
+    state.runPhase = 'running';
+    state.sessionState = 'running';
+    (service as any).emitRunState(7);
+    expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(7, {
+      activityStatus: 'running',
+      actionKind: null,
+      actionLabel: null,
+    });
+
+    state.runPhase = 'idle';
+    state.sessionState = 'idle';
+    (service as any).emitRunState(7);
+    expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(7, {
+      activityStatus: 'idle',
+      actionKind: null,
+      actionLabel: null,
+    });
   });
 
   it('starts MCP auth through the Claude Code SDK control channel', async () => {

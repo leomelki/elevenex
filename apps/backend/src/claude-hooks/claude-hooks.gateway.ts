@@ -15,8 +15,21 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    this.hooksService.on('status-changed', (data: { sessionId: number; status: string }) => {
-      this.broadcast({ type: 'status-changed', sessionId: data.sessionId, status: data.status });
+    this.hooksService.on('status-changed', (data: {
+      sessionId: number;
+      status: string;
+      activityStatus?: string;
+      actionKind?: string | null;
+      actionLabel?: string | null;
+    }) => {
+      this.broadcast({
+        type: 'status-changed',
+        sessionId: data.sessionId,
+        status: data.status,
+        activityStatus: data.activityStatus ?? data.status,
+        actionKind: data.actionKind ?? null,
+        actionLabel: data.actionLabel ?? null,
+      });
     });
 
     this.sessionsService.on('session-status-changed', (data: { sessionId: number; status: string }) => {
@@ -67,6 +80,7 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
 
       // Send initial state
       const statuses = this.hooksService.getAllStatuses();
+      const activities = this.hooksService.getAllActivities();
       const sessions = await this.sessionsService.findAllCompletionStates().catch(() => []);
       const completions: Record<number, {
         hasUnreviewedCompletion: boolean;
@@ -82,7 +96,7 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
           lastStateChangeAt: session.lastStateChangeAt,
         };
       }
-      ws.send(JSON.stringify({ type: 'init', statuses, completions }));
+      ws.send(JSON.stringify({ type: 'init', statuses, activities, completions }));
 
       ws.on('close', () => {
         this.clients.delete(ws);

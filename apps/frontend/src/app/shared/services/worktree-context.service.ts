@@ -78,10 +78,11 @@ export class WorktreeContextService {
     });
   }
 
-  consume(sessionId: number, enabled: boolean) {
+  consume(sessionId: number, enabled: boolean, contextSentence?: string) {
     return this.http.post<ConsumeWorktreeContextResult>('/api/worktree-context/consume', {
       sessionId,
       enabled,
+      contextSentence,
     });
   }
 

@@ -60,7 +60,10 @@ import {
   type SessionMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { SessionsService } from '../sessions/sessions.service.js';
-import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
+import {
+  ClaudeHooksService,
+  type ClaudeSessionActivity,
+} from '../claude-hooks/claude-hooks.service.js';
 import { TerminalService } from '../terminal/terminal.service.js';
 import {
   DRIZZLE,
@@ -2510,6 +2513,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const state = this.ensureRuntimeState(sessionId);
+    this.claudeHooksService.updateRuntimeActivity(
+      sessionId,
+      this.toSidebarActivity(state),
+    );
     this.emitEvent({
       type: 'run_state',
       payload: {
@@ -2525,6 +2532,32 @@ export class ClaudeRuntimeService extends EventEmitter {
         pendingPrompts: state.pendingPrompts,
       },
     });
+  }
+
+  private toSidebarActivity(state: RuntimeState): ClaudeSessionActivity {
+    if (state.pendingPermissionRequest) {
+      return {
+        activityStatus: 'waiting',
+        actionKind: 'permission',
+        actionLabel: 'Permission needed',
+      };
+    }
+
+    if (state.pendingUserInputRequest) {
+      return {
+        activityStatus: 'waiting',
+        actionKind: 'user_input',
+        actionLabel: 'Input needed',
+      };
+    }
+
+    return {
+      activityStatus: state.runPhase === 'running' || state.runPhase === 'waiting'
+        ? state.runPhase
+        : 'idle',
+      actionKind: null,
+      actionLabel: null,
+    };
   }
 
   private emitEvent(event: ClaudeRuntimeEvent): void {

@@ -180,6 +180,49 @@ describe('ClaudeHooksService', () => {
     expect(service.getStatus(5)).toBe('waiting');
   });
 
+  it('lets runtime activity take precedence over hook status for UI sessions', async () => {
+    await service.updateStatus(5, 'running');
+
+    service.updateRuntimeActivity(5, {
+      activityStatus: 'waiting',
+      actionKind: 'permission',
+      actionLabel: 'Permission needed',
+    });
+
+    expect(service.getStatus(5)).toBe('waiting');
+    expect(service.getActivity(5)).toEqual({
+      activityStatus: 'waiting',
+      actionKind: 'permission',
+      actionLabel: 'Permission needed',
+    });
+    expect(service.getAllActivities()[5]).toEqual({
+      activityStatus: 'waiting',
+      actionKind: 'permission',
+      actionLabel: 'Permission needed',
+    });
+  });
+
+  it('falls back to hook status when runtime activity becomes idle', async () => {
+    await service.updateStatus(5, 'running');
+    service.updateRuntimeActivity(5, {
+      activityStatus: 'waiting',
+      actionKind: 'user_input',
+      actionLabel: 'Input needed',
+    });
+
+    service.updateRuntimeActivity(5, {
+      activityStatus: 'idle',
+      actionKind: null,
+      actionLabel: null,
+    });
+
+    expect(service.getActivity(5)).toEqual({
+      activityStatus: 'running',
+      actionKind: null,
+      actionLabel: null,
+    });
+  });
+
   it('ignores late hook events after a session is cleared', async () => {
     service.clearStatus(42);
 

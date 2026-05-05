@@ -12,13 +12,21 @@ jest.mock('simple-git', () => ({
 
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: jest.fn(),
-}));
+}), { virtual: true });
 
 describe('WorktreeContextService', () => {
   let service: WorktreeContextService;
+  let sessionsServiceMock: {
+    findOne: jest.Mock;
+    markWorktreeContextInjected: jest.Mock;
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    sessionsServiceMock = {
+      findOne: jest.fn(),
+      markWorktreeContextInjected: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -43,10 +51,7 @@ describe('WorktreeContextService', () => {
         },
         {
           provide: SessionsService,
-          useValue: {
-            findOne: jest.fn(),
-            markWorktreeContextInjected: jest.fn(),
-          },
+          useValue: sessionsServiceMock,
         },
       ],
     }).compile();
@@ -81,6 +86,7 @@ describe('WorktreeContextService', () => {
     const first = service.getSnapshot(1, '/tmp/worktree-a');
     const second = service.getSnapshot(1, '/tmp/worktree-a');
 
+    await new Promise((resolve) => setImmediate(resolve));
     expect(collectSpy).toHaveBeenCalledTimes(1);
 
     resolveBranchContext(branchContext);
@@ -161,5 +167,100 @@ describe('WorktreeContextService', () => {
     );
     expect(log).toHaveBeenCalledTimes(1);
     expect(raw).toHaveBeenCalledTimes(3);
+  });
+
+  it('consumes a provided context sentence without refetching the snapshot', async () => {
+    sessionsServiceMock.findOne.mockResolvedValue({
+      id: 7,
+      repoId: 1,
+      worktreePath: '/tmp/worktree-d',
+      hasInjectedWorktreeContext: false,
+    });
+    sessionsServiceMock.markWorktreeContextInjected.mockResolvedValue({});
+    const getSnapshotSpy = jest.spyOn(service, 'getSnapshot');
+    const touchSpy = jest.spyOn(service as any, 'touchLastUsed').mockResolvedValue(undefined);
+
+    const result = await service.consumeForSession(
+      7,
+      true,
+      '  This branch updates first-message context handling.  ',
+    );
+
+    expect(result).toEqual({
+      shouldInject: true,
+      contextSentence: 'This branch updates first-message context handling.',
+    });
+    expect(getSnapshotSpy).not.toHaveBeenCalled();
+    expect(sessionsServiceMock.markWorktreeContextInjected).toHaveBeenCalledWith(7);
+    expect(touchSpy).toHaveBeenCalledWith(1, '/tmp/worktree-d');
+  });
+
+  it('falls back to snapshot lookup when no context sentence is provided', async () => {
+    sessionsServiceMock.findOne.mockResolvedValue({
+      id: 7,
+      repoId: 1,
+      worktreePath: '/tmp/worktree-e',
+      hasInjectedWorktreeContext: false,
+    });
+    sessionsServiceMock.markWorktreeContextInjected.mockResolvedValue({});
+    jest.spyOn(service, 'getSnapshot').mockResolvedValue({
+      repoId: 1,
+      worktreePath: '/tmp/worktree-e',
+      contextSentence: 'Snapshot sentence.',
+      rootRef: 'origin/main',
+      generationStatus: 'ready',
+      generatedAt: '2026-04-24T08:00:00.000Z',
+      lastUsedAt: null,
+      canGenerate: true,
+      hasChanges: true,
+      usingRepoDefaultRootRef: true,
+      errorMessage: null,
+      hasRecord: true,
+    });
+    const touchSpy = jest.spyOn(service as any, 'touchLastUsed').mockResolvedValue(undefined);
+
+    const result = await service.consumeForSession(7);
+
+    expect(result).toEqual({
+      shouldInject: true,
+      contextSentence: 'Snapshot sentence.',
+    });
+    expect(service.getSnapshot).toHaveBeenCalledWith(1, '/tmp/worktree-e');
+    expect(sessionsServiceMock.markWorktreeContextInjected).toHaveBeenCalledWith(7);
+    expect(touchSpy).toHaveBeenCalledWith(1, '/tmp/worktree-e');
+  });
+
+  it('does not mark or refetch when consume is disabled or already injected', async () => {
+    sessionsServiceMock.findOne.mockResolvedValueOnce({
+      id: 7,
+      repoId: 1,
+      worktreePath: '/tmp/worktree-f',
+      hasInjectedWorktreeContext: false,
+    });
+    const getSnapshotSpy = jest.spyOn(service, 'getSnapshot');
+
+    await expect(
+      service.consumeForSession(7, false, 'Provided sentence.'),
+    ).resolves.toEqual({
+      shouldInject: false,
+      contextSentence: null,
+    });
+
+    sessionsServiceMock.findOne.mockResolvedValueOnce({
+      id: 8,
+      repoId: 1,
+      worktreePath: '/tmp/worktree-g',
+      hasInjectedWorktreeContext: true,
+    });
+
+    await expect(
+      service.consumeForSession(8, true, 'Provided sentence.'),
+    ).resolves.toEqual({
+      shouldInject: false,
+      contextSentence: null,
+    });
+
+    expect(getSnapshotSpy).not.toHaveBeenCalled();
+    expect(sessionsServiceMock.markWorktreeContextInjected).not.toHaveBeenCalled();
   });
 });

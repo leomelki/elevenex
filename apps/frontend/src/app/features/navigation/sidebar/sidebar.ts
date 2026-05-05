@@ -352,6 +352,25 @@ export class Sidebar implements OnInit, OnDestroy {
     return this.claudeStatus.getSessionStatus(session.id) ?? session.status;
   }
 
+  getSessionActionLabel(session: SessionInTree): string | null {
+    const activity = this.claudeStatus.getActivity(session.id);
+    return activity.activityStatus === 'waiting' ? activity.actionLabel : null;
+  }
+
+  getSessionActivityTitle(session: SessionInTree): string {
+    const activity = this.claudeStatus.getActivity(session.id);
+    if (activity.actionLabel) {
+      return activity.actionLabel;
+    }
+    if (activity.activityStatus === 'running') {
+      return 'Claude is working';
+    }
+    if (activity.activityStatus === 'waiting') {
+      return 'Claude is awaiting input';
+    }
+    return 'Claude is idle';
+  }
+
   getSessionLastStateChangeLabel(session: SessionInTree): string | null {
     this.timeTick();
 

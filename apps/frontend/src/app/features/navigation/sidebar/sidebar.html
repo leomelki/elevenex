@@ -232,8 +232,16 @@
                                 [class.status-running]="claudeStatus.getStatus(session.id) === 'running'"
                                 [class.status-waiting]="claudeStatus.getStatus(session.id) === 'waiting'"
                                 [class.status-idle]="claudeStatus.getStatus(session.id) === 'idle'"
-                                [title]="claudeStatus.getStatus(session.id)">
+                                [title]="getSessionActivityTitle(session)"
+                                [attr.aria-label]="getSessionActivityTitle(session)">
                           </span>
+                          @if (getSessionActionLabel(session); as actionLabel) {
+                            <span
+                              class="sidebar-action-chip"
+                              [title]="getSessionActivityTitle(session)">
+                              {{ actionLabel }}
+                            </span>
+                          }
                           @if (editingSessionTitleId() === session.id) {
                             <input
                               #sessionTitleInput

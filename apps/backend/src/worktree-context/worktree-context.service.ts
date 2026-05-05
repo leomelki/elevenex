@@ -192,11 +192,19 @@ export class WorktreeContextService {
   async consumeForSession(
     sessionId: number,
     enabled = true,
+    contextSentence?: string,
   ): Promise<{ shouldInject: boolean; contextSentence: string | null }> {
     const session = await this.sessionsService.findOne(sessionId);
 
     if (!enabled || session.hasInjectedWorktreeContext) {
       return { shouldInject: false, contextSentence: null };
+    }
+
+    const providedSentence = this.normalizeOptionalText(contextSentence);
+    if (providedSentence) {
+      await this.sessionsService.markWorktreeContextInjected(sessionId);
+      await this.touchLastUsed(session.repoId, session.worktreePath);
+      return { shouldInject: true, contextSentence: providedSentence };
     }
 
     const snapshot = await this.getSnapshot(session.repoId, session.worktreePath);

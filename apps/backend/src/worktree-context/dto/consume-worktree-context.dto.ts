@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsNumber, IsOptional } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class ConsumeWorktreeContextDto {
   @Type(() => Number)
@@ -10,4 +10,8 @@ export class ConsumeWorktreeContextDto {
   @IsBoolean()
   @IsOptional()
   enabled?: boolean;
+
+  @IsString()
+  @IsOptional()
+  contextSentence?: string;
 }

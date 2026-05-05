@@ -1,6 +1,6 @@
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
-import { NEVER, of, Subject } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { ClaudeWorkspaceComponent } from './claude-workspace.component';
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
@@ -81,6 +81,21 @@ describe('ClaudeWorkspaceComponent', () => {
     updateRootRef: ReturnType<typeof vi.fn>;
     consume: ReturnType<typeof vi.fn>;
   };
+
+  const readyWorktreeContext = () => ({
+    repoId: 1,
+    worktreePath: '/tmp/project',
+    contextSentence: 'This branch updates first-message context handling.',
+    rootRef: 'origin/main',
+    generationStatus: 'ready' as const,
+    generatedAt: '2026-04-24T08:00:00.000Z',
+    lastUsedAt: null,
+    canGenerate: true,
+    hasChanges: true,
+    usingRepoDefaultRootRef: true,
+    errorMessage: null,
+    hasRecord: true,
+  });
 
   beforeEach(async () => {
     apiMock = {
@@ -441,14 +456,132 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(apiMock.getSubagentHistory).toHaveBeenCalledTimes(1);
   });
 
+  it('injects the already-fetched ready context into the first prompt', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.repoId = 1;
+    fixture.componentInstance.worktreePath = '/tmp/project';
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
+    worktreeContextServiceMock.consume.mockReturnValue(of({
+      shouldInject: true,
+      contextSentence: 'This branch updates first-message context handling.',
+    }));
+
+    await fixture.componentInstance.submitPrompt('Ship this change');
+
+    expect(worktreeContextServiceMock.consume).toHaveBeenCalledWith(
+      7,
+      true,
+      'This branch updates first-message context handling.',
+    );
+    expect(wsMock.send).toHaveBeenLastCalledWith(7, {
+      type: 'submit_prompt',
+      prompt: [
+        '<elevenex-worktree-context>',
+        'Context for this session: This branch updates first-message context handling.',
+        '</elevenex-worktree-context>',
+        '',
+        'Ship this change',
+      ].join('\n'),
+      titlePrompt: 'Ship this change',
+    });
+    expect(fixture.componentInstance.hasInjectedContext()).toBe(true);
+  });
+
+  it('does not call consume when local context is not ready', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    fixture.componentInstance.worktreeContext.set({
+      ...readyWorktreeContext(),
+      contextSentence: null,
+      generationStatus: 'generating',
+    });
+
+    await fixture.componentInstance.submitPrompt('Ship this change');
+
+    expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
+    expect(wsMock.send).toHaveBeenLastCalledWith(7, {
+      type: 'submit_prompt',
+      prompt: 'Ship this change',
+      titlePrompt: 'Ship this change',
+    });
+  });
+
+  it('does not call consume when first-message context is disabled', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
+    fixture.componentInstance.firstPromptContextEnabled.set(false);
+
+    await fixture.componentInstance.submitPrompt('Ship this change');
+
+    expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
+    expect(wsMock.send).toHaveBeenLastCalledWith(7, {
+      type: 'submit_prompt',
+      prompt: 'Ship this change',
+      titlePrompt: 'Ship this change',
+    });
+  });
+
+  it('does not call consume for slash commands', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
+
+    await fixture.componentInstance.submitPrompt('/status');
+
+    expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
+    expect(wsMock.send).toHaveBeenLastCalledWith(7, {
+      type: 'submit_prompt',
+      prompt: '/status',
+      titlePrompt: '/status',
+    });
+  });
+
+  it('sends a plain prompt when the backend reports context already consumed', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
+    worktreeContextServiceMock.consume.mockReturnValue(of({
+      shouldInject: false,
+      contextSentence: null,
+    }));
+
+    await fixture.componentInstance.submitPrompt('Ship this change');
+
+    expect(wsMock.send).toHaveBeenLastCalledWith(7, {
+      type: 'submit_prompt',
+      prompt: 'Ship this change',
+      titlePrompt: 'Ship this change',
+    });
+    expect(fixture.componentInstance.hasInjectedContext()).toBe(true);
+  });
+
   it('clears the composer immediately before worktree context preparation resolves', async () => {
-    vi.useFakeTimers();
-    worktreeContextServiceMock.consume.mockReturnValue(NEVER);
+    const consume$ = new Subject<{ shouldInject: boolean; contextSentence: string | null }>();
+    worktreeContextServiceMock.consume.mockReturnValue(consume$.asObservable());
 
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
     fixture.detectChanges();
+    await Promise.resolve();
 
+    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
     fixture.componentInstance.prompt.set('Ship this change');
     const submitPromise = fixture.componentInstance.submitPrompt('Ship this change');
 
@@ -457,17 +590,29 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(fixture.componentInstance.optimisticUserItems()).toEqual([
       expect.objectContaining({ content: 'Ship this change' }),
     ]);
-    expect(wsMock.send).not.toHaveBeenCalled();
+    expect(wsMock.send).not.toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ type: 'submit_prompt' }),
+    );
 
-    await vi.advanceTimersByTimeAsync(151);
+    consume$.next({
+      shouldInject: true,
+      contextSentence: 'This branch updates first-message context handling.',
+    });
+    consume$.complete();
     await submitPromise;
 
-    expect(wsMock.send).toHaveBeenCalledWith(7, {
+    expect(wsMock.send).toHaveBeenLastCalledWith(7, {
       type: 'submit_prompt',
-      prompt: 'Ship this change',
+      prompt: [
+        '<elevenex-worktree-context>',
+        'Context for this session: This branch updates first-message context handling.',
+        '</elevenex-worktree-context>',
+        '',
+        'Ship this change',
+      ].join('\n'),
       titlePrompt: 'Ship this change',
     });
-    vi.useRealTimers();
   });
 
   it('updates the live tool card when permission resolution arrives', async () => {

@@ -18,7 +18,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { firstValueFrom, TimeoutError, timeout } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import {
   ClaudeAutocompleteItem,
@@ -85,8 +85,6 @@ type TranscriptRenderItem =
       stepCount: number;
       agentSummary: TurnAgentSummary | null;
     };
-
-const WORKTREE_CONTEXT_SEND_BUDGET_MS = 150;
 
 @Component({
   selector: 'app-claude-workspace',
@@ -1228,28 +1226,36 @@ readonly messageActionsDisabled = computed(
   }
 
   private async prepareRuntimePrompt(prompt: string): Promise<string> {
-    if (this.hasInjectedContext() || prompt.trimStart().startsWith('/')) {
+    if (
+      this.hasInjectedContext()
+      || !this.firstPromptContextEnabled()
+      || prompt.trimStart().startsWith('/')
+    ) {
+      return prompt;
+    }
+
+    const localContextSentence = this.worktreeContext()?.contextSentence?.trim();
+    if (
+      this.worktreeContext()?.generationStatus !== 'ready'
+      || !localContextSentence
+    ) {
       return prompt;
     }
 
     try {
       const consume = await firstValueFrom(
-        this.worktreeContextService
-          .consume(this.sessionId, this.firstPromptContextEnabled())
-          .pipe(timeout({ first: WORKTREE_CONTEXT_SEND_BUDGET_MS })),
+        this.worktreeContextService.consume(this.sessionId, true, localContextSentence),
       );
       if (consume.shouldInject && consume.contextSentence) {
         this.hasInjectedContext.set(true);
         this.worktreeContext.update(snapshot =>
           snapshot ? { ...snapshot, lastUsedAt: new Date().toISOString() } : snapshot,
         );
-        return buildWorktreeContextPrompt(consume.contextSentence, prompt);
+        return buildWorktreeContextPrompt(consume.contextSentence.trim(), prompt);
       }
+      this.hasInjectedContext.set(true);
       return prompt;
     } catch (error) {
-      if (error instanceof TimeoutError) {
-        return prompt;
-      }
       toast.error(this.getHttpErrorMessage(error, 'Could not prepare worktree context.'));
       return prompt;
     }

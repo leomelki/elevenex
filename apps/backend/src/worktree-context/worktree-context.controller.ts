@@ -41,6 +41,10 @@ export class WorktreeContextController {
   @Post('consume')
   consume(@Body() dto: ConsumeWorktreeContextDto) {
     this.logger.log(`POST /consume session=${dto.sessionId} enabled=${dto.enabled ?? true}`);
-    return this.worktreeContextService.consumeForSession(dto.sessionId, dto.enabled ?? true);
+    return this.worktreeContextService.consumeForSession(
+      dto.sessionId,
+      dto.enabled ?? true,
+      dto.contextSentence,
+    );
   }
 }

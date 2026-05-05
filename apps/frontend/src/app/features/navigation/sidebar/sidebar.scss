@@ -198,6 +198,23 @@
   }
 }
 
+.sidebar-action-chip {
+  min-width: 0;
+  max-width: 6.25rem;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid color-mix(in oklch, oklch(0.75 0.15 65) 48%, var(--sidebar-border));
+  background: color-mix(in oklch, oklch(0.9 0.08 76) 34%, var(--sidebar));
+  color: color-mix(in oklch, oklch(0.47 0.13 65) 82%, var(--foreground));
+  font-size: 0.66rem;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
 @keyframes status-spin {
   to { transform: rotate(360deg); }
 }

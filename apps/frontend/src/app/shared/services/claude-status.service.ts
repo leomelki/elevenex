@@ -2,6 +2,13 @@ import { Injectable, NgZone, OnDestroy, signal } from '@angular/core';
 import { getWebSocketUrl } from '../runtime/runtime-config';
 
 export type ClaudeActivityStatus = 'running' | 'idle' | 'waiting';
+export type ClaudeActivityActionKind = 'permission' | 'user_input' | null;
+
+export interface ClaudeSessionActivity {
+  activityStatus: ClaudeActivityStatus;
+  actionKind: ClaudeActivityActionKind;
+  actionLabel: string | null;
+}
 
 export interface SessionCompletionState {
   hasUnreviewedCompletion: boolean;
@@ -18,6 +25,9 @@ export class ClaudeStatusService implements OnDestroy {
 
   private _statuses = signal(new Map<number, ClaudeActivityStatus>());
   readonly statuses = this._statuses.asReadonly();
+
+  private _activities = signal(new Map<number, ClaudeSessionActivity>());
+  readonly activities = this._activities.asReadonly();
 
   private _sessionStatuses = signal(new Map<number, string>());
   readonly sessionStatuses = this._sessionStatuses.asReadonly();
@@ -36,7 +46,15 @@ export class ClaudeStatusService implements OnDestroy {
   }
 
   getStatus(sessionId: number): ClaudeActivityStatus {
-    return this._statuses().get(sessionId) ?? 'idle';
+    return this.getActivity(sessionId).activityStatus;
+  }
+
+  getActivity(sessionId: number): ClaudeSessionActivity {
+    return this._activities().get(sessionId) ?? {
+      activityStatus: this._statuses().get(sessionId) ?? 'idle',
+      actionKind: null,
+      actionLabel: null,
+    };
   }
 
   getSessionStatus(sessionId: number): string | null {
@@ -63,6 +81,16 @@ export class ClaudeStatusService implements OnDestroy {
     this._sessionTitles.set(map);
   }
 
+  private setActivity(sessionId: number, activity: ClaudeSessionActivity): void {
+    const activities = new Map(this._activities());
+    activities.set(sessionId, activity);
+    this._activities.set(activities);
+
+    const statuses = new Map(this._statuses());
+    statuses.set(sessionId, activity.activityStatus);
+    this._statuses.set(statuses);
+  }
+
   private connect(): void {
     const wsUrl = getWebSocketUrl('/claude-status');
 
@@ -83,15 +111,27 @@ export class ClaudeStatusService implements OnDestroy {
               map.set(Number(id), status as ClaudeActivityStatus);
             }
             this._statuses.set(map);
+            const activityMap = new Map<number, ClaudeSessionActivity>();
+            for (const [id, activity] of Object.entries(data.activities ?? {})) {
+              activityMap.set(Number(id), this.normalizeActivity(activity, map.get(Number(id)) ?? 'idle'));
+            }
+            for (const [id, status] of map.entries()) {
+              if (!activityMap.has(id)) {
+                activityMap.set(id, {
+                  activityStatus: status,
+                  actionKind: null,
+                  actionLabel: null,
+                });
+              }
+            }
+            this._activities.set(activityMap);
             const completionMap = new Map<number, SessionCompletionState>();
             for (const [id, completion] of Object.entries(data.completions ?? {})) {
               completionMap.set(Number(id), completion as SessionCompletionState);
             }
             this._sessionCompletions.set(completionMap);
           } else if (data.type === 'status-changed') {
-            const map = new Map(this._statuses());
-            map.set(data.sessionId, data.status as ClaudeActivityStatus);
-            this._statuses.set(map);
+            this.setActivity(data.sessionId, this.normalizeActivity(data, data.status as ClaudeActivityStatus));
           } else if (data.type === 'session-status-changed') {
             const map = new Map(this._sessionStatuses());
             map.set(data.sessionId, data.status as string);
@@ -132,6 +172,29 @@ export class ClaudeStatusService implements OnDestroy {
     this.ws.onerror = () => {
       this.ws?.close();
     };
+  }
+
+  private normalizeActivity(value: unknown, fallbackStatus: ClaudeActivityStatus): ClaudeSessionActivity {
+    const record = value && typeof value === 'object'
+      ? value as Record<string, unknown>
+      : {};
+    const status = record['activityStatus'] === 'running'
+      || record['activityStatus'] === 'waiting'
+      || record['activityStatus'] === 'idle'
+      ? record['activityStatus'] as ClaudeActivityStatus
+      : fallbackStatus;
+    const actionKind = record['actionKind'] === 'permission' || record['actionKind'] === 'user_input'
+      ? record['actionKind'] as ClaudeActivityActionKind
+      : null;
+    const actionLabel = typeof record['actionLabel'] === 'string' && record['actionLabel'].trim()
+      ? record['actionLabel']
+      : actionKind === 'permission'
+        ? 'Permission needed'
+        : actionKind === 'user_input'
+          ? 'Input needed'
+          : null;
+
+    return { activityStatus: status, actionKind, actionLabel };
   }
 
   private scheduleReconnect(): void {

@@ -144,6 +144,16 @@ describe('Sidebar', () => {
       revealProjectId.set(projectId);
       highlightedProjectId.set(projectId);
     }),
+    clearRevealProject: vi.fn((projectId: number) => {
+      if (revealProjectId() === projectId) {
+        revealProjectId.set(null);
+      }
+    }),
+    clearHighlightedProject: vi.fn((projectId: number) => {
+      if (highlightedProjectId() === projectId) {
+        highlightedProjectId.set(null);
+      }
+    }),
   };
 
   const sessionsServiceMock = {
@@ -189,6 +199,11 @@ describe('Sidebar', () => {
 
   const claudeStatusMock = {
     getStatus: vi.fn(() => 'idle'),
+    getActivity: vi.fn(() => ({
+      activityStatus: 'idle',
+      actionKind: null,
+      actionLabel: null,
+    })),
     getSessionStatus: vi.fn(() => null),
     getSessionCompletion: vi.fn(() => null),
     sessionTitles: signal(new Map<number, string>()).asReadonly(),
@@ -250,6 +265,8 @@ describe('Sidebar', () => {
     navigationServiceMock.isExpanded.mockClear();
     navigationServiceMock.expandKey.mockClear();
     navigationServiceMock.revealProject.mockClear();
+    navigationServiceMock.clearRevealProject.mockClear();
+    navigationServiceMock.clearHighlightedProject.mockClear();
     sessionsServiceMock.delete.mockReset();
     sessionsServiceMock.delete.mockReturnValue(of({}));
     worktreesServiceMock.remove.mockReset();
@@ -262,6 +279,11 @@ describe('Sidebar', () => {
     routerMock.navigateByUrl.mockClear();
     vscodeWebStateMock.destroyIframe.mockClear();
     claudeStatusMock.getStatus.mockReturnValue('idle');
+    claudeStatusMock.getActivity.mockReturnValue({
+      activityStatus: 'idle',
+      actionKind: null,
+      actionLabel: null,
+    });
     claudeStatusMock.getSessionStatus.mockReturnValue(null);
     claudeStatusMock.getSessionCompletion.mockReturnValue(null);
     pendingWorktreeCreationsMock.getByRepo.mockReset();
@@ -280,6 +302,7 @@ describe('Sidebar', () => {
 
     HTMLDialogElement.prototype.showModal ??= vi.fn();
     HTMLDialogElement.prototype.close ??= vi.fn();
+    Element.prototype.scrollIntoView ??= vi.fn();
 
     TestBed.resetTestingModule();
     TestBed.overrideComponent(Sidebar, {
@@ -618,6 +641,57 @@ describe('Sidebar', () => {
     const infoLink = element.querySelector('[aria-label="Open app info"]');
 
     expect(infoLink?.getAttribute('routerLink')).toBe('/info');
+  });
+
+  it('renders the running activity indicator for a working Claude session', () => {
+    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => sessionId === 11 ? 'running' : 'idle') as any);
+    claudeStatusMock.getActivity.mockImplementation(((sessionId: number) => sessionId === 11
+      ? { activityStatus: 'running', actionKind: null, actionLabel: null }
+      : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
+
+    const fixture = createSidebar();
+    const el = fixture.nativeElement as HTMLElement;
+    const row = el.querySelector('[data-session-row-id="11"]');
+    const dot = row?.querySelector('.sidebar-status-dot');
+
+    expect(dot?.classList.contains('status-running')).toBe(true);
+    expect(dot?.getAttribute('aria-label')).toBe('Claude is working');
+  });
+
+  it('renders an action chip for pending permission prompts', () => {
+    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => sessionId === 11 ? 'waiting' : 'idle') as any);
+    claudeStatusMock.getActivity.mockImplementation(((sessionId: number) => sessionId === 11
+      ? { activityStatus: 'waiting', actionKind: 'permission', actionLabel: 'Permission needed' }
+      : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
+
+    const fixture = createSidebar();
+    const el = fixture.nativeElement as HTMLElement;
+    const row = el.querySelector('[data-session-row-id="11"]');
+
+    expect(row?.querySelector('.sidebar-status-dot')?.classList.contains('status-waiting')).toBe(true);
+    expect(row?.querySelector('.sidebar-action-chip')?.textContent).toContain('Permission needed');
+  });
+
+  it('renders an action chip for pending user input prompts', () => {
+    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => sessionId === 11 ? 'waiting' : 'idle') as any);
+    claudeStatusMock.getActivity.mockImplementation(((sessionId: number) => sessionId === 11
+      ? { activityStatus: 'waiting', actionKind: 'user_input', actionLabel: 'Input needed' }
+      : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
+
+    const fixture = createSidebar();
+    const el = fixture.nativeElement as HTMLElement;
+    const row = el.querySelector('[data-session-row-id="11"]');
+
+    expect(row?.querySelector('.sidebar-action-chip')?.textContent).toContain('Input needed');
+  });
+
+  it('keeps idle sessions visually quiet without an action chip', () => {
+    const fixture = createSidebar();
+    const el = fixture.nativeElement as HTMLElement;
+    const row = el.querySelector('[data-session-row-id="11"]');
+
+    expect(row?.querySelector('.sidebar-status-dot')?.classList.contains('status-idle')).toBe(true);
+    expect(row?.querySelector('.sidebar-action-chip')).toBeNull();
   });
 
   it('navigates to the new project after wizard completion', () => {
