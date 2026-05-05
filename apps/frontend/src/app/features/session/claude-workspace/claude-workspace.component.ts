@@ -166,6 +166,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly pendingUserInputRequest = signal<ClaudeUserInputRequest | null>(null);
   readonly pendingPrompts = signal<ClaudePendingPrompt[]>([]);
   private readonly cancelledPendingPromptIds = new Set<string>();
+  private readonly autoApprovedPermissionRequestIds = new Set<string>();
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
   readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
@@ -618,6 +619,8 @@ readonly messageActionsDisabled = computed(
   }
 
   private autoApprovePermission(requestId: string): void {
+    if (this.autoApprovedPermissionRequestIds.has(requestId)) return;
+    this.autoApprovedPermissionRequestIds.add(requestId);
     this.ws.send(this.sessionId, {
       type: 'approve_permission',
       requestId,
@@ -1034,6 +1037,8 @@ readonly messageActionsDisabled = computed(
         if (event.payload.permissionMode != null) {
           this._permissionMode.set(event.payload.permissionMode);
         }
+        this.applyPendingPermissionFromRuntime(event.payload.pendingPermissionRequest);
+        this.pendingUserInputRequest.set(event.payload.pendingUserInputRequest);
         this.updatePendingPrompts(event.payload.pendingPrompts ?? []);
         if (event.payload.runPhase !== 'running') this.submitting.set(false);
         return;
@@ -1064,19 +1069,11 @@ readonly messageActionsDisabled = computed(
         return;
       case 'permission_request': {
         const req = event.payload.request;
-        if (this.planBypassActive()) {
-          const toolName = (req.toolName ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-          if (toolName === 'exitplanmode') {
-            this.pendingPermissionRequest.set(req);
-          } else {
-            this.autoApprovePermission(req.requestId);
-          }
-          return;
-        }
-        this.pendingPermissionRequest.set(req);
+        this.applyPendingPermissionFromRuntime(req);
         return;
       }
       case 'permission_resolved':
+        this.autoApprovedPermissionRequestIds.delete(event.payload.requestId);
         this.pendingPermissionRequest.set(null);
         this.liveItems.update((items) =>
           items.map((item) =>
@@ -1106,6 +1103,7 @@ readonly messageActionsDisabled = computed(
         return;
       }
       case 'complete':
+        this.autoApprovedPermissionRequestIds.clear();
         this.pendingPermissionRequest.set(null);
         this.pendingUserInputRequest.set(null);
         this.submitting.set(false);
@@ -1224,7 +1222,7 @@ readonly messageActionsDisabled = computed(
     this.availableModels.set(state.availableModels);
     this.contextUsage.set(state.contextUsage);
     this._permissionMode.set(state.permissionMode);
-    this.pendingPermissionRequest.set(state.pendingPermissionRequest);
+    this.applyPendingPermissionFromRuntime(state.pendingPermissionRequest);
     this.pendingUserInputRequest.set(state.pendingUserInputRequest);
     this.updatePendingPrompts(state.pendingPrompts ?? []);
     this.lastError.set(state.lastError);
@@ -1239,6 +1237,27 @@ readonly messageActionsDisabled = computed(
     this.recentHookEvents.set(state.recentHookEvents);
   }
 
+  private applyPendingPermissionFromRuntime(req: ClaudePermissionRequest | null): void {
+    if (!req) {
+      this.pendingPermissionRequest.set(null);
+      return;
+    }
+
+    if (this.shouldAutoApprovePermission(req)) {
+      this.pendingPermissionRequest.set(null);
+      this.autoApprovePermission(req.requestId);
+      return;
+    }
+
+    this.pendingPermissionRequest.set(req);
+  }
+
+  private shouldAutoApprovePermission(req: ClaudePermissionRequest): boolean {
+    if (!this.planBypassActive()) return false;
+    const toolName = (req.toolName ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return toolName !== 'exitplanmode';
+  }
+
   private reset(): void {
     this.bootstrapVersion += 1;
     if (this.flushRafId !== null) {
@@ -1248,6 +1267,7 @@ readonly messageActionsDisabled = computed(
       this.pendingDeltas.length = 0;
     }
     this.ws.disconnect(this.sessionId);
+    this.autoApprovedPermissionRequestIds.clear();
     this.loading.set(true);
     this.hydrated.set(false);
     this.submitting.set(false);

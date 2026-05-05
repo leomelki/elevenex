@@ -1036,6 +1036,43 @@ describe('ClaudeWorkspaceComponent', () => {
     ]);
   });
 
+  it('clears pending permission when run state reports no pending request', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+
+    fixture.componentInstance.pendingPermissionRequest.set({
+      requestId: 'perm-1',
+      toolUseId: 'tool-1',
+      toolName: 'ExitPlanMode',
+      input: {},
+      createdAt: '2026-04-24T08:00:00.000Z',
+    });
+
+    events$.next({
+      type: 'run_state',
+      payload: {
+        sessionId: 7,
+        runPhase: 'running',
+        sessionState: 'running',
+        canInterrupt: true,
+        lastError: null,
+        selectedModel: null,
+        permissionMode: null,
+        availableModels: [],
+        contextUsage: null,
+        pendingPermissionRequest: null,
+        pendingUserInputRequest: null,
+        pendingPrompts: [],
+      },
+    });
+
+    expect(fixture.componentInstance.pendingPermissionRequest()).toBeNull();
+  });
+
   it('deduplicates matching history and live tool items after hydrate snapshot reload', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());

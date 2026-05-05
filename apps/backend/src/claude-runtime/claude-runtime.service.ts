@@ -1699,6 +1699,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       content as Array<Record<string, any>>
     ).entries()) {
       if (part.type === 'tool_result') {
+        this.reconcileResolvedPermissionFromToolResult(sessionId, part.tool_use_id);
         const item: ClaudeTranscriptItem = {
           id: `${message.uuid ?? randomUUID()}:tool_result:${part.tool_use_id ?? partIndex}`,
           kind: 'tool_result',
@@ -1712,6 +1713,38 @@ export class ClaudeRuntimeService extends EventEmitter {
         this.pushItem(sessionId, item, 'tool_result');
       }
     }
+  }
+
+  private reconcileResolvedPermissionFromToolResult(
+    sessionId: number,
+    toolUseId: unknown,
+  ): void {
+    if (typeof toolUseId !== 'string' || !toolUseId) {
+      return;
+    }
+
+    const state = this.ensureRuntimeState(sessionId);
+    const pending = state.pendingPermissionRequest;
+    if (!pending || pending.toolUseId !== toolUseId) {
+      return;
+    }
+
+    const run = this.activeRuns.get(sessionId);
+    const stillActive = run
+      ? [...run.permissionRequests.values()].some(
+          (request) => request.request.toolUseId === toolUseId,
+        )
+      : false;
+    if (stillActive) {
+      return;
+    }
+
+    state.pendingPermissionRequest = null;
+    if (!state.pendingUserInputRequest) {
+      state.runPhase = 'running';
+      state.sessionState = 'running';
+    }
+    this.emitRunState(sessionId);
   }
 
   private handleResultMessage(
@@ -2621,6 +2654,8 @@ export class ClaudeRuntimeService extends EventEmitter {
         permissionMode: state.sessionMetadata?.permissionMode ?? state.selectedPermissionMode ?? null,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
+        pendingPermissionRequest: state.pendingPermissionRequest,
+        pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
       },
     });

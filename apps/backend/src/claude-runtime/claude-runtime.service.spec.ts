@@ -165,6 +165,10 @@ describe('ClaudeRuntimeService', () => {
 
   it('publishes sidebar activity for running, action, resumed, and idle runtime states', () => {
     const state = (service as any).ensureRuntimeState(7);
+    const emittedEvents: Array<{ type: string; payload?: Record<string, unknown> }> = [];
+    service.on('event', (event: { type: string; payload?: Record<string, unknown> }) =>
+      emittedEvents.push(event),
+    );
 
     state.runPhase = 'running';
     state.sessionState = 'running';
@@ -223,6 +227,35 @@ describe('ClaudeRuntimeService', () => {
       actionKind: null,
       actionLabel: null,
     });
+
+    const runStates = emittedEvents.filter((event) => event.type === 'run_state');
+    expect(runStates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            pendingPermissionRequest: expect.objectContaining({
+              requestId: 'perm-1',
+              toolUseId: 'tool-1',
+            }),
+            pendingUserInputRequest: null,
+          }),
+        }),
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            pendingPermissionRequest: null,
+            pendingUserInputRequest: expect.objectContaining({
+              requestId: 'input-1',
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            pendingPermissionRequest: null,
+            pendingUserInputRequest: null,
+          }),
+        }),
+      ]),
+    );
   });
 
   it('starts MCP auth through the Claude Code SDK control channel', async () => {
@@ -2107,6 +2140,95 @@ describe('ClaudeRuntimeService', () => {
           && (event.payload['request'] as { requestId?: string }).requestId === 'perm-2',
       ),
     ).toBe(true);
+  });
+
+  it('clears stale pending permission when a resolved tool result arrives', () => {
+    const emittedEvents: Array<{ type: string; payload?: Record<string, unknown> }> = [];
+    service.on('event', (event: { type: string; payload?: Record<string, unknown> }) =>
+      emittedEvents.push(event),
+    );
+
+    const permissionRequests = new Map([
+      [
+        'perm-1',
+        {
+          request: {
+            requestId: 'perm-1',
+            toolUseId: 'tool-1',
+            toolName: 'ExitPlanMode',
+            input: {},
+            createdAt: 'now',
+          },
+          resolve: jest.fn(),
+        },
+      ],
+    ]);
+    (service as any).activeRuns.set(7, {
+      query: { close: jest.fn() },
+      interruptRequested: false,
+      tornDown: false,
+      permissionRequests,
+      permissionRequestOrder: ['perm-1'],
+      userInputRequests: new Map(),
+      partialAssistantItems: new Map(),
+      partialThinkingItems: new Map(),
+      currentStreamMessageId: null,
+      completionPromise: Promise.resolve(),
+      resolveCompletion: jest.fn(),
+      startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
+      sawFirstSdkMessage: true,
+      sawFirstVisibleItem: true,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
+    });
+
+    const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
+    state.pendingPermissionRequest = {
+      requestId: 'perm-1',
+      toolUseId: 'tool-1',
+      toolName: 'ExitPlanMode',
+      input: {},
+      createdAt: 'now',
+    };
+    state.runPhase = 'waiting';
+    state.sessionState = 'requires_action';
+
+    (service as any).handleUserMessage(7, {
+      type: 'user',
+      uuid: 'user-1',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'accepted' }],
+      },
+    });
+
+    expect(state.pendingPermissionRequest).toEqual(
+      expect.objectContaining({ requestId: 'perm-1' }),
+    );
+
+    permissionRequests.delete('perm-1');
+    (service as any).handleUserMessage(7, {
+      type: 'user',
+      uuid: 'user-2',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'accepted' }],
+      },
+    });
+
+    expect(state.pendingPermissionRequest).toBeNull();
+    expect(state.runPhase).toBe('running');
+    expect(state.sessionState).toBe('running');
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'run_state',
+        payload: expect.objectContaining({
+          pendingPermissionRequest: null,
+        }),
+      }),
+    );
   });
 
   it('interrupt cancels a pending user input request immediately', async () => {

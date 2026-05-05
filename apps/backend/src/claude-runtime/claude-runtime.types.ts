@@ -577,6 +577,8 @@ export type ClaudeRuntimeEvent =
         permissionMode: ClaudePermissionMode | null;
         availableModels: ClaudeModelOption[];
         contextUsage: ClaudeContextUsage | null;
+        pendingPermissionRequest: ClaudePermissionRequest | null;
+        pendingUserInputRequest: ClaudeUserInputRequest | null;
         pendingPrompts: ClaudePendingPrompt[];
       };
     }
