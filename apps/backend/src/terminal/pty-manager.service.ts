@@ -14,9 +14,9 @@ import { execSync } from 'child_process';
 import { TerminalGateway } from './terminal.gateway.js';
 import { TmuxManager } from './tmux-manager.service.js';
 import { PlannotatorRegistryService } from '../plannotator/plannotator-registry.service.js';
-import { getElevenexProxyPort } from '../config/ports.js';
 import { getBackendHelperPath } from '../config/runtime-paths.js';
 import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
 
 interface PtySession {
   pty: pty.IPty;
@@ -104,15 +104,11 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       reuseExisting: reusingTmuxSession,
     });
 
-    const env = {
+    const env = buildManagedPlannotatorEnv(sessionId, this.wrapperScriptPath, {
       ...buildAugmentedEnv(),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      // Plannotator integration env vars
-      ELEVENEX_SESSION_ID: sessionId.toString(),
-      ELEVENEX_PORT: getElevenexProxyPort().toString(),
-      PLANNOTATOR_BROWSER: this.wrapperScriptPath,
-    };
+    });
 
     this.logger.log(`Spawning PTY for session ${sessionId} in ${worktreePath}`);
 
@@ -149,6 +145,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
         // Update tmux session environment so new processes inherit plannotator vars
         const plannotatorEnvVars = [
           'PLANNOTATOR_BROWSER',
+          'PLANNOTATOR_REMOTE',
           'ELEVENEX_SESSION_ID',
           'ELEVENEX_PORT',
         ];
@@ -163,6 +160,14 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
               // Ignore - tmux may not support set-environment in all cases
             }
           }
+        }
+        try {
+          execSync(
+            `${tmuxBin} set-environment -u -t ${sessionName} PLANNOTATOR_PORT`,
+            { stdio: 'ignore', env },
+          );
+        } catch {
+          // Ignore - tmux may not support unset in all cases
         }
         // Enable mouse mode so tmux handles scrollback via copy-mode
         try {
@@ -196,13 +201,14 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       const envPrefix = [
         `ELEVENEX_SESSION_ID=${env.ELEVENEX_SESSION_ID}`,
         `ELEVENEX_PORT=${env.ELEVENEX_PORT}`,
+        `PLANNOTATOR_REMOTE=${env.PLANNOTATOR_REMOTE}`,
         `PLANNOTATOR_BROWSER='${env.PLANNOTATOR_BROWSER}'`,
       ].join(' ');
 
       const claudeCmd =
         args.length > 0
-          ? `unset SSH_TTY SSH_CONNECTION && ${envPrefix} ${CLAUDE_BIN} ${args.join(' ')}`
-          : `unset SSH_TTY SSH_CONNECTION && ${envPrefix} ${CLAUDE_BIN}`;
+          ? `unset SSH_TTY SSH_CONNECTION PLANNOTATOR_PORT && ${envPrefix} ${CLAUDE_BIN} ${args.join(' ')}`
+          : `unset SSH_TTY SSH_CONNECTION PLANNOTATOR_PORT && ${envPrefix} ${CLAUDE_BIN}`;
 
       execSync(
         `${tmuxBin} new-session -d -s ${sessionName} -c "${worktreePath}" -x 80 -y 24 "${claudeCmd}"`,

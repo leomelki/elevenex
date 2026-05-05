@@ -68,8 +68,8 @@ import {
 } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
-import { getElevenexProxyPort } from '../config/ports.js';
 import { getBackendHelperPath, getBackendRuntimeRoot } from '../config/runtime-paths.js';
+import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
 import {
   ClaudePendingPrompt,
   ClaudePermissionRequest,
@@ -2878,12 +2878,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         type: 'preset' as const,
         preset: 'claude_code' as const,
       },
-      env: {
-        ...buildAugmentedEnv(),
-        ELEVENEX_SESSION_ID: String(sessionId),
-        ELEVENEX_PORT: String(getElevenexProxyPort()),
-        PLANNOTATOR_BROWSER: this.wrapperScriptPath,
-      },
+      env: buildManagedPlannotatorEnv(sessionId, this.wrapperScriptPath),
     };
   }
 
@@ -2926,12 +2921,7 @@ export class ClaudeRuntimeService extends EventEmitter {
 
         return { action: 'decline' };
       },
-      env: {
-        ...buildAugmentedEnv(),
-        ELEVENEX_SESSION_ID: String(sessionId),
-        ELEVENEX_PORT: String(getElevenexProxyPort()),
-        PLANNOTATOR_BROWSER: this.wrapperScriptPath,
-      },
+      env: buildManagedPlannotatorEnv(sessionId, this.wrapperScriptPath),
     };
   }
 
