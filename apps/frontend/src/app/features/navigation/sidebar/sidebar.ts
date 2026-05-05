@@ -868,7 +868,7 @@ export class Sidebar implements OnInit, OnDestroy {
     this.openWorktreeTimer = window.setTimeout(() => {
       this.openWorktreeTimer = null;
       try {
-        this.worktreeSheet.open(repo.id, branchName, repo.path, autoCreateSession);
+        this.worktreeSheet.open(repo.id, branchName, repo.path, repo.name, autoCreateSession);
       } finally {
         this.openingWorktreeBranchKey.set(null);
       }

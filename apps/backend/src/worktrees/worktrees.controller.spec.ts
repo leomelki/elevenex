@@ -2,7 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { WorktreesController } from './worktrees.controller.js';
 
 describe('WorktreesController', () => {
-  const makeDb = (repos: Array<{ id: number; path: string }>) => ({
+  const makeDb = (repos: Array<{ id: number; name?: string; path: string }>) => ({
     select: jest.fn(() => ({
       from: jest.fn(() => ({
         where: jest.fn(() => repos),
@@ -26,7 +26,7 @@ describe('WorktreesController', () => {
       worktreesServiceMock as any,
       jobsServiceMock as any,
       sessionsServiceMock as any,
-      makeDb([{ id: 7, path: '/tmp/test-repo' }]) as any,
+      makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
     const result = await controller.removeWorktreeFromProject('7', {
@@ -58,7 +58,7 @@ describe('WorktreesController', () => {
       worktreesServiceMock as any,
       jobsServiceMock as any,
       sessionsServiceMock as any,
-      makeDb([{ id: 7, path: '/tmp/test-repo' }]) as any,
+      makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
     const result = await controller.removeWorktree('7', {
@@ -92,31 +92,38 @@ describe('WorktreesController', () => {
   });
 
   it('starts a background worktree creation job and returns accepted payload', async () => {
+    const jobsServiceMock = {
+      startJob: jest.fn(() => ({
+        id: 'job-1',
+        branchName: 'feature',
+        worktreePath: '/tmp/.worktrees/test-repo/feature',
+        status: 'pending',
+      })),
+      getJob: jest.fn(),
+    };
     const controller = new WorktreesController(
       { removeWorktree: jest.fn() } as any,
-      {
-        startJob: jest.fn(() => ({
-          id: 'job-1',
-          branchName: 'feature',
-          worktreePath: '/tmp/.worktrees/feature',
-          status: 'pending',
-        })),
-        getJob: jest.fn(),
-      } as any,
+      jobsServiceMock as any,
       {
         deleteByWorktreePath: jest.fn(),
         deleteByRepoAndWorktreePath: jest.fn(),
       } as any,
-      makeDb([{ id: 7, path: '/tmp/test-repo' }]) as any,
+      makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
     await expect(controller.createWorktree('7', { branchName: 'feature' })).resolves.toEqual({
       jobId: 'job-1',
       repoId: 7,
       branchName: 'feature',
-      worktreePath: '/tmp/.worktrees/feature',
+      worktreePath: '/tmp/.worktrees/test-repo/feature',
       status: 'pending',
     });
+    expect(jobsServiceMock.startJob).toHaveBeenCalledWith(
+      7,
+      '/tmp/test-repo',
+      'feature',
+      '/tmp/.worktrees/test-repo/feature',
+    );
   });
 
   it('returns worktree creation job status for the matching repo', async () => {

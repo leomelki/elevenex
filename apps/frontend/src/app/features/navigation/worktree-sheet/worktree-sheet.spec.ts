@@ -96,13 +96,13 @@ describe('WorktreeSheet', () => {
     expect(component.creating()).toBe(false);
   });
 
-  it('prefills the default path with the repo name segment', () => {
+  it('prefills the default path with the supplied repo name segment', () => {
     const fixture = TestBed.createComponent(WorktreeSheet);
     const component = fixture.componentInstance;
     fixture.detectChanges();
 
     const dialog = component.dialogRef as unknown as MockTrackNativeModalDirective;
-    component.open(7, 'feature', '/tmp/repos/repo-one');
+    component.open(7, 'feature', '/tmp/repos/path-basename', 'repo-one');
 
     expect(component.worktreePath()).toBe('/tmp/repos/.worktrees/repo-one/feature');
     expect(dialog.open).toHaveBeenCalledOnce();

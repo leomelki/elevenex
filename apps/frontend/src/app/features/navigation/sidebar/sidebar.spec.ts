@@ -611,7 +611,7 @@ describe('Sidebar', () => {
     vi.advanceTimersByTime(0);
 
     expect(worktreeSheet.open).toHaveBeenCalledOnce();
-    expect(worktreeSheet.open).toHaveBeenCalledWith(1, 'feature', '/tmp/repo-one', false);
+    expect(worktreeSheet.open).toHaveBeenCalledWith(1, 'feature', '/tmp/repo-one', 'Repo One', false);
     expect(component.openingWorktreeBranchKey()).toBeNull();
   });
 

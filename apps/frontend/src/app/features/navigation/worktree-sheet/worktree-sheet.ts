@@ -24,13 +24,12 @@ export class WorktreeSheet {
   creating = signal(false);
   autoCreateSession = signal(false);
 
-  open(repoId: number, branchName: string, repoPath: string, autoCreateSession: boolean = false) {
+  open(repoId: number, branchName: string, repoPath: string, repoName: string, autoCreateSession: boolean = false) {
     this.repoId.set(repoId);
     this.branchName.set(branchName);
     this.repoPath.set(repoPath);
     this.autoCreateSession.set(autoCreateSession);
     const parentDir = repoPath.substring(0, repoPath.lastIndexOf('/'));
-    const repoName = repoPath.substring(repoPath.lastIndexOf('/') + 1);
     this.worktreePath.set(`${parentDir}/.worktrees/${repoName}/${branchName}`);
     this.dialogRef.open();
   }
