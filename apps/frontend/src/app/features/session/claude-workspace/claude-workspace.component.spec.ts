@@ -16,6 +16,13 @@ vi.mock('ngx-sonner', () => ({
 }));
 
 describe('ClaudeWorkspaceComponent', () => {
+  const stubClipboard = (writeText: ReturnType<typeof vi.fn>) => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+  };
+
   const runtimeState = (): ClaudeRuntimeState => ({
     sessionId: 7,
     claudeSessionId: 'claude-session-1',
@@ -24,6 +31,7 @@ describe('ClaudeWorkspaceComponent', () => {
     canInterrupt: false,
     pendingPermissionRequest: null,
     pendingUserInputRequest: null,
+    pendingPrompts: [],
     liveItems: [],
     lastError: null,
     selectedModel: null,
@@ -209,11 +217,10 @@ describe('ClaudeWorkspaceComponent', () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
     fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
 
     const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal('navigator', {
-      clipboard: { writeText },
-    });
+    stubClipboard(writeText);
 
     await fixture.componentInstance.copyMessage({
       id: 'user-1',
@@ -225,6 +232,53 @@ describe('ClaudeWorkspaceComponent', () => {
 
     expect(writeText).toHaveBeenCalledWith('Copy this');
   });
+
+  it('copies selected message text when provided', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+
+    await fixture.componentInstance.copyMessage(
+      {
+        id: 'user-1',
+        kind: 'user',
+        content: 'Copy this whole message',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        sourceMessageId: 'source-user-1',
+      },
+      'this whole',
+    );
+
+    expect(writeText).toHaveBeenCalledWith('this whole');
+  });
+
+  it('falls back to full message content when selected text is empty', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+
+    await fixture.componentInstance.copyMessage(
+      {
+        id: 'user-1',
+        kind: 'user',
+        content: 'Copy fallback',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        sourceMessageId: 'source-user-1',
+      },
+      '   ',
+    );
+
+    expect(writeText).toHaveBeenCalledWith('Copy fallback');
+  });
+
 
   it('shows the waiting caret while Claude is still thinking', async () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);

@@ -458,7 +458,6 @@ export class Sidebar implements OnInit, OnDestroy {
         worktreePath: branch.worktreePath!,
       }).subscribe({
         next: (session) => {
-          toast.success('Session created');
           this.navService.refreshTree();
           this.navService.openSession(session.id);
         },
@@ -805,7 +804,6 @@ export class Sidebar implements OnInit, OnDestroy {
         worktreePath: branch.worktreePath!,
       }).subscribe({
         next: (session) => {
-          toast.success('Session created');
           this.navService.refreshTree();
           this.navService.openSession(session.id);
         },

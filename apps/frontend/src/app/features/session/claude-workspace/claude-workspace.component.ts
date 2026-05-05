@@ -763,8 +763,9 @@ readonly messageActionsDisabled = computed(
     return !!item.sourceMessageId && this.armedEditMessageId() === item.sourceMessageId;
   }
 
-  async copyMessage(item: ClaudeTranscriptItem): Promise<void> {
-    const content = item.content?.trim();
+  async copyMessage(item: ClaudeTranscriptItem, selectedText?: string | null): Promise<void> {
+    const selectedContent = selectedText?.trim();
+    const content = selectedContent || item.content?.trim();
     if (!content || this.messageActionsDisabled()) return;
     if (!navigator.clipboard?.writeText) {
       toast.error('Clipboard is not available.');

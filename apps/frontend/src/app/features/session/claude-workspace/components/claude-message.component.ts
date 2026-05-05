@@ -2,6 +2,8 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  ElementRef,
+  inject,
   input,
   output,
 } from '@angular/core';
@@ -38,7 +40,8 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
                       title="Copy message"
                       aria-label="Copy message"
                       [disabled]="actionsDisabled()"
-                      (click)="copy.emit()"
+                      (mousedown)="preserveSelection($event)"
+                      (click)="copy.emit(getSelectedText())"
                     >
                       <ng-icon name="lucideCopy" size="12" />
                     </button>
@@ -379,13 +382,15 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
   ],
 })
 export class ClaudeMessageComponent {
+  private readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
+
   readonly item = input.required<ClaudeTranscriptItem>();
   readonly streaming = input<boolean>(false);
   readonly showActions = input<boolean>(false);
   readonly actionsDisabled = input<boolean>(false);
   readonly editArmed = input<boolean>(false);
 
-  readonly copy = output<void>();
+  readonly copy = output<string | null>();
   readonly armEdit = output<void>();
   readonly confirmEdit = output<void>();
   readonly cancelEdit = output<void>();
@@ -393,6 +398,26 @@ export class ClaudeMessageComponent {
   readonly isEmpty = computed(() => !this.item().content);
   readonly timestampLabel = computed(() => buildTimestampLabel(this.item(), this.streaming()));
   readonly timestampTitle = computed(() => this.timestampLabel());
+
+  preserveSelection(event: MouseEvent): void {
+    event.preventDefault();
+  }
+
+  getSelectedText(): string | null {
+    const selection = document.getSelection();
+    if (!selection || selection.isCollapsed) return null;
+
+    const selectedText = selection.toString().trim();
+    if (!selectedText) return null;
+
+    const host = this.elementRef.nativeElement;
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    if (!anchorNode || !focusNode) return null;
+    if (!host.contains(anchorNode) || !host.contains(focusNode)) return null;
+
+    return selectedText;
+  }
 }
 
 function buildTimestampLabel(item: ClaudeTranscriptItem, streaming: boolean): string | null {

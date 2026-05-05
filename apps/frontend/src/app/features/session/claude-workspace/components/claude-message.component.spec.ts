@@ -1,9 +1,13 @@
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeMessageComponent } from './claude-message.component';
 
 describe('ClaudeMessageComponent', () => {
+  afterEach(() => {
+    document.getSelection()?.removeAllRanges();
+  });
+
   it('renders copy and edit actions only for user messages', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeMessageComponent],
@@ -22,8 +26,8 @@ describe('ClaudeMessageComponent', () => {
     fixture.detectChanges();
 
     let element = fixture.nativeElement as HTMLElement;
-    expect(element.textContent).toContain('Copy');
-    expect(element.textContent).toContain('Edit');
+    expect(element.querySelector('[aria-label="Copy message"]')).not.toBeNull();
+    expect(element.querySelector('[aria-label="Edit message"]')).not.toBeNull();
 
     fixture.componentRef.setInput('item', {
       id: 'assistant-1',
@@ -37,8 +41,8 @@ describe('ClaudeMessageComponent', () => {
     fixture.detectChanges();
 
     element = fixture.nativeElement as HTMLElement;
-    expect(element.textContent).not.toContain('Copy');
-    expect(element.textContent).not.toContain('Edit message');
+    expect(element.querySelector('[aria-label="Copy message"]')).toBeNull();
+    expect(element.querySelector('[aria-label="Edit message"]')).toBeNull();
   });
 
   it('emits arm/edit confirmation events in sequence', async () => {
@@ -66,7 +70,7 @@ describe('ClaudeMessageComponent', () => {
     let buttons = Array.from(
       fixture.nativeElement.querySelectorAll('.cw-msg__action'),
     ) as HTMLButtonElement[];
-    buttons.find((button) => button.textContent?.includes('Edit'))?.click();
+    buttons.find((button) => button.getAttribute('aria-label') === 'Edit message')?.click();
     expect(armSpy).toHaveBeenCalledTimes(1);
     expect(confirmSpy).not.toHaveBeenCalled();
 
@@ -76,8 +80,44 @@ describe('ClaudeMessageComponent', () => {
     buttons = Array.from(
       fixture.nativeElement.querySelectorAll('.cw-msg__action'),
     ) as HTMLButtonElement[];
-    buttons.find((button) => button.textContent?.includes('Edit message'))?.click();
+    buttons.find((button) => button.getAttribute('aria-label') === 'Confirm edit')?.click();
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(fixture.nativeElement.textContent).toContain('Rewind to this message?');
+  });
+
+  it('emits selected text when copying part of a message', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeMessageComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeMessageComponent);
+    fixture.componentRef.setInput('item', {
+      id: 'user-1',
+      kind: 'user',
+      content: 'Copy only this phrase',
+      timestamp: '2026-04-24T08:00:00.000Z',
+      authoredAt: '2026-04-24T08:00:00.000Z',
+      sourceMessageId: 'source-user-1',
+    });
+    fixture.componentRef.setInput('showActions', true);
+
+    const copySpy = vi.fn();
+    fixture.componentInstance.copy.subscribe(copySpy);
+    fixture.detectChanges();
+
+    const bubble = fixture.nativeElement.querySelector('.cw-msg__bubble') as HTMLElement;
+    const textNode = bubble.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(textNode, 5);
+    range.setEnd(textNode, 14);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+
+    const copyButton = fixture.nativeElement.querySelector(
+      '.cw-msg__action[aria-label="Copy message"]',
+    ) as HTMLButtonElement;
+    copyButton.click();
+
+    expect(copySpy).toHaveBeenCalledWith('only this');
   });
 });

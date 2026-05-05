@@ -107,7 +107,6 @@ export class PendingWorktreeCreationsService {
       worktreePath: job.worktreePath,
     }).subscribe({
       next: (session) => {
-        toast.success('Session created');
         this.navigationService.refreshTree();
         this.navigationService.openSession(session.id);
       },
