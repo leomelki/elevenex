@@ -1,6 +1,12 @@
 import { interceptProcessStreams } from './backend-logs/log-interceptor.js';
 interceptProcessStreams();
 
+// Suppress git's optional index-lock acquisitions (background refreshes during
+// `git status`, fsmonitor extension writes, etc.) so concurrent reads from this
+// backend never race a foreground write that holds `.git/index.lock`. Mandatory
+// locks for commit/merge/etc. are unaffected. Inherited by all child processes.
+process.env.GIT_OPTIONAL_LOCKS = '0';
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
