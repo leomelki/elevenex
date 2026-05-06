@@ -1614,15 +1614,15 @@ describe('ClaudeRuntimeService', () => {
 
     await service.submitPrompt(7, 'Trace this');
 
-    const logMessages = loggerLogSpy.mock.calls.map(([message]) => String(message));
-    expect(logMessages.some((message) => message.includes('stage=submit_start'))).toBe(true);
-    expect(logMessages.some((message) => message.includes('stage=runtime_query_created'))).toBe(true);
-    expect(logMessages.some((message) => message.includes('stage=resume_diagnostics'))).toBe(true);
-    expect(logMessages.some((message) => message.includes('stage=first_sdk_message:system'))).toBe(true);
-    expect(logMessages.some((message) => message.includes('stage=pre_visible_system:init'))).toBe(true);
-    expect(logMessages.some((message) => message.includes('stage=first_visible_message_start'))).toBe(true);
-    expect(logMessages.some((message) => message.includes('preVisibleSummary'))).toBe(true);
-    expect(logMessages.some((message) => message.includes('stage=run_complete'))).toBe(true);
+    const debugMessages = loggerDebugSpy.mock.calls.map(([message]) => String(message));
+    expect(debugMessages.some((message) => message.includes('stage=submit_start'))).toBe(true);
+    expect(debugMessages.some((message) => message.includes('stage=runtime_query_created'))).toBe(true);
+    expect(debugMessages.some((message) => message.includes('stage=resume_diagnostics'))).toBe(true);
+    expect(debugMessages.some((message) => message.includes('stage=first_sdk_message:system'))).toBe(true);
+    expect(debugMessages.some((message) => message.includes('stage=pre_visible_system:init'))).toBe(true);
+    expect(debugMessages.some((message) => message.includes('stage=first_visible_message_start'))).toBe(true);
+    expect(debugMessages.some((message) => message.includes('preVisibleSummary'))).toBe(true);
+    expect(debugMessages.some((message) => message.includes('stage=run_complete'))).toBe(true);
   });
 
   it('records history source and count for resumed-session diagnostics', async () => {

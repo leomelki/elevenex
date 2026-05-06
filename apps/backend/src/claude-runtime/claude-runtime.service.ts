@@ -2006,7 +2006,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       startedAt,
       updatedAt: startedAt,
     });
-    this.logger.log(
+    this.logger.debug(
       `Claude hook started session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event}${this.formatHookMessageDetails(message as Record<string, unknown>)}`,
     );
     this.emitEvent({ type: 'hook_started', payload: { sessionId, hook } });
@@ -2027,7 +2027,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       stderr: message.stderr,
       updatedAt,
     });
-    this.logger.log(
+    this.logger.debug(
       `Claude hook progress session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event} elapsedMs=${this.computeHookElapsedMs(hook, updatedAt)} outputBytes=${this.byteLength(message.output)} stdoutBytes=${this.byteLength(message.stdout)} stderrBytes=${this.byteLength(message.stderr)}${this.formatHookMessageDetails(message as Record<string, unknown>)}`,
     );
     this.emitEvent({ type: 'hook_progress', payload: { sessionId, hook } });
@@ -2049,7 +2049,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       exitCode: message.exit_code,
       updatedAt,
     });
-    this.logger.log(
+    this.logger.debug(
       `Claude hook completed session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event} outcome=${message.outcome} exitCode=${String(message.exit_code ?? 'null')} elapsedMs=${this.computeHookElapsedMs(hook, updatedAt)} outputBytes=${this.byteLength(message.output)} stdoutBytes=${this.byteLength(message.stdout)} stderrBytes=${this.byteLength(message.stderr)}${this.formatHookMessageDetails(message as Record<string, unknown>)}`,
     );
     this.emitEvent({ type: 'hook_complete', payload: { sessionId, hook } });
@@ -2700,7 +2700,7 @@ export class ClaudeRuntimeService extends EventEmitter {
   ): void {
     const elapsedMs = Date.now() - startedAtMs;
     const suffix = details ? ` details=${JSON.stringify(details)}` : '';
-    this.logger.log(
+    this.logger.debug(
       `Claude startup session=${sessionId} run=${runId} stage=${stage} elapsedMs=${elapsedMs}${suffix}`,
     );
   }
@@ -3429,7 +3429,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           };
         }
         state.metadataRefreshCompletedAtMs = Date.now();
-        this.logger.log(
+        this.logger.debug(
           `Claude runtime metadata refresh session=${sessionId} elapsedMs=${Date.now() - startedAtMs} models=${models.length} reason=${options.reason ?? 'unspecified'}`,
         );
       } catch (error) {

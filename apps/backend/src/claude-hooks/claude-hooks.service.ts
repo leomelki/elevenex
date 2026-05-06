@@ -79,7 +79,7 @@ export class ClaudeHooksService extends EventEmitter {
       );
       return;
     }
-    this.logger.log(
+    this.logger.debug(
       `Session ${sessionId}: ${prev?.status ?? 'unknown'} → ${status}`,
     );
     this.emitStatusChanged(sessionId);
@@ -148,7 +148,7 @@ export class ClaudeHooksService extends EventEmitter {
     }
 
     const startedAtMs = Date.now();
-    this.logger.log(
+    this.logger.debug(
       `Hook bridge received session=${sessionId} event=${payload.hook_event_name ?? 'unknown'} details=${JSON.stringify(this.summarizeHookPayload(payload))}`,
     );
 
@@ -202,7 +202,7 @@ export class ClaudeHooksService extends EventEmitter {
       await this.updateStatus(sessionId, status);
     }
 
-    this.logger.log(
+    this.logger.debug(
       `Hook bridge processed session=${sessionId} event=${payload.hook_event_name ?? 'unknown'} elapsedMs=${Date.now() - startedAtMs} status=${status ?? 'unchanged'}`,
     );
   }
