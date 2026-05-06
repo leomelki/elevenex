@@ -34,7 +34,7 @@ jobs:
         run: pnpm backend:bundle && pnpm electron:backend:prepare
 
       - name: Build Linux desktop packages
-        run: pnpm frontend:build && pnpm electron:stage-version && pnpm --dir apps/electron package:linux
+        run: pnpm frontend:build && pnpm source-maps:collect && pnpm electron:stage-version && pnpm --dir apps/electron package:linux
 
       - name: Rename Linux desktop packages for release
         run: |

@@ -46,7 +46,8 @@
           "!**/.gitignore",
           "!**/.gitattributes",
           "!**/.gitmodules",
-          "!**/.gitkeep"
+          "!**/.gitkeep",
+          "!**/*.map"
         ]
       },
       {

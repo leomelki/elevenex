@@ -13,6 +13,7 @@
     "backend:bundle": "pnpm backend:build && node scripts/bundle-electron-backend.js",
     "frontend:dev": "pnpm --dir apps/frontend start",
     "frontend:build": "pnpm --dir apps/frontend build",
+    "source-maps:collect": "node scripts/collect-source-maps.js",
     "electron:backend:assets": "node scripts/prepare-vscode-web-runtime.js",
     "electron:backend:stage": "node scripts/stage-electron-backend.js",
     "electron:backend:rebuild-natives": "node scripts/rebuild-electron-backend-natives.js",
@@ -23,8 +24,8 @@
     "dev:tmux": "sh scripts/dev-tmux.sh",
     "electron:start": "pnpm --dir apps/electron start",
     "electron:debug": "pnpm --dir apps/electron start:debug",
-    "electron:package": "pnpm frontend:build && pnpm backend:bundle && pnpm electron:backend:prepare && pnpm --dir apps/electron package",
+    "electron:package": "pnpm frontend:build && pnpm backend:bundle && pnpm electron:backend:prepare && pnpm source-maps:collect && pnpm --dir apps/electron package",
     "electron:stage-version": "node scripts/stage-version.js",
-    "electron:package:mac": "pnpm frontend:build && pnpm electron:stage-version && pnpm --dir apps/electron package:mac"
+    "electron:package:mac": "pnpm frontend:build && pnpm source-maps:collect && pnpm electron:stage-version && pnpm --dir apps/electron package:mac"
   }
 }

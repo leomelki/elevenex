@@ -60,26 +60,35 @@ jobs:
         run: ls -lhR artifacts/
 
       - name: Write manifest
-        run: |
-          cat > artifacts/manifest.json <<EOF
-          {
-            "version": "${{ github.sha }}",
-            "ref": "${{ github.ref }}",
-            "targets": [
-              { "key": "linux-x64",   "archive": "elevenex-remote-runtime-linux-x64.tar.gz" },
-              { "key": "linux-arm64", "archive": "elevenex-remote-runtime-linux-arm64.tar.gz" }
-            ],
-            "desktopRuntime": [
-              { "key": "macos-arm64", "archive": "elevenex-runtime-macos-arm64.tar.gz" },
-              { "key": "linux-x64",   "archive": "elevenex-runtime-linux-x64.tar.gz" }
-            ],
-            "desktop": [
-              { "key": "macos-arm64", "archive": "elevenex-desktop-macos-arm64.dmg" },
-              { "key": "linux-x64",   "archive": "elevenex-desktop-linux-x64.AppImage" },
-              { "key": "linux-x64",   "archive": "elevenex-desktop-linux-x64.deb" }
-            ]
-          }
-          EOF
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const artifactsDir = 'artifacts';
+            const sourceMapsManifestPath = path.join(artifactsDir, 'source-maps-manifest.json');
+            const sourceMaps = fs.existsSync(sourceMapsManifestPath)
+              ? JSON.parse(fs.readFileSync(sourceMapsManifestPath, 'utf8'))
+              : null;
+            const manifest = {
+              version: '${{ github.sha }}',
+              ref: '${{ github.ref }}',
+              targets: [
+                { key: 'linux-x64', archive: 'elevenex-remote-runtime-linux-x64.tar.gz' },
+                { key: 'linux-arm64', archive: 'elevenex-remote-runtime-linux-arm64.tar.gz' },
+              ],
+              desktopRuntime: [
+                { key: 'macos-arm64', archive: 'elevenex-runtime-macos-arm64.tar.gz' },
+                { key: 'linux-x64', archive: 'elevenex-runtime-linux-x64.tar.gz' },
+              ],
+              desktop: [
+                { key: 'macos-arm64', archive: 'elevenex-desktop-macos-arm64.dmg' },
+                { key: 'linux-x64', archive: 'elevenex-desktop-linux-x64.AppImage' },
+                { key: 'linux-x64', archive: 'elevenex-desktop-linux-x64.deb' },
+              ],
+              sourceMaps,
+            };
+            fs.writeFileSync(path.join(artifactsDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
       - uses: softprops/action-gh-release@v2
         with:

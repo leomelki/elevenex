@@ -75,3 +75,18 @@ jobs:
           path: dist-runtime/*
           if-no-files-found: error
           retention-days: 30
+
+      - name: Prepare source map release assets
+        run: |
+          set -eu
+          mkdir -p dist-source-maps
+          cp apps/electron/.stage/source-maps/assets/* dist-source-maps/
+          cp apps/electron/.stage/source-maps/manifest.json dist-source-maps/source-maps-manifest.json
+          ls -lh dist-source-maps/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-source-maps
+          path: dist-source-maps/*
+          if-no-files-found: error
+          retention-days: 30
