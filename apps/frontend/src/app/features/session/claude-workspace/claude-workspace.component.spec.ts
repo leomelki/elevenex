@@ -865,7 +865,7 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it('attaches completed turn change stats only to the latest collapsed turn', async () => {
+  it('attaches change stats to every collapsed turn rendered from history', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
     apiMock.getHistory.mockReturnValue(of([
@@ -889,10 +889,16 @@ describe('ClaudeWorkspaceComponent', () => {
     await flushPromises();
     fixture.detectChanges();
 
-    expect(fixture.componentInstance.turnChangeStatsById()).toEqual({
-      'user-2': { files: 2, additions: 9, deletions: 1 },
-    });
-    expect(fixture.nativeElement.querySelectorAll('.cw-turn-gap__changes')).toHaveLength(1);
+    // Both turns get their stats inline from renderItems, so reopened sessions
+    // never have to wait for `complete` to repopulate the badges.
+    const badges = fixture.nativeElement.querySelectorAll('.cw-turn-gap__changes');
+    expect(badges).toHaveLength(2);
+    expect((badges[0] as HTMLElement).textContent).toContain('1 file');
+    expect((badges[0] as HTMLElement).textContent).toContain('+2');
+    expect((badges[0] as HTMLElement).textContent).toContain('-2');
+    expect((badges[1] as HTMLElement).textContent).toContain('2 files');
+    expect((badges[1] as HTMLElement).textContent).toContain('+9');
+    expect((badges[1] as HTMLElement).textContent).toContain('-1');
   });
 
   it('injects the already-fetched ready context into the first prompt', async () => {

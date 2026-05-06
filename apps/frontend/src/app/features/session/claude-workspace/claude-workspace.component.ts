@@ -181,7 +181,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly subagents = signal<ClaudeSubagentState[]>([]);
   readonly recentHookEvents = signal<ClaudeHookEvent[]>([]);
   readonly expandedTurns = signal<Record<string, boolean>>({});
-  readonly turnChangeStatsById = signal<Record<string, TurnChangeSummary>>({});
   readonly armedEditMessageId = signal<string | null>(null);
   readonly rewindingMessageId = signal<string | null>(null);
   readonly agentInspectorTurnId = signal<string | null>(null);
@@ -407,7 +406,7 @@ readonly messageActionsDisabled = computed(
             getItemStartTimestamp(unit.item),
             getItemCompletionTimestamp(lastAssistantUnit.item),
           ),
-          changeSummary: this.turnChangeStatsById()[unit.id] ?? null,
+          changeSummary: computeTurnChangeSummary(collapsibleUnits),
           stepCount: collapsibleUnits.length,
           agentSummary: buildTurnAgentSummary(
             unit.id,
@@ -1151,33 +1150,7 @@ readonly messageActionsDisabled = computed(
     await this.syncHistoryAfterCompletion();
     if (version !== this.bootstrapVersion) return;
 
-    if (await this.restoreInterruptedPromptIfNothingSubstantiveHappened()) {
-      return;
-    }
-
-    const latestCollapsedTurn = [...this.renderItems()]
-      .reverse()
-      .find((entry): entry is Extract<TranscriptRenderItem, { kind: 'collapsed-turn' }> =>
-        entry.kind === 'collapsed-turn',
-      );
-    if (!latestCollapsedTurn) return;
-
-    // Stats are derived from the file-writing tool calls in the turn (Edit, Write,
-    // MultiEdit, NotebookEdit) rather than from `git diff` so the pill reflects what
-    // Claude actually did this turn — independent of unrelated working-tree changes.
-    // Identical retried edits collapse to a single entry to avoid double-counting lines.
-    const summary = computeTurnChangeSummary(latestCollapsedTurn.hiddenUnits);
-    if (!summary) {
-      this.turnChangeStatsById.update((stats) => {
-        const { [latestCollapsedTurn.turnId]: _removed, ...rest } = stats;
-        return rest;
-      });
-      return;
-    }
-    this.turnChangeStatsById.update((stats) => ({
-      ...stats,
-      [latestCollapsedTurn.turnId]: summary,
-    }));
+    await this.restoreInterruptedPromptIfNothingSubstantiveHappened();
   }
 
   private async restoreInterruptedPromptIfNothingSubstantiveHappened(): Promise<boolean> {
@@ -1363,7 +1336,6 @@ readonly messageActionsDisabled = computed(
     this.subagents.set([]);
     this.recentHookEvents.set([]);
     this.expandedTurns.set({});
-    this.turnChangeStatsById.set({});
     this.armedEditMessageId.set(null);
     this.rewindingMessageId.set(null);
     this.interruptedRunShouldRestorePrompt = false;
