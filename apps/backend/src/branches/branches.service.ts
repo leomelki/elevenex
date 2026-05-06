@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import simpleGit, { SimpleGit, BranchSummary } from 'simple-git';
+import { SimpleGit, BranchSummary } from 'simple-git';
+import { worktreeSimpleGit } from '../config/system-paths.js';
 import * as fs from 'node:fs';
 
 export interface BranchInfo {
@@ -40,8 +41,8 @@ export class BranchesService {
       // Use separate SimpleGit instances for true parallelism
       // (simple-git serializes commands per instance)
       const [branchSummary, worktreePaths] = await Promise.all([
-        simpleGit(repoPath).branch(includeRemote ? ['-a'] : []) as Promise<BranchSummary>,
-        this.listWorktreePaths(simpleGit(repoPath)),
+        worktreeSimpleGit(repoPath).branch(includeRemote ? ['-a'] : []) as Promise<BranchSummary>,
+        this.listWorktreePaths(worktreeSimpleGit(repoPath)),
       ]);
 
       // Normalize repo path for comparison (macOS symlink issue)
@@ -165,7 +166,7 @@ export class BranchesService {
     startPoint?: string,
   ): Promise<BranchInfo> {
     try {
-      const git: SimpleGit = simpleGit(repoPath);
+      const git: SimpleGit = worktreeSimpleGit(repoPath);
 
       this.invalidateCache(repoPath);
 

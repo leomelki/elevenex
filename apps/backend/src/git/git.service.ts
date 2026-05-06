@@ -1,9 +1,9 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { readFile } from 'node:fs/promises';
 import { execFile, type ExecFileOptions } from 'node:child_process';
-import simpleGit, { SimpleGit, StatusResult, LogResult } from 'simple-git';
+import { SimpleGit, StatusResult, LogResult } from 'simple-git';
 
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnv, findBinary, worktreeSimpleGit } from '../config/system-paths.js';
 
 const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
 const CLAUDE_BIN = findBinary('claude') ?? 'claude';
@@ -83,7 +83,7 @@ export class GitService {
   private readonly logger = new Logger(GitService.name);
 
   async getStatus(worktreePath: string): Promise<FileStatus[]> {
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
     const status: StatusResult = await git.status();
 
     const files: FileStatus[] = [];
@@ -124,7 +124,7 @@ export class GitService {
   }
 
   async getStatusSummary(worktreePath: string): Promise<GitStatusSummary> {
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
     const [files, status, stagedStats, unstagedStats] = await Promise.all([
       this.getStatus(worktreePath),
       git.status(),
@@ -149,12 +149,12 @@ export class GitService {
   }
 
   async stageFiles(worktreePath: string, files: string[]): Promise<void> {
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
     await git.add(files);
   }
 
   async unstageFiles(worktreePath: string, files: string[]): Promise<void> {
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
     await git.raw(['reset', 'HEAD', '--', ...files]);
   }
 
@@ -167,7 +167,7 @@ export class GitService {
     } = {},
   ): Promise<CommitResult> {
     const requestId = options.requestId ?? this.createRequestId();
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
 
     this.logger.log(
       `[commit:${requestId}] service started worktreePath="${worktreePath}" includeUnstaged=${Boolean(options.includeUnstaged)}`,
@@ -247,7 +247,7 @@ export class GitService {
       `[commit-message:${requestId}] suggestion started worktreePath="${worktreePath}"`,
     );
 
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
     try {
       const status = await git.status();
       const stagedFiles = this.getUniqueStagedFiles(status);
@@ -328,7 +328,7 @@ export class GitService {
 
   async push(worktreePath: string): Promise<PushResult> {
     const requestId = this.createRequestId();
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
     this.logger.log(
       `[push:${requestId}] service started worktreePath="${worktreePath}"`,
     );
@@ -442,7 +442,7 @@ export class GitService {
     worktreePath: string,
     maxCount: number = 50,
   ): Promise<CommitInfo[]> {
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
     const log: LogResult = await git.log({ maxCount });
 
     return log.all.map((commit) => ({
@@ -459,7 +459,7 @@ export class GitService {
     worktreePath: string,
     options: { staged?: boolean; file?: string; commit?: string },
   ): Promise<string> {
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
 
     if (options.commit) {
       if (!isValidGitRef(options.commit)) {
@@ -480,7 +480,7 @@ export class GitService {
   }
 
   async show(worktreePath: string, ref: string, path: string): Promise<string> {
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
 
     if (!isValidGitRef(ref)) {
       throw new BadRequestException(`Invalid git ref: ${ref}`);
@@ -595,7 +595,7 @@ export class GitService {
     worktreePath: string,
     staged: boolean,
   ): Promise<{ additions: number; deletions: number }> {
-    const git: SimpleGit = simpleGit(worktreePath);
+    const git: SimpleGit = worktreeSimpleGit(worktreePath);
     const args = staged
       ? ['diff', '--cached', '--numstat', '--find-renames']
       : ['diff', '--numstat', '--find-renames'];

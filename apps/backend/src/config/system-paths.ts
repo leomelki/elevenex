@@ -3,6 +3,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { execSync, spawn } from 'child_process';
 import { Logger } from '@nestjs/common';
+import simpleGit, { SimpleGit } from 'simple-git';
 
 const logger = new Logger('SystemPaths');
 
@@ -53,6 +54,40 @@ function getMinimalBootPath(): string {
   return parts.join(':');
 }
 
+// Vars that describe the shell's own runtime state — they should not leak
+// from a previous shell session into a fresh one. zsh recomputes them from
+// the spawn `cwd` and shell lineage. Forwarding stale values would shadow
+// what the new shell wants to set.
+const PER_SHELL_INSTANCE_KEYS = new Set([
+  'PWD', 'OLDPWD', 'SHLVL', '_', 'PS1', 'PS2', 'PS3', 'PS4',
+]);
+
+// Baseline env to spawn a login shell with.
+//
+// - Global load (no cwd): minimal boot path so the captured env is "pure" rc-
+//   file output, untainted by whatever `process.env` the backend inherited
+//   (systemd, launchd, Finder/DMG, …).
+// - Per-cwd load: inherit the global cache's env so the worktree-local shell
+//   starts from the same baseline as the user's interactive session. This is
+//   what makes the system general: anything an rc file sets up — version
+//   managers (nvm, fnm, pyenv, rbenv, asdf, mise, volta), direnv hooks,
+//   project exports, locale, custom env — flows into per-cwd loads, and the
+//   worktree's chpwd hooks layer cwd-specific overrides on top.
+function getShellBaselineEnv(forCwdLoad: boolean): NodeJS.ProcessEnv {
+  if (!forCwdLoad || !_shellEnvCache) {
+    return { PATH: getMinimalBootPath(), PS1: '' };
+  }
+  const baseline: NodeJS.ProcessEnv = { PS1: '' };
+  for (const [key, value] of Object.entries(_shellEnvCache)) {
+    if (PER_SHELL_INSTANCE_KEYS.has(key)) continue;
+    if (typeof value === 'string') baseline[key] = value;
+  }
+  if (typeof baseline.PATH !== 'string') {
+    baseline.PATH = getMinimalBootPath();
+  }
+  return baseline;
+}
+
 function getUserShell(): string {
   // Prefer SHELL (set by login). Fallback to /bin/sh, which exists on every
   // POSIX system — zsh isn't installed on most Linux servers.
@@ -80,6 +115,10 @@ function parseEnvOutput(raw: string): NodeJS.ProcessEnv {
   return parsed;
 }
 
+// Tag to prefix all log lines for this scope so they're greppable in tail
+// output (`grep system-paths` filters everything related to env capture).
+const cwdTag = (cwd?: string) => (cwd ? `cwd=${cwd}` : 'cwd=<global>');
+
 // Single async helper used by both initial warm-up and runtime refresh.
 // Returns null if the shell failed to produce any usable env. When `cwd` is
 // provided, the shell starts in that directory so chpwd-style hooks (nvm,
@@ -89,6 +128,8 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
     let raw = '';
     let settled = false;
     const shell = getUserShell();
+    const startedAt = Date.now();
+    logger.debug(`async shell-env load starting (${cwdTag(cwd)} shell=${shell})`);
     // `-i -l` sources both login files (.zprofile / .profile) AND interactive
     // rc files (.zshrc / .bashrc). Tools like nvm, fnm, rbenv, pyenv typically
     // inject PATH from the rc file, so login-only would miss them.
@@ -96,7 +137,7 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
       shell,
       ['-i', '-l', '-c', `printf '%s' '${ENV_BOUNDARY}'; env`],
       {
-        env: { PATH: getMinimalBootPath(), PS1: '' },
+        env: getShellBaselineEnv(cwd !== undefined),
         stdio: ['ignore', 'pipe', 'ignore'],
         cwd,
       },
@@ -109,17 +150,19 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      const elapsed = Date.now() - startedAt;
       if (err) {
-        logger.warn(`Login-shell env load failed: ${err.message}`);
+        logger.warn(`async shell-env load failed (${cwdTag(cwd)} elapsed=${elapsed}ms): ${err.message}`);
         resolve(null);
         return;
       }
       const parsed = parseEnvOutput(raw);
       if (Object.keys(parsed).length === 0) {
-        logger.warn(`Login-shell env load produced no variables (shell=${shell})`);
+        logger.warn(`async shell-env load produced no variables (${cwdTag(cwd)} shell=${shell} elapsed=${elapsed}ms)`);
         resolve(null);
         return;
       }
+      logger.log(`async shell-env loaded (${cwdTag(cwd)} keys=${Object.keys(parsed).length} elapsed=${elapsed}ms)`);
       resolve(parsed);
     };
     child.on('close', () => finish());
@@ -168,22 +211,32 @@ function applyShellEnvToProcess(): void {
 // Synchronous shell-env load. Used both for the global cache warm-up and for
 // per-cwd cold misses where we need the right env before the first spawn.
 // `cwd` is optional; when provided, the shell starts in that directory.
+//
+// This blocks the event loop for the duration of the shell startup (~100ms-
+// 500ms typically, capped at SHELL_TIMEOUT_MS), so the timing log is the
+// primary lever for spotting users whose rc files have grown slow.
 function loadLoginShellEnvSync(cwd?: string): NodeJS.ProcessEnv {
   const shell = getUserShell();
+  const startedAt = Date.now();
+  logger.debug(`sync shell-env load starting (${cwdTag(cwd)} shell=${shell})`);
   try {
     const raw = execSync(
-      `PS1='' ${shell} -i -l -c "printf '%s' '${ENV_BOUNDARY}'; env" < /dev/null`,
+      `${shell} -i -l -c "printf '%s' '${ENV_BOUNDARY}'; env" < /dev/null`,
       {
         encoding: 'utf-8',
         timeout: SHELL_TIMEOUT_MS,
-        env: { PATH: getMinimalBootPath() },
+        env: getShellBaselineEnv(cwd !== undefined),
         cwd,
       },
     );
-    return parseEnvOutput(raw);
+    const parsed = parseEnvOutput(raw);
+    const elapsed = Date.now() - startedAt;
+    logger.log(`sync shell-env loaded (${cwdTag(cwd)} keys=${Object.keys(parsed).length} elapsed=${elapsed}ms)`);
+    return parsed;
   } catch (err) {
+    const elapsed = Date.now() - startedAt;
     logger.warn(
-      `Sync login-shell env load failed (cwd=${cwd ?? 'default'}): ${(err as Error).message}`,
+      `sync shell-env load failed (${cwdTag(cwd)} elapsed=${elapsed}ms): ${(err as Error).message}`,
     );
     return {};
   }
@@ -204,14 +257,23 @@ function loadLoginShellEnv(): NodeJS.ProcessEnv {
 
 // Mark a per-cwd entry as recently used and evict the oldest if we exceed the
 // LRU bound. JavaScript `Map` preserves insertion order, so re-inserting a key
-// promotes it to the most-recent slot.
+// promotes it to the most-recent slot. Entries with an in-flight refresh are
+// skipped during eviction so that an evict-then-cold-miss can never spawn a
+// second login shell for a cwd that already has one running.
 function touchCwdLru(cwd: string, entry: CwdEnvEntry): void {
   if (_cwdEnvCache.has(cwd)) _cwdEnvCache.delete(cwd);
   _cwdEnvCache.set(cwd, entry);
   while (_cwdEnvCache.size > PER_CWD_CACHE_MAX) {
-    const oldest = _cwdEnvCache.keys().next().value;
-    if (oldest === undefined) break;
-    _cwdEnvCache.delete(oldest);
+    let evictKey: string | undefined;
+    for (const key of _cwdEnvCache.keys()) {
+      if (!_cwdRefreshInFlight.has(key)) {
+        evictKey = key;
+        break;
+      }
+    }
+    if (evictKey === undefined) break;
+    _cwdEnvCache.delete(evictKey);
+    logger.debug(`per-cwd LRU evicted ${cwdTag(evictKey)} (size=${_cwdEnvCache.size}/${PER_CWD_CACHE_MAX})`);
   }
 }
 
@@ -220,8 +282,12 @@ function touchCwdLru(cwd: string, entry: CwdEnvEntry): void {
 // failures keep the existing entry untouched.
 function refreshCwdEnvAsync(cwd: string): Promise<void> {
   const inFlight = _cwdRefreshInFlight.get(cwd);
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    logger.debug(`per-cwd refresh deduped (${cwdTag(cwd)})`);
+    return inFlight;
+  }
 
+  logger.debug(`per-cwd refresh kicked off (${cwdTag(cwd)})`);
   const promise = runLoginShell(cwd).then((parsed) => {
     if (parsed) {
       touchCwdLru(cwd, { env: parsed, lastRefreshAt: Date.now() });
@@ -241,11 +307,16 @@ function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
   const existing = _cwdEnvCache.get(cwd);
   if (existing) {
     touchCwdLru(cwd, existing);
-    if (Date.now() - existing.lastRefreshAt > REFRESH_THROTTLE_MS) {
+    const ageMs = Date.now() - existing.lastRefreshAt;
+    if (ageMs > REFRESH_THROTTLE_MS) {
+      logger.debug(`per-cwd cache hit, stale (${cwdTag(cwd)} age=${ageMs}ms) — scheduling refresh`);
       void refreshCwdEnvAsync(cwd);
+    } else {
+      logger.debug(`per-cwd cache hit (${cwdTag(cwd)} age=${ageMs}ms)`);
     }
     return existing.env;
   }
+  logger.debug(`per-cwd cache miss (${cwdTag(cwd)}) — sync-loading`);
   const env = loadLoginShellEnvSync(cwd);
   touchCwdLru(cwd, { env, lastRefreshAt: Date.now() });
   return env;
@@ -259,9 +330,13 @@ function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
 export function refreshLoginShellEnv(force = false): Promise<void> {
   const now = Date.now();
   if (!force && now - _lastRefreshAt < REFRESH_THROTTLE_MS) {
+    logger.debug(`global refresh throttled (age=${now - _lastRefreshAt}ms)`);
     return Promise.resolve();
   }
-  if (_refreshInFlight) return _refreshInFlight;
+  if (_refreshInFlight) {
+    logger.debug(`global refresh deduped`);
+    return _refreshInFlight;
+  }
 
   // Set the throttle timestamp BEFORE the refresh completes so concurrent
   // callers within the window skip immediately. A fast-failing refresh will
@@ -269,6 +344,7 @@ export function refreshLoginShellEnv(force = false): Promise<void> {
   // herd if the shell is slow to start.
   _lastRefreshAt = now;
 
+  logger.debug(`global refresh kicked off (force=${force})`);
   _refreshInFlight = runLoginShell().then((parsed) => {
     if (parsed) {
       _shellEnvCache = parsed;
@@ -349,10 +425,57 @@ function ensureUtf8Locale(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
+// Convenience wrapper around `simpleGit(worktreePath)` that overrides the
+// default `process.env` baseline with the per-cwd login-shell env. Use this
+// everywhere we run git inside a worktree — git invokes hooks (husky,
+// lint-staged, pre-commit) that often shell out to `node`, and process.env
+// has been globally augmented with the user's *default* nvm/fnm version,
+// not the one the worktree pins via `.nvmrc`. Without the override, hooks
+// resolve to the wrong node and bail or behave inconsistently.
+export function worktreeSimpleGit(worktreePath: string): SimpleGit {
+  return simpleGit(worktreePath).env(buildAugmentedEnv(process.env, worktreePath));
+}
+
+// POSIX-compliant single-quote shell escape. Wraps the value in single quotes
+// and escapes any embedded single quote with the standard `'\''` sequence.
+// Safe to inline inside another double-quoted shell context (sh leaves single
+// quotes alone when they appear inside double quotes).
+function shSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+// Critical env vars that must reach the actual command spawned inside a tmux
+// session. The tmux *server* captures its env at startup and shares it with
+// every session it creates; new sessions inherit the server's stale env, not
+// the env we pass to the tmux *client* via `execSync`. Inlining these as
+// `KEY=value cmd` shell prefixes is the simplest way to override per-command.
+//
+// PATH covers binary resolution (the actual reported bug — wrong `node`).
+// Locale vars keep multibyte UTF-8 rendering correct.
+const TMUX_INLINE_ENV_KEYS = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE'] as const;
+
+// Build a `KEY1='val' KEY2='val' ...` prefix string suitable for inlining in
+// the shell command passed to `tmux new-session`. Pass extra app-specific keys
+// (PLANNOTATOR_*, ELEVENEX_*, …) via `extraKeys` so the caller doesn't have to
+// concatenate by hand. Skips vars that are unset.
+export function buildTmuxInlineEnvPrefix(
+  env: NodeJS.ProcessEnv,
+  extraKeys: readonly string[] = [],
+): string {
+  const parts: string[] = [];
+  for (const key of [...TMUX_INLINE_ENV_KEYS, ...extraKeys]) {
+    const value = env[key];
+    if (typeof value !== 'string' || value.length === 0) continue;
+    parts.push(`${key}=${shSingleQuote(value)}`);
+  }
+  return parts.join(' ');
+}
+
 export function buildAugmentedEnv(
   base: NodeJS.ProcessEnv = process.env,
   cwd?: string,
 ): NodeJS.ProcessEnv {
+  const startedAt = Date.now();
   // Merge order: login-shell baseline → caller's env (higher priority) → augmented PATH.
   // This ensures user-defined exports (tokens, tool homes, custom vars) are present
   // even when the backend was started without a login shell (Electron / Finder launch).
@@ -366,10 +489,29 @@ export function buildAugmentedEnv(
       ? getCachedShellEnv()
       : loadLoginShellEnv();
   const merged = { ...shellEnv, ...base };
-  // PATH needs special handling: when launched from Finder/DMG, process.env.PATH is
-  // the stripped macOS default and would clobber the rich login-shell PATH. Combine
-  // both sources so user-defined PATH entries (e.g. ~/.yarn/switch/bin) survive.
-  const combinedPath = buildAugmentedPath(base.PATH || '', shellEnv.PATH || '');
+  // PATH ordering matters because dedup keeps the first occurrence: whichever
+  // version-manager bin appears first wins for `node`/`python`/etc lookups.
+  //
+  // - With a `cwd`: the per-cwd shell env was captured by running zsh inside
+  //   that worktree, so its PATH already reflects `.nvmrc`/chpwd hooks. We
+  //   put it FIRST so the project-local node beats anything `process.env.PATH`
+  //   accumulated from earlier (global) loads — which often includes the
+  //   wrong default version on top of the right one.
+  //
+  // - Without a `cwd`: keep the historical order (base first) so that values
+  //   the host explicitly set via systemd/launchd/CLI continue to take
+  //   precedence over the rc-file baseline.
+  const combinedPath = cwd
+    ? buildAugmentedPath(shellEnv.PATH || '', base.PATH || '')
+    : buildAugmentedPath(base.PATH || '', shellEnv.PATH || '');
+  const elapsed = Date.now() - startedAt;
+  // Most calls hit cache and finish in <1ms — debug-level keeps noise low while
+  // still surfacing the rare cold-miss that synchronously spawns a shell.
+  if (elapsed >= 5) {
+    logger.log(`buildAugmentedEnv (${cwdTag(cwd)} elapsed=${elapsed}ms)`);
+  } else {
+    logger.debug(`buildAugmentedEnv (${cwdTag(cwd)} elapsed=${elapsed}ms)`);
+  }
   return ensureUtf8Locale({
     ...merged,
     PATH: combinedPath,

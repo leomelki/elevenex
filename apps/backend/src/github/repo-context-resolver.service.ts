@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import simpleGit from 'simple-git';
+import { worktreeSimpleGit } from '../config/system-paths.js';
 
 export interface RepoContext {
   repoRoot: string;
@@ -17,7 +17,7 @@ export interface RepoContext {
 @Injectable()
 export class RepoContextResolverService {
   async resolve(worktreePath: string): Promise<RepoContext> {
-    const git = simpleGit(worktreePath);
+    const git = worktreeSimpleGit(worktreePath);
     const repoRoot = (await git.revparse(['--show-toplevel'])).trim();
     const branchSummary = await git.branchLocal();
     const branch = branchSummary.current;

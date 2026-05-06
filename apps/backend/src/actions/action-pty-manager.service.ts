@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnv, buildTmuxInlineEnvPrefix, findBinary } from '../config/system-paths.js';
 
 type ActionStatus = 'idle' | 'running' | 'success' | 'failed' | 'stopped';
 
@@ -317,8 +317,12 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
       // Create empty log file so tail can start immediately
       fs.writeFileSync(logFilePath, '');
 
-      // Wrap command to capture exit code before tmux session dies
-      const innerCmd = `${this.defaultShell} -lc ${this.shellEscape(action.command)}; echo $? > ${this.shellEscape(exitCodePath)}`;
+      // Wrap command to capture exit code before tmux session dies. Prefix
+      // with PATH / version-manager env so the user's command resolves to the
+      // worktree-pinned node — the running tmux server's stale env would
+      // otherwise win (its env was captured at server startup).
+      const tmuxEnvPrefix = buildTmuxInlineEnvPrefix(env);
+      const innerCmd = `${tmuxEnvPrefix} ${this.defaultShell} -lc ${this.shellEscape(action.command)}; echo $? > ${this.shellEscape(exitCodePath)}`;
 
       execSync(
         `${this.tmuxBin} new-session -d -s ${tmuxSessionName} -c "${action.worktreePath}" -x 120 -y 32 /bin/sh -c ${this.shellEscape(innerCmd)}`,

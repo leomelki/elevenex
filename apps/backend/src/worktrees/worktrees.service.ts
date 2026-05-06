@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import simpleGit, { SimpleGit } from 'simple-git';
+import { SimpleGit } from 'simple-git';
+import { worktreeSimpleGit } from '../config/system-paths.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 
@@ -16,7 +17,7 @@ export interface WorktreeInfo {
 @Injectable()
 export class WorktreesService {
   async listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
-    const git: SimpleGit = simpleGit(repoPath);
+    const git: SimpleGit = worktreeSimpleGit(repoPath);
 
     // Prune stale worktree references first
     try {
@@ -34,7 +35,7 @@ export class WorktreesService {
     branchName: string,
     worktreePath?: string,
   ): Promise<WorktreeInfo> {
-    const git: SimpleGit = simpleGit(repoPath);
+    const git: SimpleGit = worktreeSimpleGit(repoPath);
     const repoName = path.basename(repoPath);
 
     // Default path: <parent-dir>/.worktrees/<repo-name>/<branch-name>
@@ -90,7 +91,7 @@ export class WorktreesService {
       throw new BadRequestException('Cannot remove the main working tree');
     }
 
-    const git: SimpleGit = simpleGit(repoPath);
+    const git: SimpleGit = worktreeSimpleGit(repoPath);
 
     try {
       await git.raw(['worktree', 'remove', worktreePath]);

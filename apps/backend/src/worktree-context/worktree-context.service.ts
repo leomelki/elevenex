@@ -5,9 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import simpleGit, { type DefaultLogFields, type ListLogLine, type SimpleGit } from 'simple-git';
+import { type DefaultLogFields, type ListLogLine, type SimpleGit } from 'simple-git';
 import { query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnv, findBinary, worktreeSimpleGit } from '../config/system-paths.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { SessionsService } from '../sessions/sessions.service.js';
@@ -429,7 +429,7 @@ export class WorktreeContextService {
     worktreeRootRef: string | null,
     repoPreferredRootRef: string | null,
   ): Promise<BranchContextInput> {
-    const git = simpleGit(repoPath);
+    const git = worktreeSimpleGit(repoPath);
     const usingRepoDefaultRootRef = !this.normalizeOptionalText(worktreeRootRef);
 
     let resolvedRootRef: string | null;

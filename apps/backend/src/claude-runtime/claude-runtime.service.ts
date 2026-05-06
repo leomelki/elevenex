@@ -3060,7 +3060,11 @@ export class ClaudeRuntimeService extends EventEmitter {
         type: 'preset' as const,
         preset: 'claude_code' as const,
       },
-      env: buildManagedPlannotatorEnv(sessionId, this.wrapperScriptPath),
+      env: buildManagedPlannotatorEnv(
+        sessionId,
+        this.wrapperScriptPath,
+        buildAugmentedEnv(process.env, worktreePath),
+      ),
     };
   }
 
@@ -3208,7 +3212,11 @@ export class ClaudeRuntimeService extends EventEmitter {
 
         return { action: 'decline' };
       },
-      env: buildManagedPlannotatorEnv(sessionId, this.wrapperScriptPath),
+      env: buildManagedPlannotatorEnv(
+        sessionId,
+        this.wrapperScriptPath,
+        buildAugmentedEnv(process.env, worktreePath),
+      ),
     };
   }
 

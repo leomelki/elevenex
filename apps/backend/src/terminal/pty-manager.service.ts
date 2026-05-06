@@ -15,7 +15,7 @@ import { TerminalGateway } from './terminal.gateway.js';
 import { TmuxManager } from './tmux-manager.service.js';
 import { PlannotatorRegistryService } from '../plannotator/plannotator-registry.service.js';
 import { getBackendHelperPath } from '../config/runtime-paths.js';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnv, buildTmuxInlineEnvPrefix, findBinary } from '../config/system-paths.js';
 import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
 
 interface PtySession {
@@ -197,13 +197,14 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
       // Inline critical env vars in the shell command inside tmux.
       // The env passed to execSync only affects the tmux client, not
-      // the server which spawns the actual process.
-      const envPrefix = [
-        `ELEVENEX_SESSION_ID=${env.ELEVENEX_SESSION_ID}`,
-        `ELEVENEX_PORT=${env.ELEVENEX_PORT}`,
-        `PLANNOTATOR_REMOTE=${env.PLANNOTATOR_REMOTE}`,
-        `PLANNOTATOR_BROWSER='${env.PLANNOTATOR_BROWSER}'`,
-      ].join(' ');
+      // the server which spawns the actual process — so PATH and
+      // version-manager hints must be inlined to reach claude.
+      const envPrefix = buildTmuxInlineEnvPrefix(env, [
+        'ELEVENEX_SESSION_ID',
+        'ELEVENEX_PORT',
+        'PLANNOTATOR_REMOTE',
+        'PLANNOTATOR_BROWSER',
+      ]);
 
       const claudeCmd =
         args.length > 0
