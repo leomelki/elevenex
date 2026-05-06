@@ -373,17 +373,57 @@
     />
   }
 
-  @if (addRepoProject(); as project) {
-    <app-project-onboarding-wizard
-      [existingProject]="project"
-      [showPortForwardStep]="false"
-      heading="Add repositories"
-      subheading="Choose one or more local git folders to attach to this project."
-      ctaLabel="Add repositories"
-      (cancelled)="closeAddRepoWizard()"
-      (completed)="handleRepoAdded($event)"
-    />
-  }
+  <!-- Add repository to existing project dialog -->
+  <dialog
+    #addRepoDialog="trackedNativeModal"
+    trackNativeModal
+    [trackNativeModalOpen]="!!addRepoProject()"
+    (close)="onAddRepoDialogClosed()"
+    (cancel)="onAddRepoDialogClosed()"
+    class="worktree-dialog add-repo-dialog">
+    @if (addRepoProject(); as project) {
+      <form (submit)="$event.preventDefault(); submitAddRepo(project)">
+        <div class="worktree-dialog__eyebrow">{{ project.name }}</div>
+        <h2 class="worktree-dialog__title">Add a repository</h2>
+        <p class="worktree-dialog__copy">
+          Pick a local Git repository folder to attach to this project.
+        </p>
+
+        <label class="add-repo-dialog__field">
+          <span class="add-repo-dialog__label">Repository path</span>
+          <app-path-autocomplete-input
+            placeholder="/path/to/repository"
+            pathKind="directory"
+            [value]="addRepoPath()"
+            [disabled]="addRepoSubmitting()"
+            [preferredStartDirectory]="preferredAddRepoStartDirectory()"
+            (valueChange)="addRepoPath.set($event)"
+          />
+        </label>
+
+        @if (addRepoError()) {
+          <div class="add-repo-dialog__error" role="alert">{{ addRepoError() }}</div>
+        }
+
+        <div class="worktree-dialog__actions">
+          <button
+            type="button"
+            class="worktree-dialog__button worktree-dialog__button--ghost"
+            (click)="addRepoDialog.close()"
+            [disabled]="addRepoSubmitting()">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="worktree-dialog__button worktree-dialog__button--soft"
+            [disabled]="!addRepoPath().trim() || addRepoSubmitting()">
+            @if (addRepoSubmitting()) { <span class="worktree-dialog__spinner" aria-hidden="true"></span> }
+            Add repository
+          </button>
+        </div>
+      </form>
+    }
+  </dialog>
 
   <!-- Remove from project confirmation dialog -->
   <dialog #removeFromProjectDialog="trackedNativeModal" trackNativeModal class="worktree-dialog">

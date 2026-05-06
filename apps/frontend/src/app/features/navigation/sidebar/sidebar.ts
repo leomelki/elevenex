@@ -42,13 +42,15 @@ import { TodosService } from '@/features/productivity/todos.service';
 import { getElectronWindowControlsApi } from '@/shared/runtime/electron-window-controls';
 import { Project } from '@/shared/models/project.model';
 import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-wizard/project-onboarding-wizard';
+import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
+import { ReposService } from '@/shared/services/repos.service';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { PendingWorktreeCreationsService } from '@/shared/services/pending-worktree-creations.service';
 import { EnvironmentSwitcherComponent } from '../environment-switcher/environment-switcher.component';
 
 @Component({
   selector: 'app-sidebar',
-  imports: [NgIcon, RouterLink, WorktreeSheet, BranchSearch, ZardInputDirective, ProjectOnboardingWizard, TrackNativeModalDirective, EnvironmentSwitcherComponent],
+  imports: [NgIcon, RouterLink, WorktreeSheet, BranchSearch, ZardInputDirective, ProjectOnboardingWizard, PathAutocompleteInputComponent, TrackNativeModalDirective, EnvironmentSwitcherComponent],
   templateUrl: './sidebar.html',
   styleUrl: './sidebar.scss',
   viewProviders: [
@@ -89,6 +91,7 @@ export class Sidebar implements OnInit, OnDestroy {
   plannotatorState = inject(PlannotatorStateService);
   claudeStatus = inject(ClaudeStatusService);
   private sshForwardsService = inject(SshForwardsService);
+  private reposService = inject(ReposService);
   private cursorService = inject(CursorService);
   private onboardingState = inject(OnboardingStateService);
   private sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
@@ -159,6 +162,9 @@ export class Sidebar implements OnInit, OnDestroy {
   editingSessionTitleId = signal<number | null>(null);
   showCreateWizard = signal(false);
   addRepoProject = signal<NavigationProject | null>(null);
+  addRepoPath = signal('');
+  addRepoSubmitting = signal(false);
+  addRepoError = signal('');
   showPortForwardStep = computed(() => this.onboardingState.snapshotState().mode !== 'local');
 
   deleteWorktreeRepoId = signal(0);
@@ -249,17 +255,60 @@ export class Sidebar implements OnInit, OnDestroy {
   openAddRepoWizard(project: NavigationProject, event: Event) {
     event.stopPropagation();
     this.navService.expandKey(`project-${project.id}`);
+    this.addRepoPath.set('');
+    this.addRepoError.set('');
+    this.addRepoSubmitting.set(false);
     this.addRepoProject.set(project);
   }
 
-  closeAddRepoWizard() {
+  onAddRepoDialogClosed() {
+    if (this.addRepoSubmitting()) {
+      return;
+    }
     this.addRepoProject.set(null);
+    this.addRepoPath.set('');
+    this.addRepoError.set('');
   }
 
-  handleRepoAdded(project: Project) {
-    this.addRepoProject.set(null);
-    this.navService.refreshTree();
-    this.navService.revealProject(project.id);
+  preferredAddRepoStartDirectory() {
+    const path = this.addRepoPath();
+    if (path.startsWith('~/')) {
+      return '~';
+    }
+    if (!path.includes('/')) {
+      return undefined;
+    }
+    return path.slice(0, path.lastIndexOf('/')) || '/';
+  }
+
+  submitAddRepo(project: NavigationProject) {
+    if (this.addRepoSubmitting()) {
+      return;
+    }
+
+    const path = this.addRepoPath().trim();
+    if (!path) {
+      return;
+    }
+
+    this.addRepoSubmitting.set(true);
+    this.addRepoError.set('');
+
+    this.reposService.add(project.id, path).subscribe({
+      next: () => {
+        this.addRepoSubmitting.set(false);
+        this.addRepoProject.set(null);
+        this.addRepoPath.set('');
+        toast.success('Repository added');
+        this.navService.refreshTree();
+        this.navService.revealProject(project.id);
+      },
+      error: (err) => {
+        const msg = err?.error?.message || err?.message || 'Could not add repository.';
+        this.addRepoError.set(msg);
+        this.addRepoSubmitting.set(false);
+      },
+    });
   }
 
   onProjectClick(project: NavigationProject) {
