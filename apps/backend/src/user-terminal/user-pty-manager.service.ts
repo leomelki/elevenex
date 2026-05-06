@@ -71,7 +71,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     }
 
     const env: NodeJS.ProcessEnv = {
-      ...buildAugmentedEnv(),
+      ...buildAugmentedEnv(process.env, worktreePath),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     };

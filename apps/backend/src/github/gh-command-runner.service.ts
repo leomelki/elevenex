@@ -28,7 +28,7 @@ export class GhCommandRunnerService {
           timeout: this.timeoutMs,
           maxBuffer: 5_000_000,
           env: {
-            ...buildAugmentedEnv(),
+            ...buildAugmentedEnv(process.env, cwd),
             GH_PROMPT_DISABLED: '1',
             GIT_TERMINAL_PROMPT: '0',
             NO_COLOR: '1',

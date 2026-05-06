@@ -361,7 +361,7 @@ export class WorktreeContextService {
           type: 'preset',
           preset: 'claude_code',
         },
-        env: buildAugmentedEnv(),
+        env: buildAugmentedEnv(process.env, repoPath),
       },
     });
 

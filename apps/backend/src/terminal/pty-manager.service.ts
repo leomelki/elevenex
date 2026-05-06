@@ -105,7 +105,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     });
 
     const env = buildManagedPlannotatorEnv(sessionId, this.wrapperScriptPath, {
-      ...buildAugmentedEnv(),
+      ...buildAugmentedEnv(process.env, worktreePath),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     });

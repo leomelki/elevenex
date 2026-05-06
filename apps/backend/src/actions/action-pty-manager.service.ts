@@ -93,7 +93,7 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
 
     await this.persistence.markRunning(action.id);
 
-    const env = this.buildEnv();
+    const env = this.buildEnv(action.worktreePath);
 
     let ptyProcess: pty.IPty | null = null;
 
@@ -286,9 +286,9 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
     return `'${cmd.replace(/'/g, "'\\''")}'`;
   }
 
-  private buildEnv(): NodeJS.ProcessEnv {
+  private buildEnv(worktreePath?: string): NodeJS.ProcessEnv {
     return {
-      ...buildAugmentedEnv(),
+      ...buildAugmentedEnv(process.env, worktreePath),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     };

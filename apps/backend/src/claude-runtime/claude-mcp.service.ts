@@ -394,7 +394,7 @@ export class ClaudeMcpService {
         ['mcp', 'get', serverName],
         {
           cwd: worktreePath,
-          env: buildAugmentedEnv(),
+          env: buildAugmentedEnv(process.env, worktreePath),
           timeout: 15_000,
           maxBuffer: 1024 * 1024,
         },

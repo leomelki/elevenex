@@ -3116,7 +3116,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           type: 'preset' as const,
           preset: 'claude_code' as const,
         },
-        env: buildAugmentedEnv(),
+        env: buildAugmentedEnv(process.env, worktreePath),
       },
     });
 

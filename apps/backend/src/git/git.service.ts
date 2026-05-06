@@ -724,7 +724,7 @@ export class GitService {
           type: 'preset',
           preset: 'claude_code',
         },
-        env: buildAugmentedEnv(),
+        env: buildAugmentedEnv(process.env, input.worktreePath),
       },
     });
 
@@ -882,7 +882,7 @@ export class GitService {
           cwd: input.worktreePath,
           timeout: 15_000,
           maxBuffer: 2_000_000,
-          env: buildAugmentedEnv(),
+          env: buildAugmentedEnv(process.env, input.worktreePath),
         },
       );
       const parsed = JSON.parse(stdout);
