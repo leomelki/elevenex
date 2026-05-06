@@ -79,9 +79,7 @@
       }
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [class.bg-primary]="showClaudeTerminalFallback()"
-        [class.text-primary-foreground]="showClaudeTerminalFallback()"
-        [class.border-primary]="showClaudeTerminalFallback()"
+        [ngClass]="showClaudeTerminalFallback() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
         title="Claude Raw Terminal"
         aria-label="Toggle Claude raw terminal fallback"
         (click)="toggleClaudeTerminalFallback.emit()"
@@ -90,9 +88,7 @@
       </button>
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [class.bg-primary]="showTerminal()"
-        [class.text-primary-foreground]="showTerminal()"
-        [class.border-primary]="showTerminal()"
+        [ngClass]="showTerminal() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
         title="Terminal"
         aria-label="Toggle Terminal panel"
         (click)="toggleTerminal.emit()"
@@ -101,9 +97,7 @@
       </button>
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [class.bg-primary]="showActions()"
-        [class.text-primary-foreground]="showActions()"
-        [class.border-primary]="showActions()"
+        [ngClass]="showActions() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
         title="Actions"
         aria-label="Toggle Actions panel"
         (click)="toggleActions.emit()"
@@ -115,9 +109,7 @@
       </button>
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [class.bg-primary]="showFiles()"
-        [class.text-primary-foreground]="showFiles()"
-        [class.border-primary]="showFiles()"
+        [ngClass]="showFiles() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
         title="Files"
         aria-label="Toggle Files panel"
         (click)="toggleFiles.emit()"
@@ -126,9 +118,7 @@
       </button>
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [class.bg-primary]="showBrowser()"
-        [class.text-primary-foreground]="showBrowser()"
-        [class.border-primary]="showBrowser()"
+        [ngClass]="showBrowser() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
         title="Browser"
         aria-label="Toggle Browser panel"
         (click)="toggleBrowser.emit()"
@@ -137,9 +127,7 @@
       </button>
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [class.bg-primary]="showScratchpad()"
-        [class.text-primary-foreground]="showScratchpad()"
-        [class.border-primary]="showScratchpad()"
+        [ngClass]="showScratchpad() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
         title="Scratchpad"
         aria-label="Toggle Scratchpad panel"
         (click)="toggleScratchpad.emit()"
@@ -148,9 +136,7 @@
       </button>
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [class.bg-primary]="showTodos()"
-        [class.text-primary-foreground]="showTodos()"
-        [class.border-primary]="showTodos()"
+        [ngClass]="showTodos() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
         title="Tasks"
         aria-label="Toggle Tasks panel"
         (click)="toggleTodos.emit()"

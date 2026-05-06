@@ -666,13 +666,15 @@ type DevtoolsDockPosition = 'right' | 'bottom';
     }
 
     .browser-chip--shared {
-      color: color-mix(in oklch, oklch(0.44 0.12 210) 74%, var(--foreground));
-      background: color-mix(in oklch, oklch(0.92 0.02 220) 42%, var(--background));
+      color: color-mix(in oklch, oklch(0.55 0.14 220) 60%, var(--foreground));
+      background: color-mix(in oklch, oklch(0.6 0.14 220) 14%, var(--background));
+      border-color: color-mix(in oklch, oklch(0.6 0.14 220) 28%, var(--border));
     }
 
     .browser-chip--isolated {
-      color: color-mix(in oklch, oklch(0.44 0.13 160) 72%, var(--foreground));
-      background: color-mix(in oklch, oklch(0.91 0.02 160) 44%, var(--background));
+      color: color-mix(in oklch, oklch(0.58 0.14 160) 60%, var(--foreground));
+      background: color-mix(in oklch, oklch(0.62 0.14 160) 14%, var(--background));
+      border-color: color-mix(in oklch, oklch(0.62 0.14 160) 28%, var(--border));
     }
 
     .browser-chip-text {
