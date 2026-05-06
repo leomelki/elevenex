@@ -16,7 +16,12 @@ const logger = new Logger('SystemPaths');
 export const COMMON_BINARY_PATHS: readonly string[] = (() => {
   const paths: string[] = [];
   if (process.platform === 'darwin') paths.push('/opt/homebrew/bin');
-  paths.push('/usr/local/bin', join(homedir(), '.local', 'bin'), '/usr/bin', '/bin');
+  paths.push(
+    '/usr/local/bin',
+    join(homedir(), '.local', 'bin'),
+    '/usr/bin',
+    '/bin',
+  );
   return paths;
 })();
 
@@ -25,7 +30,7 @@ export const COMMON_BINARY_PATHS: readonly string[] = (() => {
 // version-check notices, …). Using \0 since it cannot appear in env values.
 const ENV_BOUNDARY = '>>>ELEVENEX_ENV_BOUNDARY<<<';
 
-const REFRESH_THROTTLE_MS = 30_000;
+const REFRESH_THROTTLE_MS = 60_000;
 const SHELL_TIMEOUT_MS = 5_000;
 
 // Cached login-shell env. Populated on first call to `loadLoginShellEnv()`
@@ -44,7 +49,11 @@ let _refreshInFlight: Promise<void> | null = null;
 // when a spawn site provides a `cwd`. LRU-bounded so a backend tracking
 // hundreds of worktrees doesn't grow unbounded.
 const PER_CWD_CACHE_MAX = 64;
-type CwdEnvEntry = { env: NodeJS.ProcessEnv; lastRefreshAt: number };
+type CwdEnvEntry = {
+  env: NodeJS.ProcessEnv;
+  lastRefreshAt: number;
+  lastRefreshAttemptAt: number;
+};
 const _cwdEnvCache = new Map<string, CwdEnvEntry>();
 const _cwdRefreshInFlight = new Map<string, Promise<void>>();
 
@@ -59,7 +68,14 @@ function getMinimalBootPath(): string {
 // the spawn `cwd` and shell lineage. Forwarding stale values would shadow
 // what the new shell wants to set.
 const PER_SHELL_INSTANCE_KEYS = new Set([
-  'PWD', 'OLDPWD', 'SHLVL', '_', 'PS1', 'PS2', 'PS3', 'PS4',
+  'PWD',
+  'OLDPWD',
+  'SHLVL',
+  '_',
+  'PS1',
+  'PS2',
+  'PS3',
+  'PS4',
 ]);
 
 // Baseline env to spawn a login shell with.
@@ -129,7 +145,9 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
     let settled = false;
     const shell = getUserShell();
     const startedAt = Date.now();
-    logger.debug(`async shell-env load starting (${cwdTag(cwd)} shell=${shell})`);
+    logger.debug(
+      `async shell-env load starting (${cwdTag(cwd)} shell=${shell})`,
+    );
     // `-i -l` sources both login files (.zprofile / .profile) AND interactive
     // rc files (.zshrc / .bashrc). Tools like nvm, fnm, rbenv, pyenv typically
     // inject PATH from the rc file, so login-only would miss them.
@@ -143,26 +161,38 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
       },
     );
     const timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
     }, SHELL_TIMEOUT_MS);
-    child.stdout.on('data', (d: Buffer) => { raw += d.toString('utf8'); });
+    child.stdout.on('data', (d: Buffer) => {
+      raw += d.toString('utf8');
+    });
     const finish = (err?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       const elapsed = Date.now() - startedAt;
       if (err) {
-        logger.warn(`async shell-env load failed (${cwdTag(cwd)} elapsed=${elapsed}ms): ${err.message}`);
+        logger.warn(
+          `async shell-env load failed (${cwdTag(cwd)} elapsed=${elapsed}ms): ${err.message}`,
+        );
         resolve(null);
         return;
       }
       const parsed = parseEnvOutput(raw);
       if (Object.keys(parsed).length === 0) {
-        logger.warn(`async shell-env load produced no variables (${cwdTag(cwd)} shell=${shell} elapsed=${elapsed}ms)`);
+        logger.warn(
+          `async shell-env load produced no variables (${cwdTag(cwd)} shell=${shell} elapsed=${elapsed}ms)`,
+        );
         resolve(null);
         return;
       }
-      logger.log(`async shell-env loaded (${cwdTag(cwd)} keys=${Object.keys(parsed).length} elapsed=${elapsed}ms)`);
+      logger.log(
+        `async shell-env loaded (${cwdTag(cwd)} keys=${Object.keys(parsed).length} elapsed=${elapsed}ms)`,
+      );
       resolve(parsed);
     };
     child.on('close', () => finish());
@@ -192,7 +222,10 @@ function applyShellEnvToProcess(): void {
   const shellEnv = _shellEnvCache;
   if (!shellEnv) return;
 
-  process.env.PATH = buildAugmentedPath(process.env.PATH || '', shellEnv.PATH || '');
+  process.env.PATH = buildAugmentedPath(
+    process.env.PATH || '',
+    shellEnv.PATH || '',
+  );
 
   for (const [key, value] of Object.entries(shellEnv)) {
     if (key === 'PATH' || value === undefined) continue;
@@ -201,8 +234,13 @@ function applyShellEnvToProcess(): void {
     }
   }
 
-  const isUtf8 = (v: string | undefined) => typeof v === 'string' && /utf-?8/i.test(v);
-  if (!isUtf8(process.env.LC_ALL) && !isUtf8(process.env.LANG) && !isUtf8(process.env.LC_CTYPE)) {
+  const isUtf8 = (v: string | undefined) =>
+    typeof v === 'string' && /utf-?8/i.test(v);
+  if (
+    !isUtf8(process.env.LC_ALL) &&
+    !isUtf8(process.env.LANG) &&
+    !isUtf8(process.env.LC_CTYPE)
+  ) {
     process.env.LANG = process.env.LANG || 'en_US.UTF-8';
     process.env.LC_CTYPE = process.env.LC_CTYPE || 'en_US.UTF-8';
   }
@@ -231,7 +269,9 @@ function loadLoginShellEnvSync(cwd?: string): NodeJS.ProcessEnv {
     );
     const parsed = parseEnvOutput(raw);
     const elapsed = Date.now() - startedAt;
-    logger.log(`sync shell-env loaded (${cwdTag(cwd)} keys=${Object.keys(parsed).length} elapsed=${elapsed}ms)`);
+    logger.log(
+      `sync shell-env loaded (${cwdTag(cwd)} keys=${Object.keys(parsed).length} elapsed=${elapsed}ms)`,
+    );
     return parsed;
   } catch (err) {
     const elapsed = Date.now() - startedAt;
@@ -273,27 +313,45 @@ function touchCwdLru(cwd: string, entry: CwdEnvEntry): void {
     }
     if (evictKey === undefined) break;
     _cwdEnvCache.delete(evictKey);
-    logger.debug(`per-cwd LRU evicted ${cwdTag(evictKey)} (size=${_cwdEnvCache.size}/${PER_CWD_CACHE_MAX})`);
+    logger.debug(
+      `per-cwd LRU evicted ${cwdTag(evictKey)} (size=${_cwdEnvCache.size}/${PER_CWD_CACHE_MAX})`,
+    );
   }
 }
 
 // Async refresh of a single per-cwd entry. De-duplicated so concurrent callers
 // share one shell startup. Refreshes overwrite the cached entry on success;
 // failures keep the existing entry untouched.
-function refreshCwdEnvAsync(cwd: string): Promise<void> {
+function refreshCwdEnvAsync(
+  cwd: string,
+  attemptedAt = Date.now(),
+): Promise<void> {
   const inFlight = _cwdRefreshInFlight.get(cwd);
   if (inFlight) {
     logger.debug(`per-cwd refresh deduped (${cwdTag(cwd)})`);
     return inFlight;
   }
 
+  const existing = _cwdEnvCache.get(cwd);
+  if (existing) {
+    touchCwdLru(cwd, { ...existing, lastRefreshAttemptAt: attemptedAt });
+  }
+
   logger.debug(`per-cwd refresh kicked off (${cwdTag(cwd)})`);
-  const promise = runLoginShell(cwd).then((parsed) => {
-    if (parsed) {
-      touchCwdLru(cwd, { env: parsed, lastRefreshAt: Date.now() });
-    }
-    _cwdRefreshInFlight.delete(cwd);
-  });
+  const promise = runLoginShell(cwd)
+    .then((parsed) => {
+      if (parsed) {
+        const refreshedAt = Date.now();
+        touchCwdLru(cwd, {
+          env: parsed,
+          lastRefreshAt: refreshedAt,
+          lastRefreshAttemptAt: refreshedAt,
+        });
+      }
+    })
+    .finally(() => {
+      _cwdRefreshInFlight.delete(cwd);
+    });
   _cwdRefreshInFlight.set(cwd, promise);
   return promise;
 }
@@ -305,12 +363,26 @@ function refreshCwdEnvAsync(cwd: string): Promise<void> {
 // edits to dotfiles are eventually picked up without stalling the spawn.
 function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
   const existing = _cwdEnvCache.get(cwd);
+  const now = Date.now();
   if (existing) {
     touchCwdLru(cwd, existing);
-    const ageMs = Date.now() - existing.lastRefreshAt;
+    const ageMs = now - existing.lastRefreshAt;
     if (ageMs > REFRESH_THROTTLE_MS) {
-      logger.debug(`per-cwd cache hit, stale (${cwdTag(cwd)} age=${ageMs}ms) — scheduling refresh`);
-      void refreshCwdEnvAsync(cwd);
+      const attemptAgeMs = now - existing.lastRefreshAttemptAt;
+      if (_cwdRefreshInFlight.has(cwd)) {
+        logger.debug(
+          `per-cwd cache hit, stale (${cwdTag(cwd)} age=${ageMs}ms) — refresh already running`,
+        );
+      } else if (attemptAgeMs > REFRESH_THROTTLE_MS) {
+        logger.debug(
+          `per-cwd cache hit, stale (${cwdTag(cwd)} age=${ageMs}ms) — scheduling async refresh`,
+        );
+        void refreshCwdEnvAsync(cwd, now);
+      } else {
+        logger.debug(
+          `per-cwd cache hit, stale (${cwdTag(cwd)} age=${ageMs}ms) — refresh throttled (attemptAge=${attemptAgeMs}ms)`,
+        );
+      }
     } else {
       logger.debug(`per-cwd cache hit (${cwdTag(cwd)} age=${ageMs}ms)`);
     }
@@ -318,7 +390,15 @@ function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
   }
   logger.debug(`per-cwd cache miss (${cwdTag(cwd)}) — sync-loading`);
   const env = loadLoginShellEnvSync(cwd);
-  touchCwdLru(cwd, { env, lastRefreshAt: Date.now() });
+  const loadedAt = Date.now();
+  logger.log(
+    `per-cwd cache miss introduced wait (${cwdTag(cwd)} elapsed=${loadedAt - now}ms)`,
+  );
+  touchCwdLru(cwd, {
+    env,
+    lastRefreshAt: loadedAt,
+    lastRefreshAttemptAt: loadedAt,
+  });
   return env;
 }
 
@@ -433,7 +513,9 @@ function ensureUtf8Locale(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 // not the one the worktree pins via `.nvmrc`. Without the override, hooks
 // resolve to the wrong node and bail or behave inconsistently.
 export function worktreeSimpleGit(worktreePath: string): SimpleGit {
-  return simpleGit(worktreePath).env(buildAugmentedEnv(process.env, worktreePath));
+  return simpleGit(worktreePath).env(
+    buildAugmentedEnv(process.env, worktreePath),
+  );
 }
 
 // POSIX-compliant single-quote shell escape. Wraps the value in single quotes
