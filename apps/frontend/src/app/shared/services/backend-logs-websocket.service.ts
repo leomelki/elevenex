@@ -2,18 +2,20 @@ import { Injectable, NgZone, OnDestroy } from '@angular/core';
 import Anser from 'anser';
 import { getWebSocketUrl } from '../runtime/runtime-config';
 
+type BackendLogLevel = 'debug' | 'error' | 'fatal' | 'info' | 'log' | 'trace' | 'verbose' | 'warn';
+
 interface LogEntry {
-  level: 'log' | 'error';
+  level: BackendLogLevel | string;
   message: string;
   timestamp: string;
 }
 
 function parseAnsi(text: string): [string, ...string[]] {
   const spans = Anser.ansiToJson(text, { use_classes: false });
-  if (spans.every(s => !s.fg && !s.bg && !s.decorations?.length)) return [text];
+  if (spans.every((s) => !s.fg && !s.bg && !s.decorations?.length)) return [text];
 
-  const format = spans.map(s => `%c${s.content}`).join('');
-  const styles = spans.map(s => {
+  const format = spans.map((s) => `%c${s.content}`).join('');
+  const styles = spans.map((s) => {
     const parts: string[] = [];
     if (s.fg) parts.push(`color: rgb(${s.fg})`);
     if (s.bg) parts.push(`background-color: rgb(${s.bg})`);
@@ -22,6 +24,32 @@ function parseAnsi(text: string): [string, ...string[]] {
     return parts.join('; ');
   });
   return [format, ...styles];
+}
+
+function writeBackendLogToConsole(level: string, args: [string, ...string[]]): void {
+  switch (level) {
+    case 'debug':
+    case 'trace':
+    case 'verbose':
+      console.debug(...args);
+      break;
+    case 'error':
+    case 'fatal':
+      console.error(...args);
+      break;
+    case 'info':
+      console.info(...args);
+      break;
+    case 'warn':
+      console.warn(...args);
+      break;
+    case 'log':
+      console.log(...args);
+      break;
+    default:
+      console.log(...args);
+      break;
+  }
 }
 
 @Injectable({ providedIn: 'root' })
@@ -50,11 +78,7 @@ export class BackendLogsWebsocketService implements OnDestroy {
         const args = parseAnsi(entry.message);
         args[0] = `%c${prefix}%c` + args[0];
         args.splice(1, 0, 'color: gray', '');
-        if (entry.level === 'error') {
-          console.error(...args);
-        } else {
-          console.log(...args);
-        }
+        writeBackendLogToConsole(entry.level, args);
       } catch {
         // ignore malformed entries
       }
