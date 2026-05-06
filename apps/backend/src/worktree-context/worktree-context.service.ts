@@ -301,7 +301,7 @@ export class WorktreeContextService {
       '- Return exactly one sentence of plain text, no quotes, no markdown, no preamble.',
       '- Start with "We are " followed by the verb that best fits the work (e.g. "We are reworking", "We are adding", "We are fixing", "We are investigating", "We are migrating"). Do NOT default to "We are working on" — pick the verb that actually describes the change.',
       '- Name the feature/area/component by its real product or module name when obvious from the diff.',
-      '- Locate the work: mention the page, feature area, subsystem, or (when useful for orientation) a short path fragment or filename. Short paths are fine; full paths are overkill.',
+      '- Locate the work: include a relevant path or filename (e.g. apps/backend/src/billing, worktree-context.service.ts) whenever the change touches a specific part of the codebase. Short paths are fine; full paths are overkill. Only omit the path when the work is not tied to a specific file/area and a path would not help orient the agent.',
       '- Prefer human phrasing over git/diff vocabulary. Do NOT mention commit hashes, branch names, merge bases, refs, or "added/removed N lines".',
       '- If multiple unrelated changes exist, describe the dominant one and optionally hint at the rest with "and related tweaks".',
       '- Keep it under ~22 words. Be specific, not vague — avoid "various improvements" or "miscellaneous changes".',
@@ -368,15 +368,21 @@ export class WorktreeContextService {
     try {
       for await (const message of runtimeQuery) {
         if (message.type !== 'assistant') continue;
-        // Collect text within this turn. When the model attempts a tool call
-        // that gets denied, it produces a second assistant turn with the same
-        // sentence. Replacing rather than appending across turns ensures we
-        // always end up with the last (final) assistant response only.
         const turnText = message.message.content
           .filter(block => block.type === 'text')
           .map(block => block.text)
-          .join('');
-        if (turnText) {
+          .join('')
+          .trim();
+        if (!turnText) continue;
+        // Keep the first turn that looks like the requested sentence. After a
+        // denied tool call the model often produces a follow-up turn like
+        // "the hand-off sentence has been written above" which would otherwise
+        // overwrite the real answer.
+        if (/^["'\s]*We are\b/i.test(turnText)) {
+          assistantText = turnText;
+          break;
+        }
+        if (!assistantText) {
           assistantText = turnText;
         }
       }
