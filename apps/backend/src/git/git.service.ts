@@ -3,13 +3,19 @@ import { readFile } from 'node:fs/promises';
 import { execFile, type ExecFileOptions } from 'node:child_process';
 import { SimpleGit, StatusResult, LogResult } from 'simple-git';
 
-import { buildAugmentedEnv, findBinary, worktreeSimpleGit } from '../config/system-paths.js';
+import {
+  buildAugmentedEnv,
+  findBinary,
+  worktreeSimpleGit,
+} from '../config/system-paths.js';
 
 const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
 const CLAUDE_BIN = findBinary('claude') ?? 'claude';
 const MAX_COMMIT_MESSAGE_DIFF_CHARS = 24_000;
 const MAX_COMMIT_MESSAGE_LOG_ENTRIES = 8;
 const MAX_COMMIT_MESSAGE_STATUS_FILES = 16;
+const CONVENTIONAL_COMMIT_SUBJECT_PATTERN =
+  /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._-]*\))?!?: [a-z0-9].*[^.]$/;
 
 export function isValidGitRef(ref: string): boolean {
   if (!ref || ref.length === 0) return false;
@@ -689,13 +695,33 @@ export class GitService {
     let assistantText = '';
     const runtimeQuery = sdk.query({
       prompt: [
-        'Write a git commit message for the staged changes.',
-        'Return strict JSON with this exact shape: {"subject":"...","body":"...|null"}',
-        'Rules:',
-        '- subject must be imperative, concise, and at most 72 characters',
-        '- body is optional and must be null unless extra context materially helps',
-        '- do not mention tests or files unless the diff makes that central',
-        '- do not wrap the JSON in markdown fences',
+        'Generate the exact commit message that will be passed to git commit -m.',
+        'Your response is machine-read and must be strict JSON only.',
+        'Return exactly one JSON object with this shape:',
+        '{"subject":"type(scope): imperative description","body":null}',
+        '',
+        'Hard output rules:',
+        '- Do not include greetings, explanations, analysis, markdown fences, or extra text.',
+        '- Do not return the final commit message as plain text.',
+        '- Do not include JSON inside subject or body; JSON is only the transport format.',
+        '- The subject string is the exact first line that will be committed.',
+        '- The body string, when non-null, is the exact commit body that will be committed after a blank line.',
+        '',
+        'Subject rules:',
+        '- Use Conventional Commits: <type>(<optional scope>): <description>.',
+        '- Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.',
+        '- Prefer a lowercase scope when clear, such as backend, frontend, git, db, branches, projects, deps.',
+        '- Use an imperative lowercase description, for example "add", "fix", "remove", or "refactor".',
+        '- Keep the full subject at most 72 characters.',
+        '- Do not end the subject with a period.',
+        '',
+        'Body rules:',
+        '- Use null unless extra motivation, context, or migration impact materially helps.',
+        '- Do not list files unless the file list is the main point of the change.',
+        '',
+        'Examples of valid responses:',
+        '{"subject":"fix(git): reject invalid generated commit subjects","body":null}',
+        '{"subject":"feat(frontend): add branch search filters","body":"Expose status and owner filters in the branch picker."}',
         '',
         `Branch: ${input.branchName}`,
         'Recent commits:',
@@ -789,16 +815,13 @@ export class GitService {
 
     try {
       const parsed = JSON.parse(normalized);
-      if (
-        !parsed ||
-        typeof parsed.subject !== 'string' ||
-        !parsed.subject.trim()
-      ) {
+      const subject = this.normalizeCommitSubject(parsed?.subject);
+      if (!subject) {
         return null;
       }
 
       return {
-        subject: parsed.subject.trim().slice(0, 72),
+        subject,
         body:
           typeof parsed.body === 'string' && parsed.body.trim()
             ? parsed.body.trim()
@@ -807,15 +830,25 @@ export class GitService {
         source: 'claude',
       };
     } catch {
-      const [subject, ...rest] = normalized.split('\n').filter(Boolean);
-      if (!subject?.trim()) return null;
-      return {
-        subject: subject.trim().slice(0, 72),
-        body: rest.length > 0 ? rest.join('\n').trim() || null : null,
-        confidence: 'low',
-        source: 'claude',
-      };
+      return null;
     }
+  }
+
+  private normalizeCommitSubject(subject: unknown): string | null {
+    if (typeof subject !== 'string') {
+      return null;
+    }
+
+    const normalized = subject.trim().replace(/\s+/g, ' ');
+    if (!normalized || normalized.length > 72) {
+      return null;
+    }
+
+    if (!CONVENTIONAL_COMMIT_SUBJECT_PATTERN.test(normalized)) {
+      return null;
+    }
+
+    return normalized;
   }
 
   private getFileStatus(
@@ -886,16 +919,13 @@ export class GitService {
         },
       );
       const parsed = JSON.parse(stdout);
-      if (
-        !parsed ||
-        typeof parsed.subject !== 'string' ||
-        !parsed.subject.trim()
-      ) {
+      const subject = this.normalizeCommitSubject(parsed?.subject);
+      if (!subject) {
         return null;
       }
 
       return {
-        subject: parsed.subject.trim(),
+        subject,
         body:
           typeof parsed.body === 'string' && parsed.body.trim().length > 0
             ? parsed.body.trim()
@@ -927,18 +957,25 @@ export class GitService {
           !line.startsWith('---'),
       ).length;
 
+    let type = 'chore';
     let verb = 'update';
     if (stagedFiles.length === 1 && diff.includes('new file mode')) {
+      type = 'feat';
       verb = 'add';
     } else if (diff.includes('deleted file mode')) {
+      type = 'chore';
       verb = 'remove';
     } else if (diff.includes('rename from ')) {
+      type = 'chore';
       verb = 'rename';
     } else if (stagedFiles.some((file) => /test|spec/i.test(file))) {
-      verb = 'test';
+      type = 'test';
+      verb = 'update';
     } else if (stagedFiles.some((file) => /readme|docs?\//i.test(file))) {
-      verb = 'document';
+      type = 'docs';
+      verb = 'update';
     } else if (lineCount > 120) {
+      type = 'refactor';
       verb = 'refactor';
     }
 
@@ -949,9 +986,16 @@ export class GitService {
           ? filenames.join(', ')
           : `${stagedFiles.length} files`;
 
-    const subject = scope ? `${verb} ${scope} ${target}` : `${verb} ${target}`;
+    const conventionalScope =
+      this.extractFileScope(stagedFiles) || this.normalizeCommitScope(scope);
+    const scopedType = conventionalScope
+      ? `${type}(${conventionalScope})`
+      : type;
+    const subject = `${scopedType}: ${verb} ${target}`;
     return {
-      subject: this.capitalize(subject).slice(0, 72),
+      subject:
+        this.normalizeCommitSubject(subject) ??
+        `${scopedType}: update staged changes`,
       body:
         stagedFiles.length > 1
           ? `Files:\n${stagedFiles.map((file) => `- ${file}`).join('\n')}`
@@ -959,6 +1003,25 @@ export class GitService {
       confidence: 'low',
       source: 'fallback',
     };
+  }
+
+  private extractFileScope(stagedFiles: string[]): string {
+    const scopes = stagedFiles
+      .map((file) => {
+        if (file.startsWith('apps/backend/src/git/')) return 'git';
+        if (file.startsWith('apps/backend/src/database/')) return 'db';
+        if (file.startsWith('apps/backend/')) return 'backend';
+        if (file.startsWith('apps/frontend/')) return 'frontend';
+        if (file.startsWith('apps/electron/')) return 'electron';
+        if (file.startsWith('vscode-scm-extension/')) return 'scm';
+        if (file.startsWith('vscode-filesystem-provider/')) return 'filesystem';
+        if (file === 'package.json' || file === 'pnpm-lock.yaml') return 'deps';
+        return '';
+      })
+      .filter(Boolean);
+
+    const uniqueScopes = new Set(scopes);
+    return uniqueScopes.size === 1 ? scopes[0] : '';
   }
 
   private extractBranchScope(branchName: string): string {
@@ -969,12 +1032,15 @@ export class GitService {
       return '';
     }
 
-    return parts[0].replace(/[-_]+/g, ' ');
+    return parts[0];
   }
 
-  private capitalize(value: string): string {
-    if (!value) return value;
-    return value.charAt(0).toUpperCase() + value.slice(1);
+  private normalizeCommitScope(scope: string): string {
+    const normalized = scope
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-');
+    return /^[a-z0-9][a-z0-9._-]*$/.test(normalized) ? normalized : '';
   }
 
   private execFileWithInput(

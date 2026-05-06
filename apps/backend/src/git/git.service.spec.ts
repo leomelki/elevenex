@@ -46,9 +46,9 @@ describe('GitService', () => {
 
     it('should detect modified files', async () => {
       fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'modified content');
-      
+
       const status = await service.getStatus(repoPath);
-      
+
       expect(status).toHaveLength(1);
       expect(status[0].path).toBe('initial.txt');
       expect(status[0].status).toBe('modified');
@@ -57,9 +57,9 @@ describe('GitService', () => {
 
     it('should detect untracked files', async () => {
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
-      
+
       const status = await service.getStatus(repoPath);
-      
+
       expect(status).toHaveLength(1);
       expect(status[0].path).toBe('new-file.txt');
       expect(status[0].status).toBe('untracked');
@@ -69,9 +69,9 @@ describe('GitService', () => {
     it('should detect staged files', async () => {
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
       execSync('git add new-file.txt', { cwd: repoPath });
-      
+
       const status = await service.getStatus(repoPath);
-      
+
       expect(status).toHaveLength(1);
       expect(status[0].path).toBe('new-file.txt');
       expect(status[0].status).toBe('added');
@@ -80,9 +80,9 @@ describe('GitService', () => {
 
     it('should detect deleted files', async () => {
       fs.unlinkSync(path.join(repoPath, 'initial.txt'));
-      
+
       const status = await service.getStatus(repoPath);
-      
+
       expect(status).toHaveLength(1);
       expect(status[0].path).toBe('initial.txt');
       expect(status[0].status).toBe('deleted');
@@ -91,9 +91,9 @@ describe('GitService', () => {
 
     it('should detect renamed files with oldPath', async () => {
       execSync('git mv initial.txt renamed.txt', { cwd: repoPath });
-      
+
       const status = await service.getStatus(repoPath);
-      
+
       expect(status).toHaveLength(1);
       expect(status[0].path).toBe('renamed.txt');
       expect(status[0].status).toBe('renamed');
@@ -105,16 +105,16 @@ describe('GitService', () => {
       // Modify file and stage it
       fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'staged content');
       execSync('git add initial.txt', { cwd: repoPath });
-      
+
       // Modify again without staging
       fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'unstaged content');
-      
+
       const status = await service.getStatus(repoPath);
-      
+
       // Should have both staged and unstaged versions
-      const stagedFile = status.find(f => f.staged);
-      const unstagedFile = status.find(f => !f.staged);
-      
+      const stagedFile = status.find((f) => f.staged);
+      const unstagedFile = status.find((f) => !f.staged);
+
       expect(stagedFile).toBeDefined();
       expect(stagedFile?.status).toBe('modified');
       expect(unstagedFile).toBeDefined();
@@ -125,9 +125,9 @@ describe('GitService', () => {
   describe('stageFiles', () => {
     it('should stage untracked files', async () => {
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
-      
+
       await service.stageFiles(repoPath, ['new-file.txt']);
-      
+
       const status = await service.getStatus(repoPath);
       expect(status).toHaveLength(1);
       expect(status[0].staged).toBe(true);
@@ -135,13 +135,13 @@ describe('GitService', () => {
 
     it('should stage modified files', async () => {
       fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'modified content');
-      
+
       await service.stageFiles(repoPath, ['initial.txt']);
-      
+
       const status = await service.getStatus(repoPath);
       // After staging, the file should appear as staged
       // It may also appear as unstaged if simple-git still reports it in modified
-      const stagedFile = status.find(f => f.staged);
+      const stagedFile = status.find((f) => f.staged);
       expect(stagedFile).toBeDefined();
       expect(stagedFile?.path).toBe('initial.txt');
       expect(stagedFile?.status).toBe('modified');
@@ -150,12 +150,12 @@ describe('GitService', () => {
     it('should stage multiple files', async () => {
       fs.writeFileSync(path.join(repoPath, 'file1.txt'), 'content1');
       fs.writeFileSync(path.join(repoPath, 'file2.txt'), 'content2');
-      
+
       await service.stageFiles(repoPath, ['file1.txt', 'file2.txt']);
-      
+
       const status = await service.getStatus(repoPath);
       expect(status).toHaveLength(2);
-      expect(status.every(f => f.staged)).toBe(true);
+      expect(status.every((f) => f.staged)).toBe(true);
     });
   });
 
@@ -163,9 +163,9 @@ describe('GitService', () => {
     it('should unstage staged files', async () => {
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
       execSync('git add new-file.txt', { cwd: repoPath });
-      
+
       await service.unstageFiles(repoPath, ['new-file.txt']);
-      
+
       const status = await service.getStatus(repoPath);
       expect(status).toHaveLength(1);
       expect(status[0].staged).toBe(false);
@@ -175,9 +175,9 @@ describe('GitService', () => {
     it('should unstage modified files leaving them as modified', async () => {
       fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'modified content');
       execSync('git add initial.txt', { cwd: repoPath });
-      
+
       await service.unstageFiles(repoPath, ['initial.txt']);
-      
+
       const status = await service.getStatus(repoPath);
       expect(status).toHaveLength(1);
       expect(status[0].staged).toBe(false);
@@ -189,12 +189,14 @@ describe('GitService', () => {
     it('should commit staged changes and return hash', async () => {
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
       await service.stageFiles(repoPath, ['new-file.txt']);
-      
-      const result = await service.commit(repoPath, { message: 'Add new file' });
-      
+
+      const result = await service.commit(repoPath, {
+        message: 'Add new file',
+      });
+
       expect(result.hash).toBeDefined();
       expect(result.hash.length).toBeGreaterThan(0);
-      
+
       // Status should be empty after commit
       const status = await service.getStatus(repoPath);
       expect(status).toEqual([]);
@@ -203,9 +205,9 @@ describe('GitService', () => {
     it('should create commit with correct message', async () => {
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
       await service.stageFiles(repoPath, ['new-file.txt']);
-      
+
       await service.commit(repoPath, { message: 'Add new file' });
-      
+
       const log = await service.getLog(repoPath, 1);
       expect(log[0].message).toBe('Add new file');
     });
@@ -213,12 +215,18 @@ describe('GitService', () => {
 
   describe('suggestCommitMessage', () => {
     it('should create a fallback commit message for staged changes', async () => {
-      fs.writeFileSync(path.join(repoPath, 'feature.ts'), 'export const value = 1;\n');
+      fs.writeFileSync(
+        path.join(repoPath, 'feature.ts'),
+        'export const value = 1;\n',
+      );
       await service.stageFiles(repoPath, ['feature.ts']);
 
       const suggestion = await service.suggestCommitMessage(repoPath);
 
       expect(suggestion.subject).toBeTruthy();
+      expect(suggestion.subject).toMatch(
+        /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._-]*\))?!?: [a-z0-9].*[^.]$/,
+      );
       expect(suggestion.source).toBe('fallback');
     });
 
@@ -226,6 +234,43 @@ describe('GitService', () => {
       await expect(service.suggestCommitMessage(repoPath)).rejects.toThrow(
         'No staged changes available to generate a commit message.',
       );
+    });
+
+    it('should parse strict JSON commit suggestions', () => {
+      const suggestion = (service as any).parseCommitSuggestion(
+        '{"subject":"fix(git): reject invalid generated commit subjects","body":null}',
+      );
+
+      expect(suggestion).toEqual({
+        subject: 'fix(git): reject invalid generated commit subjects',
+        body: null,
+        confidence: 'medium',
+        source: 'claude',
+      });
+    });
+
+    it('should reject conversational commit suggestions', () => {
+      const suggestion = (service as any).parseCommitSuggestion(
+        'Sure, let me work on this. fix(git): improve commit messages',
+      );
+
+      expect(suggestion).toBeNull();
+    });
+
+    it('should reject commit suggestions with non-conventional subjects', () => {
+      const suggestion = (service as any).parseCommitSuggestion(
+        '{"subject":"Improve generated commit messages","body":null}',
+      );
+
+      expect(suggestion).toBeNull();
+    });
+
+    it('should reject commit suggestions with overlong subjects instead of trimming', () => {
+      const suggestion = (service as any).parseCommitSuggestion(
+        '{"subject":"fix(git): reject generated commit subjects that are too long to preserve without silently trimming them","body":null}',
+      );
+
+      expect(suggestion).toBeNull();
     });
   });
 
@@ -266,12 +311,12 @@ describe('GitService', () => {
       // Create additional commits
       fs.writeFileSync(path.join(repoPath, 'file1.txt'), 'content1');
       execSync('git add . && git commit -m "Add file1"', { cwd: repoPath });
-      
+
       fs.writeFileSync(path.join(repoPath, 'file2.txt'), 'content2');
       execSync('git add . && git commit -m "Add file2"', { cwd: repoPath });
-      
+
       const log = await service.getLog(repoPath);
-      
+
       expect(log.length).toBeGreaterThanOrEqual(3);
       expect(log[0].message).toBe('Add file2');
       expect(log[1].message).toBe('Add file1');
@@ -280,7 +325,7 @@ describe('GitService', () => {
 
     it('should return commits with correct structure', async () => {
       const log = await service.getLog(repoPath, 1);
-      
+
       expect(log[0].hash).toBeDefined();
       expect(log[0].shortHash).toBeDefined();
       expect(log[0].shortHash.length).toBe(7);
@@ -294,9 +339,11 @@ describe('GitService', () => {
       // Create additional commits
       for (let i = 0; i < 5; i++) {
         fs.writeFileSync(path.join(repoPath, `file${i}.txt`), `content${i}`);
-        execSync('git add . && git commit -m "Add file${i}"', { cwd: repoPath });
+        execSync('git add . && git commit -m "Add file${i}"', {
+          cwd: repoPath,
+        });
       }
-      
+
       const log = await service.getLog(repoPath, 3);
       expect(log.length).toBe(3);
     });
@@ -304,20 +351,23 @@ describe('GitService', () => {
 
   describe('getDiff', () => {
     it('should return diff for staged changes', async () => {
-      fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'modified content\nnew line');
+      fs.writeFileSync(
+        path.join(repoPath, 'initial.txt'),
+        'modified content\nnew line',
+      );
       await service.stageFiles(repoPath, ['initial.txt']);
-      
+
       const diff = await service.getDiff(repoPath, { staged: true });
-      
+
       expect(diff).toContain('modified content');
       expect(diff).toContain('new line');
     });
 
     it('should return diff for unstaged changes', async () => {
       fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'unstaged content');
-      
+
       const diff = await service.getDiff(repoPath, { staged: false });
-      
+
       expect(diff).toContain('unstaged content');
     });
 
@@ -325,23 +375,26 @@ describe('GitService', () => {
       // Create a commit
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
       execSync('git add . && git commit -m "Add new file"', { cwd: repoPath });
-      
+
       // Get the commit hash
       const log = await service.getLog(repoPath, 1);
       const commitHash = log[0].hash;
-      
+
       const diff = await service.getDiff(repoPath, { commit: commitHash });
-      
+
       expect(diff).toContain('new-file.txt');
       expect(diff).toContain('new content');
     });
 
     it('should return diff for specific file', async () => {
       // Modify a tracked file
-      fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'modified content\nnew line');
-      
+      fs.writeFileSync(
+        path.join(repoPath, 'initial.txt'),
+        'modified content\nnew line',
+      );
+
       const diff = await service.getDiff(repoPath, { file: 'initial.txt' });
-      
+
       expect(diff).toContain('initial.txt');
       expect(diff).toContain('modified content');
     });
@@ -427,18 +480,21 @@ describe('GitService.getDiff with validation', () => {
   });
 
   it('should reject invalid commit refs', async () => {
-    await expect(service.getDiff(repoPath, { commit: ';rm -rf /' }))
-      .rejects.toThrow(BadRequestException);
+    await expect(
+      service.getDiff(repoPath, { commit: ';rm -rf /' }),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('should reject path traversal in commit refs', async () => {
-    await expect(service.getDiff(repoPath, { commit: '../etc/passwd' }))
-      .rejects.toThrow(BadRequestException);
+    await expect(
+      service.getDiff(repoPath, { commit: '../etc/passwd' }),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('should reject shell injection in commit refs', async () => {
-    await expect(service.getDiff(repoPath, { commit: '$(malicious)' }))
-      .rejects.toThrow(BadRequestException);
+    await expect(
+      service.getDiff(repoPath, { commit: '$(malicious)' }),
+    ).rejects.toThrow(BadRequestException);
   });
 });
 
@@ -483,7 +539,7 @@ describe('GitService.show', () => {
   it('should retrieve file content from named branch (main)', async () => {
     // Rename default branch to main for test
     execSync('git branch -M main', { cwd: repoPath });
-    
+
     const content = await service.show(repoPath, 'main', 'initial.txt');
     expect(content).toBe('initial content');
   });
@@ -491,18 +547,20 @@ describe('GitService.show', () => {
   it('should retrieve file content from commit hash', async () => {
     const log = await service.getLog(repoPath, 1);
     const commitHash = log[0].hash;
-    
+
     const content = await service.show(repoPath, commitHash, 'initial.txt');
     expect(content).toBe('initial content');
   });
 
   it('should throw BadRequestException for invalid ref (command injection attempt)', async () => {
-    await expect(service.show(repoPath, ';rm -rf /', 'initial.txt'))
-      .rejects.toThrow(BadRequestException);
+    await expect(
+      service.show(repoPath, ';rm -rf /', 'initial.txt'),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('should throw error for non-existent file in git history', async () => {
-    await expect(service.show(repoPath, 'HEAD', 'nonexistent.txt'))
-      .rejects.toThrow();
+    await expect(
+      service.show(repoPath, 'HEAD', 'nonexistent.txt'),
+    ).rejects.toThrow();
   });
 });
