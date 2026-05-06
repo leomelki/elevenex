@@ -1,12 +1,15 @@
-<div class="todo-panel" [class.open]="isOpen()">
-  <div class="panel-header">
+<div
+  class="fixed top-0 -right-80 z-50 flex h-screen w-80 flex-col border-l border-border bg-background transition-[right] duration-200 ease-in-out"
+  [class.right-0]="isOpen()"
+>
+  <div class="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
     <h2 class="text-sm font-semibold">Tasks</h2>
     <button z-button zType="ghost" class="h-8 w-8 p-0" (click)="onClose()">
       <ng-icon name="lucideX" size="16" />
     </button>
   </div>
 
-  <div class="panel-content">
+  <div class="flex-1 overflow-y-auto p-3">
     <!-- Add todo input -->
     <div class="add-todo mb-4">
       <div class="flex gap-2">
@@ -28,17 +31,17 @@
     @if (loading()) {
       <div class="p-4 text-center text-muted-foreground text-sm">Loading...</div>
     } @else if (todos().length === 0) {
-      <div class="empty-state">
+      <div class="flex h-[100px] items-center justify-center">
         <p class="text-sm text-muted-foreground text-center">No tasks. Add one above.</p>
       </div>
     } @else {
       <!-- Pending todos -->
-      <div cdkDropList (cdkDropListDropped)="onDrop($event)" class="todo-list">
+      <div cdkDropList (cdkDropListDropped)="onDrop($event)" class="flex flex-col gap-0.5">
         @for (todo of pendingTodos(); track todo.id) {
           <div 
             cdkDrag
-            class="todo-item group flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted"
-            [class.editing]="editingTodoId() === todo.id"
+            class="group flex items-center gap-2 rounded px-2 py-1.5 transition-colors hover:bg-muted"
+            [class.bg-muted]="editingTodoId() === todo.id"
           >
             <!-- Drag handle -->
             <span cdkDragHandle class="cursor-grab text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
@@ -104,9 +107,9 @@
           </button>
 
           @if (showCompleted()) {
-            <div class="todo-list completed">
+            <div class="flex flex-col gap-0.5">
               @for (todo of completedTodos(); track todo.id) {
-                <div class="todo-item completed flex items-center gap-2 px-2 py-1.5 rounded bg-muted/50">
+                <div class="flex items-center gap-2 rounded bg-muted/50 px-2 py-1.5 opacity-70 transition-colors">
                   <!-- Checkbox -->
                   <input
                     type="checkbox"
@@ -162,7 +165,11 @@
 
 <!-- Clear completed confirmation dialog -->
 @if (showClearDialog()) {
-  <dialog #clearDialog="trackedNativeModal" trackNativeModal class="clear-dialog">
+  <dialog
+    #clearDialog="trackedNativeModal"
+    trackNativeModal
+    class="fixed inset-0 m-auto max-w-[400px] rounded-lg border border-border bg-background p-0 backdrop:bg-black/50"
+  >
     <div class="p-4">
       <h3 class="text-lg font-semibold mb-2">Clear Completed Tasks</h3>
       <p class="text-sm text-muted-foreground mb-4">Clear all completed tasks?</p>

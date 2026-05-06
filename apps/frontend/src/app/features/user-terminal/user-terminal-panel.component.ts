@@ -20,7 +20,7 @@ import { firstValueFrom } from 'rxjs';
   standalone: true,
   imports: [CommonModule, NgIcon, UserTerminalViewComponent],
   templateUrl: './user-terminal-panel.component.html',
-  styleUrls: ['./user-terminal-panel.component.scss'],
+  host: { class: 'block h-full' },
   viewProviders: [provideIcons({ lucidePlus, lucideX, lucideTerminal })],
 })
 export class UserTerminalPanelComponent {

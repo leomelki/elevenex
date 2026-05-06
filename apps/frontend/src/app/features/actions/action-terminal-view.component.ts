@@ -23,7 +23,7 @@ import { ActionTerminalWebsocketService } from '@/shared/services/action-termina
   standalone: true,
   imports: [CommonModule],
   templateUrl: './action-terminal-view.component.html',
-  styleUrls: ['./action-terminal-view.component.scss'],
+  host: { class: 'block h-full' },
 })
 export class ActionTerminalViewComponent implements AfterViewInit, OnChanges, OnDestroy {
   @Input({ required: true }) actionId!: number;

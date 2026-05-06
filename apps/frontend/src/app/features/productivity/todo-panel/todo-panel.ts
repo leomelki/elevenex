@@ -21,7 +21,6 @@ import { TrackNativeModalDirective } from '@/shared/core/directives/track-native
     TrackNativeModalDirective,
   ],
   templateUrl: './todo-panel.html',
-  styleUrl: './todo-panel.scss',
   viewProviders: [provideIcons({ lucideX, lucidePlus, lucideTrash2, lucideCheck, lucideChevronDown, lucideGripVertical })],
 })
 export class TodoPanelComponent implements OnInit {

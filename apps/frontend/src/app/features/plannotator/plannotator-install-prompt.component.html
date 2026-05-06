@@ -1,35 +1,41 @@
-<div class="plannotator-prompt-overlay">
-  <div class="plannotator-prompt-overlay__backdrop" (click)="service.dismiss()"></div>
-  <div class="plannotator-prompt-overlay__card" role="dialog" aria-modal="true" aria-labelledby="plannotator-prompt-title">
-    <div class="plannotator-prompt-overlay__icon-ring">
+<div class="fixed inset-0 z-[60] flex items-center justify-center p-6">
+  <div class="prompt-backdrop absolute inset-0 backdrop-blur-[18px] backdrop-saturate-[0.92]" (click)="service.dismiss()"></div>
+  <div
+    class="prompt-card relative z-[1] flex w-[min(100%,460px)] flex-col items-center rounded-[28px] px-9 pt-9 pb-[30px] text-center backdrop-blur-[28px]"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="plannotator-prompt-title"
+  >
+    <div class="prompt-icon mb-5 flex size-[60px] items-center justify-center rounded-[18px] text-primary">
       <ng-icon name="lucideSparkles" size="26" />
     </div>
 
-    <p class="plannotator-prompt-overlay__eyebrow">Recommended</p>
-    <h2 id="plannotator-prompt-title" class="plannotator-prompt-overlay__title">Plannotator not found</h2>
-    <p class="plannotator-prompt-overlay__subtitle">
+    <p class="prompt-eyebrow mb-2 text-[0.72rem] font-bold tracking-[0.18em] uppercase">Recommended</p>
+    <h2 id="plannotator-prompt-title" class="mb-3 text-[1.6rem] leading-[1.1] font-bold">Plannotator not found</h2>
+    <p class="mb-[18px] max-w-[36ch] text-[0.92rem] leading-[1.6] text-muted-foreground">
       Plannotator is highly recommended for the best experience. Install it with:
     </p>
 
-    <div class="plannotator-prompt-overlay__code-block">
-      <code>curl -fsSL https://plannotator.ai/install.sh | bash</code>
+    <div class="prompt-code mb-3.5 w-full rounded-[14px] px-4 py-3">
+      <code class="break-all font-mono text-[0.8rem] text-foreground">curl -fsSL https://plannotator.ai/install.sh | bash</code>
     </div>
 
-    <div class="plannotator-prompt-overlay__note">
-      <ng-icon name="lucideServer" size="13" />
+    <div class="prompt-note mb-6 flex w-full items-start gap-2 rounded-xl px-3.5 py-2.5 text-left text-[0.8rem] leading-[1.5] text-muted-foreground">
+      <ng-icon name="lucideServer" size="13" class="mt-px shrink-0" />
       <span>If connecting via SSH, run this command on the <strong>server</strong>, not your local machine.</span>
     </div>
 
-    <div class="plannotator-prompt-overlay__actions">
+    <div class="flex w-full justify-end gap-2.5">
       <button
-        class="plannotator-prompt-overlay__button plannotator-prompt-overlay__button--muted"
+        z-button
+        zType="outline"
         type="button"
         (click)="service.neverShowAgain()"
       >
         Never show again
       </button>
       <button
-        class="plannotator-prompt-overlay__button plannotator-prompt-overlay__button--primary"
+        z-button
         type="button"
         (click)="service.dismiss()"
       >
