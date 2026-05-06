@@ -882,11 +882,7 @@ export class GitService {
           cwd: input.worktreePath,
           timeout: 15_000,
           maxBuffer: 2_000_000,
-          env: {
-            PATH: process.env.PATH || '',
-            HOME: process.env.HOME || '',
-            USER: process.env.USER || '',
-          },
+          env: buildAugmentedEnv(),
         },
       );
       const parsed = JSON.parse(stdout);

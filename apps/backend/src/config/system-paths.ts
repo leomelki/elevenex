@@ -115,6 +115,40 @@ function getCachedShellEnv(): NodeJS.ProcessEnv {
   return _shellEnvCache ?? {};
 }
 
+// Project the augmented shell-env baseline onto `process.env` itself so that
+// any child process spawned with default env (simple-git, libraries that
+// don't accept an env override, ad-hoc execSync calls, etc.) inherits the
+// correct PATH and locale. Without this, every spawn site would have to
+// remember to pass `buildAugmentedEnv()` — auditing all of them is a losing
+// battle. Mutating process.env is normal Node practice and what every shell
+// integration ultimately does.
+//
+// Rules:
+//   - PATH is always recomputed (combined merge) so a user dotfile edit
+//     observed via refresh is reflected for subsequent spawns.
+//   - Other keys are added only if missing — we never clobber a value the
+//     app deliberately set (e.g. `process.env.GIT_OPTIONAL_LOCKS = '0'` in
+//     main.ts) or that the user passed via systemd/launchd/CLI.
+function applyShellEnvToProcess(): void {
+  const shellEnv = _shellEnvCache;
+  if (!shellEnv) return;
+
+  process.env.PATH = buildAugmentedPath(process.env.PATH || '', shellEnv.PATH || '');
+
+  for (const [key, value] of Object.entries(shellEnv)) {
+    if (key === 'PATH' || value === undefined) continue;
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+
+  const isUtf8 = (v: string | undefined) => typeof v === 'string' && /utf-?8/i.test(v);
+  if (!isUtf8(process.env.LC_ALL) && !isUtf8(process.env.LANG) && !isUtf8(process.env.LC_CTYPE)) {
+    process.env.LANG = process.env.LANG || 'en_US.UTF-8';
+    process.env.LC_CTYPE = process.env.LC_CTYPE || 'en_US.UTF-8';
+  }
+}
+
 // Synchronous warm-up. Used when a caller needs the shell env before any
 // async warm-up has completed (rare, but possible during NestJS bootstrap
 // before `OnApplicationBootstrap` fires). Subsequent calls hit the cache.
@@ -138,6 +172,7 @@ function loadLoginShellEnv(): NodeJS.ProcessEnv {
   }
 
   _lastRefreshAt = Date.now();
+  applyShellEnvToProcess();
   return _shellEnvCache;
 }
 
@@ -163,6 +198,7 @@ export function refreshLoginShellEnv(force = false): Promise<void> {
     if (parsed) {
       _shellEnvCache = parsed;
       _lastRefreshAt = Date.now();
+      applyShellEnvToProcess();
     }
     // On failure: keep the existing cache rather than wiping it.
     _refreshInFlight = null;

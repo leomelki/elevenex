@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { execFile } from 'node:child_process';
+import { buildAugmentedEnv } from '../config/system-paths.js';
 
 export class GhCommandError extends Error {
   constructor(
@@ -27,13 +28,7 @@ export class GhCommandRunnerService {
           timeout: this.timeoutMs,
           maxBuffer: 5_000_000,
           env: {
-            PATH: process.env.PATH || '',
-            HOME: process.env.HOME || '',
-            USER: process.env.USER || '',
-            XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || '',
-            GH_HOST: process.env.GH_HOST || '',
-            GH_TOKEN: process.env.GH_TOKEN || '',
-            GITHUB_TOKEN: process.env.GITHUB_TOKEN || '',
+            ...buildAugmentedEnv(),
             GH_PROMPT_DISABLED: '1',
             GIT_TERMINAL_PROMPT: '0',
             NO_COLOR: '1',
