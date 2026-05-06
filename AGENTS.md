@@ -5,6 +5,11 @@ The project is meant to be used in repositories with multiple thousands of files
 - Follow the commit convention in `COMMIT_CONVENTION.md`.
 - Use Conventional Commits in the form `feat(scope): description` whenever a scope is applicable.
 
+## Frontend UI
+
+- Use Zard UI components and Tailwind CSS utilities as much as possible when building or modifying frontend UI.
+- When a needed Zard UI component is not already installed, do not hesitate to install the relevant component instead of hand-rolling a replacement.
+
 ## Database (apps/backend)
 
 - **ORM**: Drizzle ORM with better-sqlite3

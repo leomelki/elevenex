@@ -19,7 +19,6 @@ import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-
     ProjectOnboardingWizard,
   ],
   templateUrl: './project-list.html',
-  styleUrl: './project-list.scss',
   host: { class: 'block flex-1 overflow-y-auto p-8' },
   viewProviders: [provideIcons({ lucideChevronRight, lucideFolderOpen })],
 })

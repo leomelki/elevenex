@@ -9,7 +9,6 @@ import { FRONTEND_GIT_SHA } from '../../../build-info';
   selector: 'app-info',
   imports: [NgIcon],
   templateUrl: './info.html',
-  styleUrl: './info.scss',
   host: { class: 'block flex-1 overflow-y-auto' },
   viewProviders: [
     provideIcons({

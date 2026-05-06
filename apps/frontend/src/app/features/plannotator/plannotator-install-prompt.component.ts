@@ -8,7 +8,6 @@ import { PlannotatorInstallPromptService } from './plannotator-install-prompt.se
   selector: 'app-plannotator-install-prompt',
   imports: [NgIcon, ZardButtonComponent],
   templateUrl: './plannotator-install-prompt.component.html',
-  styleUrl: './plannotator-install-prompt.component.scss',
   viewProviders: [provideIcons({ lucideSparkles, lucideServer })],
 })
 export class PlannotatorInstallPromptComponent {

@@ -1,83 +1,87 @@
-<div class="actions-panel">
-  <section class="actions-sidebar">
-    <div class="sidebar-toolbar">
-      <span class="toolbar-title">Actions</span>
+<div class="grid h-full grid-cols-[240px_minmax(0,1fr)] bg-background">
+  <section class="flex flex-col overflow-hidden border-r border-border bg-[color-mix(in_oklch,var(--background)_94%,white)]">
+    <div class="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-2.5">
+      <span class="mr-auto text-[11px] font-bold tracking-[0.08em] text-muted-foreground uppercase">Actions</span>
       @if (runningCount() > 0) {
-        <span class="running-badge">{{ runningCount() }}</span>
+        <span class="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[9px] bg-[oklch(0.74_0.17_154)] px-[5px] text-[10px] font-bold text-[oklch(0.18_0.04_154)]">{{ runningCount() }}</span>
       }
       <button
-        class="toolbar-btn add-btn"
-        [class.active]="showCreateForm()"
+        class="inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] hover:text-foreground"
+        [class.bg-[color-mix(in_oklch,var(--primary)_15%,transparent)]]="showCreateForm()"
+        [class.text-primary]="showCreateForm()"
         title="New action"
         (click)="toggleCreateForm()"
       >
         <ng-icon name="lucidePlus" size="14" />
       </button>
-      <button class="toolbar-btn close-btn" title="Close panel" (click)="close.emit()">
+      <button class="inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] hover:text-foreground" title="Close panel" (click)="close.emit()">
         <ng-icon name="lucideX" size="14" />
       </button>
     </div>
 
     @if (showCreateForm()) {
-      <div class="create-form">
-        <label class="field">
-          <span class="field-label">Name</span>
+      <div class="flex shrink-0 flex-col gap-2 border-b border-border bg-[color-mix(in_oklch,var(--primary)_3%,var(--background))] p-2.5">
+        <label class="flex flex-col gap-[3px]">
+          <span class="pl-px text-[10px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">Name</span>
           <input
             #nameInput
             type="text"
-            class="field-input"
+            class="h-[30px] w-full rounded-[7px] border border-border bg-background px-[9px] text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:shadow-[0_0_0_2px_color-mix(in_oklch,var(--primary)_15%,transparent)] focus:outline-none"
             placeholder="e.g. Dev server"
             (keydown.enter)="commandInput.focus()"
             (keydown.escape)="toggleCreateForm()"
           />
         </label>
-        <label class="field">
-          <span class="field-label">Command</span>
+        <label class="flex flex-col gap-[3px]">
+          <span class="pl-px text-[10px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">Command</span>
           <input
             #commandInput
             type="text"
-            class="field-input mono"
+            class="h-[30px] w-full rounded-[7px] border border-border bg-background px-[9px] font-mono text-[11px] text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:shadow-[0_0_0_2px_color-mix(in_oklch,var(--primary)_15%,transparent)] focus:outline-none"
             placeholder="e.g. pnpm dev"
             (keydown.enter)="createAction(nameInput.value, commandInput.value); nameInput.value=''; commandInput.value=''; toggleCreateForm()"
             (keydown.escape)="toggleCreateForm()"
           />
         </label>
-        <div class="create-form__buttons">
+        <div class="mt-0.5 flex gap-1.5">
           <button
-            class="form-btn primary"
+            class="inline-flex h-7 flex-1 cursor-pointer items-center justify-center gap-[5px] rounded-[7px] border-0 bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground transition-opacity duration-150 hover:opacity-90"
             (click)="createAction(nameInput.value, commandInput.value); nameInput.value=''; commandInput.value=''; toggleCreateForm()"
           >
             <ng-icon name="lucidePlus" size="13" />
             Add
           </button>
-          <button class="form-btn" (click)="toggleCreateForm()">Cancel</button>
+          <button class="inline-flex h-7 cursor-pointer items-center justify-center gap-[5px] rounded-[7px] border border-border bg-background px-2.5 text-[11px] font-semibold text-muted-foreground transition-colors duration-150 hover:border-[color-mix(in_oklch,var(--foreground)_30%,transparent)] hover:text-foreground" (click)="toggleCreateForm()">Cancel</button>
         </div>
       </div>
     }
 
-    <div class="action-list">
+    <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
       @for (action of actions(); track action.id) {
         <div
-          class="action-row"
-          [class.selected]="selectedActionId() === action.id"
+          class="group flex cursor-pointer items-center gap-2 border-b border-[color-mix(in_oklch,var(--border)_50%,transparent)] px-2.5 py-1.5 transition-colors duration-100 hover:bg-[color-mix(in_oklch,var(--muted)_30%,transparent)]"
+          [class.border-l-2]="selectedActionId() === action.id"
+          [class.border-l-primary]="selectedActionId() === action.id"
+          [class.bg-[color-mix(in_oklch,var(--primary)_10%,transparent)]]="selectedActionId() === action.id"
+          [class.pl-2]="selectedActionId() === action.id"
           (click)="selectAction(action.id)"
         >
-          <span class="status-dot" [class]="statusTone(action)"></span>
-          <div class="action-info">
-            <div class="action-name-row">
-              <span class="action-name">{{ action.name }}</span>
+          <span class="size-2 shrink-0 rounded-full" [ngClass]="statusDotClass(action)"></span>
+          <div class="flex min-w-0 flex-1 flex-col gap-px">
+            <div class="flex min-w-0 items-center gap-1.5">
+              <span class="overflow-hidden text-ellipsis whitespace-nowrap text-xs font-semibold text-foreground">{{ action.name }}</span>
               @if (lastTriggeredLabel(action); as lastTriggered) {
-                <span class="action-time" [title]="lastTriggeredTooltip(action)">
+                <span class="shrink-0 text-[10px] font-bold text-muted-foreground" [title]="lastTriggeredTooltip(action)">
                   {{ lastTriggered }}
                 </span>
               }
             </div>
-            <span class="action-cmd">{{ action.command }}</span>
+            <span class="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[10px] text-muted-foreground">{{ action.command }}</span>
           </div>
-          <div class="action-row__buttons">
+          <div class="flex items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover:opacity-100" [class.opacity-100]="selectedActionId() === action.id">
             @if (action.status === 'running') {
               <button
-                class="icon-btn stop"
+                class="inline-flex size-6 cursor-pointer items-center justify-center rounded-[5px] border-0 bg-transparent text-[oklch(0.62_0.22_25)] transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_60%,transparent)]"
                 title="Stop"
                 (click)="$event.stopPropagation(); stopAction(action)"
               >
@@ -85,7 +89,7 @@
               </button>
             } @else {
               <button
-                class="icon-btn"
+                class="inline-flex size-6 cursor-pointer items-center justify-center rounded-[5px] border-0 bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_60%,transparent)] hover:text-foreground"
                 title="Run"
                 (click)="$event.stopPropagation(); runAction(action)"
               >
@@ -96,7 +100,7 @@
         </div>
       } @empty {
         @if (!showCreateForm()) {
-          <div class="empty-state" (click)="toggleCreateForm()">
+          <div class="m-2.5 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-[color-mix(in_oklch,var(--border)_80%,transparent)] p-3.5 text-xs text-muted-foreground transition-colors duration-150 hover:border-primary hover:bg-[color-mix(in_oklch,var(--primary)_5%,transparent)] hover:text-primary" (click)="toggleCreateForm()">
             <ng-icon name="lucidePlus" size="14" />
             <span>Add your first action</span>
           </div>
@@ -105,72 +109,72 @@
     </div>
   </section>
 
-  <section class="actions-viewer">
+  <section class="flex min-w-0 flex-col overflow-hidden">
     @if (selectedAction()) {
-      <div class="viewer-toolbar">
-        <span class="status-dot sm" [class]="statusTone(selectedAction()!)"></span>
-        <span class="viewer-name">{{ selectedAction()!.name }}</span>
-        <code class="viewer-cmd">{{ selectedAction()!.command }}</code>
-        <div class="viewer-toolbar__right">
+      <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
+        <span class="size-[7px] shrink-0 rounded-full" [ngClass]="statusDotClass(selectedAction()!)"></span>
+        <span class="whitespace-nowrap text-xs font-semibold text-foreground">{{ selectedAction()!.name }}</span>
+        <code class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px] text-muted-foreground">{{ selectedAction()!.command }}</code>
+        <div class="ml-auto flex shrink-0 items-center gap-1">
           @if (lastTriggeredLabel(selectedAction()!); as lastTriggered) {
-            <span class="pill neutral" [title]="lastTriggeredTooltip(selectedAction()!)">
+            <span class="inline-flex h-5 items-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white)] px-[7px] text-[10px] font-bold text-slate-900/85 uppercase" [title]="lastTriggeredTooltip(selectedAction()!)">
               Last triggered {{ lastTriggered }}
             </span>
           }
-          <span class="pill" [class]="statusTone(selectedAction()!)">{{ selectedAction()!.status }}</span>
+          <span class="inline-flex h-5 items-center rounded-full px-[7px] text-[10px] font-bold text-slate-900/85 uppercase" [ngClass]="statusPillClass(selectedAction()!)">{{ selectedAction()!.status }}</span>
           @if (selectedAction()!.lastExitCode !== null) {
-            <span class="pill neutral">exit {{ selectedAction()!.lastExitCode }}</span>
+            <span class="inline-flex h-5 items-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white)] px-[7px] text-[10px] font-bold text-slate-900/85 uppercase">exit {{ selectedAction()!.lastExitCode }}</span>
           }
           @if (!isEditing()) {
-            <button class="toolbar-btn" title="Edit" (click)="startEditing()">
+            <button class="inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] hover:text-foreground" title="Edit" (click)="startEditing()">
               <ng-icon name="lucidePencil" size="12" />
             </button>
           }
           <button
-            class="toolbar-btn danger"
+            class="inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] hover:text-destructive disabled:cursor-not-allowed disabled:opacity-35"
             title="Delete"
             [disabled]="selectedAction()!.status === 'running'"
             (click)="removeAction(selectedAction()!)"
           >
             <ng-icon name="lucideTrash2" size="12" />
           </button>
-          <button class="toolbar-btn close-btn" title="Close panel" (click)="close.emit()">
+          <button class="inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] hover:text-foreground" title="Close panel" (click)="close.emit()">
             <ng-icon name="lucideX" size="14" />
           </button>
         </div>
       </div>
 
       @if (isEditing()) {
-        <div class="edit-bar">
+        <div class="flex shrink-0 items-center gap-1 border-b border-border bg-[color-mix(in_oklch,var(--primary)_4%,var(--background))] px-3 py-1.5">
           <input
             #editNameInput
             type="text"
-            class="compact-input"
+            class="h-[26px] min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
             placeholder="Name"
             [value]="selectedAction()!.name"
           />
           <input
             #editCommandInput
             type="text"
-            class="compact-input mono"
+            class="h-[26px] min-w-0 flex-1 rounded-md border border-border bg-background px-2 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
             placeholder="Command"
             [value]="selectedAction()!.command"
             (keydown.enter)="saveAction(selectedAction()!, editNameInput.value, editCommandInput.value); stopEditing()"
           />
           <button
-            class="toolbar-btn"
+            class="inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
             [disabled]="selectedAction()!.status === 'running'"
             (click)="saveAction(selectedAction()!, editNameInput.value, editCommandInput.value); stopEditing()"
           >
             <ng-icon name="lucideCheck" size="12" />
           </button>
-          <button class="toolbar-btn" (click)="stopEditing()">
+          <button class="inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] hover:text-foreground" (click)="stopEditing()">
             <ng-icon name="lucideX" size="12" />
           </button>
         </div>
       }
 
-      <div class="viewer-terminal">
+      <div class="min-h-0 flex-1 overflow-hidden bg-[#0b1220]">
         <app-action-terminal-view
           [actionId]="selectedAction()!.id"
           [initialOutput]="outputFor(selectedAction())"
@@ -178,7 +182,7 @@
         />
       </div>
     } @else {
-      <div class="viewer-empty">
+      <div class="flex h-full items-center justify-center gap-2 text-xs text-muted-foreground">
         <ng-icon name="lucideTerminal" size="16" />
         <span>Select an action to see output</span>
       </div>

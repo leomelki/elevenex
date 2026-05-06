@@ -1,29 +1,41 @@
-<div class="scratchpad-panel" [class.open]="isOpen()">
-  <div class="panel-header">
+<div
+  class="fixed top-0 -right-[400px] z-50 flex h-screen w-[400px] flex-col border-l border-border bg-background transition-[right] duration-200 ease-in-out"
+  [class.right-0]="isOpen()"
+>
+  <div class="flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-4 py-3">
     <h2 class="text-sm font-semibold">Scratchpad</h2>
     <button z-button zType="ghost" class="h-8 w-8 p-0" (click)="onClose()">
       <ng-icon name="lucideX" size="16" />
     </button>
   </div>
 
-  <div class="panel-content">
+  <div class="flex-1 overflow-y-auto p-3">
     @if (loading()) {
       <div class="p-4 text-center text-muted-foreground text-sm">Loading...</div>
     } @else if (sections().length === 0) {
-      <div class="empty-state">
+      <div class="flex h-[120px] items-center justify-center text-muted-foreground">
         <p class="text-sm text-muted-foreground text-center">No sections yet.</p>
       </div>
     } @else {
-      <div class="sections-list">
+      <div class="flex flex-col gap-2">
         @for (section of sections(); track section.id) {
-          <div class="section" [class.expanded]="expandedSectionId() === section.id">
-            <div class="section-header" (click)="toggleSection(section.id)">
+          <div
+            class="overflow-hidden rounded-lg bg-muted transition-all duration-200 hover:bg-[color-mix(in_oklch,var(--muted)_95%,var(--foreground))]"
+            [class.bg-card]="expandedSectionId() === section.id"
+            [class.shadow-sm]="expandedSectionId() === section.id"
+          >
+            <div
+              class="group flex cursor-pointer items-center justify-between px-3.5 py-3 transition-colors"
+              [class.border-b]="expandedSectionId() === section.id"
+              [class.border-border]="expandedSectionId() === section.id"
+              (click)="toggleSection(section.id)"
+            >
               @if (editingTitleId() === section.id) {
                 <input
                   #titleInput
                   z-input
                   type="text"
-                  class="title-input"
+                  class="mr-2 h-7 flex-1 rounded border border-border bg-background px-2 text-[13px] font-medium focus:border-primary focus:outline-none"
                   [value]="section.name"
                   (blur)="saveTitle(section.id, $event)"
                   (keydown.enter)="saveTitle(section.id, $event)"
@@ -31,18 +43,18 @@
                   (click)="$event.stopPropagation()"
                 />
               } @else {
-                <span class="section-title" (dblclick)="startEditTitle(section.id, section.name)">
+                <span class="mr-2 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-medium text-foreground" (dblclick)="startEditTitle(section.id, section.name)">
                   {{ section.name }}
                 </span>
               }
-              <div class="section-actions">
+              <div class="flex shrink-0 items-center gap-1.5">
                 @if (savingSectionId() === section.id) {
-                  <span class="saving-indicator">Saving...</span>
+                  <span class="text-[11px] text-muted-foreground opacity-80">Saving...</span>
                 }
                 <button
                   z-button
                   zType="ghost"
-                  class="delete-btn h-6 w-6 p-0"
+                  class="h-6 w-6 scale-80 rounded p-0 text-muted-foreground opacity-0 transition-all duration-200 hover:bg-destructive/10 hover:text-destructive group-hover:scale-100 group-hover:opacity-100"
                   title="Delete section"
                   (click)="onDeleteSection($event, section.id)"
                 >
@@ -57,10 +69,10 @@
             </div>
 
             @if (expandedSectionId() === section.id) {
-              <div class="section-content">
+              <div class="bg-card">
                 <textarea
                   #contentTextarea
-                  class="content-textarea"
+                  class="min-h-20 w-full resize-none border-0 bg-transparent px-3.5 py-3 text-[13px] leading-[1.6] text-foreground outline-none placeholder:text-muted-foreground/60 focus:bg-background"
                   rows="1"
                   [value]="section.content || ''"
                   (input)="onContentInput($event)"
@@ -84,7 +96,11 @@
 </div>
 
 @if (showDeleteDialog()) {
-  <dialog #deleteDialog="trackedNativeModal" trackNativeModal class="delete-dialog">
+  <dialog
+    #deleteDialog="trackedNativeModal"
+    trackNativeModal
+    class="fixed inset-0 m-auto max-w-[400px] rounded-lg border border-border bg-background p-0 backdrop:bg-black/50"
+  >
     <div class="p-4">
       <h3 class="text-lg font-semibold mb-2">Delete Section</h3>
       <p class="text-sm text-muted-foreground mb-4">Delete this section? This cannot be undone.</p>

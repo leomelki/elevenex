@@ -33,7 +33,7 @@ import { ActionsStateService } from './actions-state.service';
   standalone: true,
   imports: [CommonModule, FormsModule, NgIcon, ActionTerminalViewComponent],
   templateUrl: './actions-panel.component.html',
-  styleUrls: ['./actions-panel.component.scss'],
+  host: { class: 'block h-full' },
   viewProviders: [
     provideIcons({
       lucideCheck,
@@ -166,6 +166,36 @@ export class ActionsPanelComponent {
         return 'stopped';
       default:
         return 'idle';
+    }
+  }
+
+  statusDotClass(action: Action): string {
+    switch (action.status) {
+      case 'running':
+        return 'bg-[oklch(0.74_0.17_154)]';
+      case 'success':
+        return 'bg-[oklch(0.72_0.17_142)]';
+      case 'failed':
+        return 'bg-[oklch(0.63_0.23_28)]';
+      case 'stopped':
+        return 'bg-[oklch(0.7_0.02_260)]';
+      default:
+        return 'bg-[color-mix(in_oklch,var(--muted)_72%,white)]';
+    }
+  }
+
+  statusPillClass(action: Action): string {
+    switch (action.status) {
+      case 'running':
+        return 'bg-[oklch(0.74_0.17_154)]';
+      case 'success':
+        return 'bg-[oklch(0.72_0.17_142)]';
+      case 'failed':
+        return 'bg-[oklch(0.63_0.23_28)]';
+      case 'stopped':
+        return 'bg-[oklch(0.7_0.02_260)]';
+      default:
+        return 'bg-[color-mix(in_oklch,var(--muted)_72%,white)]';
     }
   }
 

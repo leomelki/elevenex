@@ -1,129 +1,149 @@
-<div class="onboarding-shell">
-  <div class="onboarding-shell__backdrop"></div>
+<div class="relative grid min-h-full grid-cols-[minmax(280px,420px)_minmax(0,720px)] gap-7 p-10 max-[1080px]:grid-cols-1 max-[720px]:gap-5 max-[720px]:p-5">
+  <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_15%,color-mix(in_oklch,var(--primary)_12%,transparent),transparent_28%),radial-gradient(circle_at_85%_20%,color-mix(in_oklch,#0f172a_10%,transparent),transparent_22%)]"></div>
 
-  <section class="onboarding-hero">
-    <p class="onboarding-hero__eyebrow">First run</p>
-    <h1>Set up Elevenex for the way you work.</h1>
-    <p class="onboarding-hero__copy">
+  <section class="relative z-[1] flex flex-col justify-center px-2 py-6 max-[1080px]:pb-0">
+    <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">First run</p>
+    <h1 class="m-0 text-[clamp(2rem,3vw,3.5rem)] leading-[0.96] font-bold">Set up Elevenex for the way you work.</h1>
+    <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">
       Start locally on this machine or connect a remote SSH server and forward Elevenex into the app.
     </p>
 
-    <div class="onboarding-hero__rail">
-      <div class="onboarding-hero__step" [class.is-active]="activeStep() === 'choice'" [class.is-done]="selectedMode() !== null">
-        <span>1</span>
+    <div class="mt-8 grid gap-3">
+      <div
+        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,white_10%)] bg-[color-mix(in_oklch,var(--background)_82%,white_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
+        [class.border-[color-mix(in_oklch,var(--primary)_38%,white)]]="activeStep() === 'choice'"
+        [class.bg-[color-mix(in_oklch,var(--primary)_12%,white)]]="activeStep() === 'choice'"
+      >
+        <span
+          class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white_28%)] text-[0.82rem] font-bold"
+          [class.bg-[color-mix(in_oklch,var(--primary)_82%,white_18%)]]="selectedMode() !== null"
+          [class.text-white]="selectedMode() !== null"
+        >1</span>
         <strong>Target</strong>
       </div>
-      <div class="onboarding-hero__step" [class.is-active]="activeStep() === 'ssh' || activeStep() === 'install'" [class.is-done]="serverSummary() !== null || selectedMode() === 'local'">
-        <span>2</span>
+      <div
+        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,white_10%)] bg-[color-mix(in_oklch,var(--background)_82%,white_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
+        [class.border-[color-mix(in_oklch,var(--primary)_38%,white)]]="activeStep() === 'ssh' || activeStep() === 'install'"
+        [class.bg-[color-mix(in_oklch,var(--primary)_12%,white)]]="activeStep() === 'ssh' || activeStep() === 'install'"
+      >
+        <span
+          class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white_28%)] text-[0.82rem] font-bold"
+          [class.bg-[color-mix(in_oklch,var(--primary)_82%,white_18%)]]="serverSummary() !== null || selectedMode() === 'local'"
+          [class.text-white]="serverSummary() !== null || selectedMode() === 'local'"
+        >2</span>
         <strong>Connection</strong>
       </div>
-      <div class="onboarding-hero__step" [class.is-active]="activeStep() === 'project'">
-        <span>3</span>
+      <div
+        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,white_10%)] bg-[color-mix(in_oklch,var(--background)_82%,white_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
+        [class.border-[color-mix(in_oklch,var(--primary)_38%,white)]]="activeStep() === 'project'"
+        [class.bg-[color-mix(in_oklch,var(--primary)_12%,white)]]="activeStep() === 'project'"
+      >
+        <span class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white_28%)] text-[0.82rem] font-bold">3</span>
         <strong>First project</strong>
       </div>
     </div>
   </section>
 
-  <section class="onboarding-panel">
+  <section class="relative z-[1] rounded-[32px] border border-[color-mix(in_oklch,var(--border)_82%,white_12%)] bg-[color-mix(in_oklch,var(--background)_88%,white_12%)] p-8 shadow-[0_28px_64px_rgba(15,23,42,0.1)] backdrop-blur-[20px] max-[720px]:rounded-3xl max-[720px]:p-[22px]">
     @if (loading()) {
-      <div class="onboarding-panel__loading">Preparing your workspace…</div>
+      <div class="flex min-h-[420px] items-center justify-center text-muted-foreground">Preparing your workspace…</div>
     } @else if (activeStep() === 'choice') {
-      <div class="onboarding-panel__header">
-        <p class="onboarding-panel__eyebrow">Choose a target</p>
-        <h2>Where should Elevenex run?</h2>
-        <p>Pick the local machine for the fastest start, or connect a server over SSH.</p>
+      <div>
+        <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">Choose a target</p>
+        <h2 class="m-0 text-[clamp(1.9rem,2.2vw,2.5rem)] leading-[0.96] font-bold">Where should Elevenex run?</h2>
+        <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">Pick the local machine for the fastest start, or connect a server over SSH.</p>
       </div>
 
-      <div class="onboarding-mode-grid">
-        <button type="button" class="onboarding-mode-card" (click)="chooseLocalMode()">
+      <div class="mt-7 grid gap-4">
+        <button type="button" class="grid grid-cols-[auto_1fr_auto] items-start gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--background)_88%,white_12%),color-mix(in_oklch,var(--background)_96%,transparent))] p-[22px] text-left transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--primary)_44%,white)] hover:shadow-[0_22px_40px_rgba(15,23,42,0.08)]" (click)="chooseLocalMode()">
           <ng-icon name="lucideHardDrive" size="22" />
           <div>
-            <strong>Use locally</strong>
-            <p>Run Elevenex on this machine and go straight to creating your first project.</p>
+            <strong class="block text-base">Use locally</strong>
+            <p class="mt-1.5 leading-[1.5] text-muted-foreground">Run Elevenex on this machine and go straight to creating your first project.</p>
           </div>
           <ng-icon name="lucideArrowRight" size="16" />
         </button>
 
-        <button type="button" class="onboarding-mode-card" (click)="chooseSshMode()">
+        <button type="button" class="grid grid-cols-[auto_1fr_auto] items-start gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--background)_88%,white_12%),color-mix(in_oklch,var(--background)_96%,transparent))] p-[22px] text-left transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--primary)_44%,white)] hover:shadow-[0_22px_40px_rgba(15,23,42,0.08)]" (click)="chooseSshMode()">
           <ng-icon name="lucideServer" size="22" />
           <div>
-            <strong>Connect an SSH server</strong>
-            <p>Forward a remote Elevenex instance and keep working from the same desktop app.</p>
+            <strong class="block text-base">Connect an SSH server</strong>
+            <p class="mt-1.5 leading-[1.5] text-muted-foreground">Forward a remote Elevenex instance and keep working from the same desktop app.</p>
           </div>
           <ng-icon name="lucideArrowRight" size="16" />
         </button>
       </div>
     } @else if (activeStep() === 'ssh') {
-      <div class="onboarding-panel__header">
-        <p class="onboarding-panel__eyebrow">SSH connection</p>
-        <h2>Connect a server</h2>
-        <p>We’ll connect over SSH, then verify that Elevenex is reachable on the remote server.</p>
+      <div>
+        <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">SSH connection</p>
+        <h2 class="m-0 text-[clamp(1.9rem,2.2vw,2.5rem)] leading-[0.96] font-bold">Connect a server</h2>
+        <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">We’ll connect over SSH, then verify that Elevenex is reachable on the remote server.</p>
       </div>
 
       @if (!sshSupported()) {
-        <div class="onboarding-inline-error">
+        <div class="mt-[18px] rounded-2xl border border-[color-mix(in_oklch,#ef4444_26%,white)] bg-[color-mix(in_oklch,#ef4444_10%,white)] px-4 py-3.5 text-[color-mix(in_oklch,#7f1d1d_78%,black)]">
           SSH onboarding is only available in the Electron app.
         </div>
       }
 
-      <div class="onboarding-form-grid">
-        <div class="onboarding-field">
-          <label for="serverName">Server name</label>
+      <div class="mt-7 grid grid-cols-2 gap-4 max-[720px]:grid-cols-1">
+        <div class="grid gap-2">
+          <label class="text-[0.86rem] font-bold" for="serverName">Server name</label>
           <input id="serverName" z-input [value]="serverName()" (input)="serverName.set($any($event.target).value)" placeholder="Production, staging, home lab…" />
         </div>
 
-        <div class="onboarding-field">
-          <label for="sshHost">Host</label>
+        <div class="grid gap-2">
+          <label class="text-[0.86rem] font-bold" for="sshHost">Host</label>
           <input id="sshHost" z-input [value]="sshHost()" (input)="sshHost.set($any($event.target).value)" placeholder="server.example.com" />
         </div>
 
-        <div class="onboarding-field">
-          <label for="sshUser">User</label>
+        <div class="grid gap-2">
+          <label class="text-[0.86rem] font-bold" for="sshUser">User</label>
           <input id="sshUser" z-input [value]="sshUser()" (input)="sshUser.set($any($event.target).value)" placeholder="ubuntu" />
         </div>
 
-        <div class="onboarding-field">
-          <label for="sshPort">Port</label>
+        <div class="grid gap-2">
+          <label class="text-[0.86rem] font-bold" for="sshPort">Port</label>
           <input id="sshPort" z-input type="number" [value]="sshPort().toString()" (input)="sshPort.set(+$any($event.target).value || 22)" />
         </div>
       </div>
 
-      <div class="onboarding-auth">
-        <div class="onboarding-auth__tabs">
-          <button type="button" class="onboarding-auth__tab" [class.is-active]="authMode() === 'agent'" (click)="authMode.set('agent')">
+      <div class="mt-6 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[color-mix(in_oklch,var(--muted)_36%,white_64%)] p-[18px]">
+        <div class="flex flex-wrap gap-2.5">
+          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,white_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,white)]]="authMode() === 'agent'" [class.border-[color-mix(in_oklch,var(--primary)_42%,white)]]="authMode() === 'agent'" (click)="authMode.set('agent')">
             <ng-icon name="lucideShieldCheck" size="16" />
             SSH config / agent
           </button>
-          <button type="button" class="onboarding-auth__tab" [class.is-active]="authMode() === 'password'" (click)="authMode.set('password')">
+          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,white_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,white)]]="authMode() === 'password'" [class.border-[color-mix(in_oklch,var(--primary)_42%,white)]]="authMode() === 'password'" (click)="authMode.set('password')">
             <ng-icon name="lucideLock" size="16" />
             Password
           </button>
-          <button type="button" class="onboarding-auth__tab" [class.is-active]="authMode() === 'key'" (click)="authMode.set('key')">
+          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,white_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,white)]]="authMode() === 'key'" [class.border-[color-mix(in_oklch,var(--primary)_42%,white)]]="authMode() === 'key'" (click)="authMode.set('key')">
             <ng-icon name="lucideKeyRound" size="16" />
             Private key
           </button>
         </div>
 
         @if (authMode() === 'agent') {
-          <div class="onboarding-auth__body">
+          <div class="mt-4 text-muted-foreground">
             <p>Use the SSH config, agent, and keys already available on this machine.</p>
           </div>
         }
 
         @if (authMode() === 'password') {
-          <div class="onboarding-auth__body onboarding-auth__body--grid">
-            <div class="onboarding-field">
-              <label for="sshPassword">Password</label>
+          <div class="mt-4 grid gap-4 text-muted-foreground">
+            <div class="grid gap-2">
+              <label class="text-[0.86rem] font-bold text-foreground" for="sshPassword">Password</label>
               <input id="sshPassword" z-input type="password" [value]="password()" (input)="password.set($any($event.target).value)" placeholder="Password is only used for this connection" />
             </div>
           </div>
         }
 
         @if (authMode() === 'key') {
-          <div class="onboarding-auth__body onboarding-auth__body--grid">
-            <div class="onboarding-field onboarding-field--wide">
-              <label for="sshKey">Private key</label>
-              <div class="onboarding-key-picker">
+          <div class="mt-4 grid gap-4 text-muted-foreground">
+            <div class="grid gap-2">
+              <label class="text-[0.86rem] font-bold text-foreground" for="sshKey">Private key</label>
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2.5 max-[720px]:grid-cols-1">
                 <app-path-autocomplete-input
                   inputId="sshKey"
                   [value]="identityFilePath()"
@@ -136,8 +156,8 @@
                 />
               </div>
             </div>
-            <div class="onboarding-field">
-              <label for="sshPassphrase">Passphrase <span>(optional)</span></label>
+            <div class="grid gap-2">
+              <label class="text-[0.86rem] font-bold text-foreground" for="sshPassphrase">Passphrase <span class="font-medium text-muted-foreground">(optional)</span></label>
               <input id="sshPassphrase" z-input type="password" [value]="passphrase()" (input)="passphrase.set($any($event.target).value)" placeholder="Only if this key is encrypted" />
             </div>
           </div>
@@ -145,10 +165,10 @@
       </div>
 
       @if (connectionError()) {
-        <div class="onboarding-inline-error">{{ connectionError() }}</div>
+        <div class="mt-[18px] rounded-2xl border border-[color-mix(in_oklch,#ef4444_26%,white)] bg-[color-mix(in_oklch,#ef4444_10%,white)] px-4 py-3.5 text-[color-mix(in_oklch,#7f1d1d_78%,black)]">{{ connectionError() }}</div>
       }
 
-      <div class="onboarding-actions">
+      <div class="mt-7 flex items-center justify-between gap-3 max-[720px]:flex-col max-[720px]:items-stretch">
         <button z-button zType="ghost" type="button" (click)="selectedMode.set(null); activeStep.set('choice')">Back</button>
         <button z-button type="button" [zLoading]="connecting()" [zDisabled]="connecting() || !canConnect() || !sshSupported()" (click)="connectToServer()">
           Connect and verify
@@ -156,25 +176,25 @@
         </button>
       </div>
     } @else if (activeStep() === 'install') {
-      <div class="onboarding-panel__header">
-        <p class="onboarding-panel__eyebrow">Remote setup needed</p>
-        <h2>Elevenex is not reachable on this server yet</h2>
-        <p>SSH worked, but the forwarded Elevenex port did not answer. Install Elevenex on the server first, then retry.</p>
+      <div>
+        <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">Remote setup needed</p>
+        <h2 class="m-0 text-[clamp(1.9rem,2.2vw,2.5rem)] leading-[0.96] font-bold">Elevenex is not reachable on this server yet</h2>
+        <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">SSH worked, but the forwarded Elevenex port did not answer. Install Elevenex on the server first, then retry.</p>
       </div>
 
-      <div class="onboarding-install-card">
+      <div class="mt-6 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[color-mix(in_oklch,var(--background)_90%,white_10%)] p-[22px]">
         <div class="onboarding-install-card__todo">
-          <strong>Remote setup is paused for manual prerequisites</strong>
-          <p>{{ installMessage() || 'Use the remote setup terminal to install the missing dependencies, then re-check.' }}</p>
+          <strong class="block text-base">Remote setup is paused for manual prerequisites</strong>
+          <p class="mt-1.5 leading-[1.5] text-muted-foreground">{{ installMessage() || 'Use the remote setup terminal to install the missing dependencies, then re-check.' }}</p>
         </div>
-        <ul>
+        <ul class="mt-[18px] list-disc pl-[18px] leading-[1.6] text-muted-foreground">
           <li>Use the remote setup modal to install any missing pieces such as <code>tmux</code> or <code>claude</code>.</li>
           <li>After the remote machine is ready, Elevenex will upload or update its runtime automatically.</li>
           <li>If you close the modal, you can retry from here.</li>
         </ul>
       </div>
 
-      <div class="onboarding-actions">
+      <div class="mt-7 flex items-center justify-between gap-3 max-[720px]:flex-col max-[720px]:items-stretch">
         <button z-button zType="ghost" type="button" (click)="retryConnection()">Edit connection</button>
         <button z-button type="button" (click)="connectToServer()">
           <ng-icon name="lucideRefreshCw" size="16" class="mr-1" />
@@ -182,30 +202,30 @@
         </button>
       </div>
     } @else if (activeStep() === 'project') {
-      <div class="onboarding-panel__header">
-        <p class="onboarding-panel__eyebrow">First project</p>
-        <h2>Build your workspace in one pass</h2>
-        <p>{{ projectStepDescription() }}</p>
+      <div>
+        <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">First project</p>
+        <h2 class="m-0 text-[clamp(1.9rem,2.2vw,2.5rem)] leading-[0.96] font-bold">Build your workspace in one pass</h2>
+        <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">{{ projectStepDescription() }}</p>
       </div>
 
       @if (selectedMode() === 'ssh' && serverSummary(); as server) {
-        <div class="onboarding-server-summary">
+        <div class="mt-6 grid grid-cols-3 gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[color-mix(in_oklch,var(--background)_90%,white_10%)] p-[22px] max-[720px]:grid-cols-1">
           <div>
-            <span>Connected server</span>
-            <strong>{{ server.name }}</strong>
+            <span class="mb-1.5 block text-[0.78rem] tracking-[0.14em] text-muted-foreground uppercase">Connected server</span>
+            <strong class="block text-base">{{ server.name }}</strong>
           </div>
           <div>
-            <span>Target</span>
-            <strong>{{ server.sshUser ? server.sshUser + '@' : '' }}{{ server.sshHost }}:{{ server.sshPort }}</strong>
+            <span class="mb-1.5 block text-[0.78rem] tracking-[0.14em] text-muted-foreground uppercase">Target</span>
+            <strong class="block text-base">{{ server.sshUser ? server.sshUser + '@' : '' }}{{ server.sshHost }}:{{ server.sshPort }}</strong>
           </div>
           <div>
-            <span>Forwarded locally</span>
-            <strong>127.0.0.1:{{ server.localPort }}</strong>
+            <span class="mb-1.5 block text-[0.78rem] tracking-[0.14em] text-muted-foreground uppercase">Forwarded locally</span>
+            <strong class="block text-base">127.0.0.1:{{ server.localPort }}</strong>
           </div>
         </div>
       }
 
-      <div class="onboarding-project-wizard">
+      <div class="mt-7">
         <app-project-onboarding-wizard
           [embedded]="true"
           [allowCancel]="false"

@@ -22,7 +22,6 @@ import { RemoteInstallFlowService } from '@/shared/services/remote-install-flow.
   standalone: true,
   imports: [CommonModule, NgIcon],
   templateUrl: './remote-install-modal.component.html',
-  styleUrl: './remote-install-modal.component.scss',
   viewProviders: [
     provideIcons({
       lucideLoaderCircle,

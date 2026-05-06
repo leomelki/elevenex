@@ -1,19 +1,21 @@
 @if (state(); as install) {
-  <section class="remote-install-overlay" aria-label="Remote server setup">
-    <div class="remote-install-overlay__backdrop"></div>
+  <section class="fixed inset-0 z-[80] grid place-items-center" aria-label="Remote server setup">
+    <div class="absolute inset-0 bg-[rgba(5,10,16,0.74)] backdrop-blur-[10px]"></div>
 
-    <div class="remote-install-overlay__card">
-      <header class="remote-install-overlay__header">
+    <div
+      class="relative grid max-h-[calc(100vh-48px)] w-[min(1080px,calc(100vw-48px))] grid-rows-[auto_auto_1fr_auto_auto] overflow-hidden rounded-3xl border border-[rgba(145,169,194,0.18)] bg-[linear-gradient(180deg,rgba(13,20,29,0.98)_0%,rgba(9,14,21,0.98)_100%)] text-[#edf4ff] shadow-[0_34px_90px_rgba(0,0,0,0.44)] max-[980px]:w-[min(calc(100vw-20px),1000px)]"
+    >
+      <header class="flex items-start justify-between gap-[18px] px-6 pt-[22px]">
         <div>
-          <div class="remote-install-overlay__eyebrow">Remote setup required</div>
-          <h2>Finish preparing the remote server</h2>
-          <p>
+          <div class="text-[0.72rem] tracking-[0.18em] text-[#86d6ff] uppercase">Remote setup required</div>
+          <h2 class="my-1.5 mb-2 text-[1.45rem] font-bold">Finish preparing the remote server</h2>
+          <p class="m-0 leading-[1.55] text-[rgba(228,236,247,0.8)]">
             Elevenex connected over SSH but still needs the remote machine to be prepared before the backend can start.
           </p>
         </div>
 
         <button
-          class="remote-install-overlay__close"
+          class="flex size-[34px] items-center justify-center rounded-full border-0 bg-white/[0.08] text-inherit hover:bg-white/[0.12]"
           type="button"
           aria-label="Close remote setup"
           (click)="cancel()"
@@ -22,70 +24,70 @@
         </button>
       </header>
 
-      <div class="remote-install-overlay__meta">
-        <div>
-          <span>Platform</span>
+      <div class="mt-[18px] grid grid-cols-3 gap-3 px-6 max-[980px]:grid-cols-1">
+        <div class="rounded-[14px] border border-[rgba(134,214,255,0.12)] bg-[rgba(134,214,255,0.08)] px-3.5 py-3">
+          <span class="mb-1 block text-[0.72rem] tracking-[0.08em] text-[rgba(186,203,223,0.74)] uppercase">Platform</span>
           <strong>{{ install.result.remotePlatform }} / {{ install.result.remoteArch }}</strong>
         </div>
-        <div>
-          <span>Missing</span>
+        <div class="rounded-[14px] border border-[rgba(134,214,255,0.12)] bg-[rgba(134,214,255,0.08)] px-3.5 py-3">
+          <span class="mb-1 block text-[0.72rem] tracking-[0.08em] text-[rgba(186,203,223,0.74)] uppercase">Missing</span>
           <strong>{{ install.result.missingDependencies.join(', ') || 'none' }}</strong>
         </div>
-        <div>
-          <span>Target version</span>
+        <div class="rounded-[14px] border border-[rgba(134,214,255,0.12)] bg-[rgba(134,214,255,0.08)] px-3.5 py-3">
+          <span class="mb-1 block text-[0.72rem] tracking-[0.08em] text-[rgba(186,203,223,0.74)] uppercase">Target version</span>
           <strong>{{ install.result.version || 'unknown' }}</strong>
         </div>
       </div>
 
-      <div class="remote-install-overlay__body">
-        <div class="remote-install-overlay__instructions">
-          <div class="remote-install-overlay__message">
+      <div class="grid min-h-0 grid-cols-[minmax(270px,0.38fr)_minmax(0,1fr)] gap-[18px] px-6 pt-5 pb-[18px] max-[980px]:max-h-[calc(100vh-260px)] max-[980px]:grid-cols-1 max-[980px]:overflow-auto">
+        <div class="flex flex-col gap-3.5">
+          <div class="flex items-start gap-2.5 rounded-[14px] bg-[rgba(255,185,79,0.1)] px-3.5 py-3 text-[#ffd9ab]">
             <ng-icon name="lucideTriangleAlert" size="16" />
             <span>{{ install.result.message }}</span>
           </div>
 
           @if (install.result.suggestedCommands.length > 0) {
-            <div class="remote-install-overlay__commands">
-              <div class="remote-install-overlay__commands-title">Suggested `tmux` install commands</div>
+            <div class="flex flex-col gap-2 rounded-[14px] border border-white/[0.08] bg-white/[0.04] p-3.5">
+              <div class="text-[0.84rem] text-[#d4e9ff]">Suggested `tmux` install commands</div>
               @for (command of install.result.suggestedCommands; track command) {
-                <code>{{ command }}</code>
+                <code class="block whitespace-pre-wrap break-words rounded-[10px] bg-[rgba(5,8,12,0.54)] px-[11px] py-2.5 text-[#9ff0ce]">{{ command }}</code>
               }
             </div>
           }
 
-          <div class="remote-install-overlay__claude-note">
-            <strong>`claude` note:</strong> if `claude` is missing, install it using your normal remote workflow, then use the terminal below to verify it is on the remote `PATH`.
+          <div class="rounded-[14px] bg-white/[0.04] p-3.5 leading-[1.55] text-[rgba(228,236,247,0.82)]">
+            <strong class="text-[0.84rem] text-[#d4e9ff]">`claude` note:</strong> if `claude` is missing, install it using your normal remote workflow, then use the terminal below to verify it is on the remote `PATH`.
           </div>
         </div>
 
-        <div class="remote-install-overlay__terminal-shell">
-          <div class="remote-install-overlay__terminal-label">
+        <div class="grid min-h-[360px] min-w-0 grid-rows-[auto_1fr] overflow-hidden rounded-2xl border border-[rgba(130,155,184,0.18)] bg-[#0d141b]">
+          <div class="flex items-center gap-2 bg-white/[0.04] px-3.5 py-3 text-[rgba(230,238,248,0.84)]">
             <ng-icon name="lucideTerminalSquare" size="14" />
             <span>Remote installer terminal</span>
           </div>
-          <div #terminalContainer class="remote-install-overlay__terminal"></div>
+          <div #terminalContainer class="min-h-0 p-2.5"></div>
         </div>
       </div>
 
       @if (install.terminalError) {
-        <div class="remote-install-overlay__terminal-error">
+        <div class="mx-6 flex items-start gap-2.5 rounded-[14px] bg-[rgba(255,185,79,0.1)] px-3.5 py-3 text-[#ffd9ab]">
           <ng-icon name="lucideTriangleAlert" size="14" />
           <span>{{ install.terminalError }}</span>
         </div>
       }
 
-      <footer class="remote-install-overlay__actions">
-        <button class="remote-install-overlay__button remote-install-overlay__button--ghost" type="button" (click)="cancel()">
+      <footer class="flex justify-end gap-3 px-6 pt-[18px] pb-[22px]">
+        <button class="h-10 rounded-xl border-0 bg-white/[0.08] px-4 font-semibold text-[#edf4ff] hover:bg-white/[0.12]" type="button" (click)="cancel()">
           Cancel
         </button>
         <button
-          class="remote-install-overlay__button remote-install-overlay__button--primary"
+          class="flex h-10 items-center gap-2 rounded-xl border-0 bg-[linear-gradient(135deg,#7de8ff_0%,#8ff0c0_100%)] px-4 font-semibold text-[#09242f] disabled:opacity-[0.62]"
           type="button"
           [disabled]="!canRetry()"
           (click)="recheck()"
         >
           @if (install.checking) {
-            <ng-icon name="lucideLoaderCircle" size="14" class="remote-install-overlay__spin" />
+            <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
             <span>Checking…</span>
           } @else {
             <span>I installed them, re-check</span>

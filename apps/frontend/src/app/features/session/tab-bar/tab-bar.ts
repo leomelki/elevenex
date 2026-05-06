@@ -15,7 +15,6 @@ import { CommitButtonComponent } from '@/features/git/commit-button.component';
   standalone: true,
   imports: [CommonModule, NgIcon, CommitButtonComponent],
   templateUrl: './tab-bar.html',
-  styleUrls: ['./tab-bar.scss'],
   viewProviders: [
     provideIcons({
       lucideX,

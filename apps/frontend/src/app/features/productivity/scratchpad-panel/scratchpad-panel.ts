@@ -19,7 +19,6 @@ import { TrackNativeModalDirective } from '@/shared/core/directives/track-native
     TrackNativeModalDirective,
   ],
   templateUrl: './scratchpad-panel.html',
-  styleUrl: './scratchpad-panel.scss',
   viewProviders: [provideIcons({ lucideX, lucidePlus, lucideChevronDown, lucideChevronRight })],
 })
 export class ScratchpadPanelComponent implements OnInit, AfterViewInit {

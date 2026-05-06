@@ -9,7 +9,6 @@ import { lucideX, lucideRefreshCw, lucideCheckCircle, lucideXCircle, lucideFileT
   standalone: true,
   imports: [CommonModule, NgIcon],
   templateUrl: './plannotator-panel.component.html',
-  styleUrls: ['./plannotator-panel.component.scss'],
   viewProviders: [
     provideIcons({
       lucideX,

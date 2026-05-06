@@ -30,7 +30,6 @@ import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-
   selector: 'app-onboarding',
   imports: [NgIcon, ZardButtonComponent, ZardInputDirective, PathAutocompleteInputComponent, ProjectOnboardingWizard],
   templateUrl: './onboarding.html',
-  styleUrl: './onboarding.scss',
   host: { class: 'block flex-1 overflow-y-auto' },
   viewProviders: [
     provideIcons({

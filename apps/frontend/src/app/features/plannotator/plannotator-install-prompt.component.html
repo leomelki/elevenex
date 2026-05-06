@@ -1,26 +1,26 @@
 <div class="fixed inset-0 z-[60] flex items-center justify-center p-6">
-  <div class="prompt-backdrop absolute inset-0 backdrop-blur-[18px] backdrop-saturate-[0.92]" (click)="service.dismiss()"></div>
+  <div class="absolute inset-0 bg-[color-mix(in_oklch,var(--background)_72%,rgb(10_14_24_/_0.68))] backdrop-blur-[18px] backdrop-saturate-[0.92]" (click)="service.dismiss()"></div>
   <div
-    class="prompt-card relative z-[1] flex w-[min(100%,460px)] flex-col items-center rounded-[28px] px-9 pt-9 pb-[30px] text-center backdrop-blur-[28px]"
+    class="relative z-[1] flex w-[min(100%,460px)] flex-col items-center rounded-[28px] border border-[color-mix(in_oklch,var(--border)_76%,white_10%)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--background)_88%,white_12%),color-mix(in_oklch,var(--background)_94%,transparent))] px-9 pt-9 pb-[30px] text-center shadow-[0_1px_2px_rgba(15,23,42,0.04),0_16px_40px_rgba(15,23,42,0.12),0_40px_96px_rgba(15,23,42,0.22)] backdrop-blur-[28px]"
     role="dialog"
     aria-modal="true"
     aria-labelledby="plannotator-prompt-title"
   >
-    <div class="prompt-icon mb-5 flex size-[60px] items-center justify-center rounded-[18px] text-primary">
+    <div class="mb-5 flex size-[60px] items-center justify-center rounded-[18px] border border-[color-mix(in_oklch,var(--primary)_20%,var(--background))] bg-[color-mix(in_oklch,var(--primary)_10%,var(--background))] text-primary">
       <ng-icon name="lucideSparkles" size="26" />
     </div>
 
-    <p class="prompt-eyebrow mb-2 text-[0.72rem] font-bold tracking-[0.18em] uppercase">Recommended</p>
+    <p class="mb-2 text-[0.72rem] font-bold tracking-[0.18em] text-[color-mix(in_oklch,var(--primary)_60%,var(--foreground))] uppercase">Recommended</p>
     <h2 id="plannotator-prompt-title" class="mb-3 text-[1.6rem] leading-[1.1] font-bold">Plannotator not found</h2>
     <p class="mb-[18px] max-w-[36ch] text-[0.92rem] leading-[1.6] text-muted-foreground">
       Plannotator is highly recommended for the best experience. Install it with:
     </p>
 
-    <div class="prompt-code mb-3.5 w-full rounded-[14px] px-4 py-3">
+    <div class="mb-3.5 w-full rounded-[14px] border border-[color-mix(in_oklch,var(--border)_76%,white_10%)] bg-[color-mix(in_oklch,var(--muted)_48%,var(--background))] px-4 py-3">
       <code class="break-all font-mono text-[0.8rem] text-foreground">curl -fsSL https://plannotator.ai/install.sh | bash</code>
     </div>
 
-    <div class="prompt-note mb-6 flex w-full items-start gap-2 rounded-xl px-3.5 py-2.5 text-left text-[0.8rem] leading-[1.5] text-muted-foreground">
+    <div class="mb-6 flex w-full items-start gap-2 rounded-xl border border-[color-mix(in_oklch,var(--border)_52%,transparent)] bg-[color-mix(in_oklch,var(--muted)_30%,var(--background))] px-3.5 py-2.5 text-left text-[0.8rem] leading-[1.5] text-muted-foreground [&_strong]:font-semibold [&_strong]:text-foreground">
       <ng-icon name="lucideServer" size="13" class="mt-px shrink-0" />
       <span>If connecting via SSH, run this command on the <strong>server</strong>, not your local machine.</span>
     </div>

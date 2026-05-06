@@ -1,11 +1,13 @@
-<div class="tab-bar" role="tablist" aria-label="Session tabs">
-  <div class="tabs-container">
+<div class="flex h-10 items-end border-b border-border bg-background px-2" role="tablist" aria-label="Session tabs">
+  <div class="flex flex-1 items-end overflow-x-auto [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent">
     @for (tab of tabs(); track tab.sessionId) {
       <button
-        class="tab"
-        [class.active]="isActive(tab)"
-        [class.tab-archived]="tab.status === 'archived'"
-        [class.same-project]="isSameProjectAsActive(tab)"
+        class="relative flex h-10 min-w-[100px] max-w-[200px] cursor-pointer items-center gap-1.5 rounded-t-lg border-0 border-b border-border bg-muted py-0 pr-2.5 pl-1.5 transition-all duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_90%,transparent)]"
+        [ngClass]="{
+          'bg-background border-b-transparent after:absolute after:right-0 after:bottom-0 after:left-0 after:h-[3px] after:bg-primary': isActive(tab),
+          'opacity-60': tab.status === 'archived',
+          'before:absolute before:right-4 before:bottom-0.5 before:left-4 before:h-0.5 before:rounded-px before:bg-current before:opacity-[0.18] hover:before:opacity-30': isSameProjectAsActive(tab) && !isActive(tab)
+        }"
         role="tab"
         [attr.aria-label]="tab.sessionName + ' - ' + tab.branchName + ' - ' + tab.status"
         [title]="getTooltip(tab)"
@@ -13,38 +15,52 @@
         (contextmenu)="onContextMenu($event, tab)"
       >
         <span
-          class="tab-color-indicator"
+          class="h-6 w-1 shrink-0 rounded-sm"
           [style.background-color]="getRepoColor(tab)"
           [attr.aria-hidden]="true"
         ></span>
-        <span class="tab-content">
-          <span class="tab-branch">
+        <span class="flex min-w-0 flex-1 flex-col gap-px text-left">
+          <span
+            class="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] leading-[1.2] font-medium text-primary"
+            [class.font-semibold]="isActive(tab)"
+            [class.text-muted-foreground]="tab.status === 'archived'"
+          >
             {{ tab.branchName }}
             @if (hasLinkedPullRequest(tab)) {
               <span class="ml-2 inline-flex rounded-full bg-[color-mix(in_oklch,var(--primary)_16%,white)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">PR</span>
             }
           </span>
-          <span class="tab-name">{{ tab.sessionName }}</span>
+          <span
+            class="overflow-hidden text-ellipsis whitespace-nowrap text-xs leading-[1.3] font-normal text-muted-foreground"
+            [class.font-medium]="isActive(tab)"
+            [class.text-foreground]="isActive(tab)"
+          >
+            {{ tab.sessionName }}
+          </span>
         </span>
-        <span class="tab-status">
-          <span class="tab-status-dot"
-                [class.status-running]="getClaudeStatus(tab) === 'running'"
-                [class.status-waiting]="getClaudeStatus(tab) === 'waiting'"
-                [class.status-idle]="getClaudeStatus(tab) === 'idle'"
-                [title]="getClaudeStatus(tab)">
+        <span class="flex items-center gap-1">
+          <span
+            class="shrink-0 rounded-full"
+            [ngClass]="{
+              'size-2.5 animate-spin border-[1.5px] border-[oklch(0.72_0.17_142_/_0.3)] border-t-[oklch(0.72_0.17_142)] bg-transparent': getClaudeStatus(tab) === 'running',
+              'size-2.5 animate-pulse bg-[oklch(0.75_0.15_65)]': getClaudeStatus(tab) === 'waiting',
+              'size-1.5 bg-muted-foreground opacity-30': getClaudeStatus(tab) === 'idle'
+            }"
+            [title]="getClaudeStatus(tab)"
+          >
           </span>
           @if (hasUnreviewedCompletion(tab)) {
-            <span class="completion-indicator" title="Completed, not reviewed yet">
+            <span class="flex size-4 items-center justify-center rounded-full border border-[oklch(0.86_0.06_160)] bg-[linear-gradient(135deg,oklch(0.95_0.03_154),oklch(0.91_0.05_170))] text-[oklch(0.46_0.13_154)]" title="Completed, not reviewed yet">
               <ng-icon name="lucideCheck" size="12" />
             </span>
           }
           @if (hasReview(tab)) {
-            <span class="review-indicator" title="Review waiting">
+            <span class="flex animate-pulse items-center justify-center text-[oklch(0.65_0.15_270)]" title="Review waiting">
               <ng-icon name="lucideMessageSquare" size="14" />
             </span>
           }
           <button
-            class="tab-close"
+            class="flex size-5 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-destructive"
             [attr.aria-label]="'Close tab for ' + tab.sessionName"
             title="Close tab (session keeps running)"
             (click)="onCloseClick($event, tab.sessionId)"
@@ -57,13 +73,15 @@
   </div>
 
   @if (projectId()) {
-    <div class="panel-buttons">
+    <div class="ml-auto flex h-full shrink-0 items-center self-center gap-1 pl-2">
       @if (worktreePath()) {
         <app-commit-button [worktreePath]="worktreePath()" />
       }
       <button
-        class="panel-btn"
-        [class.active]="showClaudeTerminalFallback()"
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        [class.bg-primary]="showClaudeTerminalFallback()"
+        [class.text-primary-foreground]="showClaudeTerminalFallback()"
+        [class.border-primary]="showClaudeTerminalFallback()"
         title="Claude Raw Terminal"
         aria-label="Toggle Claude raw terminal fallback"
         (click)="toggleClaudeTerminalFallback.emit()"
@@ -71,8 +89,10 @@
         <ng-icon name="lucideMessageSquare" size="16" />
       </button>
       <button
-        class="panel-btn"
-        [class.active]="showTerminal()"
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        [class.bg-primary]="showTerminal()"
+        [class.text-primary-foreground]="showTerminal()"
+        [class.border-primary]="showTerminal()"
         title="Terminal"
         aria-label="Toggle Terminal panel"
         (click)="toggleTerminal.emit()"
@@ -80,20 +100,24 @@
         <ng-icon name="lucideTerminal" size="16" />
       </button>
       <button
-        class="panel-btn"
-        [class.active]="showActions()"
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        [class.bg-primary]="showActions()"
+        [class.text-primary-foreground]="showActions()"
+        [class.border-primary]="showActions()"
         title="Actions"
         aria-label="Toggle Actions panel"
         (click)="toggleActions.emit()"
       >
         <ng-icon name="lucidePlay" size="16" />
         @if (runningActionsCount() > 0) {
-          <span class="panel-btn-badge">{{ runningActionsCount() }}</span>
+          <span class="absolute -top-1 -right-1 h-4 min-w-4 rounded-full bg-[color-mix(in_oklch,var(--primary)_84%,white)] px-1 text-[10px] leading-4 font-bold text-white">{{ runningActionsCount() }}</span>
         }
       </button>
       <button
-        class="panel-btn"
-        [class.active]="showFiles()"
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        [class.bg-primary]="showFiles()"
+        [class.text-primary-foreground]="showFiles()"
+        [class.border-primary]="showFiles()"
         title="Files"
         aria-label="Toggle Files panel"
         (click)="toggleFiles.emit()"
@@ -101,8 +125,10 @@
         <ng-icon name="lucideFolderTree" size="16" />
       </button>
       <button
-        class="panel-btn"
-        [class.active]="showBrowser()"
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        [class.bg-primary]="showBrowser()"
+        [class.text-primary-foreground]="showBrowser()"
+        [class.border-primary]="showBrowser()"
         title="Browser"
         aria-label="Toggle Browser panel"
         (click)="toggleBrowser.emit()"
@@ -110,8 +136,10 @@
         <ng-icon name="lucideGlobe" size="16" />
       </button>
       <button
-        class="panel-btn"
-        [class.active]="showScratchpad()"
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        [class.bg-primary]="showScratchpad()"
+        [class.text-primary-foreground]="showScratchpad()"
+        [class.border-primary]="showScratchpad()"
         title="Scratchpad"
         aria-label="Toggle Scratchpad panel"
         (click)="toggleScratchpad.emit()"
@@ -119,15 +147,17 @@
         <ng-icon name="lucideFileText" size="16" />
       </button>
       <button
-        class="panel-btn"
-        [class.active]="showTodos()"
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        [class.bg-primary]="showTodos()"
+        [class.text-primary-foreground]="showTodos()"
+        [class.border-primary]="showTodos()"
         title="Tasks"
         aria-label="Toggle Tasks panel"
         (click)="toggleTodos.emit()"
       >
         <ng-icon name="lucideCheckSquare" size="16" />
         @if (pendingTodosCount() > 0) {
-          <span class="panel-btn-badge">{{ pendingTodosCount() }}</span>
+          <span class="absolute -top-1 -right-1 h-4 min-w-4 rounded-full bg-[color-mix(in_oklch,var(--primary)_84%,white)] px-1 text-[10px] leading-4 font-bold text-white">{{ pendingTodosCount() }}</span>
         }
       </button>
     </div>
