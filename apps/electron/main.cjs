@@ -403,8 +403,15 @@ function requestAppQuit() {
   app.quit();
 }
 
-function openInstallWindow() {
+function openInstallWindow({
+  title = 'Installing Elevenex Runtime',
+  eyebrow = 'Preparing Runtime',
+  heading = 'Installing Elevenex components',
+  description = 'Elevenex is downloading and installing its local runtime. This happens once per version and may take a moment.',
+  status = '',
+} = {}) {
   if (installWindow && !installWindow.isDestroyed()) {
+    updateInstallProgress({ status });
     return installWindow;
   }
 
@@ -419,7 +426,7 @@ function openInstallWindow() {
     show: false,
     center: true,
     backgroundColor: '#0d1117',
-    title: 'Installing Elevenex Runtime',
+    title,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -434,7 +441,7 @@ function openInstallWindow() {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Installing Elevenex Runtime</title>
+    <title>${escapeHtml(title)}</title>
     <style>
       :root {
         color-scheme: dark;
@@ -510,16 +517,25 @@ function openInstallWindow() {
   </head>
   <body>
     <main class="card">
-      <div class="eyebrow">Preparing Runtime</div>
-      <h1>Installing Elevenex components</h1>
-      <p>Elevenex is downloading and installing its local runtime. This happens once per version and may take a moment.</p>
-      <div class="status" id="status"></div>
-      <div class="progress indeterminate" id="progress"><div class="progress-fill" id="fill"></div></div>
+      <div class="eyebrow">${escapeHtml(eyebrow)}</div>
+      <h1>${escapeHtml(heading)}</h1>
+      <p>${escapeHtml(description)}</p>
+      <div class="status" id="status">${escapeHtml(status)}</div>
+      <div class="progress indeterminate" id="progress" role="progressbar" aria-label="${escapeHtml(heading)}"><div class="progress-fill" id="fill"></div></div>
     </main>
   </body>
 </html>`)}`);
 
   return installWindow;
+}
+
+function escapeHtml(value) {
+  return `${value ?? ''}`
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function formatBytes(bytes) {
@@ -533,8 +549,8 @@ function updateInstallProgress({ status, percent }) {
     return;
   }
   const js = percent != null
-    ? `document.getElementById('progress').classList.remove('indeterminate');document.getElementById('fill').style.width='${percent}%';document.getElementById('status').textContent=${JSON.stringify(status || '')};`
-    : `document.getElementById('progress').classList.add('indeterminate');document.getElementById('fill').style.width='';document.getElementById('status').textContent=${JSON.stringify(status || '')};`;
+    ? `document.getElementById('progress').classList.remove('indeterminate');document.getElementById('progress').setAttribute('aria-valuenow','${percent}');document.getElementById('progress').setAttribute('aria-valuemin','0');document.getElementById('progress').setAttribute('aria-valuemax','100');document.getElementById('fill').style.width='${percent}%';document.getElementById('status').textContent=${JSON.stringify(status || '')};`
+    : `document.getElementById('progress').classList.add('indeterminate');document.getElementById('progress').removeAttribute('aria-valuenow');document.getElementById('progress').removeAttribute('aria-valuemin');document.getElementById('progress').removeAttribute('aria-valuemax');document.getElementById('fill').style.width='';document.getElementById('status').textContent=${JSON.stringify(status || '')};`;
   installWindow.webContents.executeJavaScript(js).catch(() => {});
 }
 
@@ -774,6 +790,13 @@ async function startEmbeddedBackend(backendUrl) {
 
   const packagedDatabasePath = getPackagedDatabasePath();
   mkdirSync(path.dirname(packagedDatabasePath), { recursive: true });
+  openInstallWindow({
+    title: 'Starting Elevenex Runtime',
+    eyebrow: 'Starting Runtime',
+    heading: 'Starting local runtime',
+    description: 'Elevenex is launching its local services. The workspace will open as soon as they are ready.',
+    status: 'Launching backend services...',
+  });
 
   const env = {
     ...process.env,
@@ -803,6 +826,7 @@ async function startEmbeddedBackend(backendUrl) {
 
   const ready = waitForBackendReady(backendUrl, EMBEDDED_BACKEND_READY_TIMEOUT_MS).catch((error) => {
     terminateChildProcess(child);
+    closeInstallWindow();
 
     const details = stderrBuffer.trim();
     throw new Error(details ? `${error.message}\n\n${details}` : error.message);
