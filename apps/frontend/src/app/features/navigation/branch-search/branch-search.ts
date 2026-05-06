@@ -95,7 +95,7 @@ export class BranchSearch {
     const query = this.searchQuery();
     const results = this.searchResults();
     const remotes = this.visibleRemoteResults();
-    if (query.length < 3) return false;
+    if (query.length < 1) return false;
     const lower = query.toLowerCase();
     const exactLocal = results.some((b) => b.name.toLowerCase() === lower);
     const exactRemote = remotes.some(
@@ -127,7 +127,7 @@ export class BranchSearch {
       if (this.searchDebounceTimer) {
         clearTimeout(this.searchDebounceTimer);
       }
-      if (query.length >= 3 && repoId !== null) {
+      if (repoId !== null) {
         this.searching.set(true);
         this.searchingRemote.set(true);
         this.selectedIndex.set(0);
@@ -378,7 +378,7 @@ export class BranchSearch {
   }
 
   private performSearch(repoId: number, query: string) {
-    this.branchesService.searchBranches(repoId, query).subscribe({
+    this.branchesService.searchBranches(repoId, query, true).subscribe({
       next: (results) => {
         this.searchResults.set(results);
         this.searching.set(false);

@@ -9,7 +9,7 @@
         #searchInput
         type="text"
         class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        placeholder="Type at least 3 characters to search..."
+        placeholder="Filter branches..."
         [ngModel]="searchQuery()"
         (ngModelChange)="searchQuery.set($event)"
         autocomplete="off" />
@@ -35,10 +35,6 @@
       @if (searching() && searchingRemote()) {
         <div class="flex items-center justify-center py-8">
           <ng-icon name="lucideLoader2" class="!w-5 !h-5 animate-spin text-muted-foreground" />
-        </div>
-      } @else if (searchQuery().length < 3) {
-        <div class="text-sm text-muted-foreground text-center py-8">
-          Type at least 3 characters to search
         </div>
       } @else {
         @if (searchResults().length === 0 && visibleRemoteResults().length === 0 && !canCreateBranch() && !searching() && !searchingRemote()) {
