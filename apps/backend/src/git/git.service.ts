@@ -317,7 +317,6 @@ export class GitService {
       const fallbackSuggestion = this.buildFallbackCommitMessage(
         stagedFiles,
         diff,
-        currentBranch,
       );
       this.logger.log(
         `[commit-message:${requestId}] suggestion completed source=fallback confidence=${fallbackSuggestion.confidence} subject="${this.preview(fallbackSuggestion.subject)}"`,
@@ -712,6 +711,8 @@ export class GitService {
         '- Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.',
         '- Prefer a lowercase scope when clear, such as backend, frontend, git, db, branches, projects, deps.',
         '- Use an imperative lowercase description, for example "add", "fix", "remove", or "refactor".',
+        '- Describe the semantic product or code behavior change, not just file operations.',
+        '- Do not summarize as "rename files", "update files", or "change N files" when the diff changes behavior or adds a concept.',
         '- Keep the full subject at most 72 characters.',
         '- Do not end the subject with a period.',
         '',
@@ -944,10 +945,8 @@ export class GitService {
   private buildFallbackCommitMessage(
     stagedFiles: string[],
     diff: string,
-    branchName: string,
   ): CommitMessageSuggestion {
     const filenames = stagedFiles.map((file) => file.split('/').pop() || file);
-    const scope = this.extractBranchScope(branchName);
     const lineCount = diff
       .split('\n')
       .filter(
@@ -956,16 +955,18 @@ export class GitService {
           !line.startsWith('+++') &&
           !line.startsWith('---'),
       ).length;
+    const hasRenames = diff.includes('rename from ');
+    const hasContentChanges = lineCount > 0;
 
     let type = 'chore';
     let verb = 'update';
-    if (stagedFiles.length === 1 && diff.includes('new file mode')) {
+    if (diff.includes('new file mode')) {
       type = 'feat';
       verb = 'add';
     } else if (diff.includes('deleted file mode')) {
       type = 'chore';
       verb = 'remove';
-    } else if (diff.includes('rename from ')) {
+    } else if (hasRenames && !hasContentChanges) {
       type = 'chore';
       verb = 'rename';
     } else if (stagedFiles.some((file) => /test|spec/i.test(file))) {
@@ -979,15 +980,14 @@ export class GitService {
       verb = 'refactor';
     }
 
-    const target =
-      stagedFiles.length === 1
-        ? filenames[0]
-        : stagedFiles.length <= 3
-          ? filenames.join(', ')
-          : `${stagedFiles.length} files`;
+    const target = this.buildFallbackCommitTarget(
+      stagedFiles,
+      filenames,
+      verb,
+      hasContentChanges,
+    );
 
-    const conventionalScope =
-      this.extractFileScope(stagedFiles) || this.normalizeCommitScope(scope);
+    const conventionalScope = this.extractFileScope(stagedFiles);
     const scopedType = conventionalScope
       ? `${type}(${conventionalScope})`
       : type;
@@ -1003,6 +1003,31 @@ export class GitService {
       confidence: 'low',
       source: 'fallback',
     };
+  }
+
+  private buildFallbackCommitTarget(
+    stagedFiles: string[],
+    filenames: string[],
+    verb: string,
+    hasContentChanges: boolean,
+  ): string {
+    if (stagedFiles.length === 1) {
+      return filenames[0];
+    }
+
+    if (stagedFiles.length <= 3) {
+      return filenames.join(', ');
+    }
+
+    if (verb === 'rename' && !hasContentChanges) {
+      return 'files';
+    }
+
+    if (verb === 'add') {
+      return 'files';
+    }
+
+    return 'staged changes';
   }
 
   private extractFileScope(stagedFiles: string[]): string {
@@ -1022,25 +1047,6 @@ export class GitService {
 
     const uniqueScopes = new Set(scopes);
     return uniqueScopes.size === 1 ? scopes[0] : '';
-  }
-
-  private extractBranchScope(branchName: string): string {
-    const trimmed = branchName.trim();
-    if (!trimmed) return '';
-    const parts = trimmed.split('/').filter(Boolean);
-    if (parts.length < 2) {
-      return '';
-    }
-
-    return parts[0];
-  }
-
-  private normalizeCommitScope(scope: string): string {
-    const normalized = scope
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, '-');
-    return /^[a-z0-9][a-z0-9._-]*$/.test(normalized) ? normalized : '';
   }
 
   private execFileWithInput(
