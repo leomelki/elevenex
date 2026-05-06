@@ -3093,10 +3093,11 @@ export class ClaudeRuntimeService extends EventEmitter {
     const runtimeQuery = query({
       prompt: [
         'Name this Claude Code session based on the user\'s first message.',
+        'Respond promptly with a broad short title. Do not investigate, browse, inspect files, or dig into details.',
         'Return only the session name, with no quotes, markdown, or commentary.',
         'Rules:',
         '- 3 to 5 words maximum',
-        '- describe the actual task',
+        '- summarize the likely overall task broadly',
         '- use title case or compact sentence case',
         '- do not include trailing punctuation',
         '',
@@ -3106,6 +3107,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       options: {
         cwd: worktreePath,
         model: 'haiku',
+        maxTurns: 1,
         permissionMode: 'plan',
         canUseTool: async () => ({
           behavior: 'deny' as const,

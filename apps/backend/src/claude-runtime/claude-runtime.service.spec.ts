@@ -1217,10 +1217,14 @@ describe('ClaudeRuntimeService', () => {
       expect.objectContaining({
         options: expect.objectContaining({
           model: 'haiku',
+          maxTurns: 1,
           permissionMode: 'plan',
           cwd: '/tmp/project',
         }),
       }),
+    );
+    expect((query as jest.Mock).mock.calls[1][0].prompt).toContain(
+      'Respond promptly with a broad short title',
     );
     expect(sessionsService.renameFromGeneratedTitle).toHaveBeenCalledWith(
       7,
