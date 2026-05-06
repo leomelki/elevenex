@@ -19,27 +19,34 @@
         </span>
       </a>
       <div class="flex items-center gap-1">
-      <a
-        routerLink="/info"
-        class="sidebar-brand__action sidebar-brand__action--info"
-        aria-label="Open app info"
-        title="App info">
-        <ng-icon name="lucideInfo" class="!w-4 !h-4" />
-      </a>
-      <button
-        class="sidebar-brand__action"
-        aria-label="Create project"
-        title="Create project"
-        (click)="openCreateProjectWizard()">
-        <ng-icon name="lucidePlus" class="!w-4 !h-4" />
-      </button>
-      <button
-        class="sidebar-brand__refresh"
-        aria-label="Refresh navigation tree"
-        title="Refresh navigation tree"
-        (click)="onRefresh()">
-        <ng-icon name="lucideRefreshCw" class="!w-4 !h-4" [class.animate-spin]="navService.loading()" />
-      </button>
+        <button
+          class="sidebar-brand__action"
+          [attr.aria-label]="theme.isDark() ? 'Switch to light mode' : 'Switch to dark mode'"
+          [attr.title]="theme.isDark() ? 'Switch to light mode' : 'Switch to dark mode'"
+          (click)="theme.toggle()">
+          <ng-icon [name]="theme.isDark() ? 'lucideSun' : 'lucideMoon'" class="!w-4 !h-4" />
+        </button>
+        <a
+          routerLink="/info"
+          class="sidebar-brand__action sidebar-brand__action--info"
+          aria-label="Open app info"
+          title="App info">
+          <ng-icon name="lucideInfo" class="!w-4 !h-4" />
+        </a>
+        <button
+          class="sidebar-brand__action"
+          aria-label="Create project"
+          title="Create project"
+          (click)="openCreateProjectWizard()">
+          <ng-icon name="lucidePlus" class="!w-4 !h-4" />
+        </button>
+        <button
+          class="sidebar-brand__refresh"
+          aria-label="Refresh navigation tree"
+          title="Refresh navigation tree"
+          (click)="onRefresh()">
+          <ng-icon name="lucideRefreshCw" class="!w-4 !h-4" [class.animate-spin]="navService.loading()" />
+        </button>
       </div>
     </div>
     <app-environment-switcher />

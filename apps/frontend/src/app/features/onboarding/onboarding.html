@@ -1,5 +1,5 @@
 <div class="relative grid min-h-full grid-cols-[minmax(280px,420px)_minmax(0,720px)] gap-7 p-10 max-[1080px]:grid-cols-1 max-[720px]:gap-5 max-[720px]:p-5">
-  <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_15%,color-mix(in_oklch,var(--primary)_12%,transparent),transparent_28%),radial-gradient(circle_at_85%_20%,color-mix(in_oklch,#0f172a_10%,transparent),transparent_22%)]"></div>
+  <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_15%,color-mix(in_oklch,var(--primary)_12%,transparent),transparent_28%),radial-gradient(circle_at_85%_20%,color-mix(in_oklch,var(--surface-shade)_10%,transparent),transparent_22%)]"></div>
 
   <section class="relative z-[1] flex flex-col justify-center px-2 py-6 max-[1080px]:pb-0">
     <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">First run</p>
@@ -10,41 +10,41 @@
 
     <div class="mt-8 grid gap-3">
       <div
-        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,white_10%)] bg-[color-mix(in_oklch,var(--background)_82%,white_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
-        [class.border-[color-mix(in_oklch,var(--primary)_38%,white)]]="activeStep() === 'choice'"
-        [class.bg-[color-mix(in_oklch,var(--primary)_12%,white)]]="activeStep() === 'choice'"
+        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_82%,var(--surface-tint)_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
+        [class.border-[color-mix(in_oklch,var(--primary)_38%,var(--surface-tint))]]="activeStep() === 'choice'"
+        [class.bg-[color-mix(in_oklch,var(--primary)_12%,var(--background))]]="activeStep() === 'choice'"
       >
         <span
-          class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white_28%)] text-[0.82rem] font-bold"
-          [class.bg-[color-mix(in_oklch,var(--primary)_82%,white_18%)]]="selectedMode() !== null"
-          [class.text-white]="selectedMode() !== null"
+          class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint)_28%)] text-[0.82rem] font-bold"
+          [class.bg-[color-mix(in_oklch,var(--primary)_82%,var(--surface-tint)_18%)]]="selectedMode() !== null"
+          [class.text-primary-foreground]="selectedMode() !== null"
         >1</span>
         <strong>Target</strong>
       </div>
       <div
-        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,white_10%)] bg-[color-mix(in_oklch,var(--background)_82%,white_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
-        [class.border-[color-mix(in_oklch,var(--primary)_38%,white)]]="activeStep() === 'ssh' || activeStep() === 'install'"
-        [class.bg-[color-mix(in_oklch,var(--primary)_12%,white)]]="activeStep() === 'ssh' || activeStep() === 'install'"
+        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_82%,var(--surface-tint)_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
+        [class.border-[color-mix(in_oklch,var(--primary)_38%,var(--surface-tint))]]="activeStep() === 'ssh' || activeStep() === 'install'"
+        [class.bg-[color-mix(in_oklch,var(--primary)_12%,var(--background))]]="activeStep() === 'ssh' || activeStep() === 'install'"
       >
         <span
-          class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white_28%)] text-[0.82rem] font-bold"
-          [class.bg-[color-mix(in_oklch,var(--primary)_82%,white_18%)]]="serverSummary() !== null || selectedMode() === 'local'"
-          [class.text-white]="serverSummary() !== null || selectedMode() === 'local'"
+          class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint)_28%)] text-[0.82rem] font-bold"
+          [class.bg-[color-mix(in_oklch,var(--primary)_82%,var(--surface-tint)_18%)]]="serverSummary() !== null || selectedMode() === 'local'"
+          [class.text-primary-foreground]="serverSummary() !== null || selectedMode() === 'local'"
         >2</span>
         <strong>Connection</strong>
       </div>
       <div
-        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,white_10%)] bg-[color-mix(in_oklch,var(--background)_82%,white_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
-        [class.border-[color-mix(in_oklch,var(--primary)_38%,white)]]="activeStep() === 'project'"
-        [class.bg-[color-mix(in_oklch,var(--primary)_12%,white)]]="activeStep() === 'project'"
+        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_82%,var(--surface-tint)_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
+        [class.border-[color-mix(in_oklch,var(--primary)_38%,var(--surface-tint))]]="activeStep() === 'project'"
+        [class.bg-[color-mix(in_oklch,var(--primary)_12%,var(--background))]]="activeStep() === 'project'"
       >
-        <span class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white_28%)] text-[0.82rem] font-bold">3</span>
+        <span class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint)_28%)] text-[0.82rem] font-bold">3</span>
         <strong>First project</strong>
       </div>
     </div>
   </section>
 
-  <section class="relative z-[1] rounded-[32px] border border-[color-mix(in_oklch,var(--border)_82%,white_12%)] bg-[color-mix(in_oklch,var(--background)_88%,white_12%)] p-8 shadow-[0_28px_64px_rgba(15,23,42,0.1)] backdrop-blur-[20px] max-[720px]:rounded-3xl max-[720px]:p-[22px]">
+  <section class="relative z-[1] rounded-[32px] border border-[color-mix(in_oklch,var(--border)_82%,var(--surface-tint)_12%)] bg-[color-mix(in_oklch,var(--background)_88%,var(--surface-tint)_12%)] p-8 shadow-[0_28px_64px_rgba(15,23,42,0.1)] backdrop-blur-[20px] max-[720px]:rounded-3xl max-[720px]:p-[22px]">
     @if (loading()) {
       <div class="flex min-h-[420px] items-center justify-center text-muted-foreground">Preparing your workspace…</div>
     } @else if (activeStep() === 'choice') {
@@ -55,7 +55,7 @@
       </div>
 
       <div class="mt-7 grid gap-4">
-        <button type="button" class="grid grid-cols-[auto_1fr_auto] items-start gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--background)_88%,white_12%),color-mix(in_oklch,var(--background)_96%,transparent))] p-[22px] text-left transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--primary)_44%,white)] hover:shadow-[0_22px_40px_rgba(15,23,42,0.08)]" (click)="chooseLocalMode()">
+        <button type="button" class="grid grid-cols-[auto_1fr_auto] items-start gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--background)_88%,var(--surface-tint)_12%),color-mix(in_oklch,var(--background)_96%,transparent))] p-[22px] text-left transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--primary)_44%,var(--surface-tint))] hover:shadow-[0_22px_40px_rgba(15,23,42,0.08)]" (click)="chooseLocalMode()">
           <ng-icon name="lucideHardDrive" size="22" />
           <div>
             <strong class="block text-base">Use locally</strong>
@@ -64,7 +64,7 @@
           <ng-icon name="lucideArrowRight" size="16" />
         </button>
 
-        <button type="button" class="grid grid-cols-[auto_1fr_auto] items-start gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--background)_88%,white_12%),color-mix(in_oklch,var(--background)_96%,transparent))] p-[22px] text-left transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--primary)_44%,white)] hover:shadow-[0_22px_40px_rgba(15,23,42,0.08)]" (click)="chooseSshMode()">
+        <button type="button" class="grid grid-cols-[auto_1fr_auto] items-start gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--background)_88%,var(--surface-tint)_12%),color-mix(in_oklch,var(--background)_96%,transparent))] p-[22px] text-left transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--primary)_44%,var(--surface-tint))] hover:shadow-[0_22px_40px_rgba(15,23,42,0.08)]" (click)="chooseSshMode()">
           <ng-icon name="lucideServer" size="22" />
           <div>
             <strong class="block text-base">Connect an SSH server</strong>
@@ -81,7 +81,7 @@
       </div>
 
       @if (!sshSupported()) {
-        <div class="mt-[18px] rounded-2xl border border-[color-mix(in_oklch,#ef4444_26%,white)] bg-[color-mix(in_oklch,#ef4444_10%,white)] px-4 py-3.5 text-[color-mix(in_oklch,#7f1d1d_78%,black)]">
+        <div class="mt-[18px] rounded-2xl border border-[color-mix(in_oklch,var(--destructive)_26%,var(--border))] bg-[color-mix(in_oklch,var(--destructive)_10%,var(--background))] px-4 py-3.5 text-[color-mix(in_oklch,var(--destructive)_84%,var(--foreground))]">
           SSH onboarding is only available in the Electron app.
         </div>
       }
@@ -108,17 +108,17 @@
         </div>
       </div>
 
-      <div class="mt-6 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[color-mix(in_oklch,var(--muted)_36%,white_64%)] p-[18px]">
+      <div class="mt-6 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--muted)_36%,var(--surface-tint)_64%)] p-[18px]">
         <div class="flex flex-wrap gap-2.5">
-          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,white_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,white)]]="authMode() === 'agent'" [class.border-[color-mix(in_oklch,var(--primary)_42%,white)]]="authMode() === 'agent'" (click)="authMode.set('agent')">
+          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,var(--surface-tint)_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))]]="authMode() === 'agent'" [class.border-[color-mix(in_oklch,var(--primary)_42%,var(--surface-tint))]]="authMode() === 'agent'" (click)="authMode.set('agent')">
             <ng-icon name="lucideShieldCheck" size="16" />
             SSH config / agent
           </button>
-          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,white_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,white)]]="authMode() === 'password'" [class.border-[color-mix(in_oklch,var(--primary)_42%,white)]]="authMode() === 'password'" (click)="authMode.set('password')">
+          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,var(--surface-tint)_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))]]="authMode() === 'password'" [class.border-[color-mix(in_oklch,var(--primary)_42%,var(--surface-tint))]]="authMode() === 'password'" (click)="authMode.set('password')">
             <ng-icon name="lucideLock" size="16" />
             Password
           </button>
-          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,white_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,white)]]="authMode() === 'key'" [class.border-[color-mix(in_oklch,var(--primary)_42%,white)]]="authMode() === 'key'" (click)="authMode.set('key')">
+          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,var(--surface-tint)_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))]]="authMode() === 'key'" [class.border-[color-mix(in_oklch,var(--primary)_42%,var(--surface-tint))]]="authMode() === 'key'" (click)="authMode.set('key')">
             <ng-icon name="lucideKeyRound" size="16" />
             Private key
           </button>
@@ -165,7 +165,7 @@
       </div>
 
       @if (connectionError()) {
-        <div class="mt-[18px] rounded-2xl border border-[color-mix(in_oklch,#ef4444_26%,white)] bg-[color-mix(in_oklch,#ef4444_10%,white)] px-4 py-3.5 text-[color-mix(in_oklch,#7f1d1d_78%,black)]">{{ connectionError() }}</div>
+        <div class="mt-[18px] rounded-2xl border border-[color-mix(in_oklch,var(--destructive)_26%,var(--border))] bg-[color-mix(in_oklch,var(--destructive)_10%,var(--background))] px-4 py-3.5 text-[color-mix(in_oklch,var(--destructive)_84%,var(--foreground))]">{{ connectionError() }}</div>
       }
 
       <div class="mt-7 flex items-center justify-between gap-3 max-[720px]:flex-col max-[720px]:items-stretch">
@@ -182,7 +182,7 @@
         <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">SSH worked, but the forwarded Elevenex port did not answer. Install Elevenex on the server first, then retry.</p>
       </div>
 
-      <div class="mt-6 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[color-mix(in_oklch,var(--background)_90%,white_10%)] p-[22px]">
+      <div class="mt-6 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_90%,var(--surface-tint)_10%)] p-[22px]">
         <div class="onboarding-install-card__todo">
           <strong class="block text-base">Remote setup is paused for manual prerequisites</strong>
           <p class="mt-1.5 leading-[1.5] text-muted-foreground">{{ installMessage() || 'Use the remote setup terminal to install the missing dependencies, then re-check.' }}</p>
@@ -209,7 +209,7 @@
       </div>
 
       @if (selectedMode() === 'ssh' && serverSummary(); as server) {
-        <div class="mt-6 grid grid-cols-3 gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,white_10%)] bg-[color-mix(in_oklch,var(--background)_90%,white_10%)] p-[22px] max-[720px]:grid-cols-1">
+        <div class="mt-6 grid grid-cols-3 gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_90%,var(--surface-tint)_10%)] p-[22px] max-[720px]:grid-cols-1">
           <div>
             <span class="mb-1.5 block text-[0.78rem] tracking-[0.14em] text-muted-foreground uppercase">Connected server</span>
             <strong class="block text-base">{{ server.name }}</strong>

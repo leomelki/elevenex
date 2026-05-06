@@ -94,14 +94,14 @@
                   />
                 } @else if (shouldShowBrowserPlaceholder()) {
                   <div class="relative h-full overflow-hidden bg-background">
-                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,color-mix(in_oklch,var(--primary)_16%,transparent),transparent_40%),linear-gradient(180deg,color-mix(in_oklch,var(--background)_92%,white),var(--background))]"></div>
+                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,color-mix(in_oklch,var(--primary)_16%,transparent),transparent_40%),linear-gradient(180deg,color-mix(in_oklch,var(--background)_92%,var(--surface-tint)),var(--background))]"></div>
                     <div class="absolute -right-20 top-12 h-56 w-56 rounded-full bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] blur-3xl"></div>
                     <div class="absolute bottom-0 left-0 h-40 w-40 rounded-full bg-[color-mix(in_oklch,var(--foreground)_6%,transparent)] blur-3xl"></div>
 
                     <div class="relative flex h-full items-center justify-center p-8">
-                      <div class="w-full max-w-lg rounded-[28px] border border-[color-mix(in_oklch,var(--border)_86%,white)] bg-[color-mix(in_oklch,var(--background)_78%,white)] px-8 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.14)] backdrop-blur-xl">
-                        <div class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/40 bg-white/60 shadow-[0_10px_30px_rgba(255,255,255,0.35)]">
-                          <div class="h-6 w-6 rounded-full bg-[linear-gradient(135deg,color-mix(in_oklch,var(--primary)_72%,white),color-mix(in_oklch,var(--foreground)_16%,white))]"></div>
+                      <div class="w-full max-w-lg rounded-[28px] border border-[color-mix(in_oklch,var(--border)_86%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_78%,var(--surface-tint))] px-8 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.14)] backdrop-blur-xl">
+                        <div class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[color-mix(in_oklch,var(--border)_60%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_58%,var(--surface-tint))] shadow-[0_10px_30px_color-mix(in_oklch,var(--surface-tint)_20%,transparent)]">
+                          <div class="h-6 w-6 rounded-full bg-[linear-gradient(135deg,color-mix(in_oklch,var(--primary)_72%,var(--surface-tint)),color-mix(in_oklch,var(--foreground)_16%,var(--surface-tint)))]"></div>
                         </div>
 
                         <div class="space-y-3">
@@ -113,9 +113,9 @@
                         </div>
 
                         <div class="mt-8 flex items-center justify-center gap-2">
-                          <span class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--primary)_70%,white)]"></span>
-                          <span class="h-2 w-10 rounded-full bg-[color-mix(in_oklch,var(--border)_84%,white)]"></span>
-                          <span class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--foreground)_18%,white)]"></span>
+                          <span class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--primary)_70%,var(--surface-tint))]"></span>
+                          <span class="h-2 w-10 rounded-full bg-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint))]"></span>
+                          <span class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--foreground)_18%,var(--surface-tint))]"></span>
                         </div>
                       </div>
                     </div>

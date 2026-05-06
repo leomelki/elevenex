@@ -32,9 +32,9 @@
   flex-direction: column;
   overflow: hidden;
   border-radius: 32px;
-  border: 1px solid color-mix(in oklch, var(--border) 80%, white 18%);
+  border: 1px solid color-mix(in oklch, var(--border) 80%, var(--surface-tint) 18%);
   background:
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 92%, white 8%), color-mix(in oklch, var(--background) 98%, transparent));
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 92%, var(--surface-tint) 8%), color-mix(in oklch, var(--background) 98%, transparent));
   box-shadow: 0 36px 90px rgba(15, 23, 42, 0.28);
 }
 
@@ -55,7 +55,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  border-bottom: 1px solid color-mix(in oklch, var(--border) 74%, white 16%);
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 74%, var(--surface-tint) 16%);
 }
 
 .project-wizard-eyebrow {
@@ -102,7 +102,7 @@
 
 .project-wizard-close:hover,
 .project-wizard-icon-button:hover {
-  background: color-mix(in oklch, var(--muted) 70%, white 30%);
+  background: color-mix(in oklch, var(--muted) 70%, var(--surface-tint) 30%);
   color: var(--foreground);
 }
 
@@ -119,8 +119,8 @@
   gap: 12px;
   padding: 12px 14px;
   border-radius: 18px;
-  border: 1px solid color-mix(in oklch, var(--border) 74%, white 16%);
-  background: color-mix(in oklch, var(--muted) 40%, white 60%);
+  border: 1px solid color-mix(in oklch, var(--border) 74%, var(--surface-tint) 16%);
+  background: color-mix(in oklch, var(--muted) 40%, var(--surface-tint) 60%);
 }
 
 .project-wizard-step span {
@@ -130,7 +130,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in oklch, var(--background) 70%, white 30%);
+  background: color-mix(in oklch, var(--background) 70%, var(--surface-tint) 30%);
   font-size: 0.78rem;
   font-weight: 800;
 }
@@ -140,13 +140,13 @@
 }
 
 .project-wizard-step.is-active {
-  border-color: color-mix(in oklch, var(--primary) 44%, white);
-  background: color-mix(in oklch, var(--primary) 12%, white);
+  border-color: color-mix(in oklch, var(--primary) 44%, var(--surface-tint));
+  background: color-mix(in oklch, var(--primary) 12%, var(--background));
 }
 
 .project-wizard-step.is-done span {
-  background: color-mix(in oklch, var(--primary) 84%, white 16%);
-  color: white;
+  background: color-mix(in oklch, var(--primary) 84%, var(--surface-tint) 16%);
+  color: var(--primary-foreground);
 }
 
 .project-wizard-status,
@@ -161,13 +161,13 @@
 
 .project-wizard-status {
   color: color-mix(in oklch, var(--primary) 72%, var(--foreground));
-  background: color-mix(in oklch, var(--primary) 10%, white);
+  background: color-mix(in oklch, var(--primary) 10%, var(--background));
   border: 1px solid color-mix(in oklch, var(--primary) 16%, var(--border));
 }
 
 .project-wizard-error {
-  color: color-mix(in oklch, var(--destructive) 84%, black);
-  background: color-mix(in oklch, var(--destructive) 10%, white);
+  color: color-mix(in oklch, var(--destructive) 84%, var(--foreground));
+  background: color-mix(in oklch, var(--destructive) 10%, var(--background));
   border: 1px solid color-mix(in oklch, var(--destructive) 22%, var(--border));
 }
 
@@ -207,8 +207,8 @@
 .project-wizard-empty-state,
 .project-wizard-review-card {
   border-radius: 22px;
-  border: 1px solid color-mix(in oklch, var(--border) 76%, white 14%);
-  background: color-mix(in oklch, var(--background) 88%, white 12%);
+  border: 1px solid color-mix(in oklch, var(--border) 76%, var(--surface-tint) 14%);
+  background: color-mix(in oklch, var(--background) 88%, var(--surface-tint) 12%);
 }
 
 .project-wizard-card {
@@ -264,17 +264,17 @@
   padding: 10px 12px;
   border-radius: 14px;
   color: var(--muted-foreground);
-  background: color-mix(in oklch, var(--muted) 55%, white 45%);
+  background: color-mix(in oklch, var(--muted) 55%, var(--surface-tint) 45%);
 }
 
 .project-wizard-inline--success {
-  color: color-mix(in oklch, oklch(0.55 0.14 154) 70%, black);
-  background: color-mix(in oklch, oklch(0.9 0.05 154) 74%, white);
+  color: color-mix(in oklch, var(--success) 76%, var(--foreground));
+  background: color-mix(in oklch, var(--success) 12%, var(--background));
 }
 
 .project-wizard-inline--error {
-  color: color-mix(in oklch, var(--destructive) 80%, black);
-  background: color-mix(in oklch, var(--destructive) 10%, white);
+  color: color-mix(in oklch, var(--destructive) 80%, var(--foreground));
+  background: color-mix(in oklch, var(--destructive) 10%, var(--background));
 }
 
 .project-wizard-checkbox {
@@ -333,7 +333,7 @@
   gap: 10px;
   padding: 12px 14px;
   border-radius: 16px;
-  background: color-mix(in oklch, var(--muted) 42%, white 58%);
+  background: color-mix(in oklch, var(--muted) 42%, var(--surface-tint) 58%);
 }
 
 .project-wizard-footer {
@@ -341,7 +341,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  border-top: 1px solid color-mix(in oklch, var(--border) 74%, white 16%);
+  border-top: 1px solid color-mix(in oklch, var(--border) 74%, var(--surface-tint) 16%);
 }
 
 .project-wizard-footer__meta {

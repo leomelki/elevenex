@@ -10,6 +10,17 @@
     <link rel="manifest" href="favicons/manifest.webmanifest" />
     <script>
       (function () {
+        try {
+          var stored = window.localStorage && window.localStorage.getItem('elevenex-theme');
+          var systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var isDark = stored === 'dark' || (stored !== 'light' && systemDark);
+          document.documentElement.classList.toggle('dark', isDark);
+          document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+        } catch (_) {}
+      })();
+    </script>
+    <script>
+      (function () {
         var runtime = window.__ELEVENEX_RUNTIME__;
         if (window.location.protocol === 'file:' || runtime?.mode === 'electron-local') {
           var base = document.querySelector('base');

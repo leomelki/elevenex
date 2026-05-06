@@ -149,22 +149,22 @@
 }
 
 .status-active {
-  color: #166534;
-  background: #dcfce7;
-  border-color: #86efac;
+  color: color-mix(in oklch, var(--success) 78%, var(--foreground));
+  background: color-mix(in oklch, var(--success) 14%, var(--background));
+  border-color: color-mix(in oklch, var(--success) 34%, var(--border));
 }
 
 .status-connecting,
 .status-stopping {
-  color: #92400e;
-  background: #fef3c7;
-  border-color: #fcd34d;
+  color: color-mix(in oklch, var(--warning) 76%, var(--foreground));
+  background: color-mix(in oklch, var(--warning) 14%, var(--background));
+  border-color: color-mix(in oklch, var(--warning) 34%, var(--border));
 }
 
 .status-error {
-  color: #991b1b;
-  background: #fee2e2;
-  border-color: #fca5a5;
+  color: color-mix(in oklch, var(--destructive) 84%, var(--foreground));
+  background: color-mix(in oklch, var(--destructive) 12%, var(--background));
+  border-color: color-mix(in oklch, var(--destructive) 32%, var(--border));
 }
 
 .status-inactive {
@@ -202,9 +202,9 @@
 .ssh-forward-alert {
   padding: 0.85rem 1rem;
   border-radius: 0.9rem;
-  border: 1px solid #fca5a5;
-  background: #fef2f2;
-  color: #991b1b;
+  border: 1px solid color-mix(in oklch, var(--destructive) 32%, var(--border));
+  background: color-mix(in oklch, var(--destructive) 10%, var(--background));
+  color: color-mix(in oklch, var(--destructive) 84%, var(--foreground));
   font-size: 0.9rem;
 }
 
@@ -231,7 +231,7 @@
   gap: 0.75rem;
   margin-top: 0.85rem;
   padding-top: 0.85rem;
-  border-top: 1px solid rgba(153, 27, 27, 0.18);
+  border-top: 1px solid color-mix(in oklch, var(--destructive) 24%, transparent);
 }
 
 .ssh-debug-panel span {
@@ -255,7 +255,7 @@
   margin: 0;
   padding: 0.7rem 0.8rem;
   border-radius: 0.7rem;
-  background: rgba(255, 255, 255, 0.65);
+  background: color-mix(in oklch, var(--background) 72%, var(--surface-tint) 16%);
   font-size: 0.78rem;
   line-height: 1.45;
   white-space: pre-wrap;

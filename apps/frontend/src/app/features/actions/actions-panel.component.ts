@@ -172,30 +172,30 @@ export class ActionsPanelComponent {
   statusDotClass(action: Action): string {
     switch (action.status) {
       case 'running':
-        return 'bg-[oklch(0.74_0.17_154)]';
+        return 'bg-success';
       case 'success':
-        return 'bg-[oklch(0.72_0.17_142)]';
+        return 'bg-success';
       case 'failed':
-        return 'bg-[oklch(0.63_0.23_28)]';
+        return 'bg-destructive';
       case 'stopped':
-        return 'bg-[oklch(0.7_0.02_260)]';
+        return 'bg-muted-foreground';
       default:
-        return 'bg-[color-mix(in_oklch,var(--muted)_72%,white)]';
+        return 'bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint))]';
     }
   }
 
   statusPillClass(action: Action): string {
     switch (action.status) {
       case 'running':
-        return 'bg-[oklch(0.74_0.17_154)]';
+        return 'bg-success text-success-foreground';
       case 'success':
-        return 'bg-[oklch(0.72_0.17_142)]';
+        return 'bg-success text-success-foreground';
       case 'failed':
-        return 'bg-[oklch(0.63_0.23_28)]';
+        return 'bg-destructive text-destructive-foreground';
       case 'stopped':
-        return 'bg-[oklch(0.7_0.02_260)]';
+        return 'bg-muted text-muted-foreground';
       default:
-        return 'bg-[color-mix(in_oklch,var(--muted)_72%,white)]';
+        return 'bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint))]';
     }
   }
 

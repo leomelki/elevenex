@@ -1,14 +1,15 @@
 @layer ng-icon, theme, base, components, utilities;
 @import 'tailwindcss';
 @import 'highlight.js/styles/github.css' layer(base);
-@import 'highlight.js/styles/github-dark.css' layer(base) (prefers-color-scheme: dark);
 @plugin "tailwindcss-animate";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where(.dark, .dark *));
 
 
 :root {
   --radius: 0.625rem;
+  --surface-tint: oklch(1 0 0);
+  --surface-shade: oklch(0 0 0);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -24,6 +25,11 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.52 0.14 154);
+  --success-foreground: oklch(0.16 0.03 154);
+  --warning: oklch(0.62 0.14 75);
+  --warning-foreground: oklch(0.22 0.05 75);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -43,37 +49,44 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --surface-tint: oklch(0.26 0.015 260);
+  --surface-shade: oklch(0.04 0.01 260);
+  --background: oklch(0.17 0.012 260);
+  --foreground: oklch(0.94 0.006 260);
+  --card: oklch(0.205 0.014 260);
+  --card-foreground: oklch(0.94 0.006 260);
+  --popover: oklch(0.19 0.014 260);
+  --popover-foreground: oklch(0.94 0.006 260);
+  --primary: oklch(0.82 0.018 260);
+  --primary-foreground: oklch(0.17 0.012 260);
+  --secondary: oklch(0.255 0.015 260);
+  --secondary-foreground: oklch(0.94 0.006 260);
+  --muted: oklch(0.255 0.015 260);
+  --muted-foreground: oklch(0.7 0.012 260);
+  --accent: oklch(0.285 0.018 260);
+  --accent-foreground: oklch(0.94 0.006 260);
+  --destructive: oklch(0.68 0.19 24);
+  --destructive-foreground: oklch(0.98 0.01 24);
+  --success: oklch(0.72 0.15 154);
+  --success-foreground: oklch(0.12 0.025 154);
+  --warning: oklch(0.78 0.14 75);
+  --warning-foreground: oklch(0.16 0.035 75);
+  --border: oklch(0.34 0.018 260 / 72%);
+  --input: oklch(0.34 0.018 260 / 82%);
+  --ring: oklch(0.64 0.03 260);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar: oklch(0.15 0.013 260);
+  --sidebar-foreground: oklch(0.94 0.006 260);
+  --sidebar-primary: oklch(0.76 0.03 260);
+  --sidebar-primary-foreground: oklch(0.15 0.013 260);
+  --sidebar-accent: oklch(0.235 0.016 260);
+  --sidebar-accent-foreground: oklch(0.94 0.006 260);
+  --sidebar-border: oklch(0.32 0.018 260 / 78%);
+  --sidebar-ring: oklch(0.64 0.03 260);
 }
 
 
@@ -94,6 +107,10 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -122,7 +139,47 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground scheme-light dark:scheme-dark;
+  }
+
+  .dark .hljs {
+    color: #e6edf3;
+    background: #0d1117;
+  }
+
+  .dark .hljs-comment,
+  .dark .hljs-quote {
+    color: #8b949e;
+  }
+
+  .dark .hljs-keyword,
+  .dark .hljs-selector-tag,
+  .dark .hljs-subst {
+    color: #ff7b72;
+  }
+
+  .dark .hljs-string,
+  .dark .hljs-doctag,
+  .dark .hljs-title,
+  .dark .hljs-section,
+  .dark .hljs-selector-id {
+    color: #a5d6ff;
+  }
+
+  .dark .hljs-number,
+  .dark .hljs-literal,
+  .dark .hljs-variable,
+  .dark .hljs-template-variable,
+  .dark .hljs-tag .hljs-attr {
+    color: #79c0ff;
+  }
+
+  .dark .hljs-built_in,
+  .dark .hljs-builtin-name,
+  .dark .hljs-symbol,
+  .dark .hljs-bullet,
+  .dark .hljs-link {
+    color: #ffa657;
   }
 
   input[type="number"]::-webkit-inner-spin-button,

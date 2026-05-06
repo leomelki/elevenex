@@ -15,8 +15,8 @@
   height: 2rem;
   padding: 0 0.55rem 0 0.55rem;
   border-radius: 0.7rem;
-  border: 1px solid color-mix(in oklch, var(--sidebar-border) 84%, white 12%);
-  background: color-mix(in oklch, var(--sidebar-accent) 38%, white 16%);
+  border: 1px solid color-mix(in oklch, var(--sidebar-border) 84%, var(--surface-tint) 12%);
+  background: color-mix(in oklch, var(--sidebar-accent) 38%, var(--surface-tint) 16%);
   color: var(--foreground);
   text-align: left;
   font-size: 0.78rem;
@@ -27,7 +27,7 @@
 
 .env-trigger:hover,
 .env-trigger--open {
-  background: color-mix(in oklch, var(--sidebar-accent) 74%, white 10%);
+  background: color-mix(in oklch, var(--sidebar-accent) 74%, var(--surface-tint) 10%);
   border-color: color-mix(in oklch, var(--primary) 20%, var(--sidebar-border));
 }
 
@@ -103,8 +103,8 @@
   max-height: 70vh;
   overflow: hidden;
   border-radius: 0.95rem;
-  border: 1px solid color-mix(in oklch, var(--border) 84%, white 10%);
-  background: color-mix(in oklch, var(--popover, var(--card)) 98%, white 2%);
+  border: 1px solid color-mix(in oklch, var(--border) 84%, var(--surface-tint) 10%);
+  background: color-mix(in oklch, var(--popover, var(--card)) 98%, var(--surface-tint) 2%);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.5) inset,
     0 20px 50px -18px rgba(15, 23, 42, 0.42),
@@ -285,21 +285,21 @@
   align-items: center;
   justify-content: center;
   border-radius: 0.55rem;
-  background: color-mix(in oklch, var(--muted) 65%, white 8%);
+  background: color-mix(in oklch, var(--muted) 65%, var(--surface-tint) 8%);
   color: var(--muted-foreground);
   border: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
 }
 
 .env-row--active .env-row__iconframe--local {
-  background: color-mix(in oklch, var(--primary) 14%, white);
+  background: color-mix(in oklch, var(--primary) 14%, var(--surface-tint));
   color: color-mix(in oklch, var(--primary) 78%, var(--foreground));
   border-color: color-mix(in oklch, var(--primary) 24%, var(--border));
 }
 
 .env-row--active .env-row__iconframe--remote {
-  background: color-mix(in oklch, oklch(0.72 0.14 154) 18%, white);
-  color: oklch(0.42 0.12 154);
-  border-color: color-mix(in oklch, oklch(0.72 0.14 154) 32%, var(--border));
+  background: color-mix(in oklch, var(--success) 18%, var(--surface-tint));
+  color: color-mix(in oklch, var(--success) 78%, var(--foreground));
+  border-color: color-mix(in oklch, var(--success) 32%, var(--border));
 }
 
 .env-row__body {
@@ -387,9 +387,9 @@
 }
 
 .env-chip--warn {
-  color: oklch(0.45 0.13 74);
-  background: oklch(0.95 0.06 88);
-  border: 1px solid oklch(0.86 0.09 85);
+  color: color-mix(in oklch, var(--warning) 78%, var(--foreground));
+  background: color-mix(in oklch, var(--warning) 14%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--warning) 32%, var(--border));
 }
 
 /* ====== Empty state ====== */
@@ -533,7 +533,7 @@
 }
 
 .env-segment__option--active {
-  background: var(--background, white);
+  background: var(--background);
   color: var(--foreground);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
@@ -584,14 +584,14 @@
 }
 
 .env-btn--primary {
-  background: color-mix(in oklch, var(--primary) 90%, black 4%);
-  color: var(--primary-foreground, white);
-  border-color: color-mix(in oklch, var(--primary) 72%, black 8%);
+  background: color-mix(in oklch, var(--primary) 90%, var(--surface-shade) 4%);
+  color: var(--primary-foreground);
+  border-color: color-mix(in oklch, var(--primary) 72%, var(--surface-shade) 8%);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
 }
 
 .env-btn--primary:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--primary) 82%, black 4%);
+  background: color-mix(in oklch, var(--primary) 82%, var(--surface-shade) 4%);
 }
 
 .env-btn--ghost {
@@ -606,12 +606,12 @@
 
 .env-btn--danger {
   background: var(--destructive);
-  color: var(--destructive-foreground, white);
-  border-color: color-mix(in oklch, var(--destructive) 84%, black 8%);
+  color: var(--destructive-foreground);
+  border-color: color-mix(in oklch, var(--destructive) 84%, var(--surface-shade) 8%);
 }
 
 .env-btn--danger:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--destructive) 88%, black 6%);
+  background: color-mix(in oklch, var(--destructive) 88%, var(--surface-shade) 6%);
 }
 
 /* ====== Animations ====== */

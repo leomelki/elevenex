@@ -8,7 +8,7 @@ import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div #container class="relative h-full w-full isolate overflow-hidden bg-[#f5f7fb]">
+    <div #container class="relative h-full w-full isolate overflow-hidden bg-background">
       <div
         class="vscode-loader absolute inset-0 z-30 overflow-hidden transition-opacity duration-300"
         [class.opacity-100]="isLoading()"
@@ -21,28 +21,28 @@ import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
         <div class="absolute left-1/2 top-1/2 h-[30rem] w-[30rem] -translate-x-1/2 -translate-y-1/2 rounded-full vscode-loader__halo"></div>
 
         <div class="relative z-10 flex h-full items-center justify-center p-6">
-          <div class="w-full max-w-sm rounded-[28px] border border-slate-200/80 bg-white/78 px-7 py-8 shadow-[0_28px_90px_rgba(15,23,42,0.14)] backdrop-blur-2xl">
+          <div class="w-full max-w-sm rounded-[28px] border border-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint)_12%)] bg-[color-mix(in_oklch,var(--background)_82%,var(--surface-tint)_10%)] px-7 py-8 shadow-[0_28px_90px_color-mix(in_oklch,var(--surface-shade)_18%,transparent)] backdrop-blur-2xl">
             <div class="flex flex-col items-center text-center">
-              <div class="relative mb-6 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-sky-200/90 bg-white shadow-[0_18px_45px_rgba(14,165,233,0.18)]">
+              <div class="relative mb-6 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-[color-mix(in_oklch,var(--primary)_28%,var(--border))] bg-[color-mix(in_oklch,var(--background)_74%,var(--surface-tint))] shadow-[0_18px_45px_color-mix(in_oklch,var(--primary)_18%,transparent)]">
                 <div class="vscode-loader__orb"></div>
                 <div class="vscode-loader__orb vscode-loader__orb--delayed"></div>
-                <div class="relative h-8 w-8 rounded-xl border border-sky-300 bg-[linear-gradient(180deg,#e0f2fe,#bae6fd)] shadow-inner shadow-white/70"></div>
+                <div class="relative h-8 w-8 rounded-xl border border-[color-mix(in_oklch,var(--primary)_42%,var(--border))] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--primary)_20%,var(--surface-tint)),color-mix(in_oklch,var(--primary)_32%,var(--background)))] shadow-inner shadow-[color-mix(in_oklch,var(--surface-tint)_70%,transparent)]"></div>
               </div>
 
               <div class="space-y-2">
-                <p class="text-[15px] font-semibold tracking-[-0.01em] text-slate-900">Opening VS Code</p>
-                <p class="mx-auto max-w-[18rem] text-sm leading-6 text-slate-500">
+                <p class="text-[15px] font-semibold tracking-[-0.01em] text-foreground">Opening VS Code</p>
+                <p class="mx-auto max-w-[18rem] text-sm leading-6 text-muted-foreground">
                   Preparing the workspace, extensions, and Git view.
                 </p>
               </div>
 
-              <div class="mt-6 flex items-center gap-2 rounded-full border border-slate-200/80 bg-slate-50/90 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
+              <div class="mt-6 flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_82%,var(--surface-tint)_12%)] bg-[color-mix(in_oklch,var(--muted)_64%,var(--surface-tint)_12%)] px-3 py-2 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
                 <span class="vscode-loader__pulse"></span>
                 <span>Booting workspace</span>
               </div>
 
               @if (startupIssue()) {
-                <p class="mt-4 text-xs leading-5 text-amber-700">{{ startupIssue() }}</p>
+                <p class="mt-4 text-xs leading-5 text-[color-mix(in_oklch,var(--warning)_78%,var(--foreground))]">{{ startupIssue() }}</p>
               }
             </div>
           </div>
@@ -55,20 +55,20 @@ import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
 
     .vscode-loader {
       background:
-        linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.96));
+        linear-gradient(180deg, color-mix(in oklch, var(--background) 96%, var(--surface-tint) 4%), color-mix(in oklch, var(--background) 98%, transparent));
     }
 
     .vscode-loader__mesh {
       background:
-        radial-gradient(circle at 20% 20%, rgba(56, 189, 248, 0.18), transparent 28%),
-        radial-gradient(circle at 80% 30%, rgba(14, 165, 233, 0.12), transparent 26%),
-        linear-gradient(135deg, rgba(148, 163, 184, 0.14), transparent 60%);
+        radial-gradient(circle at 20% 20%, color-mix(in oklch, var(--primary) 18%, transparent), transparent 28%),
+        radial-gradient(circle at 80% 30%, color-mix(in oklch, var(--primary) 12%, transparent), transparent 26%),
+        linear-gradient(135deg, color-mix(in oklch, var(--muted-foreground) 14%, transparent), transparent 60%);
       opacity: 1;
     }
 
     .vscode-loader__glow {
       background-image:
-        linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.18), transparent);
+        linear-gradient(90deg, transparent, color-mix(in oklch, var(--primary) 18%, transparent), transparent);
       transform: translateX(-100%);
       animation: vscode-loader-scan 2.8s ease-in-out infinite;
       opacity: 0.9;
@@ -76,7 +76,7 @@ import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
 
     .vscode-loader__halo {
       background:
-        radial-gradient(circle, rgba(56, 189, 248, 0.18), rgba(56, 189, 248, 0.06) 38%, transparent 68%);
+        radial-gradient(circle, color-mix(in oklch, var(--primary) 18%, transparent), color-mix(in oklch, var(--primary) 6%, transparent) 38%, transparent 68%);
       filter: blur(16px);
       animation: vscode-loader-breathe 3.2s ease-in-out infinite;
       opacity: 0.85;
@@ -88,7 +88,7 @@ import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
       background: conic-gradient(
         from 180deg,
         transparent,
-        rgba(14, 165, 233, 0.55),
+        color-mix(in oklch, var(--primary) 55%, transparent),
         transparent 70%
       );
       animation: vscode-loader-spin 2.4s linear infinite;
@@ -104,8 +104,8 @@ import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
       width: 0.55rem;
       height: 0.55rem;
       border-radius: 9999px;
-      background: #0ea5e9;
-      box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.35);
+      background: var(--primary);
+      box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 35%, transparent);
       animation: vscode-loader-pulse 1.8s ease-out infinite;
     }
 
@@ -119,9 +119,9 @@ import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
     }
 
     @keyframes vscode-loader-pulse {
-      0% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.35); opacity: 1; }
-      70% { box-shadow: 0 0 0 12px rgba(14, 165, 233, 0); opacity: 0.75; }
-      100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); opacity: 0.75; }
+      0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 35%, transparent); opacity: 1; }
+      70% { box-shadow: 0 0 0 12px color-mix(in oklch, var(--primary) 0%, transparent); opacity: 0.75; }
+      100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 0%, transparent); opacity: 0.75; }
     }
 
     @keyframes vscode-loader-scan {

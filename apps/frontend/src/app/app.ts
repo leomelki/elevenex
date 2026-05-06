@@ -30,6 +30,7 @@ import { BackendLogsWebsocketService } from './shared/services/backend-logs-webs
 import { EnvironmentConnectionManagerService } from './shared/services/environment-connection-manager.service';
 import { PlannotatorInstallPromptService } from './features/plannotator/plannotator-install-prompt.service';
 import { PlannotatorInstallPromptComponent } from './features/plannotator/plannotator-install-prompt.component';
+import { ThemeService } from './shared/services/theme.service';
 
 const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 420;
@@ -64,6 +65,7 @@ export class App implements OnInit, OnDestroy {
   private readonly connectionManager = inject(EnvironmentConnectionManagerService);
   private readonly backendLogs = inject(BackendLogsWebsocketService);
   private readonly plannotatorInstallPrompt = inject(PlannotatorInstallPromptService);
+  private readonly theme = inject(ThemeService);
   private readonly windowControls = getElectronWindowControlsApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
 
@@ -87,6 +89,7 @@ export class App implements OnInit, OnDestroy {
   private removeRouteListener: (() => void) | null = null;
 
   async ngOnInit() {
+    this.theme.mode();
     this.backendLogs.start();
     this.plannotatorInstallPrompt.initialize();
 

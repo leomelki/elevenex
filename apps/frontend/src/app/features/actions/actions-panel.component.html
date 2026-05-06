@@ -1,9 +1,9 @@
 <div class="grid h-full grid-cols-[240px_minmax(0,1fr)] bg-background">
-  <section class="flex flex-col overflow-hidden border-r border-border bg-[color-mix(in_oklch,var(--background)_94%,white)]">
+  <section class="flex flex-col overflow-hidden border-r border-border bg-[color-mix(in_oklch,var(--background)_94%,var(--surface-tint))]">
     <div class="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-2.5">
       <span class="mr-auto text-[11px] font-bold tracking-[0.08em] text-muted-foreground uppercase">Actions</span>
       @if (runningCount() > 0) {
-        <span class="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[9px] bg-[oklch(0.74_0.17_154)] px-[5px] text-[10px] font-bold text-[oklch(0.18_0.04_154)]">{{ runningCount() }}</span>
+        <span class="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[9px] bg-success px-[5px] text-[10px] font-bold text-success-foreground">{{ runningCount() }}</span>
       }
       <button
         class="inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] hover:text-foreground"
@@ -117,13 +117,13 @@
         <code class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px] text-muted-foreground">{{ selectedAction()!.command }}</code>
         <div class="ml-auto flex shrink-0 items-center gap-1">
           @if (lastTriggeredLabel(selectedAction()!); as lastTriggered) {
-            <span class="inline-flex h-5 items-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white)] px-[7px] text-[10px] font-bold text-slate-900/85 uppercase" [title]="lastTriggeredTooltip(selectedAction()!)">
+            <span class="inline-flex h-5 items-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint))] px-[7px] text-[10px] font-bold text-foreground/85 uppercase" [title]="lastTriggeredTooltip(selectedAction()!)">
               Last triggered {{ lastTriggered }}
             </span>
           }
-          <span class="inline-flex h-5 items-center rounded-full px-[7px] text-[10px] font-bold text-slate-900/85 uppercase" [ngClass]="statusPillClass(selectedAction()!)">{{ selectedAction()!.status }}</span>
+          <span class="inline-flex h-5 items-center rounded-full px-[7px] text-[10px] font-bold text-foreground/85 uppercase" [ngClass]="statusPillClass(selectedAction()!)">{{ selectedAction()!.status }}</span>
           @if (selectedAction()!.lastExitCode !== null) {
-            <span class="inline-flex h-5 items-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,white)] px-[7px] text-[10px] font-bold text-slate-900/85 uppercase">exit {{ selectedAction()!.lastExitCode }}</span>
+            <span class="inline-flex h-5 items-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint))] px-[7px] text-[10px] font-bold text-foreground/85 uppercase">exit {{ selectedAction()!.lastExitCode }}</span>
           }
           @if (!isEditing()) {
             <button class="inline-flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] hover:text-foreground" title="Edit" (click)="startEditing()">

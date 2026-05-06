@@ -7,9 +7,9 @@
   position: relative;
   flex-shrink: 0;
   padding: 0.6rem 0.75rem 0.55rem;
-  border-bottom: 1px solid color-mix(in oklch, var(--sidebar-border) 82%, white 12%);
+  border-bottom: 1px solid color-mix(in oklch, var(--sidebar-border) 82%, var(--surface-tint) 12%);
   background:
-    linear-gradient(180deg, color-mix(in oklch, var(--sidebar) 92%, white 8%), color-mix(in oklch, var(--sidebar) 98%, transparent));
+    linear-gradient(180deg, color-mix(in oklch, var(--sidebar) 92%, var(--surface-tint) 8%), color-mix(in oklch, var(--sidebar) 98%, transparent));
   min-width: 0;
 }
 
@@ -131,8 +131,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 1px solid color-mix(in oklch, var(--sidebar-border) 84%, white 12%);
-  background: color-mix(in oklch, var(--sidebar-accent) 40%, white 18%);
+  border: 1px solid color-mix(in oklch, var(--sidebar-border) 84%, var(--surface-tint) 12%);
+  background: color-mix(in oklch, var(--sidebar-accent) 40%, var(--surface-tint) 18%);
   color: var(--muted-foreground);
   transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
   -webkit-app-region: no-drag;
@@ -142,7 +142,7 @@
 .sidebar-brand__refresh:hover,
 .sidebar-brand__action:hover {
   color: var(--foreground);
-  background: color-mix(in oklch, var(--sidebar-accent) 76%, white 10%);
+  background: color-mix(in oklch, var(--sidebar-accent) 76%, var(--surface-tint) 10%);
   border-color: color-mix(in oklch, var(--primary) 18%, var(--sidebar-border));
   transform: translateY(-1px);
 }
@@ -226,14 +226,14 @@
 
 @keyframes project-row-highlight {
   0% {
-    background: color-mix(in oklch, var(--primary) 22%, white);
+    background: color-mix(in oklch, var(--primary) 22%, var(--background));
     box-shadow:
       0 0 0 1px color-mix(in oklch, var(--primary) 30%, var(--sidebar-border)),
       0 16px 32px rgba(15, 23, 42, 0.14);
   }
 
   100% {
-    background: color-mix(in oklch, var(--primary) 14%, white);
+    background: color-mix(in oklch, var(--primary) 14%, var(--background));
     box-shadow:
       0 0 0 1px color-mix(in oklch, var(--primary) 22%, var(--sidebar-border)),
       0 12px 24px rgba(15, 23, 42, 0.1);
@@ -283,7 +283,7 @@
 }
 
 .project-toggle--highlighted {
-  background: color-mix(in oklch, var(--primary) 14%, white);
+  background: color-mix(in oklch, var(--primary) 14%, var(--background));
   box-shadow:
     0 0 0 1px color-mix(in oklch, var(--primary) 22%, var(--sidebar-border)),
     0 12px 24px rgba(15, 23, 42, 0.1);
@@ -548,8 +548,8 @@
 
 .sidebar-branch-action:hover {
   color: var(--foreground);
-  background: color-mix(in oklch, var(--sidebar-accent) 72%, white 8%);
-  border-color: color-mix(in oklch, var(--sidebar-border) 78%, white 12%);
+  background: color-mix(in oklch, var(--sidebar-accent) 72%, var(--surface-tint) 8%);
+  border-color: color-mix(in oklch, var(--sidebar-border) 78%, var(--surface-tint) 12%);
   transform: translateY(-1px);
 }
 
@@ -587,10 +587,10 @@
   width: min(34rem, calc(100vw - 2rem));
   padding: 1.4rem;
   border-radius: 1.4rem;
-  border: 1px solid color-mix(in oklch, var(--border) 86%, white 12%);
+  border: 1px solid color-mix(in oklch, var(--border) 86%, var(--surface-tint) 12%);
   background:
     radial-gradient(circle at top left, color-mix(in oklch, var(--primary) 10%, transparent), transparent 42%),
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 98%, white 3%), color-mix(in oklch, var(--card) 95%, transparent));
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 98%, var(--surface-tint) 3%), color-mix(in oklch, var(--card) 95%, transparent));
   box-shadow:
     0 24px 80px -36px rgba(15, 23, 42, 0.48),
     0 14px 30px -24px rgba(15, 23, 42, 0.32);
@@ -598,14 +598,14 @@
 }
 
 .worktree-dialog::backdrop {
-  background: color-mix(in oklch, black 42%, transparent);
+  background: color-mix(in oklch, var(--surface-shade) 42%, transparent);
   backdrop-filter: blur(3px);
 }
 
 .worktree-dialog--danger {
   background:
     radial-gradient(circle at top left, color-mix(in oklch, var(--destructive) 10%, transparent), transparent 42%),
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 98%, white 3%), color-mix(in oklch, var(--card) 95%, transparent));
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 98%, var(--surface-tint) 3%), color-mix(in oklch, var(--card) 95%, transparent));
 }
 
 .worktree-dialog__eyebrow {
@@ -640,7 +640,7 @@
   margin-top: 1rem;
   padding: 0.85rem 0.95rem;
   border-radius: 0.95rem;
-  border: 1px solid color-mix(in oklch, var(--border) 84%, white 10%);
+  border: 1px solid color-mix(in oklch, var(--border) 84%, var(--surface-tint) 10%);
   background: color-mix(in oklch, var(--muted) 44%, transparent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.83rem;
@@ -696,15 +696,15 @@
 }
 
 .worktree-dialog__button--soft {
-  color: oklch(0.39 0.08 225);
-  background: linear-gradient(135deg, oklch(0.97 0.01 220), oklch(0.93 0.03 225));
-  border-color: oklch(0.86 0.02 225);
+  color: color-mix(in oklch, var(--primary) 72%, var(--foreground));
+  background: linear-gradient(135deg, color-mix(in oklch, var(--primary) 8%, var(--background)), color-mix(in oklch, var(--primary) 12%, var(--muted)));
+  border-color: color-mix(in oklch, var(--primary) 24%, var(--border));
 }
 
 .worktree-dialog__button--danger {
   color: var(--destructive-foreground);
-  background: color-mix(in oklch, var(--destructive) 92%, black 4%);
-  border-color: color-mix(in oklch, var(--destructive) 84%, black 8%);
+  background: color-mix(in oklch, var(--destructive) 92%, var(--surface-shade) 4%);
+  border-color: color-mix(in oklch, var(--destructive) 84%, var(--surface-shade) 8%);
 }
 
 .worktree-dialog__spinner {
@@ -765,7 +765,7 @@
   border-radius: 999px;
   border: 1px solid color-mix(in oklch, var(--destructive) 20%, var(--border));
   background:
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 84%, white 16%), color-mix(in oklch, var(--destructive) 7%, transparent));
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 84%, var(--surface-tint) 16%), color-mix(in oklch, var(--destructive) 7%, transparent));
   color: color-mix(in oklch, var(--destructive) 72%, var(--foreground));
   font-size: 0.68rem;
   font-weight: 700;
@@ -793,7 +793,7 @@
   transform: translateY(-1px);
   border-color: color-mix(in oklch, var(--destructive) 38%, var(--border));
   background:
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 72%, white 18%), color-mix(in oklch, var(--destructive) 14%, transparent));
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 72%, var(--surface-tint) 18%), color-mix(in oklch, var(--destructive) 14%, transparent));
   color: color-mix(in oklch, var(--destructive) 82%, var(--foreground));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.32),
@@ -808,7 +808,7 @@
 .session-delete-confirm--ready {
   border-color: color-mix(in oklch, var(--destructive) 42%, var(--border));
   background:
-    linear-gradient(180deg, color-mix(in oklch, var(--destructive) 12%, white 10%), color-mix(in oklch, var(--destructive) 18%, transparent));
+    linear-gradient(180deg, color-mix(in oklch, var(--destructive) 12%, var(--surface-tint) 10%), color-mix(in oklch, var(--destructive) 18%, transparent));
   color: color-mix(in oklch, var(--destructive) 86%, var(--foreground));
 }
 
@@ -820,7 +820,7 @@
   width: 1.4rem;
   height: 1.4rem;
   border-radius: 999px;
-  border: 1px solid color-mix(in oklch, var(--border) 82%, white 12%);
+  border: 1px solid color-mix(in oklch, var(--border) 82%, var(--surface-tint) 12%);
   background: color-mix(in oklch, var(--background) 92%, var(--muted));
   color: var(--muted-foreground);
   display: inline-flex;
@@ -837,7 +837,7 @@
   transform: translateY(-1px);
   color: var(--foreground);
   border-color: color-mix(in oklch, var(--primary) 14%, var(--border));
-  background: color-mix(in oklch, var(--background) 84%, white 14%);
+  background: color-mix(in oklch, var(--background) 84%, var(--surface-tint) 14%);
 }
 
 .session-delete-spinner {

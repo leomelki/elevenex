@@ -1,14 +1,14 @@
 .app-shell {
-  --shell-border: color-mix(in oklch, var(--border) 88%, white);
-  --shell-panel: color-mix(in oklch, var(--background) 92%, white 8%);
-  --shell-elevated: color-mix(in oklch, var(--background) 85%, white 15%);
-  --shell-highlight: color-mix(in oklch, var(--primary) 14%, white);
+  --shell-border: color-mix(in oklch, var(--border) 88%, var(--surface-tint) 12%);
+  --shell-panel: color-mix(in oklch, var(--background) 92%, var(--surface-tint) 8%);
+  --shell-elevated: color-mix(in oklch, var(--background) 85%, var(--surface-tint) 15%);
+  --shell-highlight: color-mix(in oklch, var(--primary) 14%, var(--surface-tint));
   --shell-shadow: 0 24px 64px rgba(15, 23, 42, 0.08);
   position: relative;
   overflow: hidden;
   background:
     radial-gradient(circle at top left, color-mix(in oklch, var(--primary) 10%, transparent), transparent 34%),
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 94%, white 6%), var(--background));
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 94%, var(--surface-tint) 6%), var(--background));
 }
 
 .startup-forward-bar {
@@ -17,7 +17,7 @@
   padding: 0.35rem 0.75rem 0.35rem 1rem;
   border-bottom: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
   background:
-    linear-gradient(180deg, color-mix(in oklch, var(--primary) 22%, white 8%), color-mix(in oklch, var(--primary) 14%, var(--background)));
+    linear-gradient(180deg, color-mix(in oklch, var(--primary) 22%, var(--surface-tint) 8%), color-mix(in oklch, var(--primary) 14%, var(--background)));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -37,7 +37,7 @@
   background:
     linear-gradient(
       180deg,
-      color-mix(in oklch, var(--destructive) 16%, white 8%),
+      color-mix(in oklch, var(--destructive) 16%, var(--surface-tint) 8%),
       color-mix(in oklch, var(--destructive) 10%, var(--background))
     );
 }
@@ -55,7 +55,7 @@
 .startup-forward-bar__message {
   font-size: 0.8rem;
   line-height: 1.3;
-  color: color-mix(in oklch, var(--foreground) 88%, black 6%);
+  color: color-mix(in oklch, var(--foreground) 88%, var(--surface-shade) 6%);
 }
 
 .startup-forward-bar__message--strong {
@@ -84,21 +84,21 @@
 }
 
 .startup-forward-bar__button--primary {
-  background: color-mix(in oklch, var(--primary) 88%, black 6%);
-  color: white;
+  background: color-mix(in oklch, var(--primary) 88%, var(--surface-shade) 6%);
+  color: var(--primary-foreground);
   box-shadow: 0 1px 0 rgb(255 255 255 / 0.14) inset;
 }
 
 .startup-forward-bar__button--primary:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--primary) 94%, black 10%);
+  background: color-mix(in oklch, var(--primary) 94%, var(--surface-shade) 10%);
 }
 
 .startup-forward-bar__button--alert {
-  background: color-mix(in oklch, var(--destructive) 88%, black 6%);
+  background: color-mix(in oklch, var(--destructive) 88%, var(--surface-shade) 6%);
 }
 
 .startup-forward-bar__button--alert:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--destructive) 94%, black 10%);
+  background: color-mix(in oklch, var(--destructive) 94%, var(--surface-shade) 10%);
 }
 
 .startup-forward-bar__close {
@@ -163,7 +163,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: color-mix(in oklch, var(--background) 96%, white 4%);
+  background: color-mix(in oklch, var(--background) 96%, var(--surface-tint) 4%);
 }
 
 .desktop-chrome {
@@ -171,7 +171,7 @@
   display: flex;
   align-items: stretch;
   border-bottom: 1px solid color-mix(in oklch, var(--border) 78%, transparent);
-  background: linear-gradient(180deg, color-mix(in oklch, var(--background) 91%, white 9%), color-mix(in oklch, var(--background) 97%, transparent));
+  background: linear-gradient(180deg, color-mix(in oklch, var(--background) 91%, var(--surface-tint) 9%), color-mix(in oklch, var(--background) 97%, transparent));
   backdrop-filter: blur(18px);
   box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
   flex-shrink: 0;
@@ -226,13 +226,13 @@
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--foreground);
-  background: color-mix(in oklch, var(--background) 78%, white 22%);
-  border: 1px solid color-mix(in oklch, var(--border) 78%, white 12%);
+  background: color-mix(in oklch, var(--background) 78%, var(--surface-tint) 22%);
+  border: 1px solid color-mix(in oklch, var(--border) 78%, var(--surface-tint) 12%);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
 
 .desktop-chrome__home-link:hover {
-  background: color-mix(in oklch, var(--background) 68%, white 32%);
+  background: color-mix(in oklch, var(--background) 68%, var(--surface-tint) 32%);
 }
 
 .desktop-chrome__controls {
@@ -281,7 +281,7 @@
 .app-shell__content--onboarding {
   background:
     radial-gradient(circle at top, color-mix(in oklch, var(--primary) 12%, transparent), transparent 36%),
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 92%, white 8%), var(--background));
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 92%, var(--surface-tint) 8%), var(--background));
 }
 
 .runtime-remote-overlay {
@@ -310,9 +310,9 @@
   width: min(100%, 520px);
   padding: 40px;
   border-radius: 32px;
-  border: 1px solid color-mix(in oklch, var(--border) 76%, white 10%);
+  border: 1px solid color-mix(in oklch, var(--border) 76%, var(--surface-tint) 10%);
   background:
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 88%, white 12%), color-mix(in oklch, var(--background) 94%, transparent));
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 88%, var(--surface-tint) 12%), color-mix(in oklch, var(--background) 94%, transparent));
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.04),
     0 16px 40px rgba(15, 23, 42, 0.12),
@@ -366,7 +366,7 @@
   border-radius: 22px;
   padding: 8px 18px;
   background: color-mix(in oklch, var(--muted) 48%, var(--background));
-  border: 1px solid color-mix(in oklch, var(--border) 76%, white 10%);
+  border: 1px solid color-mix(in oklch, var(--border) 76%, var(--surface-tint) 10%);
   text-align: left;
 }
 
@@ -415,8 +415,8 @@
   border: 0;
   border-radius: 999px;
   padding: 0 1.15rem;
-  background: linear-gradient(180deg, color-mix(in oklch, var(--primary) 90%, white 8%), color-mix(in oklch, var(--primary) 82%, black 6%));
-  color: white;
+  background: linear-gradient(180deg, color-mix(in oklch, var(--primary) 90%, var(--surface-tint) 8%), color-mix(in oklch, var(--primary) 82%, var(--surface-shade) 6%));
+  color: var(--primary-foreground);
   font-size: 0.92rem;
   font-weight: 700;
   display: inline-flex;
@@ -474,7 +474,7 @@
   padding: 0;
   width: 100%;
   border-radius: 20px;
-  border: 1px solid color-mix(in oklch, var(--border) 76%, white 10%);
+  border: 1px solid color-mix(in oklch, var(--border) 76%, var(--surface-tint) 10%);
   background: color-mix(in oklch, var(--muted) 48%, var(--background));
   overflow: hidden;
 }
@@ -553,8 +553,8 @@
   min-height: 2.4rem;
   padding: 0 0.95rem;
   border-radius: 999px;
-  border: 1px solid color-mix(in oklch, var(--border) 80%, white 10%);
-  background: color-mix(in oklch, var(--background) 76%, white 18%);
+  border: 1px solid color-mix(in oklch, var(--border) 80%, var(--surface-tint) 10%);
+  background: color-mix(in oklch, var(--background) 76%, var(--surface-tint) 18%);
   color: var(--foreground);
   font-size: 0.85rem;
   font-weight: 600;
@@ -566,8 +566,8 @@
 }
 
 .runtime-remote-overlay__alt-button:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--background) 60%, white 28%);
-  border-color: color-mix(in oklch, var(--border) 100%, white 16%);
+  background: color-mix(in oklch, var(--background) 60%, var(--surface-tint) 28%);
+  border-color: color-mix(in oklch, var(--border) 100%, var(--surface-tint) 16%);
 }
 
 .runtime-remote-overlay__alt-button:disabled {
@@ -593,20 +593,20 @@
   height: 2.4rem;
   border-radius: 999px;
   font-size: 0.85rem;
-  background: color-mix(in oklch, var(--background) 76%, white 18%);
-  border-color: color-mix(in oklch, var(--border) 80%, white 10%);
+  background: color-mix(in oklch, var(--background) 76%, var(--surface-tint) 18%);
+  border-color: color-mix(in oklch, var(--border) 80%, var(--surface-tint) 10%);
 }
 
 .runtime-remote-overlay__switcher .env-trigger:hover,
 .runtime-remote-overlay__switcher .env-trigger--open {
-  background: color-mix(in oklch, var(--background) 60%, white 28%);
+  background: color-mix(in oklch, var(--background) 60%, var(--surface-tint) 28%);
 }
 
 .runtime-remote-overlay__button--cancel {
   margin-top: 20px;
   min-width: 120px;
   min-height: 2.4rem;
-  border: 1px solid color-mix(in oklch, var(--border) 80%, white 10%);
+  border: 1px solid color-mix(in oklch, var(--border) 80%, var(--surface-tint) 10%);
   border-radius: 999px;
   padding: 0 1.1rem;
   background: transparent;
@@ -623,7 +623,7 @@
 
 .runtime-remote-overlay__button--cancel:hover {
   color: var(--foreground);
-  border-color: color-mix(in oklch, var(--border) 100%, white 10%);
+  border-color: color-mix(in oklch, var(--border) 100%, var(--surface-tint) 10%);
   background: color-mix(in oklch, var(--muted) 40%, transparent);
   transform: none;
   box-shadow: none;

@@ -17,6 +17,8 @@ import {
   lucideSquareArrowOutUpRight,
   lucideCheckSquare,
   lucideInfo,
+  lucideMoon,
+  lucideSun,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { NavigationService } from '../../../shared/services/navigation.service';
@@ -47,6 +49,7 @@ import { ReposService } from '@/shared/services/repos.service';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { PendingWorktreeCreationsService } from '@/shared/services/pending-worktree-creations.service';
 import { EnvironmentSwitcherComponent } from '../environment-switcher/environment-switcher.component';
+import { ThemeService } from '@/shared/services/theme.service';
 
 @Component({
   selector: 'app-sidebar',
@@ -70,6 +73,8 @@ import { EnvironmentSwitcherComponent } from '../environment-switcher/environmen
       lucideSquareArrowOutUpRight,
       lucideCheckSquare,
       lucideInfo,
+      lucideMoon,
+      lucideSun,
     }),
   ],
 })
@@ -96,6 +101,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private onboardingState = inject(OnboardingStateService);
   private sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private todosService = inject(TodosService);
+  readonly theme = inject(ThemeService);
   pendingWorktreeCreations = inject(PendingWorktreeCreationsService);
   private windowControls = getElectronWindowControlsApi();
   private host = inject(ElementRef<HTMLElement>);
