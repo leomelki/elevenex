@@ -84,7 +84,7 @@
             (click)="onProjectClick(project)">
             <ng-icon [name]="isExpanded('project-' + project.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
             <ng-icon name="lucideFolder" class="!w-4 !h-4 text-muted-foreground shrink-0" />
-            <span class="text-sm font-semibold text-foreground truncate">{{ project.name }}</span>
+            <span class="sidebar-label--project text-sm truncate">{{ project.name }}</span>
           </button>
           <span class="project-badges">
             @if (getProjectTodoCount(project.id) > 0) {
@@ -135,7 +135,7 @@
                   [attr.aria-hidden]="true"
                 ></span>
                 <div class="flex flex-col min-w-0">
-                  <span class="text-sm font-semibold text-foreground truncate">{{ repo.name }}</span>
+                  <span class="sidebar-label--repo text-sm truncate">{{ repo.name }}</span>
                   @if (repo.error) {
                     <span class="text-xs text-destructive">{{ repo.errorMessage }}</span>
                   }
@@ -191,7 +191,7 @@
                   } @else {
                     <ng-icon name="lucideCircleDashed" class="!w-4 !h-4 text-muted-foreground shrink-0" />
                   }
-<span class="text-sm truncate flex-1" [class.text-foreground]="branch.hasWorktree || branch.isPendingCreation || isOpeningWorktree(repo, branch)" [class.text-muted-foreground]="!branch.hasWorktree && !branch.isPendingCreation && !isOpeningWorktree(repo, branch)" [title]="branch.name">{{ branch.name }}</span>
+<span class="text-sm truncate flex-1" [class.sidebar-label--branch]="branch.hasWorktree || branch.isPendingCreation || isOpeningWorktree(repo, branch)" [class.sidebar-label--branch-inactive]="!branch.hasWorktree && !branch.isPendingCreation && !isOpeningWorktree(repo, branch)" [title]="branch.name">{{ branch.name }}</span>
                    <!-- Action buttons (visible on hover) -->
                    <span class="sidebar-actions">
                      @if (isOpeningWorktree(repo, branch)) {
@@ -281,7 +281,7 @@
                             />
                           } @else {
                             <span
-                              class="text-sm text-foreground truncate"
+                              class="sidebar-label--session text-sm truncate"
                               (dblclick)="startEditSessionTitle(session.id, session.name || '', $event)">
                               {{ session.name || 'Session ' + session.id }}
                             </span>

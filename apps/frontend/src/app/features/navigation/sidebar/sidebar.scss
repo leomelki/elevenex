@@ -3,6 +3,35 @@
   container-name: sidebar;
 }
 
+// Tiered sidebar text colors so the project → repo → branch → session
+// hierarchy stays legible in dark mode (where --foreground is near-white).
+.sidebar-label--project {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.sidebar-label--repo {
+  color: color-mix(in oklch, var(--foreground) 84%, var(--muted-foreground));
+  font-weight: 600;
+}
+
+.sidebar-label--branch {
+  color: color-mix(in oklch, var(--foreground) 68%, var(--muted-foreground));
+}
+
+.sidebar-label--branch-inactive {
+  color: var(--muted-foreground);
+}
+
+.sidebar-label--session {
+  color: color-mix(in oklch, var(--foreground) 58%, var(--muted-foreground));
+}
+
+.session-selected .sidebar-label--session {
+  color: color-mix(in oklch, var(--foreground) 88%, var(--muted-foreground));
+  font-weight: 500;
+}
+
 .sidebar-brand {
   position: relative;
   flex-shrink: 0;
