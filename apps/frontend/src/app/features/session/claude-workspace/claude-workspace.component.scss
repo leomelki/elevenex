@@ -5,6 +5,8 @@
   min-height: 0;
   background: var(--background);
   color: var(--foreground);
+  container-type: inline-size;
+  container-name: cw-workspace;
 }
 
 .cw-root {
@@ -947,11 +949,13 @@
     padding: 0.45rem 0.75rem;
   }
 
-  .cw-turn-gap__meta {
-    display: none;
-  }
-
   .cw-turn-gap__agents {
     padding: 0.5rem 0.625rem;
+  }
+}
+
+@container cw-workspace (max-width: 760px) {
+  .cw-turn-gap__meta {
+    display: none;
   }
 }

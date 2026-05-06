@@ -808,8 +808,9 @@ readonly messageActionsDisabled = computed(
   }
 
   async copyMessage(item: ClaudeTranscriptItem, selectedText?: string | null): Promise<void> {
-    const selectedContent = selectedText?.trim();
-    const content = selectedContent || item.content?.trim();
+    const selectedContent = typeof selectedText === 'string' ? selectedText.trim() : '';
+    const itemContent = typeof item.content === 'string' ? item.content.trim() : '';
+    const content = selectedContent || itemContent;
     if (!content || this.messageActionsDisabled()) return;
     if (!navigator.clipboard?.writeText) {
       toast.error('Clipboard is not available.');
