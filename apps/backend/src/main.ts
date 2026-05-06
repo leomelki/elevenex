@@ -32,6 +32,7 @@ import {
   getBackendRuntimeRoot,
   getBackendVSCodeStaticPath,
 } from './config/runtime-paths.js';
+import { ShellEnvService } from './config/shell-env.service.js';
 import {
   buildVSCodeWebLauncherHtml,
   renderVSCodeWorkbenchHtml,
@@ -60,6 +61,19 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.setGlobalPrefix('api');
   const runtimeRoot = getBackendRuntimeRoot();
+
+  // Trigger a throttled async refresh of the cached login-shell environment
+  // on every incoming HTTP request. Lets the user edit their dotfiles
+  // (PATH, nvm, fnm, etc.) and have elevenex pick up the changes by
+  // reconnecting — no backend restart needed. The refresh is throttled to
+  // once per 30s inside the service and never blocks the request.
+  // (WebSocket upgrades bypass express middleware; HTTP traffic from the
+  // frontend keeps the cache fresh enough for them.)
+  const shellEnvService = app.get(ShellEnvService);
+  app.use((_req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    shellEnvService.refresh();
+    next();
+  });
 
   // Serve a stable launcher in both dev and packaged modes.
   app.use('/vscode-static/index.html', (_req: express.Request, res: express.Response) => {

@@ -24,6 +24,7 @@ import { GithubModule } from './github/github.module.js';
 import { ClaudeRuntimeModule } from './claude-runtime/claude-runtime.module.js';
 import { WorktreeContextModule } from './worktree-context/worktree-context.module.js';
 import { BackendLogsModule } from './backend-logs/backend-logs.module.js';
+import { ShellEnvService } from './config/shell-env.service.js';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { BackendLogsModule } from './backend-logs/backend-logs.module.js';
     BackendLogsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, ShellEnvService],
+  exports: [ShellEnvService],
 })
 export class AppModule {}
