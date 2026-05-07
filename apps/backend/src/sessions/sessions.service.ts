@@ -11,11 +11,8 @@ import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { PtyManager } from '../terminal/pty-manager.service.js';
 import { TmuxManager } from '../terminal/tmux-manager.service.js';
-import { CLAUDE_RUNTIME_SERVICE } from '../claude-runtime/claude-runtime.tokens.js';
-
-interface ClaudeRuntimeCleanup {
-  cleanupSession(sessionId: number): Promise<void>;
-}
+import { AGENT_RUNTIME_CLEANUP_SERVICE } from '../agent-runtime/agent-runtime.tokens.js';
+import type { AgentRuntimeCleanup } from '../agent-runtime/agent-runtime.types.js';
 
 const VALID_STATUSES = ['created', 'active', 'archived', 'stopped'] as const;
 type SessionStatus = (typeof VALID_STATUSES)[number];
@@ -28,8 +25,8 @@ export class SessionsService extends EventEmitter {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     @Inject(forwardRef(() => PtyManager)) private readonly ptyManager: PtyManager,
     private readonly tmuxManager: TmuxManager,
-    @Inject(CLAUDE_RUNTIME_SERVICE)
-    private readonly claudeRuntimeService: ClaudeRuntimeCleanup,
+    @Inject(AGENT_RUNTIME_CLEANUP_SERVICE)
+    private readonly agentRuntimeCleanup: AgentRuntimeCleanup,
   ) {
     super();
   }
@@ -341,7 +338,7 @@ export class SessionsService extends EventEmitter {
   async delete(id: number) {
     await this.findOne(id);
 
-    await this.claudeRuntimeService.cleanupSession(id);
+    await this.agentRuntimeCleanup.cleanupSession(id);
 
     // 1. Kill the PTY process if running
     this.ptyManager.kill(id);

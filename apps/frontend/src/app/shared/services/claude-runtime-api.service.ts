@@ -1,81 +1,55 @@
 import { inject, Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import {
-  ClaudeAutocompleteItem,
-  ClaudeMcpAuthStartResult,
-  ClaudeMcpSnapshot,
-  ClaudeSubagentHistoryPayload,
-  ClaudeRuntimeState,
-  ClaudeTranscriptItem,
-} from '../models/claude-runtime.model';
+import { AgentRuntimeApiService } from './agent-runtime-api.service';
 
 @Injectable({ providedIn: 'root' })
 export class ClaudeRuntimeApiService {
-  private readonly http = inject(HttpClient);
+  private readonly agentRuntimeApi = inject(AgentRuntimeApiService);
 
   getHistory(sessionId: number) {
-    return this.http.get<ClaudeTranscriptItem[]>(`/api/sessions/${sessionId}/claude/history`);
+    return this.agentRuntimeApi.getHistory(sessionId, 'claude');
   }
 
   getRuntimeState(sessionId: number) {
-    return this.http.get<ClaudeRuntimeState>(`/api/sessions/${sessionId}/claude/runtime-state`);
+    return this.agentRuntimeApi.getRuntimeState(sessionId, 'claude');
   }
 
   getSubagentHistory(sessionId: number, agentId: string) {
-    return this.http.get<ClaudeSubagentHistoryPayload>(
-      `/api/sessions/${sessionId}/claude/subagents/${encodeURIComponent(agentId)}/history`,
-    );
+    return this.agentRuntimeApi.getSubagentHistory(sessionId, agentId, 'claude');
   }
 
   getAutocompleteItems(sessionId: number) {
-    return this.http.get<ClaudeAutocompleteItem[]>(`/api/sessions/${sessionId}/claude/autocomplete`);
+    return this.agentRuntimeApi.getAutocompleteItems(sessionId, 'claude');
   }
 
   getMcpSnapshot(sessionId: number, forceRefresh = false) {
-    return this.http.get<ClaudeMcpSnapshot>(`/api/sessions/${sessionId}/claude/mcp`, {
-      params: forceRefresh ? { forceRefresh: '1' } : undefined,
-    });
+    return this.agentRuntimeApi.getMcpSnapshot(sessionId, forceRefresh, 'claude');
   }
 
   toggleMcpServer(sessionId: number, serverName: string) {
-    return this.http.post<ClaudeMcpSnapshot>(
-      `/api/sessions/${sessionId}/claude/mcp/${encodeURIComponent(serverName)}/toggle`,
-      {},
-    );
+    return this.agentRuntimeApi.toggleMcpServer(sessionId, serverName, 'claude');
   }
 
   recheckMcpServer(sessionId: number, serverName: string) {
-    return this.http.post<ClaudeMcpSnapshot>(
-      `/api/sessions/${sessionId}/claude/mcp/${encodeURIComponent(serverName)}/recheck`,
-      {},
-    );
+    return this.agentRuntimeApi.recheckMcpServer(sessionId, serverName, 'claude');
   }
 
   startMcpAuth(sessionId: number, serverName: string) {
-    return this.http.post<ClaudeMcpAuthStartResult>(
-      `/api/sessions/${sessionId}/claude/mcp/${encodeURIComponent(serverName)}/auth/start`,
-      {},
-    );
+    return this.agentRuntimeApi.startMcpAuth(sessionId, serverName, 'claude');
   }
 
   setSelectedModel(sessionId: number, model: string | null) {
-    return this.http.post<ClaudeRuntimeState>(`/api/sessions/${sessionId}/claude/model`, { model });
+    return this.agentRuntimeApi.setSelectedModel(sessionId, model, 'claude');
   }
 
   setPermissionMode(sessionId: number, mode: string | null) {
-    return this.http.post<ClaudeRuntimeState>(`/api/sessions/${sessionId}/claude/permission-mode`, {
-      mode,
-    });
+    return this.agentRuntimeApi.setPermissionMode(sessionId, mode, 'claude');
   }
 
   openTerminalFallback(sessionId: number) {
-    return this.http.post(`/api/sessions/${sessionId}/claude/terminal-fallback`, {});
+    return this.agentRuntimeApi.openTerminalFallback(sessionId, 'claude');
   }
 
   rewindConversation(sessionId: number, messageId: string) {
-    return this.http.post<ClaudeTranscriptItem[]>(
-      `/api/sessions/${sessionId}/claude/rewind-conversation`,
-      { messageId },
-    );
+    return this.agentRuntimeApi.rewindConversation(sessionId, messageId, 'claude');
   }
 }

@@ -1,22 +1,23 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
-import { ClaudeRuntimeService } from './claude-runtime.service.js';
-import { ClaudeMcpService } from './claude-mcp.service.js';
+import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
+import type { AgentPermissionMode } from '../agent-runtime/agent-runtime.types.js';
 
 @Controller('sessions/:sessionId/claude')
 export class ClaudeRuntimeController {
-  constructor(
-    private readonly runtimeService: ClaudeRuntimeService,
-    private readonly mcpService: ClaudeMcpService,
-  ) {}
+  constructor(private readonly registry: AgentRuntimeRegistryService) {}
+
+  private get claudeProvider() {
+    return this.registry.getProvider('claude');
+  }
 
   @Get('history')
   getHistory(@Param('sessionId') sessionId: string) {
-    return this.runtimeService.getHistory(Number(sessionId));
+    return this.claudeProvider.getHistory(Number(sessionId));
   }
 
   @Get('runtime-state')
   getRuntimeState(@Param('sessionId') sessionId: string) {
-    return this.runtimeService.getRuntimeState(Number(sessionId));
+    return this.claudeProvider.getRuntimeState(Number(sessionId));
   }
 
   @Get('subagents/:agentId/history')
@@ -24,17 +25,17 @@ export class ClaudeRuntimeController {
     @Param('sessionId') sessionId: string,
     @Param('agentId') agentId: string,
   ) {
-    return this.runtimeService.getSubagentHistory(Number(sessionId), agentId);
+    return this.claudeProvider.getSubagentHistory(Number(sessionId), agentId);
   }
 
   @Get('snapshot')
   getSnapshot(@Param('sessionId') sessionId: string) {
-    return this.runtimeService.getSnapshot(Number(sessionId));
+    return this.claudeProvider.getSnapshot(Number(sessionId));
   }
 
   @Get('autocomplete')
   getAutocompleteItems(@Param('sessionId') sessionId: string) {
-    return this.runtimeService.getAutocompleteItems(Number(sessionId));
+    return this.claudeProvider.getAutocompleteItems(Number(sessionId));
   }
 
   @Get('mcp')
@@ -42,7 +43,7 @@ export class ClaudeRuntimeController {
     @Param('sessionId') sessionId: string,
     @Query('forceRefresh') forceRefresh?: string,
   ) {
-    return this.mcpService.getSnapshot(
+    return this.claudeProvider.getMcpSnapshot(
       Number(sessionId),
       forceRefresh === '1' || forceRefresh === 'true',
     );
@@ -53,7 +54,7 @@ export class ClaudeRuntimeController {
     @Param('sessionId') sessionId: string,
     @Body() body: { model?: string | null },
   ) {
-    return this.runtimeService.setSelectedModel(
+    return this.claudeProvider.setSelectedModel(
       Number(sessionId),
       body.model ?? null,
     );
@@ -64,9 +65,9 @@ export class ClaudeRuntimeController {
     @Param('sessionId') sessionId: string,
     @Body() body: { mode?: string | null },
   ) {
-    return this.runtimeService.setPermissionMode(
+    return this.claudeProvider.setPermissionMode(
       Number(sessionId),
-      (body.mode ?? null) as never,
+      (body.mode ?? null) as AgentPermissionMode | null,
     );
   }
 
@@ -75,7 +76,10 @@ export class ClaudeRuntimeController {
     @Param('sessionId') sessionId: string,
     @Param('serverName') serverName: string,
   ) {
-    return this.mcpService.toggleServer(Number(sessionId), decodeURIComponent(serverName));
+    return this.claudeProvider.toggleMcpServer(
+      Number(sessionId),
+      decodeURIComponent(serverName),
+    );
   }
 
   @Post('mcp/:serverName/recheck')
@@ -83,7 +87,10 @@ export class ClaudeRuntimeController {
     @Param('sessionId') sessionId: string,
     @Param('serverName') serverName: string,
   ) {
-    return this.mcpService.recheckServer(Number(sessionId), decodeURIComponent(serverName));
+    return this.claudeProvider.recheckMcpServer(
+      Number(sessionId),
+      decodeURIComponent(serverName),
+    );
   }
 
   @Post('mcp/:serverName/auth/start')
@@ -91,12 +98,15 @@ export class ClaudeRuntimeController {
     @Param('sessionId') sessionId: string,
     @Param('serverName') serverName: string,
   ) {
-    return this.mcpService.startAuth(Number(sessionId), decodeURIComponent(serverName));
+    return this.claudeProvider.startMcpAuth(
+      Number(sessionId),
+      decodeURIComponent(serverName),
+    );
   }
 
   @Post('terminal-fallback')
   openTerminalFallback(@Param('sessionId') sessionId: string) {
-    return this.runtimeService.openTerminalFallback(Number(sessionId));
+    return this.claudeProvider.openTerminalFallback(Number(sessionId));
   }
 
   @Post('rewind-conversation')
@@ -104,7 +114,7 @@ export class ClaudeRuntimeController {
     @Param('sessionId') sessionId: string,
     @Body() body: { messageId?: string },
   ) {
-    return this.runtimeService.rewindConversation(
+    return this.claudeProvider.rewindConversation(
       Number(sessionId),
       body.messageId ?? '',
     );

@@ -1,18 +1,18 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
-import { ClaudeRuntimeService } from './claude-runtime.service.js';
 import { ClaudeRuntimeClientAction, ClaudeRuntimeEvent } from './claude-runtime.types.js';
+import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 
 @Injectable()
 export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private readonly clients = new Map<number, Set<WebSocket>>();
 
-  constructor(private readonly runtimeService: ClaudeRuntimeService) {}
+  constructor(private readonly registry: AgentRuntimeRegistryService) {}
 
   onModuleInit(): void {
-    this.runtimeService.on('event', (event: ClaudeRuntimeEvent) => {
+    this.registry.getProvider('claude').on('event', (event: ClaudeRuntimeEvent) => {
       const sessionId = event.payload.sessionId;
       this.broadcast(sessionId, event);
     });
@@ -75,14 +75,15 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
+      const claudeProvider = this.registry.getProvider('claude');
       switch (action.type) {
         case 'hydrate': {
-          const snapshot = await this.runtimeService.getSnapshot(sessionId);
+          const snapshot = await claudeProvider.getSnapshot(sessionId);
           ws.send(JSON.stringify({ type: 'session_snapshot', payload: snapshot }));
           return;
         }
         case 'submit_prompt':
-          await this.runtimeService.submitPrompt(
+          await claudeProvider.submitPrompt(
             sessionId,
             action.prompt,
             action.titlePrompt,
@@ -90,10 +91,10 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           );
           return;
         case 'interrupt':
-          await this.runtimeService.interrupt(sessionId);
+          await claudeProvider.interrupt(sessionId);
           return;
         case 'approve_permission':
-          await this.runtimeService.approvePermission(
+          await claudeProvider.approvePermission(
             sessionId,
             action.requestId,
             action.remember ?? false,
@@ -101,10 +102,10 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           );
           return;
         case 'deny_permission':
-          await this.runtimeService.denyPermission(sessionId, action.requestId, action.message);
+          await claudeProvider.denyPermission(sessionId, action.requestId, action.message);
           return;
         case 'answer_user_input':
-          await this.runtimeService.answerUserInput(
+          await claudeProvider.answerUserInput(
             sessionId,
             action.requestId,
             action.action ?? 'accept',
@@ -112,10 +113,10 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           );
           return;
         case 'cancel_pending_prompt':
-          await this.runtimeService.cancelPendingPrompt(sessionId, action.id);
+          await claudeProvider.cancelPendingPrompt(sessionId, action.id);
           return;
         case 'open_terminal_fallback':
-          await this.runtimeService.openTerminalFallback(sessionId);
+          await claudeProvider.openTerminalFallback(sessionId);
           return;
       }
     } catch (error) {

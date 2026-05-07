@@ -22,6 +22,7 @@ import { BrowserIsolationModule } from './browser-isolation/browser-isolation.mo
 import { ActionsModule } from './actions/actions.module.js';
 import { GithubModule } from './github/github.module.js';
 import { ClaudeRuntimeModule } from './claude-runtime/claude-runtime.module.js';
+import { AgentRuntimeModule } from './agent-runtime/agent-runtime.module.js';
 import { WorktreeContextModule } from './worktree-context/worktree-context.module.js';
 import { BackendLogsModule } from './backend-logs/backend-logs.module.js';
 import { ShellEnvService } from './config/shell-env.service.js';
@@ -49,6 +50,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     ActionsModule,
     GithubModule,
     ClaudeRuntimeModule,
+    AgentRuntimeModule,
     WorktreeContextModule,
     BackendLogsModule,
   ],

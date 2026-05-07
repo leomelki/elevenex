@@ -10,7 +10,7 @@ import { DRIZZLE } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { PtyManager } from '../terminal/pty-manager.service.js';
 import { TmuxManager } from '../terminal/tmux-manager.service.js';
-import { CLAUDE_RUNTIME_SERVICE } from '../claude-runtime/claude-runtime.tokens.js';
+import { AGENT_RUNTIME_CLEANUP_SERVICE } from '../agent-runtime/agent-runtime.tokens.js';
 
 function createTestDb() {
   const sqlite = new Database(':memory:');
@@ -60,7 +60,7 @@ describe('SessionsService', () => {
   let repoId: number;
   let otherRepoId: number;
   let ptyManagerMock: { kill: jest.Mock; isAlive: jest.Mock; killTmuxSession: jest.Mock };
-  let claudeRuntimeServiceMock: { cleanupSession: jest.Mock };
+  let agentRuntimeCleanupMock: { cleanupSession: jest.Mock };
 
   beforeEach(async () => {
     const testDb = createTestDb();
@@ -92,7 +92,7 @@ describe('SessionsService', () => {
       isAlive: jest.fn(),
       killTmuxSession: jest.fn(),
     };
-    claudeRuntimeServiceMock = {
+    agentRuntimeCleanupMock = {
       cleanupSession: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -102,7 +102,7 @@ describe('SessionsService', () => {
         { provide: DRIZZLE, useValue: db },
         { provide: PtyManager, useValue: ptyManagerMock },
         { provide: TmuxManager, useValue: { isTmuxAvailable: jest.fn(() => false), sessionExists: jest.fn(), killSession: jest.fn() } },
-        { provide: CLAUDE_RUNTIME_SERVICE, useValue: claudeRuntimeServiceMock },
+        { provide: AGENT_RUNTIME_CLEANUP_SERVICE, useValue: agentRuntimeCleanupMock },
       ],
     }).compile();
 
@@ -348,7 +348,7 @@ describe('SessionsService', () => {
 
       await service.delete(created.id);
 
-      expect(claudeRuntimeServiceMock.cleanupSession).toHaveBeenCalledWith(created.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(created.id);
       expect(ptyManagerMock.kill).toHaveBeenCalledWith(created.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(created.id);
       await expect(service.findOne(created.id)).rejects.toThrow(
@@ -362,14 +362,14 @@ describe('SessionsService', () => {
         branchName: 'main',
         worktreePath: '/tmp/wt',
       });
-      claudeRuntimeServiceMock.cleanupSession.mockImplementation(async () => {
+      agentRuntimeCleanupMock.cleanupSession.mockImplementation(async () => {
         const existing = await service.findOne(created.id);
         expect(existing.id).toBe(created.id);
       });
 
       await service.delete(created.id);
 
-      expect(claudeRuntimeServiceMock.cleanupSession).toHaveBeenCalledWith(created.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(created.id);
     });
 
     it('should throw NotFoundException for non-existent id', async () => {
