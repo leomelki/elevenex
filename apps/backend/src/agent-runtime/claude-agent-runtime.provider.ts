@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { ClaudeMcpService } from '../claude-runtime/claude-mcp.service.js';
 import { ClaudeRuntimeService } from '../claude-runtime/claude-runtime.service.js';
+import type { ClaudePermissionMode } from '../claude-runtime/claude-runtime.types.js';
 import type {
   AgentImageInput,
   AgentPermissionMode,
@@ -83,7 +84,10 @@ export class ClaudeAgentRuntimeProvider
   }
 
   setPermissionMode(sessionId: number, mode: AgentPermissionMode | null) {
-    return this.runtimeService.setPermissionMode(sessionId, mode);
+    return this.runtimeService.setPermissionMode(
+      sessionId,
+      mode as ClaudePermissionMode | null,
+    );
   }
 
   openTerminalFallback(sessionId: number) {

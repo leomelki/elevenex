@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import type { AgentPermissionMode } from '../agent-runtime/agent-runtime.types.js';
 
@@ -11,112 +19,113 @@ export class ClaudeRuntimeController {
   }
 
   @Get('history')
-  getHistory(@Param('sessionId') sessionId: string) {
-    return this.claudeProvider.getHistory(Number(sessionId));
+  getHistory(@Param('sessionId', ParseIntPipe) sessionId: number) {
+    return this.claudeProvider.getHistory(sessionId);
   }
 
   @Get('runtime-state')
-  getRuntimeState(@Param('sessionId') sessionId: string) {
-    return this.claudeProvider.getRuntimeState(Number(sessionId));
+  getRuntimeState(@Param('sessionId', ParseIntPipe) sessionId: number) {
+    return this.claudeProvider.getRuntimeState(sessionId);
   }
 
   @Get('subagents/:agentId/history')
   getSubagentHistory(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('agentId') agentId: string,
   ) {
-    return this.claudeProvider.getSubagentHistory(Number(sessionId), agentId);
+    return this.registry
+      .getProviderFeature('claude', 'getSubagentHistory')
+      .getSubagentHistory(sessionId, agentId);
   }
 
   @Get('snapshot')
-  getSnapshot(@Param('sessionId') sessionId: string) {
-    return this.claudeProvider.getSnapshot(Number(sessionId));
+  getSnapshot(@Param('sessionId', ParseIntPipe) sessionId: number) {
+    return this.claudeProvider.getSnapshot(sessionId);
   }
 
   @Get('autocomplete')
-  getAutocompleteItems(@Param('sessionId') sessionId: string) {
-    return this.claudeProvider.getAutocompleteItems(Number(sessionId));
+  getAutocompleteItems(@Param('sessionId', ParseIntPipe) sessionId: number) {
+    return this.claudeProvider.getAutocompleteItems(sessionId);
   }
 
   @Get('mcp')
   getMcpSnapshot(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Query('forceRefresh') forceRefresh?: string,
   ) {
-    return this.claudeProvider.getMcpSnapshot(
-      Number(sessionId),
-      forceRefresh === '1' || forceRefresh === 'true',
-    );
+    return this.registry
+      .getProviderFeature('claude', 'getMcpSnapshot')
+      .getMcpSnapshot(
+        sessionId,
+        forceRefresh === '1' || forceRefresh === 'true',
+      );
   }
 
   @Post('model')
   setSelectedModel(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Body() body: { model?: string | null },
   ) {
-    return this.claudeProvider.setSelectedModel(
-      Number(sessionId),
-      body.model ?? null,
-    );
+    return this.claudeProvider.setSelectedModel(sessionId, body.model ?? null);
   }
 
   @Post('permission-mode')
   setPermissionMode(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Body() body: { mode?: string | null },
   ) {
-    return this.claudeProvider.setPermissionMode(
-      Number(sessionId),
-      (body.mode ?? null) as AgentPermissionMode | null,
-    );
+    return this.registry
+      .getProviderFeature('claude', 'setPermissionMode')
+      .setPermissionMode(
+        sessionId,
+        (body.mode ?? null) as AgentPermissionMode | null,
+      );
   }
 
   @Post('mcp/:serverName/toggle')
   toggleMcpServer(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('serverName') serverName: string,
   ) {
-    return this.claudeProvider.toggleMcpServer(
-      Number(sessionId),
-      decodeURIComponent(serverName),
-    );
+    return this.registry
+      .getProviderFeature('claude', 'toggleMcpServer')
+      .toggleMcpServer(sessionId, serverName);
   }
 
   @Post('mcp/:serverName/recheck')
   recheckMcpServer(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('serverName') serverName: string,
   ) {
-    return this.claudeProvider.recheckMcpServer(
-      Number(sessionId),
-      decodeURIComponent(serverName),
-    );
+    return this.registry
+      .getProviderFeature('claude', 'recheckMcpServer')
+      .recheckMcpServer(sessionId, serverName);
   }
 
   @Post('mcp/:serverName/auth/start')
   startMcpAuth(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('serverName') serverName: string,
   ) {
-    return this.claudeProvider.startMcpAuth(
-      Number(sessionId),
-      decodeURIComponent(serverName),
-    );
+    return this.registry
+      .getProviderFeature('claude', 'startMcpAuth')
+      .startMcpAuth(sessionId, serverName);
   }
 
   @Post('terminal-fallback')
-  openTerminalFallback(@Param('sessionId') sessionId: string) {
-    return this.claudeProvider.openTerminalFallback(Number(sessionId));
+  openTerminalFallback(@Param('sessionId', ParseIntPipe) sessionId: number) {
+    return this.registry
+      .getProviderFeature('claude', 'openTerminalFallback')
+      .openTerminalFallback(sessionId);
   }
 
   @Post('rewind-conversation')
   rewindConversation(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Body() body: { messageId?: string },
   ) {
-    return this.claudeProvider.rewindConversation(
-      Number(sessionId),
-      body.messageId ?? '',
-    );
+    return this.registry
+      .getProviderFeature('claude', 'rewindConversation')
+      .rewindConversation(sessionId, body.messageId ?? '');
   }
 }

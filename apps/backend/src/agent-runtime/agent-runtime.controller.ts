@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
 import type { AgentPermissionMode } from './agent-runtime.types.js';
 
@@ -13,141 +21,137 @@ export class AgentRuntimeController {
 
   @Get('sessions/:sessionId/agents/:provider/history')
   getHistory(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
   ) {
-    return this.registry.getProvider(provider).getHistory(Number(sessionId));
+    return this.registry.getProvider(provider).getHistory(sessionId);
   }
 
   @Get('sessions/:sessionId/agents/:provider/runtime-state')
   getRuntimeState(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
   ) {
-    return this.registry
-      .getProvider(provider)
-      .getRuntimeState(Number(sessionId));
+    return this.registry.getProvider(provider).getRuntimeState(sessionId);
   }
 
   @Get('sessions/:sessionId/agents/:provider/subagents/:agentId/history')
   getSubagentHistory(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Param('agentId') agentId: string,
   ) {
     return this.registry
-      .getProvider(provider)
-      .getSubagentHistory(Number(sessionId), agentId);
+      .getProviderFeature(provider, 'getSubagentHistory')
+      .getSubagentHistory(sessionId, agentId);
   }
 
   @Get('sessions/:sessionId/agents/:provider/snapshot')
   getSnapshot(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
   ) {
-    return this.registry.getProvider(provider).getSnapshot(Number(sessionId));
+    return this.registry.getProvider(provider).getSnapshot(sessionId);
   }
 
   @Get('sessions/:sessionId/agents/:provider/autocomplete')
   getAutocompleteItems(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
   ) {
-    return this.registry
-      .getProvider(provider)
-      .getAutocompleteItems(Number(sessionId));
+    return this.registry.getProvider(provider).getAutocompleteItems(sessionId);
   }
 
   @Get('sessions/:sessionId/agents/:provider/mcp')
   getMcpSnapshot(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Query('forceRefresh') forceRefresh?: string,
   ) {
     return this.registry
-      .getProvider(provider)
+      .getProviderFeature(provider, 'getMcpSnapshot')
       .getMcpSnapshot(
-        Number(sessionId),
+        sessionId,
         forceRefresh === '1' || forceRefresh === 'true',
       );
   }
 
   @Post('sessions/:sessionId/agents/:provider/model')
   setSelectedModel(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Body() body: { model?: string | null },
   ) {
     return this.registry
       .getProvider(provider)
-      .setSelectedModel(Number(sessionId), body.model ?? null);
+      .setSelectedModel(sessionId, body.model ?? null);
   }
 
   @Post('sessions/:sessionId/agents/:provider/permission-mode')
   setPermissionMode(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Body() body: { mode?: string | null },
   ) {
     return this.registry
-      .getProvider(provider)
+      .getProviderFeature(provider, 'setPermissionMode')
       .setPermissionMode(
-        Number(sessionId),
+        sessionId,
         (body.mode ?? null) as AgentPermissionMode | null,
       );
   }
 
   @Post('sessions/:sessionId/agents/:provider/mcp/:serverName/toggle')
   toggleMcpServer(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Param('serverName') serverName: string,
   ) {
     return this.registry
-      .getProvider(provider)
-      .toggleMcpServer(Number(sessionId), decodeURIComponent(serverName));
+      .getProviderFeature(provider, 'toggleMcpServer')
+      .toggleMcpServer(sessionId, serverName);
   }
 
   @Post('sessions/:sessionId/agents/:provider/mcp/:serverName/recheck')
   recheckMcpServer(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Param('serverName') serverName: string,
   ) {
     return this.registry
-      .getProvider(provider)
-      .recheckMcpServer(Number(sessionId), decodeURIComponent(serverName));
+      .getProviderFeature(provider, 'recheckMcpServer')
+      .recheckMcpServer(sessionId, serverName);
   }
 
   @Post('sessions/:sessionId/agents/:provider/mcp/:serverName/auth/start')
   startMcpAuth(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Param('serverName') serverName: string,
   ) {
     return this.registry
-      .getProvider(provider)
-      .startMcpAuth(Number(sessionId), decodeURIComponent(serverName));
+      .getProviderFeature(provider, 'startMcpAuth')
+      .startMcpAuth(sessionId, serverName);
   }
 
   @Post('sessions/:sessionId/agents/:provider/terminal-fallback')
   openTerminalFallback(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
   ) {
     return this.registry
-      .getProvider(provider)
-      .openTerminalFallback(Number(sessionId));
+      .getProviderFeature(provider, 'openTerminalFallback')
+      .openTerminalFallback(sessionId);
   }
 
   @Post('sessions/:sessionId/agents/:provider/rewind-conversation')
   rewindConversation(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Body() body: { messageId?: string },
   ) {
     return this.registry
-      .getProvider(provider)
-      .rewindConversation(Number(sessionId), body.messageId ?? '');
+      .getProviderFeature(provider, 'rewindConversation')
+      .rewindConversation(sessionId, body.messageId ?? '');
   }
 }

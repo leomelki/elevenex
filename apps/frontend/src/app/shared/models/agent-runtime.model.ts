@@ -1,14 +1,5 @@
-import type {
-  ClaudeAutocompleteItem,
-  ClaudeMcpAuthStartResult,
-  ClaudeMcpSnapshot,
-  ClaudeRuntimeEvent,
-  ClaudeRuntimeState,
-  ClaudeSubagentHistoryPayload,
-  ClaudeTranscriptItem,
-} from './claude-runtime.model';
-
 export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
+export type AgentPermissionMode = string;
 
 export interface AgentRuntimeProviderCapabilities {
   mcp: boolean;
@@ -26,13 +17,53 @@ export interface AgentRuntimeProviderInfo {
   capabilities: AgentRuntimeProviderCapabilities;
 }
 
-export type AgentRuntimeState = ClaudeRuntimeState;
-export type AgentRuntimeEvent = ClaudeRuntimeEvent;
-export type AgentTranscriptItem = ClaudeTranscriptItem;
-export type AgentAutocompleteItem = ClaudeAutocompleteItem;
-export type AgentSubagentHistoryPayload = ClaudeSubagentHistoryPayload;
-export type AgentMcpSnapshot = ClaudeMcpSnapshot;
-export type AgentMcpAuthStartResult = ClaudeMcpAuthStartResult;
+export interface AgentRuntimeState {
+  sessionId: number;
+}
+
+export interface AgentRuntimeEvent {
+  type: string;
+  payload: {
+    sessionId: number;
+  };
+}
+
+export type AgentTranscriptItem = unknown;
+
+export interface AgentAutocompleteItem {
+  id: string;
+  kind: string;
+  trigger: string;
+  label: string;
+  insertText: string;
+  description: string;
+  detail?: string;
+  source?: string;
+}
+
+export interface AgentSubagentHistoryPayload {
+  history: AgentTranscriptItem[];
+  transcriptAvailable: boolean;
+}
+
+export interface AgentMcpSnapshot {
+  servers: unknown[];
+  diagnostics: unknown[];
+  summary: {
+    connected: number;
+    needsAuth: number;
+    failed: number;
+    disabled: number;
+    malformed: number;
+    total: number;
+  };
+  lastUpdatedAt: string;
+}
+
+export interface AgentMcpAuthStartResult {
+  authUrl?: string;
+  message?: string;
+}
 
 export type AgentImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 

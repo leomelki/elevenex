@@ -8,7 +8,7 @@ export class ClaudeRuntimeWebsocketService {
   private readonly agentRuntimeWs = inject(AgentRuntimeWebsocketService);
 
   connect(sessionId: number): Observable<ClaudeRuntimeEvent> {
-    return this.agentRuntimeWs.connect(sessionId, 'claude');
+    return this.agentRuntimeWs.connect(sessionId, 'claude') as Observable<ClaudeRuntimeEvent>;
   }
 
   send(sessionId: number, message: Record<string, unknown>): void {

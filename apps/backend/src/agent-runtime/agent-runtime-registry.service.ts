@@ -1,8 +1,14 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { AGENT_RUNTIME_PROVIDERS } from './agent-runtime.tokens.js';
 import type {
   AgentProviderId,
   AgentRuntimeProvider,
+  AgentRuntimeProviderFeatures,
   AgentRuntimeProviderInfo,
 } from './agent-runtime.types.js';
 
@@ -31,5 +37,20 @@ export class AgentRuntimeRegistryService {
       );
     }
     return provider;
+  }
+
+  getProviderFeature<Feature extends keyof AgentRuntimeProviderFeatures>(
+    providerId: AgentProviderId,
+    feature: Feature,
+  ): AgentRuntimeProvider &
+    Required<Pick<AgentRuntimeProviderFeatures, Feature>> {
+    const provider = this.getProvider(providerId);
+    if (typeof provider[feature] !== 'function') {
+      throw new BadRequestException(
+        `Agent provider "${providerId}" does not support ${String(feature)}.`,
+      );
+    }
+    return provider as AgentRuntimeProvider &
+      Required<Pick<AgentRuntimeProviderFeatures, Feature>>;
   }
 }

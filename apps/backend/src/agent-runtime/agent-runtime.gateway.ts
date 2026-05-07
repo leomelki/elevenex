@@ -138,35 +138,39 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           await provider.interrupt(sessionId);
           return;
         case 'approve_permission':
-          await provider.approvePermission(
-            sessionId,
-            action.requestId,
-            action.remember ?? false,
-            action.content,
-          );
+          await this.registry
+            .getProviderFeature(providerId, 'approvePermission')
+            .approvePermission(
+              sessionId,
+              action.requestId,
+              action.remember ?? false,
+              action.content,
+            );
           return;
         case 'deny_permission':
-          await provider.denyPermission(
-            sessionId,
-            action.requestId,
-            action.message,
-          );
+          await this.registry
+            .getProviderFeature(providerId, 'denyPermission')
+            .denyPermission(sessionId, action.requestId, action.message);
           return;
         case 'answer_user_input':
-          await provider.answerUserInput(
-            sessionId,
-            action.requestId,
-            action.action ?? 'accept',
-            action.content as
-              | Record<string, string | number | boolean | string[]>
-              | undefined,
-          );
+          await this.registry
+            .getProviderFeature(providerId, 'answerUserInput')
+            .answerUserInput(
+              sessionId,
+              action.requestId,
+              action.action ?? 'accept',
+              action.content as
+                | Record<string, string | number | boolean | string[]>
+                | undefined,
+            );
           return;
         case 'cancel_pending_prompt':
           await provider.cancelPendingPrompt(sessionId, action.id);
           return;
         case 'open_terminal_fallback':
-          await provider.openTerminalFallback(sessionId);
+          await this.registry
+            .getProviderFeature(providerId, 'openTerminalFallback')
+            .openTerminalFallback(sessionId);
           return;
       }
     } catch (error) {

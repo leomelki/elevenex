@@ -1,18 +1,12 @@
 import { EventEmitter } from 'events';
-import type {
-  ClaudeAutocompleteItem,
-  ClaudeImageInput,
-  ClaudeMcpAuthStartResult,
-  ClaudeMcpSnapshot,
-  ClaudePermissionMode,
-  ClaudeRuntimeEvent,
-  ClaudeRuntimeStatePayload,
-  ClaudeSessionSnapshotPayload,
-  ClaudeSubagentHistoryPayload,
-  ClaudeTranscriptItem,
-} from '../claude-runtime/claude-runtime.types.js';
 
 export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
+export type AgentPermissionMode = string;
+export type AgentImageMediaType =
+  | 'image/png'
+  | 'image/jpeg'
+  | 'image/gif'
+  | 'image/webp';
 
 export interface AgentRuntimeProviderCapabilities {
   mcp: boolean;
@@ -30,29 +24,91 @@ export interface AgentRuntimeProviderInfo {
   capabilities: AgentRuntimeProviderCapabilities;
 }
 
-export type AgentRuntimeStatePayload = ClaudeRuntimeStatePayload;
-export type AgentSessionSnapshotPayload = ClaudeSessionSnapshotPayload;
-export type AgentTranscriptItem = ClaudeTranscriptItem;
-export type AgentAutocompleteItem = ClaudeAutocompleteItem;
-export type AgentRuntimeEvent = ClaudeRuntimeEvent;
-export type AgentSubagentHistoryPayload = ClaudeSubagentHistoryPayload;
-export type AgentMcpSnapshot = ClaudeMcpSnapshot;
-export type AgentMcpAuthStartResult = ClaudeMcpAuthStartResult;
-export type AgentPermissionMode = ClaudePermissionMode;
-export type AgentImageInput = ClaudeImageInput;
+export interface AgentRuntimeStatePayload {
+  sessionId: number;
+}
 
-export interface AgentRuntimeProvider extends EventEmitter {
+export interface AgentSessionSnapshotPayload extends AgentRuntimeStatePayload {
+  history: AgentTranscriptItem[];
+}
+
+export type AgentTranscriptItem = unknown;
+
+export interface AgentAutocompleteItem {
+  id: string;
+  kind: string;
+  trigger: string;
+  label: string;
+  insertText: string;
+  description: string;
+  detail?: string;
+  source?: string;
+}
+
+export interface AgentRuntimeEvent {
+  type: string;
+  payload: {
+    sessionId: number;
+  };
+}
+
+export interface AgentSubagentHistoryPayload {
+  history: AgentTranscriptItem[];
+  transcriptAvailable: boolean;
+}
+
+export interface AgentMcpSnapshot {
+  servers: unknown[];
+  diagnostics: unknown[];
+  summary: {
+    connected: number;
+    needsAuth: number;
+    failed: number;
+    disabled: number;
+    malformed: number;
+    total: number;
+  };
+  lastUpdatedAt: string;
+}
+
+export interface AgentMcpAuthStartResult {
+  authUrl?: string;
+  message?: string;
+}
+
+export interface AgentImageInput {
+  mediaType: AgentImageMediaType;
+  data: string;
+}
+
+export interface AgentRuntimeProviderBase extends EventEmitter {
   readonly info: AgentRuntimeProviderInfo;
 
   getHistory(sessionId: number): Promise<AgentTranscriptItem[]>;
   getRuntimeState(sessionId: number): Promise<AgentRuntimeStatePayload>;
+  getSnapshot(sessionId: number): Promise<AgentSessionSnapshotPayload>;
+  getAutocompleteItems(sessionId: number): Promise<AgentAutocompleteItem[]>;
+  setSelectedModel(
+    sessionId: number,
+    model: string | null,
+  ): Promise<AgentRuntimeStatePayload>;
+
+  submitPrompt(
+    sessionId: number,
+    prompt: string,
+    titlePrompt?: string,
+    images?: AgentImageInput[],
+  ): Promise<void>;
+  interrupt(sessionId: number): Promise<void>;
+  cancelPendingPrompt(sessionId: number, id: string): Promise<void>;
+  cleanupSession(sessionId: number): Promise<void>;
+}
+
+export interface AgentRuntimeProviderFeatures {
   getSubagentHistory(
     sessionId: number,
     agentId: string,
   ): Promise<AgentSubagentHistoryPayload>;
-  getSnapshot(sessionId: number): Promise<AgentSessionSnapshotPayload>;
-  getAutocompleteItems(sessionId: number): Promise<AgentAutocompleteItem[]>;
-
   getMcpSnapshot(
     sessionId: number,
     forceRefresh?: boolean,
@@ -69,11 +125,6 @@ export interface AgentRuntimeProvider extends EventEmitter {
     sessionId: number,
     serverName: string,
   ): Promise<AgentMcpAuthStartResult>;
-
-  setSelectedModel(
-    sessionId: number,
-    model: string | null,
-  ): Promise<AgentRuntimeStatePayload>;
   setPermissionMode(
     sessionId: number,
     mode: AgentPermissionMode | null,
@@ -84,14 +135,6 @@ export interface AgentRuntimeProvider extends EventEmitter {
     sessionId: number,
     messageId: string,
   ): Promise<AgentTranscriptItem[]>;
-
-  submitPrompt(
-    sessionId: number,
-    prompt: string,
-    titlePrompt?: string,
-    images?: AgentImageInput[],
-  ): Promise<void>;
-  interrupt(sessionId: number): Promise<void>;
   approvePermission(
     sessionId: number,
     requestId: string,
@@ -109,9 +152,10 @@ export interface AgentRuntimeProvider extends EventEmitter {
     action?: 'accept' | 'decline' | 'cancel',
     content?: Record<string, string | number | boolean | string[]>,
   ): Promise<void>;
-  cancelPendingPrompt(sessionId: number, id: string): Promise<void>;
-  cleanupSession(sessionId: number): Promise<void>;
 }
+
+export type AgentRuntimeProvider = AgentRuntimeProviderBase &
+  Partial<AgentRuntimeProviderFeatures>;
 
 export interface AgentRuntimeCleanup {
   cleanupSession(sessionId: number): Promise<void>;
