@@ -55,6 +55,12 @@
     "secure": false,
     "changeOrigin": true
   },
+  "/agent-runtime": {
+    "target": "ws://127.0.0.1:11111",
+    "ws": true,
+    "secure": false,
+    "changeOrigin": true
+  },
   "/backend-logs": {
     "target": "ws://127.0.0.1:11111",
     "ws": true,
