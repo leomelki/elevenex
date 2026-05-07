@@ -16,3 +16,4 @@ apps/backend/src/generated/git-sha.ts
 apps/frontend/src/build-info.ts
 dev
 .DS_Store
+.worktrees/
