@@ -4,39 +4,6 @@
   [class.app-shell--mac]="usesNativeMacControls()"
   [class.app-shell--custom-controls]="shouldShowWindowControls"
 >
-  @if (!isOnboardingRoute() && startupPortForwardPrompt(); as prompt) {
-    <section
-      class="startup-forward-bar"
-      [class.startup-forward-bar--draggable]="shouldEnableWindowChromeInteractions"
-      [class.startup-forward-bar--mac]="usesNativeMacControls()"
-      aria-label="Startup port forwards"
-      (dblclick)="handleTopBarDoubleClick($event)"
-    >
-      <div class="startup-forward-bar__content">
-        <span class="startup-forward-bar__message">
-          {{ prompt.totalCount }} port{{ prompt.totalCount === 1 ? '' : 's' }} configured. Start forwarding?
-        </span>
-        <button
-          class="startup-forward-bar__button startup-forward-bar__button--primary"
-          type="button"
-          [disabled]="prompt.startingIds.length > 0"
-          (click)="startAllStartupForwards()"
-        >
-          <ng-icon name="lucidePlay" size="12" />
-          Start forwarding
-        </button>
-      </div>
-      <button
-        class="startup-forward-bar__close"
-        type="button"
-        aria-label="Dismiss startup forwarding prompt"
-        (click)="dismissStartupPortForwardPrompt()"
-      >
-        <ng-icon name="lucideX" size="14" />
-      </button>
-    </section>
-  }
-
   @if (!isOnboardingRoute() && disconnectedForwardsBanner(); as prompt) {
     <section
       class="startup-forward-bar startup-forward-bar--alert"
@@ -64,6 +31,37 @@
         type="button"
         aria-label="Dismiss disconnected forwarding prompt"
         (click)="dismissDisconnectedForwardsBanner()"
+      >
+        <ng-icon name="lucideX" size="14" />
+      </button>
+    </section>
+  } @else if (!isOnboardingRoute() && startupPortForwardPrompt(); as prompt) {
+    <section
+      class="startup-forward-bar"
+      [class.startup-forward-bar--draggable]="shouldEnableWindowChromeInteractions"
+      [class.startup-forward-bar--mac]="usesNativeMacControls()"
+      aria-label="Startup port forwards"
+      (dblclick)="handleTopBarDoubleClick($event)"
+    >
+      <div class="startup-forward-bar__content">
+        <span class="startup-forward-bar__message">
+          {{ prompt.totalCount }} port{{ prompt.totalCount === 1 ? '' : 's' }} configured. Start forwarding?
+        </span>
+        <button
+          class="startup-forward-bar__button startup-forward-bar__button--primary"
+          type="button"
+          [disabled]="prompt.startingIds.length > 0"
+          (click)="startAllStartupForwards()"
+        >
+          <ng-icon name="lucidePlay" size="12" />
+          Start forwarding
+        </button>
+      </div>
+      <button
+        class="startup-forward-bar__close"
+        type="button"
+        aria-label="Dismiss startup forwarding prompt"
+        (click)="dismissStartupPortForwardPrompt()"
       >
         <ng-icon name="lucideX" size="14" />
       </button>
