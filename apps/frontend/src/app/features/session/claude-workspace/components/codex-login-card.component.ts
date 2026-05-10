@@ -13,13 +13,12 @@ import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  lucideCheck,
   lucideChevronRight,
+  lucideExternalLink,
   lucideKey,
   lucideLoaderCircle,
   lucideLogIn,
   lucideTriangleAlert,
-  lucideX,
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
@@ -36,13 +35,12 @@ type Mode = 'choose' | 'oauth' | 'api_key';
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
-      lucideCheck,
       lucideChevronRight,
+      lucideExternalLink,
       lucideKey,
       lucideLoaderCircle,
       lucideLogIn,
       lucideTriangleAlert,
-      lucideX,
     }),
   ],
   template: `
@@ -111,67 +109,62 @@ type Mode = 'choose' | 'oauth' | 'api_key';
         }
         @case ('oauth') {
           <div class="flex flex-col gap-4">
-            <ol class="flex flex-col gap-3 text-sm">
-              <li class="flex flex-col gap-1.5">
-                <span class="flex items-center gap-2">
-                  <span class="flex h-5 w-5 items-center justify-center rounded-full border border-border text-xs font-semibold">1</span>
-                  Open the verification page
-                </span>
-                @if (authUrl(); as url) {
-                  <div class="flex items-stretch gap-2 pl-7">
-                    <input
-                      z-input
-                      class="flex-1 font-mono text-xs"
-                      readonly
-                      [value]="url"
-                    />
-                    <button
-                      type="button"
-                      z-button
-                      zType="outline"
-                      zSize="sm"
-                      (click)="copyUrl(url)"
-                    >Copy</button>
-                    <button
-                      type="button"
-                      z-button
-                      zType="default"
-                      zSize="sm"
-                      (click)="reopenUrl(url)"
-                    >Open</button>
-                  </div>
-                } @else {
-                  <span class="pl-7 text-xs text-muted-foreground">Waiting for Codex to provide a link…</span>
-                }
-              </li>
-              <li class="flex flex-col gap-1.5">
-                <span class="flex items-center gap-2">
-                  <span class="flex h-5 w-5 items-center justify-center rounded-full border border-border text-xs font-semibold">2</span>
-                  Enter the one-time code
-                </span>
-                @if (userCode(); as code) {
-                  <div class="flex items-center gap-2 pl-7">
-                    <code class="select-all rounded-md border border-border bg-muted px-3 py-2 font-mono text-lg tracking-widest">{{ code }}</code>
-                    <button
-                      type="button"
-                      z-button
-                      zType="outline"
-                      zSize="sm"
-                      (click)="copyCode(code)"
-                    >Copy code</button>
-                  </div>
-                  <span class="pl-7 text-xs text-muted-foreground">Codes expire in 15 minutes.</span>
-                } @else {
-                  <span class="pl-7 text-xs text-muted-foreground">Waiting for Codex to issue a code…</span>
-                }
-              </li>
-            </ol>
+            <div class="flex flex-col gap-2">
+              <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">One-time code</span>
+              @if (userCode(); as code) {
+                <code class="self-start select-all rounded-md border border-border bg-muted px-4 py-2.5 font-mono text-2xl tracking-[0.35em]">{{ code }}</code>
+                <span class="text-xs text-muted-foreground">Expires in 15 minutes. Don't share it.</span>
+              } @else {
+                <div class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
+                  Preparing your one-time code…
+                </div>
+              }
+            </div>
+
+            <button
+              type="button"
+              z-button
+              zType="default"
+              class="justify-between"
+              [disabled]="!authUrl() || !userCode()"
+              (click)="copyAndOpen()"
+            >
+              <span class="flex items-center gap-2">
+                <ng-icon name="lucideExternalLink" size="14" />
+                Copy code &amp; open verification page
+              </span>
+              <ng-icon name="lucideChevronRight" size="14" />
+            </button>
+
+            @if (authUrl(); as url) {
+              <details class="text-xs">
+                <summary class="cursor-pointer text-muted-foreground">Trouble opening? Copy the link manually</summary>
+                <div class="mt-2 flex items-stretch gap-2">
+                  <input
+                    z-input
+                    class="flex-1 font-mono text-xs"
+                    readonly
+                    [value]="url"
+                  />
+                  <button
+                    type="button"
+                    z-button
+                    zType="outline"
+                    zSize="sm"
+                    (click)="copyUrl(url)"
+                  >Copy link</button>
+                </div>
+              </details>
+            }
+
             <div class="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm">
               <ng-icon name="lucideLoaderCircle" size="14" class="shrink-0 animate-spin text-muted-foreground" />
               <span class="text-muted-foreground">
-                Waiting for sign-in to complete… this page updates automatically.
+                Waiting for sign-in to complete — this page updates automatically.
               </span>
             </div>
+
             <div class="flex items-center justify-end gap-2">
               <button
                 type="button"
@@ -257,17 +250,24 @@ export class CodexLoginCardComponent {
     this.localError.set(null);
     this.mode.set('oauth');
     this.busy.set(true);
+    // We deliberately do NOT auto-open the verification page here — the
+    // user needs to see the one-time code on this card before navigating
+    // away. They confirm with the primary CTA below.
     void firstValueFrom(this.api.startLogin({ mode: 'oauth' }, 'codex'))
-      .then((result) => {
-        if (result.authUrl) {
-          this.openVerificationUrl(result.authUrl);
-        }
-      })
       .catch((error) => {
         this.localError.set(extractError(error, 'Could not start Codex login.'));
         this.mode.set('choose');
       })
       .finally(() => this.busy.set(false));
+  }
+
+  copyAndOpen(): void {
+    const url = this.authUrl();
+    const code = this.userCode();
+    if (!url || !code) return;
+    void navigator.clipboard.writeText(code).catch(() => undefined);
+    this.openVerificationUrl(url);
+    toast.success('Code copied. Paste it on the page that just opened.');
   }
 
   submitApiKey(): void {
