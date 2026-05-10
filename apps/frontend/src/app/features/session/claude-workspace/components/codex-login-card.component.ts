@@ -25,6 +25,7 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { AgentAuthStatus } from '@/shared/models/agent-runtime.model';
+import { getElectronExternalLinksApi } from '@/shared/runtime/electron-external-links';
 
 type Mode = 'choose' | 'oauth' | 'api_key';
 
@@ -231,7 +232,6 @@ type Mode = 'choose' | 'oauth' | 'api_key';
 })
 export class CodexLoginCardComponent {
   readonly status = input<AgentAuthStatus | null>(null);
-  readonly openInBrowser = output<string>();
   readonly authenticated = output<void>();
 
   private readonly api = inject(AgentRuntimeApiService);
@@ -260,7 +260,7 @@ export class CodexLoginCardComponent {
     void firstValueFrom(this.api.startLogin({ mode: 'oauth' }, 'codex'))
       .then((result) => {
         if (result.authUrl) {
-          this.openInBrowser.emit(result.authUrl);
+          this.openVerificationUrl(result.authUrl);
         }
       })
       .catch((error) => {
@@ -311,7 +311,19 @@ export class CodexLoginCardComponent {
   }
 
   reopenUrl(url: string): void {
-    this.openInBrowser.emit(url);
+    this.openVerificationUrl(url);
+  }
+
+  private openVerificationUrl(url: string): void {
+    // The codex device-auth flow doesn't need a controlled browser — there's
+    // no localhost callback. Open in the user's real default browser so they
+    // benefit from existing ChatGPT cookies / password manager.
+    const electronApi = getElectronExternalLinksApi();
+    if (electronApi) {
+      void electronApi.open(url);
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 }
 

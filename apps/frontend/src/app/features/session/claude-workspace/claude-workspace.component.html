@@ -3,7 +3,6 @@
     <div class="flex flex-1 items-center justify-center overflow-y-auto px-4">
       <cw-codex-login-card
         [status]="codexAuthStatus()"
-        (openInBrowser)="openInBrowser.emit($event)"
         (authenticated)="onCodexAuthenticated()"
       />
     </div>
