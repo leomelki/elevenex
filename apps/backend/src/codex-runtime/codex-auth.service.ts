@@ -18,13 +18,21 @@ import type {
 } from './codex-runtime.types.js';
 
 const execFile = promisify(execFileCallback);
-const URL_PATTERN = /https?:\/\/[^\s<>"']+/i;
+// Match an http(s) URL — strip trailing punctuation/ANSI separators codex
+// occasionally adds when wrapping its output.
+const URL_PATTERN = /https?:\/\/[^\s<>"']+/i;
+// Device codes are uppercase letters/digits, typically formatted XXXX-XXXXX.
+// Codex prints the code on a line by itself.
+const USER_CODE_PATTERN = /\b([A-Z0-9]{3,6}-[A-Z0-9]{3,6})\b/;
 const LOGIN_URL_TIMEOUT_MS = 15_000;
+// Strip ANSI escape sequences from codex's TTY output.
+const ANSI_PATTERN = /\[[0-9;?]*[ -\/]*[@-~]/g;
 
 interface ActiveLogin {
   mode: CodexLoginMode;
   child: ChildProcess;
   url: string | null;
+  userCode: string | null;
   output: string[];
 }
 
@@ -59,9 +67,11 @@ export class CodexAuthService extends EventEmitter {
     if (active) {
       output.push(
         active.mode === 'oauth'
-          ? active.url
-            ? 'Waiting for browser sign-in…'
-            : 'Starting Codex login…'
+          ? active.url && active.userCode
+            ? `Visit ${active.url} and enter code ${active.userCode}`
+            : active.url
+              ? 'Waiting for browser sign-in…'
+              : 'Starting Codex login…'
           : 'Saving API key…',
       );
     }
@@ -80,6 +90,7 @@ export class CodexAuthService extends EventEmitter {
       authPath: this.authPath,
       loginMode: active?.mode ?? null,
       loginUrl: active?.url ?? null,
+      loginUserCode: active?.userCode ?? null,
       loginError: active ? null : this.lastError,
     };
   }
@@ -134,7 +145,11 @@ export class CodexAuthService extends EventEmitter {
   }
 
   private runOauthLogin(codexBin: string): Promise<CodexLoginStartResult> {
-    const child = spawn(codexBin, ['login'], {
+    // Use the device-auth flow so the OAuth handshake doesn't depend on the
+    // user's browser being able to reach the backend's localhost callback —
+    // this is the only path that works for remote/SSH installs and it also
+    // works locally.
+    const child = spawn(codexBin, ['login', '--device-auth'], {
       env: { ...buildAugmentedEnv(), BROWSER: '/bin/true', DISPLAY: '' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -142,6 +157,7 @@ export class CodexAuthService extends EventEmitter {
       mode: 'oauth',
       child,
       url: null,
+      userCode: null,
       output: [],
     };
     this.active = active;
@@ -151,16 +167,28 @@ export class CodexAuthService extends EventEmitter {
     const onData = (chunk: Buffer): void => {
       const text = chunk.toString('utf-8');
       active.output.push(text);
+      const clean = text.replace(ANSI_PATTERN, '');
+      let changed = false;
       if (!active.url) {
-        const match = text.match(URL_PATTERN);
+        const match = clean.match(URL_PATTERN);
         if (match) {
-          active.url = match[0];
-          this.emitChanged();
+          active.url = match[0].replace(/[.,;:)\]>]+$/, '');
+          changed = true;
         }
       }
+      if (!active.userCode) {
+        const match = clean.match(USER_CODE_PATTERN);
+        if (match) {
+          active.userCode = match[1];
+          changed = true;
+        }
+      }
+      if (changed) {
+        this.emitChanged();
+      }
     };
-    child.stdout.on('data', onData);
-    child.stderr.on('data', onData);
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
 
     child.once('error', (error) => {
       this.logger.error(`codex login failed to spawn: ${String(error)}`);
@@ -173,7 +201,7 @@ export class CodexAuthService extends EventEmitter {
 
     child.once('exit', (code) => {
       const wasActive = this.active === active;
-      const combined = active.output.join('').trim();
+      const combined = active.output.join('').replace(ANSI_PATTERN, '').trim();
       if (code === 0) {
         this.lastError = null;
       } else if (code !== null) {
@@ -187,9 +215,10 @@ export class CodexAuthService extends EventEmitter {
     });
 
     return new Promise<CodexLoginStartResult>((resolve, reject) => {
+      const ready = (): boolean => Boolean(active.url && active.userCode);
       const timer = setTimeout(() => {
         cleanup();
-        if (active.url) {
+        if (ready()) {
           resolve(this.toStartResult(active));
         } else {
           try {
@@ -199,32 +228,32 @@ export class CodexAuthService extends EventEmitter {
           }
           reject(
             new BadRequestException(
-              'Codex login did not return an authentication URL in time.',
+              'Codex login did not return a verification code in time.',
             ),
           );
         }
       }, LOGIN_URL_TIMEOUT_MS);
 
-      const watchUrl = (): void => {
-        if (active.url) {
+      const watchReady = (): void => {
+        if (ready()) {
           cleanup();
           resolve(this.toStartResult(active));
         }
       };
       const watchExit = (): void => {
         cleanup();
-        if (active.url) {
+        if (ready()) {
           resolve(this.toStartResult(active));
         } else {
           reject(
             new BadRequestException(
-              this.lastError ?? 'codex login exited before producing a URL.',
+              this.lastError ?? 'codex login exited before producing a verification code.',
             ),
           );
         }
       };
 
-      const interval = setInterval(watchUrl, 50);
+      const interval = setInterval(watchReady, 50);
       child.once('exit', watchExit);
       const cleanup = (): void => {
         clearTimeout(timer);
@@ -246,6 +275,7 @@ export class CodexAuthService extends EventEmitter {
       mode: 'api_key',
       child,
       url: null,
+      userCode: null,
       output: [],
     };
     this.active = active;
@@ -255,11 +285,11 @@ export class CodexAuthService extends EventEmitter {
     const onData = (chunk: Buffer): void => {
       active.output.push(chunk.toString('utf-8'));
     };
-    child.stdout.on('data', onData);
-    child.stderr.on('data', onData);
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
 
-    child.stdin.write(`${apiKey}\n`);
-    child.stdin.end();
+    child.stdin?.write(`${apiKey}\n`);
+    child.stdin?.end();
 
     return new Promise<CodexLoginStartResult>((resolve, reject) => {
       child.once('error', (error) => {
@@ -282,6 +312,7 @@ export class CodexAuthService extends EventEmitter {
           resolve({
             mode: 'api_key',
             authUrl: null,
+            userCode: null,
             message: 'OPENAI_API_KEY saved.',
           });
         } else {
@@ -298,9 +329,12 @@ export class CodexAuthService extends EventEmitter {
     return {
       mode: active.mode,
       authUrl: active.url,
+      userCode: active.userCode,
       message:
         active.mode === 'oauth'
-          ? 'Sign in to OpenAI in your browser, then return here.'
+          ? active.userCode
+            ? `Open the link and enter the code ${active.userCode}.`
+            : 'Sign in to OpenAI in your browser, then return here.'
           : 'API key saved.',
     };
   }

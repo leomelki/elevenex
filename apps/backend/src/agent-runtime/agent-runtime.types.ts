@@ -116,6 +116,7 @@ export type AgentLoginMode = 'oauth' | 'api_key';
 export interface AgentLoginStartResult {
   mode: AgentLoginMode;
   authUrl: string | null;
+  userCode: string | null;
   message: string;
 }
 

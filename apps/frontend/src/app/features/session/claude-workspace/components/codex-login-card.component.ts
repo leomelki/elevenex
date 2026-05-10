@@ -79,11 +79,15 @@ type Mode = 'choose' | 'oauth' | 'api_key';
               z-button
               zType="default"
               class="justify-between"
-              [disabled]="status()?.installed === false"
+              [disabled]="status()?.installed === false || busy()"
               (click)="signInWithBrowser()"
             >
               <span class="flex items-center gap-2">
-                <ng-icon name="lucideLogIn" size="14" />
+                @if (busy()) {
+                  <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
+                } @else {
+                  <ng-icon name="lucideLogIn" size="14" />
+                }
                 Sign in with ChatGPT
               </span>
               <ng-icon name="lucideChevronRight" size="14" />
@@ -105,48 +109,68 @@ type Mode = 'choose' | 'oauth' | 'api_key';
           </div>
         }
         @case ('oauth') {
-          <div class="flex flex-col gap-3">
-            <div class="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm">
-              @if (busy()) {
-                <ng-icon name="lucideLoaderCircle" size="14" class="mt-0.5 shrink-0 animate-spin text-muted-foreground" />
-              } @else {
-                <ng-icon name="lucideCheck" size="14" class="mt-0.5 shrink-0 text-success" />
-              }
-              <div class="flex flex-col gap-1">
-                <span class="font-medium">Waiting for browser sign-in…</span>
-                <span class="text-muted-foreground">
-                  Complete the sign-in in your browser, then return here.
-                  We'll detect it automatically.
+          <div class="flex flex-col gap-4">
+            <ol class="flex flex-col gap-3 text-sm">
+              <li class="flex flex-col gap-1.5">
+                <span class="flex items-center gap-2">
+                  <span class="flex h-5 w-5 items-center justify-center rounded-full border border-border text-xs font-semibold">1</span>
+                  Open the verification page
                 </span>
-              </div>
+                @if (authUrl(); as url) {
+                  <div class="flex items-stretch gap-2 pl-7">
+                    <input
+                      z-input
+                      class="flex-1 font-mono text-xs"
+                      readonly
+                      [value]="url"
+                    />
+                    <button
+                      type="button"
+                      z-button
+                      zType="outline"
+                      zSize="sm"
+                      (click)="copyUrl(url)"
+                    >Copy</button>
+                    <button
+                      type="button"
+                      z-button
+                      zType="default"
+                      zSize="sm"
+                      (click)="reopenUrl(url)"
+                    >Open</button>
+                  </div>
+                } @else {
+                  <span class="pl-7 text-xs text-muted-foreground">Waiting for Codex to provide a link…</span>
+                }
+              </li>
+              <li class="flex flex-col gap-1.5">
+                <span class="flex items-center gap-2">
+                  <span class="flex h-5 w-5 items-center justify-center rounded-full border border-border text-xs font-semibold">2</span>
+                  Enter the one-time code
+                </span>
+                @if (userCode(); as code) {
+                  <div class="flex items-center gap-2 pl-7">
+                    <code class="select-all rounded-md border border-border bg-muted px-3 py-2 font-mono text-lg tracking-widest">{{ code }}</code>
+                    <button
+                      type="button"
+                      z-button
+                      zType="outline"
+                      zSize="sm"
+                      (click)="copyCode(code)"
+                    >Copy code</button>
+                  </div>
+                  <span class="pl-7 text-xs text-muted-foreground">Codes expire in 15 minutes.</span>
+                } @else {
+                  <span class="pl-7 text-xs text-muted-foreground">Waiting for Codex to issue a code…</span>
+                }
+              </li>
+            </ol>
+            <div class="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm">
+              <ng-icon name="lucideLoaderCircle" size="14" class="shrink-0 animate-spin text-muted-foreground" />
+              <span class="text-muted-foreground">
+                Waiting for sign-in to complete… this page updates automatically.
+              </span>
             </div>
-            @if (authUrl(); as url) {
-              <div class="flex flex-col gap-1">
-                <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Auth link</span>
-                <div class="flex items-stretch gap-2">
-                  <input
-                    z-input
-                    class="flex-1 font-mono text-xs"
-                    readonly
-                    [value]="url"
-                  />
-                  <button
-                    type="button"
-                    z-button
-                    zType="outline"
-                    zSize="sm"
-                    (click)="copyUrl(url)"
-                  >Copy</button>
-                  <button
-                    type="button"
-                    z-button
-                    zType="default"
-                    zSize="sm"
-                    (click)="reopenUrl(url)"
-                  >Open</button>
-                </div>
-              </div>
-            }
             <div class="flex items-center justify-end gap-2">
               <button
                 type="button"
@@ -218,6 +242,7 @@ export class CodexLoginCardComponent {
   apiKeyDraft = '';
 
   readonly authUrl = computed(() => this.status()?.loginUrl ?? null);
+  readonly userCode = computed(() => this.status()?.loginUserCode ?? null);
   readonly statusError = computed(
     () => this.localError() ?? this.status()?.loginError ?? this.status()?.error ?? null,
   );
@@ -236,9 +261,6 @@ export class CodexLoginCardComponent {
       .then((result) => {
         if (result.authUrl) {
           this.openInBrowser.emit(result.authUrl);
-        }
-        if (result.message) {
-          toast.message(result.message);
         }
       })
       .catch((error) => {
@@ -278,6 +300,13 @@ export class CodexLoginCardComponent {
     void navigator.clipboard.writeText(url).then(
       () => toast.success('Link copied.'),
       () => toast.error('Could not copy the link.'),
+    );
+  }
+
+  copyCode(code: string): void {
+    void navigator.clipboard.writeText(code).then(
+      () => toast.success('Code copied.'),
+      () => toast.error('Could not copy the code.'),
     );
   }
 
