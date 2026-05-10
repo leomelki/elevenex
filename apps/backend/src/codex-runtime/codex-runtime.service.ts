@@ -1100,22 +1100,24 @@ export class CodexRuntimeService extends EventEmitter {
     const handle = (notification: CodexAppServerNotification): void => {
       const params = notification.params as any;
       switch (notification.method) {
-        case 'thread/started': {
-          if (!matchesThread(params)) return;
-          push({
-            type: 'thread.started',
-            thread_id: params?.thread?.id ?? null,
-          });
+        case 'thread/started':
+          // We push our own `thread.started` synchronously after the
+          // thread/start or thread/resume response so handleCodexEvent
+          // (and emitSessionMetadata) runs exactly once. Drop the protocol
+          // notification to avoid a duplicate emit.
           return;
-        }
         case 'turn/started': {
           if (!matchesThread(params)) return;
+          // TurnStartedNotification = { threadId, turn: { id, ... } }
           const run = this.activeRuns.get(sessionId);
-          if (run && params?.turnId) run.turnId = params.turnId as string;
+          const newTurnId = params?.turn?.id;
+          if (run && typeof newTurnId === 'string') {
+            run.turnId = newTurnId;
+          }
           push({ type: 'turn.started' });
           return;
         }
-        case 'thread/tokenUsageUpdated': {
+        case 'thread/tokenUsage/updated': {
           if (!matchesThread(params)) return;
           const last = params?.tokenUsage?.last;
           if (last) {
@@ -1130,17 +1132,25 @@ export class CodexRuntimeService extends EventEmitter {
         }
         case 'turn/completed': {
           if (!matchesThread(params)) return;
-          push({ type: 'turn.completed', usage: lastUsage });
-          endStream = true;
-          wake();
-          return;
-        }
-        case 'turn/failed': {
-          if (!matchesThread(params)) return;
-          push({
-            type: 'turn.failed',
-            error: { message: params?.error?.message ?? 'Codex turn failed' },
-          });
+          // The app-server doesn't have a separate turn/failed method —
+          // failure is communicated via turn.status on this notification.
+          const turnStatus = params?.turn?.status as
+            | 'completed'
+            | 'interrupted'
+            | 'failed'
+            | 'inProgress'
+            | undefined;
+          if (turnStatus === 'failed') {
+            push({
+              type: 'turn.failed',
+              error: {
+                message:
+                  params?.turn?.error?.message ?? 'Codex turn failed',
+              },
+            });
+          } else {
+            push({ type: 'turn.completed', usage: lastUsage });
+          }
           endStream = true;
           wake();
           return;
@@ -1184,10 +1194,34 @@ export class CodexRuntimeService extends EventEmitter {
           return;
         }
         case 'error': {
+          // v2::ErrorNotification has the shape:
+          //   { error: TurnError, willRetry: boolean, threadId, turnId }
           if (params?.threadId && !matchesThread(params)) return;
+          if (params?.willRetry) {
+            // The server will retry the upstream call automatically; don't
+            // terminate the stream — handleCodexEvent's existing logic
+            // doesn't care about retry events here.
+            return;
+          }
           push({
             type: 'error',
-            message: params?.message ?? 'Codex error',
+            message:
+              params?.error?.message ?? params?.message ?? 'Codex error',
+          });
+          endStream = true;
+          wake();
+          return;
+        }
+        case 'elevenex:app-server-down': {
+          // Synthetic notification emitted by CodexAppServerClient.tearDown
+          // when the child process dies. Without this, in-flight turns
+          // would wait forever for notifications that will never arrive.
+          push({
+            type: 'error',
+            message:
+              `Codex app-server terminated: ${
+                (params as { message?: unknown })?.message ?? 'unknown reason'
+              }`,
           });
           endStream = true;
           wake();
@@ -1229,24 +1263,52 @@ export class CodexRuntimeService extends EventEmitter {
         sandbox: sandboxMap[permissionOptions.sandboxMode],
         approvalPolicy: approvalMap[permissionOptions.approvalPolicy],
       };
-      if (threadIdFilter) {
-        await this.appServer.request('thread/resume', {
-          threadId: threadIdFilter,
-          excludeTurns: true,
-          ...commonThreadParams,
-        });
-      } else {
+
+      const startFreshThread = async (): Promise<string> => {
         const response = (await this.appServer.request('thread/start', {
           ...commonThreadParams,
         })) as { thread?: { id?: string } };
-        threadIdFilter = response?.thread?.id ?? null;
-        if (threadIdFilter) {
-          // Surface immediately so handleCodexEvent persists the codex session id.
-          push({ type: 'thread.started', thread_id: threadIdFilter });
-        } else {
+        const newId = response?.thread?.id ?? null;
+        if (!newId) {
           throw new Error('codex app-server thread/start did not return an id');
         }
+        return newId;
+      };
+
+      if (threadIdFilter) {
+        try {
+          await this.appServer.request('thread/resume', {
+            threadId: threadIdFilter,
+            excludeTurns: true,
+            ...commonThreadParams,
+          });
+          // thread/resume does NOT emit a thread/started notification
+          // (unlike thread/start) — emit our own so handleCodexEvent runs
+          // emitSessionMetadata and the frontend sees a populated header.
+          push({ type: 'thread.started', thread_id: threadIdFilter });
+        } catch (error) {
+          // The stored thread id may be stale (~/.codex/sessions wiped, or
+          // a different machine). Fall back to a fresh thread rather than
+          // permanently wedging the session.
+          this.logger.warn(
+            `thread/resume failed for ${threadIdFilter}, starting fresh thread: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          state.codexSessionId = null;
+          threadIdFilter = await startFreshThread();
+          push({ type: 'thread.started', thread_id: threadIdFilter });
+        }
+      } else {
+        threadIdFilter = await startFreshThread();
+        push({ type: 'thread.started', thread_id: threadIdFilter });
       }
+
+      // Keep the active-run record's threadId aligned with whatever the
+      // server ended up loading, so a subsequent interrupt() targets the
+      // right thread.
+      const activeRun = this.activeRuns.get(sessionId);
+      if (activeRun) activeRun.threadId = threadIdFilter;
 
       // Now start the turn.
       await this.appServer.request('turn/start', {

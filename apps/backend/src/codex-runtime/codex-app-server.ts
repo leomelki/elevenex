@@ -92,16 +92,51 @@ export class CodexAppServerClient implements OnModuleDestroy {
     };
   }
 
+  /**
+   * Single-flight ensure-ready: concurrent callers share one spawn+initialize.
+   * On success, subsequent calls short-circuit. On failure or crash,
+   * `initializePromise` is cleared so the next caller can respawn cleanly.
+   */
   async ensureReady(): Promise<void> {
-    if (this.child && !this.child.killed && this.initializePromise) {
-      await this.initializePromise;
-      return;
+    if (this.initializePromise) {
+      return this.initializePromise;
     }
-    this.spawnServer();
-    if (!this.initializePromise) {
-      throw new Error('codex app-server failed to start');
+    this.initializePromise = this.spawnAndInitialize().catch((error) => {
+      // Allow the next caller to retry rather than locking in the failure.
+      if (this.initializePromise) this.initializePromise = null;
+      throw error;
+    });
+    return this.initializePromise;
+  }
+
+  private async spawnAndInitialize(): Promise<void> {
+    if (this.shuttingDown) {
+      throw new Error('codex app-server client is shutting down');
     }
-    await this.initializePromise;
+    this.spawnChild();
+    try {
+      await this.sendRequest<unknown>(
+        'initialize',
+        {
+          clientInfo: CLIENT_INFO,
+          capabilities: { experimentalApi: true },
+        },
+        INITIALIZE_TIMEOUT_MS,
+      );
+      // Required follow-up per protocol; surface a clearer error on EPIPE.
+      try {
+        this.notify('initialized', {});
+      } catch (error) {
+        throw new Error(
+          `codex app-server died during initialization handshake: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    } catch (error) {
+      this.tearDown(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
   }
 
   async request<T = unknown>(
@@ -153,10 +188,7 @@ export class CodexAppServerClient implements OnModuleDestroy {
     });
   }
 
-  private spawnServer(): void {
-    if (this.shuttingDown) {
-      throw new Error('codex app-server client is shutting down');
-    }
+  private spawnChild(): void {
     const codexBin = findBinary('codex') ?? 'codex';
     this.logger.log(`Spawning codex app-server (${codexBin})`);
     const child = spawn(codexBin, ['app-server', '--listen', 'stdio://'], {
@@ -168,17 +200,32 @@ export class CodexAppServerClient implements OnModuleDestroy {
     const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
     rl.on('line', (line) => this.handleLine(line));
 
+    // stdin can EPIPE/error if the child dies mid-write; swallow it here so
+    // it doesn't become an unhandled "error" event that crashes the backend.
+    // The actual failure surfaces via the request timeout and the exit
+    // handler below.
+    child.stdin?.on('error', (error) => {
+      this.logger.debug(`stdin error: ${String(error)}`);
+    });
+    child.stdout?.on('error', (error) => {
+      this.logger.debug(`stdout error: ${String(error)}`);
+    });
+
     child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString('utf-8').trim();
       if (text) this.logger.debug(`stderr: ${text}`);
     });
 
     child.once('error', (error) => {
+      // Only tear down if this is still the active child — a stale handler
+      // from a previously-killed instance shouldn't disrupt the new one.
+      if (this.child !== child) return;
       this.logger.error(`codex app-server spawn error: ${String(error)}`);
       this.tearDown(error);
     });
 
     child.once('exit', (code, signal) => {
+      if (this.child !== child) return;
       this.logger.log(`codex app-server exited (code=${code} signal=${signal})`);
       this.tearDown(
         new Error(
@@ -188,28 +235,6 @@ export class CodexAppServerClient implements OnModuleDestroy {
         ),
       );
     });
-
-    // Send the initialize handshake. Failure here propagates to ensureReady().
-    this.initializePromise = this.sendRequest<unknown>(
-      'initialize',
-      {
-        clientInfo: CLIENT_INFO,
-        capabilities: {
-          experimentalApi: true,
-        },
-      },
-      INITIALIZE_TIMEOUT_MS,
-    )
-      .then(() => {
-        // Required follow-up per protocol: notify "initialized".
-        this.notify('initialized', {});
-      })
-      .catch((error) => {
-        // Re-throw so callers waiting on ensureReady see the failure, but
-        // also tear the child down so the next caller spawns fresh.
-        this.tearDown(error instanceof Error ? error : new Error(String(error)));
-        throw error;
-      });
   }
 
   private handleLine(line: string): void {
@@ -269,6 +294,21 @@ export class CodexAppServerClient implements OnModuleDestroy {
       );
     }
     this.pending.clear();
+    // Fan-out a synthetic notification so any in-flight notification
+    // consumers (e.g. an active turn waiting on streaming events) can
+    // unwind cleanly rather than waiting forever for events that will
+    // never arrive.
+    const downNotification: CodexAppServerNotification = {
+      method: 'elevenex:app-server-down',
+      params: { message: error.message },
+    };
+    for (const listener of this.notificationListeners) {
+      try {
+        listener(downNotification);
+      } catch {
+        // ignore
+      }
+    }
     if (child && !child.killed) {
       try {
         child.kill('SIGKILL');
