@@ -1565,7 +1565,13 @@ const importCodexSdk = new Function(
 function normalizeStatus(value: unknown): 'in_progress' | 'completed' | 'failed' {
   if (value === 'completed') return 'completed';
   if (value === 'failed') return 'failed';
-  // App-server uses camelCase 'inProgress'; SDK uses 'in_progress'. Accept
-  // both and any unknown value falls back to in_progress for safety.
+  // App-server's CommandExecution / PatchApply statuses also have "declined"
+  // (user denied a tool call) — map to 'failed' since the item is done
+  // and didn't succeed; otherwise the frontend would render it as in-progress
+  // forever.
+  if (value === 'declined') return 'failed';
+  // App-server uses camelCase 'inProgress'; SDK uses 'in_progress'. Treat
+  // anything else as in-progress for safety while still terminal-by-default
+  // on completion/failure.
   return 'in_progress';
 }
