@@ -42,6 +42,11 @@ export class CodexAuthService extends EventEmitter {
   private readonly authPath = join(homedir(), '.codex', 'auth.json');
   private active: ActiveLogin | null = null;
   private lastError: string | null = null;
+  // The Codex binary version is fixed for the lifetime of the install — caching
+  // it avoids spawning `codex --version` on every getStatus() call, which was
+  // ~100-500ms of process-spawn overhead per check (and getStatus is polled).
+  private versionCache: { value: string | null; expiresAt: number } | null = null;
+  private versionInFlight: Promise<string | null> | null = null;
 
   async getStatus(): Promise<CodexAuthStatus> {
     const [version, authFile] = await Promise.all([
@@ -369,16 +374,37 @@ export class CodexAuthService extends EventEmitter {
   }
 
   private async readVersion(): Promise<string | null> {
-    const codexBin = findBinary('codex') ?? 'codex';
+    const now = Date.now();
+    const cached = this.versionCache;
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+    if (this.versionInFlight) {
+      return this.versionInFlight;
+    }
+    const inflight = (async () => {
+      const codexBin = findBinary('codex') ?? 'codex';
+      try {
+        const { stdout } = await execFile(codexBin, ['--version'], {
+          encoding: 'utf-8',
+          env: buildAugmentedEnv(),
+          timeout: 5000,
+        });
+        return stdout.trim() || null;
+      } catch {
+        return null;
+      }
+    })();
+    this.versionInFlight = inflight;
     try {
-      const { stdout } = await execFile(codexBin, ['--version'], {
-        encoding: 'utf-8',
-        env: buildAugmentedEnv(),
-        timeout: 5000,
-      });
-      return stdout.trim() || null;
-    } catch {
-      return null;
+      const value = await inflight;
+      // Successful reads cache for an hour; failed reads (binary missing or
+      // PATH not yet warm) cache for only 10s so retries aren't blocked.
+      const ttlMs = value ? 60 * 60 * 1000 : 10 * 1000;
+      this.versionCache = { value, expiresAt: Date.now() + ttlMs };
+      return value;
+    } finally {
+      this.versionInFlight = null;
     }
   }
 

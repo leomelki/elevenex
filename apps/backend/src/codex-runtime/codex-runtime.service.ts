@@ -118,6 +118,9 @@ export class CodexRuntimeService extends EventEmitter {
   private codexDefaultModel = DEFAULT_CODEX_MODEL;
   private lastModelRefreshAt = 0;
   private modelRefreshInFlight: Promise<void> | null = null;
+  // Cache the dynamic SDK import so the first prompt doesn't pay the cold-import cost.
+  // Started eagerly in the constructor; awaited (or already resolved) when submitPrompt runs.
+  private sdkModulePromise: Promise<CodexSdkModule> | null = null;
 
   constructor(
     private readonly sessionsService: SessionsService,
@@ -125,6 +128,20 @@ export class CodexRuntimeService extends EventEmitter {
     private readonly historyService: CodexHistoryService,
   ) {
     super();
+    // Warm the SDK import in the background — saves ~50-200ms on first prompt.
+    this.sdkModulePromise = importCodexSdk('@openai/codex-sdk').catch((error) => {
+      this.logger.debug(`Eager codex-sdk import failed: ${String(error)}`);
+      // Reset so submitPrompt can retry the import lazily on first use.
+      this.sdkModulePromise = null;
+      throw error;
+    });
+  }
+
+  private loadCodexSdk(): Promise<CodexSdkModule> {
+    if (!this.sdkModulePromise) {
+      this.sdkModulePromise = importCodexSdk('@openai/codex-sdk');
+    }
+    return this.sdkModulePromise;
   }
 
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
@@ -219,8 +236,16 @@ export class CodexRuntimeService extends EventEmitter {
     state.canInterrupt = true;
     state.lastError = null;
     state.liveItems = [];
-    await this.sessionsService.updateStatus(sessionId, 'active');
-    await this.refreshAuthStatus(state);
+    // Both the DB status write and the auth refresh are not on the critical
+    // path for streaming the first token — fire them off in the background.
+    // The auth refresh spawns `codex --version` (process spawn ~100-500ms),
+    // which is the single biggest contributor to per-prompt latency.
+    void this.sessionsService
+      .updateStatus(sessionId, 'active')
+      .catch((error) =>
+        this.logger.warn(`Failed to mark session ${sessionId} active: ${String(error)}`),
+      );
+    void this.refreshAuthStatus(state).catch(() => undefined);
     this.emitRunState(sessionId);
 
     const abortController = new AbortController();
@@ -239,7 +264,7 @@ export class CodexRuntimeService extends EventEmitter {
 
     let stagedImageDir: string | null = null;
     try {
-      const { Codex } = await importCodexSdk('@openai/codex-sdk');
+      const { Codex } = await this.loadCodexSdk();
       const codex = new Codex({
         env: this.toStringEnv(buildAugmentedEnv(process.env, session.worktreePath)),
       });
@@ -276,7 +301,10 @@ export class CodexRuntimeService extends EventEmitter {
         if (run?.interruptRequested) {
           break;
         }
-        await this.handleCodexEvent(sessionId, state, event, session.worktreePath);
+        // Synchronous event handler — no awaits on the hot path. The one
+        // historically-async branch (persisting the codex session id) is now
+        // fire-and-forget so it can't stall delta delivery.
+        this.handleCodexEvent(sessionId, state, event, session.worktreePath);
       }
       this.finishRun(sessionId);
     } catch (error) {
@@ -342,14 +370,16 @@ export class CodexRuntimeService extends EventEmitter {
     this.runtimeStates.delete(sessionId);
   }
 
-  private async handleCodexEvent(
+  private handleCodexEvent(
     sessionId: number,
     state: CodexRuntimeState,
     event: ThreadEvent,
     cwd: string,
-  ): Promise<void> {
+  ): void {
     if (event.type === 'thread.started') {
-      await this.captureCodexSessionId(sessionId, state, event.thread_id);
+      // captureCodexSessionId persists the id to the DB; we don't want to
+      // hold up event streaming for it, so fire-and-forget.
+      void this.captureCodexSessionId(sessionId, state, event.thread_id);
       this.emitSessionMetadata(sessionId, state, cwd);
       return;
     }
@@ -573,11 +603,13 @@ export class CodexRuntimeService extends EventEmitter {
       return;
     }
     state.codexSessionId = codexSessionId;
-    await this.sessionsService.updateCodexSessionId(sessionId, codexSessionId);
+    // Emit the session-created event immediately so the frontend can render
+    // the thread id without waiting on the DB round-trip.
     this.emitEvent({
       type: 'session_created',
       payload: { sessionId, claudeSessionId: codexSessionId },
     });
+    await this.sessionsService.updateCodexSessionId(sessionId, codexSessionId);
   }
 
   private emitSessionMetadata(
