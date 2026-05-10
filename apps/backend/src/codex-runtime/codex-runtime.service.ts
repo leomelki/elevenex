@@ -22,6 +22,10 @@ import type {
   ClaudeTranscriptItem,
 } from '../claude-runtime/claude-runtime.types.js';
 import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import {
+  CodexAppServerClient,
+  CodexAppServerNotification,
+} from './codex-app-server.js';
 import { CodexAuthService } from './codex-auth.service.js';
 import { CodexHistoryService } from './codex-history.service.js';
 import type {
@@ -118,30 +122,13 @@ export class CodexRuntimeService extends EventEmitter {
   private codexDefaultModel = DEFAULT_CODEX_MODEL;
   private lastModelRefreshAt = 0;
   private modelRefreshInFlight: Promise<void> | null = null;
-  // Cache the dynamic SDK import so the first prompt doesn't pay the cold-import cost.
-  // Started eagerly in the constructor; awaited (or already resolved) when submitPrompt runs.
-  private sdkModulePromise: Promise<CodexSdkModule> | null = null;
-
   constructor(
     private readonly sessionsService: SessionsService,
     private readonly authService: CodexAuthService,
     private readonly historyService: CodexHistoryService,
+    private readonly appServer: CodexAppServerClient,
   ) {
     super();
-    // Warm the SDK import in the background — saves ~50-200ms on first prompt.
-    this.sdkModulePromise = importCodexSdk('@openai/codex-sdk').catch((error) => {
-      this.logger.debug(`Eager codex-sdk import failed: ${String(error)}`);
-      // Reset so submitPrompt can retry the import lazily on first use.
-      this.sdkModulePromise = null;
-      throw error;
-    });
-  }
-
-  private loadCodexSdk(): Promise<CodexSdkModule> {
-    if (!this.sdkModulePromise) {
-      this.sdkModulePromise = importCodexSdk('@openai/codex-sdk');
-    }
-    return this.sdkModulePromise;
   }
 
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
@@ -265,6 +252,7 @@ export class CodexRuntimeService extends EventEmitter {
     });
     this.activeRuns.set(sessionId, {
       threadId: state.codexSessionId,
+      turnId: null,
       abortController,
       interruptRequested: false,
       completionPromise,
@@ -274,36 +262,26 @@ export class CodexRuntimeService extends EventEmitter {
 
     let stagedImageDir: string | null = null;
     try {
-      const { Codex } = await this.loadCodexSdk();
-      const codex = new Codex({
-        env: this.toStringEnv(buildAugmentedEnv(process.env, worktreePath)),
-      });
-      const permissionOptions = this.mapPermissionMode(state.selectedPermissionMode);
-      const threadOptions = {
-        workingDirectory: worktreePath,
-        skipGitRepoCheck: true,
-        model: state.selectedModel ?? this.codexDefaultModel,
-        sandboxMode: permissionOptions.sandboxMode,
-        approvalPolicy: permissionOptions.approvalPolicy,
-      };
-      const thread =
-        state.codexSessionId && state.codexSessionId !== '-1'
-          ? codex.resumeThread(state.codexSessionId, threadOptions)
-          : codex.startThread(threadOptions);
-      const input = trimmedPrompt && !validatedImages.length
-        ? trimmedPrompt
-        : await this.buildCodexInput(trimmedPrompt, validatedImages).then((result) => {
-            stagedImageDir = result.tempDir;
-            return result.input;
-          });
-      const streamedTurn = await thread.runStreamed(
-        this.applyPlanModeInstruction(input, state.selectedPermissionMode),
-        {
-          signal: abortController.signal,
-        },
-      );
+      const built = await this.buildCodexInput(trimmedPrompt, validatedImages);
+      stagedImageDir = built.tempDir;
+      const turnInput: Array<{ type: 'text'; text: string } | { type: 'localImage'; path: string }> =
+        built.input.map((entry) =>
+          entry.type === 'text'
+            ? { type: 'text' as const, text: entry.text }
+            : { type: 'localImage' as const, path: entry.path },
+        );
+      const planInstruction = this.maybePlanModeInstruction(state.selectedPermissionMode);
+      if (planInstruction) {
+        turnInput.unshift({ type: 'text', text: planInstruction });
+      }
 
-      for await (const event of streamedTurn.events) {
+      for await (const event of this.runTurnOnAppServer(
+        sessionId,
+        state,
+        worktreePath,
+        turnInput,
+        abortController.signal,
+      )) {
         if (this.invalidatedSessions.has(sessionId)) {
           break;
         }
@@ -359,6 +337,21 @@ export class CodexRuntimeService extends EventEmitter {
       return;
     }
     run.interruptRequested = true;
+    // Tell the app-server to cancel the in-flight turn so it stops producing
+    // model output; the abort signal also closes the local notification loop.
+    if (run.threadId && run.turnId) {
+      try {
+        await this.appServer.request(
+          'turn/interrupt',
+          { threadId: run.threadId, turnId: run.turnId },
+          5_000,
+        );
+      } catch (error) {
+        this.logger.debug(
+          `turn/interrupt failed for session ${sessionId}: ${String(error)}`,
+        );
+      }
+    }
     run.abortController.abort();
     await run.completionPromise.catch(() => undefined);
     if (this.activeRuns.get(sessionId) === run) {
@@ -1036,6 +1029,357 @@ export class CodexRuntimeService extends EventEmitter {
     };
   }
 
+  /**
+   * Drives a single turn against the long-lived `codex app-server`.
+   *
+   * Yields events shaped like the legacy `@openai/codex-sdk` ThreadEvent
+   * stream so the existing handleCodexEvent() / handleItemEvent() logic and
+   * its tests keep working unchanged. The mapping:
+   *
+   *   thread/started               → thread.started
+   *   turn/started                 → turn.started
+   *   turn/completed               → turn.completed (usage assembled from
+   *                                  the most recent thread/tokenUsageUpdated)
+   *   item/started + completed     → item.started + item.completed, with
+   *                                  the v2 ThreadItem normalized to the v1
+   *                                  snake_case shape
+   *   item/agentMessage/delta      → item.updated (accumulated text so the
+   *                                  diffing in upsertLiveItem keeps working)
+   *
+   * Lifecycle: addRef() so the server stays alive while at least one turn
+   * is running, release() in finally.
+   */
+  private async *runTurnOnAppServer(
+    sessionId: number,
+    state: CodexRuntimeState,
+    worktreePath: string,
+    input: Array<{ type: 'text'; text: string } | { type: 'localImage'; path: string }>,
+    signal: AbortSignal,
+  ): AsyncGenerator<ThreadEvent> {
+    this.appServer.addRef();
+    const queue: ThreadEvent[] = [];
+    let waker: (() => void) | null = null;
+    const wake = (): void => {
+      if (waker) {
+        const fn = waker;
+        waker = null;
+        fn();
+      }
+    };
+    const push = (event: ThreadEvent): void => {
+      queue.push(event);
+      wake();
+    };
+    // Accumulated agent_message / reasoning text per item id so we can emit
+    // SDK-style `item.updated` deltas from the app-server's delta notifications.
+    const messageText = new Map<string, string>();
+    const reasoningText = new Map<string, string>();
+    let lastUsage: Usage = {
+      input_tokens: 0,
+      cached_input_tokens: 0,
+      output_tokens: 0,
+      reasoning_output_tokens: 0,
+    };
+    let threadIdFilter: string | null =
+      state.codexSessionId && state.codexSessionId !== '-1'
+        ? state.codexSessionId
+        : null;
+    let endStream = false;
+
+    const matchesThread = (params: any): boolean => {
+      // Drop notifications until we positively know our thread id (set from
+      // the thread/start or thread/resume response). With multiple sessions
+      // sharing one app-server we otherwise risk cross-pollinating events
+      // between concurrent thread starts.
+      if (!threadIdFilter) return false;
+      const id = params?.threadId ?? params?.thread?.id ?? null;
+      if (!id) return false;
+      return id === threadIdFilter;
+    };
+
+    const handle = (notification: CodexAppServerNotification): void => {
+      const params = notification.params as any;
+      switch (notification.method) {
+        case 'thread/started': {
+          if (!matchesThread(params)) return;
+          push({
+            type: 'thread.started',
+            thread_id: params?.thread?.id ?? null,
+          });
+          return;
+        }
+        case 'turn/started': {
+          if (!matchesThread(params)) return;
+          const run = this.activeRuns.get(sessionId);
+          if (run && params?.turnId) run.turnId = params.turnId as string;
+          push({ type: 'turn.started' });
+          return;
+        }
+        case 'thread/tokenUsageUpdated': {
+          if (!matchesThread(params)) return;
+          const last = params?.tokenUsage?.last;
+          if (last) {
+            lastUsage = {
+              input_tokens: Number(last.inputTokens ?? 0),
+              cached_input_tokens: Number(last.cachedInputTokens ?? 0),
+              output_tokens: Number(last.outputTokens ?? 0),
+              reasoning_output_tokens: Number(last.reasoningOutputTokens ?? 0),
+            };
+          }
+          return;
+        }
+        case 'turn/completed': {
+          if (!matchesThread(params)) return;
+          push({ type: 'turn.completed', usage: lastUsage });
+          endStream = true;
+          wake();
+          return;
+        }
+        case 'turn/failed': {
+          if (!matchesThread(params)) return;
+          push({
+            type: 'turn.failed',
+            error: { message: params?.error?.message ?? 'Codex turn failed' },
+          });
+          endStream = true;
+          wake();
+          return;
+        }
+        case 'item/started': {
+          if (!matchesThread(params)) return;
+          const item = this.translateAppServerItem(
+            params?.item,
+            messageText,
+            reasoningText,
+          );
+          if (item) push({ type: 'item.started', item });
+          return;
+        }
+        case 'item/completed': {
+          if (!matchesThread(params)) return;
+          const item = this.translateAppServerItem(
+            params?.item,
+            messageText,
+            reasoningText,
+            { isFinal: true },
+          );
+          if (item) push({ type: 'item.completed', item });
+          return;
+        }
+        case 'item/agentMessage/delta': {
+          if (!matchesThread(params)) return;
+          const id = params?.itemId;
+          const delta = params?.delta;
+          if (typeof id !== 'string' || typeof delta !== 'string') return;
+          const next = (messageText.get(id) ?? '') + delta;
+          messageText.set(id, next);
+          push({
+            type: 'item.updated',
+            item: {
+              id,
+              type: 'agent_message',
+              text: next,
+            } as ThreadItem,
+          });
+          return;
+        }
+        case 'error': {
+          if (params?.threadId && !matchesThread(params)) return;
+          push({
+            type: 'error',
+            message: params?.message ?? 'Codex error',
+          });
+          endStream = true;
+          wake();
+          return;
+        }
+        default:
+          return;
+      }
+    };
+
+    const unsubscribe = this.appServer.onNotification(handle);
+    const onAbort = (): void => {
+      endStream = true;
+      wake();
+    };
+    signal.addEventListener('abort', onAbort);
+
+    try {
+      await this.appServer.ensureReady();
+      const permissionOptions = this.mapPermissionMode(state.selectedPermissionMode);
+      const sandboxMap: Record<SandboxMode, string> = {
+        'read-only': 'read-only',
+        'workspace-write': 'workspace-write',
+        'danger-full-access': 'danger-full-access',
+      };
+      const approvalMap: Record<ApprovalMode, string> = {
+        untrusted: 'untrusted',
+        'on-failure': 'on-failure',
+        'on-request': 'on-request',
+        never: 'never',
+      };
+
+      // Load or create the thread before dispatching the turn. Calling
+      // thread/resume on an already-loaded thread is idempotent — the server
+      // will just confirm it stays subscribed and emit a fresh thread/started.
+      const commonThreadParams = {
+        cwd: worktreePath,
+        model: state.selectedModel ?? this.codexDefaultModel,
+        sandbox: sandboxMap[permissionOptions.sandboxMode],
+        approvalPolicy: approvalMap[permissionOptions.approvalPolicy],
+      };
+      if (threadIdFilter) {
+        await this.appServer.request('thread/resume', {
+          threadId: threadIdFilter,
+          excludeTurns: true,
+          ...commonThreadParams,
+        });
+      } else {
+        const response = (await this.appServer.request('thread/start', {
+          ...commonThreadParams,
+        })) as { thread?: { id?: string } };
+        threadIdFilter = response?.thread?.id ?? null;
+        if (threadIdFilter) {
+          // Surface immediately so handleCodexEvent persists the codex session id.
+          push({ type: 'thread.started', thread_id: threadIdFilter });
+        } else {
+          throw new Error('codex app-server thread/start did not return an id');
+        }
+      }
+
+      // Now start the turn.
+      await this.appServer.request('turn/start', {
+        threadId: threadIdFilter,
+        input,
+      });
+
+      while (!endStream || queue.length > 0) {
+        if (signal.aborted) return;
+        if (queue.length === 0) {
+          await new Promise<void>((resolve) => {
+            waker = resolve;
+          });
+          continue;
+        }
+        const event = queue.shift()!;
+        yield event;
+        if (
+          event.type === 'turn.completed'
+          || event.type === 'turn.failed'
+          || event.type === 'error'
+        ) {
+          // Drain anything that landed alongside the terminal event,
+          // then return.
+          while (queue.length > 0) {
+            yield queue.shift()!;
+          }
+          return;
+        }
+      }
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      unsubscribe();
+      this.appServer.release();
+    }
+  }
+
+  /**
+   * Maps the v2 ThreadItem (camelCase, app-server) shape into the v1
+   * ThreadItem (snake_case, SDK) shape that handleItemEvent expects. Returns
+   * `null` for items we don't render (userMessage, plan, hook prompt, etc.).
+   */
+  private translateAppServerItem(
+    raw: any,
+    messageText: Map<string, string>,
+    reasoningText: Map<string, string>,
+    opts: { isFinal?: boolean } = {},
+  ): ThreadItem | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const id = typeof raw.id === 'string' ? raw.id : null;
+    if (!id) return null;
+    const status = normalizeStatus(raw.status);
+
+    switch (raw.type) {
+      case 'agentMessage': {
+        const finalText = typeof raw.text === 'string' ? raw.text : '';
+        // On `item/completed` we get the authoritative final text; on
+        // `item/started` text is usually empty. The delta path keeps its
+        // own running buffer so we can replay it for any out-of-order
+        // updates.
+        if (opts.isFinal || finalText) {
+          messageText.set(id, finalText);
+        }
+        return {
+          id,
+          type: 'agent_message',
+          text: opts.isFinal ? finalText : (messageText.get(id) ?? finalText),
+        } as ThreadItem;
+      }
+      case 'reasoning': {
+        const summary = Array.isArray(raw.summary) ? raw.summary.join('\n\n') : '';
+        const content = Array.isArray(raw.content) ? raw.content.join('\n\n') : '';
+        const text = [summary, content].filter(Boolean).join('\n\n');
+        if (opts.isFinal || text) {
+          reasoningText.set(id, text);
+        }
+        return {
+          id,
+          type: 'reasoning',
+          text: opts.isFinal ? text : (reasoningText.get(id) ?? text),
+        } as ThreadItem;
+      }
+      case 'commandExecution':
+        return {
+          id,
+          type: 'command_execution',
+          command: typeof raw.command === 'string' ? raw.command : '',
+          aggregated_output:
+            typeof raw.aggregatedOutput === 'string' ? raw.aggregatedOutput : '',
+          ...(typeof raw.exitCode === 'number' ? { exit_code: raw.exitCode } : {}),
+          status,
+        } as ThreadItem;
+      case 'fileChange':
+        return {
+          id,
+          type: 'file_change',
+          changes: Array.isArray(raw.changes) ? raw.changes : [],
+          status: status === 'in_progress' ? 'completed' : (status as any),
+        } as ThreadItem;
+      case 'mcpToolCall':
+        return {
+          id,
+          type: 'mcp_tool_call',
+          server: typeof raw.server === 'string' ? raw.server : '',
+          tool: typeof raw.tool === 'string' ? raw.tool : '',
+          arguments: raw.arguments ?? {},
+          ...(raw.result ? { result: raw.result } : {}),
+          ...(raw.error ? { error: raw.error } : {}),
+          status,
+        } as ThreadItem;
+      case 'webSearch':
+        return {
+          id,
+          type: 'web_search',
+          query: typeof raw.query === 'string' ? raw.query : '',
+        } as ThreadItem;
+      case 'todoList':
+        return {
+          id,
+          type: 'todo_list',
+          items: Array.isArray(raw.items) ? raw.items : [],
+        } as ThreadItem;
+      case 'error':
+        return {
+          id,
+          type: 'error',
+          message: typeof raw.message === 'string' ? raw.message : 'Codex error',
+        } as ThreadItem;
+      default:
+        return null;
+    }
+  }
+
   private mapPermissionMode(
     mode: CodexPermissionMode | null,
   ): { sandboxMode: SandboxMode; approvalPolicy: ApprovalMode } {
@@ -1065,6 +1409,10 @@ export class CodexRuntimeService extends EventEmitter {
       { type: 'text', text: CODEX_PLAN_MODE_INSTRUCTION },
       ...input,
     ];
+  }
+
+  private maybePlanModeInstruction(mode: CodexPermissionMode | null): string | null {
+    return mode === 'plan' ? CODEX_PLAN_MODE_INSTRUCTION : null;
   }
 
   private toContextUsage(model: string, usage: Usage): ClaudeContextUsage {
@@ -1151,3 +1499,11 @@ const importCodexSdk = new Function(
   'specifier',
   'return import(specifier)',
 ) as (specifier: string) => Promise<CodexSdkModule>;
+
+function normalizeStatus(value: unknown): 'in_progress' | 'completed' | 'failed' {
+  if (value === 'completed') return 'completed';
+  if (value === 'failed') return 'failed';
+  // App-server uses camelCase 'inProgress'; SDK uses 'in_progress'. Accept
+  // both and any unknown value falls back to in_progress for safety.
+  return 'in_progress';
+}
