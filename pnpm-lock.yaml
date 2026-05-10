@@ -28,6 +28,9 @@ importers:
       '@nestjs/websockets':
         specifier: ^11.1.17
         version: 11.1.19(@nestjs/common@11.1.17)(@nestjs/core@11.1.17)(@nestjs/platform-socket.io@11.1.19)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@openai/codex-sdk':
+        specifier: ^0.129.0
+        version: 0.129.0
       better-sqlite3:
         specifier: ^12.8.0
         version: 12.8.0
@@ -55,6 +58,9 @@ importers:
       simple-git:
         specifier: ^3.33.0
         version: 3.33.0
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
       socket.io:
         specifier: ^4.8.3
         version: 4.8.3
@@ -3913,6 +3919,80 @@ packages:
     hasBin: true
     dependencies:
       consola: 3.4.2
+
+  /@openai/codex-sdk@0.129.0:
+    resolution: {integrity: sha512-KL/41uj5UDJW97/CtFU3Z0FtT7/dqcOscMYRUMnNnTGZSXKLZJV0A+a5OmXey8aFO6LR7Q62alnG1L2LkGHSmg==}
+    engines: {node: '>=18'}
+    dependencies:
+      '@openai/codex': 0.129.0
+    dev: false
+
+  /@openai/codex@0.129.0:
+    resolution: {integrity: sha512-8zZlcO4ploUzULJ3xT5qx8eOCL/L7gOrpWXCtr2kP568idZjWhbz3L2WE8BvjBDUF17WMDhjOklCj6DGd1cKfQ==}
+    engines: {node: '>=16'}
+    hasBin: true
+    optionalDependencies:
+      '@openai/codex-darwin-arm64': /@openai/codex@0.129.0-darwin-arm64
+      '@openai/codex-darwin-x64': /@openai/codex@0.129.0-darwin-x64
+      '@openai/codex-linux-arm64': /@openai/codex@0.129.0-linux-arm64
+      '@openai/codex-linux-x64': /@openai/codex@0.129.0-linux-x64
+      '@openai/codex-win32-arm64': /@openai/codex@0.129.0-win32-arm64
+      '@openai/codex-win32-x64': /@openai/codex@0.129.0-win32-x64
+    dev: false
+
+  /@openai/codex@0.129.0-darwin-arm64:
+    resolution: {integrity: sha512-tVFwzbh612oip/yZMeQziMtUWLz08A8ChhS6U/bNZjCKWD11bQvDZjxZJNzhWvmom/gKeXstwoUp9u1S8eCcnA==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [darwin]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /@openai/codex@0.129.0-darwin-x64:
+    resolution: {integrity: sha512-BtGc4ujzxRVIB0DcpiehP7/aQeAGEi0pNd9C98rtIqy1OBMwhOZ3ri/achzP0lxw8LWWFp8sL+hQdTGze6SGwg==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [darwin]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /@openai/codex@0.129.0-linux-arm64:
+    resolution: {integrity: sha512-VnjI4Xla4uwaAqYCekwBm4dlucvaduTdhVr3bqU+6qfG5N9yn1bR7ZS7xMRlaRgS0oIst9fgYyC2niSYPOzuDA==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [linux]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /@openai/codex@0.129.0-linux-x64:
+    resolution: {integrity: sha512-YwkJtcHXeXdI+cfdv7qKGfafwePEEbSCRL5Z++/8djnI+iBj6nIMz4ouhe12yvsMccVqNTtCH8H0QrygHARpNg==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [linux]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /@openai/codex@0.129.0-win32-arm64:
+    resolution: {integrity: sha512-8rwpYBKg/vI3IHZB2ggFmIDz+4slG7mfYTFoQtRw2m2KMS1g1XMOJK9heM80NMiCY3hqmyMN81bOQ7aKAmgFLg==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [win32]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /@openai/codex@0.129.0-win32-x64:
+    resolution: {integrity: sha512-yP59c7O3J8zZ/eyN6HXMeeZ2xksJE8/Xy9kn3qznC7jCN3GEtM7B6Wv4gEY5F/jzik+B+tU71rmkGmqzQjfVVQ==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [win32]
+    requiresBuild: true
+    dev: false
+    optional: true
 
   /@oxc-project/types@0.113.0:
     resolution: {integrity: sha512-Tp3XmgxwNQ9pEN9vxgJBAqdRamHibi76iowQ38O2I4PMpcvNRQNVsU2n1x1nv9yh0XoTrGFzf7cZSGxmixxrhA==}
@@ -11150,6 +11230,11 @@ packages:
     resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
     engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
     dev: true
+
+  /smol-toml@1.6.1:
+    resolution: {integrity: sha512-dWUG8F5sIIARXih1DTaQAX4SsiTXhInKf1buxdY9DIg4ZYPZK5nGM1VRIYmEbDbsHt7USo99xSLFu5Q1IqTmsg==}
+    engines: {node: '>= 18'}
+    dev: false
 
   /socket.io-adapter@2.5.6:
     resolution: {integrity: sha512-DkkO/dz7MGln0dHn5bmN3pPy+JmywNICWrJqVWiVOyvXjWQFIv9c2h24JrQLLFJ2aQVQf/Cvl1vblnd4r2apLQ==}

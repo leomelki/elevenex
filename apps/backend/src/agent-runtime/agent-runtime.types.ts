@@ -76,6 +76,13 @@ export interface AgentMcpAuthStartResult {
   message?: string;
 }
 
+export interface AgentAuthStatus {
+  isAuthenticating: boolean;
+  output: string[];
+  error?: string;
+  [key: string]: unknown;
+}
+
 export interface AgentImageInput {
   mediaType: AgentImageMediaType;
   data: string;
@@ -105,6 +112,7 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
 }
 
 export interface AgentRuntimeProviderFeatures {
+  getAuthStatus(): Promise<AgentAuthStatus>;
   getSubagentHistory(
     sessionId: number,
     agentId: string,

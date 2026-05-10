@@ -31,6 +31,10 @@ import {
   ClaudeRunPhase,
   ClaudeTaskState,
 } from '@/shared/models/claude-runtime.model';
+import {
+  AgentProviderId,
+  AgentRuntimeProviderInfo,
+} from '@/shared/models/agent-runtime.model';
 
 interface PermissionModeOption {
   id: ClaudePermissionMode;
@@ -86,6 +90,30 @@ const PERMISSION_MODES: PermissionModeOption[] = [
         }
         <span>{{ phaseLabel() }}</span>
       </span>
+
+      <span class="cw-sb__sep">·</span>
+
+      <div class="cw-sb__model">
+        <button type="button" class="cw-sb__link" (click)="toggleMenu('provider')">
+          {{ activeProviderLabel() }}
+          <ng-icon name="lucideChevronDown" size="11" />
+        </button>
+        @if (providerOpen()) {
+          <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
+            @for (provider of providers(); track provider.id) {
+              <button
+                type="button"
+                class="cw-sb__menu-item"
+                [class.cw-sb__menu-item--selected]="currentProvider() === provider.id"
+                (click)="pickProvider(provider.id)"
+              >
+                <strong>{{ provider.displayName }}</strong>
+                <span>{{ providerCapabilityHint(provider) }}</span>
+              </button>
+            }
+          </div>
+        }
+      </div>
 
       <span class="cw-sb__sep">·</span>
 
@@ -350,6 +378,8 @@ const PERMISSION_MODES: PermissionModeOption[] = [
 })
 export class ClaudeStatusBarComponent {
   readonly phase = input<ClaudeRunPhase>('idle');
+  readonly providers = input<AgentRuntimeProviderInfo[]>([]);
+  readonly currentProvider = input<AgentProviderId>('claude');
   readonly selectedModel = input<string | null>(null);
   readonly availableModels = input<ClaudeModelOption[]>([]);
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
@@ -358,19 +388,21 @@ export class ClaudeStatusBarComponent {
   readonly mcpSnapshot = input<ClaudeMcpSnapshot | null>(null);
 
   readonly modelChange = output<string>();
+  readonly providerChange = output<AgentProviderId>();
   readonly permissionModeChange = output<ClaudePermissionMode>();
   readonly openTerminal = output<void>();
   readonly openTasks = output<void>();
   readonly openMcp = output<void>();
 
   readonly modelOpen = signal(false);
+  readonly providerOpen = signal(false);
   readonly permissionOpen = signal(false);
   readonly menuOpen = signal(false);
 
   private readonly host = inject(ElementRef<HTMLElement>);
 
   onDocumentMousedown(event: MouseEvent): void {
-    if (!this.modelOpen() && !this.permissionOpen() && !this.menuOpen()) return;
+    if (!this.modelOpen() && !this.providerOpen() && !this.permissionOpen() && !this.menuOpen()) return;
     const target = event.target as Node | null;
     if (target && this.host.nativeElement.contains(target)) return;
     this.closeAllMenus();
@@ -378,22 +410,30 @@ export class ClaudeStatusBarComponent {
 
   closeAllMenus(): void {
     this.modelOpen.set(false);
+    this.providerOpen.set(false);
     this.permissionOpen.set(false);
     this.menuOpen.set(false);
   }
 
-  toggleMenu(which: 'model' | 'permission' | 'overflow'): void {
+  toggleMenu(which: 'model' | 'provider' | 'permission' | 'overflow'): void {
     const next = {
       model: which === 'model' ? !this.modelOpen() : false,
+      provider: which === 'provider' ? !this.providerOpen() : false,
       permission: which === 'permission' ? !this.permissionOpen() : false,
       overflow: which === 'overflow' ? !this.menuOpen() : false,
     };
     this.modelOpen.set(next.model);
+    this.providerOpen.set(next.provider);
     this.permissionOpen.set(next.permission);
     this.menuOpen.set(next.overflow);
   }
 
   readonly permissionOptions = computed(() => {
+    if (this.currentProvider() === 'codex') {
+      return PERMISSION_MODES.filter((opt) =>
+        ['default', 'acceptEdits', 'bypassPermissions'].includes(opt.id),
+      );
+    }
     const modelId = this.selectedModel();
     const models = this.availableModels();
     const effectiveModel = modelId ? models.find((m) => m.id === modelId) : models[0];
@@ -432,9 +472,32 @@ export class ClaudeStatusBarComponent {
     return m?.displayName ?? id;
   });
 
+  readonly activeProviderLabel = computed(() => {
+    return (
+      this.providers().find((provider) => provider.id === this.currentProvider())
+        ?.displayName ?? this.currentProvider()
+    );
+  });
+
   pickModel(id: string): void {
     this.modelOpen.set(false);
     this.modelChange.emit(id);
+  }
+
+  pickProvider(id: AgentProviderId): void {
+    this.providerOpen.set(false);
+    if (id !== this.currentProvider()) {
+      this.providerChange.emit(id);
+    }
+  }
+
+  providerCapabilityHint(provider: AgentRuntimeProviderInfo): string {
+    const parts = [
+      provider.capabilities.permissions ? 'interactive permissions' : 'sandbox policy',
+      provider.capabilities.mcp ? 'MCP' : '',
+      provider.capabilities.multimodalPrompts ? 'images' : '',
+    ].filter(Boolean);
+    return parts.join(' · ');
   }
 
   pickPermissionMode(mode: ClaudePermissionMode): void {

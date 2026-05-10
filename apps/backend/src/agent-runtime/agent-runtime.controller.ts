@@ -19,6 +19,13 @@ export class AgentRuntimeController {
     return this.registry.listProviders();
   }
 
+  @Get('agent-providers/:provider/auth/status')
+  getAuthStatus(@Param('provider') provider: string) {
+    return this.registry
+      .getProviderFeature(provider, 'getAuthStatus')
+      .getAuthStatus();
+  }
+
   @Get('sessions/:sessionId/agents/:provider/history')
   getHistory(
     @Param('sessionId', ParseIntPipe) sessionId: number,

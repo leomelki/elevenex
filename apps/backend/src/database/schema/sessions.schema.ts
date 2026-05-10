@@ -11,6 +11,7 @@ export const sessions = sqliteTable('sessions', {
   name: text('name'),
   status: text('status').notNull().default('created'),
   claudeSessionId: text('claude_session_id').default('-1'),
+  codexSessionId: text('codex_session_id').default('-1'),
   hasInjectedWorktreeContext: integer('has_injected_worktree_context', { mode: 'boolean' })
     .notNull()
     .default(false),

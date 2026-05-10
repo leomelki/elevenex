@@ -2,6 +2,8 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ClaudeRuntimeModule } from '../claude-runtime/claude-runtime.module.js';
 import { ClaudeRuntimeController } from '../claude-runtime/claude-runtime.controller.js';
 import { ClaudeRuntimeGateway } from '../claude-runtime/claude-runtime.gateway.js';
+import { CodexRuntimeModule } from '../codex-runtime/codex-runtime.module.js';
+import { CodexAgentRuntimeProvider } from '../codex-runtime/codex-agent-runtime.provider.js';
 import { AgentRuntimeController } from './agent-runtime.controller.js';
 import { AgentRuntimeCleanupService } from './agent-runtime-cleanup.service.js';
 import { AgentRuntimeGateway } from './agent-runtime.gateway.js';
@@ -13,16 +15,23 @@ import {
 } from './agent-runtime.tokens.js';
 
 @Module({
-  imports: [forwardRef(() => ClaudeRuntimeModule)],
+  imports: [
+    forwardRef(() => ClaudeRuntimeModule),
+    forwardRef(() => CodexRuntimeModule),
+  ],
   controllers: [AgentRuntimeController, ClaudeRuntimeController],
   providers: [
     ClaudeAgentRuntimeProvider,
     {
       provide: AGENT_RUNTIME_PROVIDERS,
-      useFactory: (claudeProvider: ClaudeAgentRuntimeProvider) => [
+      useFactory: (
+        claudeProvider: ClaudeAgentRuntimeProvider,
+        codexProvider: CodexAgentRuntimeProvider,
+      ) => [
         claudeProvider,
+        codexProvider,
       ],
-      inject: [ClaudeAgentRuntimeProvider],
+      inject: [ClaudeAgentRuntimeProvider, CodexAgentRuntimeProvider],
     },
     AgentRuntimeRegistryService,
     AgentRuntimeCleanupService,

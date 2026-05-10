@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `codex_session_id` text DEFAULT '-1';

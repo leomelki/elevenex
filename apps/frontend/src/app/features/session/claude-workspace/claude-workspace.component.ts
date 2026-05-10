@@ -44,8 +44,14 @@ import {
   ClaudeUserInputRequest,
 } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model';
+import {
+  AgentProviderId,
+  AgentRuntimeProviderInfo,
+} from '@/shared/models/agent-runtime.model';
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { ClaudeMessageComponent } from './components/claude-message.component';
@@ -137,7 +143,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ClaudeRuntimeApiService);
+  private readonly agentApi = inject(AgentRuntimeApiService);
   private readonly ws = inject(ClaudeRuntimeWebsocketService);
+  private readonly providerSelection = inject(AgentRuntimeProviderService);
   private readonly claudeStatusService = inject(ClaudeStatusService);
   private readonly worktreeContextService = inject(WorktreeContextService);
 
@@ -150,6 +158,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly canInterrupt = signal(false);
   readonly lastError = signal<string | null>(null);
   readonly claudeSessionId = signal<string | null>(null);
+  readonly providers = signal<AgentRuntimeProviderInfo[]>([]);
+  readonly currentProvider = this.providerSelection.selectedProvider;
   readonly selectedModel = signal<string | null>(null);
   readonly worktreeContext = signal<WorktreeContextSnapshot | null>(null);
   readonly worktreeContextLoading = signal(false);
@@ -670,6 +680,9 @@ readonly messageActionsDisabled = computed(
   }
 
   async onPermissionModeChange(mode: ClaudePermissionMode): Promise<void> {
+    if (this.currentProvider() === 'codex' && (mode === 'plan' || mode === ('planBypass' as ClaudePermissionMode) || mode === 'auto')) {
+      mode = 'default';
+    }
     if (mode === ('planBypass' as ClaudePermissionMode)) {
       this.planBypassActive.set(true);
       const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, 'plan'));
@@ -682,9 +695,22 @@ readonly messageActionsDisabled = computed(
   }
 
   openTerminal(): void {
+    if (this.currentProvider() !== 'claude') {
+      toast.message('Raw terminal fallback is only available for Claude Code.');
+      return;
+    }
     void firstValueFrom(this.api.openTerminalFallback(this.sessionId)).finally(() =>
       this.openTerminalFallback.emit(),
     );
+  }
+
+  onProviderChange(provider: AgentProviderId): void {
+    if (provider === this.currentProvider()) return;
+    this.ws.disconnect(this.sessionId);
+    this.providerSelection.setProvider(provider);
+    this.reset();
+    this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
+    void this.bootstrap();
   }
 
   openMcpDrawer(): void {
@@ -907,6 +933,7 @@ readonly messageActionsDisabled = computed(
     const version = ++this.bootstrapVersion;
     this.loading.set(true);
     void this.loadWorktreeContext(true);
+    void this.loadProviders();
 
     this.ws
       .connect(this.sessionId)
@@ -1015,6 +1042,28 @@ readonly messageActionsDisabled = computed(
     );
     if (version !== this.bootstrapVersion) return;
     this.autocompleteItems.set(autocompleteItems);
+  }
+
+  private async loadProviders(): Promise<void> {
+    try {
+      this.providers.set(await firstValueFrom(this.agentApi.listProviders()));
+    } catch {
+      this.providers.set([
+        {
+          id: 'claude',
+          displayName: 'Claude Code',
+          capabilities: {
+            mcp: true,
+            subagents: true,
+            permissions: true,
+            userInput: true,
+            multimodalPrompts: true,
+            terminalFallback: true,
+            rewindConversation: true,
+          },
+        },
+      ]);
+    }
   }
 
   private handleRuntimeEvent(event: ClaudeRuntimeEvent): void {

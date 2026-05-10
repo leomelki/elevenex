@@ -427,12 +427,15 @@
 
     <cw-status-bar
       [phase]="runPhase()"
+      [providers]="providers()"
+      [currentProvider]="currentProvider()"
       [selectedModel]="selectedModel()"
       [availableModels]="availableModels()"
       [contextUsage]="contextUsage()"
       [tasks]="tasks()"
       [permissionMode]="permissionMode()"
       [mcpSnapshot]="mcpSnapshot()"
+      (providerChange)="onProviderChange($event)"
       (modelChange)="onModelChange($event)"
       (permissionModeChange)="onPermissionModeChange($event)"
       (openTerminal)="openTerminal()"
