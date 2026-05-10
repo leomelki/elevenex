@@ -1,6 +1,4 @@
-import type {
-  AgentImageInput,
-} from '../agent-runtime/agent-runtime.types.js';
+import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
 import type {
   ClaudeAuthStatus,
   ClaudeContextUsage,
@@ -13,11 +11,13 @@ import type {
   ClaudeMcpTransport,
   ClaudeModelOption,
   ClaudePermissionMode,
+  ClaudePermissionRequest,
   ClaudeRuntimeEvent,
   ClaudeRuntimeSessionMetadata,
   ClaudeRuntimeStatePayload,
   ClaudeSessionSnapshotPayload,
   ClaudeTranscriptItem,
+  ClaudeUserInputRequest,
 } from '../claude-runtime/claude-runtime.types.js';
 
 export type CodexRunPhase = 'idle' | 'running' | 'waiting' | 'error';
@@ -28,29 +28,26 @@ export type CodexPermissionMode =
   | 'bypassPermissions'
   | string;
 
-export interface CodexRuntimeSessionMetadata
-  extends Omit<
-    ClaudeRuntimeSessionMetadata,
-    'claudeCodeVersion' | 'outputStyle' | 'apiKeySource' | 'agents' | 'plugins'
-  > {
+export interface CodexRuntimeSessionMetadata extends Omit<
+  ClaudeRuntimeSessionMetadata,
+  'claudeCodeVersion' | 'outputStyle' | 'apiKeySource' | 'agents' | 'plugins'
+> {
   codexVersion: string;
   authMethod: string;
   agents: [];
   plugins: [];
 }
 
-export interface CodexRuntimeStatePayload
-  extends Omit<
-    ClaudeRuntimeStatePayload,
-    'sessionMetadata' | 'permissionMode' | 'authStatus'
-  > {
+export interface CodexRuntimeStatePayload extends Omit<
+  ClaudeRuntimeStatePayload,
+  'sessionMetadata' | 'permissionMode' | 'authStatus'
+> {
   sessionMetadata: CodexRuntimeSessionMetadata | null;
   permissionMode: CodexPermissionMode | ClaudePermissionMode | null;
   authStatus: CodexAuthStatus | ClaudeAuthStatus | null;
 }
 
-export interface CodexSessionSnapshotPayload
-  extends CodexRuntimeStatePayload {
+export interface CodexSessionSnapshotPayload extends CodexRuntimeStatePayload {
   history: ClaudeTranscriptItem[];
 }
 
@@ -86,6 +83,20 @@ export interface CodexActiveRunState {
   completionPromise: Promise<void>;
   resolveCompletion: () => void;
   startedAtMs: number;
+  permissionRequests: Map<
+    string,
+    {
+      request: ClaudePermissionRequest;
+      resolve: (response: unknown) => void;
+    }
+  >;
+  userInputRequests: Map<
+    string,
+    {
+      request: ClaudeUserInputRequest;
+      resolve: (response: unknown) => void;
+    }
+  >;
 }
 
 export interface CodexRuntimeState {
@@ -103,6 +114,8 @@ export interface CodexRuntimeState {
     images?: AgentImageInput[];
   }[];
   liveItems: ClaudeTranscriptItem[];
+  pendingPermissionRequest: ClaudePermissionRequest | null;
+  pendingUserInputRequest: ClaudeUserInputRequest | null;
   lastError: string | null;
   selectedModel: string | null;
   selectedPermissionMode: CodexPermissionMode | null;

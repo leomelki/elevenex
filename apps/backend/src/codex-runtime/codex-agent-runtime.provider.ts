@@ -27,8 +27,8 @@ export class CodexAgentRuntimeProvider
     capabilities: {
       mcp: true,
       subagents: false,
-      permissions: false,
-      userInput: false,
+      permissions: true,
+      userInput: true,
       multimodalPrompts: true,
       terminalFallback: false,
       rewindConversation: false,
@@ -125,6 +125,38 @@ export class CodexAgentRuntimeProvider
 
   cancelPendingPrompt(sessionId: number, id: string) {
     return this.runtimeService.cancelPendingPrompt(sessionId, id);
+  }
+
+  approvePermission(
+    sessionId: number,
+    requestId: string,
+    remember?: boolean,
+    content?: Record<string, unknown>,
+  ) {
+    return this.runtimeService.approvePermission(
+      sessionId,
+      requestId,
+      remember,
+      content,
+    );
+  }
+
+  denyPermission(sessionId: number, requestId: string, message?: string) {
+    return this.runtimeService.denyPermission(sessionId, requestId, message);
+  }
+
+  answerUserInput(
+    sessionId: number,
+    requestId: string,
+    action?: 'accept' | 'decline' | 'cancel',
+    content?: Record<string, string | number | boolean | string[]>,
+  ) {
+    return this.runtimeService.answerUserInput(
+      sessionId,
+      requestId,
+      action,
+      content,
+    );
   }
 
   cleanupSession(sessionId: number) {

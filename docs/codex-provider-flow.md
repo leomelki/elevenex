@@ -27,37 +27,43 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
 8. The Codex thread id is stored in `sessions.codex_session_id`; Claude's
    `sessions.claude_session_id` is not reused or modified.
 
-## Permission Mapping
+## Permission Mapping And Requests
 
-Codex does not currently expose Claude's interactive per-tool approval callback.
-Elevenex maps the UI permission mode into Codex SDK sandbox settings instead:
+Elevenex maps the UI permission mode into Codex app-server sandbox settings:
 
-| UI mode | Codex sandbox | Codex approval policy |
-| --- | --- | --- |
-| `default` / `auto` | `workspace-write` | `untrusted` |
-| `plan` | `read-only` | `never` |
-| `acceptEdits` | `workspace-write` | `never` |
-| `bypassPermissions` | `danger-full-access` | `never` |
+| UI mode             | Codex sandbox        | Codex approval policy |
+| ------------------- | -------------------- | --------------------- |
+| `default` / `auto`  | `workspace-write`    | `untrusted`           |
+| `plan`              | `read-only`          | `never`               |
+| `acceptEdits`       | `workspace-write`    | `never`               |
+| `bypassPermissions` | `danger-full-access` | `never`               |
 
 Codex plan mode additionally prepends a planning instruction to the turn so the
 agent analyzes the repository and returns an implementation plan without
 attempting edits. Plan-bypass remains Claude-specific because Codex does not
 expose Claude's interactive plan approval callback.
 
+When Codex app-server emits server-to-client JSON-RPC requests for command
+execution, file changes, permission-profile grants, `request_user_input`, or
+MCP elicitations, Elevenex now bridges them into the existing permission and
+user-input UI. User responses are translated back into Codex response payloads
+such as `accept`, `acceptForSession`, empty permission grants, structured
+question answers, or MCP elicitation actions.
+
 ## Event Normalization
 
 Codex SDK items are normalized as follows:
 
-| Codex item | Elevenex transcript item |
-| --- | --- |
-| `agent_message` | assistant message |
-| `reasoning` | thinking block |
-| `command_execution` | `Bash` tool use plus tool result |
-| `file_change` | `FileChanges` tool use plus tool result |
-| `mcp_tool_call` | MCP tool use plus tool result |
-| `web_search` | `WebSearch` tool use |
-| `todo_list` | `TodoWrite` tool use |
-| `error` / `turn.failed` | error item/event |
+| Codex item              | Elevenex transcript item                |
+| ----------------------- | --------------------------------------- |
+| `agent_message`         | assistant message                       |
+| `reasoning`             | thinking block                          |
+| `command_execution`     | `Bash` tool use plus tool result        |
+| `file_change`           | `FileChanges` tool use plus tool result |
+| `mcp_tool_call`         | MCP tool use plus tool result           |
+| `web_search`            | `WebSearch` tool use                    |
+| `todo_list`             | `TodoWrite` tool use                    |
+| `error` / `turn.failed` | error item/event                        |
 
 `item.started` and `item.updated` are used to keep live tool state visible.
 `item.completed` emits final results. `turn.completed` updates context usage

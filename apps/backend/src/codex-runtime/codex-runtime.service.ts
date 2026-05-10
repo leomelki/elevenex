@@ -19,12 +19,15 @@ import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
 import type {
   ClaudeContextUsage,
   ClaudeModelOption,
+  ClaudePermissionRequest,
   ClaudeTranscriptItem,
+  ClaudeUserInputRequest,
 } from '../claude-runtime/claude-runtime.types.js';
 import { buildAugmentedEnv } from '../config/system-paths.js';
 import {
   CodexAppServerClient,
   CodexAppServerNotification,
+  CodexAppServerRequest,
 } from './codex-app-server.js';
 import { resolveCodexBinary } from './codex-binary.js';
 import { CodexAuthService } from './codex-auth.service.js';
@@ -54,7 +57,8 @@ const CODEX_MODELS: ClaudeModelOption[] = [
   {
     id: 'gpt-5.5',
     displayName: 'GPT-5.5',
-    description: 'Frontier model for complex coding, research, and real-world work.',
+    description:
+      'Frontier model for complex coding, research, and real-world work.',
     supportsEffort: true,
     supportsFastMode: true,
   },
@@ -68,7 +72,8 @@ const CODEX_MODELS: ClaudeModelOption[] = [
   {
     id: 'gpt-5.4-mini',
     displayName: 'GPT-5.4-Mini',
-    description: 'Small, fast, and cost-efficient model for simpler coding tasks.',
+    description:
+      'Small, fast, and cost-efficient model for simpler coding tasks.',
     supportsEffort: true,
   },
   {
@@ -241,7 +246,9 @@ export class CodexRuntimeService extends EventEmitter {
     void this.sessionsService
       .updateStatus(sessionId, 'active')
       .catch((error) =>
-        this.logger.warn(`Failed to mark session ${sessionId} active: ${String(error)}`),
+        this.logger.warn(
+          `Failed to mark session ${sessionId} active: ${String(error)}`,
+        ),
       );
     void this.refreshAuthStatus(state).catch(() => undefined);
     this.emitRunState(sessionId);
@@ -259,19 +266,24 @@ export class CodexRuntimeService extends EventEmitter {
       completionPromise,
       resolveCompletion,
       startedAtMs: Date.now(),
+      permissionRequests: new Map(),
+      userInputRequests: new Map(),
     });
 
     let stagedImageDir: string | null = null;
     try {
       const built = await this.buildCodexInput(trimmedPrompt, validatedImages);
       stagedImageDir = built.tempDir;
-      const turnInput: Array<{ type: 'text'; text: string } | { type: 'localImage'; path: string }> =
-        built.input.map((entry) =>
-          entry.type === 'text'
-            ? { type: 'text' as const, text: entry.text }
-            : { type: 'localImage' as const, path: entry.path },
-        );
-      const planInstruction = this.maybePlanModeInstruction(state.selectedPermissionMode);
+      const turnInput: Array<
+        { type: 'text'; text: string } | { type: 'localImage'; path: string }
+      > = built.input.map((entry) =>
+        entry.type === 'text'
+          ? { type: 'text' as const, text: entry.text }
+          : { type: 'localImage' as const, path: entry.path },
+      );
+      const planInstruction = this.maybePlanModeInstruction(
+        state.selectedPermissionMode,
+      );
       if (planInstruction) {
         turnInput.unshift({ type: 'text', text: planInstruction });
       }
@@ -322,11 +334,13 @@ export class CodexRuntimeService extends EventEmitter {
         state.pendingPrompts = rest;
         this.emitRunState(sessionId);
         setImmediate(() => {
-          this.submitPrompt(sessionId, next.prompt, next.images).catch((error) => {
-            this.logger.error(
-              `Pending Codex prompt failed session=${sessionId}: ${String(error)}`,
-            );
-          });
+          this.submitPrompt(sessionId, next.prompt, next.images).catch(
+            (error) => {
+              this.logger.error(
+                `Pending Codex prompt failed session=${sessionId}: ${String(error)}`,
+              );
+            },
+          );
         });
       }
     }
@@ -338,6 +352,7 @@ export class CodexRuntimeService extends EventEmitter {
       return;
     }
     run.interruptRequested = true;
+    this.resolvePendingCodexRequests(run);
     // Tell the app-server to cancel the in-flight turn so it stops producing
     // model output; the abort signal also closes the local notification loop.
     if (run.threadId && run.turnId) {
@@ -363,8 +378,59 @@ export class CodexRuntimeService extends EventEmitter {
 
   async cancelPendingPrompt(sessionId: number, id: string): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
-    state.pendingPrompts = state.pendingPrompts.filter((prompt) => prompt.id !== id);
+    state.pendingPrompts = state.pendingPrompts.filter(
+      (prompt) => prompt.id !== id,
+    );
     this.emitRunState(sessionId);
+  }
+
+  async approvePermission(
+    sessionId: number,
+    requestId: string,
+    remember = false,
+    content?: Record<string, unknown>,
+  ): Promise<void> {
+    const run = this.activeRuns.get(sessionId);
+    const pending = run?.permissionRequests.get(requestId);
+    if (!pending) return;
+    run?.permissionRequests.delete(requestId);
+    this.clearPendingPermission(sessionId, requestId);
+    pending.resolve({ approved: true, remember, content });
+  }
+
+  async denyPermission(
+    sessionId: number,
+    requestId: string,
+    message?: string,
+  ): Promise<void> {
+    const run = this.activeRuns.get(sessionId);
+    const pending = run?.permissionRequests.get(requestId);
+    if (!pending) return;
+    run?.permissionRequests.delete(requestId);
+    this.clearPendingPermission(sessionId, requestId);
+    pending.resolve({ approved: false, message });
+  }
+
+  async answerUserInput(
+    sessionId: number,
+    requestId: string,
+    action: 'accept' | 'decline' | 'cancel' = 'accept',
+    content?: Record<string, string | number | boolean | string[]>,
+  ): Promise<void> {
+    const run = this.activeRuns.get(sessionId);
+    const pending = run?.userInputRequests.get(requestId);
+    if (!pending) return;
+    run?.userInputRequests.delete(requestId);
+    const state = this.ensureRuntimeState(sessionId);
+    if (state.pendingUserInputRequest?.requestId === requestId) {
+      state.pendingUserInputRequest = null;
+      state.runPhase = state.pendingPermissionRequest ? 'waiting' : 'running';
+      state.sessionState = state.pendingPermissionRequest
+        ? 'requires_action'
+        : 'running';
+      this.emitRunState(sessionId);
+    }
+    pending.resolve({ action, content });
   }
 
   async cleanupSession(sessionId: number): Promise<void> {
@@ -388,7 +454,11 @@ export class CodexRuntimeService extends EventEmitter {
       return;
     }
     if (event.type === 'item.started' || event.type === 'item.updated') {
-      this.handleItemEvent(sessionId, event.item, event.type === 'item.updated');
+      this.handleItemEvent(
+        sessionId,
+        event.item,
+        event.type === 'item.updated',
+      );
       return;
     }
     if (event.type === 'item.completed') {
@@ -470,11 +540,10 @@ export class CodexRuntimeService extends EventEmitter {
       this.upsertLiveItem(sessionId, toolItem, 'tool_use', terminal);
       const result = this.toToolResultItem(item, timestamp);
       if (
-        result
-        && (
-          terminal
-          || (item.type === 'command_execution' && Boolean(item.aggregated_output))
-        )
+        result &&
+        (terminal ||
+          (item.type === 'command_execution' &&
+            Boolean(item.aggregated_output)))
       ) {
         this.pushItem(sessionId, result, 'tool_result');
       }
@@ -650,6 +719,8 @@ export class CodexRuntimeService extends EventEmitter {
     state.sessionState = 'idle';
     state.canInterrupt = false;
     state.liveItems = [];
+    state.pendingPermissionRequest = null;
+    state.pendingUserInputRequest = null;
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
   }
@@ -661,8 +732,21 @@ export class CodexRuntimeService extends EventEmitter {
     state.canInterrupt = false;
     state.lastError = null;
     state.liveItems = [];
+    state.pendingPermissionRequest = null;
+    state.pendingUserInputRequest = null;
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
+  }
+
+  private resolvePendingCodexRequests(run: CodexActiveRunState): void {
+    for (const [, pending] of run.permissionRequests) {
+      pending.resolve({ approved: false, message: 'Interrupted' });
+    }
+    run.permissionRequests.clear();
+    for (const [, pending] of run.userInputRequests) {
+      pending.resolve({ action: 'cancel' });
+    }
+    run.userInputRequests.clear();
   }
 
   private ensureRuntimeState(
@@ -685,6 +769,8 @@ export class CodexRuntimeService extends EventEmitter {
       canInterrupt: false,
       pendingPrompts: [],
       liveItems: [],
+      pendingPermissionRequest: null,
+      pendingUserInputRequest: null,
       lastError: null,
       selectedModel: this.codexDefaultModel,
       selectedPermissionMode: 'default',
@@ -711,8 +797,8 @@ export class CodexRuntimeService extends EventEmitter {
         permissionMode: state.selectedPermissionMode,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
-        pendingPermissionRequest: null,
-        pendingUserInputRequest: null,
+        pendingPermissionRequest: state.pendingPermissionRequest,
+        pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
       },
     });
@@ -736,7 +822,10 @@ export class CodexRuntimeService extends EventEmitter {
       ...state.liveItems.filter((existing) => existing.id !== item.id),
       item,
     ];
-    this.emitEvent({ type: eventType, payload: { sessionId, item } } as CodexRuntimeEvent);
+    this.emitEvent({
+      type: eventType,
+      payload: { sessionId, item },
+    } as CodexRuntimeEvent);
   }
 
   private upsertLiveItem(
@@ -754,21 +843,28 @@ export class CodexRuntimeService extends EventEmitter {
     state.liveItems = state.liveItems.map((live) =>
       live.id === item.id ? { ...live, ...item } : live,
     );
-    if ((eventType === 'message_start' || eventType === 'thinking_start') && item.content) {
+    if (
+      (eventType === 'message_start' || eventType === 'thinking_start') &&
+      item.content
+    ) {
       const previousContent = existing.content ?? '';
       const delta = item.content.startsWith(previousContent)
         ? item.content.slice(previousContent.length)
         : item.content;
       if (delta) {
         this.emitEvent({
-          type: eventType === 'message_start' ? 'message_delta' : 'thinking_delta',
+          type:
+            eventType === 'message_start' ? 'message_delta' : 'thinking_delta',
           payload: { sessionId, itemId: item.id, delta },
         } as CodexRuntimeEvent);
       }
     }
     if (terminal && eventType !== 'tool_use') {
       this.emitEvent({
-        type: eventType === 'message_start' ? 'message_complete' : 'thinking_complete',
+        type:
+          eventType === 'message_start'
+            ? 'message_complete'
+            : 'thinking_complete',
         payload: { sessionId, itemId: item.id },
       } as CodexRuntimeEvent);
     }
@@ -806,16 +902,21 @@ export class CodexRuntimeService extends EventEmitter {
     this.codexModels = models.map((model) => this.toModelOption(model));
     this.codexDefaultModel =
       this.codexModels.find((model) =>
-        models.some((source) => source.isDefault === true && this.modelId(source) === model.id),
-      )?.id
-      ?? this.codexModels[0]?.id
-      ?? DEFAULT_CODEX_MODEL;
+        models.some(
+          (source) =>
+            source.isDefault === true && this.modelId(source) === model.id,
+        ),
+      )?.id ??
+      this.codexModels[0]?.id ??
+      DEFAULT_CODEX_MODEL;
 
     for (const [sessionId, state] of this.runtimeStates.entries()) {
       state.availableModels = [...this.codexModels];
       if (!state.selectedModel || state.selectedModel === previousDefault) {
         state.selectedModel = this.codexDefaultModel;
-      } else if (!state.availableModels.some((model) => model.id === state.selectedModel)) {
+      } else if (
+        !state.availableModels.some((model) => model.id === state.selectedModel)
+      ) {
         state.availableModels = [
           ...state.availableModels,
           {
@@ -843,7 +944,10 @@ export class CodexRuntimeService extends EventEmitter {
         CODEX_MODEL_LIST_TIMEOUT_MS,
       );
       let settled = false;
-      const finish = (error: Error | null, models: CodexAppServerModel[] = []) => {
+      const finish = (
+        error: Error | null,
+        models: CodexAppServerModel[] = [],
+      ) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -884,8 +988,7 @@ export class CodexRuntimeService extends EventEmitter {
                 limit: 100,
                 includeHidden: false,
               },
-            })
-            + '\n',
+            }) + '\n',
           );
           return;
         }
@@ -926,8 +1029,7 @@ export class CodexRuntimeService extends EventEmitter {
               optOutNotificationMethods: ['configWarning'],
             },
           },
-        })
-        + '\n',
+        }) + '\n',
       );
     });
   }
@@ -935,22 +1037,24 @@ export class CodexRuntimeService extends EventEmitter {
   private parseJsonRpcLine(line: string): JsonRpcResponse | null {
     try {
       const parsed = JSON.parse(line) as unknown;
-      return parsed && typeof parsed === 'object' ? (parsed as JsonRpcResponse) : null;
+      return parsed && typeof parsed === 'object'
+        ? (parsed as JsonRpcResponse)
+        : null;
     } catch {
       return null;
     }
   }
 
   private extractModelList(result: unknown): CodexAppServerModel[] {
-    const payload = result && typeof result === 'object'
-      ? (result as CodexModelListResult)
-      : null;
+    const payload =
+      result && typeof result === 'object'
+        ? (result as CodexModelListResult)
+        : null;
     if (!Array.isArray(payload?.data)) {
       return [];
     }
-    return payload.data.filter(
-      (model): model is CodexAppServerModel =>
-        Boolean(this.modelId(model as CodexAppServerModel)),
+    return payload.data.filter((model): model is CodexAppServerModel =>
+      Boolean(this.modelId(model as CodexAppServerModel)),
     );
   }
 
@@ -965,11 +1069,12 @@ export class CodexRuntimeService extends EventEmitter {
         ? model.description.trim()
         : 'Codex model.';
     const supportsEffort =
-      Array.isArray(model.supportedReasoningEfforts)
-      && model.supportedReasoningEfforts.length > 0;
+      Array.isArray(model.supportedReasoningEfforts) &&
+      model.supportedReasoningEfforts.length > 0;
     const supportsFastMode =
-      (Array.isArray(model.additionalSpeedTiers) && model.additionalSpeedTiers.length > 0)
-      || (Array.isArray(model.serviceTiers) && model.serviceTiers.length > 0);
+      (Array.isArray(model.additionalSpeedTiers) &&
+        model.additionalSpeedTiers.length > 0) ||
+      (Array.isArray(model.serviceTiers) && model.serviceTiers.length > 0);
     return {
       id,
       displayName,
@@ -980,11 +1085,12 @@ export class CodexRuntimeService extends EventEmitter {
   }
 
   private modelId(model: CodexAppServerModel): string {
-    const id = typeof model.id === 'string' && model.id.trim()
-      ? model.id.trim()
-      : typeof model.model === 'string' && model.model.trim()
-        ? model.model.trim()
-        : '';
+    const id =
+      typeof model.id === 'string' && model.id.trim()
+        ? model.id.trim()
+        : typeof model.model === 'string' && model.model.trim()
+          ? model.model.trim()
+          : '';
     return id;
   }
 
@@ -998,8 +1104,8 @@ export class CodexRuntimeService extends EventEmitter {
       runPhase: state.runPhase,
       sessionState: state.sessionState,
       canInterrupt: state.canInterrupt,
-      pendingPermissionRequest: null,
-      pendingUserInputRequest: null,
+      pendingPermissionRequest: state.pendingPermissionRequest,
+      pendingUserInputRequest: state.pendingUserInputRequest,
       pendingPrompts: state.pendingPrompts,
       liveItems: state.liveItems,
       lastError: state.lastError,
@@ -1054,7 +1160,9 @@ export class CodexRuntimeService extends EventEmitter {
     sessionId: number,
     state: CodexRuntimeState,
     worktreePath: string,
-    input: Array<{ type: 'text'; text: string } | { type: 'localImage'; path: string }>,
+    input: Array<
+      { type: 'text'; text: string } | { type: 'localImage'; path: string }
+    >,
     signal: AbortSignal,
   ): AsyncGenerator<ThreadEvent> {
     this.appServer.addRef();
@@ -1145,8 +1253,7 @@ export class CodexRuntimeService extends EventEmitter {
             push({
               type: 'turn.failed',
               error: {
-                message:
-                  params?.turn?.error?.message ?? 'Codex turn failed',
+                message: params?.turn?.error?.message ?? 'Codex turn failed',
               },
             });
           } else {
@@ -1206,8 +1313,7 @@ export class CodexRuntimeService extends EventEmitter {
           }
           push({
             type: 'error',
-            message:
-              params?.error?.message ?? params?.message ?? 'Codex error',
+            message: params?.error?.message ?? params?.message ?? 'Codex error',
           });
           endStream = true;
           wake();
@@ -1219,10 +1325,9 @@ export class CodexRuntimeService extends EventEmitter {
           // would wait forever for notifications that will never arrive.
           push({
             type: 'error',
-            message:
-              `Codex app-server terminated: ${
-                (params as { message?: unknown })?.message ?? 'unknown reason'
-              }`,
+            message: `Codex app-server terminated: ${
+              (params as { message?: unknown })?.message ?? 'unknown reason'
+            }`,
           });
           endStream = true;
           wake();
@@ -1233,7 +1338,49 @@ export class CodexRuntimeService extends EventEmitter {
       }
     };
 
+    const handleRequest = async (
+      request: CodexAppServerRequest,
+    ): Promise<boolean> => {
+      const params = request.params as any;
+      if (!matchesThread(params)) return false;
+      switch (request.method) {
+        case 'item/commandExecution/requestApproval':
+        case 'item/fileChange/requestApproval':
+        case 'item/permissions/requestApproval': {
+          const response = await this.requestCodexPermission(
+            sessionId,
+            request.method,
+            request.id,
+            params,
+          );
+          this.appServer.respondToRequest(request.id, response);
+          return true;
+        }
+        case 'item/tool/requestUserInput': {
+          const response = await this.requestCodexToolUserInput(
+            sessionId,
+            request.id,
+            params,
+          );
+          this.appServer.respondToRequest(request.id, response);
+          return true;
+        }
+        case 'mcpServer/elicitation/request': {
+          const response = await this.requestCodexMcpElicitation(
+            sessionId,
+            request.id,
+            params,
+          );
+          this.appServer.respondToRequest(request.id, response);
+          return true;
+        }
+        default:
+          return false;
+      }
+    };
+
     const unsubscribe = this.appServer.onNotification(handle);
+    const unsubscribeRequests = this.appServer.onRequest(handleRequest);
     const onAbort = (): void => {
       endStream = true;
       wake();
@@ -1242,7 +1389,9 @@ export class CodexRuntimeService extends EventEmitter {
 
     try {
       await this.appServer.ensureReady();
-      const permissionOptions = this.mapPermissionMode(state.selectedPermissionMode);
+      const permissionOptions = this.mapPermissionMode(
+        state.selectedPermissionMode,
+      );
       const sandboxMap: Record<SandboxMode, string> = {
         'read-only': 'read-only',
         'workspace-write': 'workspace-write',
@@ -1328,9 +1477,9 @@ export class CodexRuntimeService extends EventEmitter {
         const event = queue.shift()!;
         yield event;
         if (
-          event.type === 'turn.completed'
-          || event.type === 'turn.failed'
-          || event.type === 'error'
+          event.type === 'turn.completed' ||
+          event.type === 'turn.failed' ||
+          event.type === 'error'
         ) {
           // Drain anything that landed alongside the terminal event,
           // then return.
@@ -1343,8 +1492,266 @@ export class CodexRuntimeService extends EventEmitter {
     } finally {
       signal.removeEventListener('abort', onAbort);
       unsubscribe();
+      unsubscribeRequests();
       this.appServer.release();
     }
+  }
+
+  private async requestCodexPermission(
+    sessionId: number,
+    method: string,
+    requestId: number | string,
+    params: any,
+  ): Promise<unknown> {
+    const uiRequestId = String(requestId);
+    const request = this.toCodexPermissionRequest(method, uiRequestId, params);
+    const resolution = await new Promise<{
+      approved: boolean;
+      remember?: boolean;
+      content?: Record<string, unknown>;
+      message?: string;
+    }>((resolve) => {
+      const run = this.activeRuns.get(sessionId);
+      run?.permissionRequests.set(uiRequestId, { request, resolve });
+      const state = this.ensureRuntimeState(sessionId);
+      state.pendingPermissionRequest = request;
+      state.runPhase = 'waiting';
+      state.sessionState = 'requires_action';
+      this.emitEvent({
+        type: 'permission_request',
+        payload: { sessionId, request },
+      });
+      this.emitRunState(sessionId);
+    });
+
+    if (method === 'item/permissions/requestApproval') {
+      return resolution.approved
+        ? {
+            permissions:
+              (resolution.content?.['permissions'] as
+                | Record<string, unknown>
+                | undefined) ??
+              params?.permissions ??
+              {},
+            scope: resolution.remember ? 'session' : 'turn',
+            strictAutoReview: false,
+          }
+        : {
+            permissions: {},
+            scope: 'turn',
+            strictAutoReview: false,
+          };
+    }
+
+    const decision = resolution.approved
+      ? resolution.remember
+        ? 'acceptForSession'
+        : 'accept'
+      : 'decline';
+    return { decision };
+  }
+
+  private toCodexPermissionRequest(
+    method: string,
+    requestId: string,
+    params: any,
+  ): ClaudePermissionRequest {
+    const createdAt = new Date(
+      typeof params?.startedAtMs === 'number' ? params.startedAtMs : Date.now(),
+    ).toISOString();
+    const itemId =
+      typeof params?.itemId === 'string' ? params.itemId : requestId;
+    if (method === 'item/commandExecution/requestApproval') {
+      const command = typeof params?.command === 'string' ? params.command : '';
+      return {
+        requestId,
+        toolUseId: itemId,
+        toolName: 'Bash',
+        title: 'Approve command execution?',
+        displayName: 'Bash',
+        description:
+          typeof params?.reason === 'string' ? params.reason : undefined,
+        input: {
+          command,
+          cwd: params?.cwd,
+          reason: params?.reason,
+          commandActions: params?.commandActions,
+          networkApprovalContext: params?.networkApprovalContext,
+        },
+        createdAt,
+      };
+    }
+    if (method === 'item/fileChange/requestApproval') {
+      return {
+        requestId,
+        toolUseId: itemId,
+        toolName: 'FileChanges',
+        title: 'Approve file changes?',
+        displayName: 'File changes',
+        description:
+          typeof params?.reason === 'string' ? params.reason : undefined,
+        blockedPath:
+          typeof params?.grantRoot === 'string' ? params.grantRoot : undefined,
+        input: {
+          itemId,
+          reason: params?.reason,
+          grantRoot: params?.grantRoot,
+        },
+        createdAt,
+      };
+    }
+    return {
+      requestId,
+      toolUseId: itemId,
+      toolName: 'RequestPermissions',
+      title: 'Approve requested permissions?',
+      displayName: 'Permissions',
+      description:
+        typeof params?.reason === 'string' ? params.reason : undefined,
+      input: {
+        cwd: params?.cwd,
+        reason: params?.reason,
+        permissions: params?.permissions,
+      },
+      createdAt,
+    };
+  }
+
+  private async requestCodexToolUserInput(
+    sessionId: number,
+    requestId: number | string,
+    params: any,
+  ): Promise<unknown> {
+    const uiRequestId = String(requestId);
+    const questions = Array.isArray(params?.questions) ? params.questions : [];
+    const request: ClaudeUserInputRequest = {
+      requestId: uiRequestId,
+      serverName: 'Codex',
+      mode: 'form',
+      title: 'Codex needs your input',
+      message:
+        questions.length === 1 && typeof questions[0]?.question === 'string'
+          ? questions[0].question
+          : 'Answer the requested questions.',
+      requestedSchema: this.questionsToJsonSchema(questions),
+      createdAt: new Date().toISOString(),
+    };
+    const result = await this.waitForUserInput(sessionId, uiRequestId, request);
+    const content = result.action === 'accept' ? (result.content ?? {}) : {};
+    const answerEntries: Array<[string, { answers: string[] }]> = questions
+      .map((question: any) => {
+        const id = String(question?.id ?? '');
+        const value = content[id];
+        return [
+          id,
+          {
+            answers: Array.isArray(value)
+              ? value.map(String)
+              : typeof value === 'string' && value
+                ? [value]
+                : [],
+          },
+        ] as [string, { answers: string[] }];
+      })
+      .filter(([id]: [string, { answers: string[] }]) => Boolean(id));
+    const answers = Object.fromEntries(answerEntries);
+    return { answers };
+  }
+
+  private async requestCodexMcpElicitation(
+    sessionId: number,
+    requestId: number | string,
+    params: any,
+  ): Promise<unknown> {
+    const uiRequestId = String(requestId);
+    const request: ClaudeUserInputRequest = {
+      requestId: uiRequestId,
+      serverName:
+        typeof params?.serverName === 'string' ? params.serverName : 'MCP',
+      message:
+        typeof params?.message === 'string'
+          ? params.message
+          : 'Input requested.',
+      mode: params?.mode === 'url' ? 'url' : 'form',
+      url: typeof params?.url === 'string' ? params.url : undefined,
+      elicitationId:
+        typeof params?.elicitationId === 'string'
+          ? params.elicitationId
+          : undefined,
+      requestedSchema:
+        params?.mode === 'form' && params?.requestedSchema
+          ? params.requestedSchema
+          : undefined,
+      createdAt: new Date().toISOString(),
+    };
+    const result = await this.waitForUserInput(sessionId, uiRequestId, request);
+    return {
+      action: result.action,
+      content: result.action === 'accept' ? (result.content ?? {}) : null,
+      _meta: null,
+    };
+  }
+
+  private waitForUserInput(
+    sessionId: number,
+    requestId: string,
+    request: ClaudeUserInputRequest,
+  ): Promise<{
+    action: 'accept' | 'decline' | 'cancel';
+    content?: Record<string, string | number | boolean | string[]>;
+  }> {
+    return new Promise((resolve) => {
+      const run = this.activeRuns.get(sessionId);
+      run?.userInputRequests.set(requestId, { request, resolve });
+      const state = this.ensureRuntimeState(sessionId);
+      state.pendingUserInputRequest = request;
+      state.runPhase = 'waiting';
+      state.sessionState = 'requires_action';
+      this.emitEvent({
+        type: 'user_input_request',
+        payload: { sessionId, request },
+      });
+      this.emitRunState(sessionId);
+    });
+  }
+
+  private questionsToJsonSchema(questions: any[]): Record<string, unknown> {
+    const properties: Record<string, unknown> = {};
+    const required: string[] = [];
+    for (const question of questions) {
+      const id = typeof question?.id === 'string' ? question.id : '';
+      if (!id) continue;
+      required.push(id);
+      const options = Array.isArray(question?.options) ? question.options : [];
+      const enumValues = options
+        .map((option: any) => option?.label)
+        .filter((label: unknown): label is string => typeof label === 'string');
+      if (question?.isOther) enumValues.push('Other');
+      properties[id] = {
+        type: 'string',
+        title:
+          typeof question?.header === 'string' && question.header.trim()
+            ? question.header
+            : id,
+        description:
+          typeof question?.question === 'string'
+            ? question.question
+            : undefined,
+        ...(enumValues.length ? { enum: enumValues } : {}),
+      };
+    }
+    return { type: 'object', properties, required };
+  }
+
+  private clearPendingPermission(sessionId: number, requestId: string): void {
+    const state = this.ensureRuntimeState(sessionId);
+    if (state.pendingPermissionRequest?.requestId !== requestId) return;
+    state.pendingPermissionRequest = null;
+    state.runPhase = state.pendingUserInputRequest ? 'waiting' : 'running';
+    state.sessionState = state.pendingUserInputRequest
+      ? 'requires_action'
+      : 'running';
+    this.emitRunState(sessionId);
   }
 
   /**
@@ -1380,8 +1787,12 @@ export class CodexRuntimeService extends EventEmitter {
         } as ThreadItem;
       }
       case 'reasoning': {
-        const summary = Array.isArray(raw.summary) ? raw.summary.join('\n\n') : '';
-        const content = Array.isArray(raw.content) ? raw.content.join('\n\n') : '';
+        const summary = Array.isArray(raw.summary)
+          ? raw.summary.join('\n\n')
+          : '';
+        const content = Array.isArray(raw.content)
+          ? raw.content.join('\n\n')
+          : '';
         const text = [summary, content].filter(Boolean).join('\n\n');
         if (opts.isFinal || text) {
           reasoningText.set(id, text);
@@ -1398,8 +1809,12 @@ export class CodexRuntimeService extends EventEmitter {
           type: 'command_execution',
           command: typeof raw.command === 'string' ? raw.command : '',
           aggregated_output:
-            typeof raw.aggregatedOutput === 'string' ? raw.aggregatedOutput : '',
-          ...(typeof raw.exitCode === 'number' ? { exit_code: raw.exitCode } : {}),
+            typeof raw.aggregatedOutput === 'string'
+              ? raw.aggregatedOutput
+              : '',
+          ...(typeof raw.exitCode === 'number'
+            ? { exit_code: raw.exitCode }
+            : {}),
           status,
         } as ThreadItem;
       case 'fileChange':
@@ -1436,16 +1851,18 @@ export class CodexRuntimeService extends EventEmitter {
         return {
           id,
           type: 'error',
-          message: typeof raw.message === 'string' ? raw.message : 'Codex error',
+          message:
+            typeof raw.message === 'string' ? raw.message : 'Codex error',
         } as ThreadItem;
       default:
         return null;
     }
   }
 
-  private mapPermissionMode(
-    mode: CodexPermissionMode | null,
-  ): { sandboxMode: SandboxMode; approvalPolicy: ApprovalMode } {
+  private mapPermissionMode(mode: CodexPermissionMode | null): {
+    sandboxMode: SandboxMode;
+    approvalPolicy: ApprovalMode;
+  } {
     if (mode === 'bypassPermissions') {
       return { sandboxMode: 'danger-full-access', approvalPolicy: 'never' };
     }
@@ -1458,23 +1875,27 @@ export class CodexRuntimeService extends EventEmitter {
     if (!mode || mode === 'default' || mode === 'auto') {
       return { sandboxMode: 'workspace-write', approvalPolicy: 'untrusted' };
     }
-    throw new BadRequestException(`Unsupported Codex permission mode "${mode}".`);
+    throw new BadRequestException(
+      `Unsupported Codex permission mode "${mode}".`,
+    );
   }
 
-  private applyPlanModeInstruction(input: Input, mode: CodexPermissionMode | null): Input {
+  private applyPlanModeInstruction(
+    input: Input,
+    mode: CodexPermissionMode | null,
+  ): Input {
     if (mode !== 'plan') {
       return input;
     }
     if (typeof input === 'string') {
       return `${CODEX_PLAN_MODE_INSTRUCTION}\n\nUser request:\n${input}`;
     }
-    return [
-      { type: 'text', text: CODEX_PLAN_MODE_INSTRUCTION },
-      ...input,
-    ];
+    return [{ type: 'text', text: CODEX_PLAN_MODE_INSTRUCTION }, ...input];
   }
 
-  private maybePlanModeInstruction(mode: CodexPermissionMode | null): string | null {
+  private maybePlanModeInstruction(
+    mode: CodexPermissionMode | null,
+  ): string | null {
     return mode === 'plan' ? CODEX_PLAN_MODE_INSTRUCTION : null;
   }
 
@@ -1482,7 +1903,8 @@ export class CodexRuntimeService extends EventEmitter {
     const inputTokens = usage.input_tokens + usage.cached_input_tokens;
     const outputTokens = usage.output_tokens + usage.reasoning_output_tokens;
     const totalTokens = inputTokens + outputTokens;
-    const maxTokens = CODEX_MODEL_CONTEXT_WINDOWS[model] ?? DEFAULT_CODEX_CONTEXT_WINDOW;
+    const maxTokens =
+      CODEX_MODEL_CONTEXT_WINDOWS[model] ?? DEFAULT_CODEX_CONTEXT_WINDOW;
     return {
       model,
       totalTokens,
@@ -1505,15 +1927,19 @@ export class CodexRuntimeService extends EventEmitter {
     );
   }
 
-  private validateImageInputs(images: AgentImageInput[] | undefined): AgentImageInput[] {
+  private validateImageInputs(
+    images: AgentImageInput[] | undefined,
+  ): AgentImageInput[] {
     if (!images?.length) {
       return [];
     }
     return images.filter((image) => {
       return (
-        typeof image.data === 'string'
-        && image.data.length > 0
-        && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(image.mediaType)
+        typeof image.data === 'string' &&
+        image.data.length > 0 &&
+        ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(
+          image.mediaType,
+        )
       );
     });
   }
@@ -1522,10 +1948,14 @@ export class CodexRuntimeService extends EventEmitter {
     text: string,
     images: AgentImageInput[],
   ): Promise<{
-    input: Array<{ type: 'text'; text: string } | { type: 'local_image'; path: string }>;
+    input: Array<
+      { type: 'text'; text: string } | { type: 'local_image'; path: string }
+    >;
     tempDir: string | null;
   }> {
-    const input: Array<{ type: 'text'; text: string } | { type: 'local_image'; path: string }> = [];
+    const input: Array<
+      { type: 'text'; text: string } | { type: 'local_image'; path: string }
+    > = [];
     if (text) {
       input.push({ type: 'text', text });
     }
@@ -1534,7 +1964,10 @@ export class CodexRuntimeService extends EventEmitter {
     }
     const tempDir = await mkdtemp(join(tmpdir(), 'elevenex-codex-images-'));
     for (const [index, image] of images.entries()) {
-      const filePath = join(tempDir, `image-${index + 1}${this.imageExtension(image.mediaType)}`);
+      const filePath = join(
+        tempDir,
+        `image-${index + 1}${this.imageExtension(image.mediaType)}`,
+      );
       await writeFile(filePath, Buffer.from(image.data, 'base64'));
       input.push({ type: 'local_image', path: filePath });
     }
@@ -1563,7 +1996,9 @@ const importCodexSdk = new Function(
   'return import(specifier)',
 ) as (specifier: string) => Promise<CodexSdkModule>;
 
-function normalizeStatus(value: unknown): 'in_progress' | 'completed' | 'failed' {
+function normalizeStatus(
+  value: unknown,
+): 'in_progress' | 'completed' | 'failed' {
   if (value === 'completed') return 'completed';
   if (value === 'failed') return 'failed';
   // App-server's CommandExecution / PatchApply statuses also have "declined"

@@ -34,6 +34,16 @@ export type AppServerNotificationListener = (
   notification: CodexAppServerNotification,
 ) => void;
 
+export interface CodexAppServerRequest {
+  id: number | string;
+  method: string;
+  params: unknown;
+}
+
+export type AppServerRequestListener = (
+  request: CodexAppServerRequest,
+) => boolean | Promise<boolean>;
+
 /**
  * Manages a single long-lived `codex app-server` process that serves all
  * codex turns for this backend. The process is spawned lazily on first use,
@@ -52,7 +62,9 @@ export class CodexAppServerClient implements OnModuleDestroy {
   private initializePromise: Promise<void> | null = null;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
-  private readonly notificationListeners = new Set<AppServerNotificationListener>();
+  private readonly notificationListeners =
+    new Set<AppServerNotificationListener>();
+  private readonly requestListeners = new Set<AppServerRequestListener>();
   private refCount = 0;
   private idleTimer: NodeJS.Timeout | null = null;
   private shuttingDown = false;
@@ -90,6 +102,18 @@ export class CodexAppServerClient implements OnModuleDestroy {
     this.notificationListeners.add(listener);
     return () => {
       this.notificationListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Registers a server->client JSON-RPC request handler. Codex uses these for
+   * permission prompts and user-input elicitations; handlers must send their
+   * own response with respondToRequest().
+   */
+  onRequest(listener: AppServerRequestListener): () => void {
+    this.requestListeners.add(listener);
+    return () => {
+      this.requestListeners.delete(listener);
     };
   }
 
@@ -155,6 +179,22 @@ export class CodexAppServerClient implements OnModuleDestroy {
     }
     const payload = JSON.stringify({ method, params }) + '\n';
     this.child.stdin.write(payload);
+  }
+
+  respondToRequest(id: number | string, result: unknown): void {
+    if (!this.child || !this.child.stdin || this.child.killed) {
+      throw new Error('codex app-server is not running');
+    }
+    this.child.stdin.write(JSON.stringify({ id, result }) + '\n');
+  }
+
+  rejectRequest(id: number | string, message: string, code = -32000): void {
+    if (!this.child || !this.child.stdin || this.child.killed) {
+      throw new Error('codex app-server is not running');
+    }
+    this.child.stdin.write(
+      JSON.stringify({ id, error: { code, message } }) + '\n',
+    );
   }
 
   private sendRequest<T>(
@@ -227,7 +267,9 @@ export class CodexAppServerClient implements OnModuleDestroy {
 
     child.once('exit', (code, signal) => {
       if (this.child !== child) return;
-      this.logger.log(`codex app-server exited (code=${code} signal=${signal})`);
+      this.logger.log(
+        `codex app-server exited (code=${code} signal=${signal})`,
+      );
       this.tearDown(
         new Error(
           `codex app-server exited unexpectedly (code=${code ?? 'null'} signal=${
@@ -246,6 +288,18 @@ export class CodexAppServerClient implements OnModuleDestroy {
       message = JSON.parse(trimmed);
     } catch (error) {
       this.logger.warn(`Failed to parse app-server message: ${trimmed}`);
+      return;
+    }
+
+    if (
+      (typeof message?.id === 'number' || typeof message?.id === 'string') &&
+      typeof message?.method === 'string'
+    ) {
+      void this.handleServerRequest({
+        id: message.id,
+        method: message.method,
+        params: message.params,
+      });
       return;
     }
 
@@ -280,6 +334,36 @@ export class CodexAppServerClient implements OnModuleDestroy {
         }
       }
     }
+  }
+
+  private async handleServerRequest(
+    request: CodexAppServerRequest,
+  ): Promise<void> {
+    for (const listener of this.requestListeners) {
+      try {
+        if (await listener(request)) {
+          return;
+        }
+      } catch (error) {
+        this.logger.warn(
+          `app-server request listener failed for ${request.method}: ${String(error)}`,
+        );
+        try {
+          this.rejectRequest(
+            request.id,
+            error instanceof Error ? error.message : String(error),
+          );
+        } catch {
+          // ignore
+        }
+        return;
+      }
+    }
+    this.rejectRequest(
+      request.id,
+      `Unsupported codex app-server request "${request.method}"`,
+      -32601,
+    );
   }
 
   private tearDown(error: Error): void {
