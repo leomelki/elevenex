@@ -22,7 +22,7 @@ const TARGETS = [
   { key: 'linux-x64', platform: 'linux', arch: 'x64', nodeArch: 'x64' },
   { key: 'linux-arm64', platform: 'linux', arch: 'arm64', nodeArch: 'arm64' },
 ];
-const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty'];
+const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@openai/codex-sdk'];
 
 function ensureDir(targetPath) {
   mkdirSync(targetPath, { recursive: true });
