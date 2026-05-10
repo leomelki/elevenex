@@ -870,16 +870,11 @@ export class ClaudeRuntimeService extends EventEmitter {
           ),
         },
       });
-      if (run) {
+      if (run && !run.interruptRequested) {
         this.promoteNextPendingPermissionRequest(sessionId, state, run);
-      } else {
+      } else if (state.pendingPermissionRequest) {
         state.pendingPermissionRequest = null;
-        state.runPhase = 'running';
-        state.sessionState = 'running';
         this.emitRunState(sessionId);
-        await this.claudeHooksService.updateStatus(sessionId, 'running', {
-          markCompletion: false,
-        });
       }
 
       if (decisionContext.decision.behavior === 'allow') {
@@ -1272,6 +1267,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     state: RuntimeState,
     run: ActiveRunState,
   ): void {
+    if (run.interruptRequested || this.invalidatedSessions.has(sessionId)) {
+      return;
+    }
     const nextRequestId = run.permissionRequestOrder[0];
     if (!nextRequestId) {
       state.pendingPermissionRequest = null;
@@ -2552,6 +2550,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       .catch(() => undefined)
       .finally(() => {
         this.emitRunState(sessionId);
+        this.emitEvent({ type: 'complete', payload: { sessionId } });
         void this.claudeHooksService.updateStatus(sessionId, 'idle', {
           markCompletion: false,
         });
@@ -4614,6 +4613,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.canInterrupt = false;
+    state.runPhase = 'idle';
+    state.sessionState = 'idle';
 
     if (!options.invalidateSession) {
       this.emitRunState(sessionId);

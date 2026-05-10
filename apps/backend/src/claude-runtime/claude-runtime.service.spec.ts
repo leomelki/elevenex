@@ -1976,11 +1976,8 @@ describe('ClaudeRuntimeService', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     const midInterruptState = await service.getRuntimeState(7);
-    expect(midInterruptState.runPhase).toBe('running');
+    expect(midInterruptState.runPhase).toBe('idle');
     expect(midInterruptState.canInterrupt).toBe(false);
-    await expect(service.submitPrompt(7, 'Retry too early')).rejects.toThrow(
-      'Claude is already running for this session.',
-    );
 
     releaseIteration?.();
     await interruptPromise;
@@ -1991,6 +1988,7 @@ describe('ClaudeRuntimeService', () => {
     expect(runtimeState.runPhase).toBe('idle');
     expect(runtimeState.lastError).toBeNull();
     expect(emittedEvents).not.toContain('error');
+    expect(emittedEvents).toContain('complete');
   });
 
   it('interrupt clears a pending permission request immediately', async () => {
