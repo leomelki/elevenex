@@ -9,7 +9,14 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideCheck, lucideCopy, lucidePencil, lucideX } from '@ng-icons/lucide';
+import {
+  lucideCheck,
+  lucideCopy,
+  lucideInfo,
+  lucidePencil,
+  lucideTriangleAlert,
+  lucideX,
+} from '@ng-icons/lucide';
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
 
@@ -18,7 +25,16 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
   standalone: true,
   imports: [CommonModule, MarkdownPipe, NgIcon],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [provideIcons({ lucideCheck, lucideCopy, lucidePencil, lucideX })],
+  viewProviders: [
+    provideIcons({
+      lucideCheck,
+      lucideCopy,
+      lucideInfo,
+      lucidePencil,
+      lucideTriangleAlert,
+      lucideX,
+    }),
+  ],
   template: `
     @switch (item().kind) {
       @case ('user') {
@@ -119,24 +135,30 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
         </div>
       }
       @case ('system') {
-        <div class="cw-msg cw-msg--system" [attr.title]="timestampTitle()">
-          <div class="cw-msg__body">
-            {{ item().content }}
+        <details class="cw-msg cw-msg--diagnostic cw-msg--system" [attr.title]="timestampTitle()">
+          <summary class="cw-msg__diag-summary">
+            <ng-icon name="lucideInfo" size="13" />
+            <span class="cw-msg__diag-title">{{ diagnosticTitle() }}</span>
+            <span class="cw-msg__diag-preview">{{ diagnosticPreview() }}</span>
             @if (timestampLabel(); as label) {
-              <div class="cw-msg__meta" aria-hidden="true">{{ label }}</div>
+              <span class="cw-msg__meta" aria-hidden="true">{{ label }}</span>
             }
-          </div>
-        </div>
+          </summary>
+          <pre class="cw-msg__diag-body">{{ item().content }}</pre>
+        </details>
       }
       @case ('error') {
-        <div class="cw-msg cw-msg--error" [attr.title]="timestampTitle()">
-          <div class="cw-msg__body">
-            {{ item().content }}
+        <details class="cw-msg cw-msg--diagnostic cw-msg--error" [attr.title]="timestampTitle()">
+          <summary class="cw-msg__diag-summary">
+            <ng-icon name="lucideTriangleAlert" size="13" />
+            <span class="cw-msg__diag-title">{{ diagnosticTitle() }}</span>
+            <span class="cw-msg__diag-preview">{{ diagnosticPreview() }}</span>
             @if (timestampLabel(); as label) {
-              <div class="cw-msg__meta" aria-hidden="true">{{ label }}</div>
+              <span class="cw-msg__meta" aria-hidden="true">{{ label }}</span>
             }
-          </div>
-        </div>
+          </summary>
+          <pre class="cw-msg__diag-body">{{ item().content }}</pre>
+        </details>
       }
     }
   `,
@@ -261,21 +283,57 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
         opacity: 1;
         transform: translateY(0);
       }
-      .cw-msg--system {
+      .cw-msg--diagnostic {
         font-size: 0.75rem;
+        max-width: min(100%, 100ch);
+        border: 1px solid var(--border);
+        border-radius: 0.375rem;
+        background: color-mix(in oklab, var(--foreground) 3%, transparent);
         color: var(--muted-foreground);
-        padding: 0.25rem 0.5rem;
-        border-left: 2px solid var(--border);
-        white-space: pre-wrap;
       }
       .cw-msg--error {
-        font-size: 0.8125rem;
-        padding: 0.5rem 0.75rem;
         background: color-mix(in oklab, var(--destructive) 8%, transparent);
-        border-left: 2px solid var(--destructive);
+        border-color: color-mix(in oklab, var(--destructive) 35%, var(--border));
         color: var(--destructive);
-        border-radius: 0.25rem;
+      }
+      .cw-msg__diag-summary {
+        display: grid;
+        grid-template-columns: auto auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 0.375rem;
+        min-height: 1.65rem;
+        padding: 0.1875rem 0.5rem;
+        cursor: pointer;
+        list-style: none;
+      }
+      .cw-msg__diag-summary::-webkit-details-marker {
+        display: none;
+      }
+      .cw-msg__diag-title {
+        font-weight: 600;
+        color: var(--foreground);
+      }
+      .cw-msg--error .cw-msg__diag-title {
+        color: var(--destructive);
+      }
+      .cw-msg__diag-preview {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+      .cw-msg__diag-body {
+        margin: 0;
+        padding: 0.5rem 0.625rem 0.625rem;
+        border-top: 1px solid var(--border);
         white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--foreground);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.75rem;
+        line-height: 1.55;
+        max-height: 14rem;
+        overflow: auto;
       }
       .cw-md :first-child {
         margin-top: 0;
@@ -397,6 +455,18 @@ export class ClaudeMessageComponent {
   readonly isEmpty = computed(() => !this.item().content);
   readonly timestampLabel = computed(() => buildTimestampLabel(this.item(), this.streaming()));
   readonly timestampTitle = computed(() => this.timestampLabel());
+  readonly diagnosticTitle = computed(() => {
+    const item = this.item();
+    if (item.kind === 'error') {
+      return isWarningText(item.content) ? 'Warning' : 'Error';
+    }
+    return isWarningText(item.content) ? 'Warning' : 'System';
+  });
+  readonly diagnosticPreview = computed(() => {
+    const content = this.item().content?.trim().replace(/\s+/g, ' ') ?? '';
+    if (!content) return 'No details';
+    return content.length > 180 ? `${content.slice(0, 180)}...` : content;
+  });
 
   preserveSelection(event: MouseEvent): void {
     event.preventDefault();
@@ -457,4 +527,8 @@ function formatTimestamp(value: string): string {
     : `${day}/${month}/${date.getFullYear()}`;
 
   return `${dateLabel} ${timeLabel}`;
+}
+
+function isWarningText(value: string | undefined): boolean {
+  return /\b(warn(?:ing)?|deprecated|ignoring|malformed|invalid config)\b/i.test(value ?? '');
 }
