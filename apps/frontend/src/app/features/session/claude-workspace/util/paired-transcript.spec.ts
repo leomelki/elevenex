@@ -166,6 +166,31 @@ describe('pairTranscript', () => {
     );
   });
 
+  it('dedupes Codex live and history assistant copies with different IDs', () => {
+    const units = pairTranscript([
+      {
+        id: 'codex-live-agent-message',
+        kind: 'assistant',
+        sourceMessageId: 'codex-live-agent-message',
+        content: 'Done. I updated the implementation.',
+        timestamp: '2026-05-10T08:00:00.000Z',
+      },
+      {
+        id: 'codex-history-response-item',
+        kind: 'assistant',
+        sourceMessageId: 'codex-history-response-item',
+        content: 'Done. I updated the implementation.',
+        timestamp: '2026-05-10T08:00:00.500Z',
+      },
+    ]);
+
+    const messages = units.filter((u) => u.kind === 'message');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].kind === 'message' && messages[0].item.content).toBe(
+      'Done. I updated the implementation.',
+    );
+  });
+
   it('dedupes streaming text after a thinking block against the history-replay copy', () => {
     // Reproduces the production case: when a model emits thinking → text within one
     // Anthropic message, streaming gives the text id `msg_abc:1` (real content-block

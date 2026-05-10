@@ -1256,10 +1256,15 @@ readonly messageActionsDisabled = computed(
 
     type KindKey = `${string}:${ClaudeTranscriptItemKind}`;
     const historyKindKeys = new Set<KindKey>();
+    const historyContentKeys = new Set<KindKey>();
     for (const item of history) {
       const colonIdx = item.id.indexOf(':');
       if (colonIdx >= 0) {
         historyKindKeys.add(`${item.id.slice(0, colonIdx)}:${item.kind}`);
+      }
+      const contentKey = this.transcriptContentKey(item);
+      if (contentKey) {
+        historyContentKeys.add(contentKey);
       }
     }
 
@@ -1273,6 +1278,8 @@ readonly messageActionsDisabled = computed(
         const key: KindKey = `${item.id.slice(0, colonIdx)}:${item.kind}`;
         if (historyKindKeys.has(key)) return false;
       }
+      const contentKey = this.transcriptContentKey(item);
+      if (contentKey && historyContentKeys.has(contentKey)) return false;
       return true;
     });
 
@@ -1302,6 +1309,14 @@ readonly messageActionsDisabled = computed(
     );
     this.optimisticUserItems.set(optimisticToKeep);
     this.liveItems.set(preSyncLiveItems.filter((item) => item.kind === 'error'));
+  }
+
+  private transcriptContentKey(item: ClaudeTranscriptItem): `${string}:${ClaudeTranscriptItemKind}` | null {
+    if (item.kind !== 'assistant' && item.kind !== 'thinking') {
+      return null;
+    }
+    const content = item.content?.trim().replace(/\s+/g, ' ');
+    return content ? `${content}:${item.kind}` : null;
   }
 
   private applyRuntimeState(state: ClaudeRuntimeState): void {

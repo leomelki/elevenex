@@ -1,10 +1,18 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { Codex, type ApprovalMode, type SandboxMode, type ThreadEvent, type ThreadItem, type Usage } from '@openai/codex-sdk';
+import type {
+  ApprovalMode,
+  SandboxMode,
+  ThreadEvent,
+  ThreadItem,
+  Usage,
+} from '@openai/codex-sdk';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { createInterface } from 'readline';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
 import type {
@@ -12,7 +20,7 @@ import type {
   ClaudeModelOption,
   ClaudeTranscriptItem,
 } from '../claude-runtime/claude-runtime.types.js';
-import { buildAugmentedEnv } from '../config/system-paths.js';
+import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
 import { CodexAuthService } from './codex-auth.service.js';
 import { CodexHistoryService } from './codex-history.service.js';
 import type {
@@ -25,22 +33,72 @@ import type {
   CodexSessionSnapshotPayload,
 } from './codex-runtime.types.js';
 
-const DEFAULT_CODEX_MODEL = 'gpt-5.1-codex';
-const CODEX_CONTEXT_WINDOW = 200_000;
+const DEFAULT_CODEX_MODEL = 'gpt-5.5';
+const DEFAULT_CODEX_CONTEXT_WINDOW = 1_050_000;
+const CODEX_MODEL_REFRESH_TTL_MS = 60 * 60 * 1000;
+const CODEX_MODEL_LIST_TIMEOUT_MS = 8_000;
+const CODEX_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+  'gpt-5.5': 1_050_000,
+  'gpt-5.4': 1_050_000,
+  'gpt-5.4-mini': 1_050_000,
+  'gpt-5.3-codex': 400_000,
+  'gpt-5.2': 400_000,
+};
 const CODEX_MODELS: ClaudeModelOption[] = [
   {
-    id: 'gpt-5.1-codex',
-    displayName: 'GPT-5.1 Codex',
-    description: 'Default Codex coding model.',
+    id: 'gpt-5.5',
+    displayName: 'GPT-5.5',
+    description: 'Frontier model for complex coding, research, and real-world work.',
+    supportsEffort: true,
+    supportsFastMode: true,
+  },
+  {
+    id: 'gpt-5.4',
+    displayName: 'GPT-5.4',
+    description: 'Strong model for everyday coding.',
+    supportsEffort: true,
+    supportsFastMode: true,
+  },
+  {
+    id: 'gpt-5.4-mini',
+    displayName: 'GPT-5.4-Mini',
+    description: 'Small, fast, and cost-efficient model for simpler coding tasks.',
     supportsEffort: true,
   },
   {
-    id: 'gpt-5-codex',
-    displayName: 'GPT-5 Codex',
-    description: 'Previous Codex coding model.',
+    id: 'gpt-5.3-codex',
+    displayName: 'GPT-5.3 Codex',
+    description: 'Coding-optimized model.',
+    supportsEffort: true,
+  },
+  {
+    id: 'gpt-5.2',
+    displayName: 'GPT-5.2',
+    description: 'Optimized for professional work and long-running agents.',
     supportsEffort: true,
   },
 ];
+
+interface CodexAppServerModel {
+  id?: unknown;
+  model?: unknown;
+  displayName?: unknown;
+  description?: unknown;
+  supportedReasoningEfforts?: unknown;
+  additionalSpeedTiers?: unknown;
+  serviceTiers?: unknown;
+  isDefault?: unknown;
+}
+
+interface CodexModelListResult {
+  data?: unknown;
+}
+
+interface JsonRpcResponse {
+  id?: unknown;
+  result?: unknown;
+  error?: { message?: unknown };
+}
 
 @Injectable()
 export class CodexRuntimeService extends EventEmitter {
@@ -48,6 +106,10 @@ export class CodexRuntimeService extends EventEmitter {
   private readonly activeRuns = new Map<number, CodexActiveRunState>();
   private readonly runtimeStates = new Map<number, CodexRuntimeState>();
   private readonly invalidatedSessions = new Set<number>();
+  private codexModels: ClaudeModelOption[] = [...CODEX_MODELS];
+  private codexDefaultModel = DEFAULT_CODEX_MODEL;
+  private lastModelRefreshAt = 0;
+  private modelRefreshInFlight: Promise<void> | null = null;
 
   constructor(
     private readonly sessionsService: SessionsService,
@@ -73,6 +135,7 @@ export class CodexRuntimeService extends EventEmitter {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
     await this.refreshAuthStatus(state);
+    this.refreshModelCatalogInBackground();
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
@@ -168,6 +231,7 @@ export class CodexRuntimeService extends EventEmitter {
 
     let stagedImageDir: string | null = null;
     try {
+      const { Codex } = await importCodexSdk('@openai/codex-sdk');
       const codex = new Codex({
         env: this.toStringEnv(buildAugmentedEnv(process.env, session.worktreePath)),
       });
@@ -175,7 +239,7 @@ export class CodexRuntimeService extends EventEmitter {
       const threadOptions = {
         workingDirectory: session.worktreePath,
         skipGitRepoCheck: true,
-        model: state.selectedModel ?? DEFAULT_CODEX_MODEL,
+        model: state.selectedModel ?? this.codexDefaultModel,
         sandboxMode: permissionOptions.sandboxMode,
         approvalPolicy: permissionOptions.approvalPolicy,
       };
@@ -288,7 +352,7 @@ export class CodexRuntimeService extends EventEmitter {
     }
     if (event.type === 'turn.completed') {
       state.contextUsage = this.toContextUsage(
-        state.selectedModel ?? DEFAULT_CODEX_MODEL,
+        state.selectedModel ?? this.codexDefaultModel,
         event.usage,
       );
       this.emitRunState(sessionId);
@@ -513,7 +577,7 @@ export class CodexRuntimeService extends EventEmitter {
     const authStatus = state.authStatus;
     const metadata: CodexRuntimeSessionMetadata = {
       cwd,
-      model: state.selectedModel ?? DEFAULT_CODEX_MODEL,
+      model: state.selectedModel ?? this.codexDefaultModel,
       permissionMode: state.selectedPermissionMode ?? 'default',
       codexVersion: authStatus?.version ?? 'unknown',
       authMethod: authStatus?.authMethod ?? 'unknown',
@@ -574,9 +638,9 @@ export class CodexRuntimeService extends EventEmitter {
       pendingPrompts: [],
       liveItems: [],
       lastError: null,
-      selectedModel: DEFAULT_CODEX_MODEL,
+      selectedModel: this.codexDefaultModel,
       selectedPermissionMode: 'default',
-      availableModels: [...CODEX_MODELS],
+      availableModels: [...this.codexModels],
       contextUsage: null,
       sessionMetadata: null,
       authStatus: null,
@@ -666,6 +730,216 @@ export class CodexRuntimeService extends EventEmitter {
     state.authStatus = await this.authService.getStatus();
   }
 
+  private refreshModelCatalogInBackground(): void {
+    const ageMs = Date.now() - this.lastModelRefreshAt;
+    if (ageMs < CODEX_MODEL_REFRESH_TTL_MS || this.modelRefreshInFlight) {
+      return;
+    }
+    this.modelRefreshInFlight = this.refreshModelCatalog()
+      .catch((error) => {
+        this.logger.debug(
+          `Codex model catalog refresh failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      })
+      .finally(() => {
+        this.lastModelRefreshAt = Date.now();
+        this.modelRefreshInFlight = null;
+      });
+  }
+
+  private async refreshModelCatalog(): Promise<void> {
+    const models = await this.fetchCodexAppServerModels();
+    if (!models.length) {
+      return;
+    }
+    const previousDefault = this.codexDefaultModel;
+    this.codexModels = models.map((model) => this.toModelOption(model));
+    this.codexDefaultModel =
+      this.codexModels.find((model) =>
+        models.some((source) => source.isDefault === true && this.modelId(source) === model.id),
+      )?.id
+      ?? this.codexModels[0]?.id
+      ?? DEFAULT_CODEX_MODEL;
+
+    for (const [sessionId, state] of this.runtimeStates.entries()) {
+      state.availableModels = [...this.codexModels];
+      if (!state.selectedModel || state.selectedModel === previousDefault) {
+        state.selectedModel = this.codexDefaultModel;
+      } else if (!state.availableModels.some((model) => model.id === state.selectedModel)) {
+        state.availableModels = [
+          ...state.availableModels,
+          {
+            id: state.selectedModel,
+            displayName: state.selectedModel,
+            description: 'Custom Codex model.',
+            supportsEffort: true,
+          },
+        ];
+      }
+      this.emitRunState(sessionId);
+    }
+  }
+
+  private fetchCodexAppServerModels(): Promise<CodexAppServerModel[]> {
+    return new Promise((resolve, reject) => {
+      const codexBin = findBinary('codex') ?? 'codex';
+      const child = spawn(codexBin, ['app-server', '--listen', 'stdio://'], {
+        env: buildAugmentedEnv(),
+        stdio: ['pipe', 'pipe', 'ignore'],
+      });
+      const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
+      const timer = setTimeout(
+        () => finish(new Error('Timed out while reading Codex model catalog.')),
+        CODEX_MODEL_LIST_TIMEOUT_MS,
+      );
+      let settled = false;
+      const finish = (error: Error | null, models: CodexAppServerModel[] = []) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        rl.close();
+        child.removeAllListeners();
+        try {
+          child.kill();
+        } catch {
+          // Process may have already exited.
+        }
+        if (error) {
+          reject(error);
+        } else {
+          resolve(models);
+        }
+      };
+      rl.on('line', (line) => {
+        const message = this.parseJsonRpcLine(line);
+        if (!message) {
+          return;
+        }
+        if (message.id === 1) {
+          if (message.error) {
+            finish(
+              new Error(
+                typeof message.error.message === 'string'
+                  ? message.error.message
+                  : 'Codex app-server initialization failed.',
+              ),
+            );
+            return;
+          }
+          child.stdin.write(
+            JSON.stringify({
+              id: 2,
+              method: 'model/list',
+              params: {
+                limit: 100,
+                includeHidden: false,
+              },
+            })
+            + '\n',
+          );
+          return;
+        }
+        if (message.id !== 2) {
+          return;
+        }
+        if (message.error) {
+          finish(
+            new Error(
+              typeof message.error.message === 'string'
+                ? message.error.message
+                : 'Codex model/list failed.',
+            ),
+          );
+          return;
+        }
+        finish(null, this.extractModelList(message.result));
+      });
+      child.on('error', (error) => finish(error));
+      child.on('exit', (code, signal) => {
+        if (!settled) {
+          const detail = signal ? `signal ${signal}` : `code ${code ?? 1}`;
+          finish(new Error(`Codex app-server exited with ${detail}.`));
+        }
+      });
+      child.stdin.write(
+        JSON.stringify({
+          id: 1,
+          method: 'initialize',
+          params: {
+            clientInfo: {
+              name: 'elevenex',
+              title: 'Elevenex',
+              version: '0',
+            },
+            capabilities: {
+              experimentalApi: true,
+              optOutNotificationMethods: ['configWarning'],
+            },
+          },
+        })
+        + '\n',
+      );
+    });
+  }
+
+  private parseJsonRpcLine(line: string): JsonRpcResponse | null {
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      return parsed && typeof parsed === 'object' ? (parsed as JsonRpcResponse) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private extractModelList(result: unknown): CodexAppServerModel[] {
+    const payload = result && typeof result === 'object'
+      ? (result as CodexModelListResult)
+      : null;
+    if (!Array.isArray(payload?.data)) {
+      return [];
+    }
+    return payload.data.filter(
+      (model): model is CodexAppServerModel =>
+        Boolean(this.modelId(model as CodexAppServerModel)),
+    );
+  }
+
+  private toModelOption(model: CodexAppServerModel): ClaudeModelOption {
+    const id = this.modelId(model);
+    const displayName =
+      typeof model.displayName === 'string' && model.displayName.trim()
+        ? model.displayName.trim()
+        : id;
+    const description =
+      typeof model.description === 'string' && model.description.trim()
+        ? model.description.trim()
+        : 'Codex model.';
+    const supportsEffort =
+      Array.isArray(model.supportedReasoningEfforts)
+      && model.supportedReasoningEfforts.length > 0;
+    const supportsFastMode =
+      (Array.isArray(model.additionalSpeedTiers) && model.additionalSpeedTiers.length > 0)
+      || (Array.isArray(model.serviceTiers) && model.serviceTiers.length > 0);
+    return {
+      id,
+      displayName,
+      description,
+      supportsEffort,
+      ...(supportsFastMode ? { supportsFastMode: true } : {}),
+    };
+  }
+
+  private modelId(model: CodexAppServerModel): string {
+    const id = typeof model.id === 'string' && model.id.trim()
+      ? model.id.trim()
+      : typeof model.model === 'string' && model.model.trim()
+        ? model.model.trim()
+        : '';
+    return id;
+  }
+
   private toRuntimeStatePayload(
     sessionId: number,
     state: CodexRuntimeState,
@@ -727,11 +1001,12 @@ export class CodexRuntimeService extends EventEmitter {
     const inputTokens = usage.input_tokens + usage.cached_input_tokens;
     const outputTokens = usage.output_tokens + usage.reasoning_output_tokens;
     const totalTokens = inputTokens + outputTokens;
+    const maxTokens = CODEX_MODEL_CONTEXT_WINDOWS[model] ?? DEFAULT_CODEX_CONTEXT_WINDOW;
     return {
       model,
       totalTokens,
-      maxTokens: CODEX_CONTEXT_WINDOW,
-      percentage: Math.min(100, Math.round((totalTokens / CODEX_CONTEXT_WINDOW) * 100)),
+      maxTokens,
+      percentage: Math.min(100, Math.round((totalTokens / maxTokens) * 100)),
       inputTokens,
       outputTokens,
       cacheCreationInputTokens: 0,
@@ -799,3 +1074,10 @@ export class CodexRuntimeService extends EventEmitter {
     }
   }
 }
+
+type CodexSdkModule = typeof import('@openai/codex-sdk');
+
+const importCodexSdk = new Function(
+  'specifier',
+  'return import(specifier)',
+) as (specifier: string) => Promise<CodexSdkModule>;

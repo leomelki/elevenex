@@ -60,11 +60,23 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
     if (item.kind !== 'assistant' && item.kind !== 'thinking') continue;
     const key = item.sourceMessageId
       ? `${item.sourceMessageId}:${item.kind}`
-      : (item.id.includes(':') ? `${item.id.slice(0, item.id.indexOf(':'))}:${item.kind}` : null);
+      : (item.id.includes(':') ? `${item.id.slice(0, item.id.indexOf(':'))}:${item.kind}` : contentGroupKey(item));
     if (!key) continue;
     let group = groups.get(key);
     if (!group) { group = []; groups.set(key, group); }
     group.push(item);
+  }
+  for (const item of normalizedItems) {
+    if (item.kind !== 'assistant' && item.kind !== 'thinking') continue;
+    const key = contentGroupKey(item);
+    if (!key) continue;
+    const sourceKey = item.sourceMessageId
+      ? `${item.sourceMessageId}:${item.kind}`
+      : (item.id.includes(':') ? `${item.id.slice(0, item.id.indexOf(':'))}:${item.kind}` : null);
+    if (sourceKey === key) continue;
+    let group = groups.get(key);
+    if (!group) { group = []; groups.set(key, group); }
+    if (!group.includes(item)) group.push(item);
   }
   for (const group of groups.values()) {
     if (group.length <= 1) continue;
@@ -174,6 +186,11 @@ function dedupeTranscriptItems(items: ClaudeTranscriptItem[]): ClaudeTranscriptI
       || !item.toolUseId
       || keptIds.has(item.id),
   );
+}
+
+function contentGroupKey(item: ClaudeTranscriptItem): string | null {
+  const content = item.content?.trim().replace(/\s+/g, ' ');
+  return content ? `${content}:${item.kind}` : null;
 }
 
 function pickCanonicalToolUse(group: ClaudeTranscriptItem[]): ClaudeTranscriptItem {
