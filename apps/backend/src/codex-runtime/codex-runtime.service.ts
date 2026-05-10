@@ -229,8 +229,18 @@ export class CodexRuntimeService extends EventEmitter {
       return;
     }
 
-    const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    // Skip the SQLite round-trip when we already have the session details
+    // cached from a prior turn — the worktree path doesn't change across
+    // turns and the codex session id is mirrored on the runtime state.
+    let cachedState = this.runtimeStates.get(sessionId);
+    let worktreePath = cachedState?.cachedWorktreePath ?? null;
+    if (!worktreePath) {
+      const session = await this.sessionsService.findOne(sessionId);
+      worktreePath = session.worktreePath;
+      cachedState = this.ensureRuntimeState(sessionId, session.codexSessionId);
+      cachedState.cachedWorktreePath = worktreePath;
+    }
+    const state = cachedState ?? this.ensureRuntimeState(sessionId);
     state.runPhase = 'running';
     state.sessionState = 'running';
     state.canInterrupt = true;
@@ -266,11 +276,11 @@ export class CodexRuntimeService extends EventEmitter {
     try {
       const { Codex } = await this.loadCodexSdk();
       const codex = new Codex({
-        env: this.toStringEnv(buildAugmentedEnv(process.env, session.worktreePath)),
+        env: this.toStringEnv(buildAugmentedEnv(process.env, worktreePath)),
       });
       const permissionOptions = this.mapPermissionMode(state.selectedPermissionMode);
       const threadOptions = {
-        workingDirectory: session.worktreePath,
+        workingDirectory: worktreePath,
         skipGitRepoCheck: true,
         model: state.selectedModel ?? this.codexDefaultModel,
         sandboxMode: permissionOptions.sandboxMode,
@@ -304,7 +314,7 @@ export class CodexRuntimeService extends EventEmitter {
         // Synchronous event handler — no awaits on the hot path. The one
         // historically-async branch (persisting the codex session id) is now
         // fire-and-forget so it can't stall delta delivery.
-        this.handleCodexEvent(sessionId, state, event, session.worktreePath);
+        this.handleCodexEvent(sessionId, state, event, worktreePath);
       }
       this.finishRun(sessionId);
     } catch (error) {
@@ -675,6 +685,7 @@ export class CodexRuntimeService extends EventEmitter {
     const state: CodexRuntimeState = {
       codexSessionId:
         codexSessionId && codexSessionId !== '-1' ? codexSessionId : null,
+      cachedWorktreePath: null,
       runPhase: 'idle',
       sessionState: 'idle',
       canInterrupt: false,

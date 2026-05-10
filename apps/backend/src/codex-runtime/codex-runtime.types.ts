@@ -88,6 +88,9 @@ export interface CodexActiveRunState {
 
 export interface CodexRuntimeState {
   codexSessionId: string | null;
+  // Cached so follow-up prompts don't re-read the session row from SQLite on
+  // the critical path. Populated on the first prompt of the session.
+  cachedWorktreePath: string | null;
   runPhase: CodexRunPhase;
   sessionState: 'idle' | 'running' | 'requires_action' | null;
   canInterrupt: boolean;
