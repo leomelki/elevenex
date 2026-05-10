@@ -686,7 +686,7 @@ readonly messageActionsDisabled = computed(
   }
 
   async onPermissionModeChange(mode: ClaudePermissionMode): Promise<void> {
-    if (this.currentProvider() === 'codex' && (mode === 'plan' || mode === ('planBypass' as ClaudePermissionMode) || mode === 'auto')) {
+    if (this.currentProvider() === 'codex' && (mode === ('planBypass' as ClaudePermissionMode) || mode === 'auto')) {
       mode = 'default';
     }
     if (mode === ('planBypass' as ClaudePermissionMode)) {

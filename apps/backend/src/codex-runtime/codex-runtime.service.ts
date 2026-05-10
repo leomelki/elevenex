@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type {
   ApprovalMode,
+  Input,
   SandboxMode,
   ThreadEvent,
   ThreadItem,
@@ -78,6 +79,13 @@ const CODEX_MODELS: ClaudeModelOption[] = [
     supportsEffort: true,
   },
 ];
+const CODEX_PLAN_MODE_INSTRUCTION = [
+  'You are in plan mode.',
+  'Analyze the request and repository, then respond with a concrete implementation plan.',
+  'Do not modify files, apply patches, run write commands, install dependencies, commit changes, or perform destructive actions.',
+  'You may inspect files and run read-only commands when needed.',
+  'End with a clear list of proposed changes and verification steps.',
+].join('\n');
 
 interface CodexAppServerModel {
   id?: unknown;
@@ -253,9 +261,12 @@ export class CodexRuntimeService extends EventEmitter {
             stagedImageDir = result.tempDir;
             return result.input;
           });
-      const streamedTurn = await thread.runStreamed(input, {
-        signal: abortController.signal,
-      });
+      const streamedTurn = await thread.runStreamed(
+        this.applyPlanModeInstruction(input, state.selectedPermissionMode),
+        {
+          signal: abortController.signal,
+        },
+      );
 
       for await (const event of streamedTurn.events) {
         if (this.invalidatedSessions.has(sessionId)) {
@@ -991,10 +1002,26 @@ export class CodexRuntimeService extends EventEmitter {
     if (mode === 'acceptEdits') {
       return { sandboxMode: 'workspace-write', approvalPolicy: 'never' };
     }
+    if (mode === 'plan') {
+      return { sandboxMode: 'read-only', approvalPolicy: 'never' };
+    }
     if (!mode || mode === 'default' || mode === 'auto') {
       return { sandboxMode: 'workspace-write', approvalPolicy: 'untrusted' };
     }
     throw new BadRequestException(`Unsupported Codex permission mode "${mode}".`);
+  }
+
+  private applyPlanModeInstruction(input: Input, mode: CodexPermissionMode | null): Input {
+    if (mode !== 'plan') {
+      return input;
+    }
+    if (typeof input === 'string') {
+      return `${CODEX_PLAN_MODE_INSTRUCTION}\n\nUser request:\n${input}`;
+    }
+    return [
+      { type: 'text', text: CODEX_PLAN_MODE_INSTRUCTION },
+      ...input,
+    ];
   }
 
   private toContextUsage(model: string, usage: Usage): ClaudeContextUsage {

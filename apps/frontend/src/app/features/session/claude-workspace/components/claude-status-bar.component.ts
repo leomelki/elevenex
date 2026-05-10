@@ -431,7 +431,7 @@ export class ClaudeStatusBarComponent {
   readonly permissionOptions = computed(() => {
     if (this.currentProvider() === 'codex') {
       return PERMISSION_MODES.filter((opt) =>
-        ['default', 'acceptEdits', 'bypassPermissions'].includes(opt.id),
+        ['default', 'plan', 'acceptEdits', 'bypassPermissions'].includes(opt.id),
       );
     }
     const modelId = this.selectedModel();

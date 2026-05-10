@@ -35,11 +35,14 @@ Elevenex maps the UI permission mode into Codex SDK sandbox settings instead:
 | UI mode | Codex sandbox | Codex approval policy |
 | --- | --- | --- |
 | `default` / `auto` | `workspace-write` | `untrusted` |
+| `plan` | `read-only` | `never` |
 | `acceptEdits` | `workspace-write` | `never` |
 | `bypassPermissions` | `danger-full-access` | `never` |
 
-Plan mode and plan-bypass are Claude-specific. When Codex is selected, the UI
-offers only `default`, `acceptEdits`, and `bypassPermissions`.
+Codex plan mode additionally prepends a planning instruction to the turn so the
+agent analyzes the repository and returns an implementation plan without
+attempting edits. Plan-bypass remains Claude-specific because Codex does not
+expose Claude's interactive plan approval callback.
 
 ## Event Normalization
 
