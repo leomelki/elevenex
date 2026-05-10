@@ -416,6 +416,7 @@
         [blockedByPermission]="!!pendingPermissionRequest()"
         [sendDisabledReason]="composerPermissionDisabledReason()"
         [attachedPanelOpen]="!!pendingPermissionRequest()"
+        [allowImages]="currentProviderSupportsImages()"
         [autocompleteItems]="autocompleteItems()"
         [pendingPrompts]="pendingPrompts()"
         (valueChange)="onPromptChange($event)"

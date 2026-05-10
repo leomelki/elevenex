@@ -15,9 +15,11 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
    - `skipGitRepoCheck: true`.
    - the selected Codex model.
    - Codex sandbox and approval settings derived from the app permission mode.
-5. Codex SDK stream events are converted into the same transcript item shape
+5. Image attachments are staged as temporary local image files and sent through
+   Codex SDK `local_image` inputs.
+6. Codex SDK stream events are converted into the same transcript item shape
    rendered by the existing workspace UI.
-6. The Codex thread id is stored in `sessions.codex_session_id`; Claude's
+7. The Codex thread id is stored in `sessions.codex_session_id`; Claude's
    `sessions.claude_session_id` is not reused or modified.
 
 ## Permission Mapping

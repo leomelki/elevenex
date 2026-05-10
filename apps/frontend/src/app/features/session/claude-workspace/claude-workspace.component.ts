@@ -160,6 +160,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly claudeSessionId = signal<string | null>(null);
   readonly providers = signal<AgentRuntimeProviderInfo[]>([]);
   readonly currentProvider = this.providerSelection.selectedProvider;
+  readonly currentProviderInfo = computed(() =>
+    this.providers().find((provider) => provider.id === this.currentProvider()) ?? null,
+  );
+  readonly currentProviderSupportsImages = computed(
+    () => this.currentProviderInfo()?.capabilities.multimodalPrompts ?? false,
+  );
   readonly selectedModel = signal<string | null>(null);
   readonly worktreeContext = signal<WorktreeContextSnapshot | null>(null);
   readonly worktreeContextLoading = signal(false);
@@ -545,7 +551,7 @@ readonly messageActionsDisabled = computed(
     const normalized: ComposerSendPayload =
       typeof payload === 'string' ? { text: payload, images: [] } : payload;
     const trimmed = normalized.text.trim();
-    const images = normalized.images;
+    const images = this.currentProviderSupportsImages() ? normalized.images : [];
     if (!trimmed && !images.length) return;
     const isIdle = this.runPhase() === 'idle';
     if (isIdle && this.submitting()) return;
@@ -1125,16 +1131,16 @@ readonly messageActionsDisabled = computed(
         }));
         return;
       case 'message_start':
-        this.liveItems.update((items) => [...items, event.payload.item]);
+        this.upsertLiveItem(event.payload.item);
         return;
       case 'tool_use':
       case 'tool_result':
         this.currentRunHadSubstantiveOutput = true;
         this.interruptedRunShouldRestorePrompt = false;
-        this.liveItems.update((items) => [...items, event.payload.item]);
+        this.upsertLiveItem(event.payload.item);
         return;
       case 'thinking_start':
-        this.liveItems.update((items) => [...items, event.payload.item]);
+        this.upsertLiveItem(event.payload.item);
         return;
       case 'message_delta':
         if (event.payload.delta.trim()) {
@@ -1201,6 +1207,13 @@ readonly messageActionsDisabled = computed(
     if (version !== this.bootstrapVersion) return;
 
     await this.restoreInterruptedPromptIfNothingSubstantiveHappened();
+  }
+
+  private upsertLiveItem(item: ClaudeTranscriptItem): void {
+    this.liveItems.update((items) => [
+      ...items.filter((existing) => existing.id !== item.id),
+      item,
+    ]);
   }
 
   private async restoreInterruptedPromptIfNothingSubstantiveHappened(): Promise<boolean> {

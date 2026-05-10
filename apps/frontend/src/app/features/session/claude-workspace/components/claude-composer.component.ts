@@ -93,7 +93,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
       <div
         class="cw-comp__box"
         [class.cw-comp__box--attached]="attachedPanelOpen()"
-        [class.cw-comp__box--dropping]="isDropTarget()"
+        [class.cw-comp__box--dropping]="allowImages() && isDropTarget()"
         (dragenter)="onDragEnter($event)"
         (dragover)="onDragOver($event)"
         (dragleave)="onDragLeave($event)"
@@ -167,15 +167,17 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
           </span>
 
           <div class="cw-comp__btns">
-            <button
-              type="button"
-              class="cw-comp__btn cw-comp__btn--ghost"
-              title="Attach image"
-              aria-label="Attach image"
-              (click)="openFilePicker()"
-            >
-              <ng-icon name="lucidePaperclip" size="14" />
-            </button>
+            @if (allowImages()) {
+              <button
+                type="button"
+                class="cw-comp__btn cw-comp__btn--ghost"
+                title="Attach image"
+                aria-label="Attach image"
+                (click)="openFilePicker()"
+              >
+                <ng-icon name="lucidePaperclip" size="14" />
+              </button>
+            }
             @if (running()) {
               <button
                 type="button"
@@ -456,6 +458,7 @@ export class ClaudeComposerComponent {
   readonly blockedByPermission = input<boolean>(false);
   readonly sendDisabledReason = input<string>('');
   readonly attachedPanelOpen = input<boolean>(false);
+  readonly allowImages = input<boolean>(true);
   readonly autocompleteItems = input<ClaudeAutocompleteItem[]>([]);
   readonly placeholderText = input<string>('Tell Claude what to do…');
   readonly pendingPrompts = input<ClaudePendingPrompt[]>([]);
@@ -499,6 +502,11 @@ export class ClaudeComposerComponent {
         if (ta.value !== nextValue) ta.value = nextValue;
         this.autoGrow(ta);
       });
+    });
+    effect(() => {
+      if (!this.allowImages() && this.attachedImages().length) {
+        this.attachedImages.set([]);
+      }
     });
   }
 
@@ -580,7 +588,7 @@ export class ClaudeComposerComponent {
 
   submit(): void {
     const v = this.value().trim();
-    const images = this.attachedImages();
+    const images = this.allowImages() ? this.attachedImages() : [];
     if (!v && !images.length) return;
     if (this.blockedByPermission()) return;
     if (this.submitting() && !this.running()) return;
@@ -593,11 +601,16 @@ export class ClaudeComposerComponent {
   }
 
   openFilePicker(): void {
+    if (!this.allowImages()) return;
     this.fileInput?.nativeElement?.click();
   }
 
   onFileInputChange(event: Event): void {
     const input = event.target as HTMLInputElement;
+    if (!this.allowImages()) {
+      input.value = '';
+      return;
+    }
     const files = input.files;
     if (files && files.length) {
       void this.ingestFiles(Array.from(files));
@@ -606,6 +619,7 @@ export class ClaudeComposerComponent {
   }
 
   onPaste(event: ClipboardEvent): void {
+    if (!this.allowImages()) return;
     const items = event.clipboardData?.items;
     if (!items || !items.length) return;
     const files: File[] = [];
@@ -621,6 +635,7 @@ export class ClaudeComposerComponent {
   }
 
   onDragEnter(event: DragEvent): void {
+    if (!this.allowImages()) return;
     if (!this.hasImageData(event)) return;
     event.preventDefault();
     this.dragDepth += 1;
@@ -628,6 +643,7 @@ export class ClaudeComposerComponent {
   }
 
   onDragOver(event: DragEvent): void {
+    if (!this.allowImages()) return;
     if (!this.hasImageData(event)) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
@@ -640,6 +656,7 @@ export class ClaudeComposerComponent {
   }
 
   onDrop(event: DragEvent): void {
+    if (!this.allowImages()) return;
     if (!this.hasImageData(event)) return;
     event.preventDefault();
     this.dragDepth = 0;
@@ -661,6 +678,7 @@ export class ClaudeComposerComponent {
   }
 
   private async ingestFiles(files: File[]): Promise<void> {
+    if (!this.allowImages()) return;
     const existingTotal = this.attachedImages().reduce((sum, i) => sum + i.size, 0);
     let runningTotal = existingTotal;
     const accepted: ComposerImageAttachment[] = [];

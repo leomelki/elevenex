@@ -1,4 +1,7 @@
 import type {
+  AgentImageInput,
+} from '../agent-runtime/agent-runtime.types.js';
+import type {
   ClaudeAuthStatus,
   ClaudeContextUsage,
   ClaudeMcpConfigStatus,
@@ -78,6 +81,7 @@ export interface CodexRuntimeState {
     id: string;
     prompt: string;
     queuedAt: string;
+    images?: AgentImageInput[];
   }[];
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;

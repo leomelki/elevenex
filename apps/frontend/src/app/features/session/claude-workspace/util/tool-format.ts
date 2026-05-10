@@ -20,6 +20,7 @@ export type ToolKind =
   | 'glob'
   | 'web_fetch'
   | 'web_search'
+  | 'file_changes'
   | 'task_agent'
   | 'todo_write'
   | 'plan_mode'
@@ -149,6 +150,18 @@ export function describeTool(toolName: string | undefined, input: unknown): Tool
   if (n === 'websearch') {
     return { kind: 'web_search', icon: 'lucideGlobe', verb: 'Search web', target: truncate(String(data['query'] ?? ''), 100) };
   }
+  if (n === 'filechanges') {
+    const changes = Array.isArray(data['changes']) ? data['changes'] : [];
+    const first = asRecord(changes[0]);
+    const path = String(first['path'] ?? '');
+    const suffix = changes.length > 1 ? ` +${changes.length - 1}` : '';
+    return {
+      kind: 'file_changes',
+      icon: 'lucideFilePen',
+      verb: 'Change files',
+      target: path ? `${displayPath(path)}${suffix}` : `${changes.length} file${changes.length === 1 ? '' : 's'}`,
+    };
+  }
   // Task / Agent (subagent dispatch)
   if (n === 'task' || n === 'agent' || n === 'agenttool') {
     const subagent = String(data['subagent_type'] ?? '').trim();
@@ -200,10 +213,10 @@ export function describeTool(toolName: string | undefined, input: unknown): Tool
     return { kind: 'skill', icon: 'lucideSparkles', verb: 'Skill', target: skill };
   }
   // MCP
-  if (n.startsWith('mcp')) {
+  if (n.startsWith('mcp') || typeof data['server'] === 'string') {
     const parts = name.split('__');
-    const server = parts[1] || '';
-    const tool = parts.slice(2).join('.');
+    const server = String(data['server'] ?? parts[1] ?? '');
+    const tool = parts.length > 2 ? parts.slice(2).join('.') : name;
     return { kind: 'mcp', icon: 'lucidePlugZap', verb: server || 'MCP', target: tool };
   }
 
@@ -418,4 +431,3 @@ export function contentToString(content: unknown): string {
     return String(content);
   }
 }
-

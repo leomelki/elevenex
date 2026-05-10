@@ -2,7 +2,11 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Codex, type ApprovalMode, type SandboxMode, type ThreadEvent, type ThreadItem, type Usage } from '@openai/codex-sdk';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
+import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
+import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
 import type {
   ClaudeContextUsage,
   ClaudeModelOption,
@@ -112,16 +116,26 @@ export class CodexRuntimeService extends EventEmitter {
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
-  async submitPrompt(sessionId: number, prompt: string): Promise<void> {
+  async submitPrompt(
+    sessionId: number,
+    prompt: string,
+    images?: AgentImageInput[],
+  ): Promise<void> {
     const trimmedPrompt = prompt.trim();
-    if (!trimmedPrompt) {
+    const validatedImages = this.validateImageInputs(images);
+    if (!trimmedPrompt && !validatedImages.length) {
       return;
     }
     if (this.activeRuns.has(sessionId)) {
       const state = this.ensureRuntimeState(sessionId);
       state.pendingPrompts = [
         ...state.pendingPrompts,
-        { id: randomUUID(), prompt: trimmedPrompt, queuedAt: new Date().toISOString() },
+        {
+          id: randomUUID(),
+          prompt: trimmedPrompt,
+          queuedAt: new Date().toISOString(),
+          ...(validatedImages.length ? { images: validatedImages } : {}),
+        },
       ];
       this.emitRunState(sessionId);
       return;
@@ -152,6 +166,7 @@ export class CodexRuntimeService extends EventEmitter {
       startedAtMs: Date.now(),
     });
 
+    let stagedImageDir: string | null = null;
     try {
       const codex = new Codex({
         env: this.toStringEnv(buildAugmentedEnv(process.env, session.worktreePath)),
@@ -168,7 +183,13 @@ export class CodexRuntimeService extends EventEmitter {
         state.codexSessionId && state.codexSessionId !== '-1'
           ? codex.resumeThread(state.codexSessionId, threadOptions)
           : codex.startThread(threadOptions);
-      const streamedTurn = await thread.runStreamed(trimmedPrompt, {
+      const input = trimmedPrompt && !validatedImages.length
+        ? trimmedPrompt
+        : await this.buildCodexInput(trimmedPrompt, validatedImages).then((result) => {
+            stagedImageDir = result.tempDir;
+            return result.input;
+          });
+      const streamedTurn = await thread.runStreamed(input, {
         signal: abortController.signal,
       });
 
@@ -201,12 +222,15 @@ export class CodexRuntimeService extends EventEmitter {
       const run = this.activeRuns.get(sessionId);
       this.activeRuns.delete(sessionId);
       run?.resolveCompletion();
+      if (stagedImageDir) {
+        void rm(stagedImageDir, { recursive: true, force: true });
+      }
       if (!state.lastError && state.pendingPrompts.length > 0) {
         const [next, ...rest] = state.pendingPrompts;
         state.pendingPrompts = rest;
         this.emitRunState(sessionId);
         setImmediate(() => {
-          this.submitPrompt(sessionId, next.prompt).catch((error) => {
+          this.submitPrompt(sessionId, next.prompt, next.images).catch((error) => {
             this.logger.error(
               `Pending Codex prompt failed session=${sessionId}: ${String(error)}`,
             );
@@ -336,7 +360,13 @@ export class CodexRuntimeService extends EventEmitter {
     if (toolItem) {
       this.upsertLiveItem(sessionId, toolItem, 'tool_use', terminal);
       const result = this.toToolResultItem(item, timestamp);
-      if (result && terminal) {
+      if (
+        result
+        && (
+          terminal
+          || (item.type === 'command_execution' && Boolean(item.aggregated_output))
+        )
+      ) {
         this.pushItem(sessionId, result, 'tool_result');
       }
     }
@@ -590,7 +620,10 @@ export class CodexRuntimeService extends EventEmitter {
       | 'tool_result' = 'message_start',
   ): void {
     const state = this.ensureRuntimeState(sessionId);
-    state.liveItems = [...state.liveItems, item];
+    state.liveItems = [
+      ...state.liveItems.filter((existing) => existing.id !== item.id),
+      item,
+    ];
     this.emitEvent({ type: eventType, payload: { sessionId, item } } as CodexRuntimeEvent);
   }
 
@@ -714,5 +747,55 @@ export class CodexRuntimeService extends EventEmitter {
         (entry): entry is [string, string] => typeof entry[1] === 'string',
       ),
     );
+  }
+
+  private validateImageInputs(images: AgentImageInput[] | undefined): AgentImageInput[] {
+    if (!images?.length) {
+      return [];
+    }
+    return images.filter((image) => {
+      return (
+        typeof image.data === 'string'
+        && image.data.length > 0
+        && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(image.mediaType)
+      );
+    });
+  }
+
+  private async buildCodexInput(
+    text: string,
+    images: AgentImageInput[],
+  ): Promise<{
+    input: Array<{ type: 'text'; text: string } | { type: 'local_image'; path: string }>;
+    tempDir: string | null;
+  }> {
+    const input: Array<{ type: 'text'; text: string } | { type: 'local_image'; path: string }> = [];
+    if (text) {
+      input.push({ type: 'text', text });
+    }
+    if (!images.length) {
+      return { input, tempDir: null };
+    }
+    const tempDir = await mkdtemp(join(tmpdir(), 'elevenex-codex-images-'));
+    for (const [index, image] of images.entries()) {
+      const filePath = join(tempDir, `image-${index + 1}${this.imageExtension(image.mediaType)}`);
+      await writeFile(filePath, Buffer.from(image.data, 'base64'));
+      input.push({ type: 'local_image', path: filePath });
+    }
+    return { input, tempDir };
+  }
+
+  private imageExtension(mediaType: AgentImageInput['mediaType']): string {
+    switch (mediaType) {
+      case 'image/jpeg':
+        return '.jpg';
+      case 'image/gif':
+        return '.gif';
+      case 'image/webp':
+        return '.webp';
+      case 'image/png':
+      default:
+        return '.png';
+    }
   }
 }

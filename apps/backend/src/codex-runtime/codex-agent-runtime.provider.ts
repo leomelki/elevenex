@@ -5,6 +5,7 @@ import { CodexRuntimeService } from './codex-runtime.service.js';
 import { CodexAuthService } from './codex-auth.service.js';
 import type {
   AgentPermissionMode,
+  AgentImageInput,
   AgentRuntimeEvent,
   AgentRuntimeProvider,
   AgentRuntimeProviderInfo,
@@ -23,7 +24,7 @@ export class CodexAgentRuntimeProvider
       subagents: false,
       permissions: false,
       userInput: false,
-      multimodalPrompts: false,
+      multimodalPrompts: true,
       terminalFallback: false,
       rewindConversation: false,
     },
@@ -90,8 +91,14 @@ export class CodexAgentRuntimeProvider
     return this.runtimeService.setPermissionMode(sessionId, mode);
   }
 
-  submitPrompt(sessionId: number, prompt: string) {
-    return this.runtimeService.submitPrompt(sessionId, prompt);
+  submitPrompt(
+    sessionId: number,
+    prompt: string,
+    titlePrompt?: string,
+    images?: AgentImageInput[],
+  ) {
+    void titlePrompt;
+    return this.runtimeService.submitPrompt(sessionId, prompt, images);
   }
 
   interrupt(sessionId: number) {

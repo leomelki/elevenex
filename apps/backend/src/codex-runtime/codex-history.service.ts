@@ -96,7 +96,8 @@ export class CodexHistoryService {
       if (record.type !== 'response_item') {
         continue;
       }
-      const item = asRecord(record.payload)?.item ?? asRecord(record.item);
+      const payload = asRecord(record.payload);
+      const item = payload?.item ?? (payload?.type ? payload : null) ?? asRecord(record.item);
       const payloadItem = asRecord(item);
       if (!payloadItem) {
         continue;
@@ -129,14 +130,15 @@ export class CodexHistoryService {
         : null;
     }
     if (type === 'function_call' || type === 'custom_tool_call') {
-      const toolName = this.normalizeToolName(stringValue(item.name) ?? stringValue(item.call_id) ?? type);
+      const rawToolName = stringValue(item.name) ?? stringValue(item.call_id) ?? type;
+      const toolName = this.normalizeToolName(rawToolName);
       const toolUseId = stringValue(item.call_id) ?? id;
       return {
         id: `${id}:tool_use`,
         kind: 'tool_use',
         toolUseId,
         toolName,
-        toolInput: this.parseToolArguments(item.arguments ?? item.input),
+        toolInput: this.normalizeToolInput(rawToolName, item.arguments ?? item.input),
         sourceMessageId: id,
         timestamp,
         receivedAt: timestamp,
@@ -188,6 +190,37 @@ export class CodexHistoryService {
     } catch {
       return { input: value };
     }
+  }
+
+  private normalizeToolInput(toolName: string, value: unknown): unknown {
+    const parsed = this.parseToolArguments(value);
+    const args = asRecord(parsed);
+    if (toolName === 'shell_command') {
+      return {
+        command:
+          stringValue(args?.command)
+          ?? stringValue(args?.cmd)
+          ?? stringValue(args?.input)
+          ?? (typeof value === 'string' ? value : ''),
+      };
+    }
+    if (toolName === 'apply_patch') {
+      const patch =
+        stringValue(args?.patch)
+        ?? stringValue(args?.input)
+        ?? (typeof value === 'string' ? value : '');
+      return this.parseApplyPatchInput(patch);
+    }
+    return parsed;
+  }
+
+  private parseApplyPatchInput(patch: string): Record<string, unknown> {
+    const filePathMatch = patch.match(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/m);
+    return {
+      file_path: filePathMatch?.[1]?.trim() ?? '',
+      old_string: '',
+      new_string: patch,
+    };
   }
 
   private contentToText(value: unknown): string {
