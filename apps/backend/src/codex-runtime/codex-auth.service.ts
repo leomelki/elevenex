@@ -98,8 +98,11 @@ export class CodexAuthService extends EventEmitter {
   async startLogin(
     options: { mode: CodexLoginMode; apiKey?: string } = { mode: 'oauth' },
   ): Promise<CodexLoginStartResult> {
+    // If a previous login is still around (e.g. the user reloaded or the
+    // backend outlived the last attempt), take it down so they can retry
+    // instead of being locked out.
     if (this.active) {
-      throw new BadRequestException('A Codex login is already in progress.');
+      await this.killActive();
     }
     const codexBin = findBinary('codex') ?? 'codex';
     if (!findBinary('codex')) {
@@ -128,20 +131,40 @@ export class CodexAuthService extends EventEmitter {
 
   async cancelLogin(): Promise<CodexAuthStatus> {
     if (this.active) {
-      const { child } = this.active;
-      child.kill('SIGTERM');
-      // Give the process a moment to clean up; if still alive, force kill.
-      setTimeout(() => {
-        if (!child.killed) {
-          try {
-            child.kill('SIGKILL');
-          } catch {
-            // ignore — process may have exited
-          }
-        }
-      }, 500);
+      await this.killActive();
     }
     return this.getStatus();
+  }
+
+  private async killActive(): Promise<void> {
+    const previous = this.active;
+    if (!previous) return;
+    // Detach state immediately so a follow-up startLogin can proceed without
+    // racing the child's exit event.
+    this.active = null;
+    const { child } = previous;
+    if (child.exitCode !== null || child.killed) return;
+
+    const exited = new Promise<void>((resolve) => {
+      child.once('exit', () => resolve());
+    });
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      return;
+    }
+    const escalate = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // process may already be gone
+      }
+    }, 500);
+    await Promise.race([
+      exited,
+      new Promise<void>((r) => setTimeout(r, 1500)),
+    ]);
+    clearTimeout(escalate);
   }
 
   private runOauthLogin(codexBin: string): Promise<CodexLoginStartResult> {

@@ -526,6 +526,20 @@ readonly messageActionsDisabled = computed(
       }
     });
 
+    // While the Codex login card is on screen, poll the auth-status endpoint
+    // as a safety net: the codex CLI's exit event is occasionally delayed
+    // (long-poll) or missed (WS reconnect race), and the user would otherwise
+    // be stuck on a card whose dismissal never arrived.
+    effect((onCleanup) => {
+      if (!this.showCodexLogin()) return;
+      const id = window.setInterval(() => {
+        firstValueFrom(this.agentApi.getAuthStatus('codex'))
+          .then((status) => this.codexAuthStatus.set(status))
+          .catch(() => undefined);
+      }, 3000);
+      onCleanup(() => window.clearInterval(id));
+    });
+
     this.destroyRef.onDestroy(() => {
       if (this.flushRafId !== null) {
         cancelAnimationFrame(this.flushRafId);
