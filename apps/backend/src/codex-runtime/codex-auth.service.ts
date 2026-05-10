@@ -10,7 +10,8 @@ import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnv } from '../config/system-paths.js';
+import { findBundledCodexPath, resolveCodexBinary } from './codex-binary.js';
 import type {
   CodexAuthStatus,
   CodexLoginMode,
@@ -109,8 +110,12 @@ export class CodexAuthService extends EventEmitter {
     if (this.active) {
       await this.killActive();
     }
-    const codexBin = findBinary('codex') ?? 'codex';
-    if (!findBinary('codex')) {
+    const codexBin = resolveCodexBinary();
+    // Only do the sanity-check spawn when we fell back to a PATH lookup;
+    // the bundled-binary path is known-good (resolved through the SDK's own
+    // optionalDependency layout) so skipping the check saves ~100ms of
+    // process-spawn latency on every login attempt.
+    if (!findBundledCodexPath()) {
       try {
         await execFile(codexBin, ['--version'], {
           env: buildAugmentedEnv(),
@@ -383,7 +388,7 @@ export class CodexAuthService extends EventEmitter {
       return this.versionInFlight;
     }
     const inflight = (async () => {
-      const codexBin = findBinary('codex') ?? 'codex';
+      const codexBin = resolveCodexBinary();
       try {
         const { stdout } = await execFile(codexBin, ['--version'], {
           encoding: 'utf-8',

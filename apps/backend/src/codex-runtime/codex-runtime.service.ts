@@ -21,11 +21,12 @@ import type {
   ClaudeModelOption,
   ClaudeTranscriptItem,
 } from '../claude-runtime/claude-runtime.types.js';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnv } from '../config/system-paths.js';
 import {
   CodexAppServerClient,
   CodexAppServerNotification,
 } from './codex-app-server.js';
+import { resolveCodexBinary } from './codex-binary.js';
 import { CodexAuthService } from './codex-auth.service.js';
 import { CodexHistoryService } from './codex-history.service.js';
 import type {
@@ -831,7 +832,7 @@ export class CodexRuntimeService extends EventEmitter {
 
   private fetchCodexAppServerModels(): Promise<CodexAppServerModel[]> {
     return new Promise((resolve, reject) => {
-      const codexBin = findBinary('codex') ?? 'codex';
+      const codexBin = resolveCodexBinary();
       const child = spawn(codexBin, ['app-server', '--listen', 'stdio://'], {
         env: buildAugmentedEnv(),
         stdio: ['pipe', 'pipe', 'ignore'],

@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnv } from '../config/system-paths.js';
+import { resolveCodexBinary } from './codex-binary.js';
 
 const CLIENT_INFO = {
   name: 'elevenex',
@@ -189,7 +190,7 @@ export class CodexAppServerClient implements OnModuleDestroy {
   }
 
   private spawnChild(): void {
-    const codexBin = findBinary('codex') ?? 'codex';
+    const codexBin = resolveCodexBinary();
     this.logger.log(`Spawning codex app-server (${codexBin})`);
     const child = spawn(codexBin, ['app-server', '--listen', 'stdio://'], {
       env: buildAugmentedEnv(),
