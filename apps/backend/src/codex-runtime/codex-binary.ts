@@ -6,8 +6,8 @@ import { findBinary } from '../config/system-paths.js';
 /**
  * Maps Node's process.{platform,arch} to the target triple that the
  * `@openai/codex` npm package uses to publish platform-specific binaries.
- * Mirrors the logic in `@openai/codex-sdk` so we end up at the exact same
- * binary the SDK would have spawned via `codex exec`.
+ * Mirrors the table in `@openai/codex-sdk`'s findCodexPath so we resolve
+ * to the exact same binary the SDK would have spawned via `codex exec`.
  */
 const PLATFORM_PACKAGE_BY_TARGET: Record<string, string> = {
   'x86_64-unknown-linux-musl': '@openai/codex-linux-x64',
@@ -39,22 +39,10 @@ function targetTriple(): string | null {
 }
 
 /**
- * Resolves the codex binary that ships alongside `@openai/codex-sdk` (via
- * its `@openai/codex` dependency and the platform-specific optionalDependency
- * package, e.g. `@openai/codex-linux-x64`). This is the exact binary the SDK
- * would have spawned via `codex exec` — same version, same vendored path.
- *
- * Returns `null` when:
- *   - the host platform isn't supported by codex,
- *   - the @openai/codex package isn't installed (dev mode without deps),
- *   - the platform-specific optional dep failed to install (mismatched os/cpu).
- *
- * The caller is expected to fall back to a PATH lookup in that case.
- */
-/**
  * Walks up the node_modules tree from this file looking for the SDK install
- * dir and returns its realpath (so we end up inside `.pnpm/` when pnpm is
- * involved, where the SDK's transitive deps are siblings).
+ * dir and returns its realpath. With pnpm the top-level entry is a symlink
+ * into `.pnpm/`, where the SDK's transitive deps live as siblings; following
+ * the symlink puts us where Node's resolver can see `@openai/codex`.
  */
 function findSdkRealDir(): string | null {
   let dir = path.dirname(__filename);
@@ -73,7 +61,30 @@ function findSdkRealDir(): string | null {
   }
 }
 
+let cachedBundled: string | null | undefined;
+let cachedResolved: string | undefined;
+
+/**
+ * Resolves the codex binary that ships alongside `@openai/codex-sdk` (its
+ * `@openai/codex` dep, plus the platform-specific optionalDependency such
+ * as `@openai/codex-linux-x64`). This is the exact binary the SDK would
+ * have spawned via `codex exec` — same version, same vendored path.
+ *
+ * Returns `null` when:
+ *   - the host platform isn't supported by codex,
+ *   - `@openai/codex-sdk` isn't installed (dev mode without backend deps),
+ *   - the platform-specific optional dep is missing (cross-os install).
+ *
+ * Memoized for the process lifetime — neither the install layout nor the
+ * platform changes while we're running.
+ */
 export function findBundledCodexPath(): string | null {
+  if (cachedBundled !== undefined) return cachedBundled;
+  cachedBundled = resolveBundledOnce();
+  return cachedBundled;
+}
+
+function resolveBundledOnce(): string | null {
   const triple = targetTriple();
   if (!triple) return null;
   const platformPackage = PLATFORM_PACKAGE_BY_TARGET[triple];
@@ -88,7 +99,11 @@ export function findBundledCodexPath(): string | null {
   //      (which `@openai/codex-sdk` doesn't).
   // Workaround: find the SDK install dir on disk, follow the pnpm symlink
   // to its realpath, then anchor a `createRequire` there — from inside the
-  // SDK's own pnpm dir, the transitive `@openai/codex` resolves normally.
+  // SDK's own pnpm dir the transitive `@openai/codex` resolves normally
+  // through Node's standard algorithm. This matches the behavior of the
+  // SDK's own findCodexPath (which anchors createRequire on import.meta.url
+  // — the same realpath under the hood, since the ESM loader follows
+  // symlinks by default).
   const sdkDir = findSdkRealDir();
   if (!sdkDir) return null;
   try {
@@ -117,12 +132,16 @@ export function findBundledCodexPath(): string | null {
 }
 
 /**
- * Resolves the codex binary to spawn for app-server / one-off CLI calls.
- * Prefers the binary bundled alongside `@openai/codex-sdk` so we use the
+ * Resolves the codex binary to spawn (for app-server, login, --version,
+ * model-catalog refresh, etc.). Prefers the bundled binary so we use the
  * exact version this build was tested against; falls back to whatever
- * `codex` is on the user's PATH (Homebrew, npm global install, etc.) when
- * the bundled binary can't be located.
+ * `codex` is on the user's PATH (Homebrew, npm global, …) only when the
+ * bundled binary can't be located — e.g. dev installs without the SDK,
+ * or a cross-platform install missing the optionalDependency for the host.
+ * Memoized for the process lifetime.
  */
 export function resolveCodexBinary(): string {
-  return findBundledCodexPath() ?? findBinary('codex') ?? 'codex';
+  if (cachedResolved !== undefined) return cachedResolved;
+  cachedResolved = findBundledCodexPath() ?? findBinary('codex') ?? 'codex';
+  return cachedResolved;
 }
