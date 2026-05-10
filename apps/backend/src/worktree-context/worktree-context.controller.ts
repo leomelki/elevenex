@@ -20,11 +20,12 @@ export class WorktreeContextController {
   @Post('generate')
   generate(@Body() dto: GenerateWorktreeContextDto) {
     this.logger.log(
-      `POST /generate repo=${dto.repoId} path=${dto.worktreePath} force=${!!dto.force} rootRef=${dto.rootRef ?? 'inherit'}`,
+      `POST /generate repo=${dto.repoId} path=${dto.worktreePath} provider=${dto.provider} force=${!!dto.force} rootRef=${dto.rootRef ?? 'inherit'}`,
     );
     return this.worktreeContextService.generate(dto.repoId, dto.worktreePath, {
       force: dto.force,
       rootRef: dto.rootRef,
+      provider: dto.provider,
     });
   }
 

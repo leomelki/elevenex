@@ -975,7 +975,11 @@ readonly messageActionsDisabled = computed(
     try {
       await firstValueFrom(this.worktreeContextService.updateRootRef(this.repoId, this.worktreePath, rootRef));
       const snapshot = await firstValueFrom(
-        this.worktreeContextService.generate(this.repoId, this.worktreePath, { force: true, rootRef }),
+        this.worktreeContextService.generate(this.repoId, this.worktreePath, {
+          force: true,
+          rootRef,
+          provider: this.currentProvider(),
+        }),
       );
       this.worktreeContext.set(snapshot);
       this.worktreeRootEditorOpen.set(false);
@@ -991,7 +995,10 @@ readonly messageActionsDisabled = computed(
     this.worktreeContextBusy.set(true);
     try {
       const snapshot = await firstValueFrom(
-        this.worktreeContextService.generate(this.repoId, this.worktreePath, { force: true }),
+        this.worktreeContextService.generate(this.repoId, this.worktreePath, {
+          force: true,
+          provider: this.currentProvider(),
+        }),
       );
       this.worktreeContext.set(snapshot);
     } catch (error) {
@@ -1023,7 +1030,9 @@ readonly messageActionsDisabled = computed(
         );
         this.worktreeContextBusy.set(true);
         const generated = await firstValueFrom(
-          this.worktreeContextService.generate(this.repoId, this.worktreePath),
+          this.worktreeContextService.generate(this.repoId, this.worktreePath, {
+            provider: this.currentProvider(),
+          }),
         );
         this.worktreeContext.set(generated);
         console.info(

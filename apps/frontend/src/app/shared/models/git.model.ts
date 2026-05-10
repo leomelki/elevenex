@@ -9,7 +9,7 @@ export interface CommitMessageSuggestion {
   subject: string;
   body: string | null;
   confidence: 'high' | 'medium' | 'low';
-  source: 'external' | 'claude' | 'fallback';
+  source: 'external' | 'claude' | 'codex' | 'fallback';
 }
 
 export interface GitScopeSummary {

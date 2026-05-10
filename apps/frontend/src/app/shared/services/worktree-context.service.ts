@@ -5,6 +5,7 @@ import {
   ConsumeWorktreeContextResult,
   WorktreeContextSnapshot,
 } from '../models/worktree-context.model';
+import type { AgentProviderId } from '../models/agent-runtime.model';
 
 @Injectable({ providedIn: 'root' })
 export class WorktreeContextService {
@@ -39,9 +40,9 @@ export class WorktreeContextService {
   generate(
     repoId: number,
     worktreePath: string,
-    options: { force?: boolean; rootRef?: string | null } = {},
+    options: { force?: boolean; rootRef?: string | null; provider: AgentProviderId },
   ): Observable<WorktreeContextSnapshot> {
-    const key = this.cacheKey(repoId, worktreePath);
+    const key = this.cacheKey(repoId, `${options.provider}:${worktreePath}`);
     if (!options.force && options.rootRef === undefined) {
       const existing = this.inFlightGenerate.get(key);
       if (existing) {
@@ -55,6 +56,7 @@ export class WorktreeContextService {
         worktreePath,
         force: options.force,
         rootRef: options.rootRef,
+        provider: options.provider,
       })
       .pipe(
         tap({

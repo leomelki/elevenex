@@ -6,10 +6,12 @@ import {
   FileStatus,
   GitStatusSummary,
 } from '../models/git.model';
+import { AgentRuntimeProviderService } from './agent-runtime-provider.service';
 
 @Injectable({ providedIn: 'root' })
 export class GitService {
   private http = inject(HttpClient);
+  private providerSelection = inject(AgentRuntimeProviderService);
 
   getStatus(worktreePath: string) {
     return this.http.get<FileStatus[]>('/api/git/status', {
@@ -32,7 +34,10 @@ export class GitService {
   }
 
   suggestCommitMessage(worktreePath: string) {
-    return this.http.post<CommitMessageSuggestion>('/api/git/commit-message/suggest', { worktreePath });
+    return this.http.post<CommitMessageSuggestion>('/api/git/commit-message/suggest', {
+      worktreePath,
+      provider: this.providerSelection.currentProvider,
+    });
   }
 
   commit(worktreePath: string, options: { message?: string; includeUnstaged?: boolean }) {
@@ -40,6 +45,7 @@ export class GitService {
       worktreePath,
       message: options.message,
       includeUnstaged: options.includeUnstaged ?? false,
+      provider: this.providerSelection.currentProvider,
     });
   }
 }

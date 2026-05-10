@@ -192,6 +192,7 @@ describe('GitService', () => {
 
       const result = await service.commit(repoPath, {
         message: 'Add new file',
+        provider: 'claude',
       });
 
       expect(result.hash).toBeDefined();
@@ -206,7 +207,10 @@ describe('GitService', () => {
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
       await service.stageFiles(repoPath, ['new-file.txt']);
 
-      await service.commit(repoPath, { message: 'Add new file' });
+      await service.commit(repoPath, {
+        message: 'Add new file',
+        provider: 'claude',
+      });
 
       const log = await service.getLog(repoPath, 1);
       expect(log[0].message).toBe('Add new file');
@@ -214,26 +218,27 @@ describe('GitService', () => {
   });
 
   describe('suggestCommitMessage', () => {
-    it('should create a fallback commit message for staged changes', async () => {
+    it('should reject when the selected provider cannot generate a message', async () => {
       fs.writeFileSync(
         path.join(repoPath, 'feature.ts'),
         'export const value = 1;\n',
       );
       await service.stageFiles(repoPath, ['feature.ts']);
+      jest
+        .spyOn(service as any, 'generateCommitMessageWithClaude')
+        .mockResolvedValue(null);
 
-      const suggestion = await service.suggestCommitMessage(repoPath);
-
-      expect(suggestion.subject).toBeTruthy();
-      expect(suggestion.subject).toMatch(
-        /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._-]*\))?!?: [a-z0-9].*[^.]$/,
+      await expect(
+        service.suggestCommitMessage(repoPath, 'claude'),
+      ).rejects.toThrow(
+        'Could not generate a commit message with claude.',
       );
-      expect(suggestion.source).toBe('fallback');
     });
 
     it('should reject when there are no staged changes', async () => {
-      await expect(service.suggestCommitMessage(repoPath)).rejects.toThrow(
-        'No staged changes available to generate a commit message.',
-      );
+      await expect(
+        service.suggestCommitMessage(repoPath, 'claude'),
+      ).rejects.toThrow('No staged changes available to generate a commit message.');
     });
 
     it('should parse strict JSON commit suggestions', () => {
@@ -297,6 +302,7 @@ describe('GitService', () => {
       const result = await service.commit(repoPath, {
         message: 'Add notes',
         includeUnstaged: true,
+        provider: 'claude',
       });
 
       expect(result.hash).toBeTruthy();

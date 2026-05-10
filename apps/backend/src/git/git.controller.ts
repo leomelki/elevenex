@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Body, Query, Logger } from '@nestjs/common';
+import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import {
   GitService,
   FileStatus,
@@ -55,6 +56,7 @@ export class GitController {
       worktreePath: string;
       message?: string;
       includeUnstaged?: boolean;
+      provider: AgentProviderId;
     },
   ): Promise<CommitResult> {
     const worktreePath = decodeURIComponent(body.worktreePath);
@@ -67,6 +69,7 @@ export class GitController {
     return this.gitService.commit(worktreePath, {
       message: body.message,
       includeUnstaged: Boolean(body.includeUnstaged),
+      provider: body.provider,
       requestId,
     });
   }
@@ -88,10 +91,11 @@ export class GitController {
 
   @Post('commit-message/suggest')
   async suggestCommitMessage(
-    @Body() body: { worktreePath: string },
+    @Body() body: { worktreePath: string; provider: AgentProviderId },
   ): Promise<CommitMessageSuggestion> {
     return this.gitService.suggestCommitMessage(
       decodeURIComponent(body.worktreePath),
+      body.provider,
     );
   }
 

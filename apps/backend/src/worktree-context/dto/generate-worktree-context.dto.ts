@@ -17,4 +17,7 @@ export class GenerateWorktreeContextDto {
   @IsString()
   @IsOptional()
   rootRef?: string;
+
+  @IsString()
+  provider!: string;
 }

@@ -8,20 +8,30 @@ import {
   findBinary,
   worktreeSimpleGit,
 } from '../config/system-paths.js';
+import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 
 const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
 const CLAUDE_BIN = findBinary('claude') ?? 'claude';
+const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const MAX_COMMIT_MESSAGE_DIFF_CHARS = 24_000;
 const MAX_COMMIT_MESSAGE_LOG_ENTRIES = 8;
 const MAX_COMMIT_MESSAGE_STATUS_FILES = 16;
 const CONVENTIONAL_COMMIT_SUBJECT_PATTERN =
   /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._-]*\))?!?: [a-z0-9].*[^.]$/;
+type CommitMessageProvider = 'claude' | 'codex';
 
 export function isValidGitRef(ref: string): boolean {
   if (!ref || ref.length === 0) return false;
   if (ref.includes('..')) return false;
   return SAFE_REF_PATTERN.test(ref);
 }
+
+type CodexSdkModule = typeof import('@openai/codex-sdk');
+
+const importCodexSdk = new Function(
+  'specifier',
+  'return import(specifier)',
+) as (specifier: string) => Promise<CodexSdkModule>;
 
 export interface FileStatus {
   path: string;
@@ -49,7 +59,7 @@ export interface CommitMessageSuggestion {
   subject: string;
   body: string | null;
   confidence: 'high' | 'medium' | 'low';
-  source: 'external' | 'claude' | 'fallback';
+  source: 'external' | 'claude' | 'codex' | 'fallback';
 }
 
 export interface PushResult {
@@ -169,6 +179,7 @@ export class GitService {
     options: {
       message?: string;
       includeUnstaged?: boolean;
+      provider?: AgentProviderId;
       requestId?: string;
     } = {},
   ): Promise<CommitResult> {
@@ -212,7 +223,7 @@ export class GitService {
         this.logger.log(
           `[commit:${requestId}] no message provided; generating commit message`,
         );
-        const suggestion = await this.suggestCommitMessage(worktreePath);
+        const suggestion = await this.suggestCommitMessage(worktreePath, options.provider);
         message = suggestion.body?.trim()
           ? `${suggestion.subject.trim()}\n\n${suggestion.body.trim()}`
           : suggestion.subject.trim();
@@ -247,10 +258,12 @@ export class GitService {
 
   async suggestCommitMessage(
     worktreePath: string,
+    provider: AgentProviderId | undefined,
   ): Promise<CommitMessageSuggestion> {
     const requestId = this.createRequestId();
+    const messageProvider = this.normalizeCommitMessageProvider(provider);
     this.logger.log(
-      `[commit-message:${requestId}] suggestion started worktreePath="${worktreePath}"`,
+      `[commit-message:${requestId}] suggestion started worktreePath="${worktreePath}" provider=${messageProvider}`,
     );
 
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
@@ -284,44 +297,29 @@ export class GitService {
         `[commit-message:${requestId}] context loaded branch="${currentBranch}" diffChars=${diff.length} truncatedDiffChars=${truncatedDiff.length} recentCommits=${log.length}`,
       );
 
-      const claudeSuggestion = await this.generateCommitMessageWithClaude({
+      const promptInput = {
         worktreePath,
         branchName: currentBranch,
         files: stagedFiles,
         diff: truncatedDiff,
         compactStatus: compressedStatus,
         compactLog: compressedLog,
-      });
+      };
 
-      if (claudeSuggestion) {
+      const aiSuggestion = messageProvider === 'codex'
+        ? await this.generateCommitMessageWithCodex(promptInput)
+        : await this.generateCommitMessageWithClaude(promptInput);
+
+      if (aiSuggestion) {
         this.logger.log(
-          `[commit-message:${requestId}] suggestion completed source=claude confidence=${claudeSuggestion.confidence} subject="${this.preview(claudeSuggestion.subject)}"`,
+          `[commit-message:${requestId}] suggestion completed source=${aiSuggestion.source} confidence=${aiSuggestion.confidence} subject="${this.preview(aiSuggestion.subject)}"`,
         );
-        return claudeSuggestion;
+        return aiSuggestion;
       }
 
-      const externalSuggestion = await this.runExternalCommitMessageGenerator({
-        worktreePath,
-        branchName: currentBranch,
-        files: stagedFiles,
-        diff: truncatedDiff,
-      });
-
-      if (externalSuggestion) {
-        this.logger.log(
-          `[commit-message:${requestId}] suggestion completed source=external confidence=${externalSuggestion.confidence} subject="${this.preview(externalSuggestion.subject)}"`,
-        );
-        return externalSuggestion;
-      }
-
-      const fallbackSuggestion = this.buildFallbackCommitMessage(
-        stagedFiles,
-        diff,
+      throw new BadRequestException(
+        `Could not generate a commit message with ${messageProvider}.`,
       );
-      this.logger.log(
-        `[commit-message:${requestId}] suggestion completed source=fallback confidence=${fallbackSuggestion.confidence} subject="${this.preview(fallbackSuggestion.subject)}"`,
-      );
-      return fallbackSuggestion;
     } catch (error: any) {
       this.logger.error(
         `[commit-message:${requestId}] failed ${this.formatGitError(error)}`,
@@ -693,47 +691,7 @@ export class GitService {
 
     let assistantText = '';
     const runtimeQuery = sdk.query({
-      prompt: [
-        'Generate the exact commit message that will be passed to git commit -m.',
-        'Your response is machine-read and must be strict JSON only.',
-        'Return exactly one JSON object with this shape:',
-        '{"subject":"type(scope): imperative description","body":null}',
-        '',
-        'Hard output rules:',
-        '- Do not include greetings, explanations, analysis, markdown fences, or extra text.',
-        '- Do not return the final commit message as plain text.',
-        '- Do not include JSON inside subject or body; JSON is only the transport format.',
-        '- The subject string is the exact first line that will be committed.',
-        '- The body string, when non-null, is the exact commit body that will be committed after a blank line.',
-        '',
-        'Subject rules:',
-        '- Use Conventional Commits: <type>(<optional scope>): <description>.',
-        '- Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.',
-        '- Prefer a lowercase scope when clear, such as backend, frontend, git, db, branches, projects, deps.',
-        '- Use an imperative lowercase description, for example "add", "fix", "remove", or "refactor".',
-        '- Describe the semantic product or code behavior change, not just file operations.',
-        '- Do not summarize as "rename files", "update files", or "change N files" when the diff changes behavior or adds a concept.',
-        '- Keep the full subject at most 72 characters.',
-        '- Do not end the subject with a period.',
-        '',
-        'Body rules:',
-        '- Use null unless extra motivation, context, or migration impact materially helps.',
-        '- Do not list files unless the file list is the main point of the change.',
-        '',
-        'Examples of valid responses:',
-        '{"subject":"fix(git): reject invalid generated commit subjects","body":null}',
-        '{"subject":"feat(frontend): add branch search filters","body":"Expose status and owner filters in the branch picker."}',
-        '',
-        `Branch: ${input.branchName}`,
-        'Recent commits:',
-        input.compactLog || '- none',
-        '',
-        'Staged files:',
-        input.compactStatus || '- none',
-        '',
-        'Unified diff:',
-        input.diff || '[empty diff]',
-      ].join('\n'),
+      prompt: this.buildCommitMessagePrompt(input),
       options: {
         cwd: input.worktreePath,
         model: 'haiku',
@@ -767,6 +725,82 @@ export class GitService {
     }
 
     return this.parseCommitSuggestion(assistantText);
+  }
+
+  private async generateCommitMessageWithCodex(input: {
+    worktreePath: string;
+    branchName: string;
+    files: string[];
+    diff: string;
+    compactStatus: string;
+    compactLog: string;
+  }): Promise<CommitMessageSuggestion | null> {
+    try {
+      const { Codex } = await importCodexSdk('@openai/codex-sdk');
+      const codex = new Codex({
+        env: this.toStringEnv(buildAugmentedEnv(process.env, input.worktreePath)),
+      });
+      const thread = codex.startThread({
+        workingDirectory: input.worktreePath,
+        skipGitRepoCheck: true,
+        model: DEFAULT_CODEX_MODEL,
+        sandboxMode: 'read-only',
+        approvalPolicy: 'never',
+      });
+      const result = await thread.run(this.buildCommitMessagePrompt(input));
+      return this.parseCommitSuggestion(result.finalResponse, 'codex');
+    } catch {
+      return null;
+    }
+  }
+
+  private buildCommitMessagePrompt(input: {
+    branchName: string;
+    compactLog: string;
+    compactStatus: string;
+    diff: string;
+  }): string {
+    return [
+      'Generate the exact commit message that will be passed to git commit -m.',
+      'Your response is machine-read and must be strict JSON only.',
+      'Return exactly one JSON object with this shape:',
+      '{"subject":"type(scope): imperative description","body":null}',
+      '',
+      'Hard output rules:',
+      '- Do not include greetings, explanations, analysis, markdown fences, or extra text.',
+      '- Do not return the final commit message as plain text.',
+      '- Do not include JSON inside subject or body; JSON is only the transport format.',
+      '- The subject string is the exact first line that will be committed.',
+      '- The body string, when non-null, is the exact commit body that will be committed after a blank line.',
+      '',
+      'Subject rules:',
+      '- Use Conventional Commits: <type>(<optional scope>): <description>.',
+      '- Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.',
+      '- Prefer a lowercase scope when clear, such as backend, frontend, git, db, branches, projects, deps.',
+      '- Use an imperative lowercase description, for example "add", "fix", "remove", or "refactor".',
+      '- Describe the semantic product or code behavior change, not just file operations.',
+      '- Do not summarize as "rename files", "update files", or "change N files" when the diff changes behavior or adds a concept.',
+      '- Keep the full subject at most 72 characters.',
+      '- Do not end the subject with a period.',
+      '',
+      'Body rules:',
+      '- Use null unless extra motivation, context, or migration impact materially helps.',
+      '- Do not list files unless the file list is the main point of the change.',
+      '',
+      'Examples of valid responses:',
+      '{"subject":"fix(git): reject invalid generated commit subjects","body":null}',
+      '{"subject":"feat(frontend): add branch search filters","body":"Expose status and owner filters in the branch picker."}',
+      '',
+      `Branch: ${input.branchName}`,
+      'Recent commits:',
+      input.compactLog || '- none',
+      '',
+      'Staged files:',
+      input.compactStatus || '- none',
+      '',
+      'Unified diff:',
+      input.diff || '[empty diff]',
+    ].join('\n');
   }
 
   private async loadClaudeSdk(): Promise<{
@@ -804,7 +838,10 @@ export class GitService {
       .join('');
   }
 
-  private parseCommitSuggestion(raw: string): CommitMessageSuggestion | null {
+  private parseCommitSuggestion(
+    raw: string,
+    source: CommitMessageSuggestion['source'] = 'claude',
+  ): CommitMessageSuggestion | null {
     const trimmed = raw.trim();
     if (!trimmed) return null;
 
@@ -828,7 +865,7 @@ export class GitService {
             ? parsed.body.trim()
             : null,
         confidence: 'medium',
-        source: 'claude',
+        source,
       };
     } catch {
       return null;
@@ -1047,6 +1084,25 @@ export class GitService {
 
     const uniqueScopes = new Set(scopes);
     return uniqueScopes.size === 1 ? scopes[0] : '';
+  }
+
+  private toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(env).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    );
+  }
+
+  private normalizeCommitMessageProvider(provider: AgentProviderId | undefined): CommitMessageProvider {
+    if (provider === 'claude' || provider === 'codex') {
+      return provider;
+    }
+    throw new BadRequestException(
+      provider
+        ? `Commit message generation is not supported for provider "${provider}".`
+        : 'Commit message generation requires an active provider.',
+    );
   }
 
   private execFileWithInput(

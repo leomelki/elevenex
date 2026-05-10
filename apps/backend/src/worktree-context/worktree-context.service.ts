@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   Logger,
@@ -6,13 +7,15 @@ import {
 } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { type DefaultLogFields, type ListLogLine, type SimpleGit } from 'simple-git';
-import { query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { buildAugmentedEnv, findBinary, worktreeSimpleGit } from '../config/system-paths.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 
 const CLAUDE_BIN = findBinary('claude') ?? 'claude';
+const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const MAX_CHANGED_FILES = 40;
 const MAX_COMMITS = 20;
 const MAX_DIFF_CHARS = 18_000;
@@ -20,6 +23,7 @@ const EMPTY_SNAPSHOT_CACHE_TTL_MS = 60_000;
 const VALID_GENERATION_STATUSES = ['idle', 'generating', 'ready', 'failed'] as const;
 
 type GenerationStatus = (typeof VALID_GENERATION_STATUSES)[number];
+type ContextGenerationProvider = 'claude' | 'codex';
 
 export interface WorktreeContextSnapshot {
   repoId: number;
@@ -163,7 +167,7 @@ export class WorktreeContextService {
   async generate(
     repoId: number,
     worktreePath: string,
-    options: { force?: boolean; rootRef?: string | null } = {},
+    options: { force?: boolean; rootRef?: string | null; provider: AgentProviderId },
   ): Promise<WorktreeContextSnapshot> {
     const key = `${repoId}:${worktreePath}`;
     const inFlight = this.generationLocks.get(key);
@@ -220,15 +224,20 @@ export class WorktreeContextService {
   private async generateInternal(
     repoId: number,
     worktreePath: string,
-    options: { force?: boolean; rootRef?: string | null },
+    options: { force?: boolean; rootRef?: string | null; provider: AgentProviderId },
   ): Promise<WorktreeContextSnapshot> {
     const repo = await this.getRepo(repoId);
+    const provider = this.normalizeGenerationProvider(options.provider);
     const existing = await this.findRecord(repoId, worktreePath);
     this.clearEmptySnapshotCache(repoId, worktreePath);
     const requestedRootRef = options.rootRef !== undefined
       ? this.normalizeOptionalText(options.rootRef)
       : existing?.rootRef ?? null;
-    const branchContext = await this.collectBranchContext(worktreePath,requestedRootRef, repo.preferredContextRootRef ?? null);
+    const branchContext = await this.collectBranchContext(
+      worktreePath,
+      requestedRootRef,
+      repo.preferredContextRootRef ?? null,
+    );
 
     if (!options.force && existing?.generationStatus === 'ready' && existing.contextSentence) {
       this.logger.log(
@@ -257,9 +266,9 @@ export class WorktreeContextService {
 
     try {
       this.logger.log(
-        `[worktree-context] invoking LLM for ${worktreePath} (root=${branchContext.resolvedRootRef}, commits=${branchContext.commits.length}, files=${branchContext.changedFiles.length})`,
+        `[worktree-context] invoking ${provider} for ${worktreePath} (root=${branchContext.resolvedRootRef}, commits=${branchContext.commits.length}, files=${branchContext.changedFiles.length})`,
       );
-      const sentence = await this.generateSentence(worktreePath, branchContext);
+      const sentence = await this.generateSentence(worktreePath, branchContext, provider);
       this.logger.log(`[worktree-context] generated for ${worktreePath}: "${sentence}"`);
       const ready = await this.persistGenerationOutcome(repoId, worktreePath, {
         rootRef: branchContext.rootRef,
@@ -280,7 +289,11 @@ export class WorktreeContextService {
     }
   }
 
-  private async generateSentence(repoPath: string, branchContext: BranchContextInput): Promise<string> {
+  private async generateSentence(
+    repoPath: string,
+    branchContext: BranchContextInput,
+    provider: ContextGenerationProvider,
+  ): Promise<string> {
     const canUseTool: CanUseTool = async () => ({
       behavior: 'deny',
       message: 'Tool use disabled for context generation',
@@ -343,9 +356,73 @@ export class WorktreeContextService {
       ].join('\n'),
     );
 
-    let assistantText = '';
     const llmStartedAt = Date.now();
-    const runtimeQuery = query({
+    const assistantText = provider === 'codex'
+      ? await this.generateSentenceWithCodex(repoPath, prompt)
+      : await this.generateSentenceWithClaude(
+        repoPath,
+        prompt,
+        canUseTool,
+      );
+
+    const llmDurationMs = Date.now() - llmStartedAt;
+    this.logger.log(
+      [
+        `[worktree-context] === LLM raw response (${assistantText.length} chars, ${llmDurationMs}ms) ===`,
+        ...(assistantText ? assistantText.split('\n').map(l => `  > ${l}`) : ['  > [empty]']),
+      ].join('\n'),
+    );
+
+    const normalized = this.normalizeGeneratedSentence(assistantText);
+    this.logger.log(
+      `[worktree-context] normalized sentence: "${normalized || '[empty after normalization]'}"`,
+    );
+    if (!normalized) {
+      throw new Error('Generator returned an empty context sentence');
+    }
+    return normalized;
+  }
+
+  private async generateSentenceWithCodex(
+    repoPath: string,
+    prompt: string,
+  ): Promise<string> {
+    try {
+      const { Codex } = await importCodexSdk('@openai/codex-sdk');
+      const codex = new Codex({
+        env: this.toStringEnv(buildAugmentedEnv(process.env, repoPath)),
+      });
+      const thread = codex.startThread({
+        workingDirectory: repoPath,
+        skipGitRepoCheck: true,
+        model: DEFAULT_CODEX_MODEL,
+        sandboxMode: 'read-only',
+        approvalPolicy: 'never',
+      });
+      const result = await thread.run(prompt);
+      return result.finalResponse.trim();
+    } catch (error) {
+      this.logger.debug(
+        `[worktree-context] Codex generation unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return '';
+    }
+  }
+
+  private async generateSentenceWithClaude(
+    repoPath: string,
+    prompt: string,
+    canUseTool: CanUseTool,
+  ): Promise<string> {
+    const sdk = await this.loadClaudeSdk();
+    if (!sdk) {
+      return '';
+    }
+
+    let assistantText = '';
+    const runtimeQuery = sdk.query({
       prompt,
       options: {
         cwd: repoPath,
@@ -390,22 +467,17 @@ export class WorktreeContextService {
       runtimeQuery.close();
     }
 
-    const llmDurationMs = Date.now() - llmStartedAt;
-    this.logger.log(
-      [
-        `[worktree-context] === LLM raw response (${assistantText.length} chars, ${llmDurationMs}ms) ===`,
-        ...(assistantText ? assistantText.split('\n').map(l => `  > ${l}`) : ['  > [empty]']),
-      ].join('\n'),
-    );
+    return assistantText;
+  }
 
-    const normalized = this.normalizeGeneratedSentence(assistantText);
-    this.logger.log(
-      `[worktree-context] normalized sentence: "${normalized || '[empty after normalization]'}"`,
-    );
-    if (!normalized) {
-      throw new Error('Generator returned an empty context sentence');
+  private async loadClaudeSdk(): Promise<{
+    query: (typeof import('@anthropic-ai/claude-agent-sdk'))['query'];
+  } | null> {
+    try {
+      return await import('@anthropic-ai/claude-agent-sdk');
+    } catch {
+      return null;
     }
-    return normalized;
   }
 
   private normalizeGeneratedSentence(input: string): string {
@@ -780,4 +852,30 @@ export class WorktreeContextService {
   private clearEmptySnapshotCache(repoId: number, worktreePath: string): void {
     this.emptySnapshotCache.delete(this.cacheKey(repoId, worktreePath));
   }
+
+  private normalizeGenerationProvider(provider: AgentProviderId | undefined): ContextGenerationProvider {
+    if (provider === 'claude' || provider === 'codex') {
+      return provider;
+    }
+    throw new BadRequestException(
+      provider
+        ? `Worktree context generation is not supported for provider "${provider}".`
+        : 'Worktree context generation requires an active provider.',
+    );
+  }
+
+  private toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(env).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    );
+  }
 }
+
+type CodexSdkModule = typeof import('@openai/codex-sdk');
+
+const importCodexSdk = new Function(
+  'specifier',
+  'return import(specifier)',
+) as (specifier: string) => Promise<CodexSdkModule>;

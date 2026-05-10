@@ -107,3 +107,17 @@ The parser extracts visible plain user messages, assistant messages, reasoning,
 function/custom tool calls, tool outputs, cwd, model, timestamps, and session
 metadata. Internal Codex context events are ignored so the transcript stays
 user-facing.
+
+## Auxiliary AI Flows
+
+Worktree context analysis and commit message generation use the active session
+provider selected in the workspace UI. They do not switch between Claude and
+Codex automatically. When Codex is selected, both flows use short-lived
+read-only Codex SDK threads with `approvalPolicy: never`, the worktree as
+`workingDirectory`, and `gpt-5.5` as the default model.
+
+When Claude is selected, the existing Claude Code SDK implementation is used.
+When Codex is selected, the API response includes `source: "codex"` if Codex
+produces the accepted Conventional Commit JSON. Unsupported providers are
+rejected instead of falling back to Claude, Codex, an external generator, or a
+local heuristic implicitly.
