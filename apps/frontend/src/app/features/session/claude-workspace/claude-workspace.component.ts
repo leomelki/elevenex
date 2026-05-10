@@ -45,6 +45,7 @@ import {
 } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model';
 import {
+  AgentAuthStatus,
   AgentProviderId,
   AgentRuntimeProviderInfo,
 } from '@/shared/models/agent-runtime.model';
@@ -67,6 +68,7 @@ import {
 import { ClaudeStatusBarComponent } from './components/claude-status-bar.component';
 import { ClaudeTasksDrawerComponent } from './components/claude-tasks-drawer.component';
 import { ClaudeMcpDrawerComponent } from './components/claude-mcp-drawer.component';
+import { CodexLoginCardComponent } from './components/codex-login-card.component';
 import {
   ClaudeAgentInspectorComponent,
   ClaudeSubagentHistoryState,
@@ -114,6 +116,7 @@ type TranscriptRenderItem =
     ClaudeTasksDrawerComponent,
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
+    CodexLoginCardComponent,
     NgIcon,
   ],
   templateUrl: './claude-workspace.component.html',
@@ -203,6 +206,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly agentInspectorSelectedAgentId = signal<string | null>(null);
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
   readonly _permissionMode = signal<ClaudePermissionMode | null>(null);
+  readonly codexAuthStatus = signal<AgentAuthStatus | null>(null);
+  readonly showCodexLogin = computed(() => {
+    if (this.currentProvider() !== 'codex') return false;
+    const status = this.codexAuthStatus();
+    if (!status) return false;
+    return status.authenticated !== true;
+  });
   private shouldAutoScrollTranscript = true;
   private readonly transcriptBottomThresholdPx = 48;
   private readonly planBypassActive = signal(false);
@@ -766,6 +776,12 @@ readonly messageActionsDisabled = computed(
       });
   }
 
+  onCodexAuthenticated(): void {
+    void firstValueFrom(this.agentApi.getAuthStatus('codex'))
+      .then((status) => this.codexAuthStatus.set(status))
+      .catch(() => undefined);
+  }
+
   startMcpAuth(server: ClaudeMcpServerEntry): void {
     this.mcpBusyServerName.set(server.name);
     void firstValueFrom(this.api.startMcpAuth(this.sessionId, server.name))
@@ -1206,6 +1222,11 @@ readonly messageActionsDisabled = computed(
         }
         void this.handleCompletion();
         return;
+      case 'auth_status':
+        if (this.currentProvider() === 'codex') {
+          this.codexAuthStatus.set(event.payload.status as AgentAuthStatus);
+        }
+        return;
       default:
         return;
     }
@@ -1351,6 +1372,11 @@ readonly messageActionsDisabled = computed(
     this.sessionMetadata.set(state.sessionMetadata);
     this.subagents.set(state.subagents);
     this.recentHookEvents.set(state.recentHookEvents);
+    if (this.currentProvider() === 'codex') {
+      this.codexAuthStatus.set((state.authStatus ?? null) as AgentAuthStatus | null);
+    } else {
+      this.codexAuthStatus.set(null);
+    }
   }
 
   private applyPendingPermissionFromRuntime(req: ClaudePermissionRequest | null): void {
@@ -1422,6 +1448,7 @@ readonly messageActionsDisabled = computed(
     this.sessionMetadata.set(null);
     this.subagents.set([]);
     this.recentHookEvents.set([]);
+    this.codexAuthStatus.set(null);
     this.expandedTurns.set({});
     this.armedEditMessageId.set(null);
     this.rewindingMessageId.set(null);

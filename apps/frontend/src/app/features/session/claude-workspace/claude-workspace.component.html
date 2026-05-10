@@ -1,4 +1,13 @@
 <div class="cw-root">
+  @if (showCodexLogin()) {
+    <div class="flex flex-1 items-center justify-center overflow-y-auto px-4">
+      <cw-codex-login-card
+        [status]="codexAuthStatus()"
+        (openInBrowser)="openInBrowser.emit($event)"
+        (authenticated)="onCodexAuthenticated()"
+      />
+    </div>
+  } @else {
   <div #transcriptContainer class="cw-transcript" (scroll)="onTranscriptScroll()">
     @if (showLoading()) {
       <div class="cw-loading">
@@ -444,6 +453,7 @@
       (openMcp)="openMcpDrawer()"
     />
   </div>
+  }
 
   <cw-tasks-drawer
     [open]="tasksDrawerOpen()"

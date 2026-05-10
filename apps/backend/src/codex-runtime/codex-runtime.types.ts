@@ -62,6 +62,17 @@ export interface CodexAuthStatus extends ClaudeAuthStatus {
   authMethod: 'oauth' | 'api_key' | 'none' | 'unknown';
   email?: string;
   authPath: string;
+  loginMode: 'oauth' | 'api_key' | null;
+  loginUrl: string | null;
+  loginError: string | null;
+}
+
+export type CodexLoginMode = 'oauth' | 'api_key';
+
+export interface CodexLoginStartResult {
+  mode: CodexLoginMode;
+  authUrl: string | null;
+  message: string;
 }
 
 export interface CodexActiveRunState {

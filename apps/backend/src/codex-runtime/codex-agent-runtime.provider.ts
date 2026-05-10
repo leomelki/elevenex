@@ -4,6 +4,11 @@ import { CodexMcpService } from './codex-mcp.service.js';
 import { CodexRuntimeService } from './codex-runtime.service.js';
 import { CodexAuthService } from './codex-auth.service.js';
 import type {
+  CodexAuthStatus,
+  CodexLoginMode,
+  CodexLoginStartResult,
+} from './codex-runtime.types.js';
+import type {
   AgentPermissionMode,
   AgentImageInput,
   AgentRuntimeEvent,
@@ -42,6 +47,9 @@ export class CodexAgentRuntimeProvider
     this.runtimeService.on('event', (event: AgentRuntimeEvent) => {
       this.emit('event', event);
     });
+    this.authService.on('status', (status: CodexAuthStatus) => {
+      this.emit('auth_status', status);
+    });
   }
 
   getHistory(sessionId: number) {
@@ -63,6 +71,16 @@ export class CodexAgentRuntimeProvider
 
   getAuthStatus() {
     return this.authService.getStatus();
+  }
+
+  startLogin(
+    options: { mode: CodexLoginMode; apiKey?: string } = { mode: 'oauth' },
+  ): Promise<CodexLoginStartResult> {
+    return this.authService.startLogin(options);
+  }
+
+  cancelLogin(): Promise<CodexAuthStatus> {
+    return this.authService.cancelLogin();
   }
 
   getMcpSnapshot(sessionId: number) {

@@ -111,8 +111,21 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
   cleanupSession(sessionId: number): Promise<void>;
 }
 
+export type AgentLoginMode = 'oauth' | 'api_key';
+
+export interface AgentLoginStartResult {
+  mode: AgentLoginMode;
+  authUrl: string | null;
+  message: string;
+}
+
 export interface AgentRuntimeProviderFeatures {
   getAuthStatus(): Promise<AgentAuthStatus>;
+  startLogin(options: {
+    mode: AgentLoginMode;
+    apiKey?: string;
+  }): Promise<AgentLoginStartResult>;
+  cancelLogin(): Promise<AgentAuthStatus>;
   getSubagentHistory(
     sessionId: number,
     agentId: string,

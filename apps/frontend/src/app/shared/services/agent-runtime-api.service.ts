@@ -1,7 +1,10 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import {
+  AgentAuthStatus,
   AgentAutocompleteItem,
+  AgentLoginMode,
+  AgentLoginStartResult,
   AgentMcpAuthStartResult,
   AgentMcpSnapshot,
   AgentProviderId,
@@ -19,6 +22,29 @@ export class AgentRuntimeApiService {
 
   listProviders() {
     return this.http.get<AgentRuntimeProviderInfo[]>('/api/agent-providers');
+  }
+
+  getAuthStatus(provider = this.currentProvider()) {
+    return this.http.get<AgentAuthStatus>(
+      `/api/agent-providers/${encodeURIComponent(provider)}/auth/status`,
+    );
+  }
+
+  startLogin(
+    body: { mode: AgentLoginMode; apiKey?: string },
+    provider = this.currentProvider(),
+  ) {
+    return this.http.post<AgentLoginStartResult>(
+      `/api/agent-providers/${encodeURIComponent(provider)}/auth/login`,
+      body,
+    );
+  }
+
+  cancelLogin(provider = this.currentProvider()) {
+    return this.http.post<AgentAuthStatus>(
+      `/api/agent-providers/${encodeURIComponent(provider)}/auth/cancel-login`,
+      {},
+    );
   }
 
   getHistory(sessionId: number, provider = this.currentProvider()) {

@@ -8,7 +8,10 @@ import {
   Query,
 } from '@nestjs/common';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
-import type { AgentPermissionMode } from './agent-runtime.types.js';
+import type {
+  AgentLoginMode,
+  AgentPermissionMode,
+} from './agent-runtime.types.js';
 
 @Controller()
 export class AgentRuntimeController {
@@ -24,6 +27,26 @@ export class AgentRuntimeController {
     return this.registry
       .getProviderFeature(provider, 'getAuthStatus')
       .getAuthStatus();
+  }
+
+  @Post('agent-providers/:provider/auth/login')
+  startLogin(
+    @Param('provider') provider: string,
+    @Body() body: { mode?: AgentLoginMode; apiKey?: string },
+  ) {
+    return this.registry
+      .getProviderFeature(provider, 'startLogin')
+      .startLogin({
+        mode: body.mode === 'api_key' ? 'api_key' : 'oauth',
+        apiKey: body.apiKey,
+      });
+  }
+
+  @Post('agent-providers/:provider/auth/cancel-login')
+  cancelLogin(@Param('provider') provider: string) {
+    return this.registry
+      .getProviderFeature(provider, 'cancelLogin')
+      .cancelLogin();
   }
 
   @Get('sessions/:sessionId/agents/:provider/history')

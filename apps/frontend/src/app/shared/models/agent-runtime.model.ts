@@ -65,6 +65,29 @@ export interface AgentMcpAuthStartResult {
   message?: string;
 }
 
+export type AgentLoginMode = 'oauth' | 'api_key';
+
+export interface AgentLoginStartResult {
+  mode: AgentLoginMode;
+  authUrl: string | null;
+  message: string;
+}
+
+export interface AgentAuthStatus {
+  isAuthenticating: boolean;
+  output: string[];
+  error?: string;
+  installed?: boolean;
+  version?: string | null;
+  authenticated?: boolean;
+  authMethod?: 'oauth' | 'api_key' | 'none' | 'unknown';
+  email?: string;
+  authPath?: string;
+  loginMode?: AgentLoginMode | null;
+  loginUrl?: string | null;
+  loginError?: string | null;
+}
+
 export type AgentImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 
 export interface AgentImageInput {

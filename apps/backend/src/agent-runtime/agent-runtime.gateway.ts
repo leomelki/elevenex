@@ -45,6 +45,12 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
       provider.on('event', (event: AgentRuntimeEvent) => {
         this.broadcast(providerInfo.id, event.payload.sessionId, event);
       });
+      provider.on('auth_status', (status: unknown) => {
+        this.broadcastToProvider(providerInfo.id, {
+          type: 'auth_status',
+          payload: { status },
+        });
+      });
     }
   }
 
@@ -195,6 +201,19 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     for (const client of bucket) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(serialized);
+      }
+    }
+  }
+
+  private broadcastToProvider(providerId: string, event: unknown): void {
+    const serialized = JSON.stringify(event);
+    const prefix = `${providerId}:`;
+    for (const [key, bucket] of this.clients.entries()) {
+      if (!key.startsWith(prefix)) continue;
+      for (const client of bucket) {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(serialized);
+        }
       }
     }
   }
