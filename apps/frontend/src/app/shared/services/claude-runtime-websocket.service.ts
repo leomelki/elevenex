@@ -24,6 +24,13 @@ export class ClaudeRuntimeWebsocketService {
     );
   }
 
+  isConnected(sessionId: number): boolean {
+    return this.agentRuntimeWs.isConnected(
+      sessionId,
+      this.providerSelection.currentProvider,
+    );
+  }
+
   disconnect(sessionId: number): void {
     this.agentRuntimeWs.disconnectSession(sessionId);
   }

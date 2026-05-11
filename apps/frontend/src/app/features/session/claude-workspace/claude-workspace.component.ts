@@ -632,7 +632,7 @@ readonly messageActionsDisabled = computed(
     this.cancelArmedEdit();
     this.prompt.set('');
     const runtimePrompt = await this.prepareRuntimePrompt(trimmed);
-    this.ws.send(this.sessionId, {
+    this.sendRuntimeAction({
       type: 'submit_prompt',
       prompt: runtimePrompt,
       titlePrompt: trimmed,
@@ -653,7 +653,7 @@ readonly messageActionsDisabled = computed(
 
   cancelPendingPrompt(id: string): void {
     this.cancelledPendingPromptIds.add(id);
-    this.ws.send(this.sessionId, { type: 'cancel_pending_prompt', id });
+    this.sendRuntimeAction({ type: 'cancel_pending_prompt', id });
   }
 
   private updatePendingPrompts(next: ClaudePendingPrompt[]): void {
@@ -689,13 +689,13 @@ readonly messageActionsDisabled = computed(
 
   interrupt(): void {
     this.interruptedRunShouldRestorePrompt = true;
-    this.ws.send(this.sessionId, { type: 'interrupt' });
+    this.sendRuntimeAction({ type: 'interrupt' });
   }
 
   private autoApprovePermission(requestId: string): void {
     if (this.autoApprovedPermissionRequestIds.has(requestId)) return;
     this.autoApprovedPermissionRequestIds.add(requestId);
-    this.ws.send(this.sessionId, {
+    this.sendRuntimeAction({
       type: 'approve_permission',
       requestId,
       remember: false,
@@ -705,7 +705,7 @@ readonly messageActionsDisabled = computed(
   approvePermission(approval: ClaudePermissionApproval): void {
     const req = this.pendingPermissionRequest();
     if (!req) return;
-    this.ws.send(this.sessionId, {
+    this.sendRuntimeAction({
       type: 'approve_permission',
       requestId: req.requestId,
       remember: approval.remember,
@@ -716,7 +716,7 @@ readonly messageActionsDisabled = computed(
   denyPermission(message?: string): void {
     const req = this.pendingPermissionRequest();
     if (!req) return;
-    this.ws.send(this.sessionId, {
+    this.sendRuntimeAction({
       type: 'deny_permission',
       requestId: req.requestId,
       message: message?.trim() || undefined,
@@ -726,7 +726,7 @@ readonly messageActionsDisabled = computed(
   answerUserInput(payload: { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> }): void {
     const req = this.pendingUserInputRequest();
     if (!req) return;
-    this.ws.send(this.sessionId, {
+    this.sendRuntimeAction({
       type: 'answer_user_input',
       requestId: req.requestId,
       action: payload.action,
@@ -997,6 +997,13 @@ readonly messageActionsDisabled = computed(
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => this.handleRuntimeEvent(event));
     this.ws.send(this.sessionId, { type: 'hydrate' });
+  }
+
+  private sendRuntimeAction(message: Record<string, unknown>): void {
+    if (!this.ws.isConnected(this.sessionId)) {
+      this.rehydrate();
+    }
+    this.ws.send(this.sessionId, message);
   }
 
   private async bootstrap(): Promise<void> {

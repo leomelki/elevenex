@@ -87,6 +87,17 @@ export class AgentRuntimeWebsocketService {
     }
   }
 
+  isConnected(
+    sessionId: number,
+    provider: AgentProviderId = this.providerSelection.currentProvider,
+  ): boolean {
+    const connection = this.connections.get(this.connectionKey(sessionId, provider));
+    return (
+      connection?.ws.readyState === WebSocket.OPEN
+      || connection?.ws.readyState === WebSocket.CONNECTING
+    );
+  }
+
   disconnect(
     sessionId: number,
     provider: AgentProviderId = this.providerSelection.currentProvider,

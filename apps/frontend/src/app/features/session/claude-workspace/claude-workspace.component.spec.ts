@@ -75,6 +75,7 @@ describe('ClaudeWorkspaceComponent', () => {
   let wsMock: {
     connect: ReturnType<typeof vi.fn>;
     send: ReturnType<typeof vi.fn>;
+    isConnected: ReturnType<typeof vi.fn>;
     disconnect: ReturnType<typeof vi.fn>;
   };
   let worktreeContextServiceMock: {
@@ -272,6 +273,7 @@ describe('ClaudeWorkspaceComponent', () => {
     wsMock = {
       connect: vi.fn(() => new Subject().asObservable()),
       send: vi.fn(),
+      isConnected: vi.fn(() => true),
       disconnect: vi.fn(),
     };
     worktreeContextServiceMock = {
@@ -1116,6 +1118,41 @@ describe('ClaudeWorkspaceComponent', () => {
         }),
       }),
     ]);
+  });
+
+  it('rehydrates the runtime socket before answering a pending question when disconnected', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    wsMock.send.mockClear();
+    wsMock.disconnect.mockClear();
+    wsMock.connect.mockClear();
+    wsMock.isConnected.mockReturnValue(false);
+
+    fixture.componentInstance.pendingUserInputRequest.set({
+      requestId: 'input-1',
+      serverName: 'github',
+      message: 'Authorize GitHub?',
+      createdAt: '2026-04-24T08:00:00.000Z',
+    });
+
+    fixture.componentInstance.answerUserInput({
+      action: 'accept',
+      content: { token: 'abc' },
+    });
+
+    expect(wsMock.disconnect).toHaveBeenCalledWith(7);
+    expect(wsMock.connect).toHaveBeenCalledWith(7);
+    expect(wsMock.send).toHaveBeenNthCalledWith(1, 7, { type: 'hydrate' });
+    expect(wsMock.send).toHaveBeenNthCalledWith(2, 7, {
+      type: 'answer_user_input',
+      requestId: 'input-1',
+      action: 'accept',
+      content: { token: 'abc' },
+    });
   });
 
   it('clears pending permission when run state reports no pending request', async () => {
