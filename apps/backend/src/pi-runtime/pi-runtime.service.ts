@@ -65,6 +65,29 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     private readonly authService: PiAuthService,
   ) {
     super();
+    this.authService.on('status', (status: PiAuthStatus) => {
+      void this.handleAuthStatusChange(status);
+    });
+  }
+
+  private async handleAuthStatusChange(status: PiAuthStatus): Promise<void> {
+    if (status.isAuthenticating) return;
+    const sessionIds = Array.from(this.runtimes.keys());
+    if (sessionIds.length === 0) return;
+    await Promise.all(
+      sessionIds.map(async (sessionId) => {
+        try {
+          await this.refreshModels(sessionId);
+          const state = this.ensureRuntimeState(sessionId);
+          state.authStatus = status;
+          this.emitRunState(sessionId);
+        } catch (error) {
+          this.logger.warn(
+            `Failed to refresh models after auth change session=${sessionId}: ${String(error)}`,
+          );
+        }
+      }),
+    );
   }
 
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
