@@ -13,7 +13,9 @@ export class CodexHistoryService {
   private readonly logger = new Logger('CodexHistoryService');
   private readonly sessionsRoot = join(homedir(), '.codex', 'sessions');
 
-  async getHistory(codexSessionId: string | null): Promise<ClaudeTranscriptItem[]> {
+  async getHistory(
+    codexSessionId: string | null,
+  ): Promise<ClaudeTranscriptItem[]> {
     if (!codexSessionId || codexSessionId === '-1') {
       return [];
     }
@@ -28,10 +30,14 @@ export class CodexHistoryService {
   async listSessions(): Promise<CodexHistorySessionSummary[]> {
     const paths = await this.findJsonlFiles(this.sessionsRoot);
     const summaries = await Promise.all(
-      paths.map((path) => this.parseSessionSummary(path).catch((error) => {
-        this.logger.debug(`Could not parse Codex session ${path}: ${String(error)}`);
-        return null;
-      })),
+      paths.map((path) =>
+        this.parseSessionSummary(path).catch((error) => {
+          this.logger.debug(
+            `Could not parse Codex session ${path}: ${String(error)}`,
+          );
+          return null;
+        }),
+      ),
     );
     return summaries
       .filter((item): item is CodexHistorySessionSummary => Boolean(item))
@@ -60,10 +66,16 @@ export class CodexHistoryService {
         const payload = asRecord(record.payload);
         id = stringValue(payload?.id) ?? id;
         cwd = stringValue(payload?.cwd) ?? cwd;
-        model = stringValue(payload?.model) ?? stringValue(payload?.model_provider) ?? model;
+        model =
+          stringValue(payload?.model) ??
+          stringValue(payload?.model_provider) ??
+          model;
       }
       if (this.isVisibleUserMessage(record)) {
-        latestUserMessage = stringValue(asRecord(record.payload)?.message) ?? latestUserMessage;
+        const rawMessage = stringValue(asRecord(record.payload)?.message);
+        latestUserMessage = rawMessage
+          ? this.stripInjectedWorktreeContext(rawMessage)
+          : latestUserMessage;
         messageCount += 1;
       }
     }
@@ -71,21 +83,30 @@ export class CodexHistoryService {
     if (!id) {
       id = basename(path, '.jsonl');
     }
-    return { id, cwd, model, summary: latestUserMessage, messageCount, lastTimestamp, path };
+    return {
+      id,
+      cwd,
+      model,
+      summary: latestUserMessage,
+      messageCount,
+      lastTimestamp,
+      path,
+    };
   }
 
   private normalizeRecords(records: JsonRecord[]): ClaudeTranscriptItem[] {
     const items: ClaudeTranscriptItem[] = [];
     for (const [index, record] of records.entries()) {
-      const timestamp = stringValue(record.timestamp) ?? new Date().toISOString();
+      const timestamp =
+        stringValue(record.timestamp) ?? new Date().toISOString();
       if (this.isVisibleUserMessage(record)) {
         const payload = asRecord(record.payload);
-        const content = stringValue(payload?.message);
-        if (content) {
+        const rawContent = stringValue(payload?.message);
+        if (rawContent) {
           items.push({
             id: `codex-history:${index}:user`,
             kind: 'user',
-            content,
+            content: this.stripInjectedWorktreeContext(rawContent),
             timestamp,
             authoredAt: timestamp,
           });
@@ -97,12 +118,19 @@ export class CodexHistoryService {
         continue;
       }
       const payload = asRecord(record.payload);
-      const item = payload?.item ?? (payload?.type ? payload : null) ?? asRecord(record.item);
+      const item =
+        payload?.item ??
+        (payload?.type ? payload : null) ??
+        asRecord(record.item);
       const payloadItem = asRecord(item);
       if (!payloadItem) {
         continue;
       }
-      const normalized = this.normalizeResponseItem(payloadItem, timestamp, index);
+      const normalized = this.normalizeResponseItem(
+        payloadItem,
+        timestamp,
+        index,
+      );
       if (normalized) {
         items.push(normalized);
       }
@@ -116,21 +144,38 @@ export class CodexHistoryService {
     index: number,
   ): ClaudeTranscriptItem | null {
     const type = stringValue(item.type);
-    const id = stringValue(item.id) ?? `codex-history:${index}:${type ?? 'item'}`;
+    const id =
+      stringValue(item.id) ?? `codex-history:${index}:${type ?? 'item'}`;
     if (type === 'message' && item.role === 'assistant') {
       const content = this.contentToText(item.content);
       return content
-        ? { id, kind: 'assistant', content, sourceMessageId: id, timestamp, receivedAt: timestamp }
+        ? {
+            id,
+            kind: 'assistant',
+            content,
+            sourceMessageId: id,
+            timestamp,
+            receivedAt: timestamp,
+          }
         : null;
     }
     if (type === 'reasoning') {
-      const content = this.contentToText(item.summary) || this.contentToText(item.content);
+      const content =
+        this.contentToText(item.summary) || this.contentToText(item.content);
       return content
-        ? { id, kind: 'thinking', content, sourceMessageId: id, timestamp, receivedAt: timestamp }
+        ? {
+            id,
+            kind: 'thinking',
+            content,
+            sourceMessageId: id,
+            timestamp,
+            receivedAt: timestamp,
+          }
         : null;
     }
     if (type === 'function_call' || type === 'custom_tool_call') {
-      const rawToolName = stringValue(item.name) ?? stringValue(item.call_id) ?? type;
+      const rawToolName =
+        stringValue(item.name) ?? stringValue(item.call_id) ?? type;
       const toolName = this.normalizeToolName(rawToolName);
       const toolUseId = stringValue(item.call_id) ?? id;
       return {
@@ -138,7 +183,10 @@ export class CodexHistoryService {
         kind: 'tool_use',
         toolUseId,
         toolName,
-        toolInput: this.normalizeToolInput(rawToolName, item.arguments ?? item.input),
+        toolInput: this.normalizeToolInput(
+          rawToolName,
+          item.arguments ?? item.input,
+        ),
         sourceMessageId: id,
         timestamp,
         receivedAt: timestamp,
@@ -149,7 +197,8 @@ export class CodexHistoryService {
         id: `${id}:tool_result`,
         kind: 'tool_result',
         toolUseId: stringValue(item.call_id) ?? id,
-        content: this.contentToText(item.output) || JSON.stringify(item.output ?? ''),
+        content:
+          this.contentToText(item.output) || JSON.stringify(item.output ?? ''),
         isError: Boolean(item.error),
         sourceMessageId: id,
         timestamp,
@@ -165,9 +214,9 @@ export class CodexHistoryService {
     }
     const payload = asRecord(record.payload);
     return (
-      payload?.type === 'user_message'
-      && (!payload.kind || payload.kind === 'plain')
-      && Boolean(stringValue(payload.message))
+      payload?.type === 'user_message' &&
+      (!payload.kind || payload.kind === 'plain') &&
+      Boolean(stringValue(payload.message))
     );
   }
 
@@ -198,24 +247,26 @@ export class CodexHistoryService {
     if (toolName === 'shell_command') {
       return {
         command:
-          stringValue(args?.command)
-          ?? stringValue(args?.cmd)
-          ?? stringValue(args?.input)
-          ?? (typeof value === 'string' ? value : ''),
+          stringValue(args?.command) ??
+          stringValue(args?.cmd) ??
+          stringValue(args?.input) ??
+          (typeof value === 'string' ? value : ''),
       };
     }
     if (toolName === 'apply_patch') {
       const patch =
-        stringValue(args?.patch)
-        ?? stringValue(args?.input)
-        ?? (typeof value === 'string' ? value : '');
+        stringValue(args?.patch) ??
+        stringValue(args?.input) ??
+        (typeof value === 'string' ? value : '');
       return this.parseApplyPatchInput(patch);
     }
     return parsed;
   }
 
   private parseApplyPatchInput(patch: string): Record<string, unknown> {
-    const filePathMatch = patch.match(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/m);
+    const filePathMatch = patch.match(
+      /^\*\*\* (?:Update|Add|Delete) File: (.+)$/m,
+    );
     return {
       file_path: filePathMatch?.[1]?.trim() ?? '',
       old_string: '',
@@ -232,7 +283,9 @@ export class CodexHistoryService {
         .map((part) => {
           if (typeof part === 'string') return part;
           const record = asRecord(part);
-          return stringValue(record?.text) ?? stringValue(record?.content) ?? '';
+          return (
+            stringValue(record?.text) ?? stringValue(record?.content) ?? ''
+          );
         })
         .filter(Boolean)
         .join('\n');
@@ -243,11 +296,26 @@ export class CodexHistoryService {
     return typeof value === 'object' ? JSON.stringify(value) : String(value);
   }
 
+  private stripInjectedWorktreeContext(text: string): string {
+    const trimmed = text.trimStart();
+    const openTag = '<elevenex-worktree-context>';
+    const closeTag = '</elevenex-worktree-context>';
+    if (!trimmed.startsWith(openTag)) {
+      return text;
+    }
+    const closingIndex = trimmed.indexOf(closeTag);
+    if (closingIndex === -1) {
+      return text;
+    }
+    const afterClose = trimmed.slice(closingIndex + closeTag.length);
+    return afterClose.replace(/^\s+/, '');
+  }
+
   private async findSessionFile(sessionId: string): Promise<string | null> {
     const paths = await this.findJsonlFiles(this.sessionsRoot);
     return (
-      paths.find((path) => basename(path).includes(sessionId))
-      ?? (await this.findFileBySessionMeta(paths, sessionId))
+      paths.find((path) => basename(path).includes(sessionId)) ??
+      (await this.findFileBySessionMeta(paths, sessionId))
     );
   }
 
