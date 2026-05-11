@@ -94,11 +94,20 @@ const PERMISSION_MODES: PermissionModeOption[] = [
       <span class="cw-sb__sep">·</span>
 
       <div class="cw-sb__model">
-        <button type="button" class="cw-sb__link" (click)="toggleMenu('provider')">
+        <button
+          type="button"
+          class="cw-sb__link"
+          [class.cw-sb__link--disabled]="providerLocked()"
+          [disabled]="providerLocked()"
+          [title]="providerLocked() ? 'Provider is locked after a session starts' : 'Change provider'"
+          (click)="toggleMenu('provider')"
+        >
           {{ activeProviderLabel() }}
-          <ng-icon name="lucideChevronDown" size="11" />
+          @if (!providerLocked()) {
+            <ng-icon name="lucideChevronDown" size="11" />
+          }
         </button>
-        @if (providerOpen()) {
+        @if (providerOpen() && !providerLocked()) {
           <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
             @for (provider of providers(); track provider.id) {
               <button
@@ -297,6 +306,12 @@ const PERMISSION_MODES: PermissionModeOption[] = [
         background: color-mix(in oklab, var(--foreground) 6%, transparent);
         color: var(--foreground);
       }
+      .cw-sb__link--disabled,
+      .cw-sb__link--disabled:hover {
+        cursor: default;
+        background: transparent;
+        color: var(--muted-foreground);
+      }
       .cw-sb__model,
       .cw-sb__overflow {
         position: relative;
@@ -380,6 +395,7 @@ export class ClaudeStatusBarComponent {
   readonly phase = input<ClaudeRunPhase>('idle');
   readonly providers = input<AgentRuntimeProviderInfo[]>([]);
   readonly currentProvider = input<AgentProviderId>('claude');
+  readonly providerLocked = input(false);
   readonly selectedModel = input<string | null>(null);
   readonly availableModels = input<ClaudeModelOption[]>([]);
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
@@ -416,6 +432,11 @@ export class ClaudeStatusBarComponent {
   }
 
   toggleMenu(which: 'model' | 'provider' | 'permission' | 'overflow'): void {
+    if (which === 'provider' && this.providerLocked()) {
+      this.providerOpen.set(false);
+      return;
+    }
+
     const next = {
       model: which === 'model' ? !this.modelOpen() : false,
       provider: which === 'provider' ? !this.providerOpen() : false,
@@ -486,6 +507,7 @@ export class ClaudeStatusBarComponent {
 
   pickProvider(id: AgentProviderId): void {
     this.providerOpen.set(false);
+    if (this.providerLocked()) return;
     if (id !== this.currentProvider()) {
       this.providerChange.emit(id);
     }

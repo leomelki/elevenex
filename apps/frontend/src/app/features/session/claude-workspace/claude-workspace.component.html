@@ -444,6 +444,7 @@
       [tasks]="tasks()"
       [permissionMode]="permissionMode()"
       [mcpSnapshot]="mcpSnapshot()"
+      [providerLocked]="runtimeStarted()"
       (providerChange)="onProviderChange($event)"
       (modelChange)="onModelChange($event)"
       (permissionModeChange)="onPermissionModeChange($event)"

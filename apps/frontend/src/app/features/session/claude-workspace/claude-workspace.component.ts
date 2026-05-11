@@ -139,6 +139,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   @Input({ required: true }) worktreePath!: string;
   @Input() hasInjectedWorktreeContext = false;
   @Input() activeAgentProvider: AgentProviderId = 'claude';
+  @Input() hasStartedAgentRuntime = false;
   @Input() isVisible = true;
   @ViewChild('transcriptContainer') private transcriptContainer?: ElementRef<HTMLDivElement>;
   @ViewChild(ClaudeComposerComponent) private composer?: ClaudeComposerComponent;
@@ -146,6 +147,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly openTerminalFallback = output<void>();
   readonly openInBrowser = output<string>();
   readonly activeAgentProviderChange = output<AgentProviderId>();
+  readonly agentRuntimeStarted = output<void>();
 
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ClaudeRuntimeApiService);
@@ -212,6 +214,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
   readonly _permissionMode = signal<ClaudePermissionMode | null>(null);
   readonly codexAuthStatus = signal<AgentAuthStatus | null>(null);
+  readonly runtimeStarted = signal(false);
   readonly showCodexLogin = computed(() => {
     if (this.currentProvider() !== 'codex') return false;
     const status = this.codexAuthStatus();
@@ -555,6 +558,7 @@ readonly messageActionsDisabled = computed(
 
   ngOnInit(): void {
     this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
+    this.runtimeStarted.set(this.hasStartedAgentRuntime);
     if (this.isVisible) {
       this.providerSelection.setProvider(this.activeAgentProvider);
       void this.bootstrap();
@@ -572,6 +576,9 @@ readonly messageActionsDisabled = computed(
     }
     if (changes['hasInjectedWorktreeContext'] && !changes['hasInjectedWorktreeContext'].firstChange) {
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
+    }
+    if (changes['hasStartedAgentRuntime'] && !changes['hasStartedAgentRuntime'].firstChange) {
+      this.runtimeStarted.set(this.hasStartedAgentRuntime);
     }
     if (changes['isVisible'] && this.isVisible && !changes['isVisible'].firstChange) {
       this.providerSelection.setProvider(this.activeAgentProvider);
@@ -766,6 +773,10 @@ readonly messageActionsDisabled = computed(
 
   onProviderChange(provider: AgentProviderId): void {
     if (provider === this.currentProvider()) return;
+    if (this.runtimeStarted()) {
+      toast.message('Provider can only be changed before the session is started.');
+      return;
+    }
     this.ws.disconnect(this.sessionId);
     this.providerSelection.setProvider(provider);
     this.activeAgentProvider = provider;
@@ -1162,6 +1173,8 @@ readonly messageActionsDisabled = computed(
         return;
       case 'session_created':
         this.claudeSessionId.set(event.payload.claudeSessionId);
+        this.runtimeStarted.set(true);
+        this.agentRuntimeStarted.emit();
         return;
       case 'session_metadata':
         this.sessionMetadata.set(event.payload.metadata);
@@ -1506,6 +1519,7 @@ readonly messageActionsDisabled = computed(
     this.recentHookEvents.set([]);
     this.codexAuthStatus.set(null);
     this.bootstrappedProvider = null;
+    this.runtimeStarted.set(this.hasStartedAgentRuntime);
     this.expandedTurns.set({});
     this.armedEditMessageId.set(null);
     this.rewindingMessageId.set(null);

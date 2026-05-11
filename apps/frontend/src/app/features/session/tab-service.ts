@@ -37,6 +37,7 @@ export interface Tab {
   repoColor?: string | null;
   hasInjectedWorktreeContext: boolean;
   activeAgentProvider: AgentProviderId;
+  hasStartedAgentRuntime: boolean;
 }
 
 export interface TabCloseResult {
@@ -73,7 +74,11 @@ export class TabService {
       this._tabs.update(tabs =>
         tabs.map(t =>
           t.sessionId === session.id
-            ? { ...t, activeAgentProvider: this.providerForSession(session) }
+            ? {
+                ...t,
+                activeAgentProvider: this.providerForSession(session),
+                hasStartedAgentRuntime: this.hasStartedAgentRuntime(session),
+              }
             : t,
         ),
       );
@@ -97,6 +102,7 @@ export class TabService {
       repoColor: session.repoColor,
       hasInjectedWorktreeContext: session.hasInjectedWorktreeContext,
       activeAgentProvider: this.providerForSession(session),
+      hasStartedAgentRuntime: this.hasStartedAgentRuntime(session),
     };
 
     this._tabs.update(tabs => [...tabs, newTab]);
@@ -331,6 +337,17 @@ export class TabService {
     this.persistState();
   }
 
+  markTabRuntimeStarted(sessionId: number): void {
+    const current = this._tabs().find(t => t.sessionId === sessionId);
+    if (!current || current.hasStartedAgentRuntime) return;
+    this._tabs.update(tabs =>
+      tabs.map(t =>
+        t.sessionId === sessionId ? { ...t, hasStartedAgentRuntime: true } : t
+      )
+    );
+    this.persistState();
+  }
+
   /**
    * Get all open session IDs.
    */
@@ -448,5 +465,12 @@ export class TabService {
       return persisted;
     }
     return session.codexSessionId && session.codexSessionId !== '-1' ? 'codex' : 'claude';
+  }
+
+  private hasStartedAgentRuntime(session: Session): boolean {
+    return Boolean(
+      (session.claudeSessionId && session.claudeSessionId !== '-1')
+        || (session.codexSessionId && session.codexSessionId !== '-1'),
+    );
   }
 }

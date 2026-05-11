@@ -113,6 +113,7 @@ describe('Sidebar', () => {
       projectId: 101,
       repoColor: null,
       activeAgentProvider: 'claude',
+      hasStartedAgentRuntime: false,
     },
   ]);
 
@@ -257,6 +258,7 @@ describe('Sidebar', () => {
         projectId: 101,
         repoColor: null,
         activeAgentProvider: 'claude',
+        hasStartedAgentRuntime: false,
       },
     ]);
 
@@ -751,6 +753,7 @@ describe('Sidebar', () => {
         projectId: 101,
         repoColor: null,
         activeAgentProvider: 'claude',
+        hasStartedAgentRuntime: false,
       },
     ] as any);
     tabServiceMock.closeTab.mockImplementation((sessionId: number) => {

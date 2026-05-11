@@ -878,6 +878,10 @@ export class SessionContainer implements OnInit, OnDestroy {
     }
   }
 
+  onSessionRuntimeStarted(sessionId: number): void {
+    this.tabService.markTabRuntimeStarted(sessionId);
+  }
+
   onTabClose(sessionId: number): void {
     const worktreePath = this.getWorktreePathForSession(sessionId);
     const iframeKey = this.getIframeKeyForSession(sessionId);

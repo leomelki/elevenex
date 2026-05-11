@@ -61,10 +61,12 @@
                         [worktreePath]="tab.worktreePath"
                         [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
                         [activeAgentProvider]="tab.activeAgentProvider"
+                        [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
                         [isVisible]="tab.sessionId === activeSessionId()"
                         (openTerminalFallback)="showClaudeTerminal()"
                         (openInBrowser)="onOpenInBrowser($event)"
                         (activeAgentProviderChange)="onSessionProviderChange(tab.sessionId, $event)"
+                        (agentRuntimeStarted)="onSessionRuntimeStarted(tab.sessionId)"
                         class="h-full block"
                       />
                     }
