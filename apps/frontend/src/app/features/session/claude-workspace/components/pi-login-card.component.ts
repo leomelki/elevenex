@@ -129,7 +129,7 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
               <button
                 type="button"
                 z-button
-                zType="default"
+                zType="outline"
                 class="h-auto flex-col items-start gap-0.5 py-3"
                 [disabled]="busy()"
                 (click)="startOAuth(provider.id)"
@@ -288,7 +288,7 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
               <button
                 type="button"
                 z-button
-                zType="default"
+                zType="outline"
                 class="justify-between"
                 (click)="selectApiKeyProvider(provider)"
               >
