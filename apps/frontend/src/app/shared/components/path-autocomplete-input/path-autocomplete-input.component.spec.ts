@@ -1,8 +1,9 @@
+import { OverlayContainer } from '@angular/cdk/overlay';
 import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { of, Subject } from 'rxjs';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 import { PathAutocompleteInputComponent } from './path-autocomplete-input.component';
 import { PathAutocompleteService } from '@/shared/services/path-autocomplete.service';
@@ -31,6 +32,8 @@ class HostComponent {
 
 describe('PathAutocompleteInputComponent', () => {
   const suggestPaths = vi.fn();
+  let overlayContainer: OverlayContainer;
+  let overlayContainerElement: HTMLElement;
 
   beforeEach(async () => {
     suggestPaths.mockReset();
@@ -46,6 +49,13 @@ describe('PathAutocompleteInputComponent', () => {
         },
       ],
     }).compileComponents();
+    
+    overlayContainer = TestBed.inject(OverlayContainer);
+    overlayContainerElement = overlayContainer.getContainerElement();
+  });
+  
+  afterEach(() => {
+    overlayContainer.ngOnDestroy();
   });
 
   it('opens suggestions after focus and keyboard-selects an item', async () => {
@@ -66,7 +76,7 @@ describe('PathAutocompleteInputComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.componentInstance.onCommit).toHaveBeenCalledWith('/tmp/file.txt');
-    expect(fixture.nativeElement.textContent).toContain('file.txt');
+    expect(overlayContainerElement.textContent).toContain('file.txt');
   });
 
   it('supports arrow navigation, tab completion, and escape dismissal', async () => {
@@ -94,7 +104,7 @@ describe('PathAutocompleteInputComponent', () => {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     fixture.detectChanges();
 
-    expect(fixture.debugElement.query(By.css('.pac__panel'))).toBeNull();
+    expect(overlayContainerElement.querySelector('.pac__panel')).toBeNull();
   });
 
   it('shows loading and empty states', async () => {
@@ -110,13 +120,13 @@ describe('PathAutocompleteInputComponent', () => {
     await new Promise(resolve => setTimeout(resolve, 160));
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.textContent).toContain('Looking for paths');
+    expect(overlayContainerElement.textContent).toContain('Looking for paths');
 
     subject.next([]);
     subject.complete();
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.textContent).toContain('No matching paths');
+    expect(overlayContainerElement.textContent).toContain('No matching paths');
   });
 
   it('keeps the browse action working', () => {

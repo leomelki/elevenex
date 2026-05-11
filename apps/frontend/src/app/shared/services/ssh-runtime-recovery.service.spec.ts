@@ -64,6 +64,7 @@ describe('SshRuntimeRecoveryService', () => {
 
   const onboardingStartupMock = {
     prepareStartupPortForwardPrompt: vi.fn(),
+    startupConnectingServer: vi.fn().mockReturnValue(null),
     clearStartupFailure: vi.fn(),
     startupFailure: vi.fn().mockReturnValue(null),
   };
@@ -204,6 +205,7 @@ describe('SshRuntimeRecoveryService', () => {
       lastError: 'Remote tunnel dropped.',
       debugDetails: null,
     });
+    onboardingConnectionMock.reconnect.mockResolvedValueOnce({ kind: 'error', error: new Error('Failed to reconnect') });
 
     const service = createService();
     await service.refreshNow();

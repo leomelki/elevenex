@@ -105,6 +105,8 @@ import {
                 <span class="pac__item-path">{{ item.path }}</span>
               </button>
             }
+          } @else {
+            <div class="pac__state pac__state--muted">No matching paths</div>
           }
         </div>
       </ng-template>
@@ -273,7 +275,7 @@ export class PathAutocompleteInputComponent implements OnChanges {
         this.suggestions.set(items);
         this.activeIndex.set(0);
         this.loading.set(false);
-        this.open.set(this.isPathLike(this.draftValue()) && (items.length > 0 || Boolean(this.error())));
+        this.open.set(this.isPathLike(this.draftValue()));
       });
   }
 

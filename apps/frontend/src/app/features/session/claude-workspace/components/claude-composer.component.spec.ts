@@ -78,6 +78,6 @@ describe('ClaudeComposerComponent', () => {
     fixture.detectChanges();
 
     fixture.componentInstance.submit();
-    expect(sendSpy).toHaveBeenCalledWith('Continue');
+    expect(sendSpy).toHaveBeenCalledWith({ text: 'Continue', images: [] });
   });
 });

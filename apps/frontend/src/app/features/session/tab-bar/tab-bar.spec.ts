@@ -6,6 +6,8 @@ import { ProductivityStateService } from '../../productivity/productivity-state.
 import { PlannotatorStateService } from '../../plannotator';
 import { GitHubStateService } from '../../github/github-state.service';
 import { Tab } from '../tab-service';
+import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
+import { signal } from '@angular/core';
 
 describe('TabBar', () => {
   const claudeStatusMock = {
@@ -23,6 +25,10 @@ describe('TabBar', () => {
 
   const githubStateMock = {
     hasLinkedPullRequest: vi.fn(() => false),
+  };
+
+  const providerSelectionMock = {
+    selectedProvider: signal('claude'),
   };
 
   const baseTab: Tab = {
@@ -54,6 +60,7 @@ describe('TabBar', () => {
         { provide: ProductivityStateService, useValue: productivityStateMock },
         { provide: PlannotatorStateService, useValue: plannotatorStateMock },
         { provide: GitHubStateService, useValue: githubStateMock },
+        { provide: AgentRuntimeProviderService, useValue: providerSelectionMock },
       ],
     }).compileComponents();
   });
@@ -78,7 +85,7 @@ describe('TabBar', () => {
     fixture.detectChanges();
 
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.querySelector('.tab-status-dot.status-running')).toBeTruthy();
+    expect(el.querySelector('.status-running')).toBeTruthy();
     expect(el.querySelector('.completion-indicator')).toBeTruthy();
     expect(el.querySelector('.review-indicator')).toBeTruthy();
   });

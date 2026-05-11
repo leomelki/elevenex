@@ -31,6 +31,7 @@ import { TodosService } from '@/features/productivity/todos.service';
 import { NavigationBranch, NavigationProject } from '../../../shared/models/navigation-tree.model';
 import { Project } from '@/shared/models/project.model';
 import { PendingWorktreeCreationsService } from '@/shared/services/pending-worktree-creations.service';
+import { ReposService } from '@/shared/services/repos.service';
 
 @Directive({
   selector: 'dialog[trackNativeModal]',
@@ -214,6 +215,10 @@ describe('Sidebar', () => {
     getByRepo: vi.fn<(repoId: number) => any[]>(() => []),
   };
 
+  const reposServiceMock = {
+    add: vi.fn(),
+  };
+
   const todosCounts = signal(new Map<number, number>());
   const todosServiceMock = {
     getTodos: vi.fn(() => of([])),
@@ -333,6 +338,7 @@ describe('Sidebar', () => {
         { provide: CursorService, useValue: { isConfigured: vi.fn(() => true), open: vi.fn(), getSettings: vi.fn(() => null) } },
         { provide: TodosService, useValue: todosServiceMock },
         { provide: PendingWorktreeCreationsService, useValue: pendingWorktreeCreationsMock },
+        { provide: ReposService, useValue: reposServiceMock },
       ],
     }).compileComponents();
   });
@@ -395,16 +401,20 @@ describe('Sidebar', () => {
     expect(component.addRepoProject()).toBe(project);
   });
 
-  it('refreshes and reveals the project after adding repositories', () => {
+  it('refreshes and reveals the project after adding repositories', async () => {
     const fixture = createSidebar();
     const component = fixture.componentInstance;
-    component.addRepoProject.set(tree()[0]);
+    const project = tree()[0];
+    component.addRepoProject.set(project);
+    component.addRepoPath.set('/tmp/repo-one');
+    
+    reposServiceMock.add.mockReturnValueOnce(of({ id: 2, name: 'repo-one', path: '/tmp/repo-one', branches: [] }));
 
-    component.handleRepoAdded({ id: 1, name: 'Project One', createdAt: '', updatedAt: '' });
+    await component.submitAddRepo(project);
 
     expect(component.addRepoProject()).toBeNull();
     expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
-    expect(navigationServiceMock.revealProject).toHaveBeenCalledWith(1);
+    expect(navigationServiceMock.revealProject).toHaveBeenCalledWith(project.id);
   });
 
   it('shows a visible add-branch action for a repo with no branches even when the repo is collapsed', () => {
