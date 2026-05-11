@@ -89,11 +89,18 @@ describe('SessionContainer modal browser gating', () => {
     events$: new Subject<any>(),
     registerWorktree: vi.fn(),
     requestActivePanels: vi.fn(),
+    closePanel: vi.fn(),
   };
 
   const plannotatorStateMock = {
+    hasPanel: vi.fn(() => false),
     isPanelVisible: vi.fn(() => false),
     getPanel: vi.fn(() => plannotatorPanelSignal()),
+    openPanel: vi.fn(),
+    closePanel: vi.fn(),
+    hidePanel: vi.fn(),
+    showPanel: vi.fn(),
+    restorePanel: vi.fn(),
   };
 
   const actionsStateMock = {
@@ -195,6 +202,9 @@ describe('SessionContainer modal browser gating', () => {
     reconnectSignal.set(0);
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    plannotatorStateMock.hasPanel.mockReturnValue(false);
+    plannotatorStateMock.isPanelVisible.mockReturnValue(false);
+    plannotatorStateMock.getPanel.mockImplementation(() => plannotatorPanelSignal());
     sessionsServiceMock.getOne.mockReturnValue(of(null));
     sessionsServiceMock.markReviewed.mockReturnValue(of(makeSession()) as any);
     tabServiceMock.getSavedState.mockReturnValue(null);
@@ -268,6 +278,25 @@ describe('SessionContainer modal browser gating', () => {
     fixture.detectChanges();
 
     element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('.browser-panel-live')).toBeTruthy();
+    expect(element.querySelector('.browser-panel-placeholder')).toBeNull();
+  });
+
+  it('keeps the browser panel live when plannotator is available because plannotator is a side panel', () => {
+    plannotatorPanelSignal.set({
+      sessionId: 42,
+      proxyUrl: '/api/plannotator/proxy/3000',
+      upstreamPort: 3000,
+      visible: true,
+      minimized: false,
+      mode: 'plan',
+    });
+    plannotatorStateMock.hasPanel.mockReturnValue(true);
+    plannotatorStateMock.isPanelVisible.mockReturnValue(true);
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
     expect(element.querySelector('.browser-panel-live')).toBeTruthy();
     expect(element.querySelector('.browser-panel-placeholder')).toBeNull();
   });

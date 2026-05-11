@@ -1,53 +1,28 @@
-<!-- Minimized tab — always rendered, slides in/out -->
-<button
-  class="fixed top-1/2 right-0 z-[101] flex translate-x-full -translate-y-1/2 cursor-pointer items-center gap-2.5 rounded-l-[10px] border-0 bg-[oklch(0.65_0.15_270)] py-3.5 pr-3.5 pl-4 text-white opacity-0 shadow-[-4px_0_20px_rgba(0,0,0,0.3)] transition-[transform,opacity,padding,background,box-shadow] duration-75 [writing-mode:vertical-lr] hover:bg-[oklch(0.72_0.15_270)] hover:pr-5 hover:shadow-[-6px_0_28px_rgba(0,0,0,0.35)]"
-  [class.translate-x-0]="minimized"
-  [class.pointer-events-auto]="minimized"
-  [class.opacity-100]="minimized"
-  (click)="restore.emit()"
-  [title]="'Restore ' + getModeLabel()">
-  <ng-icon name="lucideMessageSquare" class="animate-pulse text-xl" />
-  <span class="text-[13px] font-bold tracking-[0.5px] whitespace-nowrap">{{ getModeLabel() }}</span>
-</button>
-
-<!-- Full panel -->
 <div
-  class="fixed top-0 right-0 bottom-0 z-[100] flex min-w-[600px] flex-col border-l border-[var(--color-border,#333)] bg-[var(--color-bg-primary,#1e1e1e)] shadow-[-4px_0_24px_rgba(0,0,0,0.3)] transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]"
-  [class.translate-x-[calc(100%-24px)]]="minimized"
-  [class.pointer-events-none]="minimized"
-  [class.border-l-[3px]]="minimized"
-  [class.border-l-[oklch(0.65_0.15_270)]]="minimized"
-  [class.shadow-[-10px_0_40px_rgba(0,0,0,0.6),-2px_0_8px_oklch(0.75_0.18_55_/_0.3)]]="minimized"
-  [class.left-0]="isFullscreen()"
-  [class.w-full]="isFullscreen()"
-  [class.max-w-none]="isFullscreen()"
-  [class.border-l-0]="isFullscreen()"
-  [class.shadow-none]="isFullscreen()"
-  [style.width.px]="isFullscreen() ? null : panelWidth()">
+  class="flex h-full min-h-0 w-full flex-col overflow-hidden border-l border-border bg-card text-card-foreground"
+  [class.fixed]="isFullscreen()"
+  [class.inset-0]="isFullscreen()"
+  [class.z-[100]]="isFullscreen()"
+  [class.border-l-0]="isFullscreen()">
 
-  <!-- Resize handle (left edge) -->
-  @if (!isFullscreen()) {
-    <div class="absolute top-0 bottom-0 left-[-3px] z-[2] w-1.5 cursor-col-resize transition-colors hover:bg-[var(--color-accent,#0e639c)] active:bg-[var(--color-accent,#0e639c)]" (mousedown)="onResizeStart($event)"></div>
-  }
-
-  <div class="flex shrink-0 items-center justify-between border-b border-[var(--color-border,#333)] bg-[var(--color-bg-secondary,#252526)] px-4 py-3">
+  <div class="flex shrink-0 items-center justify-between border-b border-border bg-muted/40 px-4 py-3">
     <div class="flex items-center gap-2">
-      <ng-icon [name]="getModeIcon()" class="text-lg text-[var(--color-accent,#0e639c)]" />
-      <span class="text-sm font-medium text-[var(--color-text-primary,#ccc)]">{{ getModeLabel() }}</span>
+      <ng-icon [name]="getModeIcon()" class="text-lg text-primary" />
+      <span class="text-sm font-medium text-foreground">{{ getModeLabel() }}</span>
     </div>
     <div class="flex items-center gap-1">
-      <button class="flex size-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--color-text-secondary,#888)] transition-all hover:bg-[var(--color-bg-hover,#333)] hover:text-[var(--color-text-primary,#fff)] disabled:cursor-not-allowed disabled:opacity-50" (click)="refresh()" title="Refresh" [disabled]="isLoading">
+      <button class="flex size-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50" (click)="refresh()" title="Refresh" [disabled]="isLoading">
         <ng-icon name="lucideRefreshCw" [class.animate-spin]="isLoading" />
       </button>
-      <button class="flex size-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--color-text-secondary,#888)] transition-all hover:bg-[var(--color-bg-hover,#333)] hover:text-[var(--color-text-primary,#fff)]" (click)="toggleFullscreen()" [title]="isFullscreen() ? 'Exit fullscreen' : 'Fullscreen'">
+      <button class="flex size-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground" (click)="toggleFullscreen()" [title]="isFullscreen() ? 'Exit fullscreen' : 'Fullscreen'">
         <ng-icon [name]="isFullscreen() ? 'lucideMinimize2' : 'lucideMaximize2'" />
       </button>
       @if (!isFullscreen()) {
-        <button class="flex size-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--color-text-secondary,#888)] transition-all hover:bg-[var(--color-bg-hover,#333)] hover:text-[var(--color-text-primary,#fff)]" (click)="minimize.emit()" title="Minimize">
+        <button class="flex size-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-muted-foreground transition-all hover:bg-accent hover:text-accent-foreground" (click)="minimize.emit()" title="Hide panel">
           <ng-icon name="lucideMinus" />
         </button>
       }
-      <button class="flex size-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--color-text-secondary,#888)] transition-all hover:bg-[var(--color-bg-hover,#333)] hover:text-[var(--color-error,#f44336)]" (click)="onClose()" title="Close">
+      <button class="flex size-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive" (click)="onClose()" title="Close">
         <ng-icon name="lucideX" />
       </button>
     </div>
@@ -55,8 +30,8 @@
 
   <div class="relative flex-1 overflow-hidden">
     @if (isLoading) {
-      <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-[var(--color-bg-primary,#1e1e1e)] text-[var(--color-text-secondary,#888)]">
-        <div class="size-8 animate-spin rounded-full border-[3px] border-[var(--color-border,#333)] border-t-[var(--color-accent,#0e639c)]"></div>
+      <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-card text-muted-foreground">
+        <div class="size-8 animate-spin rounded-full border-[3px] border-border border-t-primary"></div>
         <span>Loading...</span>
       </div>
     }
@@ -66,12 +41,12 @@
         #plannotatorIframe
         [src]="safeUrl"
         (load)="onIframeLoad()"
-        class="h-full w-full border-0 bg-[var(--color-bg-primary,#1e1e1e)]"
+        class="h-full w-full border-0 bg-card"
         frameborder="0"
         allowfullscreen
       ></iframe>
     } @else {
-      <div class="flex h-full flex-col items-center justify-center gap-4 text-[var(--color-text-secondary,#888)]">
+      <div class="flex h-full flex-col items-center justify-center gap-4 text-muted-foreground">
         <ng-icon name="lucideFileText" class="text-5xl opacity-50" />
         <p>Waiting for Plannotator...</p>
       </div>

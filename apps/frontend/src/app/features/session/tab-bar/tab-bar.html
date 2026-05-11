@@ -2,7 +2,7 @@
   <div class="flex flex-1 items-end overflow-x-auto [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent">
     @for (tab of tabs(); track tab.sessionId) {
       <button
-        class="relative flex h-10 min-w-[100px] max-w-[200px] cursor-pointer items-center gap-1.5 rounded-t-lg border-0 border-b border-border bg-muted py-0 pr-2.5 pl-1.5 transition-all duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_90%,transparent)]"
+        class="tab relative flex h-10 min-w-[100px] max-w-[200px] cursor-pointer items-center gap-1.5 rounded-t-lg border-0 border-b border-border bg-muted py-0 pr-2.5 pl-1.5 transition-all duration-150 hover:bg-[color-mix(in_oklch,var(--muted)_90%,transparent)]"
         [ngClass]="{
           'bg-background border-b-transparent after:absolute after:right-0 after:bottom-0 after:left-0 after:h-[3px] after:bg-primary': isActive(tab),
           'opacity-60': tab.status === 'archived',
@@ -42,20 +42,20 @@
           <span
             class="shrink-0 rounded-full"
             [ngClass]="{
-              'size-2.5 animate-spin border-[1.5px] border-[oklch(0.72_0.17_142_/_0.3)] border-t-[oklch(0.72_0.17_142)] bg-transparent': getClaudeStatus(tab) === 'running',
-              'size-2.5 animate-pulse bg-[oklch(0.75_0.15_65)]': getClaudeStatus(tab) === 'waiting',
-              'size-1.5 bg-muted-foreground opacity-30': getClaudeStatus(tab) === 'idle'
+              'tab-status-dot status-running size-2.5 animate-spin border-[1.5px] border-[oklch(0.72_0.17_142_/_0.3)] border-t-[oklch(0.72_0.17_142)] bg-transparent': getClaudeStatus(tab) === 'running',
+              'tab-status-dot status-waiting size-2.5 animate-pulse bg-[oklch(0.75_0.15_65)]': getClaudeStatus(tab) === 'waiting',
+              'tab-status-dot status-idle size-1.5 bg-muted-foreground opacity-30': getClaudeStatus(tab) === 'idle'
             }"
             [title]="getClaudeStatus(tab)"
           >
           </span>
           @if (hasUnreviewedCompletion(tab)) {
-            <span class="flex size-4 items-center justify-center rounded-full border border-[oklch(0.86_0.06_160)] bg-[linear-gradient(135deg,oklch(0.95_0.03_154),oklch(0.91_0.05_170))] text-[oklch(0.46_0.13_154)]" title="Completed, not reviewed yet">
+            <span class="completion-indicator flex size-4 items-center justify-center rounded-full border border-[oklch(0.86_0.06_160)] bg-[linear-gradient(135deg,oklch(0.95_0.03_154),oklch(0.91_0.05_170))] text-[oklch(0.46_0.13_154)]" title="Completed, not reviewed yet">
               <ng-icon name="lucideCheck" size="12" />
             </span>
           }
           @if (hasReview(tab)) {
-            <span class="flex animate-pulse items-center justify-center text-[oklch(0.65_0.15_270)]" title="Review waiting">
+            <span class="review-indicator flex animate-pulse items-center justify-center text-[oklch(0.65_0.15_270)]" title="Review waiting">
               <ng-icon name="lucideMessageSquare" size="14" />
             </span>
           }
@@ -76,6 +76,17 @@
     <div class="ml-auto flex h-full shrink-0 items-center self-center gap-1 pl-2">
       @if (worktreePath()) {
         <app-commit-button [worktreePath]="worktreePath()" />
+      }
+      @if (plannotatorAvailable()) {
+        <button
+          class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+          [ngClass]="showPlannotator() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+          title="Plannotator"
+          aria-label="Toggle Plannotator panel"
+          (click)="togglePlannotator.emit()"
+        >
+          <ng-icon name="lucideMessageSquare" size="16" />
+        </button>
       }
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"

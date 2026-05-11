@@ -50,6 +50,8 @@ export class TabBar {
   showGithub = input(false);
   showTerminal = input(false);
   showActions = input(false);
+  showPlannotator = input(false);
+  plannotatorAvailable = input(false);
   showClaudeTerminalFallback = input(false);
   runningActionsCount = input(0);
   pendingTodosCount = input(0);
@@ -68,6 +70,7 @@ export class TabBar {
   toggleGithub = output<void>();
   toggleTerminal = output<void>();
   toggleActions = output<void>();
+  togglePlannotator = output<void>();
   toggleClaudeTerminalFallback = output<void>();
 
   // Context menu state

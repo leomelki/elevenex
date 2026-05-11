@@ -49,6 +49,8 @@ interface CompletionMarkerState {
   lastStateChangeAt: string | null;
 }
 
+type SidePanelMode = 'none' | 'files' | 'browser' | 'github' | 'plannotator';
+
 @Component({
   selector: 'app-session-container',
   standalone: true,
@@ -142,11 +144,13 @@ export class SessionContainer implements OnInit, OnDestroy {
     return states.get(pid)?.todos ?? false;
   });
 
-  sidePanelMode = signal<'none' | 'files' | 'browser' | 'github'>(this.getSidePanelPreference());
+  sidePanelMode = signal<SidePanelMode>(this.getSidePanelPreference());
   claudeSurfaceMode = signal<'workspace' | 'terminal'>('workspace');
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
   showGithubPanel = computed(() => this.sidePanelMode() === 'github');
+  showPlannotatorPanel = computed(() => this.sidePanelMode() === 'plannotator' && this.plannotatorAvailable());
+  sidePanelVisible = computed(() => this.sidePanelMode() !== 'none' && (this.sidePanelMode() !== 'plannotator' || this.plannotatorAvailable()));
   showClaudeTerminalFallback = computed(() => this.claudeSurfaceMode() === 'terminal');
 
   // User terminal panel visibility
@@ -179,10 +183,10 @@ export class SessionContainer implements OnInit, OnDestroy {
   });
 
   // Plannotator panel state
-  showPlannotator = computed(() => {
+  plannotatorAvailable = computed(() => {
     const sessionId = this.activeSessionId();
     if (!sessionId) return false;
-    return this.plannotatorState.isPanelVisible(sessionId);
+    return this.plannotatorState.hasPanel(sessionId);
   });
 
   activePlannotatorPanel = computed(() => {
@@ -192,11 +196,9 @@ export class SessionContainer implements OnInit, OnDestroy {
   });
 
   readonly hasBlockingOverlayPanel = computed(() => {
-    const plannotatorPanel = this.activePlannotatorPanel();
     return this.showScratchpad()
       || this.showTodos()
-      || this.modalOverlayState.hasOpenModal()
-      || Boolean(plannotatorPanel?.visible && !plannotatorPanel.minimized);
+      || this.modalOverlayState.hasOpenModal();
   });
 
   readonly shouldShowBrowserPlaceholder = computed(() =>
@@ -207,7 +209,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.showBrowserPanel() && !this.hasBlockingOverlayPanel() && this.browserPanelMounted(),
   );
 
-  private getSidePanelPreference(): 'none' | 'files' | 'browser' | 'github' {
+  private getSidePanelPreference(): SidePanelMode {
     try {
       const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
       if (stored) {
@@ -229,11 +231,11 @@ export class SessionContainer implements OnInit, OnDestroy {
     return 'files';
   }
 
-  private saveSidePanelPreference(mode: 'none' | 'files' | 'browser' | 'github'): void {
+  private saveSidePanelPreference(mode: SidePanelMode): void {
     try {
       const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
       const current = stored ? JSON.parse(stored) : {};
-      const persistedMode = mode === 'github' ? 'none' : mode;
+      const persistedMode = mode === 'github' || mode === 'plannotator' ? 'none' : mode;
       localStorage.setItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY, JSON.stringify({
         ...current,
         filesPanelVisible: persistedMode === 'files',
@@ -296,6 +298,48 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.saveSidePanelPreference(nextMode);
   }
 
+  togglePlannotatorPanel(): void {
+    const sessionId = this.activeSessionId();
+    if (!sessionId || !this.plannotatorState.hasPanel(sessionId)) {
+      return;
+    }
+
+    if (this.showPlannotatorPanel()) {
+      this.plannotatorState.hidePanel(sessionId);
+      this.sidePanelMode.set('none');
+      this.saveSidePanelPreference('none');
+      return;
+    }
+
+    this.plannotatorState.showPanel(sessionId);
+    this.plannotatorState.restorePanel(sessionId);
+    this.sidePanelMode.set('plannotator');
+    this.saveSidePanelPreference('plannotator');
+  }
+
+  showPlannotatorSidePanel(): void {
+    const sessionId = this.activeSessionId();
+    if (!sessionId || !this.plannotatorState.hasPanel(sessionId)) {
+      return;
+    }
+
+    this.plannotatorState.showPanel(sessionId);
+    this.plannotatorState.restorePanel(sessionId);
+    this.sidePanelMode.set('plannotator');
+    this.saveSidePanelPreference('plannotator');
+  }
+
+  hidePlannotatorPanel(): void {
+    const sessionId = this.activeSessionId();
+    if (!sessionId) {
+      return;
+    }
+
+    this.plannotatorState.hidePanel(sessionId);
+    this.sidePanelMode.set('none');
+    this.saveSidePanelPreference('none');
+  }
+
   toggleClaudeTerminalFallback(): void {
     this.claudeSurfaceMode.update(mode => mode === 'workspace' ? 'terminal' : 'workspace');
   }
@@ -329,7 +373,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   onResizeEnd(event: ZardResizeEvent): void {
-    if (this.sidePanelMode() === 'none') return;
+    if (!this.sidePanelVisible()) return;
     const prefs: Partial<{ terminalSize: number; editorSize: number }> = {
       terminalSize: event.sizes[0],
       editorSize: event.sizes[1],
@@ -988,14 +1032,22 @@ export class SessionContainer implements OnInit, OnDestroy {
 
         console.log('[SessionContainer] Opening panel: targetSessionId=', targetSessionId, 'mode=', mode);
         this.plannotatorState.openPanel(targetSessionId, absoluteProxyUrl, upstreamPort, mode);
+        if (targetSessionId === this.activeSessionId()) {
+          this.sidePanelMode.set('plannotator');
+          this.saveSidePanelPreference('plannotator');
+        }
 
-        console.log('[SessionContainer] Panel opened. showPlannotator=', this.showPlannotator(), 'activePlannotatorPanel=', JSON.stringify(this.activePlannotatorPanel()));
+        console.log('[SessionContainer] Panel opened. showPlannotatorPanel=', this.showPlannotatorPanel(), 'activePlannotatorPanel=', JSON.stringify(this.activePlannotatorPanel()));
       } else {
         console.log('[SessionContainer] NOT opening panel: targetSessionId=', targetSessionId, 'proxyUrl=', proxyUrl);
       }
     } else if (plannotatorEvent.type === 'close') {
       if (plannotatorEvent.sessionId) {
         this.plannotatorState.closePanel(plannotatorEvent.sessionId);
+        if (plannotatorEvent.sessionId === this.activeSessionId() && this.sidePanelMode() === 'plannotator') {
+          this.sidePanelMode.set('none');
+          this.saveSidePanelPreference('none');
+        }
       }
     } else {
       console.log('[SessionContainer] Ignoring event type:', (event as any).type);
@@ -1047,27 +1099,25 @@ export class SessionContainer implements OnInit, OnDestroy {
     if (sessionId) {
       this.plannotatorState.closePanel(sessionId);
       this.plannotatorService.closePanel(sessionId);
+      if (this.sidePanelMode() === 'plannotator') {
+        this.sidePanelMode.set('none');
+        this.saveSidePanelPreference('none');
+      }
     }
   }
 
   softClosePlannotatorPanel(): void {
     const sessionId = this.activeSessionId();
     if (sessionId) {
-      this.plannotatorState.closePanel(sessionId);
+      this.hidePlannotatorPanel();
     }
   }
 
   minimizePlannotatorPanel(): void {
-    const sessionId = this.activeSessionId();
-    if (sessionId) {
-      this.plannotatorState.minimizePanel(sessionId);
-    }
+    this.hidePlannotatorPanel();
   }
 
   restorePlannotatorPanel(): void {
-    const sessionId = this.activeSessionId();
-    if (sessionId) {
-      this.plannotatorState.restorePanel(sessionId);
-    }
+    this.showPlannotatorSidePanel();
   }
 }

@@ -104,6 +104,24 @@ describe('TabBar', () => {
     expect(menuText).toContain('Close All Tabs');
   });
 
+  it('shows the plannotator toolbar button only when plannotator is available', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [{ ...baseTab }]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.componentRef.setInput('projectId', 10);
+    fixture.componentRef.setInput('plannotatorAvailable', false);
+    fixture.detectChanges();
+
+    let el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[aria-label="Toggle Plannotator panel"]')).toBeNull();
+
+    fixture.componentRef.setInput('plannotatorAvailable', true);
+    fixture.detectChanges();
+
+    el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[aria-label="Toggle Plannotator panel"]')).toBeTruthy();
+  });
+
   it('disables left and other actions appropriately for the first tab', () => {
     const fixture = TestBed.createComponent(TabBar);
     fixture.componentRef.setInput('tabs', [

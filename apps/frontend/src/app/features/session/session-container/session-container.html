@@ -11,6 +11,8 @@
         [showGithub]="showGithubPanel()"
         [showTerminal]="terminalPanelVisible()"
         [showActions]="actionPanelVisible()"
+        [showPlannotator]="showPlannotatorPanel()"
+        [plannotatorAvailable]="plannotatorAvailable()"
         [showClaudeTerminalFallback]="showClaudeTerminalFallback()"
         [runningActionsCount]="runningActionsCount()"
         [pendingTodosCount]="pendingTodosCount()"
@@ -28,6 +30,7 @@
         (toggleGithub)="toggleGithubPanel()"
         (toggleTerminal)="toggleTerminalPanel()"
         (toggleActions)="toggleActionsPanel()"
+        (togglePlannotator)="togglePlannotatorPanel()"
         (toggleClaudeTerminalFallback)="toggleClaudeTerminalFallback()"
       />
 
@@ -38,7 +41,7 @@
         <z-resizable-panel [zDefaultSize]="bottomPanelVisible() ? 70 : 100" [zMin]="30">
           <z-resizable zLayout="horizontal" class="h-full" (zResizeEnd)="onResizeEnd($event)">
             <!-- Claude Terminal Panel (Primary) - Always visible -->
-            <z-resizable-panel [zDefaultSize]="sidePanelMode() !== 'none' ? 55 : 100" [zMin]="30" [zMax]="sidePanelMode() !== 'none' ? 70 : 100">
+            <z-resizable-panel [zDefaultSize]="sidePanelVisible() ? 55 : 100" [zMin]="30" [zMax]="sidePanelVisible() ? 70 : 100">
               <div class="claude-terminal-area h-full">
                 @for (tab of tabs(); track tab.sessionId) {
                   <div
@@ -71,7 +74,7 @@
             </z-resizable-panel>
 
             <!-- Secondary Panel (Files or Browser) -->
-            @if (worktreePath() && sidePanelMode() !== 'none') {
+            @if (worktreePath() && sidePanelVisible()) {
               <z-resizable-handle />
 
               <z-resizable-panel [zDefaultSize]="45" [zMin]="25" [zMax]="70">
@@ -85,6 +88,18 @@
                 } @else if (showGithubPanel()) {
                   <app-github-panel
                     [worktreePath]="worktreePath()!"
+                    class="h-full"
+                  />
+                } @else if (showPlannotatorPanel() && activePlannotatorPanel()) {
+                  <app-plannotator-panel
+                    [sessionId]="activePlannotatorPanel()!.sessionId"
+                    [proxyUrl]="activePlannotatorPanel()!.proxyUrl"
+                    [mode]="activePlannotatorPanel()!.mode"
+                    [minimized]="activePlannotatorPanel()!.minimized"
+                    (close)="closePlannotatorPanel()"
+                    (softClose)="softClosePlannotatorPanel()"
+                    (minimize)="hidePlannotatorPanel()"
+                    (restore)="showPlannotatorSidePanel()"
                     class="h-full"
                   />
                 } @else if (shouldRenderBrowserPanel()) {
@@ -164,19 +179,6 @@
         />
       }
 
-      <!-- Plannotator Panel (overlay) -->
-      @if (showPlannotator() && activePlannotatorPanel()) {
-        <app-plannotator-panel
-          [sessionId]="activePlannotatorPanel()!.sessionId"
-          [proxyUrl]="activePlannotatorPanel()!.proxyUrl"
-          [mode]="activePlannotatorPanel()!.mode"
-          [minimized]="activePlannotatorPanel()!.minimized"
-          (close)="closePlannotatorPanel()"
-          (softClose)="softClosePlannotatorPanel()"
-          (minimize)="minimizePlannotatorPanel()"
-          (restore)="restorePlannotatorPanel()"
-        />
-      }
     </div>
 
   } @else {
