@@ -1,7 +1,7 @@
 import { Component, output, input, inject, computed, signal, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideTrash2, lucideMessageSquare, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck } from '@ng-icons/lucide';
+import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck } from '@ng-icons/lucide';
 import { Tab } from '../tab-service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
@@ -24,8 +24,10 @@ import { CommitButtonComponent } from '@/features/git/commit-button.component';
       lucideCheckSquare,
       lucideFolderTree,
       lucideTerminal,
+      lucideSquareTerminal,
       lucideTrash2,
       lucideMessageSquare,
+      lucideNotebookPen,
       lucideGlobe,
       lucidePlay,
       lucideGitPullRequest,
