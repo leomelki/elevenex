@@ -567,6 +567,16 @@ readonly messageActionsDisabled = computed(
       onCleanup(() => window.clearInterval(id));
     });
 
+    // Proactively fetch PI auth status when the provider is PI but the status
+    // hasn't arrived yet from the session snapshot (guards against timing races).
+    effect(() => {
+      if (this.currentProvider() !== 'pi') return;
+      if (this.piAuthStatus() !== null) return;
+      void firstValueFrom(this.agentApi.getAuthStatus('pi'))
+        .then((status) => this.piAuthStatus.set(status))
+        .catch(() => undefined);
+    });
+
     this.destroyRef.onDestroy(() => {
       if (this.flushRafId !== null) {
         cancelAnimationFrame(this.flushRafId);

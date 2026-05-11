@@ -43,7 +43,7 @@ export class PiAgentRuntimeProvider
       this.emit('event', event);
     });
     this.authService.on('status', (status: AgentAuthStatus) => {
-      this.emit('event', { type: 'auth_status', payload: { sessionId: -1, status } });
+      this.emit('auth_status', status);
     });
   }
 
