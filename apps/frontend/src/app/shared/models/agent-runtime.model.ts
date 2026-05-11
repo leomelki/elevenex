@@ -72,6 +72,7 @@ export interface AgentLoginStartResult {
   authUrl: string | null;
   userCode: string | null;
   message: string;
+  supportsManualCode?: boolean;
 }
 
 export interface AgentAuthStatus {

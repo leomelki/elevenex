@@ -32,13 +32,15 @@ export class AgentRuntimeController {
   @Post('agent-providers/:provider/auth/login')
   startLogin(
     @Param('provider') provider: string,
-    @Body() body: { mode?: AgentLoginMode; apiKey?: string },
+    @Body() body: { mode?: AgentLoginMode; apiKey?: string; oauthProvider?: string; apiKeyProvider?: string },
   ) {
     return this.registry
       .getProviderFeature(provider, 'startLogin')
       .startLogin({
         mode: body.mode === 'api_key' ? 'api_key' : 'oauth',
         apiKey: body.apiKey,
+        oauthProvider: body.oauthProvider,
+        apiKeyProvider: body.apiKeyProvider,
       });
   }
 
@@ -47,6 +49,16 @@ export class AgentRuntimeController {
     return this.registry
       .getProviderFeature(provider, 'cancelLogin')
       .cancelLogin();
+  }
+
+  @Post('agent-providers/:provider/auth/continue-login')
+  continueLogin(
+    @Param('provider') provider: string,
+    @Body() body: { code: string },
+  ) {
+    return this.registry
+      .getProviderFeature(provider, 'continueLogin')
+      .continueLogin({ code: body.code });
   }
 
   @Get('sessions/:sessionId/agents/:provider/history')

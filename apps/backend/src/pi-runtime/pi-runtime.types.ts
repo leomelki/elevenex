@@ -8,9 +8,12 @@ import type {
   ClaudeTranscriptItem,
   ClaudeUserInputRequest,
 } from '../claude-runtime/claude-runtime.types.js';
-import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import type { AgentImageInput, AgentLoginMode } from '../agent-runtime/agent-runtime.types.js';
 
 export type PiRunPhase = 'idle' | 'running' | 'waiting' | 'error';
+
+export type PiOAuthProvider = 'anthropic' | 'github-copilot' | 'openai-codex';
+export type PiApiKeyProvider = 'anthropic' | 'openai' | 'google' | 'openrouter';
 
 export interface PiAuthStatus extends ClaudeAuthStatus {
   [key: string]: unknown;
@@ -20,6 +23,10 @@ export interface PiAuthStatus extends ClaudeAuthStatus {
   authMethod: 'api_key' | 'oauth' | 'none' | 'unknown';
   authPath: string;
   modelsPath: string;
+  loginMode?: AgentLoginMode | null;
+  loginUrl?: string | null;
+  loginUserCode?: string | null;
+  loginError?: string | null;
 }
 
 export interface PiRuntimeSessionMetadata extends Omit<

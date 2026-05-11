@@ -31,7 +31,7 @@ export class AgentRuntimeApiService {
   }
 
   startLogin(
-    body: { mode: AgentLoginMode; apiKey?: string },
+    body: { mode: AgentLoginMode; apiKey?: string; oauthProvider?: string; apiKeyProvider?: string },
     provider = this.currentProvider(),
   ) {
     return this.http.post<AgentLoginStartResult>(
@@ -44,6 +44,13 @@ export class AgentRuntimeApiService {
     return this.http.post<AgentAuthStatus>(
       `/api/agent-providers/${encodeURIComponent(provider)}/auth/cancel-login`,
       {},
+    );
+  }
+
+  continueLogin(body: { code: string }, provider = this.currentProvider()) {
+    return this.http.post<AgentAuthStatus>(
+      `/api/agent-providers/${encodeURIComponent(provider)}/auth/continue-login`,
+      body,
     );
   }
 

@@ -70,6 +70,7 @@ import { ClaudeStatusBarComponent } from './components/claude-status-bar.compone
 import { ClaudeTasksDrawerComponent } from './components/claude-tasks-drawer.component';
 import { ClaudeMcpDrawerComponent } from './components/claude-mcp-drawer.component';
 import { CodexLoginCardComponent } from './components/codex-login-card.component';
+import { PiLoginCardComponent } from './components/pi-login-card.component';
 import {
   ClaudeAgentInspectorComponent,
   ClaudeSubagentHistoryState,
@@ -118,6 +119,7 @@ type TranscriptRenderItem =
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
     CodexLoginCardComponent,
+    PiLoginCardComponent,
     NgIcon,
   ],
   templateUrl: './claude-workspace.component.html',
@@ -214,10 +216,17 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
   readonly _permissionMode = signal<ClaudePermissionMode | null>(null);
   readonly codexAuthStatus = signal<AgentAuthStatus | null>(null);
+  readonly piAuthStatus = signal<AgentAuthStatus | null>(null);
   readonly runtimeStarted = signal(false);
   readonly showCodexLogin = computed(() => {
     if (this.currentProvider() !== 'codex') return false;
     const status = this.codexAuthStatus();
+    if (!status) return false;
+    return status.authenticated !== true;
+  });
+  readonly showPiLogin = computed(() => {
+    if (this.currentProvider() !== 'pi') return false;
+    const status = this.piAuthStatus();
     if (!status) return false;
     return status.authenticated !== true;
   });
@@ -548,6 +557,16 @@ readonly messageActionsDisabled = computed(
       onCleanup(() => window.clearInterval(id));
     });
 
+    effect((onCleanup) => {
+      if (!this.showPiLogin()) return;
+      const id = window.setInterval(() => {
+        firstValueFrom(this.agentApi.getAuthStatus('pi'))
+          .then((status) => this.piAuthStatus.set(status))
+          .catch(() => undefined);
+      }, 3000);
+      onCleanup(() => window.clearInterval(id));
+    });
+
     this.destroyRef.onDestroy(() => {
       if (this.flushRafId !== null) {
         cancelAnimationFrame(this.flushRafId);
@@ -838,6 +857,12 @@ readonly messageActionsDisabled = computed(
   onCodexAuthenticated(): void {
     void firstValueFrom(this.agentApi.getAuthStatus('codex'))
       .then((status) => this.codexAuthStatus.set(status))
+      .catch(() => undefined);
+  }
+
+  onPiAuthenticated(): void {
+    void firstValueFrom(this.agentApi.getAuthStatus('pi'))
+      .then((status) => this.piAuthStatus.set(status))
       .catch(() => undefined);
   }
 
@@ -1294,6 +1319,8 @@ readonly messageActionsDisabled = computed(
       case 'auth_status':
         if (this.currentProvider() === 'codex') {
           this.codexAuthStatus.set(event.payload.status as AgentAuthStatus);
+        } else if (this.currentProvider() === 'pi') {
+          this.piAuthStatus.set(event.payload.status as AgentAuthStatus);
         }
         return;
       default:
@@ -1443,8 +1470,13 @@ readonly messageActionsDisabled = computed(
     this.recentHookEvents.set(state.recentHookEvents);
     if (this.currentProvider() === 'codex') {
       this.codexAuthStatus.set((state.authStatus ?? null) as AgentAuthStatus | null);
+      this.piAuthStatus.set(null);
+    } else if (this.currentProvider() === 'pi') {
+      this.piAuthStatus.set((state.authStatus ?? null) as AgentAuthStatus | null);
+      this.codexAuthStatus.set(null);
     } else {
       this.codexAuthStatus.set(null);
+      this.piAuthStatus.set(null);
     }
   }
 
@@ -1518,6 +1550,7 @@ readonly messageActionsDisabled = computed(
     this.subagents.set([]);
     this.recentHookEvents.set([]);
     this.codexAuthStatus.set(null);
+    this.piAuthStatus.set(null);
     this.bootstrappedProvider = null;
     this.runtimeStarted.set(this.hasStartedAgentRuntime);
     this.expandedTurns.set({});

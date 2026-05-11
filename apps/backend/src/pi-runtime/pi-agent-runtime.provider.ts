@@ -1,7 +1,10 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import type {
+  AgentAuthStatus,
   AgentImageInput,
+  AgentLoginMode,
+  AgentLoginStartResult,
   AgentRuntimeEvent,
   AgentRuntimeProvider,
   AgentRuntimeProviderInfo,
@@ -39,6 +42,9 @@ export class PiAgentRuntimeProvider
     this.runtimeService.on('event', (event: AgentRuntimeEvent) => {
       this.emit('event', event);
     });
+    this.authService.on('status', (status: AgentAuthStatus) => {
+      this.emit('event', { type: 'auth_status', payload: { sessionId: -1, status } });
+    });
   }
 
   getHistory(sessionId: number) {
@@ -59,6 +65,23 @@ export class PiAgentRuntimeProvider
 
   getAuthStatus() {
     return this.authService.getStatus();
+  }
+
+  startLogin(options: {
+    mode: AgentLoginMode;
+    apiKey?: string;
+    oauthProvider?: string;
+    apiKeyProvider?: string;
+  }): Promise<AgentLoginStartResult> {
+    return this.authService.startLogin(options);
+  }
+
+  cancelLogin(): Promise<AgentAuthStatus> {
+    return this.authService.cancelLogin();
+  }
+
+  continueLogin(options: { code: string }): Promise<AgentAuthStatus> {
+    return this.authService.continueLogin(options);
   }
 
   setSelectedModel(sessionId: number, model: string | null) {

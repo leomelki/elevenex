@@ -6,6 +6,13 @@
         (authenticated)="onCodexAuthenticated()"
       />
     </div>
+  } @else if (showPiLogin()) {
+    <div class="flex flex-1 items-center justify-center overflow-y-auto px-4">
+      <cw-pi-login-card
+        [status]="piAuthStatus()"
+        (authenticated)="onPiAuthenticated()"
+      />
+    </div>
   } @else {
   <div #transcriptContainer class="cw-transcript" (scroll)="onTranscriptScroll()">
     @if (showLoading()) {

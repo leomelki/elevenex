@@ -118,6 +118,7 @@ export interface AgentLoginStartResult {
   authUrl: string | null;
   userCode: string | null;
   message: string;
+  supportsManualCode?: boolean;
 }
 
 export interface AgentRuntimeProviderFeatures {
@@ -125,8 +126,11 @@ export interface AgentRuntimeProviderFeatures {
   startLogin(options: {
     mode: AgentLoginMode;
     apiKey?: string;
+    oauthProvider?: string;
+    apiKeyProvider?: string;
   }): Promise<AgentLoginStartResult>;
   cancelLogin(): Promise<AgentAuthStatus>;
+  continueLogin(options: { code: string }): Promise<AgentAuthStatus>;
   getSubagentHistory(
     sessionId: number,
     agentId: string,
