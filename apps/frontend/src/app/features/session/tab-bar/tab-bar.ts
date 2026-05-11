@@ -9,6 +9,7 @@ import { PlannotatorStateService } from '@/features/plannotator';
 import { ClaudeStatusService, ClaudeActivityStatus } from '@/shared/services/claude-status.service';
 import { GitHubStateService } from '@/features/github/github-state.service';
 import { CommitButtonComponent } from '@/features/git/commit-button.component';
+import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 
 @Component({
   selector: 'app-tab-bar',
@@ -41,6 +42,9 @@ export class TabBar {
   private plannotatorState = inject(PlannotatorStateService);
   private claudeStatusService = inject(ClaudeStatusService);
   private githubState = inject(GitHubStateService);
+  private providerSelection = inject(AgentRuntimeProviderService);
+
+  isClaudeProvider = computed(() => this.providerSelection.selectedProvider() === 'claude');
 
   tabs = input.required<Tab[]>();
   activeSessionId = input.required<number | null>();

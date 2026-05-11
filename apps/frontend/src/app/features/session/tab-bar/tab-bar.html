@@ -88,15 +88,17 @@
           <ng-icon name="lucideNotebookPen" size="16" />
         </button>
       }
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showClaudeTerminalFallback() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Claude Raw Terminal"
-        aria-label="Toggle Claude raw terminal fallback"
-        (click)="toggleClaudeTerminalFallback.emit()"
-      >
-        <ng-icon name="lucideSquareTerminal" size="16" />
-      </button>
+      @if (isClaudeProvider()) {
+        <button
+          class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+          [ngClass]="showClaudeTerminalFallback() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+          title="Claude Raw Terminal"
+          aria-label="Toggle Claude raw terminal fallback"
+          (click)="toggleClaudeTerminalFallback.emit()"
+        >
+          <ng-icon name="lucideSquareTerminal" size="16" />
+        </button>
+      }
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
         [ngClass]="showTerminal() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
