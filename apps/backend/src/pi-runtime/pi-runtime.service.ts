@@ -94,7 +94,9 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
     if (!state.piSessionPath) return [];
-    return this.readHistoryFromSessionFile(state.piSessionPath);
+    const history = this.readHistoryFromSessionFile(state.piSessionPath);
+    state.liveItems = [];
+    return history;
   }
 
   async getRuntimeState(sessionId: number): Promise<PiRuntimeStatePayload> {
@@ -446,6 +448,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
   ): void {
     const message = event.message as Record<string, unknown> | undefined;
     if (!message || event.type !== 'message_end') return;
+    if (message.role === 'user') return;
     for (const item of this.messageToTranscriptItems(message, String(event.type))) {
       const type = item.kind === 'tool_result'
         ? 'tool_result'
