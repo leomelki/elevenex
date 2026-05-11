@@ -461,16 +461,22 @@ export class TabService {
 
   private providerForSession(session: Session): AgentProviderId {
     const persisted = session.activeAgentProvider?.trim();
-    if (persisted && (persisted !== 'claude' || session.claudeSessionId !== '-1' || session.codexSessionId === '-1')) {
+    const hasPi = Boolean(session.piSessionPath && session.piSessionPath !== '-1');
+    if (
+      persisted
+      && (persisted !== 'claude' || session.claudeSessionId !== '-1' || (session.codexSessionId === '-1' && !hasPi))
+    ) {
       return persisted;
     }
+    if (hasPi) return 'pi';
     return session.codexSessionId && session.codexSessionId !== '-1' ? 'codex' : 'claude';
   }
 
   private hasStartedAgentRuntime(session: Session): boolean {
     return Boolean(
       (session.claudeSessionId && session.claudeSessionId !== '-1')
-        || (session.codexSessionId && session.codexSessionId !== '-1'),
+        || (session.codexSessionId && session.codexSessionId !== '-1')
+        || (session.piSessionPath && session.piSessionPath !== '-1'),
     );
   }
 }

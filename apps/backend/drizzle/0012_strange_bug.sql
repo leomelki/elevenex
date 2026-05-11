@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `pi_session_path` text DEFAULT '-1';

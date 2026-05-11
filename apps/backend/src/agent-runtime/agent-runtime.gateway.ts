@@ -93,13 +93,14 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
       const bucket = this.clients.get(key) ?? new Set<WebSocket>();
       bucket.add(ws);
       this.clients.set(key, bucket);
+      this.registry.getProvider(providerId).onClientAttached?.(sessionId);
 
       ws.on('message', (data) => {
         void this.handleMessage(providerId, sessionId, ws, data.toString());
       });
 
-      ws.on('close', () => this.removeClient(key, ws));
-      ws.on('error', () => this.removeClient(key, ws));
+      ws.on('close', () => this.removeClient(providerId, sessionId, key, ws));
+      ws.on('error', () => this.removeClient(providerId, sessionId, key, ws));
     });
   }
 
@@ -218,11 +219,19 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private removeClient(key: string, ws: WebSocket): void {
+  private removeClient(
+    providerId: string,
+    sessionId: number,
+    key: string,
+    ws: WebSocket,
+  ): void {
     const current = this.clients.get(key);
-    current?.delete(ws);
+    const hadClient = current?.delete(ws) ?? false;
     if (current && current.size === 0) {
       this.clients.delete(key);
+    }
+    if (hadClient) {
+      this.registry.getProvider(providerId).onClientDetached?.(sessionId);
     }
   }
 

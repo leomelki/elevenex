@@ -124,41 +124,43 @@ const PERMISSION_MODES: PermissionModeOption[] = [
         }
       </div>
 
-      <span class="cw-sb__sep">·</span>
+      @if (currentProviderCapabilities()?.permissions) {
+        <span class="cw-sb__sep">·</span>
 
-      <div class="cw-sb__model">
-        <button
-          type="button"
-          class="cw-sb__link cw-sb__mode"
-          [class.cw-sb__mode--plan]="isPlanMode()"
-          [class.cw-sb__mode--plan-bypass]="isPlanBypassMode()"
-          (click)="toggleMenu('permission')"
-          [title]="'Permission mode'"
-        >
-          @if (isPlanMode()) {
-            <ng-icon name="lucideMap" size="11" />
-          } @else {
-            <ng-icon name="lucideShield" size="11" />
-          }
-          {{ activePermissionLabel() }}
-          <ng-icon name="lucideChevronDown" size="11" />
-        </button>
-        @if (permissionOpen()) {
-          <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-            @for (opt of permissionOptions(); track opt.id) {
-              <button
-                type="button"
-                class="cw-sb__menu-item"
-                [class.cw-sb__menu-item--selected]="permissionMode() === opt.id"
-                (click)="pickPermissionMode(opt.id)"
-              >
-                <strong>{{ opt.label }}</strong>
-                <span>{{ opt.hint }}</span>
-              </button>
+        <div class="cw-sb__model">
+          <button
+            type="button"
+            class="cw-sb__link cw-sb__mode"
+            [class.cw-sb__mode--plan]="isPlanMode()"
+            [class.cw-sb__mode--plan-bypass]="isPlanBypassMode()"
+            (click)="toggleMenu('permission')"
+            [title]="'Permission mode'"
+          >
+            @if (isPlanMode()) {
+              <ng-icon name="lucideMap" size="11" />
+            } @else {
+              <ng-icon name="lucideShield" size="11" />
             }
-          </div>
-        }
-      </div>
+            {{ activePermissionLabel() }}
+            <ng-icon name="lucideChevronDown" size="11" />
+          </button>
+          @if (permissionOpen()) {
+            <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
+              @for (opt of permissionOptions(); track opt.id) {
+                <button
+                  type="button"
+                  class="cw-sb__menu-item"
+                  [class.cw-sb__menu-item--selected]="permissionMode() === opt.id"
+                  (click)="pickPermissionMode(opt.id)"
+                >
+                  <strong>{{ opt.label }}</strong>
+                  <span>{{ opt.hint }}</span>
+                </button>
+              }
+            </div>
+          }
+        </div>
+      }
 
       <span class="cw-sb__sep">·</span>
 
@@ -208,19 +210,21 @@ const PERMISSION_MODES: PermissionModeOption[] = [
         </button>
       }
 
-      <span class="cw-sb__sep">·</span>
-      <button
-        type="button"
-        class="cw-sb__link"
-        [class.cw-sb__link--mcp-warn]="mcpIssueCount() > 0"
-        (click)="openMcp.emit()"
-      >
-        <ng-icon name="lucidePlugZap" size="11" />
-        MCP{{ mcpSummary() ? ' ' + mcpSummary()!.total : '' }}
-        @if (mcpIssueCount() > 0) {
-          <span class="cw-sb__pill">{{ mcpIssueCount() }}</span>
-        }
-      </button>
+      @if (currentProviderCapabilities()?.mcp) {
+        <span class="cw-sb__sep">·</span>
+        <button
+          type="button"
+          class="cw-sb__link"
+          [class.cw-sb__link--mcp-warn]="mcpIssueCount() > 0"
+          (click)="openMcp.emit()"
+        >
+          <ng-icon name="lucidePlugZap" size="11" />
+          MCP{{ mcpSummary() ? ' ' + mcpSummary()!.total : '' }}
+          @if (mcpIssueCount() > 0) {
+            <span class="cw-sb__pill">{{ mcpIssueCount() }}</span>
+          }
+        </button>
+      }
 
       <div class="cw-sb__spacer"></div>
 
@@ -230,10 +234,12 @@ const PERMISSION_MODES: PermissionModeOption[] = [
         </button>
         @if (menuOpen()) {
           <div class="cw-sb__menu cw-sb__menu--right" (mousedown)="$event.stopPropagation()">
-            <button type="button" class="cw-sb__menu-item" (click)="menuOpen.set(false); openTerminal.emit()">
-              <ng-icon name="lucideTerminal" size="12" />
-              Raw terminal
-            </button>
+            @if (currentProviderCapabilities()?.terminalFallback) {
+              <button type="button" class="cw-sb__menu-item" (click)="menuOpen.set(false); openTerminal.emit()">
+                <ng-icon name="lucideTerminal" size="12" />
+                Raw terminal
+              </button>
+            }
           </div>
         }
       </div>
@@ -499,6 +505,10 @@ export class ClaudeStatusBarComponent {
         ?.displayName ?? this.currentProvider()
     );
   });
+  readonly currentProviderCapabilities = computed(() =>
+    this.providers().find((provider) => provider.id === this.currentProvider())
+      ?.capabilities ?? null,
+  );
 
   pickModel(id: string): void {
     this.modelOpen.set(false);
@@ -528,6 +538,7 @@ export class ClaudeStatusBarComponent {
   }
 
   cyclePermissionMode(event: Event): void {
+    if (!this.currentProviderCapabilities()?.permissions) return;
     event.preventDefault();
     const opts = this.permissionOptions();
     const current = this.permissionMode();

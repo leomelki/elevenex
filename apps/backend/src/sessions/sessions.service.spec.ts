@@ -42,6 +42,7 @@ function createTestDb() {
       active_agent_provider TEXT NOT NULL DEFAULT 'claude',
       claude_session_id TEXT DEFAULT '-1',
       codex_session_id TEXT DEFAULT '-1',
+      pi_session_path TEXT DEFAULT '-1',
       has_injected_worktree_context INTEGER NOT NULL DEFAULT 0,
       has_unreviewed_completion INTEGER NOT NULL DEFAULT 0,
       last_completion_at TEXT,
@@ -589,6 +590,28 @@ describe('SessionsService', () => {
       const reloaded = await service.findOne(created.id);
       expect(reloaded.codexSessionId).toBe('codex-session-1');
       expect(reloaded.activeAgentProvider).toBe('codex');
+    });
+  });
+
+  describe('updatePiSessionPath', () => {
+    it('stores a Pi session path and marks Pi as the active provider', async () => {
+      const created = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+        name: 'Tracked Session',
+      });
+
+      const updated = await service.updatePiSessionPath(
+        created.id,
+        '/Users/test/.pi/agent/sessions/session.jsonl',
+      );
+
+      expect(updated.piSessionPath).toBe('/Users/test/.pi/agent/sessions/session.jsonl');
+      expect(updated.activeAgentProvider).toBe('pi');
+      const reloaded = await service.findOne(created.id);
+      expect(reloaded.piSessionPath).toBe('/Users/test/.pi/agent/sessions/session.jsonl');
+      expect(reloaded.activeAgentProvider).toBe('pi');
     });
   });
 

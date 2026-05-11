@@ -60,6 +60,7 @@ export class SessionsService extends EventEmitter {
         activeAgentProvider: 'claude',
         claudeSessionId: '-1',
         codexSessionId: '-1',
+        piSessionPath: '-1',
         hasInjectedWorktreeContext: false,
       })
       .returning();
@@ -248,6 +249,33 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
+  async updatePiSessionPath(id: number, piSessionPath: string) {
+    const session = await this.findOne(id);
+
+    if (
+      session.piSessionPath === piSessionPath &&
+      session.activeAgentProvider === 'pi'
+    ) {
+      return session;
+    }
+
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        activeAgentProvider: 'pi',
+        piSessionPath,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
   async updateActiveAgentProvider(id: number, provider: AgentProviderId) {
     if (typeof provider !== 'string') {
       throw new BadRequestException('Provider must be a string');
@@ -292,10 +320,12 @@ export class SessionsService extends EventEmitter {
   private hasStartedAgentRuntime(session: {
     claudeSessionId?: string | null;
     codexSessionId?: string | null;
+    piSessionPath?: string | null;
   }): boolean {
     return Boolean(
       (session.claudeSessionId && session.claudeSessionId !== '-1')
-        || (session.codexSessionId && session.codexSessionId !== '-1'),
+        || (session.codexSessionId && session.codexSessionId !== '-1')
+        || (session.piSessionPath && session.piSessionPath !== '-1'),
     );
   }
 
@@ -304,20 +334,24 @@ export class SessionsService extends EventEmitter {
       activeAgentProvider?: string | null;
       claudeSessionId?: string | null;
       codexSessionId?: string | null;
+      piSessionPath?: string | null;
     },
   >(session: T): T & { activeAgentProvider: AgentProviderId } {
     const hasClaude = Boolean(session.claudeSessionId && session.claudeSessionId !== '-1');
     const hasCodex = Boolean(session.codexSessionId && session.codexSessionId !== '-1');
+    const hasPi = Boolean(session.piSessionPath && session.piSessionPath !== '-1');
     const persisted = session.activeAgentProvider?.trim();
 
     return {
       ...session,
       activeAgentProvider:
-        persisted && (persisted !== 'claude' || hasClaude || !hasCodex)
+        persisted && (persisted !== 'claude' || hasClaude || (!hasCodex && !hasPi))
           ? persisted
-          : hasCodex
-            ? 'codex'
-            : 'claude',
+          : hasPi
+            ? 'pi'
+            : hasCodex
+              ? 'codex'
+              : 'claude',
     };
   }
 

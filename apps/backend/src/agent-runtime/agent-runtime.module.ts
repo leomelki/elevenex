@@ -4,6 +4,8 @@ import { ClaudeRuntimeController } from '../claude-runtime/claude-runtime.contro
 import { ClaudeRuntimeGateway } from '../claude-runtime/claude-runtime.gateway.js';
 import { CodexRuntimeModule } from '../codex-runtime/codex-runtime.module.js';
 import { CodexAgentRuntimeProvider } from '../codex-runtime/codex-agent-runtime.provider.js';
+import { PiRuntimeModule } from '../pi-runtime/pi-runtime.module.js';
+import { PiAgentRuntimeProvider } from '../pi-runtime/pi-agent-runtime.provider.js';
 import { AgentRuntimeController } from './agent-runtime.controller.js';
 import { AgentRuntimeCleanupService } from './agent-runtime-cleanup.service.js';
 import { AgentRuntimeGateway } from './agent-runtime.gateway.js';
@@ -18,6 +20,7 @@ import {
   imports: [
     forwardRef(() => ClaudeRuntimeModule),
     forwardRef(() => CodexRuntimeModule),
+    forwardRef(() => PiRuntimeModule),
   ],
   controllers: [AgentRuntimeController, ClaudeRuntimeController],
   providers: [
@@ -27,11 +30,17 @@ import {
       useFactory: (
         claudeProvider: ClaudeAgentRuntimeProvider,
         codexProvider: CodexAgentRuntimeProvider,
+        piProvider: PiAgentRuntimeProvider,
       ) => [
         claudeProvider,
         codexProvider,
+        piProvider,
       ],
-      inject: [ClaudeAgentRuntimeProvider, CodexAgentRuntimeProvider],
+      inject: [
+        ClaudeAgentRuntimeProvider,
+        CodexAgentRuntimeProvider,
+        PiAgentRuntimeProvider,
+      ],
     },
     AgentRuntimeRegistryService,
     AgentRuntimeCleanupService,

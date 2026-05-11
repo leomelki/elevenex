@@ -1,0 +1,178 @@
+import { spawn } from 'child_process';
+import { EventEmitter } from 'events';
+import { PiRuntimeService } from './pi-runtime.service.js';
+
+jest.mock('child_process', () => ({
+  execFile: jest.fn(),
+  spawn: jest.fn(),
+}));
+
+jest.mock('../config/system-paths.js', () => ({
+  buildAugmentedEnv: jest.fn(() => ({ PATH: '/mock/bin' })),
+  findBinary: jest.fn(() => null),
+}));
+
+class MockWritable extends EventEmitter {
+  writable = true;
+  private nextWrite?: (chunk: string) => void;
+
+  write(chunk: string): boolean {
+    this.nextWrite?.(chunk);
+    return true;
+  }
+
+  onWrite(handler: (chunk: string) => void): void {
+    this.nextWrite = handler;
+  }
+}
+
+type MockPiProcess = EventEmitter & {
+  stdin: MockWritable;
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  exitCode: number | null;
+  killed: boolean;
+  pid: number;
+  kill: jest.Mock;
+};
+
+const mockSpawn = jest.mocked(spawn);
+
+function createPiProcess(sessionFile: string): MockPiProcess {
+  const child = new EventEmitter() as MockPiProcess;
+  child.stdin = new MockWritable();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.exitCode = null;
+  child.killed = false;
+  child.pid = 1000 + Math.floor(Math.random() * 1000);
+  child.kill = jest.fn(() => {
+    child.killed = true;
+    child.exitCode = 0;
+    child.emit('exit', 0, null);
+    return true;
+  });
+  child.stdin.onWrite((chunk) => {
+    const command = JSON.parse(chunk.trim()) as { id: string; type: string };
+    if (command.type === 'get_state') {
+      child.stdout.emit('data', Buffer.from(JSON.stringify({
+        type: 'response',
+        id: command.id,
+        command: 'get_state',
+        success: true,
+        data: {
+          sessionFile,
+          model: { provider: 'anthropic', id: 'claude-sonnet' },
+        },
+      }) + '\n'));
+      return;
+    }
+    if (command.type === 'get_available_models') {
+      child.stdout.emit('data', Buffer.from(JSON.stringify({
+        type: 'response',
+        id: command.id,
+        command: 'get_available_models',
+        success: true,
+        data: { models: [] },
+      }) + '\n'));
+      return;
+    }
+    if (command.type === 'prompt') {
+      child.stdout.emit('data', Buffer.from(JSON.stringify({
+        type: 'response',
+        id: command.id,
+        command: 'prompt',
+        success: true,
+      }) + '\n'));
+      child.stdout.emit('data', Buffer.from('{"type":"agent_end"}\n'));
+      return;
+    }
+    child.stdout.emit('data', Buffer.from(JSON.stringify({
+      type: 'response',
+      id: command.id,
+      command: command.type,
+      success: true,
+    }) + '\n'));
+  });
+  return child;
+}
+
+function createService(options?: { idleMs?: string; idleCap?: string }) {
+  if (options?.idleMs) process.env.PI_RUNTIME_IDLE_MS = options.idleMs;
+  if (options?.idleCap) process.env.PI_RUNTIME_IDLE_CAP = options.idleCap;
+  const sessions = {
+    findOne: jest.fn(async (sessionId: number) => ({
+      id: sessionId,
+      worktreePath: `/repo/session-${sessionId}`,
+      piSessionPath: '-1',
+    })),
+    updateStatus: jest.fn(async () => undefined),
+    updatePiSessionPath: jest.fn(async () => undefined),
+  };
+  const auth = {
+    getStatus: jest.fn(async () => ({
+      isAuthenticating: false,
+      output: [],
+      installed: true,
+      version: '1.0.0',
+      authenticated: true,
+      authMethod: 'api_key',
+      authPath: '/Users/test/.pi/agent/auth.json',
+      modelsPath: '/Users/test/.pi/agent/models.json',
+    })),
+  };
+  return {
+    service: new PiRuntimeService(sessions as never, auth as never),
+    sessions,
+  };
+}
+
+describe('PiRuntimeService lifecycle', () => {
+  const originalIdleMs = process.env.PI_RUNTIME_IDLE_MS;
+  const originalIdleCap = process.env.PI_RUNTIME_IDLE_CAP;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.clearAllMocks();
+    delete process.env.PI_RUNTIME_IDLE_MS;
+    delete process.env.PI_RUNTIME_IDLE_CAP;
+  });
+
+  afterEach(() => {
+    if (originalIdleMs === undefined) delete process.env.PI_RUNTIME_IDLE_MS;
+    else process.env.PI_RUNTIME_IDLE_MS = originalIdleMs;
+    if (originalIdleCap === undefined) delete process.env.PI_RUNTIME_IDLE_CAP;
+    else process.env.PI_RUNTIME_IDLE_CAP = originalIdleCap;
+    jest.useRealTimers();
+  });
+
+  it('terminates an idle detached Pi runtime after the configured timeout', async () => {
+    const child = createPiProcess('/tmp/pi-session-1.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    const { service } = createService({ idleMs: '50' });
+
+    await service.submitPrompt(1, 'hello');
+
+    expect(child.kill).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(51);
+    await Promise.resolve();
+
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('closes the oldest idle detached runtime when the global cap is exceeded', async () => {
+    const first = createPiProcess('/tmp/pi-session-1.jsonl');
+    const second = createPiProcess('/tmp/pi-session-2.jsonl');
+    mockSpawn
+      .mockReturnValueOnce(first as never)
+      .mockReturnValueOnce(second as never);
+    const { service } = createService({ idleMs: '60000', idleCap: '1' });
+
+    await service.submitPrompt(1, 'first');
+    await service.submitPrompt(2, 'second');
+
+    expect(first.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(second.kill).not.toHaveBeenCalled();
+  });
+});

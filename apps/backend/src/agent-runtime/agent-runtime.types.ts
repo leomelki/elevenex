@@ -174,6 +174,8 @@ export interface AgentRuntimeProviderFeatures {
     action?: 'accept' | 'decline' | 'cancel',
     content?: Record<string, string | number | boolean | string[]>,
   ): Promise<void>;
+  onClientAttached(sessionId: number): void;
+  onClientDetached(sessionId: number): void;
 }
 
 export type AgentRuntimeProvider = AgentRuntimeProviderBase &
