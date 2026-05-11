@@ -152,7 +152,7 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
     return true;
   }
 
-  async reattach(actionId: number): Promise<boolean> {
+  async reattach(actionId: number, worktreePath: string): Promise<boolean> {
     const tmuxSessionName = this.getTmuxSessionName(actionId);
 
     if (!this.tmuxSessionExists(tmuxSessionName)) {
@@ -162,7 +162,7 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
     this.logger.log(`Reattaching to tmux session ${tmuxSessionName} for action ${actionId}`);
 
     const logFilePath = this.getLogFilePath(actionId);
-    const env = this.buildEnv();
+    const env = this.buildEnv(worktreePath);
 
     try {
       // Read existing log content (pipe-pane has been writing since action started)
@@ -173,7 +173,10 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
 
       // Re-start pipe-pane in case it died (idempotent — replaces existing pipe)
       try {
-        execSync(`${this.tmuxBin} pipe-pane -t ${tmuxSessionName} -o 'cat >> ${logFilePath}'`, { stdio: 'ignore' });
+        execSync(
+          `${this.tmuxBin} pipe-pane -t ${tmuxSessionName} -o ${this.shellEscape(`cat >> ${logFilePath}`)}`,
+          { stdio: 'ignore' },
+        );
       } catch { /* ignore */ }
 
       // Spawn tail to follow only new content (-n 0 = start from current end)
@@ -181,7 +184,7 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
         name: 'xterm-256color',
         cols: 120,
         rows: 32,
-        cwd: env.PWD || process.cwd(),
+        cwd: worktreePath,
         env,
       });
 
@@ -289,9 +292,14 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
   private buildEnv(worktreePath?: string): NodeJS.ProcessEnv {
     return {
       ...buildAugmentedEnv(process.env, worktreePath),
+      ...(worktreePath ? { PWD: worktreePath } : {}),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     };
+  }
+
+  private resolveShell(env: NodeJS.ProcessEnv): string {
+    return env.SHELL || this.defaultShell;
   }
 
   // --- spawn methods ---
@@ -322,10 +330,11 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
       // worktree-pinned node — the running tmux server's stale env would
       // otherwise win (its env was captured at server startup).
       const tmuxEnvPrefix = buildTmuxInlineEnvPrefix(env);
-      const innerCmd = `${tmuxEnvPrefix} ${this.defaultShell} -lc ${this.shellEscape(action.command)}; echo $? > ${this.shellEscape(exitCodePath)}`;
+      const shell = this.resolveShell(env);
+      const innerCmd = `${tmuxEnvPrefix} ${this.shellEscape(shell)} -lc ${this.shellEscape(action.command)}; echo $? > ${this.shellEscape(exitCodePath)}`;
 
       execSync(
-        `${this.tmuxBin} new-session -d -s ${tmuxSessionName} -c "${action.worktreePath}" -x 120 -y 32 /bin/sh -c ${this.shellEscape(innerCmd)}`,
+        `${this.tmuxBin} new-session -d -s ${tmuxSessionName} -c ${this.shellEscape(action.worktreePath)} -x 120 -y 32 /bin/sh -c ${this.shellEscape(innerCmd)}`,
         {
           stdio: 'pipe',
           env: { ...env, TERM: 'xterm-256color' },
@@ -336,7 +345,10 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
       execSync(`${this.tmuxBin} set-option -t ${tmuxSessionName} history-limit 50000`, { stdio: 'ignore' });
 
       // Pipe pane output to log file (raw command output, no tmux wrapping)
-      execSync(`${this.tmuxBin} pipe-pane -t ${tmuxSessionName} -o 'cat >> ${logFilePath}'`, { stdio: 'ignore' });
+      execSync(
+        `${this.tmuxBin} pipe-pane -t ${tmuxSessionName} -o ${this.shellEscape(`cat >> ${logFilePath}`)}`,
+        { stdio: 'ignore' },
+      );
 
       // Tail the log file for live streaming (instead of tmux attach)
       // This gives xterm.js clean output with proper scrollback
@@ -382,7 +394,7 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
   }
 
   private spawnDirect(action: ActionRecord, env: NodeJS.ProcessEnv): pty.IPty {
-    const ptyProcess = pty.spawn(this.defaultShell, ['-lc', action.command], {
+    const ptyProcess = pty.spawn(this.resolveShell(env), ['-lc', action.command], {
       name: 'xterm-256color',
       cols: 120,
       rows: 32,

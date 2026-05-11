@@ -37,7 +37,7 @@ export class ActionsService implements OnModuleInit {
     for (const action of runningActions) {
       if (this.ptyManager.hasTmuxSessionForAction(action.id)) {
         this.logger.log(`Action ${action.id} ("${action.name}") has surviving tmux session, reattaching...`);
-        const reattached = await this.ptyManager.reattach(action.id);
+        const reattached = await this.ptyManager.reattach(action.id, action.worktreePath);
         if (reattached) {
           this.logger.log(`Successfully reattached to action ${action.id}`);
           continue;
