@@ -7,6 +7,7 @@ import {
   CommitMessageSuggestion,
   GitStatusSummary,
   CommitResult,
+  PushResult,
 } from './git.service.js';
 
 @Controller('git')
@@ -97,6 +98,11 @@ export class GitController {
       decodeURIComponent(body.worktreePath),
       body.provider,
     );
+  }
+
+  @Post('push')
+  push(@Body() body: { worktreePath: string }): Promise<PushResult> {
+    return this.gitService.push(decodeURIComponent(body.worktreePath));
   }
 
   @Get('log')

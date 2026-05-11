@@ -288,10 +288,32 @@ describe('GitService', () => {
       const summary = await service.getStatusSummary(repoPath);
 
       expect(summary.hasChanges).toBe(true);
+      expect(summary.upstream).toBeNull();
+      expect(summary.ahead).toBe(0);
+      expect(summary.behind).toBe(0);
       expect(summary.staged.files).toBe(1);
       expect(summary.staged.additions).toBeGreaterThan(0);
       expect(summary.unstaged.files).toBe(1);
       expect(summary.unstaged.additions).toBe(2);
+    });
+
+    it('should report ahead commits against upstream', async () => {
+      const remotePath = path.join(tmpDir, 'remote.git');
+      execSync(`git init --bare "${remotePath}"`);
+      execSync(`git remote add origin "${remotePath}"`, { cwd: repoPath });
+      execSync('git push -u origin HEAD', { cwd: repoPath });
+
+      fs.writeFileSync(path.join(repoPath, 'local.txt'), 'local content');
+      execSync('git add local.txt && git commit -m "Add local file"', {
+        cwd: repoPath,
+      });
+
+      const summary = await service.getStatusSummary(repoPath);
+
+      expect(summary.hasChanges).toBe(false);
+      expect(summary.upstream).toMatch(/^origin\//);
+      expect(summary.ahead).toBe(1);
+      expect(summary.behind).toBe(0);
     });
   });
 

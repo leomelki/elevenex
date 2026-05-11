@@ -20,6 +20,9 @@ export interface GitScopeSummary {
 
 export interface GitStatusSummary {
   branch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
   hasChanges: boolean;
   files: FileStatus[];
   staged: GitScopeSummary;

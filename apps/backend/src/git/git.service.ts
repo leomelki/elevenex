@@ -81,6 +81,9 @@ export interface GitScopeSummary {
 
 export interface GitStatusSummary {
   branch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
   hasChanges: boolean;
   files: FileStatus[];
   staged: GitScopeSummary;
@@ -149,9 +152,16 @@ export class GitService {
     ]);
 
     const branch = status.current || 'HEAD';
+    const upstream = await this.getUpstream(git);
+    const { ahead, behind } = upstream
+      ? await this.getAheadBehind(git, branch, upstream)
+      : { ahead: 0, behind: 0 };
 
     return {
       branch,
+      upstream,
+      ahead,
+      behind,
       hasChanges: files.length > 0,
       files,
       staged: stagedStats,
@@ -592,6 +602,45 @@ export class GitService {
       additions,
       deletions,
     };
+  }
+
+  private async getUpstream(git: SimpleGit): Promise<string | null> {
+    try {
+      return (
+        await git.raw([
+          'rev-parse',
+          '--abbrev-ref',
+          '--symbolic-full-name',
+          '@{u}',
+        ])
+      ).trim();
+    } catch {
+      return null;
+    }
+  }
+
+  private async getAheadBehind(
+    git: SimpleGit,
+    branch: string,
+    upstream: string,
+  ): Promise<{ ahead: number; behind: number }> {
+    try {
+      const counts = (
+        await git.raw([
+          'rev-list',
+          '--left-right',
+          '--count',
+          `${branch}...${upstream}`,
+        ])
+      ).trim();
+      const [aheadCount, behindCount] = counts.split(/\s+/);
+      return {
+        ahead: Number(aheadCount) || 0,
+        behind: Number(behindCount) || 0,
+      };
+    } catch {
+      return { ahead: 0, behind: 0 };
+    }
   }
 
   private async readNumstat(

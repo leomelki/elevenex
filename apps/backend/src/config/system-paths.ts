@@ -513,9 +513,10 @@ function ensureUtf8Locale(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 // not the one the worktree pins via `.nvmrc`. Without the override, hooks
 // resolve to the wrong node and bail or behave inconsistently.
 export function worktreeSimpleGit(worktreePath: string): SimpleGit {
-  return simpleGit(worktreePath).env(
-    buildAugmentedEnv(process.env, worktreePath),
-  );
+  const env = buildAugmentedEnv(process.env, worktreePath);
+  delete env.GIT_PAGER;
+  delete env.PAGER;
+  return simpleGit(worktreePath).env(env);
 }
 
 // POSIX-compliant single-quote shell escape. Wraps the value in single quotes

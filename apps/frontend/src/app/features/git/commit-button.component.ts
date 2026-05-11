@@ -17,6 +17,7 @@ import {
   lucideLoaderCircle,
   lucideRefreshCw,
   lucideSparkles,
+  lucideUpload,
   lucideX,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
@@ -44,6 +45,7 @@ const MAX_VISIBLE_FILES = 10;
       lucideLoaderCircle,
       lucideRefreshCw,
       lucideSparkles,
+      lucideUpload,
       lucideX,
     }),
   ],
@@ -59,12 +61,25 @@ export class CommitButtonComponent {
   readonly refreshing = signal(false);
   readonly open = signal(false);
   readonly submitting = signal(false);
+  readonly pushing = signal(false);
   readonly includeUnstaged = signal(false);
   readonly commitMessage = signal('');
 
   private refreshInFlight = false;
 
   readonly hasChanges = computed(() => this.summary()?.hasChanges ?? false);
+  readonly hasPushableCommits = computed(() => {
+    const summary = this.summary();
+    if (!summary || summary.hasChanges || summary.branch === 'HEAD') return false;
+    return !summary.upstream || summary.ahead > 0;
+  });
+  readonly shouldShowButton = computed(() => this.hasChanges() || this.hasPushableCommits() || this.open());
+  readonly isBusy = computed(() => this.submitting() || this.pushing());
+  readonly triggerLabel = computed(() => {
+    if (this.submitting()) return 'Committing…';
+    if (this.pushing()) return 'Pushing…';
+    return this.hasChanges() ? 'Commit' : 'Push';
+  });
 
   readonly selectedRows = computed(() => {
     const summary = this.summary();
@@ -129,6 +144,11 @@ export class CommitButtonComponent {
   }
 
   async toggleOpen(): Promise<void> {
+    if (this.hasPushableCommits()) {
+      await this.push();
+      return;
+    }
+
     const next = !this.open();
     this.open.set(next);
     if (next) {
@@ -162,11 +182,33 @@ export class CommitButtonComponent {
 
       this.commitMessage.set('');
       this.open.set(false);
-      await this.refreshSummary();
+      await this.refreshSummary({ force: true });
     } catch (error: any) {
       toast.error(error?.error?.message || 'Could not create commit.');
     } finally {
       this.submitting.set(false);
+    }
+  }
+
+  async push(): Promise<void> {
+    const worktreePath = this.worktreePath();
+    if (!worktreePath || !this.hasPushableCommits() || this.pushing()) return;
+
+    this.pushing.set(true);
+    try {
+      const result = await firstValueFrom(this.gitService.push(worktreePath));
+      if (result.pushed) {
+        toast.success(result.message);
+      } else if (result.nonFastForward) {
+        toast.error('Push rejected - branch is behind upstream.');
+      } else {
+        toast.error(result.message || 'Push failed.');
+      }
+      await this.refreshSummary({ force: true });
+    } catch (error: any) {
+      toast.error(error?.error?.message || 'Could not push.');
+    } finally {
+      this.pushing.set(false);
     }
   }
 
@@ -179,9 +221,9 @@ export class CommitButtonComponent {
     return file.status;
   }
 
-  private async refreshSummary(options: { background?: boolean } = {}): Promise<void> {
+  private async refreshSummary(options: { background?: boolean; force?: boolean } = {}): Promise<void> {
     const worktreePath = this.worktreePath();
-    if (!worktreePath || this.refreshInFlight || this.submitting()) return;
+    if (!worktreePath || this.refreshInFlight || (!options.force && this.isBusy())) return;
 
     this.refreshInFlight = true;
     if (options.background) {

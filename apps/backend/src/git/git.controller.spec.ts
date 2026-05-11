@@ -17,6 +17,7 @@ describe('GitController', () => {
             show: jest.fn(),
             getStatusSummary: jest.fn(),
             commit: jest.fn(),
+            push: jest.fn(),
           },
         },
       ],
@@ -135,6 +136,9 @@ describe('GitController', () => {
     it('should decode the worktree path before loading the summary', async () => {
       const mockSummary = {
         branch: 'main',
+        upstream: 'origin/main',
+        ahead: 1,
+        behind: 0,
         hasChanges: true,
         files: [],
         staged: { files: 1, additions: 2, deletions: 0 },
@@ -168,14 +172,39 @@ describe('GitController', () => {
         worktreePath: encodeURIComponent('/test/repo'),
         message: 'Test commit',
         includeUnstaged: true,
+        provider: 'claude',
       });
 
       expect(result.hash).toBe('abc123');
       expect(mockCommit).toHaveBeenCalledWith('/test/repo', {
         message: 'Test commit',
         includeUnstaged: true,
+        provider: 'claude',
         requestId: expect.any(String),
       });
+    });
+  });
+
+  describe('push', () => {
+    it('should decode the worktree path before pushing', async () => {
+      const mockPush = jest.fn().mockResolvedValue({
+        pushed: true,
+        remote: 'origin',
+        branch: 'feature/test',
+        upstream: 'origin/feature/test',
+        createdUpstream: true,
+        nonFastForward: false,
+        rejected: false,
+        message: 'Pushed feature/test and set upstream to origin/feature/test.',
+      });
+      service.push = mockPush;
+
+      const result = await controller.push({
+        worktreePath: encodeURIComponent('/test/path with spaces'),
+      });
+
+      expect(result.pushed).toBe(true);
+      expect(mockPush).toHaveBeenCalledWith('/test/path with spaces');
     });
   });
 });

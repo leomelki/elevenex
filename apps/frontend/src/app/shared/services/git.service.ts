@@ -5,6 +5,7 @@ import {
   CommitResult,
   FileStatus,
   GitStatusSummary,
+  PushResult,
 } from '../models/git.model';
 import { AgentRuntimeProviderService } from './agent-runtime-provider.service';
 
@@ -47,5 +48,9 @@ export class GitService {
       includeUnstaged: options.includeUnstaged ?? false,
       provider: this.providerSelection.currentProvider,
     });
+  }
+
+  push(worktreePath: string) {
+    return this.http.post<PushResult>('/api/git/push', { worktreePath });
   }
 }

@@ -1,21 +1,27 @@
-@if (hasChanges() || open()) {
+@if (shouldShowButton()) {
   <div class="cx-shell">
     <button
       class="cx-trigger"
       type="button"
       [class.cx-trigger--open]="open()"
-      [class.cx-trigger--busy]="submitting()"
-      [disabled]="(loading() && !summary()) || submitting()"
+      [class.cx-trigger--busy]="isBusy()"
+      [disabled]="(loading() && !summary()) || isBusy()"
       (click)="toggleOpen()"
     >
-      @if ((loading() && !summary()) || submitting()) {
+      @if ((loading() && !summary()) || isBusy()) {
         <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" />
+      } @else if (hasPushableCommits()) {
+        <ng-icon name="lucideUpload" size="13" />
       } @else {
         <ng-icon name="lucideGitCommitVertical" size="13" />
       }
-      <span>{{ submitting() ? 'Committing…' : 'Commit' }}</span>
-      @if (!submitting()) {
-        <span class="cx-trigger__count">{{ selectedFileCount() || summary()?.total?.files || 0 }}</span>
+      <span>{{ triggerLabel() }}</span>
+      @if (!isBusy()) {
+        @if (hasChanges()) {
+          <span class="cx-trigger__count">{{ selectedFileCount() || summary()?.total?.files || 0 }}</span>
+        } @else if ((summary()?.ahead ?? 0) > 0) {
+          <span class="cx-trigger__count">{{ summary()?.ahead }}</span>
+        }
       }
     </button>
 
