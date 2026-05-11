@@ -23,6 +23,7 @@ import { ActionTerminalWebsocketService } from '@/shared/services/action-termina
   standalone: true,
   imports: [CommonModule],
   templateUrl: './action-terminal-view.component.html',
+  styleUrls: ['./action-terminal-view.component.scss'],
   host: { class: 'block h-full' },
 })
 export class ActionTerminalViewComponent implements AfterViewInit, OnChanges, OnDestroy {
@@ -74,14 +75,15 @@ export class ActionTerminalViewComponent implements AfterViewInit, OnChanges, On
       fontSize: 13,
       lineHeight: 1.25,
       cursorBlink: false,
-      disableStdin: true,
       scrollback: 2000,
+      scrollSensitivity: 5,
       allowProposedApi: true,
       theme: {
         background: '#0f1720',
         foreground: '#d5deeb',
         cursor: '#6ee7b7',
         selectionBackground: '#1d4ed833',
+        selectionForeground: '#f8fafc',
         black: '#0f1720',
         red: '#fb7185',
         green: '#34d399',
@@ -105,6 +107,30 @@ export class ActionTerminalViewComponent implements AfterViewInit, OnChanges, On
     this.terminal.loadAddon(this.fitAddon);
     this.terminal.loadAddon(new WebLinksAddon());
     this.terminal.open(this.container.nativeElement);
+
+    this.terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.type !== 'keydown') return true;
+
+      const isSelectAll = (event.ctrlKey && event.shiftKey && event.code === 'KeyA')
+        || (event.metaKey && event.code === 'KeyA');
+      if (isSelectAll) {
+        this.terminal?.selectAll();
+        return false;
+      }
+
+      const isCopy = (event.ctrlKey && event.shiftKey && event.code === 'KeyC')
+        || (event.metaKey && event.code === 'KeyC');
+      if (isCopy) {
+        const selection = this.terminal?.getSelection();
+        if (selection) {
+          navigator.clipboard.writeText(selection);
+        }
+        return false;
+      }
+
+      return true;
+    });
+
     setTimeout(() => this.fit(), 0);
   }
 
