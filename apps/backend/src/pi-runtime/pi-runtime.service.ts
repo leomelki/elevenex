@@ -854,7 +854,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       return [{
         id: `${id}:user`,
         kind: 'user',
-        content: this.contentToText(message.content),
+        content: this.stripInjectedWorktreeContext(this.contentToText(message.content)),
         sourceMessageId: id,
         timestamp,
         authoredAt: timestamp,
@@ -945,6 +945,21 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       })
       .filter(Boolean)
       .join('\n');
+  }
+
+  private stripInjectedWorktreeContext(text: string): string {
+    const trimmed = text.trimStart();
+    const openTag = '<elevenex-worktree-context>';
+    const closeTag = '</elevenex-worktree-context>';
+    if (!trimmed.startsWith(openTag)) {
+      return text;
+    }
+    const closingIndex = trimmed.indexOf(closeTag);
+    if (closingIndex === -1) {
+      return text;
+    }
+    const afterClose = trimmed.slice(closingIndex + closeTag.length);
+    return afterClose.replace(/^\s+/, '');
   }
 
   private stringifyToolResult(result: unknown): string {
