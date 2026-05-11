@@ -91,15 +91,17 @@ export class PiAuthService extends EventEmitter {
 
   async getStatus(): Promise<PiAuthStatus> {
     const version = await this.readVersion();
-    const hasAuth = existsSync(this.authPath);
+    const storedCredentials = await this.readAuthFile();
+    const hasStoredCredentials = Object.keys(storedCredentials).length > 0;
     const hasModels = existsSync(this.modelsPath);
-    const authenticated = hasAuth || this.hasProviderEnv();
+    const hasEnvKey = this.hasProviderEnv();
+    const authenticated = hasStoredCredentials || hasEnvKey;
     const active = this.active;
 
     const output: string[] = [
       version ? `pi ${version}` : 'Pi CLI not found',
       authenticated
-        ? hasAuth
+        ? hasStoredCredentials
           ? `Pi auth configured at ${this.authPath}`
           : 'Provider API key available in environment'
         : 'No Pi credentials found',
@@ -118,13 +120,22 @@ export class PiAuthService extends EventEmitter {
       output.push(this.lastError);
     }
 
+    const credentialTypes = Object.values(storedCredentials).map((c) => c?.type);
+    const hasOAuthStored = credentialTypes.includes('oauth');
+    const hasApiKeyStored = credentialTypes.includes('api_key');
+    const authMethod: PiAuthStatus['authMethod'] = !authenticated
+      ? 'none'
+      : hasOAuthStored && !hasApiKeyStored
+        ? 'oauth'
+        : 'api_key';
+
     return {
       isAuthenticating: Boolean(active),
       output,
       installed: Boolean(version),
       version,
       authenticated,
-      authMethod: authenticated ? 'api_key' : 'none',
+      authMethod,
       authPath: this.authPath,
       modelsPath: this.modelsPath,
       loginMode: active ? (active.kind === 'api_key' ? 'api_key' : 'oauth') : null,
