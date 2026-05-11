@@ -7,7 +7,7 @@ import { SshForward, SshForwardStatus } from '../models/ssh-forward.model';
 import { ElectronSshForwardRuntimeState, getElectronSshForwardingApi } from '../runtime/electron-ssh-forwarding';
 import { RemoteInstallPhase } from '../runtime/electron-remote-server';
 import { NavigationService } from './navigation.service';
-import { OnboardingConnectionService } from './onboarding-connection.service';
+import { OnboardingConnectionService, OnboardingConnectionSuccess } from './onboarding-connection.service';
 import { OnboardingStartupService } from './onboarding-startup.service';
 import { OnboardingStateService } from './onboarding-state.service';
 import { SshForwardsService } from './ssh-forwards.service';
@@ -129,6 +129,8 @@ export class SshRuntimeRecoveryService {
   private previousRemoteServerId: number | null = null;
   private cancelToken = 0;
   private savedDisconnect: RemoteRuntimeDisconnectState | null = null;
+  private lastAutoRetryAt = 0;
+  private lastForwardAutoRetryAt = new Map<number, number>();
 
   constructor(
     private readonly sshForwardsService: SshForwardsService,
@@ -216,18 +218,23 @@ export class SshRuntimeRecoveryService {
   }
 
   async reconnectAllDisconnectedForwards(): Promise<Array<{ id: number; name: string; error: Error }>> {
+    const forwards = Array.from(this.disconnectedSavedForwards.values());
+    if (forwards.length === 0) {
+      return [];
+    }
+
+    const results = await Promise.allSettled(forwards.map(f => this.reconnectSavedForward(f.id)));
     const failures: Array<{ id: number; name: string; error: Error }> = [];
-    for (const forward of Array.from(this.disconnectedSavedForwards.values())) {
-      try {
-        await this.reconnectSavedForward(forward.id);
-      } catch (error) {
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        const forward = forwards[index];
         failures.push({
           id: forward.id,
           name: forward.name,
-          error: error instanceof Error ? error : new Error('Could not reconnect the SSH forward.'),
+          error: result.reason instanceof Error ? result.reason : new Error('Could not reconnect the SSH forward.'),
         });
       }
-    }
+    });
 
     return failures;
   }
@@ -252,33 +259,7 @@ export class SshRuntimeRecoveryService {
       }
 
       if (result.kind === 'success') {
-        this._remoteRetrying.set({
-          server: current.server,
-          localPort: current.localPort,
-          phaseOverride: CONNECTING_PHASES.length,
-        });
-
-        await new Promise<void>((resolve) => setTimeout(resolve, 350));
-
-        if (this.cancelToken !== token) {
-          return;
-        }
-
-        const nextServer: SavedServer = {
-          ...current.server,
-          localPort: result.localPort,
-          installStatus: result.installStatus,
-          lastConnectedAt: new Date().toISOString(),
-        };
-        this.onboardingState.saveServer(nextServer);
-        await this.onboardingStartup.prepareStartupPortForwardPrompt(nextServer);
-        this.onboardingStartup.clearStartupFailure();
-        this._remoteRetrying.set(null);
-        this.savedDisconnect = null;
-        this.previousRemoteServerId = nextServer.id;
-        this.previousRemoteStatus = 'active';
-        this.remoteHydrated = true;
-        this.navigationService.refreshTree();
+        await this.handleReconnectionSuccess(current.server, result, token);
         return;
       }
 
@@ -301,6 +282,46 @@ export class SshRuntimeRecoveryService {
         message: 'Could not reconnect to the remote Elevenex server.',
       });
     }
+  }
+
+  private async handleReconnectionSuccess(
+    server: SavedServer,
+    result: OnboardingConnectionSuccess,
+    token: number,
+  ): Promise<void> {
+    this._remoteRetrying.set({
+      server,
+      localPort: server.localPort,
+      phaseOverride: CONNECTING_PHASES.length,
+    });
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 350));
+
+    if (this.cancelToken !== token) {
+      return;
+    }
+
+    const nextServer: SavedServer = {
+      ...server,
+      localPort: result.localPort,
+      installStatus: result.installStatus,
+      lastConnectedAt: new Date().toISOString(),
+    };
+    this.onboardingState.saveServer(nextServer);
+
+    // Automatically restore previously active forwards to avoid redundant banners
+    await this.reconnectAllDisconnectedForwards();
+
+    // Only show the startup prompt if we didn't just restore everything (it checks for non-active forwards)
+    await this.onboardingStartup.prepareStartupPortForwardPrompt(nextServer);
+
+    this.onboardingStartup.clearStartupFailure();
+    this._remoteRetrying.set(null);
+    this.savedDisconnect = null;
+    this.previousRemoteServerId = nextServer.id;
+    this.previousRemoteStatus = 'active';
+    this.remoteHydrated = true;
+    this.navigationService.refreshTree();
   }
 
   cancelRemoteConnection(): void {
@@ -342,8 +363,15 @@ export class SshRuntimeRecoveryService {
         && isLiveStatus(previousStatus)
         && isDisconnectedStatus(forward.status)
       ) {
-        this.disconnectedSavedForwards.set(forward.id, toDisconnectedForwardItem(forward));
-        this.savedBannerVisible = true;
+        const lastRetry = this.lastForwardAutoRetryAt.get(forward.id) || 0;
+        const now = Date.now();
+        if (this.previousRemoteStatus === 'active' && now - lastRetry > 30000) {
+          this.lastForwardAutoRetryAt.set(forward.id, now);
+          void this.reconnectSavedForward(forward.id);
+        } else {
+          this.disconnectedSavedForwards.set(forward.id, toDisconnectedForwardItem(forward));
+          this.savedBannerVisible = true;
+        }
       }
 
       if (isLiveStatus(forward.status)) {
@@ -407,6 +435,22 @@ export class SshRuntimeRecoveryService {
       && isLiveStatus(this.previousRemoteStatus)
       && isDisconnectedStatus(currentStatus)
     ) {
+      // Attempt a silent auto-retry before showing the blocking overlay
+      const now = Date.now();
+      if (now - this.lastAutoRetryAt > POLL_INTERVAL_MS * 2) {
+        this.lastAutoRetryAt = now;
+        const token = ++this.cancelToken;
+        try {
+          const result = await this.onboardingConnection.reconnect(activeServer, { interactive: false });
+          if (this.cancelToken === token && result.kind === 'success') {
+            await this.handleReconnectionSuccess(activeServer, result, token);
+            return;
+          }
+        } catch {
+          // Fall through to showing the disconnect overlay
+        }
+      }
+
       this._remoteDisconnect.set({
         server: activeServer,
         localPort: activeServer.localPort,
@@ -429,6 +473,7 @@ export class SshRuntimeRecoveryService {
     this.previousRemoteStatus = currentStatus;
     this.remoteHydrated = true;
   }
+
 
   private syncDisconnectedForwardsBanner() {
     const forwards = Array.from(this.disconnectedSavedForwards.values())

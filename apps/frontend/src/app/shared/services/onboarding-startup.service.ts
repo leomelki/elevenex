@@ -201,9 +201,7 @@ export class OnboardingStartupService {
       .map(forward => forward.id)
       .filter(id => !prompt.startingIds.includes(id));
 
-    for (const id of ids) {
-      await this.startStartupPortForward(id);
-    }
+    await Promise.allSettled(ids.map(id => this.startStartupPortForward(id)));
   }
 
   private patchPrompt(patch: Partial<StartupPortForwardPrompt>) {
