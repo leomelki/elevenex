@@ -77,6 +77,7 @@ describe('ClaudeWorkspaceComponent', () => {
     send: ReturnType<typeof vi.fn>;
     isConnected: ReturnType<typeof vi.fn>;
     disconnect: ReturnType<typeof vi.fn>;
+    connectionState$: ReturnType<typeof vi.fn>;
   };
   let worktreeContextServiceMock: {
     get: ReturnType<typeof vi.fn>;
@@ -275,6 +276,7 @@ describe('ClaudeWorkspaceComponent', () => {
       send: vi.fn(),
       isConnected: vi.fn(() => true),
       disconnect: vi.fn(),
+      connectionState$: vi.fn(() => new Subject().asObservable()),
     };
     worktreeContextServiceMock = {
       get: vi.fn(() => of({

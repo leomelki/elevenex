@@ -1,8 +1,10 @@
 import { Injectable, NgZone, inject } from '@angular/core';
-import { Observable, Subject } from 'rxjs';
+import { BehaviorSubject, Observable, Subject, of } from 'rxjs';
 import { AgentProviderId, AgentRuntimeEvent } from '../models/agent-runtime.model';
 import { getWebSocketUrl } from '../runtime/runtime-config';
 import { AgentRuntimeProviderService } from './agent-runtime-provider.service';
+
+export type AgentConnectionPhase = 'connecting' | 'connected' | 'disconnected';
 
 interface Connection {
   ws: WebSocket;
@@ -12,6 +14,7 @@ interface Connection {
 @Injectable({ providedIn: 'root' })
 export class AgentRuntimeWebsocketService {
   private readonly connections = new Map<string, Connection>();
+  private readonly sessionStateSubjects = new Map<string, BehaviorSubject<AgentConnectionPhase>>();
   private readonly providerSelection = inject(AgentRuntimeProviderService);
 
   constructor(private readonly ngZone: NgZone) {}
@@ -42,6 +45,13 @@ export class AgentRuntimeWebsocketService {
     const subject = new Subject<AgentRuntimeEvent>();
     const connection: Connection = { ws, subject };
 
+    const stateSubject = this.getOrCreateStateSubject(key);
+    stateSubject.next('connecting');
+
+    ws.onopen = () => {
+      this.ngZone.run(() => stateSubject.next('connected'));
+    };
+
     ws.onmessage = (event) => {
       this.ngZone.run(() => {
         try {
@@ -57,6 +67,7 @@ export class AgentRuntimeWebsocketService {
         subject.complete();
         if (this.connections.get(key) === connection) {
           this.connections.delete(key);
+          stateSubject.next('disconnected');
         }
       });
     };
@@ -121,6 +132,24 @@ export class AgentRuntimeWebsocketService {
       this.connections.delete(key);
       connection.ws.close();
     }
+  }
+
+  connectionState$(
+    sessionId: number,
+    provider: AgentProviderId = this.providerSelection.currentProvider,
+  ): Observable<AgentConnectionPhase> {
+    const key = this.connectionKey(sessionId, provider);
+    const stateSubject = this.sessionStateSubjects.get(key);
+    return stateSubject ? stateSubject.asObservable() : of('disconnected');
+  }
+
+  private getOrCreateStateSubject(key: string): BehaviorSubject<AgentConnectionPhase> {
+    let subject = this.sessionStateSubjects.get(key);
+    if (!subject) {
+      subject = new BehaviorSubject<AgentConnectionPhase>('connecting');
+      this.sessionStateSubjects.set(key, subject);
+    }
+    return subject;
   }
 
   private connectionKey(sessionId: number, provider: AgentProviderId): string {

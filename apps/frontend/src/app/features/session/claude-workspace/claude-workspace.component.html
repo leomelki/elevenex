@@ -434,6 +434,7 @@
         [allowImages]="currentProviderSupportsImages()"
         [autocompleteItems]="autocompleteItems()"
         [pendingPrompts]="pendingPrompts()"
+        [disconnected]="hydrated() && !wsConnected()"
         (valueChange)="onPromptChange($event)"
         (send)="submitPrompt($event)"
         (interrupt)="interrupt()"

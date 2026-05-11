@@ -94,6 +94,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         class="cw-comp__box"
         [class.cw-comp__box--attached]="attachedPanelOpen()"
         [class.cw-comp__box--dropping]="allowImages() && isDropTarget()"
+        [class.cw-comp__box--disconnected]="disconnected()"
         (dragenter)="onDragEnter($event)"
         (dragover)="onDragOver($event)"
         (dragleave)="onDragLeave($event)"
@@ -140,6 +141,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
           class="cw-comp__ta"
           [placeholder]="placeholder()"
           [ngModel]="value()"
+          [disabled]="disconnected()"
           (input)="onInput($event)"
           (click)="refreshAc($any($event.target))"
           (keydown)="onKeydown($event)"
@@ -157,7 +159,10 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
         <div class="cw-comp__bar">
           <span class="cw-comp__hint">
-            @if (autocompleteOpen() && filtered().length) {
+            @if (disconnected()) {
+              <ng-icon name="lucideLoaderCircle" size="12" class="animate-spin cw-comp__hint-icon" />
+              Reconnecting…
+            } @else if (autocompleteOpen() && filtered().length) {
               ↑↓ navigate · ↵ insert
             } @else if (blockedByPermission()) {
               {{ sendDisabledReason() || 'Respond to the approval request before sending another message.' }}
@@ -173,6 +178,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
                 class="cw-comp__btn cw-comp__btn--ghost"
                 title="Attach image"
                 aria-label="Attach image"
+                [disabled]="disconnected()"
                 (click)="openFilePicker()"
               >
                 <ng-icon name="lucidePaperclip" size="14" />
@@ -182,7 +188,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
               <button
                 type="button"
                 class="cw-comp__btn cw-comp__btn--stop"
-                [disabled]="!canInterrupt()"
+                [disabled]="!canInterrupt() || disconnected()"
                 (click)="interrupt.emit()"
                 title="Interrupt"
               >
@@ -193,7 +199,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
             <button
               type="button"
               class="cw-comp__btn cw-comp__btn--send"
-              [disabled]="(!value().trim() && !attachedImages().length) || (submitting() && !running()) || blockedByPermission()"
+              [disabled]="(!value().trim() && !attachedImages().length) || (submitting() && !running()) || blockedByPermission() || disconnected()"
               (click)="submit()"
               [title]="running() ? 'Queue message' : 'Send'"
             >
@@ -352,6 +358,15 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         border-color: color-mix(in oklab, var(--primary) 60%, var(--border));
         background: color-mix(in oklab, var(--primary) 4%, var(--background));
       }
+      .cw-comp__box--disconnected {
+        opacity: 0.6;
+        pointer-events: none;
+      }
+      .cw-comp__hint-icon {
+        display: inline-block;
+        vertical-align: middle;
+        margin-right: 0.25rem;
+      }
       .cw-comp__images {
         display: flex;
         flex-wrap: wrap;
@@ -462,6 +477,7 @@ export class ClaudeComposerComponent {
   readonly autocompleteItems = input<ClaudeAutocompleteItem[]>([]);
   readonly placeholderText = input<string>('Tell Claude what to do…');
   readonly pendingPrompts = input<ClaudePendingPrompt[]>([]);
+  readonly disconnected = input<boolean>(false);
 
   readonly send = output<ComposerSendPayload>();
   readonly valueChange = output<string>();

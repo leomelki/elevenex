@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ClaudeRuntimeEvent } from '../models/claude-runtime.model';
-import { AgentRuntimeWebsocketService } from './agent-runtime-websocket.service';
+import { AgentConnectionPhase, AgentRuntimeWebsocketService } from './agent-runtime-websocket.service';
 import { AgentRuntimeProviderService } from './agent-runtime-provider.service';
 
 @Injectable({ providedIn: 'root' })
@@ -33,5 +33,9 @@ export class ClaudeRuntimeWebsocketService {
 
   disconnect(sessionId: number): void {
     this.agentRuntimeWs.disconnectSession(sessionId);
+  }
+
+  connectionState$(sessionId: number): Observable<AgentConnectionPhase> {
+    return this.agentRuntimeWs.connectionState$(sessionId, this.providerSelection.currentProvider);
   }
 }

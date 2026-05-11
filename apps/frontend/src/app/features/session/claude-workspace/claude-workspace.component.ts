@@ -18,7 +18,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { firstValueFrom } from 'rxjs';
+import { Subscription, firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import {
   ClaudeAutocompleteItem,
@@ -218,6 +218,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly codexAuthStatus = signal<AgentAuthStatus | null>(null);
   readonly piAuthStatus = signal<AgentAuthStatus | null>(null);
   readonly runtimeStarted = signal(false);
+  readonly wsConnected = signal(false);
+  private wsAutoReconnecting = false;
+  private wsStateSub: Subscription | null = null;
   readonly showCodexLogin = computed(() => {
     if (this.currentProvider() !== 'codex') return false;
     const status = this.codexAuthStatus();
@@ -1052,6 +1055,25 @@ readonly messageActionsDisabled = computed(
     this.ws.send(this.sessionId, message);
   }
 
+  private subscribeConnectionState(): void {
+    this.wsStateSub?.unsubscribe();
+    this.wsStateSub = this.ws
+      .connectionState$(this.sessionId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((phase) => {
+        if (phase === 'connected') {
+          this.wsConnected.set(true);
+          this.wsAutoReconnecting = false;
+        } else if (phase === 'disconnected' && this.hydrated() && !this.wsAutoReconnecting) {
+          this.wsConnected.set(false);
+          this.wsAutoReconnecting = true;
+          this.rehydrate();
+        } else if (phase === 'connecting') {
+          this.wsConnected.set(false);
+        }
+      });
+  }
+
   private async bootstrap(): Promise<void> {
     const version = ++this.bootstrapVersion;
     this.bootstrappedProvider = this.currentProvider();
@@ -1063,6 +1085,8 @@ readonly messageActionsDisabled = computed(
       .connect(this.sessionId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => this.handleRuntimeEvent(event));
+
+    this.subscribeConnectionState();
 
     this.ws.send(this.sessionId, { type: 'hydrate' });
 
@@ -1513,6 +1537,8 @@ readonly messageActionsDisabled = computed(
 
   private reset(): void {
     this.bootstrapVersion += 1;
+    this.wsAutoReconnecting = false;
+    this.wsConnected.set(false);
     if (this.flushRafId !== null) {
       cancelAnimationFrame(this.flushRafId);
       this.flushRafId = null;
