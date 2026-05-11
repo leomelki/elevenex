@@ -6,6 +6,7 @@ import { Subject, interval, from, forkJoin, of } from 'rxjs';
 import { TabBar } from '../tab-bar/tab-bar';
 import { Tab, TabCloseResult, TabService } from '../tab-service';
 import { SessionsService } from '../../../shared/services/sessions.service';
+import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { NavigationService } from '../../../shared/services/navigation.service';
 import { ClaudeTerminalComponent } from '../terminal';
 import { ClaudeWorkspaceComponent } from '../claude-workspace';
@@ -30,6 +31,7 @@ import { toast } from 'ngx-sonner';
 import { GitHubPanelComponent } from '@/features/github/github-panel.component';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { Session } from '@/shared/models/session.model';
+import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
 import { shouldAutoReviewSessionCompletion } from '../session-completion-review.util';
 import { shouldCloseActiveSessionTab } from '../close-tab-shortcut.util';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
@@ -78,6 +80,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private router = inject(Router);
   private tabService = inject(TabService);
   private sessionsService = inject(SessionsService);
+  private providerSelection = inject(AgentRuntimeProviderService);
   private navService = inject(NavigationService);
   private productivityState = inject(ProductivityStateService);
   private plannotatorService = inject(PlannotatorService);
@@ -482,6 +485,7 @@ export class SessionContainer implements OnInit, OnDestroy {
           this.tabService.selectTab(newSessionId);
           const existingTab = this.tabs().find(tab => tab.sessionId === newSessionId);
           if (existingTab) {
+            this.switchToSessionProvider(existingTab.activeAgentProvider);
             this.clearCompletionMarkerFromTab(existingTab);
           }
         }
@@ -642,9 +646,11 @@ export class SessionContainer implements OnInit, OnDestroy {
       const openIds = this.tabService.getOpenSessionIds();
 
       if (activeId && openIds.includes(activeId)) {
+        this.switchToSessionProvider(this.tabs().find(tab => tab.sessionId === activeId)?.activeAgentProvider);
         this.tabService.selectTab(activeId);
         this.router.navigate(['/sessions', activeId], { replaceUrl: true });
       } else if (openIds.length > 0) {
+        this.switchToSessionProvider(this.tabs().find(tab => tab.sessionId === openIds[0])?.activeAgentProvider);
         this.tabService.selectTab(openIds[0]);
         this.router.navigate(['/sessions', openIds[0]], { replaceUrl: true });
       }
@@ -663,6 +669,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private loadAndOpenSession(id: number): void {
     this.sessionsService.getOne(id).subscribe({
       next: (session) => {
+        this.switchToSessionProvider(session.activeAgentProvider);
         this.tabService.openTab(session);
         this.clearCompletionMarkerForOpenSession(session.id, session);
         if (session.worktreePath) {
@@ -812,11 +819,19 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   onTabSelect(sessionId: number): void {
-    this.tabService.selectTab(sessionId);
     const tab = this.tabs().find(currentTab => currentTab.sessionId === sessionId);
+    this.switchToSessionProvider(tab?.activeAgentProvider);
+    this.tabService.selectTab(sessionId);
     this.clearCompletionMarkerForOpenSession(sessionId, tab);
     // Update URL to reflect active session
     this.router.navigate(['/sessions', sessionId], { replaceUrl: true });
+  }
+
+  onSessionProviderChange(sessionId: number, provider: AgentProviderId): void {
+    this.tabService.updateTabProvider(sessionId, provider);
+    if (sessionId === this.activeSessionId()) {
+      this.switchToSessionProvider(provider);
+    }
   }
 
   onTabClose(sessionId: number): void {
@@ -833,6 +848,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     if (!newActiveId) {
       this.router.navigate(['/projects']);
     } else {
+      this.switchToSessionProvider(this.tabs().find(tab => tab.sessionId === newActiveId)?.activeAgentProvider);
       // Switch to new active tab
       this.router.navigate(['/sessions', newActiveId], { replaceUrl: true });
     }
@@ -1015,7 +1031,15 @@ export class SessionContainer implements OnInit, OnDestroy {
       return;
     }
 
+    this.switchToSessionProvider(this.tabs().find(tab => tab.sessionId === result.activeSessionId)?.activeAgentProvider);
     this.router.navigate(['/sessions', result.activeSessionId], { replaceUrl: true });
+  }
+
+  private switchToSessionProvider(provider: AgentProviderId | null | undefined): void {
+    if (!provider || provider === this.providerSelection.currentProvider) {
+      return;
+    }
+    this.providerSelection.setProvider(provider);
   }
 
   closePlannotatorPanel(): void {

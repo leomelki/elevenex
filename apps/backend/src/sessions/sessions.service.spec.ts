@@ -39,7 +39,9 @@ function createTestDb() {
       worktree_path TEXT NOT NULL,
       name TEXT,
       status TEXT NOT NULL DEFAULT 'created',
+      active_agent_provider TEXT NOT NULL DEFAULT 'claude',
       claude_session_id TEXT DEFAULT '-1',
+      codex_session_id TEXT DEFAULT '-1',
       has_injected_worktree_context INTEGER NOT NULL DEFAULT 0,
       has_unreviewed_completion INTEGER NOT NULL DEFAULT 0,
       last_completion_at TEXT,
@@ -129,7 +131,9 @@ describe('SessionsService', () => {
       expect(result.worktreePath).toBe('/tmp/worktree');
       expect(result.name).toBe('My Session');
       expect(result.status).toBe('created');
+      expect(result.activeAgentProvider).toBe('claude');
       expect(result.claudeSessionId).toBe('-1');
+      expect(result.codexSessionId).toBe('-1');
       expect(result.hasUnreviewedCompletion).toBe(false);
       expect(result.lastCompletionAt).toBeNull();
       expect(result.lastCompletionKind).toBeNull();
@@ -544,8 +548,10 @@ describe('SessionsService', () => {
       const updated = await service.updateClaudeSessionId(created.id, 'claude-session-1');
 
       expect(updated.claudeSessionId).toBe('claude-session-1');
+      expect(updated.activeAgentProvider).toBe('claude');
       const reloaded = await service.findOne(created.id);
       expect(reloaded.claudeSessionId).toBe('claude-session-1');
+      expect(reloaded.activeAgentProvider).toBe('claude');
     });
 
     it('returns early without rewriting when the Claude session id is unchanged', async () => {
@@ -560,8 +566,46 @@ describe('SessionsService', () => {
       const unchanged = await service.updateClaudeSessionId(created.id, 'claude-session-1');
 
       expect(unchanged.claudeSessionId).toBe('claude-session-1');
+      expect(unchanged.activeAgentProvider).toBe('claude');
       const reloaded = await service.findOne(created.id);
       expect(reloaded.claudeSessionId).toBe('claude-session-1');
+      expect(reloaded.activeAgentProvider).toBe('claude');
+    });
+  });
+
+  describe('updateCodexSessionId', () => {
+    it('stores a Codex session id and marks Codex as the active provider', async () => {
+      const created = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+        name: 'Tracked Session',
+      });
+
+      const updated = await service.updateCodexSessionId(created.id, 'codex-session-1');
+
+      expect(updated.codexSessionId).toBe('codex-session-1');
+      expect(updated.activeAgentProvider).toBe('codex');
+      const reloaded = await service.findOne(created.id);
+      expect(reloaded.codexSessionId).toBe('codex-session-1');
+      expect(reloaded.activeAgentProvider).toBe('codex');
+    });
+  });
+
+  describe('updateActiveAgentProvider', () => {
+    it('stores the preferred provider for an existing session', async () => {
+      const created = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+        name: 'Tracked Session',
+      });
+
+      const updated = await service.updateActiveAgentProvider(created.id, 'codex');
+
+      expect(updated.activeAgentProvider).toBe('codex');
+      const reloaded = await service.findOne(created.id);
+      expect(reloaded.activeAgentProvider).toBe('codex');
     });
   });
 });

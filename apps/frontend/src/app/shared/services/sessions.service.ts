@@ -1,6 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Session } from '../models/session.model';
+import type { AgentProviderId } from '../models/agent-runtime.model';
 
 @Injectable({ providedIn: 'root' })
 export class SessionsService {
@@ -28,6 +29,10 @@ export class SessionsService {
 
   updateStatus(id: number, status: string) {
     return this.http.patch<Session>(`/api/sessions/${id}/status`, { status });
+  }
+
+  updateActiveAgentProvider(id: number, provider: AgentProviderId) {
+    return this.http.patch<Session>(`/api/sessions/${id}/agent-provider`, { provider });
   }
 
   delete(id: number) {

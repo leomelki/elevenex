@@ -38,6 +38,7 @@ describe('TabBar', () => {
     repoId: 1,
     projectId: 10,
     repoColor: null,
+    activeAgentProvider: 'claude',
   };
 
   beforeEach(async () => {

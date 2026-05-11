@@ -10,6 +10,7 @@ export const sessions = sqliteTable('sessions', {
   worktreePath: text('worktree_path').notNull(),
   name: text('name'),
   status: text('status').notNull().default('created'),
+  activeAgentProvider: text('active_agent_provider').notNull().default('claude'),
   claudeSessionId: text('claude_session_id').default('-1'),
   codexSessionId: text('codex_session_id').default('-1'),
   hasInjectedWorktreeContext: integer('has_injected_worktree_context', { mode: 'boolean' })

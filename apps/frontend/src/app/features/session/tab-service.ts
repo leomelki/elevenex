@@ -1,5 +1,6 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { Session } from '../../shared/models/session.model';
+import type { AgentProviderId } from '../../shared/models/agent-runtime.model';
 
 export const LAST_OPENED_SESSION_STORAGE_KEY = 'elevenex-last-opened-session';
 export const OPEN_TABS_STORAGE_KEY = 'elevenex-open-tabs';
@@ -35,6 +36,7 @@ export interface Tab {
   projectId: number;
   repoColor?: string | null;
   hasInjectedWorktreeContext: boolean;
+  activeAgentProvider: AgentProviderId;
 }
 
 export interface TabCloseResult {
@@ -68,6 +70,13 @@ export class TabService {
   openTab(session: Session): void {
     const existing = this._tabs().find(t => t.sessionId === session.id);
     if (existing) {
+      this._tabs.update(tabs =>
+        tabs.map(t =>
+          t.sessionId === session.id
+            ? { ...t, activeAgentProvider: this.providerForSession(session) }
+            : t,
+        ),
+      );
       this._activeSessionId.set(session.id);
       this.persistLastOpenedSession(session.id);
       this.persistState();
@@ -87,6 +96,7 @@ export class TabService {
       projectId: session.projectId,
       repoColor: session.repoColor,
       hasInjectedWorktreeContext: session.hasInjectedWorktreeContext,
+      activeAgentProvider: this.providerForSession(session),
     };
 
     this._tabs.update(tabs => [...tabs, newTab]);
@@ -310,6 +320,17 @@ export class TabService {
     );
   }
 
+  updateTabProvider(sessionId: number, provider: AgentProviderId): void {
+    const current = this._tabs().find(t => t.sessionId === sessionId);
+    if (!current || current.activeAgentProvider === provider) return;
+    this._tabs.update(tabs =>
+      tabs.map(t =>
+        t.sessionId === sessionId ? { ...t, activeAgentProvider: provider } : t
+      )
+    );
+    this.persistState();
+  }
+
   /**
    * Get all open session IDs.
    */
@@ -419,5 +440,13 @@ export class TabService {
     } catch {
       // Ignore storage errors
     }
+  }
+
+  private providerForSession(session: Session): AgentProviderId {
+    const persisted = session.activeAgentProvider?.trim();
+    if (persisted && (persisted !== 'claude' || session.claudeSessionId !== '-1' || session.codexSessionId === '-1')) {
+      return persisted;
+    }
+    return session.codexSessionId && session.codexSessionId !== '-1' ? 'codex' : 'claude';
   }
 }

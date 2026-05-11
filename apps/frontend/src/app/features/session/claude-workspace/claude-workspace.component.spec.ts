@@ -8,6 +8,7 @@ import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.se
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
 import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
+import { SessionsService } from '@/shared/services/sessions.service';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -311,6 +312,7 @@ describe('ClaudeWorkspaceComponent', () => {
         { provide: ClaudeRuntimeApiService, useValue: apiMock },
         { provide: ClaudeRuntimeWebsocketService, useValue: wsMock },
         { provide: WorktreeContextService, useValue: worktreeContextServiceMock },
+        { provide: SessionsService, useValue: { updateActiveAgentProvider: vi.fn(() => of({})) } },
       ],
     }).compileComponents();
   });

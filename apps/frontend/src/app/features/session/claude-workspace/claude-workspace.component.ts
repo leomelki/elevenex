@@ -53,6 +53,7 @@ import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.se
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
+import { SessionsService } from '@/shared/services/sessions.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { ClaudeMessageComponent } from './components/claude-message.component';
@@ -137,18 +138,21 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   @Input({ required: true }) repoId!: number;
   @Input({ required: true }) worktreePath!: string;
   @Input() hasInjectedWorktreeContext = false;
-  @Input() isVisible = false;
+  @Input() activeAgentProvider: AgentProviderId = 'claude';
+  @Input() isVisible = true;
   @ViewChild('transcriptContainer') private transcriptContainer?: ElementRef<HTMLDivElement>;
   @ViewChild(ClaudeComposerComponent) private composer?: ClaudeComposerComponent;
 
   readonly openTerminalFallback = output<void>();
   readonly openInBrowser = output<string>();
+  readonly activeAgentProviderChange = output<AgentProviderId>();
 
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ClaudeRuntimeApiService);
   private readonly agentApi = inject(AgentRuntimeApiService);
   private readonly ws = inject(ClaudeRuntimeWebsocketService);
   private readonly providerSelection = inject(AgentRuntimeProviderService);
+  private readonly sessionsService = inject(SessionsService);
   private readonly claudeStatusService = inject(ClaudeStatusService);
   private readonly worktreeContextService = inject(WorktreeContextService);
 
@@ -188,6 +192,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly autoApprovedPermissionRequestIds = new Set<string>();
   private interruptedRunShouldRestorePrompt = false;
   private currentRunHadSubstantiveOutput = false;
+  private bootstrappedProvider: AgentProviderId | null = null;
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
   readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
@@ -550,20 +555,45 @@ readonly messageActionsDisabled = computed(
 
   ngOnInit(): void {
     this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
-    void this.bootstrap();
+    if (this.isVisible) {
+      this.providerSelection.setProvider(this.activeAgentProvider);
+      void this.bootstrap();
+    }
   }
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['sessionId'] && !changes['sessionId'].firstChange) {
       this.reset();
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
-      void this.bootstrap();
+      if (this.isVisible) {
+        this.providerSelection.setProvider(this.activeAgentProvider);
+        void this.bootstrap();
+      }
     }
     if (changes['hasInjectedWorktreeContext'] && !changes['hasInjectedWorktreeContext'].firstChange) {
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
     }
     if (changes['isVisible'] && this.isVisible && !changes['isVisible'].firstChange) {
-      void this.loadWorktreeContext(false);
+      this.providerSelection.setProvider(this.activeAgentProvider);
+      if (!this.hydrated() || this.bootstrappedProvider !== this.currentProvider()) {
+        this.reset();
+        this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
+        void this.bootstrap();
+      } else {
+        void this.loadWorktreeContext(false);
+      }
+    }
+    if (
+      changes['activeAgentProvider']
+      && this.isVisible
+      && !changes['activeAgentProvider'].firstChange
+    ) {
+      this.providerSelection.setProvider(this.activeAgentProvider);
+      if (this.bootstrappedProvider !== this.currentProvider()) {
+        this.reset();
+        this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
+        void this.bootstrap();
+      }
     }
   }
 
@@ -738,6 +768,10 @@ readonly messageActionsDisabled = computed(
     if (provider === this.currentProvider()) return;
     this.ws.disconnect(this.sessionId);
     this.providerSelection.setProvider(provider);
+    this.activeAgentProvider = provider;
+    this.activeAgentProviderChange.emit(provider);
+    void firstValueFrom(this.sessionsService.updateActiveAgentProvider(this.sessionId, provider))
+      .catch(() => undefined);
     this.reset();
     this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
     void this.bootstrap();
@@ -967,6 +1001,7 @@ readonly messageActionsDisabled = computed(
 
   private async bootstrap(): Promise<void> {
     const version = ++this.bootstrapVersion;
+    this.bootstrappedProvider = this.currentProvider();
     this.loading.set(true);
     void this.loadWorktreeContext(true);
     void this.loadProviders();
@@ -1463,6 +1498,7 @@ readonly messageActionsDisabled = computed(
     this.subagents.set([]);
     this.recentHookEvents.set([]);
     this.codexAuthStatus.set(null);
+    this.bootstrappedProvider = null;
     this.expandedTurns.set({});
     this.armedEditMessageId.set(null);
     this.rewindingMessageId.set(null);

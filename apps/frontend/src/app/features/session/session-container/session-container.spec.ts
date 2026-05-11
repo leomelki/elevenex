@@ -55,6 +55,7 @@ describe('SessionContainer modal browser gating', () => {
         repoId: session.repoId,
         projectId: session.projectId,
         repoColor: session.repoColor,
+        activeAgentProvider: session.activeAgentProvider,
       };
       tabsSignal.set([...tabsSignal().filter(current => current.sessionId !== session.id), tab]);
       activeSessionIdSignal.set(session.id);
@@ -62,6 +63,7 @@ describe('SessionContainer modal browser gating', () => {
     updateTabStatus: vi.fn(),
     updateTabCompletion: vi.fn(),
     updateTabName: vi.fn(),
+    updateTabProvider: vi.fn(),
     getOpenSessionIds: vi.fn(() => tabsSignal().map(tab => tab.sessionId)),
     getSavedState: vi.fn(() => null),
     selectTab: vi.fn((sessionId: number) => activeSessionIdSignal.set(sessionId)),
@@ -151,7 +153,9 @@ describe('SessionContainer modal browser gating', () => {
       worktreePath: '/tmp/main',
       name: 'Session 42',
       status: 'active',
+      activeAgentProvider: 'claude',
       claudeSessionId: '-1',
+      codexSessionId: '-1',
       hasInjectedWorktreeContext: false,
       hasUnreviewedCompletion: false,
       lastCompletionAt: null,
@@ -179,6 +183,7 @@ describe('SessionContainer modal browser gating', () => {
         repoId: 1,
         projectId: 10,
         repoColor: null,
+        activeAgentProvider: 'claude',
       },
     ]);
     activeSessionIdSignal.set(42);
@@ -327,6 +332,7 @@ describe('SessionContainer modal browser gating', () => {
         repoId: 1,
         projectId: 10,
         repoColor: null,
+        activeAgentProvider: 'claude',
       },
     ]);
     const fixture = TestBed.createComponent(SessionContainer);

@@ -60,6 +60,14 @@ export class SessionsController {
     return this.sessionsService.updateStatus(+id, body.status);
   }
 
+  @Patch(':id/agent-provider')
+  updateActiveAgentProvider(
+    @Param('id') id: string,
+    @Body() body: { provider: string },
+  ) {
+    return this.sessionsService.updateActiveAgentProvider(+id, body.provider);
+  }
+
   @Delete(':id')
   delete(@Param('id') id: string) {
     return this.sessionsService.delete(+id);

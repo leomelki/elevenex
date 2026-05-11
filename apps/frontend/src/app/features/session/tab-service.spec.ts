@@ -14,7 +14,9 @@ describe('TabService', () => {
     worktreePath: '/path/to/worktree',
     name: name ?? null,
     status,
+    activeAgentProvider: 'claude',
     claudeSessionId: '-1',
+    codexSessionId: '-1',
     hasInjectedWorktreeContext: false,
     hasUnreviewedCompletion: false,
     lastCompletionAt: null,
@@ -83,6 +85,16 @@ describe('TabService', () => {
       service.openTab(mockSession(5)); // No name
 
       expect(service.tabs()[0].sessionName).toBe('Session 5');
+    });
+
+    it('should infer Codex provider for an existing Codex-backed session', () => {
+      service.openTab({
+        ...mockSession(7),
+        activeAgentProvider: 'claude',
+        codexSessionId: 'codex-session-1',
+      });
+
+      expect(service.tabs()[0].activeAgentProvider).toBe('codex');
     });
   });
 

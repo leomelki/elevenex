@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `active_agent_provider` text DEFAULT 'claude' NOT NULL;

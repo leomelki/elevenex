@@ -117,6 +117,7 @@ describe('EnvironmentConnectionManagerService', () => {
         repoId: 4,
         projectId: 55,
         repoColor: null,
+        activeAgentProvider: 'claude',
       },
     ]).asReadonly(),
     resetForEnvironmentChange: vi.fn(() => ({ activeSessionId: null, closedSessionIds: [100] })),

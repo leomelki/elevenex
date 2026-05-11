@@ -6,7 +6,9 @@ export interface Session {
   worktreePath: string;
   name: string | null;
   status: 'created' | 'active' | 'archived' | 'stopped';
+  activeAgentProvider: string;
   claudeSessionId: string;
+  codexSessionId: string;
   hasInjectedWorktreeContext: boolean;
   hasUnreviewedCompletion: boolean;
   lastCompletionAt: string | null;

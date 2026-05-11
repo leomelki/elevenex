@@ -101,6 +101,17 @@ export class AgentRuntimeWebsocketService {
     connection.ws.close();
   }
 
+  disconnectSession(sessionId: number): void {
+    const suffix = `:${sessionId}`;
+    for (const [key, connection] of this.connections) {
+      if (!key.endsWith(suffix)) {
+        continue;
+      }
+      this.connections.delete(key);
+      connection.ws.close();
+    }
+  }
+
   private connectionKey(sessionId: number, provider: AgentProviderId): string {
     return `${provider}:${sessionId}`;
   }

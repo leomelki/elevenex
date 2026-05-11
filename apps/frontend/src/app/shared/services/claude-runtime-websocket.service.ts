@@ -25,9 +25,6 @@ export class ClaudeRuntimeWebsocketService {
   }
 
   disconnect(sessionId: number): void {
-    this.agentRuntimeWs.disconnect(
-      sessionId,
-      this.providerSelection.currentProvider,
-    );
+    this.agentRuntimeWs.disconnectSession(sessionId);
   }
 }
