@@ -946,7 +946,7 @@ export class GitService {
     }
 
     const normalized = subject.trim().replace(/\s+/g, ' ');
-    if (!normalized || normalized.length > 72) {
+    if (!normalized) {
       return null;
     }
 
