@@ -122,7 +122,7 @@ function createService(options?: { idleMs?: string; idleCap?: string }) {
     })),
   };
   return {
-    service: new PiRuntimeService(sessions as never, auth as never),
+    service: new PiRuntimeService(sessions as never, auth as never, { updateRuntimeActivity: () => {} } as never),
     sessions,
   };
 }

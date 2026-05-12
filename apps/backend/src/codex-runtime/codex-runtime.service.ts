@@ -16,6 +16,10 @@ import { join } from 'path';
 import { createInterface } from 'readline';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import {
+  ClaudeHooksService,
+  type ClaudeSessionActivity,
+} from '../claude-hooks/claude-hooks.service.js';
 import type {
   ClaudeContextUsage,
   ClaudeModelOption,
@@ -133,6 +137,7 @@ export class CodexRuntimeService extends EventEmitter {
     private readonly authService: CodexAuthService,
     private readonly historyService: CodexHistoryService,
     private readonly appServer: CodexAppServerClient,
+    private readonly hooksService: ClaudeHooksService,
   ) {
     super();
   }
@@ -785,6 +790,7 @@ export class CodexRuntimeService extends EventEmitter {
 
   private emitRunState(sessionId: number): void {
     const state = this.ensureRuntimeState(sessionId);
+    this.hooksService.updateRuntimeActivity(sessionId, this.toSidebarActivity(state));
     this.emitEvent({
       type: 'run_state',
       payload: {
@@ -802,6 +808,20 @@ export class CodexRuntimeService extends EventEmitter {
         pendingPrompts: state.pendingPrompts,
       },
     });
+  }
+
+  private toSidebarActivity(state: CodexRuntimeState): ClaudeSessionActivity {
+    if (state.pendingPermissionRequest) {
+      return { activityStatus: 'waiting', actionKind: 'permission', actionLabel: 'Permission needed' };
+    }
+    if (state.pendingUserInputRequest) {
+      return { activityStatus: 'waiting', actionKind: 'user_input', actionLabel: 'Input needed' };
+    }
+    return {
+      activityStatus: state.runPhase === 'running' || state.runPhase === 'waiting' ? state.runPhase : 'idle',
+      actionKind: null,
+      actionLabel: null,
+    };
   }
 
   private emitEvent(event: CodexRuntimeEvent): void {

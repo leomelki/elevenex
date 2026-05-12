@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { ClaudeHooksModule } from '../claude-hooks/claude-hooks.module.js';
 import { SessionsModule } from '../sessions/sessions.module.js';
 import { CodexAgentRuntimeProvider } from './codex-agent-runtime.provider.js';
 import { CodexAppServerClient } from './codex-app-server.js';
@@ -8,7 +9,7 @@ import { CodexMcpService } from './codex-mcp.service.js';
 import { CodexRuntimeService } from './codex-runtime.service.js';
 
 @Module({
-  imports: [forwardRef(() => SessionsModule)],
+  imports: [forwardRef(() => SessionsModule), ClaudeHooksModule],
   providers: [
     CodexAgentRuntimeProvider,
     CodexAppServerClient,

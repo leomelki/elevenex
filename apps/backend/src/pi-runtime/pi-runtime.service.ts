@@ -4,6 +4,10 @@ import { randomUUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import {
+  ClaudeHooksService,
+  type ClaudeSessionActivity,
+} from '../claude-hooks/claude-hooks.service.js';
 import type {
   ClaudeAutocompleteItem,
   ClaudeModelOption,
@@ -63,6 +67,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
   constructor(
     private readonly sessionsService: SessionsService,
     private readonly authService: PiAuthService,
+    private readonly hooksService: ClaudeHooksService,
   ) {
     super();
     this.authService.on('status', (status: PiAuthStatus) => {
@@ -719,6 +724,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
 
   private emitRunState(sessionId: number): void {
     const state = this.ensureRuntimeState(sessionId);
+    this.hooksService.updateRuntimeActivity(sessionId, this.toSidebarActivity(state));
     this.emitEvent({
       type: 'run_state',
       payload: {
@@ -736,6 +742,17 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
         pendingPrompts: state.pendingPrompts,
       },
     });
+  }
+
+  private toSidebarActivity(state: PiRuntimeState): ClaudeSessionActivity {
+    if (state.pendingUserInputRequest) {
+      return { activityStatus: 'waiting', actionKind: 'user_input', actionLabel: 'Input needed' };
+    }
+    return {
+      activityStatus: state.runPhase === 'running' || state.runPhase === 'waiting' ? state.runPhase : 'idle',
+      actionKind: null,
+      actionLabel: null,
+    };
   }
 
   private toRuntimeStatePayload(
