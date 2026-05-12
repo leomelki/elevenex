@@ -1031,7 +1031,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           session.worktreePath,
           sessionTitlePrompt,
         ).catch((error) => {
-          this.logger.debug(
+          this.logger.warn(
             `Session title generation failed session=${sessionId}: ${String(error)}`,
           );
         });
@@ -3133,15 +3133,21 @@ export class ClaudeRuntimeService extends EventEmitter {
         }
       }
     } catch (error) {
-      this.logger.debug(
-        `Claude Haiku title query failed session=${worktreePath}: ${String(error)}`,
+      this.logger.warn(
+        `Title query failed worktreePath=${worktreePath} error=${String(error)} rawReply=${JSON.stringify(assistantText)}`,
       );
       return null;
     } finally {
       runtimeQuery.close();
     }
 
-    return this.normalizeGeneratedSessionTitle(assistantText);
+    const title = this.normalizeGeneratedSessionTitle(assistantText);
+    if (title === null) {
+      this.logger.warn(
+        `Title normalization returned null worktreePath=${worktreePath} rawReply=${JSON.stringify(assistantText)}`,
+      );
+    }
+    return title;
   }
 
   private extractAssistantText(message: SDKAssistantMessage): string {

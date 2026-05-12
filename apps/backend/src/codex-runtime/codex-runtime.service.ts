@@ -716,7 +716,7 @@ export class CodexRuntimeService extends EventEmitter {
       if (!title) return;
       await this.sessionsService.renameFromGeneratedTitle(sessionId, title);
     } catch (error) {
-      this.logger.debug(
+      this.logger.warn(
         `Session title generation failed session=${sessionId}: ${String(error)}`,
       );
     }

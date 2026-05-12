@@ -55,15 +55,21 @@ export class SessionTitleService {
         }
       }
     } catch (error) {
-      this.logger.debug(
-        `Title query failed worktreePath=${worktreePath}: ${String(error)}`,
+      this.logger.warn(
+        `Title query failed worktreePath=${worktreePath} error=${String(error)} rawReply=${JSON.stringify(assistantText)}`,
       );
       return null;
     } finally {
       runtimeQuery.close();
     }
 
-    return this.normalize(assistantText);
+    const title = this.normalize(assistantText);
+    if (title === null) {
+      this.logger.warn(
+        `Title normalization returned null worktreePath=${worktreePath} rawReply=${JSON.stringify(assistantText)}`,
+      );
+    }
+    return title;
   }
 
   private extractText(message: SDKAssistantMessage): string {
