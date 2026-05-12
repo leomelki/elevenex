@@ -405,12 +405,13 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
         return;
       case 'tool_execution_start': {
         const toolUseId = String(event.toolCallId ?? randomUUID());
+        const toolName = String(event.toolName ?? 'Tool');
         this.pushItem(sessionId, {
           id: `${toolUseId}:tool_use`,
           kind: 'tool_use',
           toolUseId,
-          toolName: String(event.toolName ?? 'Tool'),
-          toolInput: event.args,
+          toolName,
+          toolInput: this.normalizePiToolInput(toolName, event.args),
           sourceMessageId: toolUseId,
           timestamp: new Date().toISOString(),
           receivedAt: new Date().toISOString(),
@@ -506,12 +507,13 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       const toolCall = update.toolCall as Record<string, unknown> | undefined;
       if (!toolCall) return;
       const toolUseId = String(toolCall.id ?? randomUUID());
+      const toolName = String(toolCall.name ?? 'Tool');
       this.pushItem(sessionId, {
         id: `${sourceMessageId}:tool:${toolUseId}`,
         kind: 'tool_use',
         toolUseId,
-        toolName: String(toolCall.name ?? 'Tool'),
-        toolInput: toolCall.arguments,
+        toolName,
+        toolInput: this.normalizePiToolInput(toolName, toolCall.arguments),
         sourceMessageId,
         timestamp: this.timestampFromMessage(message),
         receivedAt: new Date().toISOString(),
@@ -889,12 +891,13 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
           });
         } else if (block.type === 'toolCall') {
           const toolUseId = String(block.id ?? `${id}:${index}`);
+          const toolName = String(block.name ?? 'Tool');
           items.push({
             id: `${id}:tool:${toolUseId}`,
             kind: 'tool_use',
             toolUseId,
-            toolName: String(block.name ?? 'Tool'),
-            toolInput: block.arguments,
+            toolName,
+            toolInput: this.normalizePiToolInput(toolName, block.arguments),
             sourceMessageId: id,
             timestamp,
             receivedAt: timestamp,
@@ -1074,6 +1077,32 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       type: 'object',
       properties: { value: { type: 'string' } },
       required: ['value'],
+    };
+  }
+
+  private normalizePiToolInput(toolName: string, args: unknown): unknown {
+    if (toolName !== 'edit' || !args || typeof args !== 'object') return args;
+    const input = args as Record<string, unknown>;
+    const edits = input['edits'];
+    if (!Array.isArray(edits) || edits.length === 0) return args;
+    const filePath = typeof input['path'] === 'string' ? input['path'] : input['file_path'];
+    if (edits.length === 1) {
+      const edit = edits[0] as Record<string, unknown>;
+      return {
+        file_path: filePath,
+        old_string: typeof edit['oldText'] === 'string' ? edit['oldText'] : '',
+        new_string: typeof edit['newText'] === 'string' ? edit['newText'] : '',
+      };
+    }
+    return {
+      file_path: filePath,
+      edits: edits.map((edit) => {
+        const e = edit as Record<string, unknown>;
+        return {
+          old_string: typeof e['oldText'] === 'string' ? e['oldText'] : '',
+          new_string: typeof e['newText'] === 'string' ? e['newText'] : '',
+        };
+      }),
     };
   }
 
