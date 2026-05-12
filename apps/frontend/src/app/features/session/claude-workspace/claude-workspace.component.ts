@@ -177,6 +177,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly currentProviderSupportsImages = computed(
     () => this.currentProviderInfo()?.capabilities.multimodalPrompts ?? false,
   );
+  readonly composerPlaceholder = computed(() => {
+    const name = this.currentProviderInfo()?.displayName;
+    return name ? `Tell ${name} what to do…` : 'Tell the agent what to do…';
+  });
   readonly selectedModel = signal<string | null>(null);
   readonly worktreeContext = signal<WorktreeContextSnapshot | null>(null);
   readonly worktreeContextLoading = signal(false);
