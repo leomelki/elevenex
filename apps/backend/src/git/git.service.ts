@@ -735,6 +735,7 @@ export class GitService {
   }): Promise<CommitMessageSuggestion | null> {
     const sdk = await this.loadClaudeSdk();
     if (!sdk) {
+      this.logger.warn('[commit-message] claude SDK not available, skipping');
       return null;
     }
 
@@ -767,13 +768,22 @@ export class GitService {
         if (message.type !== 'assistant') continue;
         assistantText += this.extractAssistantText(message);
       }
-    } catch {
+    } catch (error: any) {
+      this.logger.warn(
+        `[commit-message] claude query failed: ${error?.message ?? String(error)}`,
+      );
       return null;
     } finally {
       runtimeQuery.close();
     }
 
-    return this.parseCommitSuggestion(assistantText);
+    const suggestion = this.parseCommitSuggestion(assistantText);
+    if (!suggestion && assistantText.trim()) {
+      this.logger.warn(
+        `[commit-message] claude response could not be parsed: ${assistantText.trim()}`,
+      );
+    }
+    return suggestion;
   }
 
   private async generateCommitMessageWithCodex(input: {
@@ -797,8 +807,17 @@ export class GitService {
         approvalPolicy: 'never',
       });
       const result = await thread.run(this.buildCommitMessagePrompt(input));
-      return this.parseCommitSuggestion(result.finalResponse, 'codex');
-    } catch {
+      const suggestion = this.parseCommitSuggestion(result.finalResponse, 'codex');
+      if (!suggestion && result.finalResponse?.trim()) {
+        this.logger.warn(
+          `[commit-message] codex response could not be parsed: ${result.finalResponse.trim()}`,
+        );
+      }
+      return suggestion;
+    } catch (error: any) {
+      this.logger.warn(
+        `[commit-message] codex query failed: ${error?.message ?? String(error)}`,
+      );
       return null;
     }
   }
