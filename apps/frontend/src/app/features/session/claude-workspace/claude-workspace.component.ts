@@ -1572,7 +1572,8 @@ readonly messageActionsDisabled = computed(
   private shouldAutoApprovePermission(req: ClaudePermissionRequest): boolean {
     if (!this.planBypassActive()) return false;
     const toolName = (req.toolName ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    return toolName !== 'exitplanmode';
+    const noAutoApprove = new Set(['exitplanmode', 'askuserquestion']);
+    return !noAutoApprove.has(toolName);
   }
 
   private reset(): void {
