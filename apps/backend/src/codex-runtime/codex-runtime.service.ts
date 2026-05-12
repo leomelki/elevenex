@@ -269,9 +269,7 @@ export class CodexRuntimeService extends EventEmitter {
       const effectiveTitlePrompt = (titlePrompt ?? trimmedPrompt).trim();
       if (effectiveTitlePrompt) {
         setImmediate(() => {
-          this.titleService.generateAndSave(sessionId, worktreePath!, effectiveTitlePrompt).catch(
-            (error) => this.logger.debug(`Session title generation failed session=${sessionId}: ${String(error)}`),
-          );
+          void this.generateAndSaveSessionTitle(sessionId, worktreePath!, effectiveTitlePrompt);
         });
       }
     }
@@ -706,6 +704,22 @@ export class CodexRuntimeService extends EventEmitter {
       payload: { sessionId, claudeSessionId: codexSessionId },
     });
     await this.sessionsService.updateCodexSessionId(sessionId, codexSessionId);
+  }
+
+  private async generateAndSaveSessionTitle(
+    sessionId: number,
+    worktreePath: string,
+    prompt: string,
+  ): Promise<void> {
+    try {
+      const title = await this.titleService.generate(worktreePath, prompt);
+      if (!title) return;
+      await this.sessionsService.renameFromGeneratedTitle(sessionId, title);
+    } catch (error) {
+      this.logger.debug(
+        `Session title generation failed session=${sessionId}: ${String(error)}`,
+      );
+    }
   }
 
   private emitSessionMetadata(

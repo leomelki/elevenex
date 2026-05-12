@@ -204,9 +204,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       const effectiveTitlePrompt = (titlePrompt ?? trimmedPrompt).trim();
       if (effectiveTitlePrompt) {
         setImmediate(() => {
-          this.titleService.generateAndSave(sessionId, session.worktreePath, effectiveTitlePrompt).catch(
-            (error) => this.logger.debug(`Session title generation failed session=${sessionId}: ${String(error)}`),
-          );
+          void this.generateAndSaveSessionTitle(sessionId, session.worktreePath, effectiveTitlePrompt);
         });
       }
     }
@@ -396,6 +394,22 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     state.authStatus = await this.authService.getStatus();
     this.emitSessionMetadata(sessionId);
     await this.refreshModels(sessionId);
+  }
+
+  private async generateAndSaveSessionTitle(
+    sessionId: number,
+    worktreePath: string,
+    prompt: string,
+  ): Promise<void> {
+    try {
+      const title = await this.titleService.generate(worktreePath, prompt);
+      if (!title) return;
+      await this.sessionsService.renameFromGeneratedTitle(sessionId, title);
+    } catch (error) {
+      this.logger.debug(
+        `Session title generation failed session=${sessionId}: ${String(error)}`,
+      );
+    }
   }
 
   private async refreshModels(sessionId: number): Promise<void> {
