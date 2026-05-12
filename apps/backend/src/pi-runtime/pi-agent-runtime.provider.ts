@@ -94,8 +94,7 @@ export class PiAgentRuntimeProvider
     titlePrompt?: string,
     images?: AgentImageInput[],
   ) {
-    void titlePrompt;
-    return this.runtimeService.submitPrompt(sessionId, prompt, images);
+    return this.runtimeService.submitPrompt(sessionId, prompt, titlePrompt, images);
   }
 
   interrupt(sessionId: number) {
