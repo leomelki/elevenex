@@ -175,8 +175,8 @@ export class ServerConnectionService implements OnDestroy {
     const nextAttempt = this._state().reconnectAttempt + 1;
     this._state.update((state) => ({
       ...state,
-      phase: 'disconnected',
-      lastDisconnectedAt: Date.now(),
+      phase: this.hasConnected ? 'disconnected' : 'connecting',
+      lastDisconnectedAt: this.hasConnected ? Date.now() : state.lastDisconnectedAt,
       reconnectAttempt: nextAttempt,
     }));
     this.scheduleReconnect(nextAttempt);
