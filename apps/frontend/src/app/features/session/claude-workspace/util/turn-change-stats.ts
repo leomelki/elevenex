@@ -16,6 +16,7 @@ export interface TurnChangeHunk {
   additions: number;
   deletions: number;
   patch?: string;
+  startLine?: number;
 }
 
 export interface TurnChangedFile {
@@ -37,6 +38,7 @@ interface EditOp {
   patch?: string;
   additions?: number;
   deletions?: number;
+  startLine?: number;
 }
 
 interface ExtractedEdits {
@@ -126,10 +128,11 @@ function extractEdits(toolName: string, input: unknown): ExtractedEdits[] {
 
     const filePath = readPath(record, ['file_path', 'filePath', 'path']);
     if (!filePath) return [];
+    const startLine = asNumber(record['__startLine']);
     return [{
       filePath,
       toolName,
-      edits: [{ oldString, newString }],
+      edits: [{ oldString, newString, startLine }],
     }];
   }
 
@@ -145,6 +148,7 @@ function extractEdits(toolName: string, input: unknown): ExtractedEdits[] {
         oldString: asString(editRecord['old_string']),
         newString: asString(editRecord['new_string']),
         label: raw.length > 1 ? `Edit ${index + 1}` : undefined,
+        startLine: asNumber(editRecord['__startLine']),
       });
     }
     return edits.length ? [{ filePath, toolName, edits }] : [];
@@ -314,6 +318,7 @@ export function computeTurnChangeDetails(units: PairedTranscriptUnit[]): TurnCha
           additions,
           deletions,
           patch: edit.patch,
+          startLine: edit.startLine,
         });
       }
 

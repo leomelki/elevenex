@@ -152,6 +152,7 @@ interface ActiveUserInputRequest {
 
 interface ActiveRunState {
   query: Query;
+  worktreePath: string;
   interruptRequested: boolean;
   tornDown: boolean;
   permissionRequests: Map<string, ActivePermissionRequest>;
@@ -1002,6 +1003,7 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     this.activeRuns.set(sessionId, {
       query: runtimeQuery,
+      worktreePath: session.worktreePath,
       interruptRequested: false,
       tornDown: false,
       permissionRequests: new Map(),
@@ -1677,13 +1679,66 @@ export class ClaudeRuntimeService extends EventEmitter {
           toolUseId: part.id,
           parentToolUseId: message.parent_tool_use_id ?? undefined,
           toolName: part.name,
-          toolInput: part.input,
+          toolInput: this.enrichEditToolInput(part.name, part.input, sessionId),
           sourceMessageId: streamMessageId,
           timestamp: receivedAt,
           receivedAt,
         };
         this.pushItem(sessionId, item, 'tool_use');
       }
+    }
+  }
+
+  private enrichEditToolInput(toolName: string, input: unknown, sessionId: number): unknown {
+    const normalized = toolName.toLowerCase().replace(/[_\-]/g, '');
+    const isEdit = normalized === 'edit' || normalized === 'strreplace' || normalized === 'strreplacebasededittool' || normalized === 'strreplacebasedeittool';
+    const isMultiEdit = normalized === 'multiedit';
+    if (!isEdit && !isMultiEdit) return input;
+
+    const record = input && typeof input === 'object' && !Array.isArray(input)
+      ? (input as Record<string, unknown>)
+      : null;
+    if (!record) return input;
+
+    const worktreePath = this.activeRuns.get(sessionId)?.worktreePath;
+    if (!worktreePath) return input;
+
+    const rawPath = typeof record['file_path'] === 'string' ? record['file_path']
+      : typeof record['filePath'] === 'string' ? record['filePath']
+      : typeof record['path'] === 'string' ? record['path']
+      : null;
+    if (!rawPath) return input;
+
+    const absolutePath = rawPath.startsWith('/') ? rawPath : join(worktreePath, rawPath);
+
+    try {
+      const content = readFileSync(absolutePath, 'utf-8');
+
+      if (isEdit) {
+        const oldString = typeof record['old_string'] === 'string' ? record['old_string'] : null;
+        if (!oldString) return input;
+        const idx = content.indexOf(oldString);
+        if (idx === -1) return input;
+        const startLine = content.slice(0, idx).split('\n').length;
+        return { ...record, __startLine: startLine };
+      }
+
+      // multiedit: enrich each entry in the edits array
+      const rawEdits = Array.isArray(record['edits']) ? record['edits'] : null;
+      if (!rawEdits) return input;
+      const enrichedEdits = rawEdits.map((edit) => {
+        if (!edit || typeof edit !== 'object' || Array.isArray(edit)) return edit;
+        const e = edit as Record<string, unknown>;
+        const oldStr = typeof e['old_string'] === 'string' ? e['old_string'] : null;
+        if (!oldStr) return edit;
+        const idx = content.indexOf(oldStr);
+        if (idx === -1) return edit;
+        const startLine = content.slice(0, idx).split('\n').length;
+        return { ...e, __startLine: startLine };
+      });
+      return { ...record, edits: enrichedEdits };
+    } catch {
+      return input;
     }
   }
 

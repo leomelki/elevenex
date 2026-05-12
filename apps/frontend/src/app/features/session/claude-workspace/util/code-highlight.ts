@@ -134,12 +134,12 @@ function splitDiffLines(text: string): string[] {
   return text.endsWith('\n') ? lines.slice(0, -1) : lines;
 }
 
-function buildLineDiff(oldLines: string[], newLines: string[]): LineDiff[] {
+function buildLineDiff(oldLines: string[], newLines: string[], startLine = 1): LineDiff[] {
   const cells = oldLines.length * newLines.length;
   if (cells > 200_000) {
     return [
-      ...oldLines.map((_, index) => ({ type: 'del' as const, oldLine: index + 1, oldIndex: index })),
-      ...newLines.map((_, index) => ({ type: 'add' as const, newLine: index + 1, newIndex: index })),
+      ...oldLines.map((_, index) => ({ type: 'del' as const, oldLine: index + startLine, oldIndex: index })),
+      ...newLines.map((_, index) => ({ type: 'add' as const, newLine: index + startLine, newIndex: index })),
     ];
   }
 
@@ -159,18 +159,18 @@ function buildLineDiff(oldLines: string[], newLines: string[]): LineDiff[] {
   let j = 0;
   while (i < oldLines.length || j < newLines.length) {
     if (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
-      out.push({ type: 'context', oldLine: i + 1, newLine: j + 1, oldIndex: i, newIndex: j });
+      out.push({ type: 'context', oldLine: i + startLine, newLine: j + startLine, oldIndex: i, newIndex: j });
       i++;
       j++;
       continue;
     }
     if (j < newLines.length && (i === oldLines.length || dp[i][j + 1] >= dp[i + 1][j])) {
-      out.push({ type: 'add', newLine: j + 1, newIndex: j });
+      out.push({ type: 'add', newLine: j + startLine, newIndex: j });
       j++;
       continue;
     }
     if (i < oldLines.length) {
-      out.push({ type: 'del', oldLine: i + 1, oldIndex: i });
+      out.push({ type: 'del', oldLine: i + startLine, oldIndex: i });
       i++;
     }
   }
@@ -200,13 +200,14 @@ export function highlightedUnifiedDiffHtml(
   oldStr: string,
   newStr: string,
   filePath: string,
+  startLine = 1,
 ): string {
   const lang = detectHljsLang(filePath);
   const oldLines = splitDiffLines(oldStr);
   const newLines = splitDiffLines(newStr);
   const oldHl = highlightLines(oldLines.join('\n'), lang);
   const newHl = highlightLines(newLines.join('\n'), lang);
-  const diff = buildLineDiff(oldLines, newLines);
+  const diff = buildLineDiff(oldLines, newLines, startLine);
 
   return diff.map((line) => {
     if (line.type === 'context') {

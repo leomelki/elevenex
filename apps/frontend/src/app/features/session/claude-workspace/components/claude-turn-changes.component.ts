@@ -489,7 +489,7 @@ export class ClaudeTurnChangesComponent {
     const raw = hunk.patch
       ? highlightedPatchHtml(hunk.patch, filePath)
       : hunk.oldString || hunk.newString
-        ? highlightedUnifiedDiffHtml(hunk.oldString, hunk.newString, filePath)
+        ? highlightedUnifiedDiffHtml(hunk.oldString, hunk.newString, filePath, hunk.startLine ?? 1)
         : '';
     if (!raw) return null;
     const safe = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });

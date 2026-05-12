@@ -1147,8 +1147,8 @@ export class ClaudeToolCallComponent {
   });
 
   readonly diffHtml = computed<SafeHtml>(() => {
-    const data = this.call().toolInput as { old_string?: string; new_string?: string } | undefined;
-    const html = highlightedUnifiedDiffHtml(data?.old_string ?? '', data?.new_string ?? '', this.editFilePath());
+    const data = this.call().toolInput as { old_string?: string; new_string?: string; __startLine?: number } | undefined;
+    const html = highlightedUnifiedDiffHtml(data?.old_string ?? '', data?.new_string ?? '', this.editFilePath(), data?.__startLine ?? 1);
     const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
     return this.sanitizer.bypassSecurityTrustHtml(safe);
   });
