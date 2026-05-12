@@ -1,4 +1,4 @@
-<div class="cw-root">
+<div class="flex flex-col flex-1 min-h-0 h-full">
   @if (showCodexLogin()) {
     <div class="flex flex-1 items-center justify-center overflow-y-auto px-4">
       <cw-codex-login-card
@@ -14,81 +14,98 @@
       />
     </div>
   } @else {
-  <div #transcriptContainer class="cw-transcript" (scroll)="onTranscriptScroll()">
+
+  <div
+    #transcriptContainer
+    class="flex-1 min-h-0 overflow-auto py-5 px-[clamp(0.75rem,4vw,2rem)] scroll-smooth"
+    (scroll)="onTranscriptScroll()"
+  >
     @if (showLoading()) {
-      <div class="cw-loading">
-        <div class="cw-loading__stream">
-          <div class="cw-loading__row cw-loading__row--user">
-            <div class="cw-loading__bubble"></div>
+      <div class="h-full flex items-center justify-center">
+        <div class="flex flex-col gap-4 w-full max-w-[52rem] mx-auto">
+          <div class="flex flex-col gap-1.5 items-end">
+            <div class="w-48 h-9 rounded-[1rem_1rem_0.25rem_1rem] bg-foreground/7 animate-pulse"></div>
           </div>
-          <div class="cw-loading__row">
-            <div class="cw-loading__lines">
-              <div class="cw-loading__line cw-loading__line--long"></div>
-              <div class="cw-loading__line cw-loading__line--medium"></div>
-              <div class="cw-loading__line cw-loading__line--short"></div>
-            </div>
+          <div class="flex flex-col gap-2 max-w-[40ch]">
+            <div class="h-3 rounded bg-foreground/7 animate-pulse w-full [animation-delay:150ms]"></div>
+            <div class="h-3 rounded bg-foreground/7 animate-pulse w-3/4 [animation-delay:150ms]"></div>
+            <div class="h-3 rounded bg-foreground/7 animate-pulse w-[45%] [animation-delay:150ms]"></div>
           </div>
-          <div class="cw-loading__row">
-            <div class="cw-loading__lines">
-              <div class="cw-loading__line cw-loading__line--long"></div>
-              <div class="cw-loading__line cw-loading__line--short"></div>
-            </div>
+          <div class="flex flex-col gap-2 max-w-[40ch]">
+            <div class="h-3 rounded bg-foreground/7 animate-pulse w-full [animation-delay:300ms]"></div>
+            <div class="h-3 rounded bg-foreground/7 animate-pulse w-[45%] [animation-delay:300ms]"></div>
           </div>
         </div>
       </div>
     } @else if (!pairedTranscript().length) {
-      <div class="cw-empty">
-        <div class="cw-empty__title">Start with a prompt.</div>
-        <div class="cw-empty__hint">Type <code>/</code> for commands or <code>$</code> for skills. ⌘↵ to send.</div>
+      <div class="h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground text-sm">
+        <div class="text-[0.9375rem] text-foreground font-medium">Start with a prompt.</div>
+        <div>
+          Type
+          <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded">/</code>
+          for commands or
+          <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded">$</code>
+          for skills. ⌘↵ to send.
+        </div>
       </div>
     } @else {
-      <div class="cw-stream">
+      <div class="flex flex-col gap-3.5 max-w-[52rem] mx-auto">
+
         @if (firstMessageContext(); as fmc) {
           <section
-            class="cw-first-ctx"
-            [class.cw-first-ctx--open]="firstMessageContextExpanded()"
+            [attr.data-open]="firstMessageContextExpanded() || null"
+            class="group/fmc mb-1 rounded-xl border border-border/85 bg-card/92 overflow-hidden transition-[border-color,box-shadow] duration-[160ms] ease-in-out hover:border-primary/22 data-[open]:shadow-[0_10px_28px_-22px_color-mix(in_oklab,var(--foreground)_45%,transparent)]"
             aria-label="Context attached to this conversation"
           >
             <button
               type="button"
-              class="cw-first-ctx__head"
+              class="flex items-center gap-[0.55rem] w-full pl-[0.85rem] pr-[0.7rem] py-2 border-0 bg-transparent text-foreground font-[inherit] text-left cursor-pointer transition-[background-color] duration-[140ms] hover:bg-foreground/3 focus-visible:outline-none"
               [attr.aria-expanded]="firstMessageContextExpanded()"
               (click)="toggleFirstMessageContext()"
             >
-              <span class="cw-first-ctx__icon" aria-hidden="true">
+              <span
+                class="inline-flex items-center justify-center w-[1.15rem] h-[1.15rem] shrink-0 rounded-[0.35rem] bg-primary/14 text-[color-mix(in_oklab,var(--primary)_85%,var(--foreground))]"
+                aria-hidden="true"
+              >
                 <ng-icon name="lucideWandSparkles" size="13" />
               </span>
-              <span class="cw-first-ctx__label">Context</span>
-              <span class="cw-first-ctx__summary">{{ fmc.sentence }}</span>
+              <span class="text-[0.68rem] font-semibold tracking-[0.06em] uppercase text-[color-mix(in_oklab,var(--primary)_72%,var(--muted-foreground))] shrink-0">Context</span>
+              <span class="text-[0.8rem] leading-[1.4] text-foreground min-w-0 flex-1 whitespace-nowrap overflow-hidden text-ellipsis group-data-[open]/fmc:hidden">{{ fmc.sentence }}</span>
               @if (fmc.rootRef) {
-                <span class="cw-first-ctx__ref" title="Compared against">
+                <span
+                  class="inline-flex items-center gap-[0.3rem] px-[0.4rem] py-[0.1rem] rounded-full bg-foreground/6 text-muted-foreground text-[0.68rem] shrink-0 max-w-56"
+                  title="Compared against"
+                >
                   <ng-icon name="lucideGitBranch" size="10" aria-hidden="true" />
-                  <code>{{ fmc.rootRef }}</code>
+                  <code class="font-mono text-[0.68rem] text-foreground whitespace-nowrap overflow-hidden text-ellipsis">{{ fmc.rootRef }}</code>
                 </span>
               }
               <ng-icon
-                class="cw-first-ctx__chevron"
+                class="text-muted-foreground shrink-0 ml-auto transition-transform duration-[180ms] group-data-[open]/fmc:rotate-180"
                 name="lucideChevronDown"
                 size="12"
                 aria-hidden="true"
               />
             </button>
             @if (firstMessageContextExpanded()) {
-              <div class="cw-first-ctx__panel">
-                <p class="cw-first-ctx__sentence">{{ fmc.sentence }}</p>
+              <div class="flex flex-col gap-[0.55rem] px-[0.95rem] pt-[0.7rem] pb-[0.85rem] border-t border-dashed border-border/70 mt-[0.15rem]">
+                <p class="m-0 text-[0.82rem] leading-[1.5] text-foreground">{{ fmc.sentence }}</p>
                 @if (fmc.rootRef) {
-                  <dl class="cw-first-ctx__meta">
-                    <dt>Comparing against</dt>
-                    <dd><code>{{ fmc.rootRef }}</code></dd>
+                  <dl class="m-0 flex items-center gap-2 text-[0.72rem]">
+                    <dt class="text-muted-foreground font-medium">Comparing against</dt>
+                    <dd class="m-0">
+                      <code class="font-mono text-[0.72rem] px-[0.35rem] py-[0.05rem] rounded-[0.3rem] bg-foreground/6 text-foreground">{{ fmc.rootRef }}</code>
+                    </dd>
                   </dl>
                 }
-                <p class="cw-first-ctx__hint">
+                <p class="m-0 text-[0.7rem] text-muted-foreground italic">
                   This summary was attached to the first prompt to orient the assistant.
                 </p>
               </div>
             }
           </section>
         }
+
         @for (item of renderItems(); track trackByRenderItem($index, item)) {
           @switch (item.kind) {
             @case ('unit') {
@@ -126,80 +143,89 @@
               }
             }
             @case ('collapsed-turn') {
-              <div class="cw-turn-gap">
-                <div class="cw-turn-gap__shell">
+              <div class="flex flex-col gap-3 -my-0.5">
+                <div class="flex flex-col gap-[0.65rem]">
+
+                  <!-- worked-for pill toggle -->
                   <button
                     type="button"
-                    class="cw-turn-gap__toggle"
+                    class="group flex items-center gap-3.5 w-full p-0 border-0 bg-transparent text-muted-foreground cursor-pointer focus-visible:outline-none"
                     [attr.aria-expanded]="isTurnExpanded(item.turnId)"
                     (click)="toggleTurn(item.turnId)"
                   >
-                    <span class="cw-turn-gap__line"></span>
-                    <span class="cw-turn-gap__pill">
+                    <span class="flex-1 min-w-6 h-px cw-turn-line"></span>
+                    <span class="inline-flex items-center flex-wrap justify-center gap-2.5 min-w-0 px-3.5 py-[0.475rem] border border-border/92 rounded-full cw-pill-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_24px_-18px_color-mix(in_oklab,var(--foreground)_22%,transparent)] transition-[border-color,background,color,box-shadow] duration-[140ms] group-hover:border-primary/35 group-hover:bg-primary/7 group-hover:bg-none group-hover:text-foreground group-focus-visible:border-primary/35 group-focus-visible:bg-primary/7 group-focus-visible:bg-none group-focus-visible:text-foreground">
                       <span
-                        class="cw-turn-gap__chevron"
-                        [class.cw-turn-gap__chevron--open]="isTurnExpanded(item.turnId)"
+                        [attr.data-open]="isTurnExpanded(item.turnId) || null"
+                        class="w-[0.475rem] h-[0.475rem] shrink-0 border-r-[1.5px] border-b-[1.5px] border-current -rotate-45 data-[open]:rotate-45 transition-transform duration-[140ms] ease-in-out opacity-75"
                       ></span>
-                      <span class="cw-turn-gap__label">Worked for {{ item.durationLabel }}</span>
-                      <span class="cw-turn-gap__meta">
+                      <span class="text-[0.8125rem] font-semibold text-foreground whitespace-nowrap">Worked for {{ item.durationLabel }}</span>
+                      <span class="cw-pill-meta text-[0.75rem] whitespace-nowrap">
                         {{ isTurnExpanded(item.turnId) ? 'Hide activity' : 'Show activity' }}
                       </span>
-                      <span class="cw-turn-gap__count">{{ item.stepCount }} step{{ item.stepCount === 1 ? '' : 's' }}</span>
+                      <span class="px-[0.4rem] py-0.5 rounded-full bg-foreground/6 text-[0.6875rem] tracking-[0.01em] whitespace-nowrap">
+                        {{ item.stepCount }} step{{ item.stepCount === 1 ? '' : 's' }}
+                      </span>
                       @if (item.agentSummary; as summary) {
-                        <span class="cw-turn-gap__count cw-turn-gap__count--agents">
+                        <span class="px-[0.4rem] py-0.5 rounded-full bg-foreground/6 text-[0.6875rem] tracking-[0.01em] whitespace-nowrap">
                           {{ summary.agents.length }} agent{{ summary.agents.length === 1 ? '' : 's' }}
                         </span>
                       }
                     </span>
-                    <span class="cw-turn-gap__line"></span>
+                    <span class="flex-1 min-w-6 h-px cw-turn-line"></span>
                   </button>
 
+                  <!-- view changes pill -->
                   @if (item.changeDetails; as changeDetails) {
-                    <div class="cw-turn-gap__change-actions">
+                    <div class="flex justify-center -mt-[0.2rem]">
                       <button
                         type="button"
-                        class="cw-turn-gap__changes-button"
+                        class="inline-flex items-center gap-[0.55rem] min-h-[1.8rem] px-[0.7rem] py-1 border border-border/86 rounded-full bg-background/74 text-foreground font-[inherit] cursor-pointer shadow-[0_8px_20px_-18px_color-mix(in_oklab,var(--foreground)_35%,transparent)] transition-[border-color,background-color,box-shadow] duration-[130ms] ease-in-out hover:border-primary/34 hover:bg-primary/7 hover:shadow-[0_10px_24px_-18px_color-mix(in_oklab,var(--primary)_40%,transparent)] focus-visible:outline-none focus-visible:border-primary/34 focus-visible:bg-primary/7"
                         [attr.aria-expanded]="isTurnChangesExpanded(item.turnId)"
                         (click)="toggleTurnChanges(item.turnId)"
                       >
-                        <span class="cw-turn-gap__changes-button-label">
+                        <span class="text-[0.74rem] font-[650]">
                           {{ isTurnChangesExpanded(item.turnId) ? 'Hide changes' : 'View changes' }}
                         </span>
-                        <span class="cw-turn-gap__changes-button-meta">
+                        <span class="inline-flex items-baseline gap-1 text-muted-foreground text-[0.68rem] font-semibold whitespace-nowrap">
                           {{ changeDetails.files }} file{{ changeDetails.files === 1 ? '' : 's' }}
-                          <span class="cw-turn-gap__changes-additions">+{{ changeDetails.additions }}</span>
-                          <span class="cw-turn-gap__changes-deletions">-{{ changeDetails.deletions }}</span>
+                          <span class="text-[color-mix(in_oklab,var(--success)_82%,var(--foreground))]">+{{ changeDetails.additions }}</span>
+                          <span class="text-[color-mix(in_oklab,var(--destructive)_78%,var(--foreground))]">-{{ changeDetails.deletions }}</span>
                         </span>
                       </button>
                     </div>
                   }
 
+                  <!-- agents summary -->
                   @if (item.agentSummary; as summary) {
-                    <div class="cw-turn-gap__agents">
-                      <div class="cw-turn-gap__agents-header">
-                        <span class="cw-turn-gap__agents-label">
+                    <div class="flex flex-col gap-2 mx-auto w-full px-[0.875rem] py-[0.625rem] border border-[color-mix(in_oklab,var(--primary)_20%,var(--border))] rounded-xl cw-agents-bg">
+                      <div class="flex items-center justify-between gap-3">
+                        <span class="text-[0.75rem] font-semibold text-foreground">
                           {{ summary.agents.length === 1 ? '1 agent ran' : summary.agents.length + ' agents ran' }}
                         </span>
                         <button
                           type="button"
-                          class="cw-turn-gap__inspect"
+                          class="inline-flex items-center gap-1.5 px-3 py-[0.3rem] rounded-full border border-primary/38 bg-primary/9 text-[color-mix(in_oklab,var(--primary)_80%,var(--foreground))] text-[0.75rem] font-semibold cursor-pointer whitespace-nowrap transition-[background,border-color] duration-[120ms] hover:bg-primary/15 hover:border-primary/55 focus-visible:outline-none"
                           (click)="openAgentInspector(item.turnId)"
                         >
                           Deep Dive →
                         </button>
                       </div>
-                      <div class="cw-turn-gap__agent-list">
+                      <div class="flex flex-col gap-1.5">
                         @for (agent of summary.agents; track agent.agentId) {
                           <button
                             type="button"
-                            class="cw-turn-gap__agent-chip"
+                            class="flex items-center gap-2 min-w-0 w-full rounded-lg border border-border/80 bg-background/70 px-[0.625rem] py-[0.4rem] text-foreground cursor-pointer text-left transition-[background,border-color] duration-100 hover:bg-primary/6 hover:border-primary/28 focus-visible:outline-none"
                             [attr.data-state]="agent.status"
                             (click)="openAgentInspector(item.turnId)"
                           >
-                            <span class="cw-turn-gap__agent-dot" [attr.data-state]="agent.status"></span>
-                            <span class="cw-turn-gap__agent-type">{{ agent.agentType }}</span>
+                            <span
+                              class="w-[0.4375rem] h-[0.4375rem] rounded-full shrink-0 bg-muted-foreground data-[state=started]:bg-primary data-[state=started]:shadow-[0_0_0_2px_color-mix(in_oklab,var(--primary)_25%,transparent)] data-[state=stopped]:bg-[#0f9f6e]"
+                              [attr.data-state]="agent.status"
+                            ></span>
+                            <span class="text-[0.8125rem] font-semibold capitalize shrink-0">{{ agent.agentType }}</span>
                             @if (agent.summary) {
-                              <span class="cw-turn-gap__agent-summary">{{ agent.summary }}</span>
+                              <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.75rem] text-muted-foreground">{{ agent.summary }}</span>
                             }
                           </button>
                         }
@@ -216,7 +242,7 @@
                 }
 
                 @if (isTurnExpanded(item.turnId)) {
-                  <div class="cw-turn-gap__panel">
+                  <div class="flex flex-col gap-3.5 mb-0.5 py-0.5 pl-4 border-l border-border/80">
                     @for (hiddenUnit of item.hiddenUnits; track hiddenUnit.id) {
                       @switch (hiddenUnit.kind) {
                         @case ('message') {
@@ -276,19 +302,19 @@
     }
   </div>
 
-  <div class="cw-dock">
+  <div class="shrink-0 px-[clamp(0.75rem,4vw,2rem)] pt-2 pb-[0.625rem] flex flex-col gap-2 bg-background border-t border-border/60">
+
     @if (showContextPin()) {
       <div
-        class="cw-ctx"
-        [class.cw-ctx--expanded]="contextExpanded()"
-        [class.cw-ctx--enabled]="firstPromptContextEnabled() && canToggleContextEnabled() && !promptIsCommand()"
-        [class.cw-ctx--disabled]="(!firstPromptContextEnabled() && canToggleContextEnabled()) || (promptIsCommand() && canToggleContextEnabled())"
         [attr.data-state]="contextPinState()"
+        [attr.data-expanded]="contextExpanded() || null"
+        [attr.data-ctx-mode]="(firstPromptContextEnabled() && canToggleContextEnabled() && !promptIsCommand()) ? 'enabled' : ((!firstPromptContextEnabled() && canToggleContextEnabled()) || (promptIsCommand() && canToggleContextEnabled())) ? 'disabled' : null"
+        class="group/ctx max-w-[52rem] w-[calc(100%-1.5rem)] mx-auto mb-0 rounded-xl border overflow-hidden transition-[border-color,box-shadow,background-color] duration-[150ms] ease-in-out border-border/90 bg-[color-mix(in_oklab,var(--card)_92%,var(--background))] hover:border-[color-mix(in_oklab,var(--border)_60%,var(--foreground)_20%)] data-[state=failed]:border-destructive/40 data-[state=failed]:bg-destructive/5 data-[state=loading]:border-primary/25 data-[state=generating]:border-primary/25 data-[ctx-mode=enabled]:border-[color-mix(in_oklab,var(--primary)_28%,var(--border))] data-[expanded]:shadow-[0_8px_24px_-18px_color-mix(in_oklab,var(--foreground)_40%,transparent)]"
       >
-        <div class="cw-ctx__head">
+        <div class="flex items-stretch w-full">
           <button
             type="button"
-            class="cw-ctx__primary"
+            class="flex items-center gap-[0.6rem] flex-1 min-w-0 px-[0.75rem] py-[0.5rem] border-0 bg-transparent text-foreground font-[inherit] text-left cursor-pointer transition-[background-color] duration-[140ms] hover:bg-foreground/3 focus-visible:outline-none"
             [attr.aria-pressed]="canToggleContextEnabled() ? firstPromptContextEnabled() : null"
             [attr.aria-label]="canToggleContextEnabled()
               ? (promptIsCommand() && firstPromptContextEnabled()
@@ -302,10 +328,17 @@
               : ''"
             (click)="toggleContextEnabled()"
           >
-            <span class="cw-ctx__icon" aria-hidden="true">
+            <span
+              class="inline-flex items-center justify-center w-4 h-4 shrink-0 text-muted-foreground transition-[color] duration-[140ms] group-data-[ctx-mode=enabled]/ctx:text-[color-mix(in_oklab,var(--primary)_80%,var(--foreground))] group-data-[state=failed]/ctx:text-destructive"
+              aria-hidden="true"
+            >
               @switch (contextPinState()) {
-                @case ('loading') { <span class="cw-ctx__spinner"></span> }
-                @case ('generating') { <span class="cw-ctx__spinner"></span> }
+                @case ('loading') {
+                  <span class="size-[0.9rem] rounded-full border-2 border-primary/40 border-t-primary animate-spin [animation-duration:650ms]"></span>
+                }
+                @case ('generating') {
+                  <span class="size-[0.9rem] rounded-full border-2 border-primary/40 border-t-primary animate-spin [animation-duration:650ms]"></span>
+                }
                 @case ('failed') {
                   <ng-icon name="lucideTriangleAlert" size="14" />
                 }
@@ -315,107 +348,111 @@
               }
             </span>
 
-            <span class="cw-ctx__body">
-              <span class="cw-ctx__label">{{ contextPinLabel() }}</span>
-              <span class="cw-ctx__summary">{{ contextPinSummary() }}</span>
+            <span class="flex flex-row items-baseline gap-2 min-w-0 flex-1">
+              <span
+                class="text-[0.72rem] font-semibold tracking-[0.02em] text-muted-foreground shrink-0 [text-decoration-thickness:1px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_35%,transparent)]"
+                [class.line-through]="(!firstPromptContextEnabled() && canToggleContextEnabled()) || (promptIsCommand() && canToggleContextEnabled())"
+              >{{ contextPinLabel() }}</span>
+              <span
+                class="text-[0.8rem] text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0 flex-1 [text-decoration-thickness:1px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_35%,transparent)] group-data-[expanded]/ctx:hidden"
+                [class.line-through]="(!firstPromptContextEnabled() && canToggleContextEnabled()) || (promptIsCommand() && canToggleContextEnabled())"
+              >{{ contextPinSummary() }}</span>
             </span>
 
             @if (contextPinBadge(); as badge) {
-              <span class="cw-ctx__badge" [attr.data-variant]="badge.variant">{{ badge.text }}</span>
+              <span
+                [attr.data-variant]="badge.variant"
+                class="inline-flex items-center px-[0.45rem] py-[0.1rem] rounded-full text-[0.65rem] font-semibold tracking-[0.03em] shrink-0 border border-transparent data-[variant=accent]:bg-primary/14 data-[variant=accent]:text-[color-mix(in_oklab,var(--primary)_85%,var(--foreground))] data-[variant=accent]:border-primary/25 data-[variant=muted]:bg-foreground/6 data-[variant=muted]:text-muted-foreground data-[variant=warn]:bg-destructive/14 data-[variant=warn]:text-destructive data-[variant=warn]:border-destructive/28"
+              >{{ badge.text }}</span>
             }
           </button>
 
           <button
             type="button"
-            class="cw-ctx__expand"
-            [class.cw-ctx__expand--open]="contextExpanded()"
+            class="inline-flex items-center justify-center px-[0.55rem] border-0 border-l border-border/80 bg-transparent text-muted-foreground cursor-pointer transition-[background-color,color] duration-[140ms] hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none"
             [attr.aria-expanded]="contextExpanded()"
             [attr.aria-label]="contextExpanded() ? 'Hide details' : 'Show full context'"
             [title]="contextExpanded() ? 'Hide details' : 'Show full context'"
             (click)="toggleContextExpanded()"
           >
-            <ng-icon name="lucideChevronDown" size="12" />
+            <ng-icon
+              name="lucideChevronDown"
+              size="12"
+              class="transition-transform duration-[180ms] group-data-[expanded]/ctx:rotate-180"
+            />
           </button>
         </div>
 
         @if (contextExpanded() && worktreeContext(); as context) {
-          <div class="cw-ctx__panel">
+          <div class="flex flex-col gap-[0.65rem] px-[0.85rem] pt-3 pb-[0.85rem] border-t border-dashed border-border/80 mt-[0.25rem]">
             @if (context.contextSentence) {
-              <p class="cw-ctx__sentence">{{ context.contextSentence }}</p>
+              <p class="m-0 text-[0.82rem] leading-[1.5] text-foreground">{{ context.contextSentence }}</p>
             } @else if (context.errorMessage) {
-              <p class="cw-ctx__sentence cw-ctx__sentence--error">
+              <p class="m-0 text-[0.78rem] text-destructive px-[0.55rem] py-[0.35rem] border border-destructive/30 rounded-lg bg-destructive/8">
                 {{ context.errorMessage }}
               </p>
             } @else if (context.generationStatus === 'failed') {
-              <p class="cw-ctx__sentence cw-ctx__sentence--muted">
-                Context generation failed.
-              </p>
+              <p class="m-0 text-[0.82rem] leading-[1.5] text-muted-foreground">Context generation failed.</p>
             } @else if (context.generationStatus === 'generating') {
-              <p class="cw-ctx__sentence cw-ctx__sentence--muted">Generating a one-line summary…</p>
+              <p class="m-0 text-[0.82rem] leading-[1.5] text-muted-foreground">Generating a one-line summary…</p>
             } @else if (!context.hasChanges) {
-              <p class="cw-ctx__sentence cw-ctx__sentence--muted">
+              <p class="m-0 text-[0.82rem] leading-[1.5] text-muted-foreground">
                 No branch-specific changes compared to
-                <code>{{ context.rootRef || 'auto' }}</code> yet.
+                <code class="font-mono text-[0.78rem] px-[0.3rem] py-[0.05rem] rounded-[0.3rem] bg-foreground/6">{{ context.rootRef || 'auto' }}</code> yet.
               </p>
             }
 
             @if (context.contextSentence && context.errorMessage) {
-              <p class="cw-ctx__sentence cw-ctx__sentence--error">
+              <p class="m-0 text-[0.78rem] text-destructive px-[0.55rem] py-[0.35rem] border border-destructive/30 rounded-lg bg-destructive/8">
                 {{ context.errorMessage }}
               </p>
             }
 
-            <dl class="cw-ctx__meta">
-              <div class="cw-ctx__meta-row">
-                <dt>Comparing against</dt>
-                <dd>
+            <dl class="m-0 flex flex-wrap gap-x-4 gap-y-[0.35rem]">
+              <div class="flex items-center gap-2 text-[0.74rem]">
+                <dt class="text-muted-foreground font-medium">Comparing against</dt>
+                <dd class="m-0">
                   @if (worktreeRootEditorOpen()) {
-                    <form class="cw-ctx__root-edit" (submit)="$event.preventDefault(); saveRootRef()">
+                    <form class="inline-flex items-center gap-[0.3rem]" (submit)="$event.preventDefault(); saveRootRef()">
                       <input
-                        class="cw-ctx__input"
+                        class="h-7 px-[0.55rem] rounded-[0.45rem] border border-input bg-background text-foreground font-[inherit] text-[0.76rem] min-w-40 focus:outline-none focus:border-primary/60 focus:ring-3 focus:ring-primary/18"
                         [value]="draftRootRef()"
                         placeholder="origin/main"
                         autofocus
                         (input)="onRootRefInput($any($event.target).value)"
                       />
-                      <button
-                        type="submit"
-                        class="cw-ctx__btn cw-ctx__btn--primary"
-                        [disabled]="worktreeContextBusy()"
-                      >Save</button>
-                      <button
-                        type="button"
-                        class="cw-ctx__btn cw-ctx__btn--ghost"
-                        [disabled]="worktreeContextBusy()"
-                        (click)="cancelRootRefEditor()"
-                      >Cancel</button>
+                      <button z-button zType="default" zSize="xs" type="submit" [zDisabled]="worktreeContextBusy()">Save</button>
+                      <button z-button zType="ghost" zSize="xs" type="button" [zDisabled]="worktreeContextBusy()" (click)="cancelRootRefEditor()">Cancel</button>
                     </form>
                   } @else {
                     <button
+                      z-button
+                      zType="outline"
+                      zSize="xs"
                       type="button"
-                      class="cw-ctx__ref"
-                      [disabled]="worktreeContextBusy()"
+                      [zDisabled]="worktreeContextBusy()"
                       (click)="openRootRefEditor()"
                       title="Change comparison root"
                     >
-                      <code>{{ context.rootRef || 'auto' }}</code>
-                      <span class="cw-ctx__ref-hint">Change</span>
+                      <code class="font-mono text-[0.74rem]">{{ context.rootRef || 'auto' }}</code>
+                      <span class="text-muted-foreground text-[0.68rem]">Change</span>
                     </button>
                   }
                 </dd>
               </div>
             </dl>
 
-
-            <div class="cw-ctx__actions">
+            <div class="flex flex-wrap gap-[0.4rem] justify-end">
               <button
+                z-button
+                zType="ghost"
+                zSize="xs"
                 type="button"
-                class="cw-ctx__btn cw-ctx__btn--ghost"
-                [disabled]="worktreeContextBusy()"
+                [zDisabled]="worktreeContextBusy()"
                 (click)="recomputeWorktreeContext()"
               >
                 @if (worktreeContextBusy()) {
-                  <span class="cw-ctx__spinner cw-ctx__spinner--sm"></span>
+                  <span class="size-[0.7rem] rounded-full border-[1.5px] border-primary/40 border-t-primary animate-spin [animation-duration:650ms]"></span>
                 } @else {
                   <ng-icon name="lucideRefreshCw" size="12" />
                 }
@@ -428,13 +465,17 @@
     }
 
     @if (pendingUserInputRequest(); as req) {
-      <cw-user-input [request]="req" (answer)="answerUserInput($event)" />
+      <cw-user-input
+        class="block max-w-[52rem] w-full mx-auto"
+        [request]="req"
+        (answer)="answerUserInput($event)"
+      />
     }
 
-    <div class="cw-compose-shell">
+    <div class="max-w-[52rem] w-full mx-auto flex flex-col">
       @if (pendingPermissionRequest(); as req) {
         <cw-permission-inline
-          class="cw-compose-shell__permission"
+          class="block w-full"
           [request]="req"
           [appearance]="'dock'"
           (approve)="approvePermission($event)"
@@ -463,6 +504,7 @@
     </div>
 
     <cw-status-bar
+      class="block max-w-[52rem] w-full mx-auto"
       [phase]="runPhase()"
       [providers]="providers()"
       [currentProvider]="currentProvider()"

@@ -90,6 +90,7 @@ import {
   lucideTriangleAlert,
   lucideRefreshCw,
 } from '@ng-icons/lucide';
+import { ZardButtonComponent } from '@/shared/components/button/button.component';
 
 type TranscriptRenderItem =
   | { kind: 'unit'; id: string; unit: PairedTranscriptUnit }
@@ -123,6 +124,7 @@ type TranscriptRenderItem =
     CodexLoginCardComponent,
     PiLoginCardComponent,
     NgIcon,
+    ZardButtonComponent,
   ],
   templateUrl: './claude-workspace.component.html',
   styleUrls: ['./claude-workspace.component.scss'],
