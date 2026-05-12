@@ -16,7 +16,7 @@ type Waiter = () => void;
 export class ServerConnectionService implements OnDestroy {
   private static readonly HEARTBEAT_TIMEOUT_MS = 12000;
   private static readonly RESTORED_GRACE_MS = 1500;
-  private static readonly RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000];
+  private static readonly RECONNECT_DELAYS_MS = [0, 500, 1000, 2000];
 
   private ws: WebSocket | null = null;
   private started = false;
