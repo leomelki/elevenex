@@ -219,18 +219,42 @@ export function highlightedUnifiedDiffHtml(
   }).join('');
 }
 
-export function highlightedPatchHtml(patch: string): string {
+export function highlightedPatchHtml(patch: string, filePath = ''): string {
+  const lang = detectHljsLang(filePath);
   const lines = splitDiffLines(patch);
-  return lines.map((line) => {
+
+  // Build a parallel array of stripped code content for batch syntax highlighting.
+  // @@ hunk headers and "no newline" notices get empty slots so indices stay aligned.
+  const codeLines = lines.map((line) => {
+    if (line.startsWith('@@') || line.startsWith('\\')) return '';
+    if (line.startsWith('+') || line.startsWith('-')) return line.slice(1);
+    return line.startsWith(' ') ? line.slice(1) : line;
+  });
+  const highlighted = highlightLines(codeLines.join('\n'), lang);
+
+  let oldLine = 1;
+  let newLine = 1;
+  let hasHunkHeader = false;
+
+  return lines.map((line, i) => {
     if (line.startsWith('@@')) {
-      return `<span class="cw-diff-line cw-diff-hunk"><span class="cw-diff-ln"></span><span class="cw-diff-ln"></span><span class="cw-diff-marker"> </span><span class="cw-diff-code">${escapeHtml(line)}</span></span>`;
+      const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) {
+        oldLine = parseInt(m[1], 10);
+        newLine = parseInt(m[2], 10);
+        hasHunkHeader = true;
+      }
+      return `<span class="cw-diff-line cw-diff-hunk"><span class="cw-diff-ln cw-diff-ln--old"></span><span class="cw-diff-ln cw-diff-ln--new"></span><span class="cw-diff-marker"> </span><span class="cw-diff-code">${escapeHtml(line)}</span></span>`;
     }
+    if (line.startsWith('\\')) return '';
+    const hl = highlighted[i] ?? '';
     if (line.startsWith('+')) {
-      return renderUnifiedDiffLine('add', null, null, escapeHtml(line.slice(1)));
+      return renderUnifiedDiffLine('add', null, newLine++, hl);
     }
     if (line.startsWith('-')) {
-      return renderUnifiedDiffLine('del', null, null, escapeHtml(line.slice(1)));
+      return renderUnifiedDiffLine('del', oldLine++, null, hl);
     }
-    return renderUnifiedDiffLine('context', null, null, escapeHtml(line.startsWith(' ') ? line.slice(1) : line));
-  }).join('');
+    // context line — only show line numbers once a hunk header has set them
+    return renderUnifiedDiffLine('context', hasHunkHeader ? oldLine++ : null, hasHunkHeader ? newLine++ : null, hl);
+  }).filter(Boolean).join('');
 }

@@ -487,7 +487,7 @@ export class ClaudeTurnChangesComponent {
 
   private renderHunkHtml(filePath: string, hunk: TurnChangeHunk): SafeHtml | null {
     const raw = hunk.patch
-      ? highlightedPatchHtml(hunk.patch)
+      ? highlightedPatchHtml(hunk.patch, filePath)
       : hunk.oldString || hunk.newString
         ? highlightedUnifiedDiffHtml(hunk.oldString, hunk.newString, filePath)
         : '';

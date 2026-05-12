@@ -6,7 +6,7 @@ import DOMPurify from 'dompurify';
 import {
   detectHljsLang,
   escapeHtml,
-  highlightedDiffHtml,
+  highlightedUnifiedDiffHtml,
   splitHighlightedLines,
 } from '../util/code-highlight';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -478,7 +478,6 @@ interface Todo {
       }
       .cw-tool__cmd,
       .cw-tool__output,
-      .cw-tool__diff,
       .cw-tool__file {
         margin: 0;
         padding: 0.5rem 0.625rem;
@@ -507,31 +506,56 @@ interface Todo {
         overflow: auto;
       }
       .cw-tool__diff {
-        padding: 0.375rem 0;
+        margin: 0;
+        max-height: 24rem;
+        overflow: auto;
+        border-radius: 0.375rem;
+        background: color-mix(in oklab, var(--background) 88%, var(--surface-shade));
+        color: var(--foreground);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.72rem;
+        line-height: 1.55;
+        white-space: pre;
       }
-      :host ::ng-deep .cw-diff-add,
-      :host ::ng-deep .cw-diff-del,
-      :host ::ng-deep .cw-diff-context {
-        display: block;
-        padding: 0.1rem 0.75rem;
+      :host ::ng-deep .cw-diff-line {
+        display: grid;
+        grid-template-columns: 2.5rem 2.5rem 1.15rem minmax(0, 1fr);
+        min-width: max-content;
+      }
+      :host ::ng-deep .cw-diff-ln,
+      :host ::ng-deep .cw-diff-marker {
+        user-select: none;
+        color: var(--muted-foreground);
+        background: color-mix(in oklab, var(--foreground) 3%, transparent);
+      }
+      :host ::ng-deep .cw-diff-ln {
+        padding: 0 0.45rem;
+        text-align: right;
+        border-right: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+      }
+      :host ::ng-deep .cw-diff-marker {
+        padding: 0 0.25rem;
+        text-align: center;
+      }
+      :host ::ng-deep .cw-diff-code {
+        padding: 0 0.75rem 0 0.5rem;
+        min-width: 0;
       }
       :host ::ng-deep .cw-diff-add {
-        background: color-mix(in oklab, oklch(0.52 0.18 240) 10%, transparent);
-        border-left: 3px solid oklch(0.52 0.18 240 / 0.45);
-        padding-left: calc(0.75rem - 3px);
+        background: color-mix(in oklab, var(--success) 10%, transparent);
+      }
+      :host ::ng-deep .cw-diff-add .cw-diff-marker {
+        color: color-mix(in oklab, var(--success) 85%, var(--foreground));
       }
       :host ::ng-deep .cw-diff-del {
-        background: color-mix(in oklab, oklch(0.55 0.22 20) 10%, transparent);
-        border-left: 3px solid oklch(0.55 0.22 20 / 0.45);
-        padding-left: calc(0.75rem - 3px);
+        background: color-mix(in oklab, var(--destructive) 10%, transparent);
       }
-      :host-context(.dark) ::ng-deep .cw-diff-add {
-        background: color-mix(in oklab, oklch(0.68 0.16 240) 15%, transparent);
-        border-left-color: oklch(0.68 0.16 240 / 0.5);
+      :host ::ng-deep .cw-diff-del .cw-diff-marker {
+        color: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
       }
-      :host-context(.dark) ::ng-deep .cw-diff-del {
-        background: color-mix(in oklab, oklch(0.72 0.18 20) 15%, transparent);
-        border-left-color: oklch(0.72 0.18 20 / 0.5);
+      :host ::ng-deep .cw-diff-hunk {
+        color: color-mix(in oklab, var(--primary) 78%, var(--foreground));
+        background: color-mix(in oklab, var(--primary) 8%, transparent);
       }
       .cw-tool__write {
         margin: 0;
@@ -1124,7 +1148,7 @@ export class ClaudeToolCallComponent {
 
   readonly diffHtml = computed<SafeHtml>(() => {
     const data = this.call().toolInput as { old_string?: string; new_string?: string } | undefined;
-    const html = highlightedDiffHtml(data?.old_string ?? '', data?.new_string ?? '', this.editFilePath());
+    const html = highlightedUnifiedDiffHtml(data?.old_string ?? '', data?.new_string ?? '', this.editFilePath());
     const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
     return this.sanitizer.bypassSecurityTrustHtml(safe);
   });
