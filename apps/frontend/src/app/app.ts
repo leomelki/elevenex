@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { NavigationEnd, Router, RouterOutlet, RouterLink } from '@angular/router';
 import { NgxSonnerToaster } from 'ngx-sonner';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -96,6 +96,12 @@ export class App implements OnInit, OnDestroy {
   readonly connectingPhases = CONNECTING_PHASES;
   readonly serverConnectionState = this.serverConnection.state;
   readonly showServerConnectionOverlay = this.serverConnection.showOverlay;
+  readonly showServerBlockOverlay = computed(() =>
+    this.serverConnection.showOverlay() &&
+    !this.sshRuntimeRecovery.remoteConnecting() &&
+    !this.sshRuntimeRecovery.remoteDisconnect() &&
+    !this.isOnboardingRoute(),
+  );
 
   private removeWindowListener: (() => void) | null = null;
   private removeRouteListener: (() => void) | null = null;

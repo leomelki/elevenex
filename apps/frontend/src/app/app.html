@@ -68,7 +68,7 @@
     </section>
   }
 
-  <div class="app-shell__body">
+  <div class="app-shell__body" [attr.inert]="showServerBlockOverlay() ? '' : null">
     @if (shouldShowWorkspaceSidebar) {
       <div
         class="app-shell__sidebar"
@@ -246,7 +246,7 @@
     </section>
   }
 
-  @if (showServerConnectionOverlay()) {
+  @if (showServerBlockOverlay()) {
     @let connection = serverConnectionState();
     <section
       class="server-connection-overlay"
