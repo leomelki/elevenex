@@ -781,11 +781,56 @@
 }
 
 .cw-turn-gap__changes-additions {
-  color: color-mix(in oklab, #0f9f6e 82%, var(--foreground));
+  color: color-mix(in oklab, var(--success) 82%, var(--foreground));
 }
 
 .cw-turn-gap__changes-deletions {
   color: color-mix(in oklab, var(--destructive) 78%, var(--foreground));
+}
+
+.cw-turn-gap__change-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: -0.2rem;
+}
+
+.cw-turn-gap__changes-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 1.8rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid color-mix(in oklab, var(--border) 86%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--background) 74%, var(--card));
+  color: var(--foreground);
+  font: inherit;
+  cursor: pointer;
+  box-shadow: 0 8px 20px -18px color-mix(in oklab, var(--foreground) 35%, transparent);
+  transition: border-color 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
+}
+
+.cw-turn-gap__changes-button:hover,
+.cw-turn-gap__changes-button:focus-visible {
+  border-color: color-mix(in oklab, var(--primary) 34%, var(--border));
+  background: color-mix(in oklab, var(--primary) 7%, var(--card));
+  box-shadow: 0 10px 24px -18px color-mix(in oklab, var(--primary) 40%, transparent);
+  outline: none;
+}
+
+.cw-turn-gap__changes-button-label {
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+
+.cw-turn-gap__changes-button-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .cw-turn-gap__count {

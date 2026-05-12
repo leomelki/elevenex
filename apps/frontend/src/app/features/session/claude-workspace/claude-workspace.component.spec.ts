@@ -802,6 +802,45 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(changes?.textContent).toContain('-8');
   });
 
+  it('opens a file-by-file diff view for turn changes', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+    apiMock.getHistory.mockReturnValue(of(editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
+      {
+        tool: 'MultiEdit',
+        file: 'src/app.ts',
+        edits: [
+          { old_string: 'const a = 1;\nconst b = 2;', new_string: 'const a = 1;\nconst b = 3;' },
+          { old_string: 'export const name = "old";', new_string: 'export const name = "new";' },
+        ],
+      },
+      { tool: 'Write', file: 'src/new.ts', content: 'export const created = true;' },
+    ])));
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.worktreePath = '/tmp/project';
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+
+    events$.next({ type: 'complete', payload: { sessionId: 7 } });
+    await flushPromises();
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector('.cw-turn-gap__changes-button') as HTMLButtonElement | null;
+    expect(button?.textContent).toContain('View changes');
+    button?.click();
+    fixture.detectChanges();
+
+    const panel = fixture.nativeElement.querySelector('cw-turn-changes') as HTMLElement | null;
+    expect(panel?.textContent).toContain('Changes in this turn');
+    expect(panel?.textContent).toContain('app.ts');
+    expect(panel?.textContent).toContain('new.ts');
+    expect(panel?.querySelectorAll('.cw-turn-changes__file')).toHaveLength(2);
+    expect(panel?.querySelector('.cw-turn-changes__diff')?.innerHTML).toContain('cw-diff-line');
+  });
+
   it('dedupes identical edits and counts each file once', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());

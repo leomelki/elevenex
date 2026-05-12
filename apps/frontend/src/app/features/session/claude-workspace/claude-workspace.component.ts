@@ -75,12 +75,13 @@ import {
   ClaudeAgentInspectorComponent,
   ClaudeSubagentHistoryState,
 } from './components/claude-agent-inspector.component';
+import { ClaudeTurnChangesComponent } from './components/claude-turn-changes.component';
 import { PairedTranscriptUnit, pairTranscript } from './util/paired-transcript';
 import {
   TurnAgentSummary,
   buildTurnAgentSummary,
 } from './util/agent-deep-dive';
-import { TurnChangeSummary, computeTurnChangeSummary } from './util/turn-change-stats';
+import { TurnChangeDetails, computeTurnChangeDetails } from './util/turn-change-stats';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideWandSparkles,
@@ -98,7 +99,7 @@ type TranscriptRenderItem =
       turnId: string;
       hiddenUnits: PairedTranscriptUnit[];
       durationLabel: string;
-      changeSummary: TurnChangeSummary | null;
+      changeDetails: TurnChangeDetails | null;
       stepCount: number;
       agentSummary: TurnAgentSummary | null;
     };
@@ -118,6 +119,7 @@ type TranscriptRenderItem =
     ClaudeTasksDrawerComponent,
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
+    ClaudeTurnChangesComponent,
     CodexLoginCardComponent,
     PiLoginCardComponent,
     NgIcon,
@@ -213,6 +215,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly subagents = signal<ClaudeSubagentState[]>([]);
   readonly recentHookEvents = signal<ClaudeHookEvent[]>([]);
   readonly expandedTurns = signal<Record<string, boolean>>({});
+  readonly expandedTurnChanges = signal<Record<string, boolean>>({});
   readonly armedEditMessageId = signal<string | null>(null);
   readonly rewindingMessageId = signal<string | null>(null);
   readonly agentInspectorTurnId = signal<string | null>(null);
@@ -447,6 +450,7 @@ readonly messageActionsDisabled = computed(
       out.push({ kind: 'unit', id: unit.id, unit });
 
       if (canCollapse) {
+        const changeUnits = this.collectTurnChangeUnits(collapsibleUnits);
         out.push({
           kind: 'collapsed-turn',
           id: `collapsed-${unit.id}`,
@@ -456,7 +460,7 @@ readonly messageActionsDisabled = computed(
             getItemStartTimestamp(unit.item),
             getItemCompletionTimestamp(lastAssistantUnit.item),
           ),
-          changeSummary: computeTurnChangeSummary(collapsibleUnits),
+          changeDetails: computeTurnChangeDetails(changeUnits),
           stepCount: collapsibleUnits.length,
           agentSummary: buildTurnAgentSummary(
             unit.id,
@@ -910,6 +914,23 @@ readonly messageActionsDisabled = computed(
     return this.childTranscriptItemsByParentToolUseId()[toolUseId] ?? [];
   }
 
+  private collectTurnChangeUnits(units: PairedTranscriptUnit[]): PairedTranscriptUnit[] {
+    const collected: PairedTranscriptUnit[] = [];
+    const childItemsByParent = this.childTranscriptItemsByParentToolUseId();
+    const visit = (entries: PairedTranscriptUnit[]) => {
+      for (const entry of entries) {
+        collected.push(entry);
+        if (entry.kind !== 'tool') continue;
+        const children = childItemsByParent[entry.toolUseId] ?? [];
+        if (children.length) {
+          visit(pairTranscript(children));
+        }
+      }
+    };
+    visit(units);
+    return collected;
+  }
+
   isStreamingMessage(itemId: string): boolean {
     return this.runPhase() === 'running' && this.lastLiveMessageId() === itemId;
   }
@@ -920,6 +941,18 @@ readonly messageActionsDisabled = computed(
 
   toggleTurn(turnId: string): void {
     this.expandedTurns.update((state) => ({ ...state, [turnId]: !state[turnId] }));
+  }
+
+  isTurnChangesExpanded(turnId: string): boolean {
+    return !!this.expandedTurnChanges()[turnId];
+  }
+
+  toggleTurnChanges(turnId: string): void {
+    this.expandedTurnChanges.update((state) => ({ ...state, [turnId]: !state[turnId] }));
+  }
+
+  closeTurnChanges(turnId: string): void {
+    this.expandedTurnChanges.update((state) => ({ ...state, [turnId]: false }));
   }
 
   openAgentInspector(turnId: string): void {
@@ -1020,6 +1053,7 @@ readonly messageActionsDisabled = computed(
       this.pendingPermissionRequest.set(null);
       this.pendingUserInputRequest.set(null);
       this.expandedTurns.set({});
+      this.expandedTurnChanges.set({});
       this.prompt.set(content);
       this.cancelArmedEdit();
       this.closeAgentInspector();
@@ -1594,6 +1628,7 @@ readonly messageActionsDisabled = computed(
     this.bootstrappedProvider = null;
     this.runtimeStarted.set(this.hasStartedAgentRuntime);
     this.expandedTurns.set({});
+    this.expandedTurnChanges.set({});
     this.armedEditMessageId.set(null);
     this.rewindingMessageId.set(null);
     this.interruptedRunShouldRestorePrompt = false;

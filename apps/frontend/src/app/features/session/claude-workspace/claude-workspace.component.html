@@ -141,7 +141,7 @@
                         [class.cw-turn-gap__chevron--open]="isTurnExpanded(item.turnId)"
                       ></span>
                       <span class="cw-turn-gap__label">Worked for {{ item.durationLabel }}</span>
-                      @if (item.changeSummary; as changeSummary) {
+                      @if (item.changeDetails; as changeSummary) {
                         <span class="cw-turn-gap__changes" aria-label="Changed files and lines">
                           <span>{{ changeSummary.files }} file{{ changeSummary.files === 1 ? '' : 's' }}</span>
                           <span class="cw-turn-gap__changes-separator">·</span>
@@ -161,6 +161,26 @@
                     </span>
                     <span class="cw-turn-gap__line"></span>
                   </button>
+
+                  @if (item.changeDetails; as changeDetails) {
+                    <div class="cw-turn-gap__change-actions">
+                      <button
+                        type="button"
+                        class="cw-turn-gap__changes-button"
+                        [attr.aria-expanded]="isTurnChangesExpanded(item.turnId)"
+                        (click)="toggleTurnChanges(item.turnId)"
+                      >
+                        <span class="cw-turn-gap__changes-button-label">
+                          {{ isTurnChangesExpanded(item.turnId) ? 'Hide changes' : 'View changes' }}
+                        </span>
+                        <span class="cw-turn-gap__changes-button-meta">
+                          {{ changeDetails.files }} file{{ changeDetails.files === 1 ? '' : 's' }}
+                          <span class="cw-turn-gap__changes-additions">+{{ changeDetails.additions }}</span>
+                          <span class="cw-turn-gap__changes-deletions">-{{ changeDetails.deletions }}</span>
+                        </span>
+                      </button>
+                    </div>
+                  }
 
                   @if (item.agentSummary; as summary) {
                     <div class="cw-turn-gap__agents">
@@ -195,6 +215,13 @@
                     </div>
                   }
                 </div>
+
+                @if (item.changeDetails && isTurnChangesExpanded(item.turnId)) {
+                  <cw-turn-changes
+                    [details]="item.changeDetails"
+                    (close)="closeTurnChanges(item.turnId)"
+                  />
+                }
 
                 @if (isTurnExpanded(item.turnId)) {
                   <div class="cw-turn-gap__panel">

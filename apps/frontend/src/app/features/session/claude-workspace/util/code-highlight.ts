@@ -122,3 +122,115 @@ export function highlightedDiffHtml(
   }
   return out.join('');
 }
+
+type LineDiff =
+  | { type: 'context'; oldLine: number; newLine: number; oldIndex: number; newIndex: number }
+  | { type: 'del'; oldLine: number; oldIndex: number }
+  | { type: 'add'; newLine: number; newIndex: number };
+
+function splitDiffLines(text: string): string[] {
+  if (!text) return [];
+  const lines = text.split('\n');
+  return text.endsWith('\n') ? lines.slice(0, -1) : lines;
+}
+
+function buildLineDiff(oldLines: string[], newLines: string[]): LineDiff[] {
+  const cells = oldLines.length * newLines.length;
+  if (cells > 200_000) {
+    return [
+      ...oldLines.map((_, index) => ({ type: 'del' as const, oldLine: index + 1, oldIndex: index })),
+      ...newLines.map((_, index) => ({ type: 'add' as const, newLine: index + 1, newIndex: index })),
+    ];
+  }
+
+  const dp = Array.from({ length: oldLines.length + 1 }, () =>
+    Array<number>(newLines.length + 1).fill(0),
+  );
+  for (let i = oldLines.length - 1; i >= 0; i--) {
+    for (let j = newLines.length - 1; j >= 0; j--) {
+      dp[i][j] = oldLines[i] === newLines[j]
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  const out: LineDiff[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < oldLines.length || j < newLines.length) {
+    if (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
+      out.push({ type: 'context', oldLine: i + 1, newLine: j + 1, oldIndex: i, newIndex: j });
+      i++;
+      j++;
+      continue;
+    }
+    if (j < newLines.length && (i === oldLines.length || dp[i][j + 1] >= dp[i + 1][j])) {
+      out.push({ type: 'add', newLine: j + 1, newIndex: j });
+      j++;
+      continue;
+    }
+    if (i < oldLines.length) {
+      out.push({ type: 'del', oldLine: i + 1, oldIndex: i });
+      i++;
+    }
+  }
+  return out;
+}
+
+function renderUnifiedDiffLine(
+  type: 'add' | 'del' | 'context',
+  oldLine: number | null,
+  newLine: number | null,
+  content: string,
+): string {
+  const marker = type === 'add' ? '+' : type === 'del' ? '-' : ' ';
+  const oldText = oldLine === null ? '' : String(oldLine);
+  const newText = newLine === null ? '' : String(newLine);
+  return [
+    `<span class="cw-diff-line cw-diff-${type}">`,
+    `<span class="cw-diff-ln cw-diff-ln--old">${oldText}</span>`,
+    `<span class="cw-diff-ln cw-diff-ln--new">${newText}</span>`,
+    `<span class="cw-diff-marker">${marker}</span>`,
+    `<span class="cw-diff-code">${content || ' '}</span>`,
+    '</span>',
+  ].join('');
+}
+
+export function highlightedUnifiedDiffHtml(
+  oldStr: string,
+  newStr: string,
+  filePath: string,
+): string {
+  const lang = detectHljsLang(filePath);
+  const oldLines = splitDiffLines(oldStr);
+  const newLines = splitDiffLines(newStr);
+  const oldHl = highlightLines(oldLines.join('\n'), lang);
+  const newHl = highlightLines(newLines.join('\n'), lang);
+  const diff = buildLineDiff(oldLines, newLines);
+
+  return diff.map((line) => {
+    if (line.type === 'context') {
+      return renderUnifiedDiffLine('context', line.oldLine, line.newLine, newHl[line.newIndex] ?? '');
+    }
+    if (line.type === 'add') {
+      return renderUnifiedDiffLine('add', null, line.newLine, newHl[line.newIndex] ?? '');
+    }
+    return renderUnifiedDiffLine('del', line.oldLine, null, oldHl[line.oldIndex] ?? '');
+  }).join('');
+}
+
+export function highlightedPatchHtml(patch: string): string {
+  const lines = splitDiffLines(patch);
+  return lines.map((line) => {
+    if (line.startsWith('@@')) {
+      return `<span class="cw-diff-line cw-diff-hunk"><span class="cw-diff-ln"></span><span class="cw-diff-ln"></span><span class="cw-diff-marker"> </span><span class="cw-diff-code">${escapeHtml(line)}</span></span>`;
+    }
+    if (line.startsWith('+')) {
+      return renderUnifiedDiffLine('add', null, null, escapeHtml(line.slice(1)));
+    }
+    if (line.startsWith('-')) {
+      return renderUnifiedDiffLine('del', null, null, escapeHtml(line.slice(1)));
+    }
+    return renderUnifiedDiffLine('context', null, null, escapeHtml(line.startsWith(' ') ? line.slice(1) : line));
+  }).join('');
+}
