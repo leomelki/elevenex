@@ -19,6 +19,7 @@ import { ClaudeHooksGateway } from './claude-hooks/claude-hooks.gateway.js';
 import { ClaudeRuntimeGateway } from './claude-runtime/claude-runtime.gateway.js';
 import { AgentRuntimeGateway } from './agent-runtime/agent-runtime.gateway.js';
 import { BackendLogsGateway } from './backend-logs/backend-logs.gateway.js';
+import { ServerConnectionGateway } from './server-connection/server-connection.gateway.js';
 import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
 import { join } from 'path';
 import * as http from 'http';
@@ -228,6 +229,9 @@ async function bootstrap() {
 
   const backendLogsGateway = app.get(BackendLogsGateway);
   backendLogsGateway.attachToServer(httpServer);
+
+  const serverConnectionGateway = app.get(ServerConnectionGateway);
+  serverConnectionGateway.attachToServer(httpServer);
 
   await app.init();
 

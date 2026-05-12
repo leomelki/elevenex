@@ -245,6 +245,45 @@
       </div>
     </section>
   }
+
+  @if (showServerConnectionOverlay()) {
+    @let connection = serverConnectionState();
+    <section
+      class="server-connection-overlay"
+      [class.server-connection-overlay--restored]="connection.phase === 'restored'"
+      aria-live="assertive"
+      aria-modal="true"
+      role="alertdialog"
+      [attr.aria-label]="connection.phase === 'restored' ? 'Server reconnected' : 'Server disconnected'"
+    >
+      <div class="server-connection-overlay__backdrop"></div>
+      <div class="server-connection-overlay__panel">
+        <div
+          class="server-connection-overlay__icon"
+          [class.server-connection-overlay__icon--restored]="connection.phase === 'restored'"
+        >
+          @if (connection.phase === 'restored') {
+            <ng-icon name="lucideCheck" size="26" />
+          } @else {
+            <ng-icon name="lucideLoader" size="26" class="runtime-remote-overlay__spin" />
+          }
+        </div>
+        <div class="server-connection-overlay__eyebrow">
+          {{ connection.phase === 'restored' ? 'Connection restored' : 'Server connection lost' }}
+        </div>
+        <h1 class="server-connection-overlay__title">
+          {{ connection.phase === 'restored' ? 'Server reconnected' : 'Disconnected from server' }}
+        </h1>
+        <p class="server-connection-overlay__message">
+          {{
+            connection.phase === 'restored'
+              ? 'Server reconnected. Resuming workspace...'
+              : 'Elevenex is trying to reconnect. Workspace actions will resume when the server is available.'
+          }}
+        </p>
+      </div>
+    </section>
+  }
 </div>
 <ngx-sonner-toaster position="bottom-right" />
 <app-remote-install-modal />

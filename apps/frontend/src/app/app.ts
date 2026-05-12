@@ -31,11 +31,20 @@ import { EnvironmentConnectionManagerService } from './shared/services/environme
 import { PlannotatorInstallPromptService } from './features/plannotator/plannotator-install-prompt.service';
 import { PlannotatorInstallPromptComponent } from './features/plannotator/plannotator-install-prompt.component';
 import { ThemeService } from './shared/services/theme.service';
+import { ServerConnectionService } from './shared/services/server-connection.service';
 
 const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 260;
 const STORAGE_KEY = 'sidebar-width';
+
+function readSidebarWidth(): number {
+  try {
+    return +(globalThis.localStorage?.getItem(STORAGE_KEY) ?? SIDEBAR_DEFAULT);
+  } catch {
+    return SIDEBAR_DEFAULT;
+  }
+}
 
 @Component({
   selector: 'app-root',
@@ -64,12 +73,13 @@ export class App implements OnInit, OnDestroy {
   private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private readonly connectionManager = inject(EnvironmentConnectionManagerService);
   private readonly backendLogs = inject(BackendLogsWebsocketService);
+  private readonly serverConnection = inject(ServerConnectionService);
   private readonly plannotatorInstallPrompt = inject(PlannotatorInstallPromptService);
   private readonly theme = inject(ThemeService);
   private readonly windowControls = getElectronWindowControlsApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
 
-  sidebarWidth = signal(+(localStorage.getItem(STORAGE_KEY) ?? SIDEBAR_DEFAULT));
+  sidebarWidth = signal(readSidebarWidth());
   isElectronDesktop = signal(false);
   usesNativeMacControls = signal(false);
   isMaximized = signal(false);
@@ -84,12 +94,15 @@ export class App implements OnInit, OnDestroy {
   readonly remoteDisconnect = this.sshRuntimeRecovery.remoteDisconnect;
   readonly remoteConnecting = this.sshRuntimeRecovery.remoteConnecting;
   readonly connectingPhases = CONNECTING_PHASES;
+  readonly serverConnectionState = this.serverConnection.state;
+  readonly showServerConnectionOverlay = this.serverConnection.showOverlay;
 
   private removeWindowListener: (() => void) | null = null;
   private removeRouteListener: (() => void) | null = null;
 
   async ngOnInit() {
     this.theme.mode();
+    this.serverConnection.start();
     this.backendLogs.start();
     this.plannotatorInstallPrompt.initialize();
 
@@ -256,7 +269,11 @@ export class App implements OnInit, OnDestroy {
       document.removeEventListener('mouseup', onMouseUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      localStorage.setItem(STORAGE_KEY, String(this.sidebarWidth()));
+      try {
+        globalThis.localStorage?.setItem(STORAGE_KEY, String(this.sidebarWidth()));
+      } catch {
+        // Ignore unavailable storage in restricted runtimes.
+      }
     };
 
     document.body.style.cursor = 'col-resize';

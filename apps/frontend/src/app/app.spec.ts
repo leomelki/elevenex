@@ -7,6 +7,8 @@ import { OnboardingStartupService } from './shared/services/onboarding-startup.s
 import { RemoteInstallFlowService } from './shared/services/remote-install-flow.service';
 import { SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
 import { EnvironmentConnectionManagerService } from './shared/services/environment-connection-manager.service';
+import { ServerConnectionService, ServerConnectionState } from './shared/services/server-connection.service';
+import { PlannotatorInstallPromptService } from './features/plannotator/plannotator-install-prompt.service';
 
 describe('App', () => {
   const prompt = signal<any>(null);
@@ -14,7 +16,15 @@ describe('App', () => {
   const remoteDisconnect = signal<any>(null);
   const remoteConnecting = signal<any>(null);
   const remoteInstallState = signal<any>(null);
+  const showPlannotatorInstallPrompt = signal(false);
   const switching = signal(false);
+  const serverConnectionState = signal<ServerConnectionState>({
+    phase: 'connected',
+    lastConnectedAt: 1,
+    lastDisconnectedAt: null,
+    reconnectAttempt: 0,
+  });
+  const showServerConnectionOverlay = signal(false);
   const startupServiceMock = {
     startupPortForwardPrompt: prompt.asReadonly(),
     dismissStartupPortForwardPrompt: vi.fn(),
@@ -57,6 +67,20 @@ describe('App', () => {
     cancel: vi.fn(() => Promise.resolve()),
     sendInput: vi.fn(() => Promise.resolve()),
     resize: vi.fn(() => Promise.resolve()),
+  };
+  const plannotatorInstallPromptMock = {
+    show: showPlannotatorInstallPrompt.asReadonly(),
+    initialize: vi.fn(),
+    dismiss: vi.fn(),
+    install: vi.fn(),
+  };
+  const serverConnectionServiceMock = {
+    state: serverConnectionState.asReadonly(),
+    showOverlay: showServerConnectionOverlay.asReadonly(),
+    isInteractive: signal(true).asReadonly(),
+    reconnectCount: signal(0).asReadonly(),
+    start: vi.fn(),
+    waitUntilInteractive: vi.fn(() => Promise.resolve()),
   };
   const windowControlsMock = {
     getEnvironment: vi.fn(() =>
@@ -105,7 +129,15 @@ describe('App', () => {
     remoteDisconnect.set(null);
     remoteConnecting.set(null);
     remoteInstallState.set(null);
+    showPlannotatorInstallPrompt.set(false);
     switching.set(false);
+    serverConnectionState.set({
+      phase: 'connected',
+      lastConnectedAt: 1,
+      lastDisconnectedAt: null,
+      reconnectAttempt: 0,
+    });
+    showServerConnectionOverlay.set(false);
     vi.clearAllMocks();
     window.__ELEVENEX_ELECTRON__ = undefined;
     window.__ELEVENEX_RUNTIME__ = undefined;
@@ -139,6 +171,8 @@ describe('App', () => {
         { provide: RemoteInstallFlowService, useValue: remoteInstallFlowMock },
         { provide: SshRuntimeRecoveryService, useValue: runtimeRecoveryServiceMock },
         { provide: EnvironmentConnectionManagerService, useValue: connectionManagerMock },
+        { provide: ServerConnectionService, useValue: serverConnectionServiceMock },
+        { provide: PlannotatorInstallPromptService, useValue: plannotatorInstallPromptMock },
       ],
     }).compileComponents();
   });
@@ -280,6 +314,48 @@ describe('App', () => {
     expect(compiled.querySelector('.runtime-remote-overlay')).toBeTruthy();
     expect(compiled.textContent).toContain('Reconnect to continue');
     expect(compiled.textContent).toContain('Tunnel dropped unexpectedly.');
+  });
+
+  it('should render a blocking server disconnect overlay above the shell', async () => {
+    showServerConnectionOverlay.set(true);
+    serverConnectionState.set({
+      phase: 'disconnected',
+      lastConnectedAt: 1,
+      lastDisconnectedAt: 2,
+      reconnectAttempt: 1,
+    });
+
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const overlay = compiled.querySelector('.server-connection-overlay');
+    expect(overlay).toBeTruthy();
+    expect(compiled.textContent).toContain('Disconnected from server');
+    expect(compiled.textContent).toContain('Elevenex is trying to reconnect');
+  });
+
+  it('should render the server restored state before dismissing the overlay', async () => {
+    showServerConnectionOverlay.set(true);
+    serverConnectionState.set({
+      phase: 'restored',
+      lastConnectedAt: 3,
+      lastDisconnectedAt: 2,
+      reconnectAttempt: 0,
+    });
+
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const overlay = compiled.querySelector('.server-connection-overlay');
+    expect(overlay?.classList.contains('server-connection-overlay--restored')).toBe(true);
+    expect(compiled.textContent).toContain('Server reconnected');
+    expect(compiled.textContent).toContain('Server reconnected. Resuming workspace...');
   });
 
   it('should render the shared remote install modal when manual remote setup is required', async () => {

@@ -629,6 +629,100 @@
   box-shadow: none;
 }
 
+.server-connection-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  pointer-events: auto;
+}
+
+.server-connection-overlay--restored {
+  animation: server-connection-restored-exit 0.35s ease 1.15s forwards;
+}
+
+.server-connection-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top, color-mix(in oklch, var(--warning) 12%, transparent), transparent 34%),
+    color-mix(in oklch, var(--background) 72%, var(--surface-shade) 52%);
+  backdrop-filter: blur(20px) saturate(0.9);
+}
+
+.server-connection-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 440px);
+  padding: 34px;
+  border-radius: 28px;
+  border: 1px solid color-mix(in oklch, var(--border) 76%, var(--surface-tint) 10%);
+  background:
+    linear-gradient(180deg, color-mix(in oklch, var(--background) 88%, var(--surface-tint) 12%), color-mix(in oklch, var(--background) 94%, transparent));
+  box-shadow:
+    0 16px 42px color-mix(in oklch, var(--surface-shade) 18%, transparent),
+    0 40px 96px color-mix(in oklch, var(--surface-shade) 24%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.server-connection-overlay__icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--warning);
+  background: color-mix(in oklch, var(--warning) 12%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--warning) 24%, var(--background));
+  margin-bottom: 22px;
+}
+
+.server-connection-overlay__icon--restored {
+  color: var(--success);
+  background: color-mix(in oklch, var(--success) 12%, var(--background));
+  border-color: color-mix(in oklch, var(--success) 24%, var(--background));
+}
+
+.server-connection-overlay__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--warning) 62%, var(--foreground));
+}
+
+.server-connection-overlay--restored .server-connection-overlay__eyebrow {
+  color: color-mix(in oklch, var(--success) 62%, var(--foreground));
+}
+
+.server-connection-overlay__title {
+  margin: 10px 0 0;
+  font-size: 1.85rem;
+  line-height: 1.08;
+  font-weight: 700;
+}
+
+.server-connection-overlay__message {
+  margin: 14px 0 0;
+  max-width: 36ch;
+  color: var(--muted-foreground);
+  line-height: 1.58;
+}
+
+@keyframes server-connection-restored-exit {
+  to {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
 @media (max-width: 900px) {
   .startup-forward-bar {
     flex-direction: column;
