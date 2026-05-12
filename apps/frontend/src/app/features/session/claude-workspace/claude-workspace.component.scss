@@ -751,7 +751,6 @@
 
 .cw-turn-gap__label,
 .cw-turn-gap__meta,
-.cw-turn-gap__changes,
 .cw-turn-gap__count {
   white-space: nowrap;
 }
@@ -764,20 +763,6 @@
 
 .cw-turn-gap__meta {
   font-size: 0.75rem;
-}
-
-.cw-turn-gap__changes {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.25rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--muted-foreground);
-}
-
-.cw-turn-gap__changes-separator {
-  color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
-  font-weight: 500;
 }
 
 .cw-turn-gap__changes-additions {

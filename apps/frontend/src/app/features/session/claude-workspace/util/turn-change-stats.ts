@@ -53,11 +53,38 @@ const FILE_WRITING_TOOLS = new Set([
   'filechanges',
 ]);
 
-function lineCount(text: string | undefined | null): number {
-  if (!text) return 0;
+function splitLines(text: string | undefined | null): string[] {
+  if (!text) return [];
   const trimmed = text.endsWith('\n') ? text.slice(0, -1) : text;
-  if (!trimmed) return 0;
-  return trimmed.split('\n').length;
+  return trimmed ? trimmed.split('\n') : [];
+}
+
+function lineCount(text: string | undefined | null): number {
+  return splitLines(text).length;
+}
+
+function lcsLength(a: string[], b: string[]): number {
+  const m = a.length;
+  const n = b.length;
+  let prev = new Array<number>(n + 1).fill(0);
+  let curr = new Array<number>(n + 1).fill(0);
+  for (let i = 1; i <= m; i++) {
+    curr.fill(0);
+    for (let j = 1; j <= n; j++) {
+      curr[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(curr[j - 1], prev[j]);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+function countLineDiff(oldStr: string, newStr: string): { additions: number; deletions: number } {
+  const oldLines = splitLines(oldStr);
+  const newLines = splitLines(newStr);
+  if (!oldLines.length) return { additions: newLines.length, deletions: 0 };
+  if (!newLines.length) return { additions: 0, deletions: oldLines.length };
+  const common = lcsLength(oldLines, newLines);
+  return { additions: newLines.length - common, deletions: oldLines.length - common };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -191,16 +218,22 @@ function parseApplyPatchLikeEdit(oldString: string, newString: string): Extracte
     files.get(currentPath)?.lines.push(line);
   }
 
-  return Array.from(files.entries()).map(([filePath, file]) => ({
-    filePath,
-    toolName: 'Edit',
-    edits: [{
-      oldString: file.status === 'Add' ? '' : file.lines.filter((line) => line.startsWith('-')).map((line) => line.slice(1)).join('\n'),
-      newString: file.status === 'Delete' ? '' : file.lines.filter((line) => line.startsWith('+')).map((line) => line.slice(1)).join('\n'),
-      patch: file.lines.join('\n'),
-      label: file.status === 'Add' ? 'Created file' : file.status === 'Delete' ? 'Deleted file' : 'Patch',
-    }],
-  }));
+  return Array.from(files.entries()).map(([filePath, file]) => {
+    const oldString = file.status === 'Add' ? '' : file.lines.filter((line) => line.startsWith('-')).map((line) => line.slice(1)).join('\n');
+    const newString = file.status === 'Delete' ? '' : file.lines.filter((line) => line.startsWith('+')).map((line) => line.slice(1)).join('\n');
+    return {
+      filePath,
+      toolName: 'Edit',
+      edits: [{
+        oldString,
+        newString,
+        patch: file.lines.join('\n'),
+        label: file.status === 'Add' ? 'Created file' : file.status === 'Delete' ? 'Deleted file' : 'Patch',
+        additions: lineCount(newString),
+        deletions: lineCount(oldString),
+      }],
+    };
+  });
 }
 
 function isToolUseUnit(
@@ -265,8 +298,9 @@ export function computeTurnChangeDetails(units: PairedTranscriptUnit[]): TurnCha
         if (seenFingerprints.has(fp)) continue;
         seenFingerprints.add(fp);
 
-        const additions = edit.additions ?? lineCount(edit.newString);
-        const deletions = edit.deletions ?? lineCount(edit.oldString);
+        const diff = countLineDiff(edit.oldString, edit.newString);
+        const additions = edit.additions ?? diff.additions;
+        const deletions = edit.deletions ?? diff.deletions;
         if (additions === 0 && deletions === 0 && !edit.patch) continue;
 
         file.additions += additions;
