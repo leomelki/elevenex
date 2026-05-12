@@ -40,8 +40,13 @@ export type PlannotatorEvent = PlannotatorUrlEvent | PlannotatorSessionEvent | P
   providedIn: 'root',
 })
 export class PlannotatorService implements OnDestroy {
+  private static readonly RECONNECT_DELAYS_MS = [0, 500, 1000, 2000];
+
   private socket: Socket | null = null;
   private eventSubject = new ReplaySubject<PlannotatorEvent>(5);
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
+  private destroyed = false;
 
   events$ = this.eventSubject.asObservable();
 
@@ -53,36 +58,69 @@ export class PlannotatorService implements OnDestroy {
   }
 
   private connect(): void {
+    // Re-read the backend origin on every connect attempt so that a newly
+    // allocated SSH-tunnel port (written to localStorage by the startup
+    // service) is picked up without requiring a page reload.
     const socketUrl = getSocketIoBaseUrl('/plannotator');
 
-    this.socket = io(socketUrl, {
+    const socket = io(socketUrl, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
-      reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
+      reconnection: false,
       path: '/socket.io',
     });
 
-    this.socket.on('connect', () => {
-      console.log('[Plannotator] WebSocket connected, id:', this.socket?.id);
+    this.socket = socket;
+
+    socket.on('connect', () => {
+      console.log('[Plannotator] WebSocket connected, id:', socket.id);
+      this.reconnectAttempt = 0;
       this._connected.set(true);
       setTimeout(() => this.requestActivePanels(), 100);
     });
 
-    this.socket.on('disconnect', (reason: string) => {
+    socket.on('disconnect', (reason: string) => {
       console.log('[Plannotator] WebSocket disconnected, reason:', reason);
       this._connected.set(false);
+      this.scheduleReconnect();
     });
 
-    this.socket.on('event', (event: PlannotatorEvent) => {
+    socket.on('event', (event: PlannotatorEvent) => {
       console.log('[Plannotator] Received event:', JSON.stringify(event));
       this.eventSubject.next(event);
     });
 
-    this.socket.on('connect_error', (error: Error) => {
+    socket.on('connect_error', (error: Error) => {
       console.error('[Plannotator] Connection error:', error.message);
+      this.scheduleReconnect();
     });
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer !== null || this.destroyed) {
+      return;
+    }
+
+    const delay = PlannotatorService.RECONNECT_DELAYS_MS[
+      Math.min(this.reconnectAttempt, PlannotatorService.RECONNECT_DELAYS_MS.length - 1)
+    ];
+    this.reconnectAttempt++;
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.destroyed) {
+        this.destroySocket();
+        this.connect();
+      }
+    }, delay);
+  }
+
+  private destroySocket(): void {
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      this.socket.disconnect();
+      this.socket = null;
+    }
   }
 
   registerWorktree(worktreePath: string, sessionId: number): void {
@@ -113,10 +151,12 @@ export class PlannotatorService implements OnDestroy {
   }
 
   ngOnDestroy(): void {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
+    this.destroyed = true;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
+    this.destroySocket();
     this.eventSubject.complete();
   }
 }
