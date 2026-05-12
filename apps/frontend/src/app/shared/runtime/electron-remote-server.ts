@@ -48,7 +48,6 @@ export interface ElectronRemoteServerEnsureReadyPayload {
   sshUser?: string | null;
   sshPort: number;
   bindAddress: string;
-  localPort: number;
   remoteHost: string;
   remotePort: number;
   authMode?: 'agent' | 'password' | 'key';

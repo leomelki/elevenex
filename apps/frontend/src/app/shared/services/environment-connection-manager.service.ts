@@ -29,10 +29,6 @@ export interface SavedServerDraft {
   identityFilePath?: string | null;
 }
 
-function buildRandomPortSeed() {
-  return ELEVENEX_REMOTE_PORT + 100 + Math.floor(Math.random() * 4000);
-}
-
 function normalizeDraft(draft: SavedServerDraft): SavedServerDraft {
   return {
     id: draft.id,
@@ -162,7 +158,7 @@ export class EnvironmentConnectionManagerService {
       sshPort: normalized.sshPort,
       authMode: normalized.authMode,
       identityFilePath: normalized.identityFilePath ?? null,
-      localPort: existing?.localPort ?? buildRandomPortSeed(),
+      localPort: existing?.localPort ?? 0,
       remotePort: existing?.remotePort ?? ELEVENEX_REMOTE_PORT,
       installStatus: existing?.installStatus ?? 'unknown',
       createdAt: existing?.createdAt ?? now,

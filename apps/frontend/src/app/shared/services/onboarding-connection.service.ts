@@ -33,10 +33,6 @@ export type OnboardingConnectionResult =
   | OnboardingConnectionSuccess
   | OnboardingConnectionFailure;
 
-function buildRandomPortSeed() {
-  return ELEVENEX_REMOTE_PORT + 100 + Math.floor(Math.random() * 4000);
-}
-
 @Injectable({ providedIn: 'root' })
 export class OnboardingConnectionService {
   private readonly _currentPhase = signal<RemoteInstallPhase | null>(null);
@@ -88,7 +84,6 @@ export class OnboardingConnectionService {
       password: payload.password?.trim() || null,
       identityFilePath: payload.identityFilePath?.trim() || null,
       passphrase: payload.passphrase?.trim() || null,
-      localPort: buildRandomPortSeed(),
     }, { interactive: true });
   }
 
@@ -112,7 +107,6 @@ export class OnboardingConnectionService {
       password: null,
       identityFilePath: server.identityFilePath,
       passphrase: null,
-      localPort: server.localPort,
     }, { interactive: options.interactive ?? true });
   }
 
@@ -125,7 +119,6 @@ export class OnboardingConnectionService {
     password: string | null;
     identityFilePath: string | null;
     passphrase: string | null;
-    localPort: number;
   }, options: { interactive: boolean }): Promise<OnboardingConnectionResult> {
     if (!(await this.isSupported())) {
       return {
@@ -143,7 +136,6 @@ export class OnboardingConnectionService {
       sshUser: payload.sshUser,
       sshPort: payload.sshPort,
       bindAddress: '127.0.0.1',
-      localPort: payload.localPort,
       remoteHost: '127.0.0.1',
       remotePort: ELEVENEX_REMOTE_PORT,
       authMode: payload.authMode,
@@ -188,7 +180,7 @@ export class OnboardingConnectionService {
       return {
         kind: 'success',
         serverId: payload.id,
-        localPort: runtime.localPort ?? payload.localPort,
+        localPort: runtime.localPort ?? 0,
         installStatus: runtime.installStatus ?? 'available',
       };
     }

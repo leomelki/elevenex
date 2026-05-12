@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage,
 const { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } = require('fs');
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
@@ -1281,6 +1282,7 @@ function createRemoteInstallerSession(forward, preflight) {
   const sessionState = {
     id: sessionId,
     serverId: forward.id,
+    forward,
     process: child,
     resolvedConfig,
     askPass,
@@ -1597,6 +1599,25 @@ function probeElevenexBackend(localPort) {
     });
     request.on('error', () => resolve(false));
   });
+}
+
+function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+    server.on('error', reject);
+  });
+}
+
+async function allocateLocalPort(id) {
+  const existing = sshForwardRuntimes.get(id);
+  if (existing && (existing.status === 'connecting' || existing.status === 'active')) {
+    return existing.localPort;
+  }
+  return getFreePort();
 }
 
 function assertNoSshBindConflict(forward) {
@@ -3116,13 +3137,24 @@ ipcMain.handle('elevenex-ssh-forwarding:pick-identity-file', async () => {
 });
 
 ipcMain.handle('elevenex-remote-server:ensure-ready', async (_event, payload) => {
+  const serverId = Number(payload?.id);
+  if (!Number.isFinite(serverId) || serverId <= 0) {
+    throw new Error('Remote server id is required');
+  }
+
+  const sshHost = `${payload?.sshHost || ''}`.trim();
+  if (!sshHost) {
+    throw new Error('SSH host is required');
+  }
+
+  const localPort = await allocateLocalPort(serverId);
   const forward = {
-    id: Number(payload?.id),
-    sshHost: `${payload?.sshHost || ''}`.trim(),
+    id: serverId,
+    sshHost,
     sshUser: `${payload?.sshUser || ''}`.trim(),
     sshPort: Number(payload?.sshPort || 22),
     bindAddress: `${payload?.bindAddress || '127.0.0.1'}`.trim(),
-    localPort: Number(payload?.localPort),
+    localPort,
     remoteHost: `${payload?.remoteHost || '127.0.0.1'}`.trim(),
     remotePort: Number(payload?.remotePort || 11111),
     authMode: payload?.authMode === 'password' || payload?.authMode === 'key' ? payload.authMode : 'agent',
@@ -3131,14 +3163,6 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (_event, payload) =>
     passphrase: `${payload?.passphrase || ''}`,
     probeType: 'elevenex-backend',
   };
-
-  if (!Number.isFinite(forward.id) || forward.id <= 0) {
-    throw new Error('Remote server id is required');
-  }
-
-  if (!forward.sshHost) {
-    throw new Error('SSH host is required');
-  }
 
   let result;
   try {
@@ -3178,7 +3202,7 @@ ipcMain.handle('elevenex-remote-server:recheck', async (_event, payload) => {
 
   let result;
   try {
-    result = await ensureRemoteServerReady(payload);
+    result = await ensureRemoteServerReady(sessionState.forward);
   } catch (error) {
     console.error('[remote-runtime] recheck failed', {
       sessionId,
