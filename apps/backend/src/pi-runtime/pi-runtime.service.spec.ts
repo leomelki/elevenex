@@ -2,6 +2,10 @@ import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { PiRuntimeService } from './pi-runtime.service.js';
 
+jest.mock('../session-title/session-title.service.js', () => ({
+  SessionTitleService: jest.fn(),
+}));
+
 jest.mock('child_process', () => ({
   execFile: jest.fn(),
   spawn: jest.fn(),
@@ -110,6 +114,7 @@ function createService(options?: { idleMs?: string; idleCap?: string }) {
     updatePiSessionPath: jest.fn(async () => undefined),
   };
   const auth = {
+    on: jest.fn(),
     getStatus: jest.fn(async () => ({
       isAuthenticating: false,
       output: [],

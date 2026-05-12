@@ -357,7 +357,7 @@ export class CodexRuntimeService extends EventEmitter {
         state.pendingPrompts = rest;
         this.emitRunState(sessionId);
         setImmediate(() => {
-          this.submitPrompt(sessionId, next.prompt, next.images).catch(
+          this.submitPrompt(sessionId, next.prompt, undefined, next.images).catch(
             (error) => {
               this.logger.error(
                 `Pending Codex prompt failed session=${sessionId}: ${String(error)}`,

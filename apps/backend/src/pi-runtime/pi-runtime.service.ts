@@ -252,7 +252,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
         state.pendingPrompts = rest;
         this.emitRunState(sessionId);
         setImmediate(() => {
-          this.submitPrompt(sessionId, next.prompt, next.images).catch((error) => {
+          this.submitPrompt(sessionId, next.prompt, undefined, next.images).catch((error) => {
             this.logger.error(
               `Pending Pi prompt failed session=${sessionId}: ${String(error)}`,
             );
