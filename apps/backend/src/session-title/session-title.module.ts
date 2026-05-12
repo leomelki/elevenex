@@ -1,9 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { SessionsModule } from '../sessions/sessions.module.js';
 import { SessionTitleService } from './session-title.service.js';
 
 @Module({
-  imports: [SessionsModule],
+  imports: [forwardRef(() => SessionsModule)],
   providers: [SessionTitleService],
   exports: [SessionTitleService],
 })
