@@ -54,6 +54,9 @@ describe('ActionPtyManager', () => {
       PATH: '/repo/bin:/usr/bin',
       SHELL: '/custom/zsh',
       PWD: '/backend/root',
+      ELEVENEX_ACTION_TOKEN: 'abc 123',
+      ELEVENEX_ACTION_QUOTED: "it's ok",
+      'ELEVENEX-INVALID-KEY': 'ignored',
     });
     mockSpawn.mockReturnValue(createMockPty() as never);
   });
@@ -117,5 +120,33 @@ describe('ActionPtyManager', () => {
         }),
       },
     );
+  });
+
+  it('starts tmux actions with the full augmented env inlined into the command wrapper', async () => {
+    mockFindBinary.mockReturnValue('/usr/bin/tmux');
+    mockExecSync.mockReturnValue(Buffer.from(''));
+    manager = new ActionPtyManager();
+    manager.registerPersistence({
+      markRunning: jest.fn().mockResolvedValue(undefined),
+      flushCurrentOutput: jest.fn().mockResolvedValue(undefined),
+      finalizeRun: jest.fn().mockResolvedValue(undefined),
+    });
+
+    await manager.start({
+      id: 11,
+      worktreePath: tmpDir,
+      command: 'printenv ELEVENEX_ACTION_TOKEN',
+    });
+
+    const newSessionCall = mockExecSync.mock.calls.find(([command]) =>
+      String(command).includes(' new-session '),
+    );
+    expect(newSessionCall?.[0]).toContain("PATH='\\''/repo/bin:/usr/bin'\\''");
+    expect(newSessionCall?.[0]).toContain(
+      "ELEVENEX_ACTION_TOKEN='\\''abc 123'\\''",
+    );
+    expect(newSessionCall?.[0]).toContain('ELEVENEX_ACTION_QUOTED=');
+    expect(newSessionCall?.[0]).toContain('s ok');
+    expect(newSessionCall?.[0]).not.toContain('ELEVENEX-INVALID-KEY');
   });
 });

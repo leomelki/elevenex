@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import { buildAugmentedEnv, buildTmuxInlineEnvPrefix, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
 
 type ActionStatus = 'idle' | 'running' | 'success' | 'failed' | 'stopped';
 
@@ -289,6 +289,16 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
     return `'${cmd.replace(/'/g, "'\\''")}'`;
   }
 
+  private buildTmuxInlineEnvPrefix(env: NodeJS.ProcessEnv): string {
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(env)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      if (typeof value !== 'string') continue;
+      parts.push(`${key}=${this.shellEscape(value)}`);
+    }
+    return parts.join(' ');
+  }
+
   private buildEnv(worktreePath?: string): NodeJS.ProcessEnv {
     return {
       ...buildAugmentedEnv(process.env, worktreePath),
@@ -328,8 +338,10 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
       // Wrap command to capture exit code before tmux session dies. Prefix
       // with PATH / version-manager env so the user's command resolves to the
       // worktree-pinned node — the running tmux server's stale env would
-      // otherwise win (its env was captured at server startup).
-      const tmuxEnvPrefix = buildTmuxInlineEnvPrefix(env);
+      // otherwise win (its env was captured at server startup). Inline the
+      // full augmented env, not only PATH, so action commands see the same
+      // tokens and tool variables as non-tmux executions.
+      const tmuxEnvPrefix = this.buildTmuxInlineEnvPrefix(env);
       const shell = this.resolveShell(env);
       const innerCmd = `${tmuxEnvPrefix} ${this.shellEscape(shell)} -lc ${this.shellEscape(action.command)}; echo $? > ${this.shellEscape(exitCodePath)}`;
 
