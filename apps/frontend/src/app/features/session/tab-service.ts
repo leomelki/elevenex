@@ -285,6 +285,7 @@ export class TabService {
         t.sessionId === sessionId ? { ...t, status } : t
       )
     );
+    this.persistState();
   }
 
   updateTabCompletion(

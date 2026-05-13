@@ -10,6 +10,7 @@ import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-pro
 import { NavigationService } from '../../../shared/services/navigation.service';
 import { ClaudeTerminalComponent } from '../terminal';
 import { ClaudeWorkspaceComponent } from '../claude-workspace';
+import { ArchivedSessionViewComponent } from '../archived-session-view/archived-session-view.component';
 import { VSCodeWebPanelComponent } from '@/features/vscode-web';
 import { BrowserPanelComponent } from '@/features/browser-panel/browser-panel.component';
 import { ScratchpadPanelComponent } from '@/features/productivity/scratchpad-panel/scratchpad-panel';
@@ -59,6 +60,7 @@ type SidePanelMode = 'none' | 'files' | 'browser' | 'github' | 'plannotator';
     TabBar,
     ClaudeTerminalComponent,
     ClaudeWorkspaceComponent,
+    ArchivedSessionViewComponent,
     VSCodeWebPanelComponent,
     BrowserPanelComponent,
     ScratchpadPanelComponent,
@@ -105,6 +107,7 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   showDeleteDialog = signal(false);
   deleteTargetSessionId = signal<number | null>(null);
+  unarchivingSessionId = signal<number | null>(null);
   protected readonly browserPanelMounted = signal(true);
 
   claudeTerminals = viewChildren(ClaudeTerminalComponent);
@@ -146,11 +149,16 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   sidePanelMode = signal<SidePanelMode>(this.getSidePanelPreference());
   claudeSurfaceMode = signal<'workspace' | 'terminal'>('workspace');
+  activeSessionArchived = computed(() => this.activeTab()?.status === 'archived');
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
   showGithubPanel = computed(() => this.sidePanelMode() === 'github');
   showPlannotatorPanel = computed(() => this.sidePanelMode() === 'plannotator' && this.plannotatorAvailable());
-  sidePanelVisible = computed(() => this.sidePanelMode() !== 'none' && (this.sidePanelMode() !== 'plannotator' || this.plannotatorAvailable()));
+  sidePanelVisible = computed(() =>
+    !this.activeSessionArchived()
+    && this.sidePanelMode() !== 'none'
+    && (this.sidePanelMode() !== 'plannotator' || this.plannotatorAvailable()),
+  );
   showClaudeTerminalFallback = computed(() => this.claudeSurfaceMode() === 'terminal');
 
   // User terminal panel visibility
@@ -166,7 +174,10 @@ export class SessionContainer implements OnInit, OnDestroy {
     return this.actionsState.isPanelOpen(wt);
   });
 
-  bottomPanelVisible = computed(() => this.terminalPanelVisible() || this.actionPanelVisible());
+  bottomPanelVisible = computed(() =>
+    !this.activeSessionArchived()
+    && (this.terminalPanelVisible() || this.actionPanelVisible()),
+  );
 
   runningActionsCount = computed(() => {
     const wt = this.worktreePath();
@@ -530,7 +541,9 @@ export class SessionContainer implements OnInit, OnDestroy {
           const existingTab = this.tabs().find(tab => tab.sessionId === newSessionId);
           if (existingTab) {
             this.switchToSessionProvider(existingTab.activeAgentProvider);
-            this.clearCompletionMarkerFromTab(existingTab);
+            if (existingTab.status !== 'archived') {
+              this.clearCompletionMarkerFromTab(existingTab);
+            }
           }
         }
       }
@@ -549,7 +562,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     const tabsList = this.tabs();
     console.log('[SessionContainer] registerOpenWorktrees: tabs count=', tabsList.length, 'tabs=', tabsList.map(t => ({ id: t.sessionId, wt: t.worktreePath })));
     for (const tab of tabsList) {
-      if (tab.worktreePath) {
+      if (tab.worktreePath && tab.status !== 'archived') {
         this.plannotatorService.registerWorktree(tab.worktreePath, tab.sessionId);
       }
     }
@@ -700,7 +713,7 @@ export class SessionContainer implements OnInit, OnDestroy {
       }
 
       const selectedTab = this.activeTab();
-      if (selectedTab) {
+      if (selectedTab && selectedTab.status !== 'archived') {
         this.clearCompletionMarkerForOpenSession(selectedTab.sessionId, selectedTab);
       }
 
@@ -715,7 +728,9 @@ export class SessionContainer implements OnInit, OnDestroy {
       next: (session) => {
         this.switchToSessionProvider(session.activeAgentProvider);
         this.tabService.openTab(session);
-        this.clearCompletionMarkerForOpenSession(session.id, session);
+        if (session.status !== 'archived') {
+          this.clearCompletionMarkerForOpenSession(session.id, session);
+        }
         if (session.worktreePath) {
           this.plannotatorService.registerWorktree(session.worktreePath, session.id);
         }
@@ -866,7 +881,9 @@ export class SessionContainer implements OnInit, OnDestroy {
     const tab = this.tabs().find(currentTab => currentTab.sessionId === sessionId);
     this.switchToSessionProvider(tab?.activeAgentProvider);
     this.tabService.selectTab(sessionId);
-    this.clearCompletionMarkerForOpenSession(sessionId, tab);
+    if (tab?.status !== 'archived') {
+      this.clearCompletionMarkerForOpenSession(sessionId, tab);
+    }
     // Update URL to reflect active session
     this.router.navigate(['/sessions', sessionId], { replaceUrl: true });
   }
@@ -937,6 +954,43 @@ export class SessionContainer implements OnInit, OnDestroy {
   onTabDeleteRequest(sessionId: number): void {
     this.deleteTargetSessionId.set(sessionId);
     this.showDeleteDialog.set(true);
+  }
+
+  onTabArchiveRequest(sessionId: number): void {
+    this.sessionsService.archive(sessionId).subscribe({
+      next: (session) => {
+        this.tabService.updateTabStatus(sessionId, session.status);
+        this.navService.refreshTree();
+        if (this.activeSessionId() === sessionId) {
+          this.sidePanelMode.set('none');
+          this.saveSidePanelPreference('none');
+        }
+        toast.success('Session archived');
+      },
+      error: (err) => {
+        toast.error('Could not archive session. ' + (err.error?.message || ''));
+      },
+    });
+  }
+
+  onTabUnarchiveRequest(sessionId: number): void {
+    if (this.unarchivingSessionId() !== null) {
+      return;
+    }
+
+    this.unarchivingSessionId.set(sessionId);
+    this.sessionsService.unarchive(sessionId).subscribe({
+      next: (session) => {
+        this.unarchivingSessionId.set(null);
+        this.tabService.updateTabStatus(sessionId, session.status);
+        this.navService.refreshTree();
+        toast.success('Session unarchived');
+      },
+      error: (err) => {
+        this.unarchivingSessionId.set(null);
+        toast.error('Could not unarchive session. ' + (err.error?.message || ''));
+      },
+    });
   }
 
   confirmDeleteSession(): void {

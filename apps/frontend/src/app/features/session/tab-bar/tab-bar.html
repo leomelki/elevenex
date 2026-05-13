@@ -72,7 +72,7 @@
     }
   </div>
 
-  @if (projectId()) {
+  @if (projectId() && !activeTabIsArchived()) {
     <div class="ml-auto flex h-full shrink-0 items-center self-center gap-1 pl-2">
       @if (worktreePath()) {
         <app-commit-button [worktreePath]="worktreePath()" />
@@ -205,6 +205,23 @@
         Close All Tabs
       </button>
       <div class="my-1 h-px bg-border"></div>
+      @if (contextMenuTab()?.status === 'archived') {
+        <button
+          class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground hover:bg-accent cursor-pointer"
+          (click)="onContextMenuUnarchive()"
+        >
+          <ng-icon name="lucideArchiveRestore" size="14" />
+          Unarchive Session
+        </button>
+      } @else {
+        <button
+          class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground hover:bg-accent cursor-pointer"
+          (click)="onContextMenuArchive()"
+        >
+          <ng-icon name="lucideArchive" size="14" />
+          Archive Session
+        </button>
+      }
       <button
         class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 cursor-pointer"
         (click)="onContextMenuDelete()"

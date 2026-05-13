@@ -24,6 +24,7 @@ export interface BranchInTree {
   hasWorktree: boolean;
   worktreePath: string | null;
   sessions: SessionInTree[];
+  archivedSessions: SessionInTree[];
 }
 
 export interface RepoInTree {
@@ -62,16 +63,15 @@ export class NavigationService {
           repos.map(async (repo) => {
             const sessions = await this.sessionsService.findByRepo(repo.id);
 
-            // Group non-archived sessions by branchName to create virtual branches
-            const branchMap = new Map<string, { worktreePath: string; sessions: SessionInTree[] }>();
+            // Group sessions by branchName to create virtual branches.
+            const branchMap = new Map<string, { worktreePath: string; sessions: SessionInTree[]; archivedSessions: SessionInTree[] }>();
             for (const s of sessions) {
-              if (s.status === 'archived') continue;
               let entry = branchMap.get(s.branchName);
               if (!entry) {
-                entry = { worktreePath: s.worktreePath, sessions: [] };
+                entry = { worktreePath: s.worktreePath, sessions: [], archivedSessions: [] };
                 branchMap.set(s.branchName, entry);
               }
-              entry.sessions.push({
+              const sessionInTree = {
                 id: s.id,
                 name: s.name,
                 status: s.status,
@@ -81,11 +81,16 @@ export class NavigationService {
                 lastCompletionAt: s.lastCompletionAt,
                 lastCompletionKind: s.lastCompletionKind,
                 lastStateChangeAt: s.lastStateChangeAt,
-              });
+              };
+              if (s.status === 'archived') {
+                entry.archivedSessions.push(sessionInTree);
+              } else {
+                entry.sessions.push(sessionInTree);
+              }
             }
 
             const branches: BranchInTree[] = Array.from(branchMap.entries()).map(
-              ([branchName, { worktreePath, sessions: branchSessions }]) => ({
+              ([branchName, { worktreePath, sessions: branchSessions, archivedSessions }]) => ({
                 name: branchName,
                 commit: '',
                 label: '',
@@ -93,6 +98,7 @@ export class NavigationService {
                 hasWorktree: true,
                 worktreePath,
                 sessions: branchSessions,
+                archivedSessions,
               }),
             );
 
@@ -135,8 +141,22 @@ export class NavigationService {
               // Attach sessions to their corresponding branches
               const branchesWithSessions: BranchInTree[] = branches.map(
                 (branch) => {
-                  const branchSessions = sessions
-                    .filter((s) => s.branchName === branch.name && s.status !== 'archived')
+                  const branchSessions = sessions.filter((s) => s.branchName === branch.name);
+                  const activeSessions = branchSessions
+                    .filter((s) => s.status !== 'archived')
+                    .map((s) => ({
+                      id: s.id,
+                      name: s.name,
+                      status: s.status,
+                      branchName: s.branchName,
+                      repoId: repo.id,
+                      hasUnreviewedCompletion: s.hasUnreviewedCompletion,
+                      lastCompletionAt: s.lastCompletionAt,
+                      lastCompletionKind: s.lastCompletionKind,
+                      lastStateChangeAt: s.lastStateChangeAt,
+                    }));
+                  const archivedSessions = branchSessions
+                    .filter((s) => s.status === 'archived')
                     .map((s) => ({
                       id: s.id,
                       name: s.name,
@@ -151,10 +171,45 @@ export class NavigationService {
 
                   return {
                     ...branch,
-                    sessions: branchSessions,
+                    sessions: activeSessions,
+                    archivedSessions,
                   };
                 },
               );
+
+              const branchNames = new Set(branches.map((branch) => branch.name));
+              const archivedOnlyBranches = new Map<string, SessionInTree[]>();
+              for (const session of sessions) {
+                if (session.status !== 'archived' || branchNames.has(session.branchName)) {
+                  continue;
+                }
+                const entry = archivedOnlyBranches.get(session.branchName) ?? [];
+                entry.push({
+                  id: session.id,
+                  name: session.name,
+                  status: session.status,
+                  branchName: session.branchName,
+                  repoId: repo.id,
+                  hasUnreviewedCompletion: session.hasUnreviewedCompletion,
+                  lastCompletionAt: session.lastCompletionAt,
+                  lastCompletionKind: session.lastCompletionKind,
+                  lastStateChangeAt: session.lastStateChangeAt,
+                });
+                archivedOnlyBranches.set(session.branchName, entry);
+              }
+
+              for (const [branchName, archivedSessions] of archivedOnlyBranches) {
+                branchesWithSessions.push({
+                  name: branchName,
+                  commit: '',
+                  label: branchName,
+                  current: false,
+                  hasWorktree: true,
+                  worktreePath: null,
+                  sessions: [],
+                  archivedSessions,
+                });
+              }
 
               return {
                 id: repo.id,

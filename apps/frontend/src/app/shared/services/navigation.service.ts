@@ -97,6 +97,11 @@ export class NavigationService {
               ? { ...session, ...completion }
               : session,
           ),
+          archivedSessions: branch.archivedSessions?.map(session =>
+            session.id === sessionId
+              ? { ...session, ...completion }
+              : session,
+          ),
         })),
       })),
     })));
@@ -134,7 +139,10 @@ export class NavigationService {
     ));
     const previousSessionIds = new Set(previous.flatMap(project =>
       project.repos.flatMap(repo =>
-        repo.branches.flatMap(branch => branch.sessions.map(session => session.id)),
+        repo.branches.flatMap(branch => [
+          ...branch.sessions,
+          ...(branch.archivedSessions ?? []),
+        ].map(session => session.id)),
       ),
     ));
 
@@ -163,7 +171,10 @@ export class NavigationService {
         for (const branch of repo.branches) {
           const branchKey = this.branchKey(repo.id, branch.name);
           const hasNewBranch = !previousBranchKeys.has(branchKey);
-          const hasNewSession = branch.sessions.some(session => !previousSessionIds.has(session.id));
+          const hasNewSession = [
+            ...branch.sessions,
+            ...(branch.archivedSessions ?? []),
+          ].some(session => !previousSessionIds.has(session.id));
 
           if (hasNewBranch || hasNewSession) {
             add(`project-${project.id}`);

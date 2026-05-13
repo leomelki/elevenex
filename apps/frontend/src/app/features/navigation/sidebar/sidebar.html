@@ -179,7 +179,7 @@
                   [disabled]="branch.isPendingCreation || openingWorktreeBranchKey() !== null"
                   [style.padding-left]="'48px'"
                   (click)="onBranchClick(repo, branch)">
-                  @if (branch.sessions && branch.sessions.length > 0) {
+                  @if ((branch.sessions && branch.sessions.length > 0) || ((branch.archivedSessions?.length ?? 0) > 0)) {
                     <ng-icon [name]="isExpanded('branch-' + repo.id + '-' + branch.name) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
                   } @else {
                     <span class="w-4 shrink-0"></span>
@@ -244,7 +244,7 @@
 
                  @if (isExpanded('branch-' + repo.id + '-' + branch.name)) {
                    @for (session of branch.sessions; track session.id) {
-<!-- Session node -->
+                      <!-- Session node -->
                       <div
                         class="sidebar-tree-row w-full cursor-pointer group"
                         [class.session-selected]="session.id === activeSessionId()"
@@ -340,6 +340,15 @@
                             </span>
                           } @else {
                             <button
+                              class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground"
+                              [attr.data-session-archive-trigger-id]="session.id"
+                              title="Archive Session"
+                              aria-label="Archive Session"
+                              [disabled]="isArchivingSession(session.id)"
+                              (click)="archiveSession(session, $event)">
+                              <ng-icon name="lucideArchive" class="!w-3.5 !h-3.5" />
+                            </button>
+                            <button
                               class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-destructive"
                               [attr.data-session-delete-trigger-id]="session.id"
                               data-session-delete-controls="true"
@@ -351,6 +360,114 @@
                           }
                         </span>
                       </div>
+                   }
+
+                   @if ((branch.archivedSessions?.length ?? 0) > 0) {
+                     <button
+                       class="sidebar-archive-toggle"
+                       [style.padding-left]="'64px'"
+                       (click)="$event.stopPropagation(); navService.toggleExpand('archive-' + repo.id + '-' + branch.name)">
+                       <ng-icon [name]="isExpanded('archive-' + repo.id + '-' + branch.name) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                       <ng-icon name="lucideArchive" class="!w-3.5 !h-3.5 text-muted-foreground shrink-0" />
+                       <span class="text-xs font-medium text-muted-foreground">Archived</span>
+                       <span class="sidebar-archive-count">{{ branch.archivedSessions?.length ?? 0 }}</span>
+                     </button>
+
+                     @if (isExpanded('archive-' + repo.id + '-' + branch.name)) {
+                       @for (session of branch.archivedSessions ?? []; track session.id) {
+                         <div
+                           class="sidebar-tree-row sidebar-tree-row--archived w-full cursor-pointer group"
+                           [class.session-selected]="session.id === activeSessionId()"
+                           [attr.data-session-row-id]="session.id"
+                           [style.padding-left]="'82px'"
+                           (click)="onSessionClick(session)">
+                           <div class="flex items-center gap-1 flex-1 min-w-0">
+                             @if (editingSessionTitleId() === session.id) {
+                               <input
+                                 #sessionTitleInput
+                                 z-input
+                                 type="text"
+                                 class="session-title-input"
+                                 [value]="session.name || ''"
+                                 (blur)="saveSessionTitle(session.id, $event)"
+                                 (keydown.enter)="saveSessionTitle(session.id, $event)"
+                                 (keydown.escape)="cancelEditSessionTitle()"
+                                 (click)="$event.stopPropagation()"
+                               />
+                             } @else {
+                               <span
+                                 class="sidebar-label--session sidebar-label--session-archived text-sm truncate"
+                                 (dblclick)="startEditSessionTitle(session.id, session.name || '', $event)">
+                                 {{ session.name || 'Session ' + session.id }}
+                               </span>
+                             }
+                           </div>
+                           @if (getSessionLastStateChangeLabel(session); as stateChangeLabel) {
+                             <span
+                               class="sidebar-session-time"
+                               [title]="getSessionLastStateChangeTooltip(session)">
+                               {{ stateChangeLabel }}
+                             </span>
+                           }
+                           <span
+                             class="sidebar-actions session-actions"
+                             data-session-delete-controls="true"
+                             [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id)">
+                             @if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
+                               <span class="session-delete-inline" data-session-delete-controls="true">
+                                 <button
+                                   class="session-delete-confirm"
+                                   [attr.data-session-delete-confirm-id]="session.id"
+                                   data-session-delete-controls="true"
+                                   [class.session-delete-confirm--ready]="isSessionDeleteConfirmReady(session.id)"
+                                   [class.session-delete-confirm--loading]="isDeletingSession(session.id)"
+                                   [attr.aria-label]="isDeletingSession(session.id) ? 'Deleting Session' : 'Confirm Delete Session'"
+                                   [attr.title]="isDeletingSession(session.id) ? 'Deleting session' : (isSessionDeleteConfirmReady(session.id) ? 'Confirm delete' : 'Wait a moment before confirming')"
+                                   [disabled]="!isSessionDeleteConfirmReady(session.id) || isDeletingSession(session.id)"
+                                   (click)="confirmDeleteSession(session, $event)">
+                                   @if (isDeletingSession(session.id)) {
+                                     <span class="session-delete-spinner" aria-hidden="true"></span>
+                                     <span>Deleting</span>
+                                   } @else {
+                                     <span>Delete</span>
+                                   }
+                                 </button>
+                                 @if (!isDeletingSession(session.id)) {
+                                   <button
+                                     class="session-delete-cancel"
+                                     [attr.data-session-delete-cancel-id]="session.id"
+                                     data-session-delete-controls="true"
+                                     title="Cancel delete"
+                                     aria-label="Cancel delete"
+                                     (click)="cancelDeleteSession($event)">
+                                     <span aria-hidden="true">×</span>
+                                   </button>
+                                 }
+                               </span>
+                             } @else {
+                               <button
+                                 class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground"
+                                 [attr.data-session-unarchive-trigger-id]="session.id"
+                                 title="Unarchive Session"
+                                 aria-label="Unarchive Session"
+                                 [disabled]="isUnarchivingSession(session.id)"
+                                 (click)="unarchiveSession(session, $event)">
+                                 <ng-icon name="lucideArchiveRestore" class="!w-3.5 !h-3.5" />
+                               </button>
+                               <button
+                                 class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-destructive"
+                                 [attr.data-session-delete-trigger-id]="session.id"
+                                 data-session-delete-controls="true"
+                                 title="Delete Session"
+                                 aria-label="Delete Session"
+                                 (click)="armDeleteSession(session, $event)">
+                                 <ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" />
+                               </button>
+                             }
+                           </span>
+                         </div>
+                       }
+                     }
                    }
                  }
               }

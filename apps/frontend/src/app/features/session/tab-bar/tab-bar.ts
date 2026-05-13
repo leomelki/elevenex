@@ -1,7 +1,7 @@
 import { Component, output, input, inject, computed, signal, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck } from '@ng-icons/lucide';
+import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore } from '@ng-icons/lucide';
 import { Tab } from '../tab-service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
@@ -27,6 +27,8 @@ import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-pro
       lucideTerminal,
       lucideSquareTerminal,
       lucideTrash2,
+      lucideArchive,
+      lucideArchiveRestore,
       lucideMessageSquare,
       lucideNotebookPen,
       lucideGlobe,
@@ -65,6 +67,8 @@ export class TabBar {
   tabSelect = output<number>();
   tabClose = output<number>();
   tabDelete = output<number>();
+  tabArchive = output<number>();
+  tabUnarchive = output<number>();
   closeAllTabs = output<void>();
   closeOtherTabs = output<number>();
   closeTabsToRight = output<number>();
@@ -100,6 +104,11 @@ export class TabBar {
 
   isActive(tab: Tab): boolean {
     return tab.sessionId === this.activeSessionId();
+  }
+
+  activeTabIsArchived(): boolean {
+    const activeId = this.activeSessionId();
+    return this.tabs().some(tab => tab.sessionId === activeId && tab.status === 'archived');
   }
 
   getStatusClass(status: Tab['status']): string {
@@ -220,6 +229,23 @@ export class TabBar {
     const sessionId = this.contextMenuSessionId();
     this.closeContextMenu();
     if (sessionId) this.tabDelete.emit(sessionId);
+  }
+
+  onContextMenuArchive(): void {
+    const sessionId = this.contextMenuSessionId();
+    this.closeContextMenu();
+    if (sessionId) this.tabArchive.emit(sessionId);
+  }
+
+  onContextMenuUnarchive(): void {
+    const sessionId = this.contextMenuSessionId();
+    this.closeContextMenu();
+    if (sessionId) this.tabUnarchive.emit(sessionId);
+  }
+
+  contextMenuTab(): Tab | null {
+    const sessionId = this.contextMenuSessionId();
+    return this.tabs().find(tab => tab.sessionId === sessionId) ?? null;
   }
 
   onContextMenuCloseAll(): void {

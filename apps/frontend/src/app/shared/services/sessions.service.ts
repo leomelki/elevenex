@@ -43,6 +43,10 @@ export class SessionsService {
     return this.http.post<Session>(`/api/sessions/${id}/archive`, {});
   }
 
+  unarchive(id: number) {
+    return this.http.post<Session>(`/api/sessions/${id}/unarchive`, {});
+  }
+
   reset(id: number) {
     return this.http.post<Session>(`/api/sessions/${id}/reset`, {});
   }

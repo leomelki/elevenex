@@ -12,6 +12,8 @@ import {
   lucidePlus,
   lucideRefreshCw,
   lucideTrash2,
+  lucideArchive,
+  lucideArchiveRestore,
   lucideCircleMinus,
   lucideServer,
   lucideSquareArrowOutUpRight,
@@ -68,6 +70,8 @@ import { ThemeService } from '@/shared/services/theme.service';
       lucidePlus,
       lucideRefreshCw,
       lucideTrash2,
+      lucideArchive,
+      lucideArchiveRestore,
       lucideCircleMinus,
       lucideServer,
       lucideSquareArrowOutUpRight,
@@ -186,6 +190,8 @@ export class Sidebar implements OnInit, OnDestroy {
   armedDeleteSessionId = signal<number | null>(null);
   deleteSessionConfirmEnabled = signal(false);
   deletingSessionId = signal<number | null>(null);
+  archivingSessionId = signal<number | null>(null);
+  unarchivingSessionId = signal<number | null>(null);
   private sessionDeleteEnableTimer: number | null = null;
   private sessionDeleteDismissTimer: number | null = null;
   private projectRevealTimer: number | null = null;
@@ -766,6 +772,60 @@ export class Sidebar implements OnInit, OnDestroy {
     return this.deletingSessionId() === sessionId;
   }
 
+  isArchivingSession(sessionId: number): boolean {
+    return this.archivingSessionId() === sessionId;
+  }
+
+  isUnarchivingSession(sessionId: number): boolean {
+    return this.unarchivingSessionId() === sessionId;
+  }
+
+  archiveSession(session: SessionInTree, event: Event) {
+    event.stopPropagation();
+    if (this.archivingSessionId() !== null || session.status === 'archived') {
+      return;
+    }
+
+    this.clearDeleteSessionConfirmation();
+    this.archivingSessionId.set(session.id);
+    this.sessionsService.archive(session.id).subscribe({
+      next: (updated) => {
+        toast.success('Session archived');
+        this.archivingSessionId.set(null);
+        this.tabService.updateTabStatus(session.id, updated.status);
+        this.navService.refreshTree();
+      },
+      error: (err) => {
+        const msg = err?.error?.message || 'Unknown error';
+        toast.error(`Could not archive session. ${msg}`);
+        this.archivingSessionId.set(null);
+      },
+    });
+  }
+
+  unarchiveSession(session: SessionInTree, event: Event) {
+    event.stopPropagation();
+    if (this.unarchivingSessionId() !== null || session.status !== 'archived') {
+      return;
+    }
+
+    this.clearDeleteSessionConfirmation();
+    this.unarchivingSessionId.set(session.id);
+    this.sessionsService.unarchive(session.id).subscribe({
+      next: (updated) => {
+        toast.success('Session unarchived');
+        this.unarchivingSessionId.set(null);
+        this.tabService.updateTabStatus(session.id, updated.status);
+        this.navService.refreshTree();
+      },
+      error: (err) => {
+        const msg = err?.error?.message || 'Unknown error';
+        toast.error(`Could not unarchive session. ${msg}`);
+        this.unarchivingSessionId.set(null);
+      },
+    });
+  }
+
   confirmDeleteSession(session: SessionInTree, event: Event) {
     event.stopPropagation();
     if (!this.isSessionDeleteConfirmReady(session.id)) {
@@ -843,6 +903,14 @@ export class Sidebar implements OnInit, OnDestroy {
           if (branch.sessions.some(session => session.id === sessionId)) {
             return true;
           }
+
+          const archiveKey = `archive-${repo.id}-${branch.name}`;
+          if (
+            this.navService.isExpanded(archiveKey) &&
+            branch.archivedSessions?.some(session => session.id === sessionId)
+          ) {
+            return true;
+          }
         }
       }
     }
@@ -869,7 +937,10 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   filterBranches(repo: NavigationRepo): Array<NavigationBranch & { isPendingCreation?: boolean }> {
-    const persistedBranches = repo.branches.filter((branch) => branch.sessions && branch.sessions.length > 0);
+    const persistedBranches = repo.branches.filter((branch) =>
+      (branch.sessions && branch.sessions.length > 0)
+      || ((branch.archivedSessions?.length ?? 0) > 0),
+    );
     const existingNames = new Set(persistedBranches.map((branch) => branch.name));
     const pendingBranches = this.pendingWorktreeCreations.getByRepo(repo.id)
       .filter((job) => !existingNames.has(job.branchName))
@@ -882,6 +953,7 @@ export class Sidebar implements OnInit, OnDestroy {
         hasWorktree: false,
         worktreePath: job.worktreePath,
         sessions: [],
+        archivedSessions: [],
         isPendingCreation: true,
       }));
 

@@ -480,13 +480,15 @@ export class SessionsService extends EventEmitter {
   async delete(id: number) {
     await this.findOne(id);
 
-    await this.agentRuntimeCleanup.cleanupSession(id);
+    try {
+      await this.agentRuntimeCleanup.cleanupSession(id);
+    } finally {
+      // 1. Kill the PTY process if running
+      this.ptyManager.kill(id);
 
-    // 1. Kill the PTY process if running
-    this.ptyManager.kill(id);
-
-    // 2. Kill the tmux session if exists
-    this.ptyManager.killTmuxSession(id);
+      // 2. Kill the tmux session if exists
+      this.ptyManager.killTmuxSession(id);
+    }
 
     // 3. Delete from database
     const rows = await this.db
@@ -532,14 +534,34 @@ export class SessionsService extends EventEmitter {
   }
 
   async archive(id: number) {
-    // 1. Kill the PTY process if running
-    this.ptyManager.kill(id);
+    const session = await this.findOne(id);
 
-    // 2. Kill the tmux session if exists
-    this.ptyManager.killTmuxSession(id);
+    if (session.status === 'archived') {
+      return this.withInferredActiveAgentProvider(session);
+    }
+
+    try {
+      await this.agentRuntimeCleanup.cleanupSession(id);
+    } finally {
+      // 1. Kill the PTY process if running
+      this.ptyManager.kill(id);
+
+      // 2. Kill the tmux session if exists
+      this.ptyManager.killTmuxSession(id);
+    }
 
     // 3. Update status to archived
     return this.updateStatus(id, 'archived');
+  }
+
+  async unarchive(id: number) {
+    const session = await this.findOne(id);
+
+    if (session.status !== 'archived') {
+      throw new BadRequestException('Only archived sessions can be unarchived');
+    }
+
+    return this.updateStatus(id, 'stopped');
   }
 
   async reset(id: number) {
@@ -585,11 +607,21 @@ export class SessionsService extends EventEmitter {
    * Session status is set to 'stopped' (distinct from 'archived').
    */
   async kill(id: number) {
-    // 1. Kill the PTY process if running
-    this.ptyManager.kill(id);
+    const session = await this.findOne(id);
 
-    // 2. Kill the tmux session if exists
-    this.ptyManager.killTmuxSession(id);
+    if (session.status === 'archived') {
+      throw new BadRequestException('Archived sessions cannot be stopped');
+    }
+
+    try {
+      await this.agentRuntimeCleanup.cleanupSession(id);
+    } finally {
+      // 1. Kill the PTY process if running
+      this.ptyManager.kill(id);
+
+      // 2. Kill the tmux session if exists
+      this.ptyManager.killTmuxSession(id);
+    }
 
     // 3. Update status to stopped (NOT archived - session remains accessible)
     return this.updateStatus(id, 'stopped');
@@ -599,6 +631,10 @@ export class SessionsService extends EventEmitter {
     // Just return session info - actual PTY spawn happens via TerminalService
     // when WebSocket connects
     const session = await this.findOne(id);
+
+    if (session.status === 'archived') {
+      throw new BadRequestException('Archived sessions cannot be started');
+    }
 
     // Update status to indicate starting
     await this.updateStatus(id, 'active');

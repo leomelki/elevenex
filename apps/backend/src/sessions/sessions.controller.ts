@@ -83,6 +83,11 @@ export class SessionsController {
     return this.sessionsService.archive(Number(id));
   }
 
+  @Post(':id/unarchive')
+  async unarchive(@Param('id') id: string) {
+    return this.sessionsService.unarchive(Number(id));
+  }
+
   @Post(':id/reset')
   async reset(@Param('id') id: string) {
     return this.sessionsService.reset(Number(id));

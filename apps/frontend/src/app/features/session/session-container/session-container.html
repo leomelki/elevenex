@@ -19,6 +19,8 @@
         (tabSelect)="onTabSelect($event)"
         (tabClose)="onTabClose($event)"
         (tabDelete)="onTabDeleteRequest($event)"
+        (tabArchive)="onTabArchiveRequest($event)"
+        (tabUnarchive)="onTabUnarchiveRequest($event)"
         (closeAllTabs)="onCloseAllTabs()"
         (closeOtherTabs)="onCloseOtherTabs($event)"
         (closeTabsToRight)="onCloseTabsToRight($event)"
@@ -48,7 +50,19 @@
                     class="claude-terminal-wrapper h-full"
                     [class.hidden]="tab.sessionId !== activeSessionId()"
                   >
-                    @if (showClaudeTerminalFallback()) {
+                    @if (tab.status === 'archived') {
+                      <app-archived-session-view
+                        [session]="{
+                          id: tab.sessionId,
+                          name: tab.sessionName,
+                          branchName: tab.branchName,
+                          activeAgentProvider: tab.activeAgentProvider
+                        }"
+                        [unarchiveBusy]="unarchivingSessionId() === tab.sessionId"
+                        (unarchive)="onTabUnarchiveRequest($event)"
+                        class="h-full block"
+                      />
+                    } @else if (showClaudeTerminalFallback()) {
                       <app-claude-terminal
                         [sessionId]="tab.sessionId"
                         [isVisible]="tab.sessionId === activeSessionId()"

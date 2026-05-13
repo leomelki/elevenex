@@ -27,9 +27,47 @@
   color: color-mix(in oklch, var(--foreground) 58%, var(--muted-foreground));
 }
 
+.sidebar-label--session-archived {
+  color: color-mix(in oklch, var(--muted-foreground) 86%, transparent);
+}
+
 .session-selected .sidebar-label--session {
   color: color-mix(in oklch, var(--foreground) 88%, var(--muted-foreground));
   font-weight: 500;
+}
+
+.sidebar-tree-row--archived {
+  opacity: 0.86;
+}
+
+.sidebar-archive-toggle {
+  width: 100%;
+  min-height: 1.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-archive-toggle:hover {
+  background: color-mix(in oklch, var(--sidebar-accent) 52%, transparent);
+}
+
+.sidebar-archive-count {
+  min-width: 1.2rem;
+  height: 1.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklch, var(--border) 86%, transparent);
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  line-height: 1;
 }
 
 .sidebar-brand {

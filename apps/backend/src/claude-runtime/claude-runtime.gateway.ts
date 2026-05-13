@@ -1,4 +1,11 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  OnModuleDestroy,
+  OnModuleInit,
+  forwardRef,
+} from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
 import {
@@ -6,13 +13,18 @@ import {
   ClaudeRuntimeEvent,
 } from './claude-runtime.types.js';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
 
 @Injectable()
 export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private readonly clients = new Map<number, Set<WebSocket>>();
 
-  constructor(private readonly registry: AgentRuntimeRegistryService) {}
+  constructor(
+    private readonly registry: AgentRuntimeRegistryService,
+    @Inject(forwardRef(() => SessionsService))
+    private readonly sessionsService: SessionsService,
+  ) {}
 
   onModuleInit(): void {
     this.registry
@@ -102,6 +114,7 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           return;
         }
         case 'submit_prompt':
+          await this.assertSessionMutable(sessionId);
           await claudeProvider.submitPrompt(
             sessionId,
             action.prompt,
@@ -110,9 +123,11 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           );
           return;
         case 'interrupt':
+          await this.assertSessionMutable(sessionId);
           await claudeProvider.interrupt(sessionId);
           return;
         case 'approve_permission':
+          await this.assertSessionMutable(sessionId);
           await this.registry
             .getProviderFeature('claude', 'approvePermission')
             .approvePermission(
@@ -123,11 +138,13 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
             );
           return;
         case 'deny_permission':
+          await this.assertSessionMutable(sessionId);
           await this.registry
             .getProviderFeature('claude', 'denyPermission')
             .denyPermission(sessionId, action.requestId, action.message);
           return;
         case 'answer_user_input':
+          await this.assertSessionMutable(sessionId);
           await this.registry
             .getProviderFeature('claude', 'answerUserInput')
             .answerUserInput(
@@ -140,9 +157,11 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
             );
           return;
         case 'cancel_pending_prompt':
+          await this.assertSessionMutable(sessionId);
           await claudeProvider.cancelPendingPrompt(sessionId, action.id);
           return;
         case 'open_terminal_fallback':
+          await this.assertSessionMutable(sessionId);
           await this.registry
             .getProviderFeature('claude', 'openTerminalFallback')
             .openTerminalFallback(sessionId);
@@ -153,6 +172,13 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
       ws.send(
         JSON.stringify({ type: 'error', payload: { sessionId, message } }),
       );
+    }
+  }
+
+  private async assertSessionMutable(sessionId: number): Promise<void> {
+    const session = await this.sessionsService.findOne(sessionId);
+    if (session.status === 'archived') {
+      throw new BadRequestException('Archived sessions are read-only');
     }
   }
 

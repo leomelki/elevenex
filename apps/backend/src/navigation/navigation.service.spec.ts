@@ -42,6 +42,35 @@ describe('NavigationService', () => {
     service = module.get<NavigationService>(NavigationService);
   });
 
+  describe('getNavigationTreeLight', () => {
+    it('separates live and archived sessions under branch context', async () => {
+      mockProjectsService.findAll.mockResolvedValue([
+        { id: 1, name: 'Project 1', createdAt: '2024-01-01', updatedAt: '2024-01-01' },
+      ]);
+
+      mockReposService.findByProject.mockResolvedValue([
+        { id: 1, projectId: 1, name: 'repo-1', path: '/path/to/repo', createdAt: '2024-01-01' },
+      ]);
+
+      mockSessionsService.findByRepo.mockResolvedValue([
+        { id: 1, repoId: 1, branchName: 'main', worktreePath: '/path/main', name: 'Live', status: 'active', claudeSessionId: '-1', hasUnreviewedCompletion: false, lastCompletionAt: null, lastCompletionKind: null, lastStateChangeAt: null, createdAt: '2024-01-01', updatedAt: '2024-01-01' },
+        { id: 2, repoId: 1, branchName: 'main', worktreePath: '/path/main', name: 'Archived', status: 'archived', claudeSessionId: '-1', hasUnreviewedCompletion: false, lastCompletionAt: null, lastCompletionKind: null, lastStateChangeAt: null, createdAt: '2024-01-01', updatedAt: '2024-01-01' },
+        { id: 3, repoId: 1, branchName: 'old', worktreePath: '/path/old', name: 'Archived only', status: 'archived', claudeSessionId: '-1', hasUnreviewedCompletion: false, lastCompletionAt: null, lastCompletionKind: null, lastStateChangeAt: null, createdAt: '2024-01-01', updatedAt: '2024-01-01' },
+      ]);
+
+      const result = await service.getNavigationTreeLight();
+
+      const branches = result[0].repos[0].branches;
+      const mainBranch = branches.find(branch => branch.name === 'main');
+      const oldBranch = branches.find(branch => branch.name === 'old');
+
+      expect(mainBranch?.sessions.map(session => session.id)).toEqual([1]);
+      expect(mainBranch?.archivedSessions.map(session => session.id)).toEqual([2]);
+      expect(oldBranch?.sessions).toEqual([]);
+      expect(oldBranch?.archivedSessions.map(session => session.id)).toEqual([3]);
+    });
+  });
+
   describe('getNavigationTree', () => {
     it('should return empty array when no projects exist', async () => {
       mockProjectsService.findAll.mockResolvedValue([]);

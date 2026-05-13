@@ -382,6 +382,66 @@ describe('SessionsService', () => {
     });
   });
 
+  describe('archive', () => {
+    it('cleans up agent runtime, PTY, and tmux before marking archived', async () => {
+      const created = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+      });
+
+      const archived = await service.archive(created.id);
+
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(created.id);
+      expect(ptyManagerMock.kill).toHaveBeenCalledWith(created.id);
+      expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(created.id);
+      expect(archived.status).toBe('archived');
+    });
+
+    it('still kills terminal processes if agent cleanup fails', async () => {
+      const created = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+      });
+      agentRuntimeCleanupMock.cleanupSession.mockRejectedValueOnce(new Error('cleanup failed'));
+
+      await expect(service.archive(created.id)).rejects.toThrow('cleanup failed');
+
+      expect(ptyManagerMock.kill).toHaveBeenCalledWith(created.id);
+      expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(created.id);
+    });
+  });
+
+  describe('unarchive', () => {
+    it('restores archived sessions as stopped', async () => {
+      const created = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+      });
+      await service.archive(created.id);
+
+      const restored = await service.unarchive(created.id);
+
+      expect(restored.status).toBe('stopped');
+    });
+
+    it('rejects non-archived sessions', async () => {
+      const created = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+      });
+
+      await expect(service.unarchive(created.id)).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws NotFoundException for non-existent sessions', async () => {
+      await expect(service.unarchive(99999)).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('fork', () => {
     it('should create new session in same worktree', async () => {
       // Create original session

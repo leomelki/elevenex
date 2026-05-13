@@ -1,8 +1,16 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  OnModuleDestroy,
+  OnModuleInit,
+  forwardRef,
+} from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
 import type { AgentRuntimeEvent } from './agent-runtime.types.js';
+import { SessionsService } from '../sessions/sessions.service.js';
 
 type AgentRuntimeClientAction =
   | { type: 'hydrate' }
@@ -37,7 +45,11 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private readonly clients = new Map<string, Set<WebSocket>>();
 
-  constructor(private readonly registry: AgentRuntimeRegistryService) {}
+  constructor(
+    private readonly registry: AgentRuntimeRegistryService,
+    @Inject(forwardRef(() => SessionsService))
+    private readonly sessionsService: SessionsService,
+  ) {}
 
   onModuleInit(): void {
     for (const providerInfo of this.registry.listProviders()) {
@@ -134,6 +146,7 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           return;
         }
         case 'submit_prompt':
+          await this.assertSessionMutable(sessionId);
           await provider.submitPrompt(
             sessionId,
             action.prompt,
@@ -142,9 +155,11 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           );
           return;
         case 'interrupt':
+          await this.assertSessionMutable(sessionId);
           await provider.interrupt(sessionId);
           return;
         case 'approve_permission':
+          await this.assertSessionMutable(sessionId);
           await this.registry
             .getProviderFeature(providerId, 'approvePermission')
             .approvePermission(
@@ -155,11 +170,13 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
             );
           return;
         case 'deny_permission':
+          await this.assertSessionMutable(sessionId);
           await this.registry
             .getProviderFeature(providerId, 'denyPermission')
             .denyPermission(sessionId, action.requestId, action.message);
           return;
         case 'answer_user_input':
+          await this.assertSessionMutable(sessionId);
           await this.registry
             .getProviderFeature(providerId, 'answerUserInput')
             .answerUserInput(
@@ -172,9 +189,11 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
             );
           return;
         case 'cancel_pending_prompt':
+          await this.assertSessionMutable(sessionId);
           await provider.cancelPendingPrompt(sessionId, action.id);
           return;
         case 'open_terminal_fallback':
+          await this.assertSessionMutable(sessionId);
           await this.registry
             .getProviderFeature(providerId, 'openTerminalFallback')
             .openTerminalFallback(sessionId);
@@ -185,6 +204,13 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
       ws.send(
         JSON.stringify({ type: 'error', payload: { sessionId, message } }),
       );
+    }
+  }
+
+  private async assertSessionMutable(sessionId: number): Promise<void> {
+    const session = await this.sessionsService.findOne(sessionId);
+    if (session.status === 'archived') {
+      throw new BadRequestException('Archived sessions are read-only');
     }
   }
 

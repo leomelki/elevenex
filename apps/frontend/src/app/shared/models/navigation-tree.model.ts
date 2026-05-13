@@ -3,6 +3,7 @@ import { SessionInTree } from './session.model';
 
 export interface NavigationBranch extends BranchInfo {
   sessions: SessionInTree[];
+  archivedSessions?: SessionInTree[];
 }
 
 export interface NavigationRepo {

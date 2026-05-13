@@ -1,13 +1,17 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Inject,
   Get,
   Param,
   ParseIntPipe,
   Post,
   Query,
+  forwardRef,
 } from '@nestjs/common';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
 import type {
   AgentLoginMode,
   AgentPermissionMode,
@@ -15,7 +19,11 @@ import type {
 
 @Controller()
 export class AgentRuntimeController {
-  constructor(private readonly registry: AgentRuntimeRegistryService) {}
+  constructor(
+    private readonly registry: AgentRuntimeRegistryService,
+    @Inject(forwardRef(() => SessionsService))
+    private readonly sessionsService: SessionsService,
+  ) {}
 
   @Get('agent-providers')
   listProviders() {
@@ -119,22 +127,24 @@ export class AgentRuntimeController {
   }
 
   @Post('sessions/:sessionId/agents/:provider/model')
-  setSelectedModel(
+  async setSelectedModel(
     @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Body() body: { model?: string | null },
   ) {
+    await this.assertSessionMutable(sessionId);
     return this.registry
       .getProvider(provider)
       .setSelectedModel(sessionId, body.model ?? null);
   }
 
   @Post('sessions/:sessionId/agents/:provider/permission-mode')
-  setPermissionMode(
+  async setPermissionMode(
     @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Body() body: { mode?: string | null },
   ) {
+    await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature(provider, 'setPermissionMode')
       .setPermissionMode(
@@ -144,56 +154,68 @@ export class AgentRuntimeController {
   }
 
   @Post('sessions/:sessionId/agents/:provider/mcp/:serverName/toggle')
-  toggleMcpServer(
+  async toggleMcpServer(
     @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Param('serverName') serverName: string,
   ) {
+    await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature(provider, 'toggleMcpServer')
       .toggleMcpServer(sessionId, serverName);
   }
 
   @Post('sessions/:sessionId/agents/:provider/mcp/:serverName/recheck')
-  recheckMcpServer(
+  async recheckMcpServer(
     @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Param('serverName') serverName: string,
   ) {
+    await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature(provider, 'recheckMcpServer')
       .recheckMcpServer(sessionId, serverName);
   }
 
   @Post('sessions/:sessionId/agents/:provider/mcp/:serverName/auth/start')
-  startMcpAuth(
+  async startMcpAuth(
     @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Param('serverName') serverName: string,
   ) {
+    await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature(provider, 'startMcpAuth')
       .startMcpAuth(sessionId, serverName);
   }
 
   @Post('sessions/:sessionId/agents/:provider/terminal-fallback')
-  openTerminalFallback(
+  async openTerminalFallback(
     @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
   ) {
+    await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature(provider, 'openTerminalFallback')
       .openTerminalFallback(sessionId);
   }
 
   @Post('sessions/:sessionId/agents/:provider/rewind-conversation')
-  rewindConversation(
+  async rewindConversation(
     @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Body() body: { messageId?: string },
   ) {
+    await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature(provider, 'rewindConversation')
       .rewindConversation(sessionId, body.messageId ?? '');
+  }
+
+  private async assertSessionMutable(sessionId: number): Promise<void> {
+    const session = await this.sessionsService.findOne(sessionId);
+    if (session.status === 'archived') {
+      throw new BadRequestException('Archived sessions are read-only');
+    }
   }
 }

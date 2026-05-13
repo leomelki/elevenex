@@ -1,4 +1,4 @@
-import { Injectable, forwardRef, Inject } from '@nestjs/common';
+import { BadRequestException, Injectable, forwardRef, Inject } from '@nestjs/common';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { PtyManager } from './pty-manager.service.js';
 import * as fs from 'fs';
@@ -12,6 +12,10 @@ export class TerminalService {
 
   async startSession(sessionId: number): Promise<{ success: boolean; resumed: boolean; error?: string }> {
     const session = await this.sessionsService.findOne(sessionId);
+
+    if (session.status === 'archived') {
+      throw new BadRequestException('Archived sessions cannot be started');
+    }
 
     // Verify worktree path exists
     if (!fs.existsSync(session.worktreePath)) {

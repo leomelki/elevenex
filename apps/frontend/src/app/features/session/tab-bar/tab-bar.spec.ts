@@ -112,6 +112,68 @@ describe('TabBar', () => {
     expect(menuText).toContain('Close All Tabs');
   });
 
+  it('shows archive or unarchive actions based on tab status', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [
+      { ...baseTab, sessionId: 1, status: 'active' },
+      { ...baseTab, sessionId: 2, sessionName: 'Archived', status: 'archived' },
+    ]);
+    fixture.componentRef.setInput('activeSessionId', 1);
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    const tabs = el.querySelectorAll('.tab');
+
+    (tabs[0] as HTMLElement).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(el.textContent).toContain('Archive Session');
+    expect(el.textContent).not.toContain('Unarchive Session');
+
+    (tabs[1] as HTMLElement).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(el.textContent).toContain('Unarchive Session');
+  });
+
+  it('emits archive and unarchive events from the context menu', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [
+      { ...baseTab, sessionId: 1, status: 'active' },
+      { ...baseTab, sessionId: 2, sessionName: 'Archived', status: 'archived' },
+    ]);
+    fixture.componentRef.setInput('activeSessionId', 1);
+    fixture.detectChanges();
+
+    const component = fixture.componentInstance;
+    const archiveSpy = vi.fn();
+    const unarchiveSpy = vi.fn();
+    component.tabArchive.subscribe(archiveSpy);
+    component.tabUnarchive.subscribe(unarchiveSpy);
+
+    const el = fixture.nativeElement as HTMLElement;
+    const tabs = el.querySelectorAll('.tab');
+
+    (tabs[0] as HTMLElement).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    (Array.from(el.querySelectorAll('button')).find(button => button.textContent?.includes('Archive Session')) as HTMLButtonElement).click();
+    expect(archiveSpy).toHaveBeenCalledWith(1);
+
+    (tabs[1] as HTMLElement).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    (Array.from(el.querySelectorAll('button')).find(button => button.textContent?.includes('Unarchive Session')) as HTMLButtonElement).click();
+    expect(unarchiveSpy).toHaveBeenCalledWith(2);
+  });
+
+  it('hides active-session tool buttons for archived tabs', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [{ ...baseTab, status: 'archived' }]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.componentRef.setInput('projectId', 10);
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[aria-label="Toggle Terminal panel"]')).toBeNull();
+  });
+
   it('shows the plannotator toolbar button only when plannotator is available', () => {
     const fixture = TestBed.createComponent(TabBar);
     fixture.componentRef.setInput('tabs', [{ ...baseTab }]);
