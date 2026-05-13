@@ -1,6 +1,7 @@
 import {
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   forwardRef,
@@ -22,6 +23,8 @@ type SessionCompletionKind = (typeof VALID_COMPLETION_KINDS)[number];
 
 @Injectable()
 export class SessionsService extends EventEmitter {
+  private readonly logger = new Logger(SessionsService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     @Inject(forwardRef(() => PtyManager)) private readonly ptyManager: PtyManager,
@@ -540,8 +543,21 @@ export class SessionsService extends EventEmitter {
       return this.withInferredActiveAgentProvider(session);
     }
 
+    const archived = await this.updateStatus(id, 'archived');
+
+    void this.cleanupArchivedSessionProcesses(id);
+
+    return archived;
+  }
+
+  private async cleanupArchivedSessionProcesses(id: number) {
     try {
       await this.agentRuntimeCleanup.cleanupSession(id);
+    } catch (error) {
+      this.logger.error(
+        `Failed to clean up agent runtime while archiving session ${id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
     } finally {
       // 1. Kill the PTY process if running
       this.ptyManager.kill(id);
@@ -549,9 +565,6 @@ export class SessionsService extends EventEmitter {
       // 2. Kill the tmux session if exists
       this.ptyManager.killTmuxSession(id);
     }
-
-    // 3. Update status to archived
-    return this.updateStatus(id, 'archived');
   }
 
   async unarchive(id: number) {

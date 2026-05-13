@@ -1551,16 +1551,55 @@ async function ensureRemoteServerReady(forward) {
   );
 
   emitRemoteServerPhaseEvent(forward.id, 'probing');
-  const runtime = await startSshForwardRuntime({
+  let runtime = await startSshForwardRuntime({
     ...forward,
     probeType: 'elevenex-backend',
   });
+
+  if (isRemoteBackendProbeMissing(runtime)) {
+    console.warn('[remote-runtime] backend probe failed after startup; restarting remote runtime and reallocating tunnel port', {
+      serverId: forward.id,
+      sshHost: forward.sshHost,
+      previousLocalPort: forward.localPort,
+      remotePort: forward.remotePort,
+    });
+
+    await stopSshForwardRuntime(forward.id);
+    forward.localPort = await getFreePort();
+
+    emitRemoteServerPhaseEvent(forward.id, 'starting');
+    await runSshCommandAsync(
+      forward,
+      buildRemoteStartCommand({
+        remoteRoot: remoteCurrentRoot,
+        remotePort: forward.remotePort || 11111,
+        forcePortCleanup: true,
+      }),
+    );
+
+    await runSshCommandAsync(
+      forward,
+      buildRemoteWaitForReadyCommand({
+        remoteRoot: remoteCurrentRoot,
+        remotePort: forward.remotePort || 11111,
+        expectedVersion: bundledVersion,
+      }),
+    );
+
+    emitRemoteServerPhaseEvent(forward.id, 'probing');
+    runtime = await startSshForwardRuntime({
+      ...forward,
+      probeType: 'elevenex-backend',
+    });
+  }
 
   if (runtime.status !== 'active') {
     return toRemoteEnsureReadyResult(forward, preflight, {
       status: 'error',
       installPhase: 'probing',
-      message: runtime.lastError || 'Could not establish the SSH tunnel.',
+      message: isRemoteBackendProbeMissing(runtime)
+        ? 'Could not restart the remote Elevenex app.'
+        : runtime.lastError || 'Could not establish the SSH tunnel.',
       bundledVersion,
     });
   }
@@ -1618,6 +1657,14 @@ async function allocateLocalPort(id) {
     return existing.localPort;
   }
   return getFreePort();
+}
+
+function isRemoteBackendProbeMissing(runtime) {
+  return runtime?.status === 'error'
+    && (
+      runtime.installStatus === 'missing'
+      || runtime.debugDetails?.lastEvent === 'probe-missing'
+    );
 }
 
 function assertNoSshBindConflict(forward) {
