@@ -133,6 +133,37 @@ describe('WorktreeContextService', () => {
     expect(collectSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('returns a cached-only snapshot without collecting git branch context', async () => {
+    jest.spyOn(service as any, 'getRepo').mockResolvedValue({
+      id: 1,
+      preferredContextRootRef: null,
+    });
+    jest.spyOn(service as any, 'findRecord').mockResolvedValue({
+      id: 9,
+      repoId: 1,
+      worktreePath: '/tmp/worktree-cache',
+      rootRef: 'origin/main',
+      contextSentence: 'Cached context sentence.',
+      generationStatus: 'ready',
+      generatedAt: '2026-04-24T08:00:00.000Z',
+      lastUsedAt: null,
+      createdAt: '2026-04-24T08:00:00.000Z',
+      updatedAt: '2026-04-24T08:00:00.000Z',
+    });
+    const collectSpy = jest.spyOn(service as any, 'collectBranchContext');
+
+    const result = await service.getCachedSnapshot(1, '/tmp/worktree-cache');
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        contextSentence: 'Cached context sentence.',
+        generationStatus: 'ready',
+        hasRecord: true,
+      }),
+    );
+    expect(collectSpy).not.toHaveBeenCalled();
+  });
+
   it('returns early from branch context collection when there are no commits and git status is clean', async () => {
     const raw = jest.fn(async (args: string[]) => {
       if (args[0] === 'rev-parse') {
@@ -148,7 +179,9 @@ describe('WorktreeContextService', () => {
     });
     const log = jest.fn().mockResolvedValue({ all: [] });
 
-    (simpleGit as jest.Mock).mockReturnValue({ raw, log });
+    (simpleGit as jest.Mock).mockReturnValue({
+      env: jest.fn().mockReturnValue({ raw, log }),
+    });
 
     const result = await (service as any).collectBranchContext(
       '/tmp/worktree-c',

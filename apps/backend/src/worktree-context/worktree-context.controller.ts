@@ -13,7 +13,10 @@ export class WorktreeContextController {
 
   @Get()
   getSnapshot(@Query() query: GetWorktreeContextDto) {
-    this.logger.log(`GET / repo=${query.repoId} path=${query.worktreePath}`);
+    this.logger.log(`GET / repo=${query.repoId} path=${query.worktreePath} cachedOnly=${!!query.cachedOnly}`);
+    if (query.cachedOnly) {
+      return this.worktreeContextService.getCachedSnapshot(query.repoId, query.worktreePath);
+    }
     return this.worktreeContextService.getSnapshot(query.repoId, query.worktreePath);
   }
 

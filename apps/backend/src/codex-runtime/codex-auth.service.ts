@@ -54,6 +54,25 @@ export class CodexAuthService extends EventEmitter {
       this.readVersion(),
       this.readAuthFile(),
     ]);
+    return this.buildStatus(version, authFile);
+  }
+
+  async getFastStatus(): Promise<CodexAuthStatus> {
+    const authFile = await this.readAuthFile();
+    this.refreshStatusInBackground();
+    return this.buildStatus(this.cachedVersionValue(), authFile);
+  }
+
+  refreshStatusInBackground(): void {
+    void this.getStatus()
+      .then((status) => this.emit('status', status))
+      .catch(() => undefined);
+  }
+
+  private buildStatus(
+    version: string | null,
+    authFile: Record<string, unknown> | null,
+  ): CodexAuthStatus {
     const tokens = asRecord(authFile?.tokens);
     const idToken = stringValue(tokens?.id_token);
     const accessToken = stringValue(tokens?.access_token);
@@ -88,7 +107,7 @@ export class CodexAuthService extends EventEmitter {
     return {
       isAuthenticating: Boolean(active),
       output,
-      installed: Boolean(version),
+      installed: Boolean(version || findBundledCodexPath()),
       version,
       authenticated,
       authMethod,
@@ -373,9 +392,12 @@ export class CodexAuthService extends EventEmitter {
   }
 
   private emitChanged(): void {
-    void this.getStatus()
-      .then((status) => this.emit('status', status))
-      .catch(() => undefined);
+    this.refreshStatusInBackground();
+  }
+
+  private cachedVersionValue(): string | null {
+    const cached = this.versionCache;
+    return cached && cached.expiresAt > Date.now() ? cached.value : null;
   }
 
   private async readVersion(): Promise<string | null> {

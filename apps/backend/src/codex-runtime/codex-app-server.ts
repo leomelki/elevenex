@@ -13,7 +13,7 @@ const CLIENT_INFO = {
 // How long the app-server stays alive after the last reference is released.
 // Long enough to absorb workspace tab switches without re-spawning, short
 // enough that an idle backend doesn't keep the process forever.
-const IDLE_SHUTDOWN_MS = 60_000;
+const IDLE_SHUTDOWN_MS = 5 * 60_000;
 
 const INITIALIZE_TIMEOUT_MS = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
@@ -171,6 +171,15 @@ export class CodexAppServerClient implements OnModuleDestroy {
   ): Promise<T> {
     await this.ensureReady();
     return this.sendRequest<T>(method, params, timeoutMs);
+  }
+
+  async prewarm(): Promise<void> {
+    this.addRef();
+    try {
+      await this.ensureReady();
+    } finally {
+      this.release();
+    }
   }
 
   notify(method: string, params: unknown): void {

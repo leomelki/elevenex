@@ -205,6 +205,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private interruptedRunShouldRestorePrompt = false;
   private currentRunHadSubstantiveOutput = false;
   private bootstrappedProvider: AgentProviderId | null = null;
+  private deferredCodexContextGenerationTimer: number | null = null;
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
   readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
@@ -594,6 +595,9 @@ readonly messageActionsDisabled = computed(
       if (this.flushRafId !== null) {
         cancelAnimationFrame(this.flushRafId);
       }
+      if (this.deferredCodexContextGenerationTimer !== null) {
+        window.clearTimeout(this.deferredCodexContextGenerationTimer);
+      }
       this.ws.disconnect(this.sessionId);
     });
   }
@@ -680,15 +684,18 @@ readonly messageActionsDisabled = computed(
     }
     this.cancelArmedEdit();
     this.prompt.set('');
-    const runtimePrompt = await this.prepareRuntimePrompt(trimmed);
+    const prepared = this.prepareRuntimePrompt(trimmed);
     this.sendRuntimeAction({
       type: 'submit_prompt',
-      prompt: runtimePrompt,
+      prompt: prepared.prompt,
       titlePrompt: trimmed,
       ...(images.length
         ? { images: images.map((i) => this.toRuntimeImage(i)) }
         : {}),
     });
+    if (prepared.consumedContextSentence) {
+      this.markWorktreeContextConsumed(prepared.consumedContextSentence);
+    }
   }
 
   private toRuntimeImage(img: ComposerImageAttachment): {
@@ -1192,15 +1199,22 @@ readonly messageActionsDisabled = computed(
 
   private async loadWorktreeContext(triggerGenerate = true): Promise<void> {
     this.worktreeContextLoading.set(true);
+    const deferCodexGeneration =
+      triggerGenerate
+      && this.currentProvider() === 'codex'
+      && !this.runtimeStarted();
     try {
       const snapshot = await firstValueFrom(
-        this.worktreeContextService.get(this.repoId, this.worktreePath),
+        this.worktreeContextService.get(this.repoId, this.worktreePath, {
+          cachedOnly: deferCodexGeneration,
+        }),
       );
       this.worktreeContext.set(snapshot);
       this.draftRootRef.set(snapshot.rootRef ?? '');
 
       const shouldAutoGenerate =
         triggerGenerate
+        && !deferCodexGeneration
         && !snapshot.hasRecord
         && snapshot.canGenerate
         && snapshot.generationStatus !== 'generating'
@@ -1224,6 +1238,9 @@ readonly messageActionsDisabled = computed(
         console.info(
           `[worktree-context] skipping auto-generate for ${this.worktreePath} (hasRecord=${snapshot.hasRecord}, canGenerate=${snapshot.canGenerate}, status=${snapshot.generationStatus})`,
         );
+        if (deferCodexGeneration) {
+          this.scheduleDeferredCodexContextGeneration();
+        }
       }
     } catch (error) {
       toast.error(this.getHttpErrorMessage(error, 'Could not load worktree context.'));
@@ -1231,6 +1248,33 @@ readonly messageActionsDisabled = computed(
       this.worktreeContextLoading.set(false);
       this.worktreeContextBusy.set(false);
     }
+  }
+
+  private scheduleDeferredCodexContextGeneration(): void {
+    if (this.currentProvider() !== 'codex') return;
+    if (!this.runtimeStarted()) return;
+    if (this.hasInjectedContext()) return;
+    const context = this.worktreeContext();
+    if (!context?.canGenerate || context.contextSentence) return;
+    if (this.deferredCodexContextGenerationTimer !== null) return;
+
+    this.deferredCodexContextGenerationTimer = window.setTimeout(() => {
+      this.deferredCodexContextGenerationTimer = null;
+      if (
+        this.currentProvider() !== 'codex'
+        || !this.runtimeStarted()
+        || this.hasInjectedContext()
+        || this.runPhase() !== 'idle'
+        || this.submitting()
+        || this.worktreeContextBusy()
+        || this.worktreeContextLoading()
+        || this.worktreeContext()?.contextSentence
+      ) {
+        this.scheduleDeferredCodexContextGeneration();
+        return;
+      }
+      void this.loadWorktreeContext(true);
+    }, 1500);
   }
 
   private async refreshAutocomplete(version: number = this.bootstrapVersion): Promise<void> {
@@ -1407,6 +1451,7 @@ readonly messageActionsDisabled = computed(
     if (version !== this.bootstrapVersion) return;
 
     await this.restoreInterruptedPromptIfNothingSubstantiveHappened();
+    this.scheduleDeferredCodexContextGeneration();
   }
 
   private upsertLiveItem(item: ClaudeTranscriptItem): void {
@@ -1602,6 +1647,10 @@ readonly messageActionsDisabled = computed(
     this.worktreeContextLoading.set(false);
     this.worktreeContextBusy.set(false);
     this.firstPromptContextEnabled.set(true);
+    if (this.deferredCodexContextGenerationTimer !== null) {
+      window.clearTimeout(this.deferredCodexContextGenerationTimer);
+      this.deferredCodexContextGenerationTimer = null;
+    }
     this.worktreeRootEditorOpen.set(false);
     this.draftRootRef.set('');
     this.availableModels.set([]);
@@ -1667,13 +1716,16 @@ readonly messageActionsDisabled = computed(
     this.scheduleFlush();
   }
 
-  private async prepareRuntimePrompt(prompt: string): Promise<string> {
+  private prepareRuntimePrompt(prompt: string): {
+    prompt: string;
+    consumedContextSentence: string | null;
+  } {
     if (
       this.hasInjectedContext()
       || !this.firstPromptContextEnabled()
       || prompt.trimStart().startsWith('/')
     ) {
-      return prompt;
+      return { prompt, consumedContextSentence: null };
     }
 
     const localContextSentence = this.worktreeContext()?.contextSentence?.trim();
@@ -1681,26 +1733,28 @@ readonly messageActionsDisabled = computed(
       this.worktreeContext()?.generationStatus !== 'ready'
       || !localContextSentence
     ) {
-      return prompt;
+      return { prompt, consumedContextSentence: null };
     }
 
-    try {
-      const consume = await firstValueFrom(
-        this.worktreeContextService.consume(this.sessionId, true, localContextSentence),
+    this.hasInjectedContext.set(true);
+    this.worktreeContext.update(snapshot =>
+      snapshot ? { ...snapshot, lastUsedAt: new Date().toISOString() } : snapshot,
+    );
+    return {
+      prompt: buildWorktreeContextPrompt(localContextSentence, prompt),
+      consumedContextSentence: localContextSentence,
+    };
+  }
+
+  private markWorktreeContextConsumed(contextSentence: string): void {
+    void firstValueFrom(
+      this.worktreeContextService.consume(this.sessionId, true, contextSentence),
+    ).catch((error) => {
+      console.warn(
+        '[worktree-context] failed to mark first-message context consumed',
+        error,
       );
-      if (consume.shouldInject && consume.contextSentence) {
-        this.hasInjectedContext.set(true);
-        this.worktreeContext.update(snapshot =>
-          snapshot ? { ...snapshot, lastUsedAt: new Date().toISOString() } : snapshot,
-        );
-        return buildWorktreeContextPrompt(consume.contextSentence.trim(), prompt);
-      }
-      this.hasInjectedContext.set(true);
-      return prompt;
-    } catch (error) {
-      toast.error(this.getHttpErrorMessage(error, 'Could not prepare worktree context.'));
-      return prompt;
-    }
+    });
   }
 
   private scheduleFlush(): void {

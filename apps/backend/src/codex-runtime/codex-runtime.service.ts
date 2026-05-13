@@ -9,11 +9,9 @@ import type {
 } from '@openai/codex-sdk';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { spawn } from 'child_process';
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { createInterface } from 'readline';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
 import {
@@ -28,13 +26,11 @@ import type {
   ClaudeTranscriptItem,
   ClaudeUserInputRequest,
 } from '../claude-runtime/claude-runtime.types.js';
-import { buildAugmentedEnv } from '../config/system-paths.js';
 import {
   CodexAppServerClient,
   CodexAppServerNotification,
   CodexAppServerRequest,
 } from './codex-app-server.js';
-import { resolveCodexBinary } from './codex-binary.js';
 import { CodexAuthService } from './codex-auth.service.js';
 import { CodexHistoryService } from './codex-history.service.js';
 import type {
@@ -51,6 +47,8 @@ const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const DEFAULT_CODEX_CONTEXT_WINDOW = 1_050_000;
 const CODEX_MODEL_REFRESH_TTL_MS = 60 * 60 * 1000;
 const CODEX_MODEL_LIST_TIMEOUT_MS = 8_000;
+const CODEX_MODEL_REFRESH_IDLE_DELAY_MS = 10_000;
+const CODEX_PREWARM_COOLDOWN_MS = 30_000;
 const CODEX_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'gpt-5.5': 1_050_000,
   'gpt-5.4': 1_050_000,
@@ -117,12 +115,6 @@ interface CodexModelListResult {
   data?: unknown;
 }
 
-interface JsonRpcResponse {
-  id?: unknown;
-  result?: unknown;
-  error?: { message?: unknown };
-}
-
 @Injectable()
 export class CodexRuntimeService extends EventEmitter {
   private readonly logger = new Logger('CodexRuntimeService');
@@ -133,6 +125,9 @@ export class CodexRuntimeService extends EventEmitter {
   private codexDefaultModel = DEFAULT_CODEX_MODEL;
   private lastModelRefreshAt = 0;
   private modelRefreshInFlight: Promise<void> | null = null;
+  private modelRefreshTimer: NodeJS.Timeout | null = null;
+  private readonly prewarmInFlight = new Map<number, Promise<void>>();
+  private readonly lastPrewarmAt = new Map<number, number>();
   constructor(
     private readonly sessionsService: SessionsService,
     private readonly authService: CodexAuthService,
@@ -159,8 +154,9 @@ export class CodexRuntimeService extends EventEmitter {
   async getRuntimeState(sessionId: number): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
-    await this.refreshAuthStatus(state);
-    this.refreshModelCatalogInBackground();
+    state.cachedWorktreePath = session.worktreePath;
+    await this.refreshAuthStatusFast(state);
+    this.scheduleModelCatalogRefresh();
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
@@ -174,6 +170,41 @@ export class CodexRuntimeService extends EventEmitter {
 
   async getAutocompleteItems() {
     return [];
+  }
+
+  async prewarmSession(sessionId: number): Promise<void> {
+    if (this.activeRuns.has(sessionId)) {
+      return;
+    }
+    const now = Date.now();
+    const last = this.lastPrewarmAt.get(sessionId) ?? 0;
+    if (now - last < CODEX_PREWARM_COOLDOWN_MS) {
+      return;
+    }
+    const existing = this.prewarmInFlight.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+    const promise = (async () => {
+      const session = await this.sessionsService.findOne(sessionId);
+      const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+      state.cachedWorktreePath = session.worktreePath;
+      await this.refreshAuthStatusFast(state);
+      await this.appServer.prewarm();
+      this.lastPrewarmAt.set(sessionId, Date.now());
+    })()
+      .catch((error) => {
+        this.logger.debug(
+          `Codex prewarm failed session=${sessionId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      })
+      .finally(() => {
+        this.prewarmInFlight.delete(sessionId);
+      });
+    this.prewarmInFlight.set(sessionId, promise);
+    return promise;
   }
 
   async setSelectedModel(
@@ -262,7 +293,7 @@ export class CodexRuntimeService extends EventEmitter {
           `Failed to mark session ${sessionId} active: ${String(error)}`,
         ),
       );
-    void this.refreshAuthStatus(state).catch(() => undefined);
+    void this.refreshAuthStatusFast(state).catch(() => undefined);
     this.emitRunState(sessionId);
 
     if (isNewSession) {
@@ -922,8 +953,23 @@ export class CodexRuntimeService extends EventEmitter {
     }
   }
 
-  private async refreshAuthStatus(state: CodexRuntimeState): Promise<void> {
-    state.authStatus = await this.authService.getStatus();
+  private async refreshAuthStatusFast(state: CodexRuntimeState): Promise<void> {
+    state.authStatus = await this.authService.getFastStatus();
+  }
+
+  private scheduleModelCatalogRefresh(): void {
+    if (this.modelRefreshTimer) {
+      return;
+    }
+    this.modelRefreshTimer = setTimeout(() => {
+      this.modelRefreshTimer = null;
+      if (this.activeRuns.size > 0) {
+        this.scheduleModelCatalogRefresh();
+        return;
+      }
+      this.refreshModelCatalogInBackground();
+    }, CODEX_MODEL_REFRESH_IDLE_DELAY_MS);
+    this.modelRefreshTimer.unref?.();
   }
 
   private refreshModelCatalogInBackground(): void {
@@ -983,118 +1029,13 @@ export class CodexRuntimeService extends EventEmitter {
     }
   }
 
-  private fetchCodexAppServerModels(): Promise<CodexAppServerModel[]> {
-    return new Promise((resolve, reject) => {
-      const codexBin = resolveCodexBinary();
-      const child = spawn(codexBin, ['app-server', '--listen', 'stdio://'], {
-        env: buildAugmentedEnv(),
-        stdio: ['pipe', 'pipe', 'ignore'],
-      });
-      const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
-      const timer = setTimeout(
-        () => finish(new Error('Timed out while reading Codex model catalog.')),
-        CODEX_MODEL_LIST_TIMEOUT_MS,
-      );
-      let settled = false;
-      const finish = (
-        error: Error | null,
-        models: CodexAppServerModel[] = [],
-      ) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        rl.close();
-        child.removeAllListeners();
-        try {
-          child.kill();
-        } catch {
-          // Process may have already exited.
-        }
-        if (error) {
-          reject(error);
-        } else {
-          resolve(models);
-        }
-      };
-      rl.on('line', (line) => {
-        const message = this.parseJsonRpcLine(line);
-        if (!message) {
-          return;
-        }
-        if (message.id === 1) {
-          if (message.error) {
-            finish(
-              new Error(
-                typeof message.error.message === 'string'
-                  ? message.error.message
-                  : 'Codex app-server initialization failed.',
-              ),
-            );
-            return;
-          }
-          child.stdin.write(
-            JSON.stringify({
-              id: 2,
-              method: 'model/list',
-              params: {
-                limit: 100,
-                includeHidden: false,
-              },
-            }) + '\n',
-          );
-          return;
-        }
-        if (message.id !== 2) {
-          return;
-        }
-        if (message.error) {
-          finish(
-            new Error(
-              typeof message.error.message === 'string'
-                ? message.error.message
-                : 'Codex model/list failed.',
-            ),
-          );
-          return;
-        }
-        finish(null, this.extractModelList(message.result));
-      });
-      child.on('error', (error) => finish(error));
-      child.on('exit', (code, signal) => {
-        if (!settled) {
-          const detail = signal ? `signal ${signal}` : `code ${code ?? 1}`;
-          finish(new Error(`Codex app-server exited with ${detail}.`));
-        }
-      });
-      child.stdin.write(
-        JSON.stringify({
-          id: 1,
-          method: 'initialize',
-          params: {
-            clientInfo: {
-              name: 'elevenex',
-              title: 'Elevenex',
-              version: '0',
-            },
-            capabilities: {
-              experimentalApi: true,
-              optOutNotificationMethods: ['configWarning'],
-            },
-          },
-        }) + '\n',
-      );
-    });
-  }
-
-  private parseJsonRpcLine(line: string): JsonRpcResponse | null {
-    try {
-      const parsed = JSON.parse(line) as unknown;
-      return parsed && typeof parsed === 'object'
-        ? (parsed as JsonRpcResponse)
-        : null;
-    } catch {
-      return null;
-    }
+  private async fetchCodexAppServerModels(): Promise<CodexAppServerModel[]> {
+    const result = await this.appServer.request<unknown>(
+      'model/list',
+      { limit: 100, includeHidden: false },
+      CODEX_MODEL_LIST_TIMEOUT_MS,
+    );
+    return this.extractModelList(result);
   }
 
   private extractModelList(result: unknown): CodexAppServerModel[] {

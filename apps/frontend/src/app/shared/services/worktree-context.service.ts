@@ -14,16 +14,23 @@ export class WorktreeContextService {
   private readonly inFlightGet = new Map<string, Observable<WorktreeContextSnapshot>>();
   private readonly inFlightGenerate = new Map<string, Observable<WorktreeContextSnapshot>>();
 
-  get(repoId: number, worktreePath: string): Observable<WorktreeContextSnapshot> {
-    const key = this.cacheKey(repoId, worktreePath);
+  get(
+    repoId: number,
+    worktreePath: string,
+    options: { cachedOnly?: boolean } = {},
+  ): Observable<WorktreeContextSnapshot> {
+    const key = this.cacheKey(repoId, `${options.cachedOnly ? 'cached:' : ''}${worktreePath}`);
     const existing = this.inFlightGet.get(key);
     if (existing) {
       return existing;
     }
 
-    const params = new HttpParams()
+    let params = new HttpParams()
       .set('repoId', String(repoId))
       .set('worktreePath', worktreePath);
+    if (options.cachedOnly) {
+      params = params.set('cachedOnly', 'true');
+    }
     const request = this.http
       .get<WorktreeContextSnapshot>('/api/worktree-context', { params })
       .pipe(

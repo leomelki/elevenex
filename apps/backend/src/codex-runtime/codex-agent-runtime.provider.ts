@@ -69,6 +69,10 @@ export class CodexAgentRuntimeProvider
     return this.runtimeService.getAutocompleteItems();
   }
 
+  onClientAttached(sessionId: number): void {
+    void this.runtimeService.prewarmSession(sessionId);
+  }
+
   getAuthStatus() {
     return this.authService.getStatus();
   }

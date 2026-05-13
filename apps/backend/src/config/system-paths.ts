@@ -544,6 +544,12 @@ type TmuxInlineEnvOptions =
       extraKeys?: readonly string[];
     };
 
+function isTmuxInlineEnvKeyList(
+  options: TmuxInlineEnvOptions,
+): options is readonly string[] {
+  return Array.isArray(options);
+}
+
 // Build a `KEY1='val' KEY2='val' ...` prefix string suitable for inlining in
 // the shell command passed to `tmux new-session`. The default mode inlines only
 // critical tmux-stale vars; `mode: 'full'` is for generic user commands where
@@ -553,7 +559,7 @@ export function buildTmuxInlineEnvPrefix(
   env: NodeJS.ProcessEnv,
   options: TmuxInlineEnvOptions = [],
 ): string {
-  const normalized = Array.isArray(options)
+  const normalized = isTmuxInlineEnvKeyList(options)
     ? { mode: 'critical' as const, extraKeys: options }
     : { mode: options.mode ?? 'critical', extraKeys: options.extraKeys ?? [] };
   const keys =

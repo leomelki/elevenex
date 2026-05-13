@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsNumber, IsString } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class GetWorktreeContextDto {
   @Type(() => Number)
@@ -8,4 +8,9 @@ export class GetWorktreeContextDto {
 
   @IsString()
   worktreePath!: string;
+
+  @Type(() => Boolean)
+  @IsBoolean()
+  @IsOptional()
+  cachedOnly?: boolean;
 }

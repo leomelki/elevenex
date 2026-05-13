@@ -87,6 +87,15 @@ export class WorktreeContextService {
     return promise;
   }
 
+  async getCachedSnapshot(
+    repoId: number,
+    worktreePath: string,
+  ): Promise<WorktreeContextSnapshot> {
+    await this.getRepo(repoId);
+    const existing = await this.findRecord(repoId, worktreePath);
+    return this.toRecordOnlySnapshot(repoId, worktreePath, existing);
+  }
+
   private async getSnapshotInternal(repoId: number, worktreePath: string): Promise<WorktreeContextSnapshot> {
     const repo = await this.getRepo(repoId);
     const existing = await this.findRecord(repoId, worktreePath);
@@ -142,6 +151,27 @@ export class WorktreeContextService {
       usingRepoDefaultRootRef: !this.normalizeOptionalText(record.rootRef),
       errorMessage: null,
       hasRecord: true,
+    };
+  }
+
+  private toRecordOnlySnapshot(
+    repoId: number,
+    worktreePath: string,
+    record: typeof schema.worktreeContexts.$inferSelect | null,
+  ): WorktreeContextSnapshot {
+    return {
+      repoId,
+      worktreePath,
+      contextSentence: record?.contextSentence ?? null,
+      rootRef: record?.rootRef ?? null,
+      generationStatus: this.normalizeGenerationStatus(record?.generationStatus),
+      generatedAt: record?.generatedAt ?? null,
+      lastUsedAt: record?.lastUsedAt ?? null,
+      canGenerate: true,
+      hasChanges: Boolean(record?.contextSentence),
+      usingRepoDefaultRootRef: !this.normalizeOptionalText(record?.rootRef),
+      errorMessage: null,
+      hasRecord: Boolean(record),
     };
   }
 
