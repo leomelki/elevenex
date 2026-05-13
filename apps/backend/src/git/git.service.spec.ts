@@ -230,15 +230,73 @@ describe('GitService', () => {
 
       await expect(
         service.suggestCommitMessage(repoPath, 'claude'),
+      ).rejects.toThrow('Could not generate a commit message with claude.');
+    });
+
+    it('should generate commit messages with pi when pi is the selected provider', async () => {
+      fs.writeFileSync(
+        path.join(repoPath, 'feature.ts'),
+        'export const value = 1;\n',
+      );
+      await service.stageFiles(repoPath, ['feature.ts']);
+      jest
+        .spyOn(service as any, 'generateCommitMessageWithPi')
+        .mockResolvedValue({
+          subject: 'feat(git): support pi commit messages',
+          body: null,
+          confidence: 'medium',
+          source: 'pi',
+        });
+
+      await expect(
+        service.suggestCommitMessage(repoPath, 'pi'),
+      ).resolves.toEqual({
+        subject: 'feat(git): support pi commit messages',
+        body: null,
+        confidence: 'medium',
+        source: 'pi',
+      });
+    });
+
+    it('should generate commit messages with codex when codex is the selected provider', async () => {
+      fs.writeFileSync(
+        path.join(repoPath, 'feature.ts'),
+        'export const value = 1;\n',
+      );
+      await service.stageFiles(repoPath, ['feature.ts']);
+      jest
+        .spyOn(service as any, 'generateCommitMessageWithCodex')
+        .mockResolvedValue({
+          subject: 'feat(git): support codex commit messages',
+          body: null,
+          confidence: 'medium',
+          source: 'codex',
+        });
+
+      await expect(
+        service.suggestCommitMessage(repoPath, 'codex'),
+      ).resolves.toEqual({
+        subject: 'feat(git): support codex commit messages',
+        body: null,
+        confidence: 'medium',
+        source: 'codex',
+      });
+    });
+
+    it('should still reject providers without a commit message generator', async () => {
+      await expect(
+        service.suggestCommitMessage(repoPath, 'opencode'),
       ).rejects.toThrow(
-        'Could not generate a commit message with claude.',
+        'Commit message generation is not supported for provider "opencode".',
       );
     });
 
     it('should reject when there are no staged changes', async () => {
       await expect(
         service.suggestCommitMessage(repoPath, 'claude'),
-      ).rejects.toThrow('No staged changes available to generate a commit message.');
+      ).rejects.toThrow(
+        'No staged changes available to generate a commit message.',
+      );
     });
 
     it('should parse strict JSON commit suggestions', () => {

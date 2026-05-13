@@ -841,6 +841,120 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(panel?.querySelector('.cw-turn-changes__diff')?.innerHTML).toContain('cw-diff-line');
   });
 
+  it('opens turn changes from an already hydrated historical session', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.worktreePath = '/tmp/project';
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    events$.next({
+      type: 'session_snapshot',
+      payload: {
+        ...runtimeState(),
+        sessionId: 7,
+        history: editTurnHistory('yesterday', '2026-04-23T18:00:00.000Z', [
+          { tool: 'Edit', file: 'src/yesterday.ts', oldString: 'export const value = 1;', newString: 'export const value = 2;' },
+        ]),
+      },
+    });
+    await flushPromises();
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector('.cw-turn-gap__changes-button') as HTMLButtonElement | null;
+    expect(button?.textContent).toContain('View changes');
+    button?.click();
+    fixture.detectChanges();
+
+    const panel = fixture.nativeElement.querySelector('cw-turn-changes') as HTMLElement | null;
+    expect(panel?.textContent).toContain('yesterday.ts');
+    expect(panel?.textContent).toContain('Changes in this turn');
+  });
+
+  it('includes nested subagent edits in the parent turn changes', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.worktreePath = '/tmp/project';
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    events$.next({
+      type: 'session_snapshot',
+      payload: {
+        ...runtimeState(),
+        sessionId: 7,
+        history: [
+          {
+            id: 'user-nested',
+            kind: 'user',
+            content: 'Delegate edit',
+            timestamp: '2026-04-23T18:00:00.000Z',
+          },
+          {
+            id: 'task-nested',
+            kind: 'tool_use',
+            toolUseId: 'task-nested',
+            toolName: 'Task',
+            toolInput: { description: 'Edit nested file' },
+            timestamp: '2026-04-23T18:00:01.000Z',
+          },
+          {
+            id: 'child-edit',
+            kind: 'tool_use',
+            toolUseId: 'child-edit',
+            parentToolUseId: 'task-nested',
+            toolName: 'Edit',
+            toolInput: {
+              file_path: 'src/nested.ts',
+              old_string: 'export const nested = false;',
+              new_string: 'export const nested = true;',
+            },
+            timestamp: '2026-04-23T18:00:02.000Z',
+          },
+          {
+            id: 'child-result',
+            kind: 'tool_result',
+            toolUseId: 'child-edit',
+            parentToolUseId: 'task-nested',
+            content: 'ok',
+            timestamp: '2026-04-23T18:00:03.000Z',
+          },
+          {
+            id: 'task-result',
+            kind: 'tool_result',
+            toolUseId: 'task-nested',
+            content: 'done',
+            timestamp: '2026-04-23T18:00:04.000Z',
+          },
+          {
+            id: 'assistant-nested',
+            kind: 'assistant',
+            content: 'Done',
+            timestamp: '2026-04-23T18:00:05.000Z',
+          },
+        ],
+      },
+    });
+    await flushPromises();
+    fixture.detectChanges();
+
+    const changes = fixture.nativeElement.querySelector('.cw-turn-gap__changes') as HTMLElement | null;
+    expect(changes?.textContent).toContain('1 file');
+
+    const button = fixture.nativeElement.querySelector('.cw-turn-gap__changes-button') as HTMLButtonElement | null;
+    button?.click();
+    fixture.detectChanges();
+
+    const panel = fixture.nativeElement.querySelector('cw-turn-changes') as HTMLElement | null;
+    expect(panel?.textContent).toContain('nested.ts');
+  });
+
   it('dedupes identical edits and counts each file once', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
