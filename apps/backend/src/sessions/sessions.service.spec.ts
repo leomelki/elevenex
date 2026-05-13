@@ -383,22 +383,37 @@ describe('SessionsService', () => {
   });
 
   describe('archive', () => {
-    it('cleans up agent runtime, PTY, and tmux before marking archived', async () => {
+    it('marks archived and returns before process cleanup finishes', async () => {
       const created = await service.create({
         repoId,
         branchName: 'main',
         worktreePath: '/tmp/wt',
       });
+      let resolveCleanup!: () => void;
+      agentRuntimeCleanupMock.cleanupSession.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          resolveCleanup = resolve;
+        }),
+      );
 
       const archived = await service.archive(created.id);
 
+      expect(archived.status).toBe('archived');
       expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(created.id);
+      expect(ptyManagerMock.kill).not.toHaveBeenCalledWith(created.id);
+      expect(ptyManagerMock.killTmuxSession).not.toHaveBeenCalledWith(created.id);
+
+      const persisted = await service.findOne(created.id);
+      expect(persisted.status).toBe('archived');
+
+      resolveCleanup();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
       expect(ptyManagerMock.kill).toHaveBeenCalledWith(created.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(created.id);
-      expect(archived.status).toBe('archived');
     });
 
-    it('still kills terminal processes if agent cleanup fails', async () => {
+    it('still kills terminal processes asynchronously if agent cleanup fails', async () => {
       const created = await service.create({
         repoId,
         branchName: 'main',
@@ -406,7 +421,10 @@ describe('SessionsService', () => {
       });
       agentRuntimeCleanupMock.cleanupSession.mockRejectedValueOnce(new Error('cleanup failed'));
 
-      await expect(service.archive(created.id)).rejects.toThrow('cleanup failed');
+      const archived = await service.archive(created.id);
+      expect(archived.status).toBe('archived');
+
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       expect(ptyManagerMock.kill).toHaveBeenCalledWith(created.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(created.id);
