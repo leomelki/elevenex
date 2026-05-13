@@ -88,10 +88,11 @@ interface RenderedFile extends TurnChangedFile {
               />
               <span class="cw-turn-changes__status">{{ file.statusGlyph }}</span>
               <span class="cw-turn-changes__path">
-                <span class="cw-turn-changes__base">{{ file.basename }}</span>
                 @if (file.folder) {
                   <span class="cw-turn-changes__folder">{{ file.folder }}</span>
+                  <span class="cw-turn-changes__path-separator" aria-hidden="true">/</span>
                 }
+                <span class="cw-turn-changes__base">{{ file.basename }}</span>
               </span>
               <span class="cw-turn-changes__file-meta">{{ file.statusLabel }}</span>
               <span class="cw-turn-changes__file-stats">
@@ -281,13 +282,13 @@ interface RenderedFile extends TurnChangedFile {
     .cw-turn-changes__path {
       display: flex;
       align-items: baseline;
-      gap: 0.45rem;
       min-width: 0;
       overflow: hidden;
     }
 
     .cw-turn-changes__base {
-      min-width: 0;
+      flex: 0 0 auto;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -296,10 +297,22 @@ interface RenderedFile extends TurnChangedFile {
     }
 
     .cw-turn-changes__folder {
+      flex: 1 1 auto;
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      color: var(--muted-foreground);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.68rem;
+      direction: rtl;
+      text-align: left;
+      unicode-bidi: isolate;
+    }
+
+    .cw-turn-changes__path-separator {
+      flex: 0 0 auto;
+      padding: 0 0.16rem;
       color: var(--muted-foreground);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 0.68rem;
@@ -434,7 +447,8 @@ interface RenderedFile extends TurnChangedFile {
         display: none;
       }
 
-      .cw-turn-changes__folder {
+      .cw-turn-changes__folder,
+      .cw-turn-changes__path-separator {
         display: none;
       }
 
@@ -489,7 +503,10 @@ export class ClaudeTurnChangesComponent {
     const raw = hunk.patch
       ? highlightedPatchHtml(hunk.patch, filePath)
       : hunk.oldString || hunk.newString
-        ? highlightedUnifiedDiffHtml(hunk.oldString, hunk.newString, filePath, hunk.startLine ?? 1)
+        ? highlightedUnifiedDiffHtml(hunk.oldString, hunk.newString, filePath, {
+          oldStartLine: hunk.oldStartLine ?? hunk.startLine,
+          newStartLine: hunk.newStartLine ?? hunk.startLine,
+        })
         : '';
     if (!raw) return null;
     const safe = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });

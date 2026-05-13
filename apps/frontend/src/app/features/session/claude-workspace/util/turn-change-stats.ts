@@ -13,6 +13,8 @@ export interface TurnChangeHunk {
   label: string;
   oldString: string;
   newString: string;
+  oldStartLine?: number;
+  newStartLine?: number;
   additions: number;
   deletions: number;
   patch?: string;
@@ -101,6 +103,46 @@ function asString(value: unknown): string {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeLineForMatch(line: string): string {
+  return line.trim().replace(/\s+/g, ' ');
+}
+
+function numberedResultLines(content: string | undefined): Array<{ lineNumber: number; text: string }> {
+  if (!content) return [];
+  const out: Array<{ lineNumber: number; text: string }> = [];
+  for (const rawLine of content.split('\n')) {
+    const match = rawLine.match(/^\s*(\d+)(?:\s*→|\t|\s{2,})(.*)$/);
+    if (!match) continue;
+    const lineNumber = Number(match[1]);
+    if (!Number.isFinite(lineNumber)) continue;
+    out.push({ lineNumber, text: match[2] ?? '' });
+  }
+  return out;
+}
+
+function inferStartLineFromResult(
+  edit: Pick<EditOp, 'oldString' | 'newString'>,
+  resultContent: string | undefined,
+): number | undefined {
+  const numbered = numberedResultLines(resultContent);
+  if (!numbered.length) return undefined;
+
+  const referenceLines = (edit.newString || edit.oldString)
+    .split('\n')
+    .map(normalizeLineForMatch)
+    .filter(Boolean);
+  if (!referenceLines.length) return undefined;
+
+  const numberedLines = numbered.map((line) => normalizeLineForMatch(line.text));
+  for (let i = 0; i < numberedLines.length; i++) {
+    if (numberedLines[i] !== referenceLines[0]) continue;
+    const matches = referenceLines.every((reference, offset) => numberedLines[i + offset] === reference);
+    if (matches) return numbered[i].lineNumber;
+  }
+  const firstLineMatch = numbered.find((line) => normalizeLineForMatch(line.text) === referenceLines[0]);
+  return firstLineMatch?.lineNumber;
 }
 
 function normalizeToolName(toolName: string): string {
@@ -277,6 +319,7 @@ export function computeTurnChangeDetails(units: PairedTranscriptUnit[]): TurnCha
     const toolName = unit.call.toolName ?? '';
     if (!FILE_WRITING_TOOLS.has(normalizeToolName(toolName))) continue;
     if (unit.result?.isError) continue;
+    const resultContent = typeof unit.result?.content === 'string' ? unit.result.content : undefined;
 
     for (const extracted of extractEdits(toolName, unit.call.toolInput)) {
       let file = files.get(extracted.filePath);
@@ -306,6 +349,7 @@ export function computeTurnChangeDetails(units: PairedTranscriptUnit[]): TurnCha
         const additions = edit.additions ?? diff.additions;
         const deletions = edit.deletions ?? diff.deletions;
         if (additions === 0 && deletions === 0 && !edit.patch) continue;
+        const inferredStartLine = inferStartLineFromResult(edit, resultContent);
 
         file.additions += additions;
         file.deletions += deletions;
@@ -315,6 +359,8 @@ export function computeTurnChangeDetails(units: PairedTranscriptUnit[]): TurnCha
           label: edit.label ?? extracted.toolName,
           oldString: edit.oldString,
           newString: edit.newString,
+          oldStartLine: inferredStartLine,
+          newStartLine: inferredStartLine,
           additions,
           deletions,
           patch: edit.patch,

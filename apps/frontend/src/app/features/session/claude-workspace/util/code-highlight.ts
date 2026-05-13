@@ -134,12 +134,17 @@ function splitDiffLines(text: string): string[] {
   return text.endsWith('\n') ? lines.slice(0, -1) : lines;
 }
 
-function buildLineDiff(oldLines: string[], newLines: string[], startLine = 1): LineDiff[] {
+function buildLineDiff(
+  oldLines: string[],
+  newLines: string[],
+  oldStartLine = 1,
+  newStartLine = 1,
+): LineDiff[] {
   const cells = oldLines.length * newLines.length;
   if (cells > 200_000) {
     return [
-      ...oldLines.map((_, index) => ({ type: 'del' as const, oldLine: index + startLine, oldIndex: index })),
-      ...newLines.map((_, index) => ({ type: 'add' as const, newLine: index + startLine, newIndex: index })),
+      ...oldLines.map((_, index) => ({ type: 'del' as const, oldLine: oldStartLine + index, oldIndex: index })),
+      ...newLines.map((_, index) => ({ type: 'add' as const, newLine: newStartLine + index, newIndex: index })),
     ];
   }
 
@@ -159,18 +164,24 @@ function buildLineDiff(oldLines: string[], newLines: string[], startLine = 1): L
   let j = 0;
   while (i < oldLines.length || j < newLines.length) {
     if (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
-      out.push({ type: 'context', oldLine: i + startLine, newLine: j + startLine, oldIndex: i, newIndex: j });
+      out.push({
+        type: 'context',
+        oldLine: oldStartLine + i,
+        newLine: newStartLine + j,
+        oldIndex: i,
+        newIndex: j,
+      });
       i++;
       j++;
       continue;
     }
     if (j < newLines.length && (i === oldLines.length || dp[i][j + 1] >= dp[i + 1][j])) {
-      out.push({ type: 'add', newLine: j + startLine, newIndex: j });
+      out.push({ type: 'add', newLine: newStartLine + j, newIndex: j });
       j++;
       continue;
     }
     if (i < oldLines.length) {
-      out.push({ type: 'del', oldLine: i + startLine, oldIndex: i });
+      out.push({ type: 'del', oldLine: oldStartLine + i, oldIndex: i });
       i++;
     }
   }
@@ -200,14 +211,21 @@ export function highlightedUnifiedDiffHtml(
   oldStr: string,
   newStr: string,
   filePath: string,
-  startLine = 1,
+  options: number | { oldStartLine?: number; newStartLine?: number } = {},
 ): string {
   const lang = detectHljsLang(filePath);
   const oldLines = splitDiffLines(oldStr);
   const newLines = splitDiffLines(newStr);
   const oldHl = highlightLines(oldLines.join('\n'), lang);
   const newHl = highlightLines(newLines.join('\n'), lang);
-  const diff = buildLineDiff(oldLines, newLines, startLine);
+  const oldStartLine = typeof options === 'number' ? options : options.oldStartLine ?? 1;
+  const newStartLine = typeof options === 'number' ? options : options.newStartLine ?? 1;
+  const diff = buildLineDiff(
+    oldLines,
+    newLines,
+    oldStartLine,
+    newStartLine,
+  );
 
   return diff.map((line) => {
     if (line.type === 'context') {
@@ -233,29 +251,31 @@ export function highlightedPatchHtml(patch: string, filePath = ''): string {
   });
   const highlighted = highlightLines(codeLines.join('\n'), lang);
 
-  let oldLine = 1;
-  let newLine = 1;
-  let hasHunkHeader = false;
+  let oldLine: number | null = null;
+  let newLine: number | null = null;
 
   return lines.map((line, i) => {
     if (line.startsWith('@@')) {
-      const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      if (m) {
-        oldLine = parseInt(m[1], 10);
-        newLine = parseInt(m[2], 10);
-        hasHunkHeader = true;
-      }
+      const m = line.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+      oldLine = m ? Number(m[1]) : null;
+      newLine = m ? Number(m[2]) : null;
       return `<span class="cw-diff-line cw-diff-hunk"><span class="cw-diff-ln cw-diff-ln--old"></span><span class="cw-diff-ln cw-diff-ln--new"></span><span class="cw-diff-marker"> </span><span class="cw-diff-code">${escapeHtml(line)}</span></span>`;
     }
     if (line.startsWith('\\')) return '';
     const hl = highlighted[i] ?? '';
     if (line.startsWith('+')) {
-      return renderUnifiedDiffLine('add', null, newLine++, hl);
+      const html = renderUnifiedDiffLine('add', null, newLine, hl);
+      if (newLine !== null) newLine++;
+      return html;
     }
     if (line.startsWith('-')) {
-      return renderUnifiedDiffLine('del', oldLine++, null, hl);
+      const html = renderUnifiedDiffLine('del', oldLine, null, hl);
+      if (oldLine !== null) oldLine++;
+      return html;
     }
-    // context line — only show line numbers once a hunk header has set them
-    return renderUnifiedDiffLine('context', hasHunkHeader ? oldLine++ : null, hasHunkHeader ? newLine++ : null, hl);
+    const html = renderUnifiedDiffLine('context', oldLine, newLine, hl);
+    if (oldLine !== null) oldLine++;
+    if (newLine !== null) newLine++;
+    return html;
   }).filter(Boolean).join('');
 }
