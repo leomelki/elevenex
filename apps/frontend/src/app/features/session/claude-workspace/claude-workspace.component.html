@@ -1,4 +1,30 @@
 <div class="flex flex-col flex-1 min-h-0 h-full">
+  @if (archived) {
+    <header class="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-background px-4 py-3">
+      <div class="flex min-w-0 items-center gap-3">
+        <span class="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">
+          <ng-icon name="lucideArchive" size="17" />
+        </span>
+        <div class="min-w-0">
+          <div class="flex min-w-0 items-center gap-2">
+            <h2 class="truncate text-sm font-semibold text-foreground">{{ sessionName || 'Session ' + sessionId }}</h2>
+            <span class="rounded border border-border bg-muted px-1.5 py-0.5 text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Archived</span>
+          </div>
+          <p class="truncate text-xs text-muted-foreground">Read-only transcript</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+        [disabled]="unarchiveBusy"
+        (click)="unarchive.emit()"
+      >
+        <ng-icon name="lucideArchiveRestore" size="14" />
+        {{ unarchiveBusy ? 'Restoring' : 'Unarchive' }}
+      </button>
+    </header>
+  }
+
   @if (showCodexLogin()) {
     <div class="flex flex-1 items-center justify-center overflow-y-auto px-4">
       <cw-codex-login-card
@@ -17,7 +43,7 @@
 
   <div
     #transcriptContainer
-    class="flex-1 min-h-0 overflow-auto py-5 px-[clamp(0.75rem,4vw,2rem)] scroll-smooth"
+    class="cw-transcript flex-1 min-h-0 overflow-auto py-5 px-[clamp(0.75rem,4vw,2rem)] scroll-smooth"
     (scroll)="onTranscriptScroll()"
   >
     @if (showLoading()) {
@@ -37,16 +63,24 @@
           </div>
         </div>
       </div>
+    } @else if (lastError()) {
+      <div class="h-full flex items-center justify-center">
+        <div class="max-w-lg rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+          {{ lastError() }}
+        </div>
+      </div>
     } @else if (!pairedTranscript().length) {
       <div class="h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground text-sm">
-        <div class="text-[0.9375rem] text-foreground font-medium">Start with a prompt.</div>
-        <div>
+        <div class="text-[0.9375rem] text-foreground font-medium">{{ archived ? 'No transcript available.' : 'Start with a prompt.' }}</div>
+        @if (!archived) {
+          <div>
           Type
           <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded">/</code>
           for commands or
           <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded">$</code>
           for skills. ⌘↵ to send.
-        </div>
+          </div>
+        }
       </div>
     } @else {
       <div class="flex flex-col gap-3.5 max-w-[52rem] mx-auto">
@@ -180,7 +214,7 @@
                     <div class="flex justify-center -mt-[0.2rem]">
                       <button
                         type="button"
-                        class="inline-flex items-center gap-[0.55rem] min-h-[1.8rem] px-[0.7rem] py-1 border border-border/86 rounded-full bg-background/74 text-foreground font-[inherit] cursor-pointer shadow-[0_8px_20px_-18px_color-mix(in_oklab,var(--foreground)_35%,transparent)] transition-[border-color,background-color,box-shadow] duration-[130ms] ease-in-out hover:border-primary/34 hover:bg-primary/7 hover:shadow-[0_10px_24px_-18px_color-mix(in_oklab,var(--primary)_40%,transparent)] focus-visible:outline-none focus-visible:border-primary/34 focus-visible:bg-primary/7"
+                        class="cw-turn-gap__changes cw-turn-gap__changes-button inline-flex items-center gap-[0.55rem] min-h-[1.8rem] px-[0.7rem] py-1 border border-border/86 rounded-full bg-background/74 text-foreground font-[inherit] cursor-pointer shadow-[0_8px_20px_-18px_color-mix(in_oklab,var(--foreground)_35%,transparent)] transition-[border-color,background-color,box-shadow] duration-[130ms] ease-in-out hover:border-primary/34 hover:bg-primary/7 hover:shadow-[0_10px_24px_-18px_color-mix(in_oklab,var(--primary)_40%,transparent)] focus-visible:outline-none focus-visible:border-primary/34 focus-visible:bg-primary/7"
                         [attr.aria-expanded]="isTurnChangesExpanded(item.turnId)"
                         (click)="toggleTurnChanges(item.turnId)"
                       >
@@ -205,7 +239,7 @@
                         </span>
                         <button
                           type="button"
-                          class="inline-flex items-center gap-1.5 px-3 py-[0.3rem] rounded-full border border-primary/38 bg-primary/9 text-[color-mix(in_oklab,var(--primary)_80%,var(--foreground))] text-[0.75rem] font-semibold cursor-pointer whitespace-nowrap transition-[background,border-color] duration-[120ms] hover:bg-primary/15 hover:border-primary/55 focus-visible:outline-none"
+                          class="cw-turn-gap__inspect inline-flex items-center gap-1.5 px-3 py-[0.3rem] rounded-full border border-primary/38 bg-primary/9 text-[color-mix(in_oklab,var(--primary)_80%,var(--foreground))] text-[0.75rem] font-semibold cursor-pointer whitespace-nowrap transition-[background,border-color] duration-[120ms] hover:bg-primary/15 hover:border-primary/55 focus-visible:outline-none"
                           (click)="openAgentInspector(item.turnId)"
                         >
                           Deep Dive →
@@ -464,18 +498,21 @@
       </div>
     }
 
-    @if (pendingUserInputRequest(); as req) {
-      <cw-user-input
-        class="block max-w-[52rem] w-full mx-auto"
-        [request]="req"
-        (answer)="answerUserInput($event)"
-      />
+    @if (!archived) {
+      @if (pendingUserInputRequest(); as req) {
+        <cw-user-input
+          class="block max-w-[52rem] w-full mx-auto"
+          [request]="req"
+          (answer)="answerUserInput($event)"
+        />
+      }
     }
 
+    @if (!archived) {
     <div class="max-w-[52rem] w-full mx-auto flex flex-col">
       @if (pendingPermissionRequest(); as req) {
         <cw-permission-inline
-          class="block w-full"
+          class="cw-compose-shell__permission block w-full"
           [request]="req"
           [appearance]="'dock'"
           (approve)="approvePermission($event)"
@@ -522,9 +559,11 @@
       (openTasks)="tasksDrawerOpen.set(true)"
       (openMcp)="openMcpDrawer()"
     />
+    }
   </div>
   }
 
+  @if (!archived) {
   <cw-tasks-drawer
     [open]="tasksDrawerOpen()"
     [tasks]="tasks()"
@@ -542,6 +581,7 @@
     (recheck)="recheckMcpServer($event)"
     (auth)="startMcpAuth($event)"
   />
+  }
 
   <cw-agent-inspector
     [open]="!!selectedAgentInspectorTurn()"

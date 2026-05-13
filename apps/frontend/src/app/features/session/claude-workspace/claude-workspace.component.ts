@@ -89,6 +89,8 @@ import {
   lucideGitBranch,
   lucideTriangleAlert,
   lucideRefreshCw,
+  lucideArchive,
+  lucideArchiveRestore,
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '@/shared/components/button/button.component';
 
@@ -136,6 +138,8 @@ type TranscriptRenderItem =
       lucideGitBranch,
       lucideTriangleAlert,
       lucideRefreshCw,
+      lucideArchive,
+      lucideArchiveRestore,
     }),
   ],
 })
@@ -147,6 +151,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   @Input() activeAgentProvider: AgentProviderId = 'claude';
   @Input() hasStartedAgentRuntime = false;
   @Input() isVisible = true;
+  @Input() archived = false;
+  @Input() sessionName: string | null = null;
+  @Input() unarchiveBusy = false;
   @ViewChild('transcriptContainer') private transcriptContainer?: ElementRef<HTMLDivElement>;
   @ViewChild(ClaudeComposerComponent) private composer?: ClaudeComposerComponent;
 
@@ -154,6 +161,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly openInBrowser = output<string>();
   readonly activeAgentProviderChange = output<AgentProviderId>();
   readonly agentRuntimeStarted = output<void>();
+  readonly unarchive = output<void>();
 
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(ClaudeRuntimeApiService);
@@ -232,12 +240,14 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private wsAutoReconnecting = false;
   private wsStateSub: Subscription | null = null;
   readonly showCodexLogin = computed(() => {
+    if (this.archived) return false;
     if (this.currentProvider() !== 'codex') return false;
     const status = this.codexAuthStatus();
     if (!status) return false;
     return status.authenticated !== true;
   });
   readonly showPiLogin = computed(() => {
+    if (this.archived) return false;
     if (this.currentProvider() !== 'pi') return false;
     const status = this.piAuthStatus();
     if (!status) return false;
@@ -278,6 +288,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   );
 
   readonly showContextPin = computed(() => {
+    if (this.archived) return false;
     const hasTranscript = this.transcriptItems().length > 0 || this.submitting();
     if (hasTranscript) return false;
     if (this.worktreeContextLoading()) return true;
@@ -355,7 +366,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
 readonly messageActionsDisabled = computed(
     () =>
-      this.loading()
+      this.archived
+      || this.loading()
       || this.submitting()
       || this.runPhase() !== 'idle'
       || !!this.pendingPermissionRequest()
@@ -607,7 +619,7 @@ readonly messageActionsDisabled = computed(
     this.runtimeStarted.set(this.hasStartedAgentRuntime);
     if (this.isVisible) {
       this.providerSelection.setProvider(this.activeAgentProvider);
-      void this.bootstrap();
+      void this.bootstrapForMode();
     }
   }
 
@@ -617,7 +629,7 @@ readonly messageActionsDisabled = computed(
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       if (this.isVisible) {
         this.providerSelection.setProvider(this.activeAgentProvider);
-        void this.bootstrap();
+        void this.bootstrapForMode();
       }
     }
     if (changes['hasInjectedWorktreeContext'] && !changes['hasInjectedWorktreeContext'].firstChange) {
@@ -631,10 +643,16 @@ readonly messageActionsDisabled = computed(
       if (!this.hydrated() || this.bootstrappedProvider !== this.currentProvider()) {
         this.reset();
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
-        void this.bootstrap();
-      } else {
+        void this.bootstrapForMode();
+      } else if (!this.archived) {
         void this.loadWorktreeContext(false);
       }
+    }
+    if (changes['archived'] && !changes['archived'].firstChange && this.isVisible) {
+      this.reset();
+      this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
+      this.providerSelection.setProvider(this.activeAgentProvider);
+      void this.bootstrapForMode();
     }
     if (
       changes['activeAgentProvider']
@@ -645,7 +663,7 @@ readonly messageActionsDisabled = computed(
       if (this.bootstrappedProvider !== this.currentProvider()) {
         this.reset();
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
-        void this.bootstrap();
+        void this.bootstrapForMode();
       }
     }
   }
@@ -655,6 +673,7 @@ readonly messageActionsDisabled = computed(
   }
 
   async submitPrompt(payload: ComposerSendPayload | string): Promise<void> {
+    if (this.archived) return;
     const normalized: ComposerSendPayload =
       typeof payload === 'string' ? { text: payload, images: [] } : payload;
     const trimmed = normalized.text.trim();
@@ -708,6 +727,7 @@ readonly messageActionsDisabled = computed(
   }
 
   cancelPendingPrompt(id: string): void {
+    if (this.archived) return;
     this.cancelledPendingPromptIds.add(id);
     this.sendRuntimeAction({ type: 'cancel_pending_prompt', id });
   }
@@ -744,6 +764,7 @@ readonly messageActionsDisabled = computed(
   }
 
   interrupt(): void {
+    if (this.archived) return;
     this.interruptedRunShouldRestorePrompt = true;
     this.sendRuntimeAction({ type: 'interrupt' });
   }
@@ -759,6 +780,7 @@ readonly messageActionsDisabled = computed(
   }
 
   approvePermission(approval: ClaudePermissionApproval): void {
+    if (this.archived) return;
     const req = this.pendingPermissionRequest();
     if (!req) return;
     this.sendRuntimeAction({
@@ -770,6 +792,7 @@ readonly messageActionsDisabled = computed(
   }
 
   denyPermission(message?: string): void {
+    if (this.archived) return;
     const req = this.pendingPermissionRequest();
     if (!req) return;
     this.sendRuntimeAction({
@@ -780,6 +803,7 @@ readonly messageActionsDisabled = computed(
   }
 
   answerUserInput(payload: { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> }): void {
+    if (this.archived) return;
     const req = this.pendingUserInputRequest();
     if (!req) return;
     this.sendRuntimeAction({
@@ -811,6 +835,7 @@ readonly messageActionsDisabled = computed(
   }
 
   openTerminal(): void {
+    if (this.archived) return;
     if (this.currentProvider() !== 'claude') {
       toast.message('Raw terminal fallback is only available for Claude Code.');
       return;
@@ -991,7 +1016,7 @@ readonly messageActionsDisabled = computed(
   }
 
   canShowMessageActions(item: ClaudeTranscriptItem): boolean {
-    return item.kind === 'user' && !!item.sourceMessageId;
+    return !this.archived && item.kind === 'user' && !!item.sourceMessageId;
   }
 
   isEditArmed(item: ClaudeTranscriptItem): boolean {
@@ -1142,6 +1167,42 @@ readonly messageActionsDisabled = computed(
     } finally {
       if (version === this.bootstrapVersion) this.loading.set(false);
     }
+  }
+
+  private async bootstrapArchived(): Promise<void> {
+    const version = ++this.bootstrapVersion;
+    this.bootstrappedProvider = this.currentProvider();
+    this.loading.set(true);
+    this.hydrated.set(false);
+    void this.loadProviders();
+
+    try {
+      const history = await firstValueFrom(
+        this.agentApi.getHistory(this.sessionId, this.activeAgentProvider),
+      ) as ClaudeTranscriptItem[];
+      if (version !== this.bootstrapVersion) return;
+      this.historyItems.set(history);
+      this.liveItems.set([]);
+      this.optimisticUserItems.set([]);
+      this.runPhase.set('idle');
+      this.sessionState.set('idle');
+      this.canInterrupt.set(false);
+      this.pendingPermissionRequest.set(null);
+      this.pendingUserInputRequest.set(null);
+      this.pendingPrompts.set([]);
+      this.lastError.set(null);
+      this.hydrated.set(true);
+    } catch (error) {
+      if (version !== this.bootstrapVersion) return;
+      this.lastError.set(this.getHttpErrorMessage(error, 'Could not load archived transcript.'));
+      this.hydrated.set(true);
+    } finally {
+      if (version === this.bootstrapVersion) this.loading.set(false);
+    }
+  }
+
+  private bootstrapForMode(): Promise<void> {
+    return this.archived ? this.bootstrapArchived() : this.bootstrap();
   }
 
   onRootRefInput(value: string): void {

@@ -10,7 +10,6 @@ import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-pro
 import { NavigationService } from '../../../shared/services/navigation.service';
 import { ClaudeTerminalComponent } from '../terminal';
 import { ClaudeWorkspaceComponent } from '../claude-workspace';
-import { ArchivedSessionViewComponent } from '../archived-session-view/archived-session-view.component';
 import { VSCodeWebPanelComponent } from '@/features/vscode-web';
 import { BrowserPanelComponent } from '@/features/browser-panel/browser-panel.component';
 import { ScratchpadPanelComponent } from '@/features/productivity/scratchpad-panel/scratchpad-panel';
@@ -60,7 +59,6 @@ type SidePanelMode = 'none' | 'files' | 'browser' | 'github' | 'plannotator';
     TabBar,
     ClaudeTerminalComponent,
     ClaudeWorkspaceComponent,
-    ArchivedSessionViewComponent,
     VSCodeWebPanelComponent,
     BrowserPanelComponent,
     ScratchpadPanelComponent,
