@@ -537,16 +537,32 @@ function shSingleQuote(value: string): string {
 // Locale vars keep multibyte UTF-8 rendering correct.
 const TMUX_INLINE_ENV_KEYS = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE'] as const;
 
+type TmuxInlineEnvOptions =
+  | readonly string[]
+  | {
+      mode?: 'critical' | 'full';
+      extraKeys?: readonly string[];
+    };
+
 // Build a `KEY1='val' KEY2='val' ...` prefix string suitable for inlining in
-// the shell command passed to `tmux new-session`. Pass extra app-specific keys
-// (PLANNOTATOR_*, ELEVENEX_*, …) via `extraKeys` so the caller doesn't have to
-// concatenate by hand. Skips vars that are unset.
+// the shell command passed to `tmux new-session`. The default mode inlines only
+// critical tmux-stale vars; `mode: 'full'` is for generic user commands where
+// arbitrary login-shell exports must be visible. Skips unset values and env
+// keys that cannot be represented as POSIX shell assignments.
 export function buildTmuxInlineEnvPrefix(
   env: NodeJS.ProcessEnv,
-  extraKeys: readonly string[] = [],
+  options: TmuxInlineEnvOptions = [],
 ): string {
+  const normalized = Array.isArray(options)
+    ? { mode: 'critical' as const, extraKeys: options }
+    : { mode: options.mode ?? 'critical', extraKeys: options.extraKeys ?? [] };
+  const keys =
+    normalized.mode === 'full'
+      ? Object.keys(env)
+      : [...TMUX_INLINE_ENV_KEYS, ...normalized.extraKeys];
   const parts: string[] = [];
-  for (const key of [...TMUX_INLINE_ENV_KEYS, ...extraKeys]) {
+  for (const key of keys) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
     const value = env[key];
     if (typeof value !== 'string' || value.length === 0) continue;
     parts.push(`${key}=${shSingleQuote(value)}`);

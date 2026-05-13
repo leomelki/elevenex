@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { execSync, spawn } from 'child_process';
-import { buildAugmentedEnv } from './system-paths.js';
+import { buildAugmentedEnv, buildTmuxInlineEnvPrefix } from './system-paths.js';
 
 jest.mock('child_process', () => ({
   execSync: jest.fn(),
@@ -117,5 +117,41 @@ describe('system-paths per-cwd env cache', () => {
     expect(mockSpawn).toHaveBeenCalledTimes(2);
 
     await closeShellProcess(nextRefreshProcess, envOutput('/fresh/bin'));
+  });
+});
+
+describe('buildTmuxInlineEnvPrefix', () => {
+  it('inlines only critical env vars and requested extras by default', () => {
+    const prefix = buildTmuxInlineEnvPrefix(
+      {
+        PATH: '/repo/bin',
+        LANG: 'en_US.UTF-8',
+        ELEVENEX_SESSION_ID: '42',
+        ELEVENEX_ACTION_TOKEN: 'secret',
+      },
+      ['ELEVENEX_SESSION_ID'],
+    );
+
+    expect(prefix).toContain("PATH='/repo/bin'");
+    expect(prefix).toContain("LANG='en_US.UTF-8'");
+    expect(prefix).toContain("ELEVENEX_SESSION_ID='42'");
+    expect(prefix).not.toContain('ELEVENEX_ACTION_TOKEN');
+  });
+
+  it('can inline the full env with shell-safe quoting for generic tmux actions', () => {
+    const prefix = buildTmuxInlineEnvPrefix(
+      {
+        PATH: '/repo/bin',
+        ELEVENEX_ACTION_TOKEN: 'abc 123',
+        ELEVENEX_ACTION_QUOTED: "it's ok",
+        'ELEVENEX-INVALID-KEY': 'ignored',
+      },
+      { mode: 'full' },
+    );
+
+    expect(prefix).toContain("PATH='/repo/bin'");
+    expect(prefix).toContain("ELEVENEX_ACTION_TOKEN='abc 123'");
+    expect(prefix).toContain("ELEVENEX_ACTION_QUOTED='it'\\''s ok'");
+    expect(prefix).not.toContain('ELEVENEX-INVALID-KEY');
   });
 });

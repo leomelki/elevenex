@@ -5,7 +5,11 @@ import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import * as pty from 'node-pty';
 import { ActionPtyManager } from './action-pty-manager.service.js';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import {
+  buildAugmentedEnv,
+  buildTmuxInlineEnvPrefix,
+  findBinary,
+} from '../config/system-paths.js';
 
 jest.mock('node-pty', () => ({
   spawn: jest.fn(),
@@ -41,6 +45,7 @@ describe('ActionPtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
   const mockExecSync = jest.mocked(execSync);
   const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnv);
+  const mockBuildTmuxInlineEnvPrefix = jest.mocked(buildTmuxInlineEnvPrefix);
   const mockFindBinary = jest.mocked(findBinary);
 
   let tmpDir: string;
@@ -58,6 +63,7 @@ describe('ActionPtyManager', () => {
       ELEVENEX_ACTION_QUOTED: "it's ok",
       'ELEVENEX-INVALID-KEY': 'ignored',
     });
+    mockBuildTmuxInlineEnvPrefix.mockReturnValue("PATH='/repo/bin'");
     mockSpawn.mockReturnValue(createMockPty() as never);
   });
 
@@ -138,15 +144,21 @@ describe('ActionPtyManager', () => {
       command: 'printenv ELEVENEX_ACTION_TOKEN',
     });
 
+    expect(mockBuildTmuxInlineEnvPrefix).toHaveBeenCalledWith(
+      expect.objectContaining({
+        PATH: '/repo/bin:/usr/bin',
+        PWD: tmpDir,
+        ELEVENEX_ACTION_TOKEN: 'abc 123',
+        ELEVENEX_ACTION_QUOTED: "it's ok",
+        TERM: 'xterm-256color',
+      }),
+      { mode: 'full' },
+    );
+    expect(mockBuildTmuxInlineEnvPrefix).toHaveBeenCalledTimes(1);
+
     const newSessionCall = mockExecSync.mock.calls.find(([command]) =>
       String(command).includes(' new-session '),
     );
-    expect(newSessionCall?.[0]).toContain("PATH='\\''/repo/bin:/usr/bin'\\''");
-    expect(newSessionCall?.[0]).toContain(
-      "ELEVENEX_ACTION_TOKEN='\\''abc 123'\\''",
-    );
-    expect(newSessionCall?.[0]).toContain('ELEVENEX_ACTION_QUOTED=');
-    expect(newSessionCall?.[0]).toContain('s ok');
-    expect(newSessionCall?.[0]).not.toContain('ELEVENEX-INVALID-KEY');
+    expect(newSessionCall?.[0]).toContain("PATH='\\''/repo/bin'\\''");
   });
 });
