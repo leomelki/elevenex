@@ -26,6 +26,7 @@ export function readLastOpenedSessionId(storage: Pick<Storage, 'getItem'> | null
 export interface Tab {
   sessionId: number;
   sessionName: string;
+  workspaceName?: string | null;
   branchName: string;
   worktreePath: string;
   status: Session['status'];
@@ -91,6 +92,7 @@ export class TabService {
     const newTab: Tab = {
       sessionId: session.id,
       sessionName: session.name ?? `Session ${session.id}`,
+      workspaceName: session.workspaceName,
       branchName: session.branchName,
       worktreePath: session.worktreePath,
       status: session.status,

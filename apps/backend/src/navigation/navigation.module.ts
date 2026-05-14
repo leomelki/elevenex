@@ -3,11 +3,11 @@ import { NavigationController } from './navigation.controller.js';
 import { NavigationService } from './navigation.service.js';
 import { ProjectsModule } from '../projects/projects.module.js';
 import { ReposModule } from '../repos/repos.module.js';
-import { BranchesModule } from '../branches/branches.module.js';
 import { SessionsModule } from '../sessions/sessions.module.js';
+import { WorkspacesModule } from '../workspaces/workspaces.module.js';
 
 @Module({
-  imports: [ProjectsModule, ReposModule, BranchesModule, SessionsModule],
+  imports: [ProjectsModule, ReposModule, SessionsModule, WorkspacesModule],
   controllers: [NavigationController],
   providers: [NavigationService],
 })

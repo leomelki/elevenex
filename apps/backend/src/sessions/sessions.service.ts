@@ -15,6 +15,7 @@ import { TmuxManager } from '../terminal/tmux-manager.service.js';
 import { AGENT_RUNTIME_CLEANUP_SERVICE } from '../agent-runtime/agent-runtime.tokens.js';
 import type { AgentRuntimeCleanup } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
+import { worktreeSimpleGit } from '../config/system-paths.js';
 
 const VALID_STATUSES = ['created', 'active', 'archived', 'stopped'] as const;
 type SessionStatus = (typeof VALID_STATUSES)[number];
@@ -37,18 +38,19 @@ export class SessionsService extends EventEmitter {
 
   async create(dto: {
     repoId: number;
-    branchName: string;
-    worktreePath: string;
+    workspaceId?: number;
+    branchName?: string;
+    worktreePath?: string;
     name?: string;
   }) {
+    const resolved = await this.resolveSessionWorkspace(dto);
     let sessionName = dto.name;
 
     // Auto-generate name if not provided
     if (!sessionName) {
-      const sessionCount = await this.countByRepoAndBranch(
-        dto.repoId,
-        dto.branchName,
-      );
+      const sessionCount = resolved.workspaceId
+        ? await this.countByWorkspace(resolved.workspaceId)
+        : await this.countByRepoAndBranch(dto.repoId, resolved.branchName);
       sessionName = `Session ${sessionCount + 1}`;
     }
 
@@ -56,8 +58,9 @@ export class SessionsService extends EventEmitter {
       .insert(schema.sessions)
       .values({
         repoId: dto.repoId,
-        branchName: dto.branchName,
-        worktreePath: dto.worktreePath,
+        workspaceId: resolved.workspaceId,
+        branchName: resolved.branchName,
+        worktreePath: resolved.worktreePath,
         name: sessionName,
         status: 'created',
         activeAgentProvider: 'claude',
@@ -69,6 +72,42 @@ export class SessionsService extends EventEmitter {
       .returning();
 
     return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
+  private async resolveSessionWorkspace(dto: {
+    repoId: number;
+    workspaceId?: number;
+    branchName?: string;
+    worktreePath?: string;
+  }): Promise<{ workspaceId: number | null; branchName: string; worktreePath: string }> {
+    if (dto.workspaceId) {
+      const rows = await this.db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, dto.workspaceId));
+
+      if (rows.length === 0 || rows[0].repoId !== dto.repoId) {
+        throw new NotFoundException(`Workspace with id ${dto.workspaceId} not found`);
+      }
+
+      const branchName = await this.resolveCurrentBranch(rows[0].path);
+      return {
+        workspaceId: rows[0].id,
+        branchName: branchName ?? dto.branchName ?? 'detached',
+        worktreePath: rows[0].path,
+      };
+    }
+
+    if (!dto.branchName || !dto.worktreePath) {
+      throw new BadRequestException('workspaceId or branchName and worktreePath are required');
+    }
+
+    const workspace = await this.findWorkspaceByRepoAndPath(dto.repoId, dto.worktreePath);
+    return {
+      workspaceId: workspace?.id ?? null,
+      branchName: dto.branchName,
+      worktreePath: dto.worktreePath,
+    };
   }
 
   async findByRepo(repoId: number) {
@@ -136,17 +175,19 @@ export class SessionsService extends EventEmitter {
         session: schema.sessions,
         projectId: schema.repos.projectId,
         repoColor: schema.repos.color,
+        workspaceName: schema.workspaces.name,
       })
       .from(schema.sessions)
       .innerJoin(schema.repos, eq(schema.sessions.repoId, schema.repos.id))
+      .leftJoin(schema.workspaces, eq(schema.sessions.workspaceId, schema.workspaces.id))
       .where(eq(schema.sessions.id, id));
 
     if (rows.length === 0) {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
 
-    const { session, projectId, repoColor } = rows[0];
-    return this.withInferredActiveAgentProvider({ ...session, projectId, repoColor });
+    const { session, projectId, repoColor, workspaceName } = rows[0];
+    return this.withInferredActiveAgentProvider({ ...session, projectId, repoColor, workspaceName });
   }
 
   async update(id: number, data: { name?: string }) {
@@ -586,6 +627,7 @@ export class SessionsService extends EventEmitter {
     // 2. Create new session in same worktree
     const newSession = await this.create({
       repoId: session.repoId,
+      workspaceId: session.workspaceId ?? undefined,
       branchName: session.branchName,
       worktreePath: session.worktreePath,
       name: `${session.name} (reset)`,
@@ -607,6 +649,7 @@ export class SessionsService extends EventEmitter {
     // Create new session in same worktree
     const newSession = await this.create({
       repoId: session.repoId,
+      workspaceId: session.workspaceId ?? undefined,
       branchName: session.branchName,
       worktreePath: session.worktreePath,
       name: forkName,
@@ -667,5 +710,36 @@ export class SessionsService extends EventEmitter {
       );
 
     return result[0].count;
+  }
+
+  private async countByWorkspace(workspaceId: number) {
+    const result = await this.db
+      .select({ count: count() })
+      .from(schema.sessions)
+      .where(eq(schema.sessions.workspaceId, workspaceId));
+
+    return result[0].count;
+  }
+
+  private async findWorkspaceByRepoAndPath(repoId: number, worktreePath: string) {
+    const rows = await this.db
+      .select()
+      .from(schema.workspaces)
+      .where(
+        and(
+          eq(schema.workspaces.repoId, repoId),
+          eq(schema.workspaces.path, worktreePath),
+        ),
+      );
+    return rows[0] ?? null;
+  }
+
+  private async resolveCurrentBranch(worktreePath: string): Promise<string | null> {
+    try {
+      const branch = await worktreeSimpleGit(worktreePath).revparse(['--abbrev-ref', 'HEAD']);
+      return branch.trim() === 'HEAD' ? null : branch.trim();
+    } catch {
+      return null;
+    }
   }
 }

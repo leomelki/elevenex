@@ -4,13 +4,19 @@ export class CreateSessionDto {
   @IsNumber()
   repoId!: number;
 
-  @IsString()
-  @IsNotEmpty()
-  branchName!: string;
+  @IsNumber()
+  @IsOptional()
+  workspaceId?: number;
 
   @IsString()
   @IsNotEmpty()
-  worktreePath!: string;
+  @IsOptional()
+  branchName?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @IsOptional()
+  worktreePath?: string;
 
   @IsString()
   @IsOptional()

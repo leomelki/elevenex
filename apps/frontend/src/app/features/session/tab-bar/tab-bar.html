@@ -25,7 +25,7 @@
             [class.font-semibold]="isActive(tab)"
             [class.text-muted-foreground]="tab.status === 'archived'"
           >
-            {{ tab.branchName }}
+            {{ tab.workspaceName || tab.branchName }}
             @if (hasLinkedPullRequest(tab)) {
               <span class="ml-2 inline-flex rounded-full bg-[color-mix(in_oklch,var(--primary)_16%,white)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">PR</span>
             }

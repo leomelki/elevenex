@@ -87,17 +87,17 @@ export class NavigationService {
 
   patchSessionCompletion(sessionId: number, completion: SessionCompletionPatch): void {
     this.tree.update(projects => projects.map(project => ({
-      ...project,
-      repos: project.repos.map(repo => ({
-        ...repo,
-        branches: repo.branches.map(branch => ({
-          ...branch,
-          sessions: branch.sessions.map(session =>
+        ...project,
+        repos: project.repos.map(repo => ({
+          ...repo,
+        workspaces: repo.workspaces.map(workspace => ({
+          ...workspace,
+          sessions: workspace.sessions.map(session =>
             session.id === sessionId
               ? { ...session, ...completion }
               : session,
           ),
-          archivedSessions: branch.archivedSessions?.map(session =>
+          archivedSessions: workspace.archivedSessions?.map(session =>
             session.id === sessionId
               ? { ...session, ...completion }
               : session,
@@ -134,14 +134,14 @@ export class NavigationService {
   private expandNewTreeItems(previous: NavigationProject[], next: NavigationProject[]): void {
     const previousProjectIds = new Set(previous.map(project => project.id));
     const previousRepoIds = new Set(previous.flatMap(project => project.repos.map(repo => repo.id)));
-    const previousBranchKeys = new Set(previous.flatMap(project =>
-      project.repos.flatMap(repo => repo.branches.map(branch => this.branchKey(repo.id, branch.name))),
+    const previousWorkspaceKeys = new Set(previous.flatMap(project =>
+      project.repos.flatMap(repo => repo.workspaces.map(workspace => this.workspaceKey(repo.id, workspace.id))),
     ));
     const previousSessionIds = new Set(previous.flatMap(project =>
       project.repos.flatMap(repo =>
-        repo.branches.flatMap(branch => [
-          ...branch.sessions,
-          ...(branch.archivedSessions ?? []),
+        repo.workspaces.flatMap(workspace => [
+          ...workspace.sessions,
+          ...(workspace.archivedSessions ?? []),
         ].map(session => session.id)),
       ),
     ));
@@ -168,18 +168,18 @@ export class NavigationService {
           add(`repo-${repo.id}`);
         }
 
-        for (const branch of repo.branches) {
-          const branchKey = this.branchKey(repo.id, branch.name);
-          const hasNewBranch = !previousBranchKeys.has(branchKey);
+        for (const workspace of repo.workspaces) {
+          const workspaceKey = this.workspaceKey(repo.id, workspace.id);
+          const hasNewWorkspace = !previousWorkspaceKeys.has(workspaceKey);
           const hasNewSession = [
-            ...branch.sessions,
-            ...(branch.archivedSessions ?? []),
+            ...workspace.sessions,
+            ...(workspace.archivedSessions ?? []),
           ].some(session => !previousSessionIds.has(session.id));
 
-          if (hasNewBranch || hasNewSession) {
+          if (hasNewWorkspace || hasNewSession) {
             add(`project-${project.id}`);
             add(`repo-${repo.id}`);
-            add(branchKey);
+            add(workspaceKey);
           }
         }
       }
@@ -191,7 +191,7 @@ export class NavigationService {
     }
   }
 
-  private branchKey(repoId: number, branchName: string): string {
-    return `branch-${repoId}-${branchName}`;
+  private workspaceKey(repoId: number, workspaceId: number): string {
+    return `workspace-${repoId}-${workspaceId}`;
   }
 }

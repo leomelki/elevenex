@@ -145,8 +145,8 @@
                 <span class="sidebar-actions">
                   <button
                     class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground"
-                    title="Add branch"
-                    aria-label="Add branch"
+                    title="New workspace"
+                    aria-label="New workspace"
                     (click)="openBranchSearchForRepo(repo)">
                     <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                   </button>
@@ -154,96 +154,108 @@
               }
             </div>
 
-            @if (!repo.error && filterBranches(repo).length === 0) {
+            @if (!repo.error && filterWorkspaces(repo).length === 0) {
               <button
                 class="sidebar-empty-branch-action"
                 [style.margin-left]="'48px'"
-                [attr.data-empty-repo-add-branch]="repo.id"
+                [attr.data-empty-repo-add-workspace]="repo.id"
                 (click)="openBranchSearchForRepo(repo)">
                 <span class="sidebar-empty-branch-action__icon">
                   <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                 </span>
                 <span class="sidebar-empty-branch-action__copy">
-                  <span class="sidebar-empty-branch-action__title">Add branch</span>
-                  <span class="sidebar-empty-branch-action__hint">Create a worktree or start from an existing branch</span>
+                  <span class="sidebar-empty-branch-action__title">New workspace</span>
+                  <span class="sidebar-empty-branch-action__hint">Create a named worktree from any branch or ref</span>
                 </span>
               </button>
             }
 
             @if (isExpanded('repo-' + repo.id) && !repo.error) {
-              @for (branch of filterBranches(repo); track branch.name) {
-                <!-- Branch node -->
+              @for (workspace of filterWorkspaces(repo); track workspace.id) {
+                <!-- Workspace node -->
                 <button
                   class="sidebar-tree-row w-full text-left group"
-                  [class.sidebar-tree-row--busy]="isOpeningWorktree(repo, branch)"
-                  [disabled]="branch.isPendingCreation || openingWorktreeBranchKey() !== null"
+                  [class.sidebar-tree-row--busy]="isOpeningWorkspace(repo)"
+                  [disabled]="openingWorkspaceRepoId() !== null"
                   [style.padding-left]="'48px'"
-                  (click)="onBranchClick(repo, branch)">
-                  @if ((branch.sessions && branch.sessions.length > 0) || ((branch.archivedSessions?.length ?? 0) > 0)) {
-                    <ng-icon [name]="isExpanded('branch-' + repo.id + '-' + branch.name) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                  (click)="onWorkspaceClick(repo, workspace)">
+                  @if ((workspace.sessions && workspace.sessions.length > 0) || ((workspace.archivedSessions?.length ?? 0) > 0)) {
+                    <ng-icon [name]="isExpanded('workspace-' + repo.id + '-' + workspace.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
                   } @else {
                     <span class="w-4 shrink-0"></span>
                   }
-                  @if (branch.isPendingCreation || isOpeningWorktree(repo, branch)) {
+                  @if (isOpeningWorkspace(repo)) {
                     <span class="inline-block w-4 h-4 shrink-0 rounded-full border-2 border-muted-foreground/50 border-t-transparent animate-spin"></span>
-                  } @else if (branch.hasWorktree) {
-                    <ng-icon name="lucideGitBranch" class="!w-4 !h-4 text-foreground shrink-0" />
+                  } @else if (workspace.isMissing) {
+                    <ng-icon name="lucideAlertCircle" class="!w-4 !h-4 text-destructive shrink-0" />
                   } @else {
-                    <ng-icon name="lucideCircleDashed" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                    <ng-icon name="lucideFolderOpen" class="!w-4 !h-4 text-foreground shrink-0" />
                   }
-<span class="text-sm truncate flex-1" [class.sidebar-label--branch]="branch.hasWorktree || branch.isPendingCreation || isOpeningWorktree(repo, branch)" [class.sidebar-label--branch-inactive]="!branch.hasWorktree && !branch.isPendingCreation && !isOpeningWorktree(repo, branch)" [title]="branch.name">{{ branch.name }}</span>
+                  <span class="text-sm truncate flex-1 sidebar-label--branch" [title]="workspace.name + ' - ' + workspace.path">
+                    {{ workspace.name }}
+                    <span class="text-xs text-muted-foreground">{{ workspace.currentBranch || 'detached' }}</span>
+                  </span>
                    <!-- Action buttons (visible on hover) -->
                    <span class="sidebar-actions">
-                     @if (isOpeningWorktree(repo, branch)) {
-                       <span class="text-xs text-muted-foreground" [attr.data-opening-worktree-branch]="branch.name">Opening…</span>
-                     } @else if (branch.isPendingCreation) {
-                       <span class="text-xs text-muted-foreground" [attr.data-pending-worktree-branch]="branch.name">Creating…</span>
-                     } @else if (branch.hasWorktree) {
+                     @if (isOpeningWorkspace(repo)) {
+                       <span class="text-xs text-muted-foreground">Opening…</span>
+                     } @else {
+                       <button
+                         class="sidebar-branch-action"
+                         title="Switch branch"
+                         aria-label="Switch branch"
+                         [disabled]="workspace.isMissing"
+                         (click)="$event.stopPropagation(); switchWorkspaceBranch(repo, workspace)">
+                         <ng-icon name="lucideGitBranch" class="!w-3.5 !h-3.5" />
+                       </button>
+                       <button
+                         class="sidebar-branch-action"
+                         title="Create branch"
+                         aria-label="Create branch"
+                         [disabled]="workspace.isMissing"
+                         (click)="$event.stopPropagation(); createWorkspaceBranch(repo, workspace)">
+                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                       </button>
                        <button
                          class="sidebar-branch-action sidebar-branch-action--soft"
                          title="Remove from project"
                          aria-label="Remove from project"
-                         [attr.data-worktree-remove-trigger]="branch.worktreePath"
-                         (click)="$event.stopPropagation(); openRemoveFromProject(repo, branch)">
+                         [disabled]="workspace.isDefault"
+                         [attr.data-workspace-remove-trigger]="workspace.path"
+                         (click)="$event.stopPropagation(); openRemoveWorkspaceFromProject(repo, workspace)">
                          <ng-icon name="lucideCircleMinus" class="!w-3.5 !h-3.5" />
                        </button>
                        <button
                          class="sidebar-branch-action"
                          title="Open in Cursor"
                          aria-label="Open in Cursor"
-                         (click)="$event.stopPropagation(); openInCursor(repo, branch)">
+                         [disabled]="workspace.isMissing"
+                         (click)="$event.stopPropagation(); openWorkspaceInCursor(repo, workspace)">
                          <ng-icon name="lucideSquareArrowOutUpRight" class="!w-3.5 !h-3.5" />
                        </button>
                        <button
                          class="sidebar-branch-action"
                          title="New Session"
                          aria-label="New Session"
-                         (click)="$event.stopPropagation(); createSessionOnBranch(repo, branch)">
+                         [disabled]="workspace.isMissing"
+                         (click)="$event.stopPropagation(); createSessionOnWorkspace(repo, workspace)">
                          <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                        </button>
                        <button
                          class="sidebar-branch-action sidebar-branch-action--danger"
-                         title="Delete Worktree"
-                         aria-label="Delete Worktree"
-                         [attr.data-worktree-delete-trigger]="branch.worktreePath"
-                         (click)="$event.stopPropagation(); openDeleteWorktree(repo, branch)">
+                         title="Delete Workspace"
+                         aria-label="Delete Workspace"
+                         [disabled]="workspace.isDefault"
+                         [attr.data-workspace-delete-trigger]="workspace.path"
+                         (click)="$event.stopPropagation(); openDeleteWorkspace(repo, workspace)">
                          <ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" />
-                       </button>
-                     } @else {
-                       <button
-                         class="sidebar-branch-action"
-                         title="Create Worktree"
-                         aria-label="Create Worktree"
-                         [disabled]="openingWorktreeBranchKey() !== null"
-                         (click)="$event.stopPropagation(); openCreateWorktree(repo, branch)">
-                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                        </button>
                      }
                    </span>
                 </button>
 
-                 @if (isExpanded('branch-' + repo.id + '-' + branch.name)) {
-                   @for (session of branch.sessions; track session.id) {
+                 @if (isExpanded('workspace-' + repo.id + '-' + workspace.id)) {
+                   @for (session of workspace.sessions; track session.id) {
                       <!-- Session node -->
                       <div
                         class="sidebar-tree-row w-full cursor-pointer group"
@@ -362,19 +374,19 @@
                       </div>
                    }
 
-                   @if ((branch.archivedSessions?.length ?? 0) > 0) {
+                   @if ((workspace.archivedSessions?.length ?? 0) > 0) {
                      <button
                        class="sidebar-archive-toggle"
                        [style.padding-left]="'64px'"
-                       (click)="$event.stopPropagation(); navService.toggleExpand('archive-' + repo.id + '-' + branch.name)">
-                       <ng-icon [name]="isExpanded('archive-' + repo.id + '-' + branch.name) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                       (click)="$event.stopPropagation(); navService.toggleExpand('archive-' + repo.id + '-' + workspace.id)">
+                       <ng-icon [name]="isExpanded('archive-' + repo.id + '-' + workspace.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
                        <ng-icon name="lucideArchive" class="!w-3.5 !h-3.5 text-muted-foreground shrink-0" />
                        <span class="text-xs font-medium text-muted-foreground">Archived</span>
-                       <span class="sidebar-archive-count">{{ branch.archivedSessions?.length ?? 0 }}</span>
+                       <span class="sidebar-archive-count">{{ workspace.archivedSessions?.length ?? 0 }}</span>
                      </button>
 
-                     @if (isExpanded('archive-' + repo.id + '-' + branch.name)) {
-                       @for (session of branch.archivedSessions ?? []; track session.id) {
+                     @if (isExpanded('archive-' + repo.id + '-' + workspace.id)) {
+                       @for (session of workspace.archivedSessions ?? []; track session.id) {
                          <div
                            class="sidebar-tree-row sidebar-tree-row--archived w-full cursor-pointer group"
                            [class.session-selected]="session.id === activeSessionId()"
@@ -481,9 +493,6 @@
   <!-- Worktree creation sheet -->
   <app-worktree-sheet #worktreeSheet />
 
-  <!-- Branch search -->
-  <app-branch-search #branchSearch (branchSelected)="onBranchSearchSelect($event)" />
-
   @if (showCreateWizard()) {
     <app-project-onboarding-wizard
       heading="Create a project from the sidebar"
@@ -552,14 +561,14 @@
   <!-- Remove from project confirmation dialog -->
   <dialog #removeFromProjectDialog="trackedNativeModal" trackNativeModal class="worktree-dialog">
     <div class="worktree-dialog__eyebrow">Non-destructive action</div>
-    <h2 class="worktree-dialog__title">Remove worktree from project</h2>
+    <h2 class="worktree-dialog__title">Remove workspace from project</h2>
     <p class="worktree-dialog__copy">
-      This removes the <span class="worktree-dialog__branch">{{ removeFromProjectBranch() }}</span> worktree from this project sidebar by deleting its sessions.
+      This removes the <span class="worktree-dialog__branch">{{ removeFromProjectWorkspace() }}</span> workspace from this project sidebar by deleting its sessions.
       The folder stays on disk and can still be opened outside Elevenex.
     </p>
     <div class="worktree-dialog__path">{{ removeFromProjectPath() }}</div>
     <div class="worktree-dialog__note">
-      Sessions in this worktree will be removed, and the branch will disappear from the project once no sessions remain.
+      Sessions in this workspace will be removed. The worktree folder stays on disk.
     </div>
     <div class="worktree-dialog__actions">
       <button class="worktree-dialog__button worktree-dialog__button--ghost" (click)="removeFromProjectDialog.close()" [disabled]="removingFromProject()">Cancel</button>
@@ -570,13 +579,13 @@
     </div>
   </dialog>
 
-  <!-- Delete worktree confirmation dialog -->
+  <!-- Delete workspace confirmation dialog -->
   <dialog #deleteWorktreeDialog="trackedNativeModal" trackNativeModal class="worktree-dialog worktree-dialog--danger">
     <div class="worktree-dialog__eyebrow">Destructive action</div>
-    <h2 class="worktree-dialog__title">Delete worktree</h2>
+    <h2 class="worktree-dialog__title">Delete workspace</h2>
     <p class="worktree-dialog__copy">
-      This permanently removes the <span class="worktree-dialog__branch">{{ deleteWorktreeBranch() }}</span> worktree from Git and disk.
-      Active sessions in this worktree will be stopped first.
+      This permanently removes the <span class="worktree-dialog__branch">{{ deleteWorktreeWorkspace() }}</span> workspace from Git and disk.
+      Active sessions in this workspace will be stopped first.
     </p>
     <div class="worktree-dialog__path">{{ deleteWorktreePath() }}</div>
     <div class="worktree-dialog__note">
@@ -586,7 +595,7 @@
       <button class="worktree-dialog__button worktree-dialog__button--ghost" (click)="deleteWorktreeDialog.close()" [disabled]="deleting()">Cancel</button>
       <button class="worktree-dialog__button worktree-dialog__button--danger" (click)="confirmDeleteWorktree()" [disabled]="deleting()">
         @if (deleting()) { <span class="worktree-dialog__spinner" aria-hidden="true"></span> }
-        Delete worktree
+        Delete workspace
       </button>
     </div>
   </dialog>

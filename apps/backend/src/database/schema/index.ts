@@ -1,5 +1,6 @@
 export * from './projects.schema.js';
 export * from './repos.schema.js';
+export * from './workspaces.schema.js';
 export * from './sessions.schema.js';
 export * from './scratchpad.schema.js';
 export * from './todos.schema.js';

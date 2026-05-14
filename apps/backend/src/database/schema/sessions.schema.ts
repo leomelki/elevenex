@@ -1,11 +1,13 @@
 import { integer, text, sqliteTable } from 'drizzle-orm/sqlite-core';
 import { repos } from './repos.schema.js';
+import { workspaces } from './workspaces.schema.js';
 
 export const sessions = sqliteTable('sessions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   repoId: integer('repo_id')
     .notNull()
     .references(() => repos.id, { onDelete: 'cascade' }),
+  workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
   branchName: text('branch_name').notNull(),
   worktreePath: text('worktree_path').notNull(),
   name: text('name'),

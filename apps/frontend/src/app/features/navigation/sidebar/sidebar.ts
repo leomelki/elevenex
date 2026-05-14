@@ -4,6 +4,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideFolder,
   lucideGitBranch,
+  lucideFolderOpen,
   lucideTerminal,
   lucideCircleDashed,
   lucideAlertCircle,
@@ -24,15 +25,13 @@ import {
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { NavigationService } from '../../../shared/services/navigation.service';
-import { WorktreesService } from '../../../shared/services/worktrees.service';
 import { SessionsService } from '../../../shared/services/sessions.service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { TabService } from '../../session/tab-service';
-import { NavigationProject, NavigationRepo, NavigationBranch } from '../../../shared/models/navigation-tree.model';
+import { NavigationProject, NavigationRepo, NavigationWorkspace } from '../../../shared/models/navigation-tree.model';
 import { SessionInTree } from '../../../shared/models/session.model';
 import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
-import { BranchSearch } from '../branch-search/branch-search';
-import { BranchInfo } from '../../../shared/models/branch.model';
+import { WorkspacesService } from '@/shared/services/workspaces.service';
 import { ZardInputDirective } from '@/shared/components/input';
 import { PlannotatorStateService } from '@/features/plannotator';
 import { VSCodeWebStateService, buildVSCodeIframeKey } from '@/features/vscode-web/vscode-web-state.service';
@@ -49,19 +48,19 @@ import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
 import { ReposService } from '@/shared/services/repos.service';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
-import { PendingWorktreeCreationsService } from '@/shared/services/pending-worktree-creations.service';
 import { EnvironmentSwitcherComponent } from '../environment-switcher/environment-switcher.component';
 import { ThemeService } from '@/shared/services/theme.service';
 
 @Component({
   selector: 'app-sidebar',
-  imports: [NgIcon, RouterLink, WorktreeSheet, BranchSearch, ZardInputDirective, ProjectOnboardingWizard, PathAutocompleteInputComponent, TrackNativeModalDirective, EnvironmentSwitcherComponent],
+  imports: [NgIcon, RouterLink, WorktreeSheet, ZardInputDirective, ProjectOnboardingWizard, PathAutocompleteInputComponent, TrackNativeModalDirective, EnvironmentSwitcherComponent],
   templateUrl: './sidebar.html',
   styleUrl: './sidebar.scss',
   viewProviders: [
     provideIcons({
       lucideFolder,
       lucideGitBranch,
+      lucideFolderOpen,
       lucideTerminal,
       lucideCircleDashed,
       lucideAlertCircle,
@@ -92,7 +91,7 @@ export class Sidebar implements OnInit, OnDestroy {
   macTrafficLightsVisible = input(false);
   navService = inject(NavigationService);
   private router = inject(Router);
-  private worktreesService = inject(WorktreesService);
+  private workspacesService = inject(WorkspacesService);
   private sessionsService = inject(SessionsService);
   private tabService = inject(TabService);
   private vscodeWebState = inject(VSCodeWebStateService);
@@ -106,7 +105,6 @@ export class Sidebar implements OnInit, OnDestroy {
   private sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private todosService = inject(TodosService);
   readonly theme = inject(ThemeService);
-  pendingWorktreeCreations = inject(PendingWorktreeCreationsService);
   private windowControls = getElectronWindowControlsApi();
   private host = inject(ElementRef<HTMLElement>);
   readonly timeTick = signal(Date.now());
@@ -164,7 +162,6 @@ export class Sidebar implements OnInit, OnDestroy {
   });
 
   @ViewChild('worktreeSheet') worktreeSheet!: WorktreeSheet;
-  @ViewChild('branchSearch') branchSearch!: BranchSearch;
   @ViewChild('removeFromProjectDialog') removeFromProjectDialogRef!: TrackNativeModalDirective;
   @ViewChild('deleteWorktreeDialog') deleteWorktreeDialogRef!: TrackNativeModalDirective;
   @ViewChild('sessionTitleInput') sessionTitleInputRef!: ElementRef<HTMLInputElement>;
@@ -179,13 +176,15 @@ export class Sidebar implements OnInit, OnDestroy {
 
   deleteWorktreeRepoId = signal(0);
   deleteWorktreePath = signal('');
-  deleteWorktreeBranch = signal('');
+  deleteWorktreeWorkspace = signal('');
+  deleteWorkspaceId = signal(0);
   deleting = signal(false);
   removeFromProjectRepoId = signal(0);
   removeFromProjectPath = signal('');
-  removeFromProjectBranch = signal('');
+  removeFromProjectWorkspace = signal('');
+  removeWorkspaceId = signal(0);
   removingFromProject = signal(false);
-  openingWorktreeBranchKey = signal<string | null>(null);
+  openingWorkspaceRepoId = signal<number | null>(null);
 
   armedDeleteSessionId = signal<number | null>(null);
   deleteSessionConfirmEnabled = signal(false);
@@ -345,8 +344,8 @@ export class Sidebar implements OnInit, OnDestroy {
     this.clearDeleteSessionConfirmationIfHidden();
   }
 
-  onBranchClick(repo: NavigationRepo, branch: NavigationBranch) {
-    this.navService.toggleExpand(`branch-${repo.id}-${branch.name}`);
+  onWorkspaceClick(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    this.navService.toggleExpand(`workspace-${repo.id}-${workspace.id}`);
     this.clearDeleteSessionConfirmationIfHidden();
   }
 
@@ -544,43 +543,36 @@ export class Sidebar implements OnInit, OnDestroy {
     });
   }
 
-  createSessionOnBranch(repo: NavigationRepo, branch: NavigationBranch) {
-    if (this.openingWorktreeBranchKey() !== null) {
+  createSessionOnWorkspace(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    if (this.openingWorkspaceRepoId() !== null || workspace.isMissing) {
       return;
     }
 
-    if (branch.hasWorktree) {
-      // Branch has worktree - create session directly
-      this.sessionsService.create({
-        repoId: repo.id,
-        branchName: branch.name,
-        worktreePath: branch.worktreePath!,
-      }).subscribe({
-        next: (session) => {
-          this.navService.refreshTree();
-          this.navService.openSession(session.id);
-        },
-        error: (err) => {
-          const msg = err?.error?.message || 'Unknown error';
-          toast.error(`Could not create session. ${msg}`);
-        },
-      });
-    } else {
-      // Branch has no worktree - prompt worktree creation first
-      this.openCreateWorktreeSheet(repo, branch.name, true);
-    }
+    this.sessionsService.create({
+      repoId: repo.id,
+      workspaceId: workspace.id,
+    }).subscribe({
+      next: (session) => {
+        this.navService.refreshTree();
+        this.navService.openSession(session.id);
+      },
+      error: (err) => {
+        const msg = err?.error?.message || 'Unknown error';
+        toast.error(`Could not create session. ${msg}`);
+      },
+    });
   }
 
-  openCreateWorktree(repo: NavigationRepo, branch: NavigationBranch) {
-    this.openCreateWorktreeSheet(repo, branch.name, false);
+  openCreateWorkspace(repo: NavigationRepo) {
+    this.openCreateWorkspaceSheet(repo, false);
   }
 
-  isOpeningWorktree(repo: NavigationRepo, branch: NavigationBranch): boolean {
-    return this.openingWorktreeBranchKey() === this.getWorktreeBranchKey(repo.id, branch.name);
+  isOpeningWorkspace(repo: NavigationRepo): boolean {
+    return this.openingWorkspaceRepoId() === repo.id;
   }
 
-  async openInCursor(repo: NavigationRepo, branch: NavigationBranch) {
-    if (!branch.worktreePath) return;
+  async openWorkspaceInCursor(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    if (!workspace.path || workspace.isMissing) return;
 
     const snapshot = this.onboardingState.readSnapshot();
     const activeServer = snapshot.mode === 'ssh' && snapshot.remoteConnectionReady
@@ -597,23 +589,25 @@ export class Sidebar implements OnInit, OnDestroy {
       this.cursorService.saveSettings({ mode: 'local' });
     }
 
-    const result = await this.cursorService.open(branch.worktreePath);
+    const result = await this.cursorService.open(workspace.path);
     if (!result.ok) {
       toast.error(result.error || 'Could not open Cursor');
     }
   }
 
-  openDeleteWorktree(repo: NavigationRepo, branch: NavigationBranch) {
+  openDeleteWorkspace(repo: NavigationRepo, workspace: NavigationWorkspace) {
     this.deleteWorktreeRepoId.set(repo.id);
-    this.deleteWorktreePath.set(branch.worktreePath!);
-    this.deleteWorktreeBranch.set(branch.name);
+    this.deleteWorkspaceId.set(workspace.id);
+    this.deleteWorktreePath.set(workspace.path);
+    this.deleteWorktreeWorkspace.set(workspace.name);
     this.deleteWorktreeDialogRef.open();
   }
 
-  openRemoveFromProject(repo: NavigationRepo, branch: NavigationBranch) {
+  openRemoveWorkspaceFromProject(repo: NavigationRepo, workspace: NavigationWorkspace) {
     this.removeFromProjectRepoId.set(repo.id);
-    this.removeFromProjectPath.set(branch.worktreePath!);
-    this.removeFromProjectBranch.set(branch.name);
+    this.removeWorkspaceId.set(workspace.id);
+    this.removeFromProjectPath.set(workspace.path);
+    this.removeFromProjectWorkspace.set(workspace.name);
     this.removeFromProjectDialogRef.open();
   }
 
@@ -621,9 +615,9 @@ export class Sidebar implements OnInit, OnDestroy {
     this.removingFromProject.set(true);
     const worktreePath = this.removeFromProjectPath();
 
-    this.worktreesService.removeFromProject(
+    this.workspacesService.removeFromProject(
       this.removeFromProjectRepoId(),
-      worktreePath,
+      this.removeWorkspaceId(),
     ).subscribe({
       next: () => {
         this.handleWorktreeSessionsRemoved(
@@ -644,7 +638,7 @@ export class Sidebar implements OnInit, OnDestroy {
   confirmDeleteWorktree() {
     this.deleting.set(true);
     const worktreePath = this.deleteWorktreePath();
-    this.worktreesService.remove(this.deleteWorktreeRepoId(), this.deleteWorktreePath()).subscribe({
+    this.workspacesService.remove(this.deleteWorktreeRepoId(), this.deleteWorkspaceId()).subscribe({
       next: () => {
         this.handleWorktreeSessionsRemoved(worktreePath, 'Worktree deleted');
         this.deleting.set(false);
@@ -895,19 +889,19 @@ export class Sidebar implements OnInit, OnDestroy {
           continue;
         }
 
-        for (const branch of repo.branches) {
-          if (!this.navService.isExpanded(`branch-${repo.id}-${branch.name}`)) {
+        for (const workspace of repo.workspaces) {
+          if (!this.navService.isExpanded(`workspace-${repo.id}-${workspace.id}`)) {
             continue;
           }
 
-          if (branch.sessions.some(session => session.id === sessionId)) {
+          if (workspace.sessions.some(session => session.id === sessionId)) {
             return true;
           }
 
-          const archiveKey = `archive-${repo.id}-${branch.name}`;
+          const archiveKey = `archive-${repo.id}-${workspace.id}`;
           if (
             this.navService.isExpanded(archiveKey) &&
-            branch.archivedSessions?.some(session => session.id === sessionId)
+            workspace.archivedSessions?.some(session => session.id === sessionId)
           ) {
             return true;
           }
@@ -936,74 +930,74 @@ export class Sidebar implements OnInit, OnDestroy {
     }
   }
 
-  filterBranches(repo: NavigationRepo): Array<NavigationBranch & { isPendingCreation?: boolean }> {
-    const persistedBranches = repo.branches.filter((branch) =>
-      (branch.sessions && branch.sessions.length > 0)
-      || ((branch.archivedSessions?.length ?? 0) > 0),
-    );
-    const existingNames = new Set(persistedBranches.map((branch) => branch.name));
-    const pendingBranches = this.pendingWorktreeCreations.getByRepo(repo.id)
-      .filter((job) => !existingNames.has(job.branchName))
-      .map((job) => ({
-        name: job.branchName,
-        commit: '',
-        label: job.branchName,
-        current: false,
-        isRemote: false,
-        hasWorktree: false,
-        worktreePath: job.worktreePath,
-        sessions: [],
-        archivedSessions: [],
-        isPendingCreation: true,
-      }));
-
-    return [...persistedBranches, ...pendingBranches];
+  filterWorkspaces(repo: NavigationRepo): NavigationWorkspace[] {
+    return repo.workspaces;
   }
 
   openBranchSearchForRepo(repo: NavigationRepo) {
-    this.branchSearch.open([repo]);
+    this.openCreateWorkspace(repo);
   }
 
-  onBranchSearchSelect(event: { repo: NavigationRepo; branch: BranchInfo }) {
-    const { repo, branch } = event;
-    if (branch.hasWorktree) {
-      this.sessionsService.create({
-        repoId: repo.id,
-        branchName: branch.name,
-        worktreePath: branch.worktreePath!,
-      }).subscribe({
-        next: (session) => {
-          this.navService.refreshTree();
-          this.navService.openSession(session.id);
-        },
-        error: (err) => {
-          const msg = err?.error?.message || 'Unknown error';
-          toast.error(`Could not create session. ${msg}`);
-        },
-      });
-    } else {
-      this.openCreateWorktreeSheet(repo, branch.name, true);
-    }
+  onBranchSearchSelect() {
+    // Kept for template compatibility while the branch-first dialog is phased out.
   }
 
-  private openCreateWorktreeSheet(repo: NavigationRepo, branchName: string, autoCreateSession: boolean) {
-    if (this.openingWorktreeBranchKey() !== null) {
+  private openCreateWorkspaceSheet(repo: NavigationRepo, autoCreateSession: boolean) {
+    if (this.openingWorkspaceRepoId() !== null) {
       return;
     }
 
-    this.openingWorktreeBranchKey.set(this.getWorktreeBranchKey(repo.id, branchName));
+    this.openingWorkspaceRepoId.set(repo.id);
     this.openWorktreeTimer = window.setTimeout(() => {
       this.openWorktreeTimer = null;
       try {
-        this.worktreeSheet.open(repo.id, branchName, repo.path, repo.name, autoCreateSession);
+        this.worktreeSheet.open(repo.id, '', repo.path, repo.name, autoCreateSession);
       } finally {
-        this.openingWorktreeBranchKey.set(null);
+        this.openingWorkspaceRepoId.set(null);
       }
     }, 0);
   }
 
-  private getWorktreeBranchKey(repoId: number, branchName: string): string {
-    return `${repoId}:${branchName}`;
+  switchWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    const branchName = window.prompt('Switch workspace to branch', workspace.currentBranch ?? 'main')?.trim();
+    if (!branchName) return;
+    const force = workspace.isDirty && window.confirm('This workspace has uncommitted changes. Continue with checkout?');
+    if (workspace.isDirty && !force) return;
+    this.workspacesService.switchBranch(repo.id, workspace.id, branchName, force).subscribe({
+      next: () => {
+        toast.success('Workspace branch switched');
+        this.navService.refreshTree();
+      },
+      error: (err) => toast.error(err?.error?.message || 'Could not switch branch'),
+    });
+  }
+
+  createWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    const branchName = window.prompt('New branch name')?.trim();
+    if (!branchName) return;
+    const defaultDestination = workspace.isDirty ? 'new' : 'current';
+    const choice = window.prompt('Destination: current, new, or only', defaultDestination)?.trim().toLowerCase();
+    if (!choice) return;
+    const destination =
+      choice === 'only'
+        ? 'branch-only'
+        : choice === 'new'
+          ? 'new-workspace'
+          : 'current-workspace';
+    const workspaceName = destination === 'new-workspace'
+      ? window.prompt('Workspace name', branchName)?.trim() || branchName
+      : undefined;
+    this.workspacesService.createBranch(repo.id, workspace.id, {
+      branchName,
+      destination,
+      workspaceName,
+    }).subscribe({
+      next: () => {
+        toast.success(destination === 'new-workspace' ? 'Branch workspace created' : 'Branch created');
+        this.navService.refreshTree();
+      },
+      error: (err) => toast.error(err?.error?.message || 'Could not create branch'),
+    });
   }
 
   private revealProjectRow(projectId: number) {

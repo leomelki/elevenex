@@ -6,6 +6,7 @@ import { ProjectsModule } from './projects/projects.module.js';
 import { ReposModule } from './repos/repos.module.js';
 import { BranchesModule } from './branches/branches.module.js';
 import { WorktreesModule } from './worktrees/worktrees.module.js';
+import { WorkspacesModule } from './workspaces/workspaces.module.js';
 import { SessionsModule } from './sessions/sessions.module.js';
 import { NavigationModule } from './navigation/navigation.module.js';
 import { TerminalModule } from './terminal/terminal.module.js';
@@ -35,6 +36,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     ReposModule,
     BranchesModule,
     WorktreesModule,
+    WorkspacesModule,
     SessionsModule,
     NavigationModule,
     TerminalModule,

@@ -1,10 +1,11 @@
 import { Component, signal, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { WorktreesService } from '../../../shared/services/worktrees.service';
-import { PendingWorktreeCreationsService } from '../../../shared/services/pending-worktree-creations.service';
+import { WorkspacesService } from '../../../shared/services/workspaces.service';
+import { SessionsService } from '../../../shared/services/sessions.service';
 import { toast } from 'ngx-sonner';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
+import { NavigationService } from '@/shared/services/navigation.service';
 
 @Component({
   selector: 'app-worktree-sheet',
@@ -12,25 +13,35 @@ import { PathAutocompleteInputComponent } from '@/shared/components/path-autocom
   templateUrl: './worktree-sheet.html',
 })
 export class WorktreeSheet {
-  private worktreesService = inject(WorktreesService);
-  private pendingWorktreeCreations = inject(PendingWorktreeCreationsService);
+  private workspacesService = inject(WorkspacesService);
+  private sessionsService = inject(SessionsService);
+  private navService = inject(NavigationService);
 
   @ViewChild('worktreeDialog') dialogRef!: TrackNativeModalDirective;
 
   repoId = signal(0);
-  branchName = signal('');
   repoPath = signal('');
+  repoName = signal('');
+  workspaceName = signal('');
+  startPoint = signal('HEAD');
+  branchName = signal('');
+  createBranch = signal(false);
   worktreePath = signal('');
   creating = signal(false);
   autoCreateSession = signal(false);
 
   open(repoId: number, branchName: string, repoPath: string, repoName: string, autoCreateSession: boolean = false) {
     this.repoId.set(repoId);
-    this.branchName.set(branchName);
     this.repoPath.set(repoPath);
+    this.repoName.set(repoName);
     this.autoCreateSession.set(autoCreateSession);
     const parentDir = repoPath.substring(0, repoPath.lastIndexOf('/'));
-    this.worktreePath.set(`${parentDir}/.worktrees/${repoName}/${branchName}`);
+    const defaultName = branchName || 'Workspace';
+    this.workspaceName.set(defaultName);
+    this.branchName.set(branchName);
+    this.startPoint.set(branchName || 'HEAD');
+    this.createBranch.set(false);
+    this.worktreePath.set(`${parentDir}/.worktrees/${repoName}/${this.slugify(defaultName)}`);
     this.dialogRef.open();
   }
 
@@ -48,18 +59,48 @@ export class WorktreeSheet {
   }
 
   submit() {
+    if (!this.workspaceName().trim() || !this.worktreePath().trim()) {
+      return;
+    }
+
     this.creating.set(true);
-    this.worktreesService.create(this.repoId(), this.branchName(), this.worktreePath()).subscribe({
-      next: (job) => {
-        this.pendingWorktreeCreations.register(job, this.autoCreateSession());
+    this.workspacesService.create(this.repoId(), {
+      name: this.workspaceName().trim(),
+      path: this.worktreePath().trim(),
+      startPoint: this.startPoint().trim() || 'HEAD',
+      createBranch: this.createBranch(),
+      branchName: this.createBranch() ? this.branchName().trim() : undefined,
+    }).subscribe({
+      next: (workspace) => {
+        if (this.autoCreateSession()) {
+          this.sessionsService.create({ repoId: this.repoId(), workspaceId: workspace.id }).subscribe({
+            next: (session) => {
+              this.navService.refreshTree();
+              this.navService.openSession(session.id);
+            },
+            error: (err) => toast.error(err?.error?.message || 'Workspace created, but session could not be created'),
+          });
+        } else {
+          this.navService.refreshTree();
+        }
+        toast.success('Workspace created');
         this.creating.set(false);
         this.close();
       },
       error: (err) => {
         const msg = err?.error?.message || 'Unknown error';
-        toast.error(`Could not create worktree. ${msg}`);
+        toast.error(`Could not create workspace. ${msg}`);
         this.creating.set(false);
       },
     });
+  }
+
+  updatePathFromName() {
+    const parentDir = this.repoPath().substring(0, this.repoPath().lastIndexOf('/'));
+    this.worktreePath.set(`${parentDir}/.worktrees/${this.repoName()}/${this.slugify(this.workspaceName())}`);
+  }
+
+  private slugify(value: string): string {
+    return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
   }
 }

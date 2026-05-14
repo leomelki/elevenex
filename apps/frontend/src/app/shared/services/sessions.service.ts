@@ -19,7 +19,7 @@ export class SessionsService {
     return this.http.post<Session>(`/api/sessions/${id}/mark-reviewed`, {});
   }
 
-  create(data: { repoId: number; branchName: string; worktreePath: string; name?: string }) {
+  create(data: { repoId: number; workspaceId?: number; branchName?: string; worktreePath?: string; name?: string }) {
     return this.http.post<Session>('/api/sessions', data);
   }
 
