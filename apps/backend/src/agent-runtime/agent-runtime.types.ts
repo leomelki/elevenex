@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 
 export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
 export type AgentPermissionMode = string;
+export type AgentReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | string;
 export type AgentImageMediaType =
   | 'image/png'
   | 'image/jpeg'
@@ -26,6 +27,8 @@ export interface AgentRuntimeProviderInfo {
 
 export interface AgentRuntimeStatePayload {
   sessionId: number;
+  reasoningEffort?: AgentReasoningEffort | null;
+  fastMode?: boolean;
 }
 
 export interface AgentSessionSnapshotPayload extends AgentRuntimeStatePayload {
@@ -154,6 +157,14 @@ export interface AgentRuntimeProviderFeatures {
   setPermissionMode(
     sessionId: number,
     mode: AgentPermissionMode | null,
+  ): Promise<AgentRuntimeStatePayload>;
+  setReasoningEffort(
+    sessionId: number,
+    effort: AgentReasoningEffort | null,
+  ): Promise<AgentRuntimeStatePayload>;
+  setFastMode(
+    sessionId: number,
+    enabled: boolean,
   ): Promise<AgentRuntimeStatePayload>;
 
   openTerminalFallback(sessionId: number): Promise<unknown>;

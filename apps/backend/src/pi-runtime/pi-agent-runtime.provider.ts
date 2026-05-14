@@ -88,6 +88,14 @@ export class PiAgentRuntimeProvider
     return this.runtimeService.setSelectedModel(sessionId, model);
   }
 
+  setReasoningEffort(sessionId: number, effort: string | null) {
+    return this.runtimeService.setReasoningEffort(sessionId, effort);
+  }
+
+  setFastMode(sessionId: number, enabled: boolean) {
+    return this.runtimeService.setFastMode(sessionId, enabled);
+  }
+
   submitPrompt(
     sessionId: number,
     prompt: string,

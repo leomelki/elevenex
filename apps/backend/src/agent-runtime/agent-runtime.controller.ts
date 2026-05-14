@@ -15,6 +15,7 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import type {
   AgentLoginMode,
   AgentPermissionMode,
+  AgentReasoningEffort,
 } from './agent-runtime.types.js';
 
 @Controller()
@@ -151,6 +152,33 @@ export class AgentRuntimeController {
         sessionId,
         (body.mode ?? null) as AgentPermissionMode | null,
       );
+  }
+
+  @Post('sessions/:sessionId/agents/:provider/reasoning-effort')
+  async setReasoningEffort(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Body() body: { effort?: string | null },
+  ) {
+    await this.assertSessionMutable(sessionId);
+    return this.registry
+      .getProviderFeature(provider, 'setReasoningEffort')
+      .setReasoningEffort(
+        sessionId,
+        (body.effort ?? null) as AgentReasoningEffort | null,
+      );
+  }
+
+  @Post('sessions/:sessionId/agents/:provider/fast-mode')
+  async setFastMode(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Body() body: { enabled?: boolean },
+  ) {
+    await this.assertSessionMutable(sessionId);
+    return this.registry
+      .getProviderFeature(provider, 'setFastMode')
+      .setFastMode(sessionId, body.enabled === true);
   }
 
   @Post('sessions/:sessionId/agents/:provider/mcp/:serverName/toggle')

@@ -114,6 +114,20 @@ export class AgentRuntimeApiService {
     );
   }
 
+  setReasoningEffort(sessionId: number, effort: string | null, provider = this.currentProvider()) {
+    return this.http.post<AgentRuntimeState>(
+      `${this.basePath(sessionId, provider)}/reasoning-effort`,
+      { effort },
+    );
+  }
+
+  setFastMode(sessionId: number, enabled: boolean, provider = this.currentProvider()) {
+    return this.http.post<AgentRuntimeState>(
+      `${this.basePath(sessionId, provider)}/fast-mode`,
+      { enabled },
+    );
+  }
+
   openTerminalFallback(sessionId: number, provider = this.currentProvider()) {
     return this.http.post(`${this.basePath(sessionId, provider)}/terminal-fallback`, {});
   }

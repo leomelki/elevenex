@@ -9,6 +9,7 @@ export type ClaudePermissionMode =
   | 'auto'
   | string;
 export type ClaudeFastModeState = 'off' | 'cooldown' | 'on';
+export type ClaudeReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | string;
 
 export type ClaudeTranscriptItemKind =
   | 'user'
@@ -506,6 +507,8 @@ export interface ClaudeRuntimeState {
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
+  reasoningEffort: ClaudeReasoningEffort | null;
+  fastMode: boolean;
   permissionMode: ClaudePermissionMode | null;
   availableModels: ClaudeModelOption[];
   contextUsage: ClaudeContextUsage | null;
@@ -547,6 +550,8 @@ export type ClaudeRuntimeEvent =
         canInterrupt: boolean;
         lastError: string | null;
         selectedModel: string | null;
+        reasoningEffort: ClaudeReasoningEffort | null;
+        fastMode: boolean;
         permissionMode: ClaudePermissionMode | null;
         availableModels: ClaudeModelOption[];
         contextUsage: ClaudeContextUsage | null;

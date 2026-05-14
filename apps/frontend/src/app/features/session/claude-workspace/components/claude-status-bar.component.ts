@@ -19,6 +19,8 @@ import {
   lucideLoaderCircle,
   lucideMap,
   lucidePlugZap,
+  lucideBrain,
+  lucideZap,
   lucideShield,
   lucideTerminal,
   lucideTriangleAlert,
@@ -28,6 +30,7 @@ import {
   ClaudeMcpSnapshot,
   ClaudeModelOption,
   ClaudePermissionMode,
+  ClaudeReasoningEffort,
   ClaudeRunPhase,
   ClaudeTaskState,
 } from '@/shared/models/claude-runtime.model';
@@ -51,6 +54,15 @@ const PERMISSION_MODES: PermissionModeOption[] = [
   { id: 'bypassPermissions', label: 'Bypass permissions', hint: 'Skip all prompts — danger' },
 ];
 
+const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: string }[] = [
+  { id: '', label: 'Default effort', hint: 'Use the provider default' },
+  { id: 'low', label: 'Low', hint: 'Fastest responses' },
+  { id: 'medium', label: 'Medium', hint: 'Balanced reasoning' },
+  { id: 'high', label: 'High', hint: 'Deep reasoning' },
+  { id: 'xhigh', label: 'Extra high', hint: 'More depth where supported' },
+  { id: 'max', label: 'Max', hint: 'Maximum effort where supported' },
+];
+
 @Component({
   selector: 'cw-status-bar',
   standalone: true,
@@ -71,6 +83,8 @@ const PERMISSION_MODES: PermissionModeOption[] = [
       lucideLoaderCircle,
       lucideMap,
       lucidePlugZap,
+      lucideBrain,
+      lucideZap,
       lucideShield,
       lucideTerminal,
       lucideTriangleAlert,
@@ -194,6 +208,51 @@ const PERMISSION_MODES: PermissionModeOption[] = [
         }
       </div>
 
+      @if (selectedModelSupportsEffort()) {
+        <span class="cw-sb__sep">·</span>
+        <div class="cw-sb__model">
+          <button
+            type="button"
+            class="cw-sb__link"
+            (click)="toggleMenu('effort')"
+            title="Reasoning effort"
+          >
+            <ng-icon name="lucideBrain" size="11" />
+            {{ reasoningEffortLabel() }}
+            <ng-icon name="lucideChevronDown" size="11" />
+          </button>
+          @if (effortOpen()) {
+            <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
+              @for (effort of reasoningEffortOptions(); track effort.id) {
+                <button
+                  type="button"
+                  class="cw-sb__menu-item"
+                  [class.cw-sb__menu-item--selected]="(reasoningEffort() ?? '') === effort.id"
+                  (click)="pickReasoningEffort(effort.id)"
+                >
+                  <strong>{{ effort.label }}</strong>
+                  <span>{{ effort.hint }}</span>
+                </button>
+              }
+            </div>
+          }
+        </div>
+      }
+
+      @if (selectedModelSupportsFastMode()) {
+        <span class="cw-sb__sep">·</span>
+        <button
+          type="button"
+          class="cw-sb__link"
+          [class.cw-sb__link--active]="fastMode()"
+          (click)="toggleFastMode()"
+          title="Fast mode"
+        >
+          <ng-icon name="lucideZap" size="11" />
+          Fast {{ fastMode() ? 'on' : 'off' }}
+        </button>
+      }
+
       @if (contextUsage(); as u) {
         <span class="cw-sb__sep">·</span>
         <span class="cw-sb__ctx" [class.cw-sb__ctx--warn]="u.percentage >= 80">
@@ -312,6 +371,10 @@ const PERMISSION_MODES: PermissionModeOption[] = [
         background: color-mix(in oklab, var(--foreground) 6%, transparent);
         color: var(--foreground);
       }
+      .cw-sb__link--active {
+        background: color-mix(in oklab, var(--success) 14%, transparent);
+        color: color-mix(in oklab, var(--success) 85%, var(--foreground));
+      }
       .cw-sb__link--disabled,
       .cw-sb__link--disabled:hover {
         cursor: default;
@@ -403,6 +466,8 @@ export class ClaudeStatusBarComponent {
   readonly currentProvider = input<AgentProviderId>('claude');
   readonly providerLocked = input(false);
   readonly selectedModel = input<string | null>(null);
+  readonly reasoningEffort = input<ClaudeReasoningEffort | null>(null);
+  readonly fastMode = input(false);
   readonly availableModels = input<ClaudeModelOption[]>([]);
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
   readonly tasks = input<ClaudeTaskState[]>([]);
@@ -410,6 +475,8 @@ export class ClaudeStatusBarComponent {
   readonly mcpSnapshot = input<ClaudeMcpSnapshot | null>(null);
 
   readonly modelChange = output<string>();
+  readonly reasoningEffortChange = output<ClaudeReasoningEffort | null>();
+  readonly fastModeChange = output<boolean>();
   readonly providerChange = output<AgentProviderId>();
   readonly permissionModeChange = output<ClaudePermissionMode>();
   readonly openTerminal = output<void>();
@@ -417,6 +484,7 @@ export class ClaudeStatusBarComponent {
   readonly openMcp = output<void>();
 
   readonly modelOpen = signal(false);
+  readonly effortOpen = signal(false);
   readonly providerOpen = signal(false);
   readonly permissionOpen = signal(false);
   readonly menuOpen = signal(false);
@@ -424,7 +492,7 @@ export class ClaudeStatusBarComponent {
   private readonly host = inject(ElementRef<HTMLElement>);
 
   onDocumentMousedown(event: MouseEvent): void {
-    if (!this.modelOpen() && !this.providerOpen() && !this.permissionOpen() && !this.menuOpen()) return;
+    if (!this.modelOpen() && !this.effortOpen() && !this.providerOpen() && !this.permissionOpen() && !this.menuOpen()) return;
     const target = event.target as Node | null;
     if (target && this.host.nativeElement.contains(target)) return;
     this.closeAllMenus();
@@ -432,12 +500,13 @@ export class ClaudeStatusBarComponent {
 
   closeAllMenus(): void {
     this.modelOpen.set(false);
+    this.effortOpen.set(false);
     this.providerOpen.set(false);
     this.permissionOpen.set(false);
     this.menuOpen.set(false);
   }
 
-  toggleMenu(which: 'model' | 'provider' | 'permission' | 'overflow'): void {
+  toggleMenu(which: 'model' | 'effort' | 'provider' | 'permission' | 'overflow'): void {
     if (which === 'provider' && this.providerLocked()) {
       this.providerOpen.set(false);
       return;
@@ -445,11 +514,13 @@ export class ClaudeStatusBarComponent {
 
     const next = {
       model: which === 'model' ? !this.modelOpen() : false,
+      effort: which === 'effort' ? !this.effortOpen() : false,
       provider: which === 'provider' ? !this.providerOpen() : false,
       permission: which === 'permission' ? !this.permissionOpen() : false,
       overflow: which === 'overflow' ? !this.menuOpen() : false,
     };
     this.modelOpen.set(next.model);
+    this.effortOpen.set(next.effort);
     this.providerOpen.set(next.provider);
     this.permissionOpen.set(next.permission);
     this.menuOpen.set(next.overflow);
@@ -498,6 +569,24 @@ export class ClaudeStatusBarComponent {
     const m = this.availableModels().find((x) => x.id === id);
     return m?.displayName ?? id;
   });
+  readonly selectedModelOption = computed(() => {
+    const id = this.selectedModel();
+    const models = this.availableModels();
+    return id ? models.find((m) => m.id === id) : models[0];
+  });
+  readonly selectedModelSupportsEffort = computed(() => this.selectedModelOption()?.supportsEffort ?? false);
+  readonly selectedModelSupportsFastMode = computed(() => this.selectedModelOption()?.supportsFastMode ?? false);
+  readonly reasoningEffortOptions = computed(() => {
+    const effort = this.reasoningEffort();
+    return effort && !REASONING_EFFORTS.some((option) => option.id === effort)
+      ? [{ id: effort, label: effort, hint: 'Custom effort' }, ...REASONING_EFFORTS]
+      : REASONING_EFFORTS;
+  });
+  readonly reasoningEffortLabel = computed(() => {
+    const effort = this.reasoningEffort();
+    if (!effort) return 'default effort';
+    return REASONING_EFFORTS.find((option) => option.id === effort)?.label ?? effort;
+  });
 
   readonly activeProviderLabel = computed(() => {
     return (
@@ -513,6 +602,15 @@ export class ClaudeStatusBarComponent {
   pickModel(id: string): void {
     this.modelOpen.set(false);
     this.modelChange.emit(id);
+  }
+
+  pickReasoningEffort(effort: ClaudeReasoningEffort | ''): void {
+    this.effortOpen.set(false);
+    this.reasoningEffortChange.emit(effort || null);
+  }
+
+  toggleFastMode(): void {
+    this.fastModeChange.emit(!this.fastMode());
   }
 
   pickProvider(id: AgentProviderId): void {

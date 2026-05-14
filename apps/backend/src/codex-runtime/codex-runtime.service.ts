@@ -226,6 +226,34 @@ export class CodexRuntimeService extends EventEmitter {
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
+  async setReasoningEffort(
+    sessionId: number,
+    effort: string | null,
+  ): Promise<CodexRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    state.reasoningEffort = effort;
+    this.emitRunState(sessionId);
+    return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  async setFastMode(
+    sessionId: number,
+    enabled: boolean,
+  ): Promise<CodexRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    state.fastMode = enabled;
+    if (state.sessionMetadata) {
+      state.sessionMetadata = {
+        ...state.sessionMetadata,
+        fastModeState: enabled ? 'on' : 'off',
+      };
+    }
+    this.emitRunState(sessionId);
+    return this.toRuntimeStatePayload(sessionId, state);
+  }
+
   async submitPrompt(
     sessionId: number,
     prompt: string,
@@ -775,7 +803,7 @@ export class CodexRuntimeService extends EventEmitter {
       slashCommands: [],
       skills: [],
       agents: [],
-      fastModeState: null,
+      fastModeState: state.fastMode ? 'on' : 'off',
       mcpServers: [],
       plugins: [],
     };
@@ -847,6 +875,8 @@ export class CodexRuntimeService extends EventEmitter {
       pendingUserInputRequest: null,
       lastError: null,
       selectedModel: this.codexDefaultModel,
+      reasoningEffort: null,
+      fastMode: false,
       selectedPermissionMode: 'default',
       availableModels: [...this.codexModels],
       contextUsage: null,
@@ -869,6 +899,8 @@ export class CodexRuntimeService extends EventEmitter {
         canInterrupt: state.canInterrupt,
         lastError: state.lastError,
         selectedModel: state.selectedModel,
+        reasoningEffort: state.reasoningEffort,
+        fastMode: state.fastMode,
         permissionMode: state.selectedPermissionMode,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
@@ -1109,6 +1141,8 @@ export class CodexRuntimeService extends EventEmitter {
       liveItems: state.liveItems,
       lastError: state.lastError,
       selectedModel: state.selectedModel,
+      reasoningEffort: state.reasoningEffort,
+      fastMode: state.fastMode,
       permissionMode: state.selectedPermissionMode,
       availableModels: state.availableModels,
       contextUsage: state.contextUsage,
@@ -1429,6 +1463,10 @@ export class CodexRuntimeService extends EventEmitter {
       const commonThreadParams = {
         cwd: worktreePath,
         model: state.selectedModel ?? this.codexDefaultModel,
+        ...(state.reasoningEffort
+          ? { modelReasoningEffort: state.reasoningEffort }
+          : {}),
+        ...(state.fastMode ? { serviceTier: 'flex', speedTier: 'fast' } : {}),
         sandbox: sandboxMap[permissionOptions.sandboxMode],
         approvalPolicy: approvalMap[permissionOptions.approvalPolicy],
       };
@@ -1923,7 +1961,7 @@ export class CodexRuntimeService extends EventEmitter {
         mode: 'plan',
         settings: {
           model: state.selectedModel ?? this.codexDefaultModel,
-          reasoning_effort: null,
+          reasoning_effort: state.reasoningEffort,
           developer_instructions: null,
         },
       },

@@ -69,6 +69,8 @@ export interface PiRuntimeState {
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   lastError: string | null;
   selectedModel: string | null;
+  reasoningEffort: string | null;
+  fastMode: boolean;
   availableModels: ClaudeModelOption[];
   contextUsage: ClaudeContextUsage | null;
   sessionMetadata: PiRuntimeSessionMetadata | null;

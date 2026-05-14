@@ -30,6 +30,7 @@ import {
   ClaudePendingPrompt,
   ClaudePermissionApproval,
   ClaudePermissionMode,
+  ClaudeReasoningEffort,
   ClaudePermissionRequest,
   ClaudeRuntimeSessionMetadata,
   ClaudeRunPhase,
@@ -194,6 +195,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     return name ? `Tell ${name} what to do…` : 'Tell the agent what to do…';
   });
   readonly selectedModel = signal<string | null>(null);
+  readonly reasoningEffort = signal<ClaudeReasoningEffort | null>(null);
+  readonly fastMode = signal(false);
   readonly worktreeContext = signal<WorktreeContextSnapshot | null>(null);
   readonly worktreeContextLoading = signal(false);
   readonly worktreeContextBusy = signal(false);
@@ -819,6 +822,16 @@ readonly messageActionsDisabled = computed(
     this.applyRuntimeState(next);
   }
 
+  async onReasoningEffortChange(effort: ClaudeReasoningEffort | null): Promise<void> {
+    const next = await firstValueFrom(this.api.setReasoningEffort(this.sessionId, effort));
+    this.applyRuntimeState(next);
+  }
+
+  async onFastModeChange(enabled: boolean): Promise<void> {
+    const next = await firstValueFrom(this.api.setFastMode(this.sessionId, enabled));
+    this.applyRuntimeState(next);
+  }
+
   async onPermissionModeChange(mode: ClaudePermissionMode): Promise<void> {
     if (this.currentProvider() === 'codex' && (mode === ('planBypass' as ClaudePermissionMode) || mode === 'auto')) {
       mode = 'default';
@@ -1403,6 +1416,8 @@ readonly messageActionsDisabled = computed(
         this.canInterrupt.set(event.payload.canInterrupt);
         this.lastError.set(event.payload.lastError);
         this.selectedModel.set(event.payload.selectedModel);
+        this.reasoningEffort.set(event.payload.reasoningEffort ?? null);
+        this.fastMode.set(event.payload.fastMode ?? false);
         this.availableModels.set(event.payload.availableModels);
         this.contextUsage.set(event.payload.contextUsage);
         if (event.payload.permissionMode != null) {
@@ -1632,6 +1647,8 @@ readonly messageActionsDisabled = computed(
     this.canInterrupt.set(state.canInterrupt);
     this.claudeSessionId.set(state.claudeSessionId);
     this.selectedModel.set(state.selectedModel);
+    this.reasoningEffort.set(state.reasoningEffort ?? null);
+    this.fastMode.set(state.fastMode ?? false);
     this.availableModels.set(state.availableModels);
     this.contextUsage.set(state.contextUsage);
     this._permissionMode.set(state.permissionMode);
@@ -1704,6 +1721,8 @@ readonly messageActionsDisabled = computed(
     this.lastError.set(null);
     this.claudeSessionId.set(null);
     this.selectedModel.set(null);
+    this.reasoningEffort.set(null);
+    this.fastMode.set(false);
     this.worktreeContext.set(null);
     this.worktreeContextLoading.set(false);
     this.worktreeContextBusy.set(false);

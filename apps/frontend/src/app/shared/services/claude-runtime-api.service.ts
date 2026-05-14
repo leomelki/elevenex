@@ -91,6 +91,22 @@ export class ClaudeRuntimeApiService {
     ) as Observable<ClaudeRuntimeState>;
   }
 
+  setReasoningEffort(sessionId: number, effort: string | null) {
+    return this.agentRuntimeApi.setReasoningEffort(
+      sessionId,
+      effort,
+      this.provider(),
+    ) as Observable<ClaudeRuntimeState>;
+  }
+
+  setFastMode(sessionId: number, enabled: boolean) {
+    return this.agentRuntimeApi.setFastMode(
+      sessionId,
+      enabled,
+      this.provider(),
+    ) as Observable<ClaudeRuntimeState>;
+  }
+
   openTerminalFallback(sessionId: number) {
     return this.agentRuntimeApi.openTerminalFallback(sessionId, this.provider());
   }

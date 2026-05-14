@@ -90,6 +90,14 @@ export class ClaudeAgentRuntimeProvider
     );
   }
 
+  setReasoningEffort(sessionId: number, effort: string | null) {
+    return this.runtimeService.setReasoningEffort(sessionId, effort);
+  }
+
+  setFastMode(sessionId: number, enabled: boolean) {
+    return this.runtimeService.setFastMode(sessionId, enabled);
+  }
+
   openTerminalFallback(sessionId: number) {
     return this.runtimeService.openTerminalFallback(sessionId);
   }

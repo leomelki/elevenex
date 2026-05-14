@@ -160,6 +160,34 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
+  async setReasoningEffort(
+    sessionId: number,
+    effort: string | null,
+  ): Promise<PiRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    state.reasoningEffort = effort;
+    this.emitRunState(sessionId);
+    return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  async setFastMode(
+    sessionId: number,
+    enabled: boolean,
+  ): Promise<PiRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    state.fastMode = enabled;
+    if (state.sessionMetadata) {
+      state.sessionMetadata = {
+        ...state.sessionMetadata,
+        fastModeState: enabled ? 'on' : 'off',
+      };
+    }
+    this.emitRunState(sessionId);
+    return this.toRuntimeStatePayload(sessionId, state);
+  }
+
   async submitPrompt(
     sessionId: number,
     prompt: string,
@@ -225,6 +253,8 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       await runtime.send({
         type: 'prompt',
         message: trimmedPrompt,
+        ...(state.reasoningEffort ? { reasoningEffort: state.reasoningEffort } : {}),
+        ...(state.fastMode ? { fastMode: true } : {}),
         ...(normalizedImages.length ? { images: normalizedImages } : {}),
       });
       await completionPromise;
@@ -723,6 +753,8 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       pendingUserInputRequest: null,
       lastError: null,
       selectedModel: null,
+      reasoningEffort: null,
+      fastMode: false,
       availableModels: [],
       contextUsage: null,
       sessionMetadata: null,
@@ -744,7 +776,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       tools: ['Bash', 'Read', 'Write', 'Edit', 'Grep', 'Find', 'Ls'],
       slashCommands: [],
       skills: [],
-      fastModeState: null,
+      fastModeState: state.fastMode ? 'on' : 'off',
       mcpServers: [],
       agents: [],
       plugins: [],
@@ -768,6 +800,8 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
         canInterrupt: state.canInterrupt,
         lastError: state.lastError,
         selectedModel: state.selectedModel,
+        reasoningEffort: state.reasoningEffort,
+        fastMode: state.fastMode,
         permissionMode: null,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
@@ -805,6 +839,8 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       liveItems: state.liveItems,
       lastError: state.lastError,
       selectedModel: state.selectedModel,
+      reasoningEffort: state.reasoningEffort,
+      fastMode: state.fastMode,
       permissionMode: null,
       availableModels: state.availableModels,
       contextUsage: state.contextUsage,

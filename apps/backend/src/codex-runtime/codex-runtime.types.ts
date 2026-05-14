@@ -118,6 +118,8 @@ export interface CodexRuntimeState {
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   lastError: string | null;
   selectedModel: string | null;
+  reasoningEffort: string | null;
+  fastMode: boolean;
   selectedPermissionMode: CodexPermissionMode | null;
   availableModels: ClaudeModelOption[];
   contextUsage: ClaudeContextUsage | null;

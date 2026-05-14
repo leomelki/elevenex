@@ -58,6 +58,7 @@ import {
   type SDKToolUseSummaryMessage,
   type SDKUserMessage,
   type SessionMessage,
+  type EffortLevel,
 } from '@anthropic-ai/claude-agent-sdk';
 import { SessionsService } from '../sessions/sessions.service.js';
 import {
@@ -111,6 +112,7 @@ import {
   ClaudeMirrorError,
   ClaudePromptSuggestion,
   ClaudePermissionMode,
+  ClaudeReasoningEffort,
   ClaudePermissionUpdate,
   ClaudeToolInteractionAnswer,
   ClaudeToolInteractionKind,
@@ -202,6 +204,8 @@ interface RuntimeState {
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
+  reasoningEffort: ClaudeReasoningEffort | null;
+  fastMode: boolean;
   selectedPermissionMode: ClaudePermissionMode | null;
   availableModels: ClaudeModelOption[];
   contextUsage: ClaudeContextUsage | null;
@@ -625,6 +629,34 @@ export class ClaudeRuntimeService extends EventEmitter {
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
+  async setReasoningEffort(
+    sessionId: number,
+    effort: ClaudeReasoningEffort | null,
+  ): Promise<ClaudeRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    state.reasoningEffort = effort;
+    this.emitRunState(sessionId);
+    return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  async setFastMode(
+    sessionId: number,
+    enabled: boolean,
+  ): Promise<ClaudeRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    state.fastMode = enabled;
+    if (state.sessionMetadata) {
+      state.sessionMetadata = {
+        ...state.sessionMetadata,
+        fastModeState: enabled ? 'on' : 'off',
+      };
+    }
+    this.emitRunState(sessionId);
+    return this.toRuntimeStatePayload(sessionId, state);
+  }
+
   async getAutocompleteItems(
     sessionId: number,
   ): Promise<ClaudeAutocompleteItem[]> {
@@ -955,6 +987,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       session.worktreePath,
       session.claudeSessionId,
       state.selectedModel,
+      state.reasoningEffort,
+      state.fastMode,
       state.selectedPermissionMode,
       canUseTool,
       onElicitation,
@@ -2651,6 +2685,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       liveItems: [],
       lastError: null,
       selectedModel: null,
+      reasoningEffort: null,
+      fastMode: false,
       selectedPermissionMode: 'auto',
       availableModels: [...FALLBACK_MODELS],
       contextUsage: null,
@@ -2705,6 +2741,8 @@ export class ClaudeRuntimeService extends EventEmitter {
         canInterrupt: state.canInterrupt,
         lastError: state.lastError,
         selectedModel: state.selectedModel,
+        reasoningEffort: state.reasoningEffort,
+        fastMode: state.fastMode,
         permissionMode: state.sessionMetadata?.permissionMode ?? state.selectedPermissionMode ?? null,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
@@ -3078,6 +3116,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     worktreePath: string,
     claudeSessionId: string | null,
     selectedModel: string | null,
+    reasoningEffort: ClaudeReasoningEffort | null,
+    fastMode: boolean,
     selectedPermissionMode: ClaudePermissionMode | null,
     canUseTool: CanUseTool,
     onElicitation: (request: ElicitationRequest) => Promise<ElicitationResult>,
@@ -3090,9 +3130,15 @@ export class ClaudeRuntimeService extends EventEmitter {
       ?? this.resolveSdkClaudePath()
       ?? findBinary('claude')
       ?? undefined;
-    return {
+    const options: Options & {
+      fastMode?: boolean;
+      fastModePerSessionOptIn?: boolean;
+    } = {
       cwd: worktreePath,
       model: selectedModel ?? undefined,
+      effort: (reasoningEffort as EffortLevel | null) ?? undefined,
+      fastMode,
+      fastModePerSessionOptIn: true,
       permissionMode: (selectedPermissionMode as PermissionMode | undefined) ?? undefined,
       resume:
         claudeSessionId && claudeSessionId !== '-1'
@@ -3120,6 +3166,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         buildAugmentedEnv(process.env, worktreePath),
       ),
     };
+    return options;
   }
 
   private async generateAndSaveSessionTitle(
@@ -3399,6 +3446,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       liveItems: state.liveItems,
       lastError: state.lastError,
       selectedModel: state.selectedModel,
+      reasoningEffort: state.reasoningEffort,
+      fastMode: state.fastMode,
       permissionMode: state.sessionMetadata?.permissionMode ?? state.selectedPermissionMode ?? null,
       availableModels: state.availableModels,
       contextUsage: state.contextUsage,

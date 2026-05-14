@@ -1,5 +1,6 @@
 export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
 export type AgentPermissionMode = string;
+export type AgentReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | string;
 
 export interface AgentRuntimeProviderCapabilities {
   mcp: boolean;
@@ -17,9 +18,7 @@ export interface AgentRuntimeProviderInfo {
   capabilities: AgentRuntimeProviderCapabilities;
 }
 
-export interface AgentRuntimeState {
-  sessionId: number;
-}
+export type AgentRuntimeState = import('./claude-runtime.model').ClaudeRuntimeState;
 
 export interface AgentRuntimeEvent {
   type: string;
