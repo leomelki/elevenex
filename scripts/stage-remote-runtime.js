@@ -82,15 +82,21 @@ function stageExtensionRuntime(extensionDirName, destinationRoot) {
   removeSourceMaps(extensionDestinationRoot);
 }
 
-function buildRuntimePackageJson() {
+function shouldBuildNativeDependenciesOnHost(target) {
+  return target.platform === process.platform && target.arch === process.arch;
+}
+
+function buildRuntimePackageJson(target) {
+  const onlyBuiltDependencies = shouldBuildNativeDependenciesOnHost(target)
+    ? ['better-sqlite3', 'node-pty']
+    : [];
+
   return {
     name: 'elevenex-remote-runtime',
     private: true,
     type: 'commonjs',
     pnpm: {
-      onlyBuiltDependencies: [
-        'better-sqlite3',
-      ],
+      onlyBuiltDependencies,
     },
     dependencies: Object.fromEntries(
       NATIVE_RUNTIME_DEPENDENCIES.map((name) => [name, backendPackageJson.dependencies[name]]),
@@ -206,7 +212,7 @@ async function stageBundledNodeRuntime(targetRoot, target, nodeVersion) {
 function installRuntimeDependencies(targetRoot, target) {
   writeFileSync(
     path.join(targetRoot, 'package.json'),
-    `${JSON.stringify(buildRuntimePackageJson(), null, 2)}\n`,
+    `${JSON.stringify(buildRuntimePackageJson(target), null, 2)}\n`,
     'utf8',
   );
 
@@ -225,6 +231,13 @@ function installRuntimeDependencies(targetRoot, target) {
     cwd: targetRoot,
     env,
   });
+
+  if (shouldBuildNativeDependenciesOnHost(target)) {
+    runCommand('pnpm', ['rebuild', 'better-sqlite3', 'node-pty'], {
+      cwd: targetRoot,
+      env,
+    });
+  }
 }
 
 function writeLauncher(targetRoot) {
