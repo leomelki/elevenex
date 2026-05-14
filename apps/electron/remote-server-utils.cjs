@@ -9,6 +9,16 @@ const REMOTE_RUNTIME_TARGETS = Object.freeze({
     arch: 'arm64',
     unameArchValues: ['aarch64', 'arm64'],
   },
+  'darwin-x64': {
+    platform: 'darwin',
+    arch: 'x64',
+    unameArchValues: ['x86_64', 'amd64'],
+  },
+  'darwin-arm64': {
+    platform: 'darwin',
+    arch: 'arm64',
+    unameArchValues: ['arm64'],
+  },
 });
 
 const REMOTE_INSTALL_PHASES = Object.freeze([
@@ -218,11 +228,12 @@ function buildRemoteInstallCommand({ remoteArchivePath, remoteReleaseDir, remote
     `RELEASE_DIR=${releaseDir}`,
     'PTY_DIR="$(find "$RELEASE_DIR/node_modules/.pnpm" -maxdepth 4 -type d -path "*/node-pty@*/node_modules/node-pty" 2>/dev/null | head -n 1 || true)"',
     'if [ -n "$PTY_DIR" ] && [ ! -f "$PTY_DIR/build/Release/pty.node" ]; then',
+    '  PLATFORM_KEY="$(uname -s 2>/dev/null | tr \'[:upper:]\' \'[:lower:]\')"',
     '  ARCH_KEY="$(uname -m)"',
     '  case "$ARCH_KEY" in x86_64|amd64) ARCH_KEY=x64 ;; aarch64) ARCH_KEY=arm64 ;; esac',
-    '  if [ ! -f "$PTY_DIR/prebuilds/linux-$ARCH_KEY/pty.node" ]; then',
+    '  if [ ! -f "$PTY_DIR/prebuilds/$PLATFORM_KEY-$ARCH_KEY/pty.node" ]; then',
     '    if ! { command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; } || ! command -v make >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then',
-    '      echo "Cannot compile node-pty on remote: missing build tools. Install gcc/cc, make, and python3, then retry." >&2',
+    '      echo "Cannot compile node-pty on remote: missing build tools. Install cc/gcc, make, and python3, then retry." >&2',
     '      exit 1',
     '    fi',
     '    ( cd "$PTY_DIR" && PATH="$RELEASE_DIR/node/bin:$PATH" "$RELEASE_DIR/node/bin/npm" rebuild --build-from-source --foreground-scripts ) || {',
@@ -360,7 +371,11 @@ function buildRemoteWaitForReadyCommand({ remoteRoot, remotePort, expectedVersio
   ].join('\n');
 }
 
-function getSuggestedInstallCommands(osRelease) {
+function getSuggestedInstallCommands(osRelease, platform = 'linux') {
+  if (platform === 'darwin') {
+    return ['brew install tmux'];
+  }
+
   const distroId = `${osRelease.ID || ''}`.toLowerCase();
   const distroFamily = `${osRelease.ID_LIKE || ''}`.toLowerCase();
   const values = `${distroId} ${distroFamily}`;

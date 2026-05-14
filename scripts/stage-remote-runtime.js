@@ -21,6 +21,8 @@ const NODE_MAJOR = 22;
 const TARGETS = [
   { key: 'linux-x64', platform: 'linux', arch: 'x64', nodeArch: 'x64' },
   { key: 'linux-arm64', platform: 'linux', arch: 'arm64', nodeArch: 'arm64' },
+  { key: 'darwin-x64', platform: 'darwin', arch: 'x64', nodeArch: 'x64' },
+  { key: 'darwin-arm64', platform: 'darwin', arch: 'arm64', nodeArch: 'arm64' },
 ];
 const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@openai/codex-sdk'];
 
@@ -85,6 +87,11 @@ function buildRuntimePackageJson() {
     name: 'elevenex-remote-runtime',
     private: true,
     type: 'commonjs',
+    pnpm: {
+      onlyBuiltDependencies: [
+        'better-sqlite3',
+      ],
+    },
     dependencies: Object.fromEntries(
       NATIVE_RUNTIME_DEPENDENCIES.map((name) => [name, backendPackageJson.dependencies[name]]),
     ),
@@ -178,11 +185,11 @@ async function resolveLatestNodeVersion() {
 
 async function stageBundledNodeRuntime(targetRoot, target, nodeVersion) {
   const targetTempRoot = path.join(tempRoot, target.key);
-  const archiveName = `node-${nodeVersion}-linux-${target.nodeArch}.tar.gz`;
+  const archiveName = `node-${nodeVersion}-${target.platform}-${target.nodeArch}.tar.gz`;
   const archivePath = path.join(targetTempRoot, archiveName);
   const downloadUrl = `https://nodejs.org/dist/${nodeVersion}/${archiveName}`;
   const extractRoot = path.join(targetTempRoot, 'extract');
-  const extractedNodeRoot = path.join(extractRoot, `node-${nodeVersion}-linux-${target.nodeArch}`);
+  const extractedNodeRoot = path.join(extractRoot, `node-${nodeVersion}-${target.platform}-${target.nodeArch}`);
 
   ensureDir(targetTempRoot);
   if (!existsSync(archivePath)) {

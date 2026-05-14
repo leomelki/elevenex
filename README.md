@@ -54,7 +54,7 @@ Elevenex is a pnpm monorepo with a desktop shell, a frontend, a backend, and a s
 
 If you use remote servers through Elevenex:
 
-- v1 remote auto-install currently supports Linux only.
+- v1 remote auto-install currently supports Linux and macOS.
 - The remote server must provide standard POSIX basics such as `sh`, `tar`, `mkdir`, and `ln`.
 - Elevenex will check for remote `claude` and `tmux` and pause setup with an in-app SSH terminal if they are missing.
 - Elevenex downloads the matching remote backend runtime from CI-built release artifacts, so system Node is not required on the remote host.
@@ -122,7 +122,7 @@ Electron packaging now stages two runtime layers:
 Elevenex can connect to remote servers over SSH and automatically prepare a remote backend when one is missing or out of date.
 
 - On connect, Elevenex detects the remote OS and architecture.
-- v1 supports Linux `x64` and `arm64`.
+- v1 supports Linux and macOS on `x64` and `arm64`.
 - Elevenex checks for remote `claude` and `tmux` first.
 - If either dependency is missing, Elevenex opens an in-app SSH terminal so you can install the missing pieces and then re-check.
 - Once prerequisites are present, Elevenex downloads a versioned runtime artifact to `~/.elevenex`, updates it when the app commit SHA changes, and starts the backend in a detached `tmux` session.

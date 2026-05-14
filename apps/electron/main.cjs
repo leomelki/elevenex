@@ -1322,7 +1322,7 @@ function createRemoteInstallerSession(forward, preflight) {
 }
 
 function getRemoteInstallStatus(preflight, bundledVersion) {
-  if (preflight.remotePlatform !== 'linux') {
+  if (!['linux', 'darwin'].includes(preflight.remotePlatform)) {
     return 'unsupported-os';
   }
 
@@ -1350,7 +1350,10 @@ function toRemoteEnsureReadyResult(forward, preflight, overrides = {}) {
     ? overrides.bundledVersion
     : getRemoteRuntimeVersion();
   const installStatus = overrides.installStatus || getRemoteInstallStatus(preflight, bundledVersion);
-  const suggestedCommands = getSuggestedInstallCommands(preflight.osRelease || {});
+  const suggestedCommands = getSuggestedInstallCommands(
+    preflight.osRelease || {},
+    preflight.remotePlatform,
+  );
   return {
     status: overrides.status || 'error',
     installPhase: overrides.installPhase || 'checking',
@@ -1455,11 +1458,11 @@ async function ensureRemoteServerReady(forward) {
     missingDependencies: preflight.missingDependencies,
   });
 
-  if (preflight.remotePlatform !== 'linux') {
+  if (!['linux', 'darwin'].includes(preflight.remotePlatform)) {
     return toRemoteEnsureReadyResult(forward, preflight, {
       status: 'unsupported',
       installPhase: 'checking',
-      message: `Remote OS ${preflight.remotePlatform || 'unknown'} is not supported yet. Linux is required for auto-install.`,
+      message: `Remote OS ${preflight.remotePlatform || 'unknown'} is not supported yet. Linux or macOS is required for auto-install.`,
       bundledVersion,
     });
   }
