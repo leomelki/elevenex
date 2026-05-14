@@ -1,4 +1,9 @@
 import { jest } from '@jest/globals';
+
+jest.mock('../session-title/session-title.service.js', () => ({
+  SessionTitleService: class SessionTitleService {},
+}));
+
 import { CodexRuntimeService } from './codex-runtime.service.js';
 
 describe('CodexRuntimeService', () => {
@@ -11,9 +16,13 @@ describe('CodexRuntimeService', () => {
 
   function createService() {
     const sessionsService = {
-      findOne: jest.fn<() => Promise<typeof session>>().mockResolvedValue(session),
+      findOne: jest
+        .fn<() => Promise<typeof session>>()
+        .mockResolvedValue(session),
       updateStatus: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
-      updateCodexSessionId: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
+      updateCodexSessionId: jest
+        .fn<() => Promise<unknown>>()
+        .mockResolvedValue({}),
     };
     const authService = {
       getFastStatus: jest.fn<() => Promise<unknown>>().mockResolvedValue({
@@ -32,9 +41,17 @@ describe('CodexRuntimeService', () => {
     const historyService = {
       getHistory: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
     };
+    const hooksService = {
+      updateRuntimeActivity: jest.fn(),
+    };
+    const titleService = {
+      generate: jest.fn<() => Promise<string | null>>().mockResolvedValue(null),
+    };
     const appServer = {
       prewarm: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-      request: jest.fn<() => Promise<unknown>>().mockResolvedValue({ data: [] }),
+      request: jest
+        .fn<() => Promise<unknown>>()
+        .mockResolvedValue({ data: [] }),
       addRef: jest.fn(),
       release: jest.fn(),
       ensureReady: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -50,15 +67,88 @@ describe('CodexRuntimeService', () => {
         authService as never,
         historyService as never,
         appServer as never,
+        hooksService as never,
+        titleService as never,
       ),
       sessionsService,
       authService,
       appServer,
+      hooksService,
     };
   }
 
+  function wireAppServerTurn(
+    appServer: ReturnType<typeof createService>['appServer'],
+  ) {
+    let notificationHandler:
+      | ((notification: { method: string; params: unknown }) => void)
+      | null = null;
+    let requestHandler: unknown = null;
+    let turnStartParams: unknown = null;
+
+    appServer.onNotification.mockImplementation((handler) => {
+      notificationHandler = handler;
+      return () => undefined;
+    });
+    appServer.onRequest.mockImplementation((handler) => {
+      requestHandler = handler;
+      return () => undefined;
+    });
+    appServer.request.mockImplementation(
+      async (method: string, params: unknown) => {
+        if (method === 'thread/start') {
+          return { thread: { id: 'thread-1' } };
+        }
+        if (method === 'turn/start') {
+          turnStartParams = params;
+          return { turn: { id: 'turn-1' } };
+        }
+        return {};
+      },
+    );
+
+    return {
+      get notificationHandler() {
+        if (!notificationHandler) {
+          throw new Error('notification handler was not registered');
+        }
+        return notificationHandler;
+      },
+      get requestHandler() {
+        return requestHandler;
+      },
+      get turnStartParams() {
+        return turnStartParams;
+      },
+    };
+  }
+
+  async function startAppServerTurn(
+    service: CodexRuntimeService,
+    selectedPermissionMode: string,
+  ) {
+    const state = (service as any).ensureRuntimeState(7);
+    state.selectedPermissionMode = selectedPermissionMode;
+    state.selectedModel = 'gpt-test';
+    const iterator = (service as any).runTurnOnAppServer(
+      7,
+      state,
+      '/tmp/project',
+      [{ type: 'text', text: 'Plan this change' }],
+      new AbortController().signal,
+    ) as AsyncGenerator<unknown>;
+
+    const first = await iterator.next();
+    expect(first.value).toEqual({
+      type: 'thread.started',
+      thread_id: 'thread-1',
+    });
+    return iterator;
+  }
+
   it('prewarms the shared app-server and caches session metadata', async () => {
-    const { service, sessionsService, authService, appServer } = createService();
+    const { service, sessionsService, authService, appServer } =
+      createService();
 
     await service.prewarmSession(7);
 
@@ -112,5 +202,109 @@ describe('CodexRuntimeService', () => {
       8000,
     );
     expect(models).toEqual([{ id: 'gpt-test', displayName: 'GPT Test' }]);
+  });
+
+  it('uses native Codex collaboration mode for plan turns without injecting a prompt', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+
+    const iterator = await startAppServerTurn(service, 'plan');
+
+    expect(wire.turnStartParams).toEqual({
+      threadId: 'thread-1',
+      input: [{ type: 'text', text: 'Plan this change' }],
+      collaborationMode: {
+        mode: 'plan',
+        settings: {
+          model: 'gpt-test',
+          reasoning_effort: null,
+          developer_instructions: null,
+        },
+      },
+    });
+    expect(JSON.stringify(wire.turnStartParams)).not.toContain(
+      'You are in plan mode',
+    );
+
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { status: 'completed' } },
+    });
+    await iterator.next();
+    await iterator.next();
+  });
+
+  it('omits Codex collaboration mode for non-plan turns', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+
+    const iterator = await startAppServerTurn(service, 'default');
+
+    expect(wire.turnStartParams).toEqual({
+      threadId: 'thread-1',
+      input: [{ type: 'text', text: 'Plan this change' }],
+    });
+
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { status: 'completed' } },
+    });
+    await iterator.next();
+    await iterator.next();
+  });
+
+  it('normalizes streamed Codex plan deltas and completed plan items', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const iterator = await startAppServerTurn(service, 'plan');
+
+    wire.notificationHandler({
+      method: 'item/plan/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'turn-1-plan',
+        delta: '# Draft plan\n',
+      },
+    });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: 'item.updated',
+        item: {
+          id: 'turn-1-plan',
+          type: 'plan',
+          text: '# Draft plan\n',
+        },
+      },
+    });
+
+    wire.notificationHandler({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1',
+        item: {
+          id: 'turn-1-plan',
+          type: 'plan',
+          text: '# Final plan\n',
+        },
+      },
+    });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: 'item.completed',
+        item: {
+          id: 'turn-1-plan',
+          type: 'plan',
+          text: '# Final plan\n',
+        },
+      },
+    });
+
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { status: 'completed' } },
+    });
+    await iterator.next();
+    await iterator.next();
   });
 });

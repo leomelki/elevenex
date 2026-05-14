@@ -1,7 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type {
   ApprovalMode,
-  Input,
   SandboxMode,
   ThreadEvent,
   ThreadItem,
@@ -92,14 +91,6 @@ const CODEX_MODELS: ClaudeModelOption[] = [
     supportsEffort: true,
   },
 ];
-const CODEX_PLAN_MODE_INSTRUCTION = [
-  'You are in plan mode.',
-  'Analyze the request and repository, then respond with a concrete implementation plan.',
-  'Do not modify files, apply patches, run write commands, install dependencies, commit changes, or perform destructive actions.',
-  'You may inspect files and run read-only commands when needed.',
-  'End with a clear list of proposed changes and verification steps.',
-].join('\n');
-
 interface CodexAppServerModel {
   id?: unknown;
   model?: unknown;
@@ -333,12 +324,6 @@ export class CodexRuntimeService extends EventEmitter {
           ? { type: 'text' as const, text: entry.text }
           : { type: 'localImage' as const, path: entry.path },
       );
-      const planInstruction = this.maybePlanModeInstruction(
-        state.selectedPermissionMode,
-      );
-      if (planInstruction) {
-        turnInput.unshift({ type: 'text', text: planInstruction });
-      }
 
       for await (const event of this.runTurnOnAppServer(
         sessionId,
@@ -546,6 +531,27 @@ export class CodexRuntimeService extends EventEmitter {
     terminal: boolean,
   ): void {
     const timestamp = new Date().toISOString();
+    const planItem = item as unknown as {
+      id: string;
+      type: string;
+      text?: string;
+    };
+    if (planItem.type === 'plan' && planItem.text?.trim()) {
+      this.upsertLiveItem(
+        sessionId,
+        {
+          id: planItem.id,
+          kind: 'assistant',
+          content: planItem.text,
+          sourceMessageId: planItem.id,
+          timestamp,
+          receivedAt: timestamp,
+        },
+        'message_start',
+        terminal,
+      );
+      return;
+    }
     if (item.type === 'agent_message' && item.text.trim()) {
       this.upsertLiveItem(
         sessionId,
@@ -1176,6 +1182,7 @@ export class CodexRuntimeService extends EventEmitter {
     // SDK-style `item.updated` deltas from the app-server's delta notifications.
     const messageText = new Map<string, string>();
     const reasoningText = new Map<string, string>();
+    const planText = new Map<string, string>();
     let lastUsage: Usage = {
       input_tokens: 0,
       cached_input_tokens: 0,
@@ -1262,6 +1269,7 @@ export class CodexRuntimeService extends EventEmitter {
             params?.item,
             messageText,
             reasoningText,
+            planText,
           );
           if (item) push({ type: 'item.started', item });
           return;
@@ -1272,6 +1280,7 @@ export class CodexRuntimeService extends EventEmitter {
             params?.item,
             messageText,
             reasoningText,
+            planText,
             { isFinal: true },
           );
           if (item) push({ type: 'item.completed', item });
@@ -1291,6 +1300,23 @@ export class CodexRuntimeService extends EventEmitter {
               type: 'agent_message',
               text: next,
             } as ThreadItem,
+          });
+          return;
+        }
+        case 'item/plan/delta': {
+          if (!matchesThread(params)) return;
+          const id = params?.itemId;
+          const delta = params?.delta;
+          if (typeof id !== 'string' || typeof delta !== 'string') return;
+          const next = (planText.get(id) ?? '') + delta;
+          planText.set(id, next);
+          push({
+            type: 'item.updated',
+            item: {
+              id,
+              type: 'plan',
+              text: next,
+            } as unknown as ThreadItem,
           });
           return;
         }
@@ -1457,6 +1483,7 @@ export class CodexRuntimeService extends EventEmitter {
       await this.appServer.request('turn/start', {
         threadId: threadIdFilter,
         input,
+        ...this.buildCollaborationModeParams(state),
       });
 
       while (!endStream || queue.length > 0) {
@@ -1750,12 +1777,13 @@ export class CodexRuntimeService extends EventEmitter {
   /**
    * Maps the v2 ThreadItem (camelCase, app-server) shape into the v1
    * ThreadItem (snake_case, SDK) shape that handleItemEvent expects. Returns
-   * `null` for items we don't render (userMessage, plan, hook prompt, etc.).
+   * `null` for items we don't render (userMessage, hook prompt, etc.).
    */
   private translateAppServerItem(
     raw: any,
     messageText: Map<string, string>,
     reasoningText: Map<string, string>,
+    planText: Map<string, string>,
     opts: { isFinal?: boolean } = {},
   ): ThreadItem | null {
     if (!raw || typeof raw !== 'object') return null;
@@ -1795,6 +1823,17 @@ export class CodexRuntimeService extends EventEmitter {
           type: 'reasoning',
           text: opts.isFinal ? text : (reasoningText.get(id) ?? text),
         } as ThreadItem;
+      }
+      case 'plan': {
+        const finalText = typeof raw.text === 'string' ? raw.text : '';
+        if (opts.isFinal || finalText) {
+          planText.set(id, finalText);
+        }
+        return {
+          id,
+          type: 'plan',
+          text: opts.isFinal ? finalText : (planText.get(id) ?? finalText),
+        } as unknown as ThreadItem;
       }
       case 'commandExecution':
         return {
@@ -1873,23 +1912,22 @@ export class CodexRuntimeService extends EventEmitter {
     );
   }
 
-  private applyPlanModeInstruction(
-    input: Input,
-    mode: CodexPermissionMode | null,
-  ): Input {
-    if (mode !== 'plan') {
-      return input;
+  private buildCollaborationModeParams(
+    state: CodexRuntimeState,
+  ): Record<string, unknown> {
+    if (state.selectedPermissionMode !== 'plan') {
+      return {};
     }
-    if (typeof input === 'string') {
-      return `${CODEX_PLAN_MODE_INSTRUCTION}\n\nUser request:\n${input}`;
-    }
-    return [{ type: 'text', text: CODEX_PLAN_MODE_INSTRUCTION }, ...input];
-  }
-
-  private maybePlanModeInstruction(
-    mode: CodexPermissionMode | null,
-  ): string | null {
-    return mode === 'plan' ? CODEX_PLAN_MODE_INSTRUCTION : null;
+    return {
+      collaborationMode: {
+        mode: 'plan',
+        settings: {
+          model: state.selectedModel ?? this.codexDefaultModel,
+          reasoning_effort: null,
+          developer_instructions: null,
+        },
+      },
+    };
   }
 
   private toContextUsage(model: string, usage: Usage): ClaudeContextUsage {

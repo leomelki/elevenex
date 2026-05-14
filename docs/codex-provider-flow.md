@@ -38,10 +38,11 @@ Elevenex maps the UI permission mode into Codex app-server sandbox settings:
 | `acceptEdits`       | `workspace-write`    | `never`               |
 | `bypassPermissions` | `danger-full-access` | `never`               |
 
-Codex plan mode additionally prepends a planning instruction to the turn so the
-agent analyzes the repository and returns an implementation plan without
-attempting edits. Plan-bypass remains Claude-specific because Codex does not
-expose Claude's interactive plan approval callback.
+Codex plan mode additionally sends Codex app-server's native
+`collaborationMode: { mode: "plan" }` turn option so Codex applies its built-in
+planning instructions and emits structured plan items. Plan-bypass remains
+Claude-specific because Codex does not expose Claude's interactive plan
+approval callback.
 
 When Codex app-server emits server-to-client JSON-RPC requests for command
 execution, file changes, permission-profile grants, `request_user_input`, or
@@ -57,6 +58,7 @@ Codex SDK items are normalized as follows:
 | Codex item              | Elevenex transcript item                |
 | ----------------------- | --------------------------------------- |
 | `agent_message`         | assistant message                       |
+| `plan`                  | assistant message with plan markdown    |
 | `reasoning`             | thinking block                          |
 | `command_execution`     | `Bash` tool use plus tool result        |
 | `file_change`           | `FileChanges` tool use plus tool result |
