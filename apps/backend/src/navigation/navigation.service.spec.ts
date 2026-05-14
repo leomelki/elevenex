@@ -130,6 +130,26 @@ describe('NavigationService', () => {
     });
   });
 
+  it('groups unmatched legacy sessions by worktree path instead of creating one workspace per session', async () => {
+    mockProjectsService.findAll.mockResolvedValue([
+      { id: 1, name: 'Project 1', createdAt: '2024-01-01', updatedAt: '2024-01-01' },
+    ]);
+    mockReposService.findByProject.mockResolvedValue([repo]);
+    mockWorkspacesService.listForRepo.mockResolvedValue([
+      workspace({ id: 1, name: 'Default', path: '/path/to/repo', currentBranch: 'main' }),
+    ]);
+    mockSessionsService.findByRepo.mockResolvedValue([
+      session({ id: 4, workspaceId: null, branchName: 'feature', worktreePath: '/path/feature', name: 'One' }),
+      session({ id: 5, workspaceId: null, branchName: 'feature', worktreePath: '/path/feature', name: 'Two' }),
+    ]);
+
+    const result = await service.getNavigationTreeLight();
+    const legacyWorkspaces = result[0].repos[0].workspaces.filter((item) => item.path === '/path/feature');
+
+    expect(legacyWorkspaces).toHaveLength(1);
+    expect(legacyWorkspaces[0].sessions.map((item) => item.id)).toEqual([4, 5]);
+  });
+
   it('marks repo errors when workspace reconciliation fails', async () => {
     mockProjectsService.findAll.mockResolvedValue([
       { id: 1, name: 'Project 1', createdAt: '2024-01-01', updatedAt: '2024-01-01' },

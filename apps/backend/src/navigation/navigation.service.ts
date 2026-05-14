@@ -36,6 +36,17 @@ export interface WorkspaceInTree {
   archivedSessions: SessionInTree[];
 }
 
+export interface BranchInTree {
+  name: string;
+  commit: string;
+  label: string;
+  current: boolean;
+  hasWorktree: boolean;
+  worktreePath: string | null;
+  sessions: SessionInTree[];
+  archivedSessions: SessionInTree[];
+}
+
 export interface RepoInTree {
   id: number;
   name: string;
@@ -44,6 +55,7 @@ export interface RepoInTree {
   error?: boolean;
   errorMessage?: string;
   workspaces: WorkspaceInTree[];
+  branches: BranchInTree[];
 }
 
 export interface ProjectInTree {
@@ -72,66 +84,19 @@ export class NavigationService {
           repos.map(async (repo) => {
             const sessions = await this.sessionsService.findByRepo(repo.id);
 
-            const workspaces = await this.workspacesService.listForRepo(repo);
-            const workspaceByPath = new Map(workspaces.map((workspace) => [workspace.path, workspace]));
-            const workspaceMap = new Map<number, WorkspaceInTree>(
-              workspaces.map((workspace) => [workspace.id, { ...workspace, sessions: [], archivedSessions: [] }]),
+            const workspaces = this.attachSessionsToWorkspaces(
+              repo.id,
+              await this.workspacesService.listForRepo(repo),
+              sessions,
             );
-
-            for (const s of sessions) {
-              let entry = s.workspaceId ? workspaceMap.get(s.workspaceId) : undefined;
-              if (!entry) {
-                const workspace = workspaceByPath.get(s.worktreePath);
-                if (workspace) {
-                  entry = workspaceMap.get(workspace.id);
-                }
-              }
-              if (!entry) {
-                entry = {
-                  id: 0 - s.id,
-                  name: s.branchName,
-                  path: s.worktreePath,
-                  isDefault: false,
-                  currentBranch: s.branchName,
-                  head: null,
-                  isDetached: false,
-                  isBare: false,
-                  isLocked: false,
-                  lockReason: null,
-                  isMissing: false,
-                  isDirty: false,
-                  branchCheckedOutElsewhere: false,
-                  checkedOutElsewherePath: null,
-                  sessions: [],
-                  archivedSessions: [],
-                };
-                workspaceMap.set(entry.id, entry);
-              }
-              const sessionInTree = {
-                id: s.id,
-                name: s.name,
-                status: s.status,
-                branchName: s.branchName,
-                workspaceId: s.workspaceId ?? entry.id,
-                repoId: repo.id,
-                hasUnreviewedCompletion: s.hasUnreviewedCompletion,
-                lastCompletionAt: s.lastCompletionAt,
-                lastCompletionKind: s.lastCompletionKind,
-                lastStateChangeAt: s.lastStateChangeAt,
-              };
-              if (s.status === 'archived') {
-                entry.archivedSessions.push(sessionInTree);
-              } else {
-                entry.sessions.push(sessionInTree);
-              }
-            }
 
             return {
               id: repo.id,
               name: repo.name,
               path: repo.path,
               color: repo.color,
-              workspaces: Array.from(workspaceMap.values()),
+              workspaces,
+              branches: this.toCompatibilityBranches(workspaces),
             };
           }),
         );
@@ -162,94 +127,11 @@ export class NavigationService {
                 this.sessionsService.findByRepo(repo.id),
               ]);
 
-              const workspacesWithSessions: WorkspaceInTree[] = workspaces.map(
-                (workspace) => {
-                  const workspaceSessions = sessions.filter((s) =>
-                    s.workspaceId === workspace.id
-                    || (!s.workspaceId && s.worktreePath === workspace.path),
-                  );
-                  const activeSessions = workspaceSessions
-                    .filter((s) => s.status !== 'archived')
-                    .map((s) => ({
-                      id: s.id,
-                      name: s.name,
-                      status: s.status,
-                      branchName: s.branchName,
-                      workspaceId: s.workspaceId ?? workspace.id,
-                      repoId: repo.id,
-                      hasUnreviewedCompletion: s.hasUnreviewedCompletion,
-                      lastCompletionAt: s.lastCompletionAt,
-                      lastCompletionKind: s.lastCompletionKind,
-                      lastStateChangeAt: s.lastStateChangeAt,
-                    }));
-                  const archivedSessions = workspaceSessions
-                    .filter((s) => s.status === 'archived')
-                    .map((s) => ({
-                      id: s.id,
-                      name: s.name,
-                      status: s.status,
-                      branchName: s.branchName,
-                      workspaceId: s.workspaceId ?? workspace.id,
-                      repoId: repo.id,
-                      hasUnreviewedCompletion: s.hasUnreviewedCompletion,
-                      lastCompletionAt: s.lastCompletionAt,
-                      lastCompletionKind: s.lastCompletionKind,
-                      lastStateChangeAt: s.lastStateChangeAt,
-                    }));
-
-                  return {
-                    ...workspace,
-                    sessions: activeSessions,
-                    archivedSessions,
-                  };
-                },
+              const workspacesWithSessions = this.attachSessionsToWorkspaces(
+                repo.id,
+                workspaces,
+                sessions,
               );
-
-              const workspaceSessionIds = new Set(workspacesWithSessions.flatMap((workspace) => [
-                ...workspace.sessions,
-                ...workspace.archivedSessions,
-              ].map((session) => session.id)));
-              const archivedOnlyWorkspaces = new Map<string, SessionInTree[]>();
-              for (const session of sessions) {
-                if (session.status !== 'archived' || workspaceSessionIds.has(session.id)) {
-                  continue;
-                }
-                const entry = archivedOnlyWorkspaces.get(session.worktreePath) ?? [];
-                entry.push({
-                  id: session.id,
-                  name: session.name,
-                  status: session.status,
-                  branchName: session.branchName,
-                  workspaceId: session.workspaceId ?? null,
-                  repoId: repo.id,
-                  hasUnreviewedCompletion: session.hasUnreviewedCompletion,
-                  lastCompletionAt: session.lastCompletionAt,
-                  lastCompletionKind: session.lastCompletionKind,
-                  lastStateChangeAt: session.lastStateChangeAt,
-                });
-                archivedOnlyWorkspaces.set(session.worktreePath, entry);
-              }
-
-              for (const [worktreePath, archivedSessions] of archivedOnlyWorkspaces) {
-                workspacesWithSessions.push({
-                  id: 0 - archivedSessions[0].id,
-                  name: archivedSessions[0].branchName,
-                  path: worktreePath,
-                  isDefault: false,
-                  currentBranch: archivedSessions[0].branchName,
-                  head: null,
-                  isDetached: false,
-                  isBare: false,
-                  isLocked: false,
-                  lockReason: null,
-                  isMissing: false,
-                  isDirty: false,
-                  branchCheckedOutElsewhere: false,
-                  checkedOutElsewherePath: null,
-                  sessions: [],
-                  archivedSessions,
-                });
-              }
 
               return {
                 id: repo.id,
@@ -257,6 +139,7 @@ export class NavigationService {
                 path: repo.path,
                 color: repo.color,
                 workspaces: workspacesWithSessions,
+                branches: this.toCompatibilityBranches(workspacesWithSessions),
               };
             } catch {
               // Handle unreachable repos gracefully
@@ -268,6 +151,7 @@ export class NavigationService {
                 error: true,
                 errorMessage: 'Path not found',
                 workspaces: [],
+                branches: [],
               };
             }
           }),
@@ -282,5 +166,109 @@ export class NavigationService {
     );
 
     return tree;
+  }
+
+  private attachSessionsToWorkspaces(
+    repoId: number,
+    workspaces: Omit<WorkspaceInTree, 'sessions' | 'archivedSessions'>[],
+    sessions: Awaited<ReturnType<SessionsService['findByRepo']>>,
+  ): WorkspaceInTree[] {
+    const workspaceMap = new Map<number, WorkspaceInTree>(
+      workspaces.map((workspace) => [workspace.id, { ...workspace, sessions: [], archivedSessions: [] }]),
+    );
+    const workspaceByPath = new Map<string, WorkspaceInTree>();
+    for (const workspace of workspaceMap.values()) {
+      workspaceByPath.set(workspace.path, workspace);
+    }
+
+    const virtualWorkspaceByPath = new Map<string, WorkspaceInTree>();
+
+    for (const session of sessions) {
+      const entry =
+        (session.workspaceId ? workspaceMap.get(session.workspaceId) : undefined)
+        ?? workspaceByPath.get(session.worktreePath)
+        ?? this.getOrCreateVirtualWorkspace(repoId, session, virtualWorkspaceByPath);
+
+      const sessionInTree: SessionInTree = {
+        id: session.id,
+        name: session.name,
+        status: session.status,
+        branchName: session.branchName,
+        workspaceId: entry.id > 0 ? entry.id : null,
+        repoId,
+        hasUnreviewedCompletion: session.hasUnreviewedCompletion,
+        lastCompletionAt: session.lastCompletionAt,
+        lastCompletionKind: session.lastCompletionKind,
+        lastStateChangeAt: session.lastStateChangeAt,
+      };
+
+      if (session.status === 'archived') {
+        entry.archivedSessions.push(sessionInTree);
+      } else {
+        entry.sessions.push(sessionInTree);
+      }
+    }
+
+    return [
+      ...Array.from(workspaceMap.values()),
+      ...Array.from(virtualWorkspaceByPath.values()),
+    ].sort((a, b) => {
+      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  private getOrCreateVirtualWorkspace(
+    repoId: number,
+    session: Awaited<ReturnType<SessionsService['findByRepo']>>[number],
+    virtualWorkspaceByPath: Map<string, WorkspaceInTree>,
+  ): WorkspaceInTree {
+    const existing = virtualWorkspaceByPath.get(session.worktreePath);
+    if (existing) {
+      return existing;
+    }
+
+    const workspace: WorkspaceInTree = {
+      id: this.virtualWorkspaceId(repoId, session.worktreePath),
+      name: session.branchName,
+      path: session.worktreePath,
+      isDefault: false,
+      currentBranch: session.branchName,
+      head: null,
+      isDetached: false,
+      isBare: false,
+      isLocked: false,
+      lockReason: null,
+      isMissing: false,
+      isDirty: false,
+      branchCheckedOutElsewhere: false,
+      checkedOutElsewherePath: null,
+      sessions: [],
+      archivedSessions: [],
+    };
+
+    virtualWorkspaceByPath.set(session.worktreePath, workspace);
+    return workspace;
+  }
+
+  private virtualWorkspaceId(repoId: number, worktreePath: string): number {
+    let hash = 0;
+    for (const char of `${repoId}:${worktreePath}`) {
+      hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+    }
+    return -Math.max(1, Math.abs(hash));
+  }
+
+  private toCompatibilityBranches(workspaces: WorkspaceInTree[]): BranchInTree[] {
+    return workspaces.map((workspace) => ({
+      name: workspace.currentBranch ?? workspace.name,
+      commit: workspace.head ?? '',
+      label: workspace.currentBranch ?? workspace.name,
+      current: workspace.isDefault,
+      hasWorktree: !workspace.isMissing,
+      worktreePath: workspace.path,
+      sessions: workspace.sessions,
+      archivedSessions: workspace.archivedSessions,
+    }));
   }
 }

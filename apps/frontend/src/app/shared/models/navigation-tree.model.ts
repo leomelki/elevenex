@@ -1,7 +1,13 @@
 import { SessionInTree } from './session.model';
 import { Workspace } from './workspace.model';
+import { BranchInfo } from './branch.model';
 
 export interface NavigationWorkspace extends Workspace {
+  sessions: SessionInTree[];
+  archivedSessions?: SessionInTree[];
+}
+
+export interface NavigationBranch extends BranchInfo {
   sessions: SessionInTree[];
   archivedSessions?: SessionInTree[];
 }
@@ -13,7 +19,8 @@ export interface NavigationRepo {
   color?: string | null;
   error?: boolean;
   errorMessage?: string;
-  workspaces: NavigationWorkspace[];
+  workspaces?: NavigationWorkspace[];
+  branches: NavigationBranch[];
 }
 
 export interface NavigationProject {

@@ -65,6 +65,7 @@ export class WorkspacesService {
   async listForRepo(repo: typeof schema.repos.$inferSelect): Promise<WorkspaceSnapshot[]> {
     await this.ensureDefaultWorkspace(repo);
     await this.reconcileGitWorktrees(repo);
+    await this.reconcileSessionWorktrees(repo);
 
     const rows = await this.db
       .select()
@@ -316,6 +317,44 @@ export class WorkspacesService {
         createdFromRef: worktree.branch ?? worktree.head,
       });
       await this.backfillSessionsForWorkspace(repo.id, rows[0].id, worktree.path);
+    }
+  }
+
+  private async reconcileSessionWorktrees(repo: typeof schema.repos.$inferSelect) {
+    const [existing, sessions] = await Promise.all([
+      this.db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.repoId, repo.id)),
+      this.sessionsService.findByRepo(repo.id),
+    ]);
+    const workspaceByPath = new Map(existing.map((workspace) => [workspace.path, workspace]));
+    const sessionsByPath = new Map<string, Awaited<ReturnType<SessionsService['findByRepo']>>>();
+
+    for (const session of sessions) {
+      if (workspaceByPath.has(session.worktreePath)) {
+        continue;
+      }
+      const entry = sessionsByPath.get(session.worktreePath) ?? [];
+      entry.push(session);
+      sessionsByPath.set(session.worktreePath, entry);
+    }
+
+    for (const [worktreePath, pathSessions] of sessionsByPath) {
+      const first = pathSessions[0];
+      const name = await this.uniqueWorkspaceName(
+        repo.id,
+        first.branchName || path.basename(worktreePath),
+      );
+      const rows = await this.insertWorkspace({
+        repoId: repo.id,
+        name,
+        path: worktreePath,
+        isDefault: await this.samePath(worktreePath, repo.path),
+        createdFromRef: first.branchName,
+      });
+      workspaceByPath.set(worktreePath, rows[0]);
+      await this.backfillSessionsForWorkspace(repo.id, rows[0].id, worktreePath);
     }
   }
 

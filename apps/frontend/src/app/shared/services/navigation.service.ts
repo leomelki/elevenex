@@ -90,7 +90,7 @@ export class NavigationService {
         ...project,
         repos: project.repos.map(repo => ({
           ...repo,
-        workspaces: repo.workspaces.map(workspace => ({
+        workspaces: (repo.workspaces ?? []).map(workspace => ({
           ...workspace,
           sessions: workspace.sessions.map(session =>
             session.id === sessionId
@@ -135,11 +135,11 @@ export class NavigationService {
     const previousProjectIds = new Set(previous.map(project => project.id));
     const previousRepoIds = new Set(previous.flatMap(project => project.repos.map(repo => repo.id)));
     const previousWorkspaceKeys = new Set(previous.flatMap(project =>
-      project.repos.flatMap(repo => repo.workspaces.map(workspace => this.workspaceKey(repo.id, workspace.id))),
+      project.repos.flatMap(repo => (repo.workspaces ?? []).map(workspace => this.workspaceKey(repo.id, workspace.id))),
     ));
     const previousSessionIds = new Set(previous.flatMap(project =>
       project.repos.flatMap(repo =>
-        repo.workspaces.flatMap(workspace => [
+        (repo.workspaces ?? []).flatMap(workspace => [
           ...workspace.sessions,
           ...(workspace.archivedSessions ?? []),
         ].map(session => session.id)),
@@ -168,7 +168,7 @@ export class NavigationService {
           add(`repo-${repo.id}`);
         }
 
-        for (const workspace of repo.workspaces) {
+        for (const workspace of repo.workspaces ?? []) {
           const workspaceKey = this.workspaceKey(repo.id, workspace.id);
           const hasNewWorkspace = !previousWorkspaceKeys.has(workspaceKey);
           const hasNewSession = [

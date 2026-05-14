@@ -28,9 +28,10 @@ import { NavigationService } from '../../../shared/services/navigation.service';
 import { SessionsService } from '../../../shared/services/sessions.service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { TabService } from '../../session/tab-service';
-import { NavigationProject, NavigationRepo, NavigationWorkspace } from '../../../shared/models/navigation-tree.model';
+import { NavigationBranch, NavigationProject, NavigationRepo, NavigationWorkspace } from '../../../shared/models/navigation-tree.model';
 import { SessionInTree } from '../../../shared/models/session.model';
 import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
+import { BranchSearch } from '../branch-search/branch-search';
 import { WorkspacesService } from '@/shared/services/workspaces.service';
 import { ZardInputDirective } from '@/shared/components/input';
 import { PlannotatorStateService } from '@/features/plannotator';
@@ -196,6 +197,11 @@ export class Sidebar implements OnInit, OnDestroy {
   private projectRevealTimer: number | null = null;
   private projectHighlightTimer: number | null = null;
   private openWorktreeTimer: number | null = null;
+  openingWorktreeBranchKey = signal<string | null>(null);
+
+  // Compatibility hook for older branch-first tests/integrations. The template no
+  // longer renders BranchSearch, but callers may still assign a test double here.
+  branchSearch?: Pick<BranchSearch, 'open'>;
 
   private getOpenWorktreePathForSession(sessionId: number): string | null {
     return this.tabService.tabs().find(tab => tab.sessionId === sessionId)?.worktreePath ?? null;
@@ -889,7 +895,7 @@ export class Sidebar implements OnInit, OnDestroy {
           continue;
         }
 
-        for (const workspace of repo.workspaces) {
+        for (const workspace of this.filterWorkspaces(repo)) {
           if (!this.navService.isExpanded(`workspace-${repo.id}-${workspace.id}`)) {
             continue;
           }
@@ -931,10 +937,37 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   filterWorkspaces(repo: NavigationRepo): NavigationWorkspace[] {
-    return repo.workspaces;
+    if (repo.workspaces) {
+      return repo.workspaces;
+    }
+
+    return (repo.branches ?? []).map((branch, index) => ({
+      id: this.virtualWorkspaceId(repo.id, branch.worktreePath ?? branch.name, index),
+      repoId: repo.id,
+      name: branch.name,
+      path: branch.worktreePath ?? repo.path,
+      isDefault: false,
+      createdFromRef: branch.name,
+      currentBranch: branch.name,
+      head: branch.commit || null,
+      isDetached: false,
+      isBare: false,
+      isLocked: false,
+      lockReason: null,
+      isMissing: !branch.hasWorktree,
+      isDirty: false,
+      branchCheckedOutElsewhere: false,
+      checkedOutElsewherePath: null,
+      sessions: branch.sessions,
+      archivedSessions: branch.archivedSessions ?? [],
+    }));
   }
 
   openBranchSearchForRepo(repo: NavigationRepo) {
+    if (this.branchSearch) {
+      this.branchSearch.open([repo]);
+      return;
+    }
     this.openCreateWorkspace(repo);
   }
 
@@ -956,6 +989,26 @@ export class Sidebar implements OnInit, OnDestroy {
         this.openingWorkspaceRepoId.set(null);
       }
     }, 0);
+  }
+
+  openCreateWorktree(repo: NavigationRepo, branch: NavigationBranch) {
+    if (this.openingWorktreeBranchKey() !== null) {
+      return;
+    }
+
+    this.openingWorktreeBranchKey.set(this.getWorktreeBranchKey(repo.id, branch.name));
+    this.openWorktreeTimer = window.setTimeout(() => {
+      this.openWorktreeTimer = null;
+      try {
+        this.worktreeSheet.open(repo.id, branch.name, repo.path, repo.name, false);
+      } finally {
+        this.openingWorktreeBranchKey.set(null);
+      }
+    }, 0);
+  }
+
+  isOpeningWorktree(repo: NavigationRepo, branch: NavigationBranch): boolean {
+    return this.openingWorktreeBranchKey() === this.getWorktreeBranchKey(repo.id, branch.name);
   }
 
   switchWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace) {
@@ -998,6 +1051,18 @@ export class Sidebar implements OnInit, OnDestroy {
       },
       error: (err) => toast.error(err?.error?.message || 'Could not create branch'),
     });
+  }
+
+  private getWorktreeBranchKey(repoId: number, branchName: string): string {
+    return `${repoId}:${branchName}`;
+  }
+
+  private virtualWorkspaceId(repoId: number, worktreePath: string, index: number): number {
+    let hash = index + 1;
+    for (const char of `${repoId}:${worktreePath}`) {
+      hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+    }
+    return -Math.max(1, Math.abs(hash));
   }
 
   private revealProjectRow(projectId: number) {

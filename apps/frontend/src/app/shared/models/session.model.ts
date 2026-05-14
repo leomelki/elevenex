@@ -2,7 +2,7 @@ export interface Session {
   id: number;
   repoId: number;
   projectId: number;
-  workspaceId: number | null;
+  workspaceId?: number | null;
   branchName: string;
   worktreePath: string;
   name: string | null;
@@ -26,7 +26,7 @@ export interface Session {
 export interface SessionInTree {
   id: number;
   repoId: number;
-  workspaceId: number | null;
+  workspaceId?: number | null;
   branchName: string;
   name: string | null;
   status: 'created' | 'active' | 'archived' | 'stopped';
