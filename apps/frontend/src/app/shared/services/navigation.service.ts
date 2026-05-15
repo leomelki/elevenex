@@ -1,10 +1,14 @@
 import { inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
+import { finalize } from 'rxjs';
 import { NavigationProject } from '../models/navigation-tree.model';
 import { Session } from '../models/session.model';
 
-type SessionCompletionPatch = Pick<Session, 'hasUnreviewedCompletion' | 'lastCompletionAt' | 'lastCompletionKind' | 'lastStateChangeAt'>;
+type SessionCompletionPatch = Pick<
+  Session,
+  'hasUnreviewedCompletion' | 'lastCompletionAt' | 'lastCompletionKind' | 'lastStateChangeAt'
+>;
 
 @Injectable({ providedIn: 'root' })
 export class NavigationService {
@@ -18,8 +22,12 @@ export class NavigationService {
   expandedKeys = signal<Set<string>>(this.loadExpandedKeys());
   revealProjectId = signal<number | null>(null);
   highlightedProjectId = signal<number | null>(null);
+  private loadVersion = 0;
+  private fullRefreshInFlight = false;
+  private fullRefreshQueued = false;
 
   loadTree() {
+    const version = ++this.loadVersion;
     const hasData = this.tree().length > 0;
     if (!hasData) {
       this.loading.set(true);
@@ -27,11 +35,15 @@ export class NavigationService {
 
     this.http.get<NavigationProject[]>('/api/navigation/tree/light').subscribe({
       next: (data) => {
+        if (version !== this.loadVersion) {
+          return;
+        }
         if (hasData) {
           this.expandNewTreeItems(this.tree(), data);
         }
         this.tree.set(data);
         this.loading.set(false);
+        this.refreshFullTree();
       },
       error: () => this.loading.set(false),
     });
@@ -86,29 +98,56 @@ export class NavigationService {
   }
 
   patchSessionCompletion(sessionId: number, completion: SessionCompletionPatch): void {
-    this.tree.update(projects => projects.map(project => ({
+    this.tree.update((projects) =>
+      projects.map((project) => ({
         ...project,
-        repos: project.repos.map(repo => ({
+        repos: project.repos.map((repo) => ({
           ...repo,
-        workspaces: (repo.workspaces ?? []).map(workspace => ({
-          ...workspace,
-          sessions: workspace.sessions.map(session =>
-            session.id === sessionId
-              ? { ...session, ...completion }
-              : session,
-          ),
-          archivedSessions: workspace.archivedSessions?.map(session =>
-            session.id === sessionId
-              ? { ...session, ...completion }
-              : session,
-          ),
+          workspaces: (repo.workspaces ?? []).map((workspace) => ({
+            ...workspace,
+            sessions: workspace.sessions.map((session) =>
+              session.id === sessionId ? { ...session, ...completion } : session,
+            ),
+            archivedSessions: workspace.archivedSessions?.map((session) =>
+              session.id === sessionId ? { ...session, ...completion } : session,
+            ),
+          })),
         })),
       })),
-    })));
+    );
   }
 
   refreshTree() {
     this.loadTree();
+  }
+
+  private refreshFullTree(): void {
+    if (this.fullRefreshInFlight) {
+      this.fullRefreshQueued = true;
+      return;
+    }
+
+    this.fullRefreshInFlight = true;
+    this.http
+      .get<NavigationProject[]>('/api/navigation/tree')
+      .pipe(
+        finalize(() => {
+          this.fullRefreshInFlight = false;
+          if (this.fullRefreshQueued) {
+            this.fullRefreshQueued = false;
+            this.refreshFullTree();
+          }
+        }),
+      )
+      .subscribe({
+        next: (data) => {
+          this.expandNewTreeItems(this.tree(), data);
+          this.tree.set(data);
+        },
+        error: () => {
+          // The light tree is already rendered; keep it if git reconciliation fails.
+        },
+      });
   }
 
   private loadExpandedKeys(): Set<string> {
@@ -132,19 +171,28 @@ export class NavigationService {
   }
 
   private expandNewTreeItems(previous: NavigationProject[], next: NavigationProject[]): void {
-    const previousProjectIds = new Set(previous.map(project => project.id));
-    const previousRepoIds = new Set(previous.flatMap(project => project.repos.map(repo => repo.id)));
-    const previousWorkspaceKeys = new Set(previous.flatMap(project =>
-      project.repos.flatMap(repo => (repo.workspaces ?? []).map(workspace => this.workspaceKey(repo.id, workspace.id))),
-    ));
-    const previousSessionIds = new Set(previous.flatMap(project =>
-      project.repos.flatMap(repo =>
-        (repo.workspaces ?? []).flatMap(workspace => [
-          ...workspace.sessions,
-          ...(workspace.archivedSessions ?? []),
-        ].map(session => session.id)),
+    const previousProjectIds = new Set(previous.map((project) => project.id));
+    const previousRepoIds = new Set(
+      previous.flatMap((project) => project.repos.map((repo) => repo.id)),
+    );
+    const previousWorkspaceKeys = new Set(
+      previous.flatMap((project) =>
+        project.repos.flatMap((repo) =>
+          (repo.workspaces ?? []).map((workspace) => this.workspaceKey(repo.id, workspace.id)),
+        ),
       ),
-    ));
+    );
+    const previousSessionIds = new Set(
+      previous.flatMap((project) =>
+        project.repos.flatMap((repo) =>
+          (repo.workspaces ?? []).flatMap((workspace) =>
+            [...workspace.sessions, ...(workspace.archivedSessions ?? [])].map(
+              (session) => session.id,
+            ),
+          ),
+        ),
+      ),
+    );
 
     const expanded = new Set(this.expandedKeys());
     let changed = false;
@@ -171,10 +219,9 @@ export class NavigationService {
         for (const workspace of repo.workspaces ?? []) {
           const workspaceKey = this.workspaceKey(repo.id, workspace.id);
           const hasNewWorkspace = !previousWorkspaceKeys.has(workspaceKey);
-          const hasNewSession = [
-            ...workspace.sessions,
-            ...(workspace.archivedSessions ?? []),
-          ].some(session => !previousSessionIds.has(session.id));
+          const hasNewSession = [...workspace.sessions, ...(workspace.archivedSessions ?? [])].some(
+            (session) => !previousSessionIds.has(session.id),
+          );
 
           if (hasNewWorkspace || hasNewSession) {
             add(`project-${project.id}`);

@@ -46,15 +46,25 @@ describe('NavigationService', () => {
             id: 2,
             name: 'Repo',
             path: '/tmp/repo',
-            branches: [
+            branches: [],
+            workspaces: [
               {
-                name: 'main',
-                label: 'main',
-                current: true,
-                isRemote: false,
-                hasWorktree: true,
-                worktreePath: '/tmp/repo',
-                commit: 'abc123',
+                id: 3,
+                repoId: 2,
+                name: 'Default',
+                path: '/tmp/repo',
+                isDefault: true,
+                createdFromRef: 'main',
+                currentBranch: 'main',
+                head: 'abc123',
+                isDetached: false,
+                isBare: false,
+                isLocked: false,
+                lockReason: null,
+                isMissing: false,
+                isDirty: false,
+                branchCheckedOutElsewhere: false,
+                checkedOutElsewherePath: null,
                 sessions: [
                   {
                     id: 42,
@@ -82,7 +92,7 @@ describe('NavigationService', () => {
       lastStateChangeAt: '2026-01-01T00:01:00.000Z',
     });
 
-    const session = service.tree()[0].repos[0].branches[0].sessions[0];
+    const session = service.tree()[0].repos[0].workspaces![0].sessions[0];
     expect(session.hasUnreviewedCompletion).toBe(false);
     expect(session.lastCompletionAt).toBe('2026-01-01T00:00:00.000Z');
     expect(session.lastCompletionKind).toBe('completed');
@@ -90,31 +100,44 @@ describe('NavigationService', () => {
   });
 
   it('does not auto-expand the tree on the initial load', () => {
-    httpGetMock.mockReturnValue(of([
-      {
-        id: 1,
-        name: 'Project',
-        repos: [
-          {
-            id: 2,
-            name: 'Repo',
-            path: '/tmp/repo',
-            branches: [
-              {
-                name: 'main',
-                label: 'main',
-                current: true,
-                isRemote: false,
-                hasWorktree: true,
-                worktreePath: '/tmp/repo',
-                commit: 'abc123',
-                sessions: [],
-              },
-            ],
-          },
-        ],
-      },
-    ]));
+    httpGetMock.mockReturnValue(
+      of([
+        {
+          id: 1,
+          name: 'Project',
+          repos: [
+            {
+              id: 2,
+              name: 'Repo',
+              path: '/tmp/repo',
+              branches: [],
+              workspaces: [
+                {
+                  id: 3,
+                  repoId: 2,
+                  name: 'Default',
+                  path: '/tmp/repo',
+                  isDefault: true,
+                  createdFromRef: 'main',
+                  currentBranch: 'main',
+                  head: 'abc123',
+                  isDetached: false,
+                  isBare: false,
+                  isLocked: false,
+                  lockReason: null,
+                  isMissing: false,
+                  isDirty: false,
+                  branchCheckedOutElsewhere: false,
+                  checkedOutElsewherePath: null,
+                  sessions: [],
+                  archivedSessions: [],
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+    );
 
     service.loadTree();
 
@@ -122,7 +145,7 @@ describe('NavigationService', () => {
     expect(localStorageMock.setItem).not.toHaveBeenCalled();
   });
 
-  it('auto-expands newly added projects, repositories, branches, and sessions on refresh', () => {
+  it('auto-expands newly added projects, repositories, workspaces, and sessions on refresh', () => {
     service.tree.set([
       {
         id: 1,
@@ -132,98 +155,127 @@ describe('NavigationService', () => {
             id: 2,
             name: 'Repo',
             path: '/tmp/repo',
-            branches: [
+            branches: [],
+            workspaces: [
               {
-                name: 'main',
-                label: 'main',
-                current: true,
-                isRemote: false,
-                hasWorktree: true,
-                worktreePath: '/tmp/repo',
-                commit: 'abc123',
+                id: 3,
+                repoId: 2,
+                name: 'Default',
+                path: '/tmp/repo',
+                isDefault: true,
+                createdFromRef: 'main',
+                currentBranch: 'main',
+                head: 'abc123',
+                isDetached: false,
+                isBare: false,
+                isLocked: false,
+                lockReason: null,
+                isMissing: false,
+                isDirty: false,
+                branchCheckedOutElsewhere: false,
+                checkedOutElsewherePath: null,
                 sessions: [],
+                archivedSessions: [],
               },
             ],
           },
         ],
       },
     ]);
-    httpGetMock.mockReturnValue(of([
-      {
-        id: 1,
-        name: 'Project',
-        repos: [
-          {
-            id: 2,
-            name: 'Repo',
-            path: '/tmp/repo',
-            branches: [
-              {
-                name: 'main',
-                label: 'main',
-                current: true,
-                isRemote: false,
-                hasWorktree: true,
-                worktreePath: '/tmp/repo',
-                commit: 'abc123',
-                sessions: [
-                  {
-                    id: 42,
-                    repoId: 2,
-                    branchName: 'main',
-                    name: 'Session 42',
-                    status: 'active',
-                    hasUnreviewedCompletion: false,
-                    lastCompletionAt: null,
-                    lastCompletionKind: null,
-                    lastStateChangeAt: null,
-                  },
-                ],
-              },
-              {
-                name: 'feature',
-                label: 'feature',
-                current: false,
-                isRemote: false,
-                hasWorktree: true,
-                worktreePath: '/tmp/repo-feature',
-                commit: 'def456',
-                sessions: [],
-              },
-            ],
-          },
-          {
-            id: 3,
-            name: 'New Repo',
-            path: '/tmp/new-repo',
-            branches: [],
-          },
-        ],
-      },
-      {
-        id: 4,
-        name: 'New Project',
-        repos: [],
-      },
-    ]));
+    httpGetMock.mockReturnValue(
+      of([
+        {
+          id: 1,
+          name: 'Project',
+          repos: [
+            {
+              id: 2,
+              name: 'Repo',
+              path: '/tmp/repo',
+              branches: [],
+              workspaces: [
+                {
+                  id: 3,
+                  repoId: 2,
+                  name: 'Default',
+                  path: '/tmp/repo',
+                  isDefault: true,
+                  createdFromRef: 'main',
+                  currentBranch: 'main',
+                  head: 'abc123',
+                  isDetached: false,
+                  isBare: false,
+                  isLocked: false,
+                  lockReason: null,
+                  isMissing: false,
+                  isDirty: false,
+                  branchCheckedOutElsewhere: false,
+                  checkedOutElsewherePath: null,
+                  sessions: [
+                    {
+                      id: 42,
+                      repoId: 2,
+                      branchName: 'main',
+                      name: 'Session 42',
+                      status: 'active',
+                      hasUnreviewedCompletion: false,
+                      lastCompletionAt: null,
+                      lastCompletionKind: null,
+                      lastStateChangeAt: null,
+                    },
+                  ],
+                  archivedSessions: [],
+                },
+                {
+                  id: 4,
+                  repoId: 2,
+                  name: 'Feature',
+                  path: '/tmp/repo-feature',
+                  isDefault: false,
+                  createdFromRef: 'feature',
+                  currentBranch: 'feature',
+                  head: 'def456',
+                  isDetached: false,
+                  isBare: false,
+                  isLocked: false,
+                  lockReason: null,
+                  isMissing: false,
+                  isDirty: false,
+                  branchCheckedOutElsewhere: false,
+                  checkedOutElsewherePath: null,
+                  sessions: [],
+                  archivedSessions: [],
+                },
+              ],
+            },
+            {
+              id: 3,
+              name: 'New Repo',
+              path: '/tmp/new-repo',
+              branches: [],
+            },
+          ],
+        },
+        {
+          id: 4,
+          name: 'New Project',
+          repos: [],
+        },
+      ]),
+    );
 
     service.loadTree();
 
-    expect(service.expandedKeys()).toEqual(new Set([
-      'project-1',
-      'repo-2',
-      'branch-2-main',
-      'branch-2-feature',
-      'repo-3',
-      'project-4',
-    ]));
+    expect(service.expandedKeys()).toEqual(
+      new Set(['project-1', 'repo-2', 'workspace-2-3', 'workspace-2-4', 'repo-3', 'project-4']),
+    );
     expect(localStorageMock.setItem).toHaveBeenCalledWith(
       'elevenex-nav-expanded',
       JSON.stringify([
         'project-1',
         'repo-2',
-        'branch-2-main',
-        'branch-2-feature',
+        'workspace-2-3',
+        'workspace-2-4',
         'repo-3',
         'project-4',
       ]),

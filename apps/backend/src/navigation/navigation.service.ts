@@ -66,6 +66,8 @@ export interface ProjectInTree {
 
 @Injectable()
 export class NavigationService {
+  private fullTreeInFlight: Promise<ProjectInTree[]> | null = null;
+
   constructor(
     private readonly projectsService: ProjectsService,
     private readonly reposService: ReposService,
@@ -82,11 +84,13 @@ export class NavigationService {
 
         const reposWithSessions = await Promise.all(
           repos.map(async (repo) => {
-            const sessions = await this.sessionsService.findByRepo(repo.id);
-
-            const workspaces = this.attachSessionsToWorkspaces(
+            const [workspaces, sessions] = await Promise.all([
+              this.workspacesService.listCachedForRepo(repo),
+              this.sessionsService.findByRepo(repo.id),
+            ]);
+            const workspacesWithSessions = this.attachSessionsToWorkspaces(
               repo.id,
-              await this.workspacesService.listForRepo(repo),
+              workspaces,
               sessions,
             );
 
@@ -95,8 +99,8 @@ export class NavigationService {
               name: repo.name,
               path: repo.path,
               color: repo.color,
-              workspaces,
-              branches: this.toCompatibilityBranches(workspaces),
+              workspaces: workspacesWithSessions,
+              branches: this.toCompatibilityBranches(workspacesWithSessions),
             };
           }),
         );
@@ -113,6 +117,19 @@ export class NavigationService {
   }
 
   async getNavigationTree(): Promise<ProjectInTree[]> {
+    if (this.fullTreeInFlight) {
+      return this.fullTreeInFlight;
+    }
+
+    this.fullTreeInFlight = this.buildNavigationTree();
+    try {
+      return await this.fullTreeInFlight;
+    } finally {
+      this.fullTreeInFlight = null;
+    }
+  }
+
+  private async buildNavigationTree(): Promise<ProjectInTree[]> {
     const projects = await this.projectsService.findAll();
 
     const tree = await Promise.all(
@@ -201,6 +218,10 @@ export class NavigationService {
         lastCompletionKind: session.lastCompletionKind,
         lastStateChangeAt: session.lastStateChangeAt,
       };
+
+      if (!entry.currentBranch && session.branchName) {
+        entry.currentBranch = session.branchName;
+      }
 
       if (session.status === 'archived') {
         entry.archivedSessions.push(sessionInTree);

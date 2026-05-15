@@ -111,6 +111,22 @@ export class WorkspacesService {
     });
   }
 
+  async listCachedForRepo(repo: typeof schema.repos.$inferSelect): Promise<WorkspaceSnapshot[]> {
+    await this.ensureDefaultWorkspace(repo);
+
+    const rows = await this.db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.repoId, repo.id));
+
+    return rows
+      .map((workspace) => this.toCachedSnapshot(workspace))
+      .sort((a, b) => {
+        if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+  }
+
   async findOne(id: number) {
     const rows = await this.db
       .select()
@@ -462,6 +478,31 @@ export class WorkspacesService {
   private nameFromWorktree(repo: typeof schema.repos.$inferSelect, worktree: WorktreeInfo): string {
     if (worktree.path === repo.path) return 'Default';
     return worktree.branch ?? path.basename(worktree.path);
+  }
+
+  private toCachedSnapshot(workspace: typeof schema.workspaces.$inferSelect): WorkspaceSnapshot {
+    const branchLikeRef = workspace.createdFromRef && workspace.createdFromRef !== 'HEAD'
+      ? workspace.createdFromRef
+      : null;
+
+    return {
+      id: workspace.id,
+      repoId: workspace.repoId,
+      name: workspace.name,
+      path: workspace.path,
+      isDefault: workspace.isDefault,
+      createdFromRef: workspace.createdFromRef,
+      currentBranch: branchLikeRef,
+      head: null,
+      isDetached: false,
+      isBare: false,
+      isLocked: false,
+      lockReason: null,
+      isMissing: false,
+      isDirty: false,
+      branchCheckedOutElsewhere: false,
+      checkedOutElsewherePath: null,
+    };
   }
 
   private async uniqueWorkspaceName(repoId: number, baseName: string): Promise<string> {
