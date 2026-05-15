@@ -151,10 +151,13 @@
                     [showActions]="canShowMessageActions(item.unit.item)"
                     [actionsDisabled]="messageActionsDisabled()"
                     [editArmed]="isEditArmed(item.unit.item)"
+                    [planReviewEnabled]="canReviewPlan(item.unit.item)"
                     (copy)="copyMessage(item.unit.item, $event)"
                     (armEdit)="armEditMessage(item.unit.item)"
                     (confirmEdit)="confirmEditMessage(item.unit.item)"
                     (cancelEdit)="cancelArmedEdit()"
+                    (approvePlan)="approveProposedPlan()"
+                    (planFeedback)="sendPlanFeedback($event)"
                   />
                 }
                 @case ('thinking') {
@@ -286,10 +289,13 @@
                             [showActions]="canShowMessageActions(hiddenUnit.item)"
                             [actionsDisabled]="messageActionsDisabled()"
                             [editArmed]="isEditArmed(hiddenUnit.item)"
+                            [planReviewEnabled]="canReviewPlan(hiddenUnit.item)"
                             (copy)="copyMessage(hiddenUnit.item, $event)"
                             (armEdit)="armEditMessage(hiddenUnit.item)"
                             (confirmEdit)="confirmEditMessage(hiddenUnit.item)"
                             (cancelEdit)="cancelArmedEdit()"
+                            (approvePlan)="approveProposedPlan()"
+                            (planFeedback)="sendPlanFeedback($event)"
                           />
                         }
                         @case ('thinking') {

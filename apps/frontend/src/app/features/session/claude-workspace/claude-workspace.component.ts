@@ -78,6 +78,7 @@ import {
 } from './components/claude-agent-inspector.component';
 import { ClaudeTurnChangesComponent } from './components/claude-turn-changes.component';
 import { PairedTranscriptUnit, pairTranscript } from './util/paired-transcript';
+import { hasProposedPlan } from './util/proposed-plan';
 import {
   TurnAgentSummary,
   buildTurnAgentSummary,
@@ -527,6 +528,15 @@ readonly messageActionsDisabled = computed(
     return null;
   });
 
+  readonly latestProposedPlanMessageId = computed(() => {
+    const items = this.transcriptItems();
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (item.kind === 'assistant' && hasProposedPlan(item.content)) return item.id;
+    }
+    return null;
+  });
+
   readonly isAwaitingFirstAssistantToken = computed(
     () =>
       (this.runPhase() === 'running' || this.runPhase() === 'waiting') &&
@@ -717,6 +727,36 @@ readonly messageActionsDisabled = computed(
     });
     if (prepared.consumedContextSentence) {
       this.markWorktreeContextConsumed(prepared.consumedContextSentence);
+    }
+  }
+
+  canReviewPlan(item: ClaudeTranscriptItem): boolean {
+    if (this.archived) return false;
+    if (this.currentProvider() !== 'codex') return false;
+    if (item.id !== this.latestProposedPlanMessageId()) return false;
+    if (!hasProposedPlan(item.content)) return false;
+    if (this.runPhase() !== 'idle' || this.submitting()) return false;
+    const mode = this.permissionMode();
+    return mode === 'plan' || mode === ('planBypass' as ClaudePermissionMode);
+  }
+
+  async sendPlanFeedback(message: string): Promise<void> {
+    const trimmed = message.trim();
+    if (!trimmed || this.archived || this.currentProvider() !== 'codex') return;
+    await this.submitPrompt({ text: trimmed, images: [] });
+  }
+
+  async approveProposedPlan(): Promise<void> {
+    if (this.archived || this.currentProvider() !== 'codex') return;
+    if (this.runPhase() !== 'idle' || this.submitting()) return;
+
+    try {
+      this.planBypassActive.set(false);
+      const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, 'default'));
+      this.applyRuntimeState(next);
+      await this.submitPrompt({ text: 'implement plan', images: [] });
+    } catch (error) {
+      toast.error(this.getHttpErrorMessage(error, 'Could not approve the plan.'));
     }
   }
 

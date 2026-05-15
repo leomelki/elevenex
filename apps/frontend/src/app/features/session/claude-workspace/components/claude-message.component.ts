@@ -19,11 +19,13 @@ import {
 } from '@ng-icons/lucide';
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
+import { CodexPlanReviewComponent } from './codex-plan-review.component';
+import { hasProposedPlan } from '../util/proposed-plan';
 
 @Component({
   selector: 'cw-message',
   standalone: true,
-  imports: [CommonModule, MarkdownPipe, NgIcon],
+  imports: [CommonModule, MarkdownPipe, NgIcon, CodexPlanReviewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
@@ -119,7 +121,15 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
         <div class="cw-msg cw-msg--assistant" [attr.title]="timestampTitle()">
           <div class="cw-msg__body">
             @if (item().content) {
-              @if (streaming()) {
+              @if (isProposedPlan()) {
+                <cw-codex-plan-review
+                  [content]="item().content!"
+                  [streaming]="streaming()"
+                  [disabled]="!planReviewEnabled()"
+                  (approve)="approvePlan.emit()"
+                  (feedback)="planFeedback.emit($event)"
+                />
+              } @else if (streaming()) {
                 <div class="cw-md cw-md--streaming" [innerHTML]="item().content | cwMarkdown"></div>
                 <span class="cw-caret"></span>
               } @else {
@@ -446,15 +456,19 @@ export class ClaudeMessageComponent {
   readonly showActions = input<boolean>(false);
   readonly actionsDisabled = input<boolean>(false);
   readonly editArmed = input<boolean>(false);
+  readonly planReviewEnabled = input<boolean>(false);
 
   readonly copy = output<string | null>();
   readonly armEdit = output<void>();
   readonly confirmEdit = output<void>();
   readonly cancelEdit = output<void>();
+  readonly approvePlan = output<void>();
+  readonly planFeedback = output<string>();
 
   readonly isEmpty = computed(() => !this.item().content);
   readonly timestampLabel = computed(() => buildTimestampLabel(this.item(), this.streaming()));
   readonly timestampTitle = computed(() => this.timestampLabel());
+  readonly isProposedPlan = computed(() => hasProposedPlan(this.item().content));
   readonly diagnosticTitle = computed(() => {
     const item = this.item();
     if (item.kind === 'error') {
