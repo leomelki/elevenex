@@ -1,26 +1,27 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Subscription, timer } from 'rxjs';
 import { SessionsService } from './sessions.service';
-import { WorktreesService } from './worktrees.service';
+import { WorkspacesService, WorkspaceCreationJobStatus } from './workspaces.service';
 import { NavigationService } from './navigation.service';
 import { toast } from 'ngx-sonner';
 
-export interface PendingWorktreeCreation {
+export interface PendingWorkspaceCreation {
   jobId: string;
   repoId: number;
-  branchName: string;
+  name: string;
+  startPoint: string;
   worktreePath: string;
-  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  status: WorkspaceCreationJobStatus;
   autoCreateSession: boolean;
 }
 
 @Injectable({ providedIn: 'root' })
-export class PendingWorktreeCreationsService {
-  private readonly worktreesService = inject(WorktreesService);
+export class PendingWorkspaceCreationsService {
+  private readonly workspacesService = inject(WorkspacesService);
   private readonly navigationService = inject(NavigationService);
   private readonly sessionsService = inject(SessionsService);
 
-  private readonly _pending = signal(new Map<string, PendingWorktreeCreation>());
+  private readonly _pending = signal(new Map<string, PendingWorkspaceCreation>());
   readonly pending = this._pending.asReadonly();
 
   private readonly pollSubscriptions = new Map<string, Subscription>();
@@ -28,21 +29,23 @@ export class PendingWorktreeCreationsService {
   register(job: {
     jobId: string;
     repoId: number;
-    branchName: string;
+    name: string;
+    startPoint: string;
     worktreePath: string;
-    status: 'pending' | 'running' | 'succeeded' | 'failed';
+    status: WorkspaceCreationJobStatus;
   }, autoCreateSession: boolean): void {
-    const pendingJob: PendingWorktreeCreation = {
+    const pendingJob: PendingWorkspaceCreation = {
       ...job,
       autoCreateSession,
     };
     const next = new Map(this._pending());
     next.set(job.jobId, pendingJob);
     this._pending.set(next);
+    this.expandRepo(job.repoId);
     this.startPolling(job.jobId);
   }
 
-  getByRepo(repoId: number): PendingWorktreeCreation[] {
+  getByRepo(repoId: number): PendingWorkspaceCreation[] {
     return Array.from(this._pending().values()).filter((job) => job.repoId === repoId);
   }
 
@@ -56,7 +59,7 @@ export class PendingWorktreeCreationsService {
         return;
       }
 
-      this.worktreesService.getCreateJob(job.repoId, jobId).subscribe({
+      this.workspacesService.getCreateJob(job.repoId, jobId).subscribe({
         next: (status) => {
           const current = this._pending().get(jobId);
           if (!current) {
@@ -70,7 +73,7 @@ export class PendingWorktreeCreationsService {
           });
 
           if (status.status === 'succeeded') {
-            this.finishSuccess(current);
+            this.finishSuccess(current, status.workspace ?? null);
           } else if (status.status === 'failed') {
             this.finishFailure(current, status.error || 'Unknown error');
           }
@@ -91,20 +94,27 @@ export class PendingWorktreeCreationsService {
     this.pollSubscriptions.set(jobId, subscription);
   }
 
-  private finishSuccess(job: PendingWorktreeCreation): void {
+  private finishSuccess(
+    job: PendingWorkspaceCreation,
+    workspace: { id: number } | null,
+  ): void {
     this.stopPolling(job.jobId);
     this.remove(job.jobId);
-    toast.success('Worktree created');
+    toast.success('Workspace created');
     this.navigationService.refreshTree();
 
     if (!job.autoCreateSession) {
       return;
     }
 
+    if (!workspace) {
+      toast.error('Workspace created, but the workspace record was not returned.');
+      return;
+    }
+
     this.sessionsService.create({
       repoId: job.repoId,
-      branchName: job.branchName,
-      worktreePath: job.worktreePath,
+      workspaceId: workspace.id,
     }).subscribe({
       next: (session) => {
         this.navigationService.refreshTree();
@@ -117,13 +127,13 @@ export class PendingWorktreeCreationsService {
     });
   }
 
-  private finishFailure(job: PendingWorktreeCreation, message: string): void {
+  private finishFailure(job: PendingWorkspaceCreation, message: string): void {
     this.stopPolling(job.jobId);
     this.remove(job.jobId);
-    toast.error(`Could not create worktree. ${message}`);
+    toast.error(`Could not create workspace. ${message}`);
   }
 
-  private upsert(job: PendingWorktreeCreation): void {
+  private upsert(job: PendingWorkspaceCreation): void {
     const next = new Map(this._pending());
     next.set(job.jobId, job);
     this._pending.set(next);
@@ -138,5 +148,15 @@ export class PendingWorktreeCreationsService {
   private stopPolling(jobId: string): void {
     this.pollSubscriptions.get(jobId)?.unsubscribe();
     this.pollSubscriptions.delete(jobId);
+  }
+
+  private expandRepo(repoId: number): void {
+    this.navigationService.expandKey(`repo-${repoId}`);
+    const project = this.navigationService.tree().find((candidate) =>
+      candidate.repos.some((repo) => repo.id === repoId),
+    );
+    if (project) {
+      this.navigationService.expandKey(`project-${project.id}`);
+    }
   }
 }

@@ -19,7 +19,7 @@ vi.mock('@/shared/runtime/electron-window-controls', () => ({
 import { Sidebar } from './sidebar';
 import { NavigationService } from '../../../shared/services/navigation.service';
 import { SessionsService } from '../../../shared/services/sessions.service';
-import { WorktreesService } from '../../../shared/services/worktrees.service';
+import { WorkspacesService } from '@/shared/services/workspaces.service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { TabService, Tab } from '../../session/tab-service';
 import { PlannotatorStateService } from '@/features/plannotator';
@@ -30,7 +30,7 @@ import { CursorService } from '@/shared/services/cursor.service';
 import { TodosService } from '@/features/productivity/todos.service';
 import { NavigationBranch, NavigationProject } from '../../../shared/models/navigation-tree.model';
 import { Project } from '@/shared/models/project.model';
-import { PendingWorktreeCreationsService } from '@/shared/services/pending-worktree-creations.service';
+import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 import { ReposService } from '@/shared/services/repos.service';
 
 @Directive({
@@ -44,6 +44,8 @@ class MockTrackNativeModalDirective {
 }
 
 describe('Sidebar', () => {
+  const defaultWorkspaceKey = 'workspace-1--1169402078';
+
   function makeBranch(): NavigationBranch {
     return {
       name: 'main',
@@ -80,7 +82,7 @@ describe('Sidebar', () => {
     };
   }
 
-  const expandedKeys = signal(new Set<string>(['project-1', 'repo-1', 'branch-1-main']));
+  const expandedKeys = signal(new Set<string>(['project-1', 'repo-1', defaultWorkspaceKey]));
   const tree = signal<NavigationProject[]>([
     {
       id: 1,
@@ -195,9 +197,10 @@ describe('Sidebar', () => {
     destroyIframe: vi.fn(),
   };
 
-  const worktreesServiceMock = {
+  const workspacesServiceMock = {
     remove: vi.fn(() => of({})),
     removeFromProject: vi.fn(() => of({})),
+    switchBranch: vi.fn(() => of({})),
   };
 
   const claudeStatusMock = {
@@ -211,7 +214,7 @@ describe('Sidebar', () => {
     getSessionCompletion: vi.fn(() => null),
     sessionTitles: signal(new Map<number, string>()).asReadonly(),
   };
-  const pendingWorktreeCreationsMock = {
+  const pendingWorkspaceCreationsMock = {
     getByRepo: vi.fn<(repoId: number) => any[]>(() => []),
   };
 
@@ -229,7 +232,7 @@ describe('Sidebar', () => {
   beforeEach(async () => {
     vi.useFakeTimers();
 
-    expandedKeys.set(new Set(['project-1', 'repo-1', 'branch-1-main']));
+    expandedKeys.set(new Set(['project-1', 'repo-1', defaultWorkspaceKey]));
     tree.set([
       {
         id: 1,
@@ -278,10 +281,12 @@ describe('Sidebar', () => {
     navigationServiceMock.clearHighlightedProject.mockClear();
     sessionsServiceMock.delete.mockReset();
     sessionsServiceMock.delete.mockReturnValue(of({}));
-    worktreesServiceMock.remove.mockReset();
-    worktreesServiceMock.remove.mockReturnValue(of({}));
-    worktreesServiceMock.removeFromProject.mockReset();
-    worktreesServiceMock.removeFromProject.mockReturnValue(of({}));
+    workspacesServiceMock.remove.mockReset();
+    workspacesServiceMock.remove.mockReturnValue(of({}));
+    workspacesServiceMock.removeFromProject.mockReset();
+    workspacesServiceMock.removeFromProject.mockReturnValue(of({}));
+    workspacesServiceMock.switchBranch.mockReset();
+    workspacesServiceMock.switchBranch.mockReturnValue(of({}));
     tabServiceMock.closeTab.mockClear();
     tabServiceMock.updateTabName.mockClear();
     routerMock.navigate.mockClear();
@@ -295,8 +300,8 @@ describe('Sidebar', () => {
     });
     claudeStatusMock.getSessionStatus.mockReturnValue(null);
     claudeStatusMock.getSessionCompletion.mockReturnValue(null);
-    pendingWorktreeCreationsMock.getByRepo.mockReset();
-    pendingWorktreeCreationsMock.getByRepo.mockReturnValue([]);
+    pendingWorkspaceCreationsMock.getByRepo.mockReset();
+    pendingWorkspaceCreationsMock.getByRepo.mockReturnValue([]);
     todosServiceMock.getTodos.mockClear();
     todosServiceMock.pendingCountsSignal.mockClear();
     todosServiceMock.getPendingCount.mockClear();
@@ -328,7 +333,7 @@ describe('Sidebar', () => {
         { provide: Router, useValue: routerMock },
         { provide: NavigationService, useValue: navigationServiceMock },
         { provide: SessionsService, useValue: sessionsServiceMock },
-        { provide: WorktreesService, useValue: worktreesServiceMock },
+        { provide: WorkspacesService, useValue: workspacesServiceMock },
         { provide: TabColorService, useValue: { getRepoColor: vi.fn(() => '#5b7fff') } },
         { provide: TabService, useValue: tabServiceMock },
         { provide: PlannotatorStateService, useValue: { isPanelVisible: vi.fn(() => false) } },
@@ -337,7 +342,7 @@ describe('Sidebar', () => {
         { provide: SshForwardsService, useValue: { getByProject: vi.fn(() => of([])) } },
         { provide: CursorService, useValue: { isConfigured: vi.fn(() => true), open: vi.fn(), getSettings: vi.fn(() => null) } },
         { provide: TodosService, useValue: todosServiceMock },
-        { provide: PendingWorktreeCreationsService, useValue: pendingWorktreeCreationsMock },
+        { provide: PendingWorkspaceCreationsService, useValue: pendingWorkspaceCreationsMock },
         { provide: ReposService, useValue: reposServiceMock },
       ],
     }).compileComponents();
@@ -367,11 +372,11 @@ describe('Sidebar', () => {
   }
 
   function getWorktreeRemoveTrigger(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
-    return container.querySelector(`[data-worktree-remove-trigger="${worktreePath}"]`);
+    return container.querySelector(`[data-workspace-remove-trigger="${worktreePath}"]`);
   }
 
   function getWorktreeDeleteTrigger(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
-    return container.querySelector(`[data-worktree-delete-trigger="${worktreePath}"]`);
+    return container.querySelector(`[data-workspace-delete-trigger="${worktreePath}"]`);
   }
 
   it('arms inline confirmation on the first click instead of deleting immediately', () => {
@@ -459,6 +464,7 @@ describe('Sidebar', () => {
             id: 1,
             name: 'Repo One',
             path: '/tmp/repo-one',
+            workspaces: [],
             branches: [{
               ...makeBranch(),
               hasWorktree: false,
@@ -588,13 +594,14 @@ describe('Sidebar', () => {
     expect(getWorktreeDeleteTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
   });
 
-  it('renders a pending worktree branch row while creation is in progress', () => {
-    pendingWorktreeCreationsMock.getByRepo.mockImplementation(((repoId: number) => (
+  it('renders a pending workspace row while creation is in progress', () => {
+    pendingWorkspaceCreationsMock.getByRepo.mockImplementation(((repoId: number) => (
       repoId === 1
         ? [{
           jobId: 'job-1',
           repoId: 1,
-          branchName: 'feature',
+          name: 'Feature',
+          startPoint: 'feature',
           worktreePath: '/tmp/repo-one/.worktrees/feature',
           status: 'running',
           autoCreateSession: false,
@@ -605,7 +612,7 @@ describe('Sidebar', () => {
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
 
-    expect(el.querySelector('[data-pending-worktree-branch="feature"]')?.textContent).toContain('Creating');
+    expect(el.querySelector('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')?.textContent).toContain('Creating');
   });
 
   it('removes the completion dot when live and tree completion state are cleared', () => {
@@ -666,7 +673,7 @@ describe('Sidebar', () => {
     expect(el.querySelector('.sidebar-completion-dot')).toBeFalsy();
   });
 
-  it('suppresses a duplicate pending branch when the real branch is already in the tree', () => {
+  it('suppresses a duplicate pending workspace when the real workspace is already in the tree', () => {
     tree.set([
       {
         id: 1,
@@ -676,18 +683,29 @@ describe('Sidebar', () => {
             id: 1,
             name: 'Repo One',
             path: '/tmp/repo-one',
-            branches: [
-              makeBranch(),
+            workspaces: [
               {
-                ...makeBranch(),
-                name: 'feature',
-                label: 'feature',
-                current: false,
-                worktreePath: '/tmp/repo-one/.worktrees/feature',
+                id: 2,
+                repoId: 1,
+                name: 'Feature',
+                path: '/tmp/repo-one/.worktrees/feature',
+                isDefault: false,
+                createdFromRef: 'feature',
+                currentBranch: 'feature',
+                head: null,
+                isDetached: false,
+                isBare: false,
+                isLocked: false,
+                lockReason: null,
+                isMissing: false,
+                isDirty: false,
+                branchCheckedOutElsewhere: false,
+                checkedOutElsewherePath: null,
                 sessions: [{
                   id: 99,
                   repoId: 1,
                   branchName: 'feature',
+                  workspaceId: 2,
                   name: 'Feature Session',
                   status: 'active' as const,
                   hasUnreviewedCompletion: false,
@@ -695,17 +713,22 @@ describe('Sidebar', () => {
                   lastCompletionKind: null,
                   lastStateChangeAt: null,
                 }],
+                archivedSessions: [],
               },
+            ],
+            branches: [
+              makeBranch(),
             ],
           },
         ],
       },
     ]);
-    expandedKeys.set(new Set(['project-1', 'repo-1', 'branch-1-main', 'branch-1-feature']));
-    pendingWorktreeCreationsMock.getByRepo.mockReturnValue([{
+    expandedKeys.set(new Set(['project-1', 'repo-1', 'workspace-1-2']));
+    pendingWorkspaceCreationsMock.getByRepo.mockReturnValue([{
       jobId: 'job-1',
       repoId: 1,
-      branchName: 'feature',
+      name: 'Feature',
+      startPoint: 'feature',
       worktreePath: '/tmp/repo-one/.worktrees/feature',
       status: 'running',
       autoCreateSession: false,
@@ -714,7 +737,7 @@ describe('Sidebar', () => {
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
 
-    expect(el.querySelectorAll('[data-pending-worktree-branch="feature"]')).toHaveLength(0);
+    expect(el.querySelectorAll('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')).toHaveLength(0);
     expect(el.textContent).toContain('Feature Session');
   });
 
@@ -742,7 +765,7 @@ describe('Sidebar', () => {
     vi.advanceTimersByTime(0);
 
     expect(worktreeSheet.open).toHaveBeenCalledOnce();
-    expect(worktreeSheet.open).toHaveBeenCalledWith(1, 'feature', '/tmp/repo-one', 'Repo One', false);
+    expect(worktreeSheet.open).toHaveBeenCalledWith(1, 'feature', '/tmp/repo-one', 'Repo One', true);
     expect(component.openingWorktreeBranchKey()).toBeNull();
   });
 
@@ -776,11 +799,12 @@ describe('Sidebar', () => {
     const component = fixture.componentInstance;
 
     component.removeFromProjectRepoId.set(1);
+    component.removeWorkspaceId.set(2);
     component.removeFromProjectPath.set('/tmp/repo-one-main');
     component.confirmRemoveFromProject();
 
-    expect(worktreesServiceMock.removeFromProject).toHaveBeenCalledWith(1, '/tmp/repo-one-main');
-    expect(worktreesServiceMock.remove).not.toHaveBeenCalled();
+    expect(workspacesServiceMock.removeFromProject).toHaveBeenCalledWith(1, 2);
+    expect(workspacesServiceMock.remove).not.toHaveBeenCalled();
     expect(tabServiceMock.closeTab).toHaveBeenCalledWith(11);
     expect(vscodeWebStateMock.destroyIframe).toHaveBeenCalledWith('101:/tmp/repo-one-main');
     expect(routerMock.navigate).toHaveBeenCalledWith(['/sessions', 12], { replaceUrl: true });

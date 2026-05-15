@@ -1,11 +1,10 @@
 import { Component, signal, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { WorkspacesService } from '../../../shared/services/workspaces.service';
-import { SessionsService } from '../../../shared/services/sessions.service';
 import { toast } from 'ngx-sonner';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
-import { NavigationService } from '@/shared/services/navigation.service';
+import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 
 @Component({
   selector: 'app-worktree-sheet',
@@ -14,8 +13,7 @@ import { NavigationService } from '@/shared/services/navigation.service';
 })
 export class WorktreeSheet {
   private workspacesService = inject(WorkspacesService);
-  private sessionsService = inject(SessionsService);
-  private navService = inject(NavigationService);
+  private pendingWorkspaceCreations = inject(PendingWorkspaceCreationsService);
 
   @ViewChild('worktreeDialog') dialogRef!: TrackNativeModalDirective;
 
@@ -66,19 +64,9 @@ export class WorktreeSheet {
       path: this.worktreePath().trim(),
       startPoint: this.branchName().trim() || 'HEAD',
     }).subscribe({
-      next: (workspace) => {
-        if (this.autoCreateSession()) {
-          this.sessionsService.create({ repoId: this.repoId(), workspaceId: workspace.id }).subscribe({
-            next: (session) => {
-              this.navService.refreshTree();
-              this.navService.openSession(session.id);
-            },
-            error: (err) => toast.error(err?.error?.message || 'Workspace created, but session could not be created'),
-          });
-        } else {
-          this.navService.refreshTree();
-        }
-        toast.success('Workspace created');
+      next: (job) => {
+        this.pendingWorkspaceCreations.register(job, this.autoCreateSession());
+        toast.success('Workspace creation started');
         this.creating.set(false);
         this.close();
       },

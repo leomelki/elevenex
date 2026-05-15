@@ -154,7 +154,7 @@
               }
             </div>
 
-            @if (!repo.error && filterWorkspaces(repo).length === 0) {
+            @if (!repo.error && filterWorkspaces(repo).length === 0 && getPendingWorkspaces(repo).length === 0) {
               <button
                 class="sidebar-empty-branch-action"
                 [style.margin-left]="'48px'"
@@ -470,12 +470,28 @@
                              }
                            </span>
                          </div>
-                       }
-                     }
-                   }
+                  }
                  }
               }
+              @for (pendingWorkspace of getPendingWorkspaces(repo); track pendingWorkspace.jobId) {
+                <div
+                  class="sidebar-tree-row sidebar-tree-row--busy w-full group"
+                  [style.padding-left]="'48px'"
+                  [attr.data-pending-workspace]="pendingWorkspace.worktreePath">
+                  <span class="w-4 shrink-0"></span>
+                  <span class="inline-block w-4 h-4 shrink-0 rounded-full border-2 border-muted-foreground/50 border-t-transparent animate-spin"></span>
+                  <span class="text-sm truncate flex-1 sidebar-label--branch" [title]="pendingWorkspace.name + ' - ' + pendingWorkspace.worktreePath">
+                    {{ pendingWorkspace.name }}
+                    <span class="text-xs text-muted-foreground">{{ pendingWorkspace.startPoint }}</span>
+                  </span>
+                  <span class="sidebar-actions sidebar-actions--visible">
+                    <span class="text-xs text-muted-foreground">Creating...</span>
+                  </span>
+                </div>
+              }
             }
+          }
+        }
           }
         }
       }

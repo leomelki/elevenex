@@ -5,8 +5,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { of } from 'rxjs';
 import { WorktreeSheet } from './worktree-sheet';
 import { WorkspacesService } from '../../../shared/services/workspaces.service';
-import { SessionsService } from '../../../shared/services/sessions.service';
-import { NavigationService } from '../../../shared/services/navigation.service';
+import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -42,19 +41,13 @@ describe('WorktreeSheet', () => {
   const workspacesServiceMock = {
     create: vi.fn(),
   };
-  const sessionsServiceMock = {
-    create: vi.fn(),
-  };
-  const navigationServiceMock = {
-    refreshTree: vi.fn(),
-    openSession: vi.fn(),
+  const pendingWorkspaceCreationsMock = {
+    register: vi.fn(),
   };
 
   beforeEach(async () => {
     workspacesServiceMock.create.mockReset();
-    sessionsServiceMock.create.mockReset();
-    navigationServiceMock.refreshTree.mockReset();
-    navigationServiceMock.openSession.mockReset();
+    pendingWorkspaceCreationsMock.register.mockReset();
 
     TestBed.resetTestingModule();
     TestBed.overrideComponent(WorktreeSheet, {
@@ -67,20 +60,21 @@ describe('WorktreeSheet', () => {
       imports: [WorktreeSheet],
       providers: [
         { provide: WorkspacesService, useValue: workspacesServiceMock },
-        { provide: SessionsService, useValue: sessionsServiceMock },
-        { provide: NavigationService, useValue: navigationServiceMock },
+        { provide: PendingWorkspaceCreationsService, useValue: pendingWorkspaceCreationsMock },
       ],
     }).compileComponents();
   });
 
-  it('creates a workspace from the selected branch and opens an auto-created session', () => {
-    workspacesServiceMock.create.mockReturnValue(of({
-      id: 99,
+  it('starts a workspace creation job from the selected branch and closes immediately', () => {
+    const job = {
+      jobId: 'job-1',
       repoId: 7,
       name: 'feature',
-      path: '/tmp/repo/.worktrees/feature',
-    }));
-    sessionsServiceMock.create.mockReturnValue(of({ id: 123 }));
+      startPoint: 'feature',
+      worktreePath: '/tmp/repo/.worktrees/feature',
+      status: 'pending' as const,
+    };
+    workspacesServiceMock.create.mockReturnValue(of(job));
 
     const fixture = TestBed.createComponent(WorktreeSheet);
     const component = fixture.componentInstance;
@@ -100,9 +94,7 @@ describe('WorktreeSheet', () => {
       path: '/tmp/repo/.worktrees/feature',
       startPoint: 'feature',
     });
-    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 7, workspaceId: 99 });
-    expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
-    expect(navigationServiceMock.openSession).toHaveBeenCalledWith(123);
+    expect(pendingWorkspaceCreationsMock.register).toHaveBeenCalledWith(job, true);
     expect(dialog.close).toHaveBeenCalledOnce();
     expect(component.creating()).toBe(false);
   });

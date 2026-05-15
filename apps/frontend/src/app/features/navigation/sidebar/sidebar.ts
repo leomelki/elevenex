@@ -52,6 +52,7 @@ import { ReposService } from '@/shared/services/repos.service';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { EnvironmentSwitcherComponent } from '../environment-switcher/environment-switcher.component';
 import { ThemeService } from '@/shared/services/theme.service';
+import { PendingWorkspaceCreation, PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 
 @Component({
   selector: 'app-sidebar',
@@ -106,6 +107,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private onboardingState = inject(OnboardingStateService);
   private sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private todosService = inject(TodosService);
+  private pendingWorkspaceCreations = inject(PendingWorkspaceCreationsService);
   readonly theme = inject(ThemeService);
   private windowControls = getElectronWindowControlsApi();
   private host = inject(ElementRef<HTMLElement>);
@@ -963,13 +965,20 @@ export class Sidebar implements OnInit, OnDestroy {
     }));
   }
 
+  getPendingWorkspaces(repo: NavigationRepo): PendingWorkspaceCreation[] {
+    const existingPaths = new Set(this.filterWorkspaces(repo).map((workspace) => workspace.path));
+    return this.pendingWorkspaceCreations
+      .getByRepo(repo.id)
+      .filter((job) => !existingPaths.has(job.worktreePath));
+  }
+
   openBranchSearchForRepo(repo: NavigationRepo) {
     this.branchSelectionTarget = null;
     if (this.branchSearch) {
       this.branchSearch.open([repo]);
       return;
     }
-    this.openCreateWorkspaceSheet(repo, 'HEAD', false);
+    this.openCreateWorkspaceSheet(repo, 'HEAD', true);
   }
 
   onBranchSearchSelect(event: { repo: NavigationRepo; branch: BranchInfo }) {
@@ -1009,7 +1018,7 @@ export class Sidebar implements OnInit, OnDestroy {
     this.openWorktreeTimer = window.setTimeout(() => {
       this.openWorktreeTimer = null;
       try {
-        this.worktreeSheet.open(repo.id, branch.name, repo.path, repo.name, false);
+        this.worktreeSheet.open(repo.id, branch.name, repo.path, repo.name, true);
       } finally {
         this.openingWorktreeBranchKey.set(null);
       }

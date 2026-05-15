@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Inject,
   NotFoundException,
   Param,
@@ -16,12 +18,14 @@ import { CreateWorkspaceDto } from './dto/create-workspace.dto.js';
 import { CreateWorkspaceBranchDto } from './dto/create-workspace-branch.dto.js';
 import { SwitchWorkspaceBranchDto } from './dto/switch-workspace-branch.dto.js';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto.js';
+import { WorkspaceCreationJobsService } from './workspace-creation-jobs.service.js';
 import { WorkspacesService } from './workspaces.service.js';
 
 @Controller()
 export class WorkspacesController {
   constructor(
     private readonly workspacesService: WorkspacesService,
+    private readonly workspaceCreationJobsService: WorkspaceCreationJobsService,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
   ) {}
 
@@ -32,9 +36,38 @@ export class WorkspacesController {
   }
 
   @Post('repos/:repoId/workspaces')
+  @HttpCode(HttpStatus.ACCEPTED)
   async create(@Param('repoId') repoId: string, @Body() dto: CreateWorkspaceDto) {
     const repo = await this.findRepo(+repoId);
-    return this.workspacesService.createWorkspace(repo, dto);
+    const job = this.workspaceCreationJobsService.startJob(repo, dto);
+
+    return {
+      jobId: job.id,
+      repoId: job.repoId,
+      name: job.name,
+      startPoint: job.startPoint,
+      worktreePath: job.worktreePath,
+      status: job.status,
+    };
+  }
+
+  @Get('repos/:repoId/workspaces/jobs/:jobId')
+  async getCreateWorkspaceJob(
+    @Param('repoId') repoId: string,
+    @Param('jobId') jobId: string,
+  ) {
+    const repo = await this.findRepo(+repoId);
+    const job = this.workspaceCreationJobsService.getJob(repo.id, jobId);
+
+    return {
+      jobId: job.id,
+      status: job.status,
+      name: job.name,
+      startPoint: job.startPoint,
+      worktreePath: job.worktreePath,
+      workspace: job.workspace,
+      error: job.error,
+    };
   }
 
   @Patch('repos/:repoId/workspaces/:workspaceId')

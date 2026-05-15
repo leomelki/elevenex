@@ -10,6 +10,27 @@ export interface CreateWorkspacePayload {
   branchName?: string;
 }
 
+export type WorkspaceCreationJobStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+
+export interface CreateWorkspaceJob {
+  jobId: string;
+  repoId: number;
+  name: string;
+  startPoint: string;
+  worktreePath: string;
+  status: WorkspaceCreationJobStatus;
+}
+
+export interface CreateWorkspaceJobStatus {
+  jobId: string;
+  status: WorkspaceCreationJobStatus;
+  name: string;
+  startPoint: string;
+  worktreePath: string;
+  workspace?: Workspace | null;
+  error?: string | null;
+}
+
 export interface CreateWorkspaceBranchPayload {
   branchName: string;
   startPoint?: string;
@@ -27,7 +48,11 @@ export class WorkspacesService {
   }
 
   create(repoId: number, payload: CreateWorkspacePayload) {
-    return this.http.post<Workspace>(`/api/repos/${repoId}/workspaces`, payload);
+    return this.http.post<CreateWorkspaceJob>(`/api/repos/${repoId}/workspaces`, payload);
+  }
+
+  getCreateJob(repoId: number, jobId: string) {
+    return this.http.get<CreateWorkspaceJobStatus>(`/api/repos/${repoId}/workspaces/jobs/${jobId}`);
   }
 
   rename(repoId: number, workspaceId: number, name: string) {
