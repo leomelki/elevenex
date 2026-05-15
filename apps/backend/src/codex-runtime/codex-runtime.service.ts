@@ -1696,6 +1696,7 @@ export class CodexRuntimeService extends EventEmitter {
           ? questions[0].question
           : 'Answer the requested questions.',
       requestedSchema: this.questionsToJsonSchema(questions),
+      questions: this.toCodexUserInputQuestions(questions),
       createdAt: new Date().toISOString(),
     };
     const result = await this.waitForUserInput(sessionId, uiRequestId, request);
@@ -1803,6 +1804,71 @@ export class CodexRuntimeService extends EventEmitter {
       };
     }
     return { type: 'object', properties, required };
+  }
+
+  private toCodexUserInputQuestions(
+    questions: any[],
+  ): NonNullable<ClaudeUserInputRequest['questions']> {
+    return questions
+      .map((question: any) => {
+        const id = typeof question?.id === 'string' ? question.id : '';
+        const text =
+          typeof question?.question === 'string'
+            ? question.question.trim()
+            : '';
+        if (!id || !text) return null;
+        const options = Array.isArray(question?.options)
+          ? question.options
+              .map((option: any) => {
+                const label =
+                  typeof option?.label === 'string' ? option.label.trim() : '';
+                if (!label) return null;
+                return {
+                  label,
+                  description:
+                    typeof option?.description === 'string'
+                      ? option.description
+                      : undefined,
+                  preview:
+                    typeof option?.preview === 'string'
+                      ? option.preview
+                      : undefined,
+                };
+              })
+              .filter(
+                (
+                  option: {
+                    label: string;
+                    description?: string;
+                    preview?: string;
+                  } | null,
+                ): option is {
+                  label: string;
+                  description?: string;
+                  preview?: string;
+                } => option !== null,
+              )
+          : [];
+        return {
+          id,
+          question: text,
+          header:
+            typeof question?.header === 'string' && question.header.trim()
+              ? question.header
+              : undefined,
+          options,
+          multiSelect: Boolean(question?.multiSelect),
+        };
+      })
+      .filter(
+        (
+          question:
+            | NonNullable<ClaudeUserInputRequest['questions']>[number]
+            | null,
+        ): question is NonNullable<
+          ClaudeUserInputRequest['questions']
+        >[number] => question !== null,
+      );
   }
 
   private clearPendingPermission(sessionId: number, requestId: string): void {

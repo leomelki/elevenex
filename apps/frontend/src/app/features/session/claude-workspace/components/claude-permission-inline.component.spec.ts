@@ -32,7 +32,9 @@ function askRequest(
   };
 }
 
-async function render(request: ClaudePermissionRequest = askRequest()): Promise<ComponentFixture<ClaudePermissionInlineComponent>> {
+async function render(
+  request: ClaudePermissionRequest = askRequest(),
+): Promise<ComponentFixture<ClaudePermissionInlineComponent>> {
   await TestBed.configureTestingModule({
     imports: [ClaudePermissionInlineComponent],
   }).compileComponents();
@@ -47,10 +49,13 @@ function text(fixture: ComponentFixture<ClaudePermissionInlineComponent>): strin
   return (fixture.nativeElement as HTMLElement).textContent ?? '';
 }
 
-function clickOption(fixture: ComponentFixture<ClaudePermissionInlineComponent>, label: string): void {
-  const option = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('.cw-ask__opt')).find((node) =>
-    (node.textContent ?? '').includes(label),
-  );
+function clickOption(
+  fixture: ComponentFixture<ClaudePermissionInlineComponent>,
+  label: string,
+): void {
+  const option = Array.from(
+    (fixture.nativeElement as HTMLElement).querySelectorAll('.cw-ask__opt'),
+  ).find((node) => (node.textContent ?? '').includes(label));
   if (!option) throw new Error(`Option not found: ${label}`);
   const input = option.querySelector('input');
   if (!input) throw new Error(`Option input not found: ${label}`);
@@ -58,18 +63,36 @@ function clickOption(fixture: ComponentFixture<ClaudePermissionInlineComponent>,
   fixture.detectChanges();
 }
 
-function clickButton(fixture: ComponentFixture<ClaudePermissionInlineComponent>, label: string): void {
-  const button = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('button')).find((node) =>
-    (node.textContent ?? '').includes(label),
+function clickButton(
+  fixture: ComponentFixture<ClaudePermissionInlineComponent>,
+  label: string,
+): void {
+  const button = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('button')).find(
+    (node) => (node.textContent ?? '').includes(label),
   );
   if (!button) throw new Error(`Button not found: ${label}`);
   button.click();
   fixture.detectChanges();
 }
 
-function setOtherAnswer(fixture: ComponentFixture<ClaudePermissionInlineComponent>, value: string): void {
+function checkedOption(
+  fixture: ComponentFixture<ClaudePermissionInlineComponent>,
+  label: string,
+): boolean {
+  const option = Array.from(
+    (fixture.nativeElement as HTMLElement).querySelectorAll('.cw-ask__opt'),
+  ).find((node) => (node.textContent ?? '').includes(label));
+  const input = option?.querySelector('input');
+  return input instanceof HTMLInputElement ? input.checked : false;
+}
+
+function setOtherAnswer(
+  fixture: ComponentFixture<ClaudePermissionInlineComponent>,
+  value: string,
+): void {
   const textarea = (fixture.nativeElement as HTMLElement).querySelector('textarea');
-  if (!(textarea instanceof HTMLTextAreaElement)) throw new Error('Other answer textarea not found');
+  if (!(textarea instanceof HTMLTextAreaElement))
+    throw new Error('Other answer textarea not found');
   textarea.value = value;
   textarea.dispatchEvent(new Event('input'));
   fixture.detectChanges();
@@ -103,7 +126,7 @@ describe('ClaudePermissionInlineComponent ask-user wizard', () => {
 
     expect(text(fixture)).toContain('Question 1 of 2');
     expect(text(fixture)).toContain('Which approach should we use?');
-    expect(fixture.componentInstance.isSelected(fixture.componentInstance.questions()[0], 'Option A')).toBe(true);
+    expect(checkedOption(fixture, 'Option A')).toBe(true);
   });
 
   it('requires explicit next for multi-select questions', async () => {
@@ -112,10 +135,7 @@ describe('ClaudePermissionInlineComponent ask-user wizard', () => {
         {
           question: 'Which checks should run?',
           multiSelect: true,
-          options: [
-            { label: 'Unit tests' },
-            { label: 'Build' },
-          ],
+          options: [{ label: 'Unit tests' }, { label: 'Build' }],
         },
         {
           question: 'When should they run?',
@@ -143,9 +163,9 @@ describe('ClaudePermissionInlineComponent ask-user wizard', () => {
 
     expect(text(fixture)).toContain('Question 1 of 2');
     expect(text(fixture)).toContain('Next');
-    const nextButton = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('button')).find((node) =>
-      (node.textContent ?? '').includes('Next'),
-    ) as HTMLButtonElement | undefined;
+    const nextButton = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ).find((node) => (node.textContent ?? '').includes('Next')) as HTMLButtonElement | undefined;
     expect(nextButton?.disabled).toBe(true);
 
     setOtherAnswer(fixture, 'Use a hybrid approach');
@@ -196,6 +216,6 @@ describe('ClaudePermissionInlineComponent ask-user wizard', () => {
     expect(text(fixture)).toContain('Question 1 of 2');
     expect(text(fixture)).toContain('Which approach should we use?');
     expect(text(fixture)).not.toContain('How much detail should the answer include?');
-    expect(fixture.componentInstance.selectedAnswers()).toEqual({});
+    expect(checkedOption(fixture, 'Option A')).toBe(false);
   });
 });

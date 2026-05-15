@@ -1,9 +1,18 @@
-import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  input,
+  output,
+  signal,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideExternalLink, lucideBraces } from '@ng-icons/lucide';
+import { lucideExternalLink, lucideBraces, lucideMessageCircleQuestion } from '@ng-icons/lucide';
 import { ClaudeJsonSchema, ClaudeUserInputRequest } from '@/shared/models/claude-runtime.model';
+import { AskUserQuestionFlowComponent } from './ask-user-question-flow.component';
 
 interface Field {
   key: string;
@@ -17,20 +26,32 @@ interface Field {
 @Component({
   selector: 'cw-user-input',
   standalone: true,
-  imports: [CommonModule, FormsModule, NgIcon],
+  imports: [CommonModule, FormsModule, NgIcon, AskUserQuestionFlowComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [provideIcons({ lucideExternalLink, lucideBraces })],
+  viewProviders: [provideIcons({ lucideExternalLink, lucideBraces, lucideMessageCircleQuestion })],
   template: `
     <div class="cw-ui">
       <div class="cw-ui__head">
-        <ng-icon name="lucideBraces" size="14" />
+        <ng-icon
+          [name]="askQuestions().length ? 'lucideMessageCircleQuestion' : 'lucideBraces'"
+          size="14"
+        />
         <strong>{{ request().title || request().displayName || request().serverName }}</strong>
         @if (request().description || request().message) {
           <span class="cw-ui__desc">{{ request().description || request().message }}</span>
         }
       </div>
 
-      @if (request().mode === 'url' && request().url) {
+      @if (askQuestions().length) {
+        <cw-ask-user-question-flow
+          [requestId]="request().requestId"
+          [questions]="askQuestions()"
+          declineLabel="Decline"
+          submitLabel="Submit"
+          (decline)="answer.emit({ action: 'decline' })"
+          (submitted)="submitQuestionAnswers($event)"
+        />
+      } @else if (request().mode === 'url' && request().url) {
         <a class="cw-ui__link" [href]="request().url" target="_blank" rel="noreferrer">
           <ng-icon name="lucideExternalLink" size="14" />
           Open requested URL
@@ -41,7 +62,9 @@ interface Field {
             <label class="cw-ui__field">
               <span class="cw-ui__label">
                 {{ field.label }}
-                @if (field.required) { <em>*</em> }
+                @if (field.required) {
+                  <em>*</em>
+                }
               </span>
               @switch (field.type) {
                 @case ('boolean') {
@@ -52,7 +75,10 @@ interface Field {
                   />
                 }
                 @case ('enum') {
-                  <select [ngModel]="values()[field.key] ?? ''" (ngModelChange)="set(field.key, $event)">
+                  <select
+                    [ngModel]="values()[field.key] ?? ''"
+                    (ngModelChange)="set(field.key, $event)"
+                  >
                     <option value="">Select…</option>
                     @for (opt of field.options; track opt) {
                       <option [value]="opt">{{ opt }}</option>
@@ -98,11 +124,19 @@ interface Field {
         }
       }
 
-      <div class="cw-ui__actions">
-        <button type="button" class="cw-ui__btn" (click)="answer.emit({ action: 'cancel' })">Cancel</button>
-        <button type="button" class="cw-ui__btn" (click)="answer.emit({ action: 'decline' })">Decline</button>
-        <button type="button" class="cw-ui__btn cw-ui__btn--primary" (click)="submit()">Accept</button>
-      </div>
+      @if (!askQuestions().length) {
+        <div class="cw-ui__actions">
+          <button type="button" class="cw-ui__btn" (click)="answer.emit({ action: 'cancel' })">
+            Cancel
+          </button>
+          <button type="button" class="cw-ui__btn" (click)="answer.emit({ action: 'decline' })">
+            Decline
+          </button>
+          <button type="button" class="cw-ui__btn cw-ui__btn--primary" (click)="submit()">
+            Accept
+          </button>
+        </div>
+      }
     </div>
   `,
   styles: [
@@ -208,9 +242,13 @@ interface Field {
 })
 export class ClaudeUserInputComponent {
   readonly request = input.required<ClaudeUserInputRequest>();
-  readonly answer = output<{ action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> }>();
+  readonly answer = output<{
+    action: 'accept' | 'decline' | 'cancel';
+    content?: Record<string, unknown>;
+  }>();
 
   readonly fields = computed<Field[]>(() => buildFields(this.request().requestedSchema));
+  readonly askQuestions = computed(() => this.request().questions ?? []);
   readonly values = signal<Record<string, unknown>>({});
   readonly jsonText = signal('{}');
   readonly jsonError = signal<string | null>(null);
@@ -256,6 +294,10 @@ export class ClaudeUserInputComponent {
       this.jsonError.set('Provide valid JSON before accepting.');
     }
   }
+
+  submitQuestionAnswers(answers: Record<string, string>): void {
+    this.answer.emit({ action: 'accept', content: answers });
+  }
 }
 
 function buildFields(schema: ClaudeJsonSchema | undefined): Field[] {
@@ -268,7 +310,14 @@ function buildFields(schema: ClaudeJsonSchema | undefined): Field[] {
     const description = prop.description;
     const isReq = required.includes(key);
     if (prop.enum && prop.enum.length) {
-      out.push({ key, label, description, required: isReq, type: 'enum', options: prop.enum.map(String) });
+      out.push({
+        key,
+        label,
+        description,
+        required: isReq,
+        type: 'enum',
+        options: prop.enum.map(String),
+      });
       continue;
     }
     if (rawType === 'boolean') {

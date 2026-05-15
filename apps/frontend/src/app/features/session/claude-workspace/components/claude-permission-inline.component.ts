@@ -21,7 +21,6 @@ import {
   lucideClipboardList,
   lucideCheck,
   lucideCheckCheck,
-  lucideChevronLeft,
   lucideX,
 } from '@ng-icons/lucide';
 import {
@@ -32,19 +31,7 @@ import {
 import { MarkdownPipe } from '../pipes/markdown.pipe';
 import { normalizeToolName as normalizeToolNameForUi } from '../util/tool-format';
 import { highlightedDiffHtml } from '../util/code-highlight';
-
-interface AskOption {
-  label: string;
-  description?: string;
-  preview?: string;
-}
-
-interface AskQuestion {
-  question: string;
-  header?: string;
-  options: AskOption[];
-  multiSelect?: boolean;
-}
+import { AskUserQuestion, AskUserQuestionFlowComponent } from './ask-user-question-flow.component';
 
 interface AlwaysAllowPattern {
   label: string;
@@ -55,7 +42,7 @@ interface AlwaysAllowPattern {
 @Component({
   selector: 'cw-permission-inline',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownPipe, NgIcon],
+  imports: [CommonModule, FormsModule, MarkdownPipe, NgIcon, AskUserQuestionFlowComponent],
   viewProviders: [
     provideIcons({
       lucideShield,
@@ -63,7 +50,6 @@ interface AlwaysAllowPattern {
       lucideClipboardList,
       lucideCheck,
       lucideCheckCheck,
-      lucideChevronLeft,
       lucideX,
     }),
   ],
@@ -78,7 +64,9 @@ interface AlwaysAllowPattern {
             </span>
             <span class="cw-perm__eyebrow">Input needed</span>
             @if (request().agentId) {
-              <span class="cw-perm__agent" title="Delegated subagent">Subagent · {{ request().agentId }}</span>
+              <span class="cw-perm__agent" title="Delegated subagent"
+                >Subagent · {{ request().agentId }}</span
+              >
             }
           </header>
           <h3 class="cw-perm__title">{{ request().title || 'Claude needs your input' }}</h3>
@@ -86,113 +74,15 @@ interface AlwaysAllowPattern {
             <p class="cw-perm__sub">{{ request().description }}</p>
           }
 
-          <div class="cw-ask">
-            <div class="cw-ask__nav">
-              <span class="cw-ask__progress">{{ askProgressLabel() }}</span>
-            </div>
-
-            @if (isAskReviewing()) {
-              <section class="cw-ask__recap" aria-label="Review answers">
-                @for (question of questions(); track question.question) {
-                  <div class="cw-ask__recap-item">
-                    <span class="cw-ask__recap-question">{{ question.question }}</span>
-                    <span class="cw-ask__recap-answer">{{ serializeAnswer(question) }}</span>
-                  </div>
-                }
-              </section>
-            } @else if (activeQuestion(); as question) {
-              <section class="cw-ask__q">
-                <div class="cw-ask__qhead">
-                  @if (question.header) {
-                    <span class="cw-ask__chip">{{ question.header }}</span>
-                  }
-                  <span class="cw-ask__qtext">{{ question.question }}</span>
-                </div>
-
-                <div class="cw-ask__options">
-                  @for (option of question.options; track option.label) {
-                    <label class="cw-ask__opt" [class.cw-ask__opt--on]="isSelected(question, option.label)">
-                      <input
-                        [type]="question.multiSelect ? 'checkbox' : 'radio'"
-                        [name]="question.question"
-                        [checked]="isSelected(question, option.label)"
-                        (change)="toggleOption(question, option.label, $any($event.target).checked)"
-                      />
-                      <span class="cw-ask__opt-body">
-                        <span class="cw-ask__opt-label">{{ option.label }}</span>
-                        @if (option.description) {
-                          <span class="cw-ask__opt-desc">{{ option.description }}</span>
-                        }
-                      </span>
-                    </label>
-                  }
-
-                  <label class="cw-ask__opt" [class.cw-ask__opt--on]="isOtherSelected(question)">
-                    <input
-                      [type]="question.multiSelect ? 'checkbox' : 'radio'"
-                      [name]="question.question"
-                      [checked]="isOtherSelected(question)"
-                      (change)="toggleOther(question, $any($event.target).checked)"
-                    />
-                    <span class="cw-ask__opt-body">
-                      <span class="cw-ask__opt-label">Other...</span>
-                    </span>
-                  </label>
-
-                  @if (isOtherSelected(question)) {
-                    <textarea
-                      #otherTa
-                      class="cw-ask__other"
-                      [ngModel]="otherAnswers()[question.question] || ''"
-                      (ngModelChange)="setOtherAnswer(question.question, $event)"
-                      placeholder="Type your answer"
-                    ></textarea>
-                  }
-                </div>
-
-                @if (selectedPreview(question); as preview) {
-                  <div class="cw-perm__preview cw-perm__preview--md" [innerHTML]="preview | cwMarkdown"></div>
-                }
-              </section>
-            }
-          </div>
-
           @if (!denying()) {
-            <footer class="cw-perm__actions">
-              <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
-                <ng-icon name="lucideX" size="13" aria-hidden="true" />
-                Decline
-              </button>
-              <span class="cw-perm__spacer"></span>
-              @if (canGoBack()) {
-                <button type="button" class="cw-btn cw-btn--secondary" (click)="goBack()">
-                  <ng-icon name="lucideChevronLeft" size="13" aria-hidden="true" />
-                  Back
-                </button>
-              }
-              @if (showAskNextButton()) {
-                <button
-                  type="button"
-                  class="cw-btn cw-btn--primary"
-                  [disabled]="!canAdvanceActiveQuestion()"
-                  (click)="advanceAskFlow()"
-                >
-                  <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
-                  Next
-                </button>
-              }
-              @if (isAskReviewing()) {
-                <button
-                  type="button"
-                  class="cw-btn cw-btn--primary"
-                  [disabled]="!canSubmitQuestions()"
-                  (click)="submitQuestions()"
-                >
-                  <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
-                  Submit
-                </button>
-              }
-            </footer>
+            <cw-ask-user-question-flow
+              [requestId]="request().requestId"
+              [questions]="questions()"
+              declineLabel="Decline"
+              submitLabel="Submit"
+              (decline)="startDeny()"
+              (submitted)="submitQuestionAnswers($event)"
+            />
           }
         }
 
@@ -213,7 +103,11 @@ interface AlwaysAllowPattern {
                 <ng-icon name="lucideX" size="13" aria-hidden="true" />
                 Not now
               </button>
-              <button type="button" class="cw-btn cw-btn--primary" (click)="approve.emit({ remember: false })">
+              <button
+                type="button"
+                class="cw-btn cw-btn--primary"
+                (click)="approve.emit({ remember: false })"
+              >
                 <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
                 Start planning
               </button>
@@ -234,7 +128,10 @@ interface AlwaysAllowPattern {
           <h3 class="cw-perm__title">{{ request().title || 'Approve plan?' }}</h3>
 
           @if (planContent(); as plan) {
-            <div class="cw-perm__preview cw-perm__preview--md" [innerHTML]="plan | cwMarkdown"></div>
+            <div
+              class="cw-perm__preview cw-perm__preview--md"
+              [innerHTML]="plan | cwMarkdown"
+            ></div>
           }
 
           @if (!denying()) {
@@ -243,7 +140,11 @@ interface AlwaysAllowPattern {
                 <ng-icon name="lucideX" size="13" aria-hidden="true" />
                 Keep planning
               </button>
-              <button type="button" class="cw-btn cw-btn--primary" (click)="approve.emit({ remember: false })">
+              <button
+                type="button"
+                class="cw-btn cw-btn--primary"
+                (click)="approve.emit({ remember: false })"
+              >
                 <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
                 Approve plan
               </button>
@@ -259,7 +160,9 @@ interface AlwaysAllowPattern {
             <span class="cw-perm__eyebrow">Approval required</span>
             <span class="cw-perm__tool">{{ requestToolLabel() }}</span>
             @if (request().agentId) {
-              <span class="cw-perm__agent" title="Delegated subagent">Subagent · {{ request().agentId }}</span>
+              <span class="cw-perm__agent" title="Delegated subagent"
+                >Subagent · {{ request().agentId }}</span
+              >
             }
           </header>
 
@@ -280,10 +183,17 @@ interface AlwaysAllowPattern {
           }
 
           @if (!denying()) {
-            <section class="cw-perm__always" [attr.data-has-patterns]="alwaysAllowPatterns().length > 0">
+            <section
+              class="cw-perm__always"
+              [attr.data-has-patterns]="alwaysAllowPatterns().length > 0"
+            >
               <div class="cw-perm__always-head">
                 <span class="cw-perm__always-kicker">
-                  {{ alwaysAllowPatterns().length ? 'Always allow saves this pattern' : 'No always-allow pattern available' }}
+                  {{
+                    alwaysAllowPatterns().length
+                      ? 'Always allow saves this pattern'
+                      : 'No always-allow pattern available'
+                  }}
                 </span>
                 @if (!alwaysAllowPatterns().length) {
                   <span class="cw-perm__always-empty">No reusable pattern supplied</span>
@@ -301,7 +211,8 @@ interface AlwaysAllowPattern {
                 </div>
               } @else {
                 <p class="cw-perm__always-note">
-                  Claude did not provide a reusable rule for this tool call, so this request can only be approved once.
+                  Claude did not provide a reusable rule for this tool call, so this request can
+                  only be approved once.
                 </p>
               }
             </section>
@@ -355,7 +266,9 @@ interface AlwaysAllowPattern {
           ></textarea>
           <div class="cw-perm__deny-actions">
             <span class="cw-perm__deny-hint">⌘↵ to send · Esc to cancel</span>
-            <button type="button" class="cw-btn cw-btn--ghost" (click)="cancelDeny()">Cancel</button>
+            <button type="button" class="cw-btn cw-btn--ghost" (click)="cancelDeny()">
+              Cancel
+            </button>
             <button type="button" class="cw-btn cw-btn--deny-confirm" (click)="confirmDeny()">
               <ng-icon name="lucideX" size="13" aria-hidden="true" />
               {{ denyMessage().trim() ? 'Send & deny' : 'Deny' }}
@@ -488,8 +401,12 @@ interface AlwaysAllowPattern {
         line-height: 1.6;
         max-height: 18rem;
       }
-      .cw-perm__preview--md :first-child { margin-top: 0; }
-      .cw-perm__preview--md :last-child { margin-bottom: 0; }
+      .cw-perm__preview--md :first-child {
+        margin-top: 0;
+      }
+      .cw-perm__preview--md :last-child {
+        margin-bottom: 0;
+      }
 
       /* Always allow pattern */
       .cw-perm__always {
@@ -596,7 +513,9 @@ interface AlwaysAllowPattern {
         flex-wrap: wrap;
         margin-top: 0.35rem;
       }
-      .cw-perm__spacer { flex: 1; }
+      .cw-perm__spacer {
+        flex: 1;
+      }
 
       .cw-btn {
         appearance: none;
@@ -615,7 +534,11 @@ interface AlwaysAllowPattern {
         color: var(--foreground);
         cursor: pointer;
         white-space: nowrap;
-        transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 80ms ease;
+        transition:
+          background 120ms ease,
+          border-color 120ms ease,
+          color 120ms ease,
+          transform 80ms ease;
       }
       .cw-btn:focus-visible {
         outline: none;
@@ -643,7 +566,9 @@ interface AlwaysAllowPattern {
         background: color-mix(in oklab, var(--primary) 88%, var(--background));
         border-color: color-mix(in oklab, var(--primary) 88%, var(--background));
       }
-      .cw-btn--primary ng-icon { opacity: 1; }
+      .cw-btn--primary ng-icon {
+        opacity: 1;
+      }
 
       /* Secondary — subtle filled (Allow once) */
       .cw-btn--secondary {
@@ -678,7 +603,9 @@ interface AlwaysAllowPattern {
         background: color-mix(in oklab, var(--destructive) 88%, var(--background));
         border-color: color-mix(in oklab, var(--destructive) 88%, var(--background));
       }
-      .cw-btn--deny-confirm ng-icon { opacity: 1; }
+      .cw-btn--deny-confirm ng-icon {
+        opacity: 1;
+      }
 
       /* Ghost — minimal */
       .cw-btn--ghost {
@@ -724,7 +651,9 @@ interface AlwaysAllowPattern {
         line-height: 1.45;
         resize: vertical;
         outline: none;
-        transition: border-color 120ms ease, box-shadow 120ms ease;
+        transition:
+          border-color 120ms ease,
+          box-shadow 120ms ease;
       }
       .cw-perm__deny-input:focus {
         border-color: color-mix(in oklab, var(--destructive) 50%, var(--border));
@@ -741,149 +670,16 @@ interface AlwaysAllowPattern {
         color: var(--muted-foreground);
       }
 
-      /* Ask user question */
-      .cw-ask {
-        display: flex;
-        flex-direction: column;
-        gap: 0.55rem;
-        margin-top: 0.15rem;
-      }
-      .cw-ask__nav {
-        display: flex;
-        align-items: center;
-        gap: 0.45rem;
-        min-height: 1rem;
-      }
-      .cw-ask__progress {
-        font-size: 0.68rem;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: var(--muted-foreground);
-      }
-      .cw-ask__q {
-        display: flex;
-        flex-direction: column;
-        gap: 0.45rem;
-      }
-      .cw-ask__qhead {
-        display: flex;
-        align-items: center;
-        gap: 0.45rem;
-        flex-wrap: wrap;
-      }
-      .cw-ask__chip {
-        font-size: 0.65rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        padding: 0.1rem 0.4rem;
-        border-radius: 999px;
-        background: color-mix(in oklab, var(--foreground) 7%, transparent);
-        color: var(--muted-foreground);
-      }
-      .cw-ask__qtext {
-        font-size: 0.83rem;
-        font-weight: 600;
-        line-height: 1.4;
-        color: var(--foreground);
-      }
-      .cw-ask__options {
-        display: flex;
-        flex-direction: column;
-        gap: 0.3rem;
-      }
-      .cw-ask__opt {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.55rem;
-        padding: 0.45rem 0.6rem;
-        border: 1px solid var(--border);
-        border-radius: 0.5rem;
-        background: var(--background);
-        cursor: pointer;
-        transition: border-color 120ms ease, background 120ms ease;
-      }
-      .cw-ask__opt:hover {
-        border-color: color-mix(in oklab, var(--foreground) 25%, var(--border));
-      }
-      .cw-ask__opt input {
-        margin-top: 0.18rem;
-        accent-color: var(--foreground);
-      }
-      .cw-ask__opt--on {
-        border-color: var(--foreground);
-        background: color-mix(in oklab, var(--foreground) 5%, var(--background));
-      }
-      .cw-ask__opt-body {
-        display: flex;
-        flex-direction: column;
-        gap: 0.1rem;
-        min-width: 0;
-      }
-      .cw-ask__opt-label {
-        font-size: 0.8125rem;
-        font-weight: 500;
-        color: var(--foreground);
-      }
-      .cw-ask__opt-desc {
-        font-size: 0.72rem;
-        color: var(--muted-foreground);
-        line-height: 1.45;
-      }
-      .cw-ask__other {
-        min-height: 3.5rem;
-        padding: 0.5rem 0.65rem;
-        border: 1px solid var(--border);
-        border-radius: 0.5rem;
-        background: var(--background);
-        color: inherit;
-        font: inherit;
-        font-size: 0.8125rem;
-        resize: vertical;
-        outline: none;
-        transition: border-color 120ms ease, box-shadow 120ms ease;
-      }
-      .cw-ask__other:focus {
-        border-color: color-mix(in oklab, var(--ring) 60%, var(--border));
-        box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 25%, transparent);
-      }
-      .cw-ask__recap {
-        display: flex;
-        flex-direction: column;
-        gap: 0.4rem;
-        max-height: 12rem;
-        overflow: auto;
-      }
-      .cw-ask__recap-item {
-        display: grid;
-        grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-        gap: 0.5rem;
-        align-items: start;
-        padding: 0.45rem 0.55rem;
-        border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
-        border-radius: 0.45rem;
-        background: color-mix(in oklab, var(--foreground) 3%, var(--background));
-      }
-      .cw-ask__recap-question {
-        min-width: 0;
-        color: var(--muted-foreground);
-        font-size: 0.74rem;
-        line-height: 1.35;
-      }
-      .cw-ask__recap-answer {
-        min-width: 0;
-        color: var(--foreground);
-        font-size: 0.78rem;
-        font-weight: 500;
-        line-height: 1.35;
-        overflow-wrap: anywhere;
-      }
-
       @media (max-width: 540px) {
-        .cw-perm { padding: 0.7rem 0.75rem; }
-        .cw-perm__spacer { display: none; }
-        .cw-btn { flex: 1; }
+        .cw-perm {
+          padding: 0.7rem 0.75rem;
+        }
+        .cw-perm__spacer {
+          display: none;
+        }
+        .cw-btn {
+          flex: 1;
+        }
         .cw-perm__pattern {
           grid-template-columns: 1fr;
           gap: 0.2rem;
@@ -891,17 +687,12 @@ interface AlwaysAllowPattern {
         .cw-perm__pattern-detail {
           white-space: normal;
         }
-        .cw-ask__recap-item {
-          grid-template-columns: 1fr;
-          gap: 0.2rem;
-        }
       }
     `,
   ],
 })
 export class ClaudePermissionInlineComponent {
   @ViewChild('denyTa') private denyTa?: ElementRef<HTMLTextAreaElement>;
-  @ViewChild('otherTa') private otherTa?: ElementRef<HTMLTextAreaElement>;
 
   readonly request = input.required<ClaudePermissionRequest>();
   readonly appearance = input<'inline' | 'dock'>('inline');
@@ -910,15 +701,16 @@ export class ClaudePermissionInlineComponent {
 
   readonly denying = signal(false);
   readonly denyMessage = signal('');
-  readonly currentQuestionIndex = signal(0);
 
-  readonly kind = computed<'generic' | 'ask_user_question' | 'enter_plan_mode' | 'exit_plan_mode'>(() => {
-    const name = normalizeToolName(this.request().toolName);
-    if (name === 'askuserquestion') return 'ask_user_question';
-    if (name === 'enterplanmode') return 'enter_plan_mode';
-    if (name === 'exitplanmode') return 'exit_plan_mode';
-    return 'generic';
-  });
+  readonly kind = computed<'generic' | 'ask_user_question' | 'enter_plan_mode' | 'exit_plan_mode'>(
+    () => {
+      const name = normalizeToolName(this.request().toolName);
+      if (name === 'askuserquestion') return 'ask_user_question';
+      if (name === 'enterplanmode') return 'enter_plan_mode';
+      if (name === 'exitplanmode') return 'exit_plan_mode';
+      return 'generic';
+    },
+  );
 
   readonly permToolKind = computed<string>(() => normalizeToolName(this.request().toolName));
 
@@ -966,7 +758,9 @@ export class ClaudePermissionInlineComponent {
   );
 
   readonly alwaysAllowPatterns = computed<AlwaysAllowPattern[]>(() =>
-    (this.request().suggestions ?? []).flatMap((suggestion) => describePermissionSuggestion(suggestion)),
+    (this.request().suggestions ?? []).flatMap((suggestion) =>
+      describePermissionSuggestion(suggestion),
+    ),
   );
 
   private readonly sanitizer = inject(DomSanitizer);
@@ -974,7 +768,8 @@ export class ClaudePermissionInlineComponent {
   readonly permDiffHtml = computed<SafeHtml | null>(() => {
     if (this.kind() !== 'generic') return null;
     const name = this.permToolKind();
-    if (name !== 'edit' && name !== 'multiedit' && name !== 'fileedit' && name !== 'fileedittool') return null;
+    if (name !== 'edit' && name !== 'multiedit' && name !== 'fileedit' && name !== 'fileedittool')
+      return null;
     const data = asRecord(this.request().input);
     const oldStr = typeof data['old_string'] === 'string' ? data['old_string'] : '';
     const newStr = typeof data['new_string'] === 'string' ? data['new_string'] : '';
@@ -1001,10 +796,10 @@ export class ClaudePermissionInlineComponent {
     return typeof data['command'] === 'string' ? String(data['command']).trim() : '';
   });
 
-  readonly questions = computed<AskQuestion[]>(() => {
+  readonly questions = computed<AskUserQuestion[]>(() => {
     if (this.kind() !== 'ask_user_question') return [];
     const input = asRecord(this.request().input);
-    return Array.isArray(input['questions']) ? (input['questions'] as AskQuestion[]) : [];
+    return Array.isArray(input['questions']) ? (input['questions'] as AskUserQuestion[]) : [];
   });
 
   readonly planContent = computed(() => {
@@ -1017,38 +812,6 @@ export class ClaudePermissionInlineComponent {
     return typeof input['planFilePath'] === 'string' ? input['planFilePath'] : '';
   });
 
-  readonly selectedAnswers = signal<Record<string, string[]>>({});
-  readonly otherAnswers = signal<Record<string, string>>({});
-
-  readonly isAskReviewing = computed(() => {
-    const questions = this.questions();
-    return questions.length > 0 && this.currentQuestionIndex() >= questions.length;
-  });
-
-  readonly activeQuestion = computed<AskQuestion | null>(() => {
-    const questions = this.questions();
-    if (!questions.length || this.isAskReviewing()) return null;
-    return questions[this.currentQuestionIndex()] ?? null;
-  });
-
-  readonly askProgressLabel = computed(() => {
-    const questions = this.questions();
-    if (!questions.length) return 'No questions';
-    if (this.isAskReviewing()) return 'Review answers';
-    return `Question ${this.currentQuestionIndex() + 1} of ${questions.length}`;
-  });
-
-  readonly canSubmitQuestions = computed(() =>
-    this.questions().every((question) => {
-      const selections = this.selectedAnswers()[question.question] ?? [];
-      if (selections.length === 0) return false;
-      if (selections.includes('__other__')) {
-        return !!this.otherAnswers()[question.question]?.trim();
-      }
-      return true;
-    }),
-  );
-
   private lastRequestId = '';
 
   constructor() {
@@ -1056,9 +819,6 @@ export class ClaudePermissionInlineComponent {
       const requestId = this.request().requestId;
       if (requestId === this.lastRequestId) return;
       this.lastRequestId = requestId;
-      this.selectedAnswers.set({});
-      this.otherAnswers.set({});
-      this.currentQuestionIndex.set(0);
       this.denying.set(false);
       this.denyMessage.set('');
     });
@@ -1092,107 +852,11 @@ export class ClaudePermissionInlineComponent {
     }
   }
 
-  isSelected(question: AskQuestion, label: string): boolean {
-    return (this.selectedAnswers()[question.question] ?? []).includes(label);
-  }
-
-  isOtherSelected(question: AskQuestion): boolean {
-    return (this.selectedAnswers()[question.question] ?? []).includes('__other__');
-  }
-
-  toggleOption(question: AskQuestion, label: string, checked: boolean): void {
-    this.selectedAnswers.update((current) => ({
-      ...current,
-      [question.question]: nextSelections(
-        current[question.question] ?? [],
-        label,
-        checked,
-        !!question.multiSelect,
-      ),
-    }));
-    if (checked && !question.multiSelect) {
-      this.advanceAskFlow();
-    }
-  }
-
-  toggleOther(question: AskQuestion, checked: boolean): void {
-    this.selectedAnswers.update((current) => ({
-      ...current,
-      [question.question]: nextSelections(
-        current[question.question] ?? [],
-        '__other__',
-        checked,
-        !!question.multiSelect,
-      ),
-    }));
-    if (checked) {
-      queueMicrotask(() => this.otherTa?.nativeElement?.focus());
-    }
-  }
-
-  setOtherAnswer(questionText: string, value: string): void {
-    this.otherAnswers.update((current) => ({ ...current, [questionText]: value }));
-  }
-
-  selectedPreview(question: AskQuestion): string {
-    if (question.multiSelect) return '';
-    const selected = (this.selectedAnswers()[question.question] ?? []).find((value) => value !== '__other__');
-    if (!selected) return '';
-    return question.options.find((option) => option.label === selected)?.preview ?? '';
-  }
-
-  canGoBack(): boolean {
-    return this.currentQuestionIndex() > 0;
-  }
-
-  goBack(): void {
-    this.currentQuestionIndex.update((index) => Math.max(index - 1, 0));
-  }
-
-  canAdvanceActiveQuestion(): boolean {
-    const question = this.activeQuestion();
-    return !!question && this.canAdvanceQuestion(question);
-  }
-
-  showAskNextButton(): boolean {
-    const question = this.activeQuestion();
-    if (!question) return false;
-    return (this.selectedAnswers()[question.question] ?? []).length > 0;
-  }
-
-  advanceAskFlow(): void {
-    const question = this.activeQuestion();
-    if (!question || !this.canAdvanceQuestion(question)) return;
-    const questions = this.questions();
-    this.currentQuestionIndex.set(Math.min(this.currentQuestionIndex() + 1, questions.length));
-  }
-
-  submitQuestions(): void {
-    if (!this.isAskReviewing() || !this.canSubmitQuestions()) return;
-    const answers = Object.fromEntries(
-      this.questions().map((question) => [question.question, this.serializeAnswer(question)]),
-    );
+  submitQuestionAnswers(answers: Record<string, string>): void {
     this.approve.emit({
       remember: false,
       content: { answers },
     });
-  }
-
-  serializeAnswer(question: AskQuestion): string {
-    const selections = this.selectedAnswers()[question.question] ?? [];
-    const mapped = selections.map((selection) =>
-      selection === '__other__' ? (this.otherAnswers()[question.question] ?? '').trim() : selection,
-    );
-    return mapped.filter(Boolean).join(', ');
-  }
-
-  private canAdvanceQuestion(question: AskQuestion): boolean {
-    const selections = this.selectedAnswers()[question.question] ?? [];
-    if (selections.length === 0) return false;
-    if (selections.includes('__other__')) {
-      return !!this.otherAnswers()[question.question]?.trim();
-    }
-    return true;
   }
 }
 
@@ -1275,17 +939,4 @@ function formatPermissionDestination(destination: ClaudePermissionUpdate['destin
     case 'cliArg':
       return 'the current run';
   }
-}
-
-function nextSelections(
-  current: string[],
-  value: string,
-  checked: boolean,
-  multiSelect: boolean,
-): string[] {
-  if (!multiSelect) {
-    return checked ? [value] : [];
-  }
-  const without = current.filter((entry) => entry !== value);
-  return checked ? [...without, value] : without;
 }

@@ -13,7 +13,13 @@ export type ClaudePermissionMode =
   | 'auto'
   | string;
 export type ClaudeFastModeState = 'off' | 'cooldown' | 'on';
-export type ClaudeReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | string;
+export type ClaudeReasoningEffort =
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | string;
 
 export type ClaudeTranscriptItemKind =
   | 'user'
@@ -89,6 +95,17 @@ export interface ClaudeUserInputRequest {
   url?: string;
   elicitationId?: string;
   requestedSchema?: Record<string, unknown>;
+  questions?: {
+    id?: string;
+    question: string;
+    header?: string;
+    options: {
+      label: string;
+      description?: string;
+      preview?: string;
+    }[];
+    multiSelect?: boolean;
+  }[];
   title?: string;
   displayName?: string;
   description?: string;

@@ -128,6 +128,17 @@ export interface ClaudeUserInputRequest {
   url?: string;
   elicitationId?: string;
   requestedSchema?: ClaudeJsonSchema;
+  questions?: {
+    id?: string;
+    question: string;
+    header?: string;
+    options: {
+      label: string;
+      description?: string;
+      preview?: string;
+    }[];
+    multiSelect?: boolean;
+  }[];
   title?: string;
   displayName?: string;
   description?: string;
@@ -560,13 +571,19 @@ export type ClaudeRuntimeEvent =
         pendingPrompts: ClaudePendingPrompt[];
       };
     }
-  | { type: 'session_metadata'; payload: { sessionId: number; metadata: ClaudeRuntimeSessionMetadata } }
+  | {
+      type: 'session_metadata';
+      payload: { sessionId: number; metadata: ClaudeRuntimeSessionMetadata };
+    }
   | { type: 'runtime_status'; payload: { sessionId: number; status: ClaudeRuntimeStatus } }
   | { type: 'auth_status'; payload: { sessionId: number; status: ClaudeAuthStatus } }
   | { type: 'rate_limit'; payload: { sessionId: number; rateLimit: ClaudeRateLimit } }
   | { type: 'notification'; payload: { sessionId: number; notification: ClaudeNotification } }
   | { type: 'api_retry'; payload: { sessionId: number; retry: ClaudeApiRetry } }
-  | { type: 'plugin_install'; payload: { sessionId: number; progress: ClaudePluginInstallProgress } }
+  | {
+      type: 'plugin_install';
+      payload: { sessionId: number; progress: ClaudePluginInstallProgress };
+    }
   | { type: 'hook_event'; payload: { sessionId: number; hookEvent: ClaudeHookEvent } }
   | { type: 'hook_started'; payload: { sessionId: number; hook: ClaudeHookExecution } }
   | { type: 'hook_progress'; payload: { sessionId: number; hook: ClaudeHookExecution } }
@@ -581,8 +598,14 @@ export type ClaudeRuntimeEvent =
   | { type: 'tool_summary'; payload: { sessionId: number; summary: ClaudeToolUseSummary } }
   | { type: 'memory_recall'; payload: { sessionId: number; recall: ClaudeMemoryRecall } }
   | { type: 'files_persisted'; payload: { sessionId: number; files: ClaudeFilesPersisted } }
-  | { type: 'elicitation_complete'; payload: { sessionId: number; completion: ClaudeElicitationCompletion } }
-  | { type: 'prompt_suggestion'; payload: { sessionId: number; suggestion: ClaudePromptSuggestion } }
+  | {
+      type: 'elicitation_complete';
+      payload: { sessionId: number; completion: ClaudeElicitationCompletion };
+    }
+  | {
+      type: 'prompt_suggestion';
+      payload: { sessionId: number; suggestion: ClaudePromptSuggestion };
+    }
   | { type: 'compact_boundary'; payload: { sessionId: number; boundary: ClaudeCompactBoundary } }
   | { type: 'mirror_error'; payload: { sessionId: number; error: ClaudeMirrorError } }
   | { type: 'message_start'; payload: { sessionId: number; item: ClaudeTranscriptItem } }
