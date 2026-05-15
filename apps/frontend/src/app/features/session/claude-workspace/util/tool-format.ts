@@ -68,6 +68,202 @@ export function normalizeToolName(name: string): string {
   return name.toLowerCase().replace(/[_-]/g, '');
 }
 
+function shellWords(command: string): string[] | null {
+  const words: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  let escaping = false;
+
+  const pushCurrent = () => {
+    if (current) {
+      words.push(current);
+      current = '';
+    }
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (escaping) {
+      current += ch;
+      escaping = false;
+      continue;
+    }
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      else current += ch;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === '"') {
+        quote = null;
+      } else if (ch === '\\') {
+        escaping = true;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (ch === '\\') {
+      escaping = true;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (ch === '\n' || ch === '\r') {
+      pushCurrent();
+      words.push(';');
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      pushCurrent();
+      continue;
+    }
+    if (ch === '|') {
+      pushCurrent();
+      if (command[i + 1] === '|') {
+        words.push('||');
+        i++;
+      } else {
+        words.push('|');
+      }
+      continue;
+    }
+    if (ch === '&' && command[i + 1] === '&') {
+      pushCurrent();
+      words.push('&&');
+      i++;
+      continue;
+    }
+    if (ch === '<' || ch === '>') {
+      pushCurrent();
+      if (command[i + 1] === ch) {
+        words.push(ch + ch);
+        i++;
+      } else {
+        words.push(ch);
+      }
+      continue;
+    }
+    if (ch === ';') {
+      pushCurrent();
+      words.push(';');
+      continue;
+    }
+    current += ch;
+  }
+
+  if (escaping) current += '\\';
+  if (quote) return null;
+  pushCurrent();
+  return words;
+}
+
+function unwrapShellCommand(tokens: string[]): string[] {
+  const shellName = basename(tokens[0] ?? '');
+  if (
+    (shellName === 'bash' || shellName === 'zsh' || shellName === 'sh') &&
+    (tokens[1] === '-lc' || tokens[1] === '-c') &&
+    tokens[2]
+  ) {
+    return shellWords(tokens[2]) ?? tokens;
+  }
+  return tokens;
+}
+
+function isValidSedPrintRange(arg: string | undefined): boolean {
+  if (!arg?.endsWith('p')) return false;
+  const parts = arg.slice(0, -1).split(',');
+  if (parts.length < 1 || parts.length > 2) return false;
+  return parts.every((part) => part.length > 0 && /^\d+$/.test(part));
+}
+
+function skipFlagValues(args: string[], optionsWithValues: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    out.push(args[i]);
+    if (optionsWithValues.includes(args[i])) i++;
+  }
+  return out;
+}
+
+function sedHasPrintRange(args: string[]): boolean {
+  if (!args.includes('-n')) return false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-e' || arg === '--expression') {
+      if (isValidSedPrintRange(args[i + 1])) return true;
+      i++;
+    }
+  }
+  return args.some((arg) => !arg.startsWith('-') && isValidSedPrintRange(arg));
+}
+
+function sedReadPath(args: string[]): string | null {
+  if (!sedHasPrintRange(args)) return null;
+  const candidates = skipFlagValues(args, ['-e', '-f', '--expression', '--file']);
+  const nonFlags = candidates.filter((arg) => !arg.startsWith('-'));
+  if (!nonFlags.length) return null;
+  if (isValidSedPrintRange(nonFlags[0])) return nonFlags[1] ?? null;
+  return nonFlags[0];
+}
+
+function catReadPath(args: string[]): string | null {
+  const path = args.find((arg) => arg !== '--' && !arg.startsWith('-'));
+  return path ?? null;
+}
+
+function nlReadPath(args: string[]): string | null {
+  const candidates = skipFlagValues(args, ['-s', '-w', '-v', '-i', '-b']);
+  return candidates.find((arg) => arg !== '--' && !arg.startsWith('-')) ?? null;
+}
+
+function commandSegmentReadPath(tokens: string[]): string | null {
+  const [head, ...tail] = tokens;
+  if (head === 'sed') return sedReadPath(tail);
+  if (head === 'cat') return catReadPath(tail);
+  if (head === 'nl') return nlReadPath(tail);
+  return null;
+}
+
+function splitPipeline(tokens: string[]): string[][] {
+  const segments: string[][] = [[]];
+  for (const token of tokens) {
+    if (token === '|') segments.push([]);
+    else segments[segments.length - 1].push(token);
+  }
+  return segments.filter((segment) => segment.length > 0);
+}
+
+function codexStyleSedReadPath(command: string): string | null {
+  const tokens = shellWords(command);
+  if (!tokens?.length) return null;
+  const unwrapped = unwrapShellCommand(tokens);
+  if (
+    unwrapped.some((token) =>
+      token === '&&' ||
+      token === '||' ||
+      token === ';' ||
+      token === '<' ||
+      token === '>' ||
+      token === '>>'
+    )
+  ) {
+    return null;
+  }
+
+  const pipeline = splitPipeline(unwrapped);
+  if (pipeline.length === 1) {
+    const [head, ...tail] = pipeline[0];
+    return head === 'sed' ? sedReadPath(tail) : null;
+  }
+
+  const last = pipeline[pipeline.length - 1];
+  if (last[0] !== 'sed' || !sedHasPrintRange(last.slice(1))) return null;
+  return commandSegmentReadPath(pipeline[0]);
+}
+
 export function describeTool(toolName: string | undefined, input: unknown): ToolDisplay {
   const data = asRecord(input);
   const name = toolName || 'Tool';
@@ -127,6 +323,10 @@ export function describeTool(toolName: string | undefined, input: unknown): Tool
   // Bash / PowerShell
   if (n === 'bash' || n === 'powershell') {
     const cmd = String(data['command'] ?? '').trim();
+    const readPath = n === 'bash' ? codexStyleSedReadPath(cmd) : null;
+    if (readPath) {
+      return { kind: 'read', icon: 'lucideFileText', verb: 'Read', target: displayPath(readPath) };
+    }
     const firstLine = cmd.split('\n')[0] || cmd;
     return { kind: 'bash', icon: 'lucideTerminal', verb: 'Run', target: truncate(firstLine, 120) };
   }

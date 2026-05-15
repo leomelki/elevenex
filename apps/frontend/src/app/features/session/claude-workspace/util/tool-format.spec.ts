@@ -2,6 +2,57 @@ import { describe, expect, it } from 'vitest';
 import { describeTool, resultSummary } from './tool-format';
 
 describe('tool-format', () => {
+  it('shows Codex-style sed range reads as Read tool calls', () => {
+    const display = describeTool('Bash', {
+      command: "sed -n '12,20p' Cargo.toml",
+    });
+
+    expect(display).toMatchObject({
+      kind: 'read',
+      verb: 'Read',
+      target: 'Cargo.toml',
+    });
+  });
+
+  it('shows shell-wrapped Codex sed range reads as Read tool calls', () => {
+    const display = describeTool('Bash', {
+      command: "/bin/zsh -lc \"sed -n '1,10p' apps/frontend/src/main.ts\"",
+    });
+
+    expect(display).toMatchObject({
+      kind: 'read',
+      verb: 'Read',
+      target: 'apps/frontend/src/main.ts',
+    });
+  });
+
+  it('shows Codex nl-to-sed range pipelines as Read tool calls', () => {
+    const display = describeTool('Bash', {
+      command: "nl -ba core/src/parse_command.rs | sed -n '1200,1720p'",
+    });
+
+    expect(display).toMatchObject({
+      kind: 'read',
+      verb: 'Read',
+      target: 'core/src/parse_command.rs',
+    });
+  });
+
+  it('keeps invalid sed scripts and plain cat commands as run tool calls', () => {
+    expect(describeTool('Bash', { command: 'sed -n +10p file.txt' })).toMatchObject({
+      kind: 'bash',
+      verb: 'Run',
+    });
+    expect(describeTool('Bash', { command: 'sed -n 1,5p file.txt > out.txt' })).toMatchObject({
+      kind: 'bash',
+      verb: 'Run',
+    });
+    expect(describeTool('Bash', { command: 'cat file.txt' })).toMatchObject({
+      kind: 'bash',
+      verb: 'Run',
+    });
+  });
+
   it('uses the ask-user-question prompt text instead of a count label', () => {
     const display = describeTool('AskUserQuestion', {
       questions: [
