@@ -76,6 +76,7 @@ jobs:
               targets: [
                 { key: 'linux-x64', archive: 'elevenex-remote-runtime-linux-x64.tar.gz' },
                 { key: 'linux-arm64', archive: 'elevenex-remote-runtime-linux-arm64.tar.gz' },
+                { key: 'darwin-arm64', archive: 'elevenex-remote-runtime-darwin-arm64.tar.gz' },
               ],
               desktopRuntime: [
                 { key: 'macos-arm64', archive: 'elevenex-runtime-macos-arm64.tar.gz' },
