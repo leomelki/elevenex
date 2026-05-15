@@ -204,6 +204,34 @@ describe('CodexRuntimeService', () => {
     expect(models).toEqual([{ id: 'gpt-test', displayName: 'GPT Test' }]);
   });
 
+  it('preserves Codex parsed command actions on command execution tool calls', () => {
+    const { service } = createService();
+    const commandActions = [
+      {
+        type: 'read',
+        command: "sed -n '12,20p' Cargo.toml",
+        name: 'Cargo.toml',
+        path: '/tmp/project/Cargo.toml',
+      },
+    ];
+
+    const item = (service as any).toToolUseItem(
+      {
+        id: 'cmd-1',
+        type: 'command_execution',
+        command: "sed -n '12,20p' Cargo.toml",
+        command_actions: commandActions,
+        status: 'in_progress',
+      },
+      '2026-05-15T12:00:00.000Z',
+    );
+
+    expect(item.toolInput).toEqual({
+      command: "sed -n '12,20p' Cargo.toml",
+      commandActions,
+    });
+  });
+
   it('uses native Codex collaboration mode for plan turns without injecting a prompt', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);

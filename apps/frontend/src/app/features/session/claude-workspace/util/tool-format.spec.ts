@@ -2,43 +2,67 @@ import { describe, expect, it } from 'vitest';
 import { describeTool, resultSummary } from './tool-format';
 
 describe('tool-format', () => {
-  it('shows Codex-style sed range reads as Read tool calls', () => {
+  it('shows Codex parsed read actions as Read tool calls', () => {
     const display = describeTool('Bash', {
       command: "sed -n '12,20p' Cargo.toml",
+      commandActions: [
+        {
+          type: 'read',
+          command: "sed -n '12,20p' Cargo.toml",
+          name: 'Cargo.toml',
+          path: '/repo/Cargo.toml',
+        },
+      ],
     });
 
     expect(display).toMatchObject({
       kind: 'read',
       verb: 'Read',
-      target: 'Cargo.toml',
+      target: '/repo/Cargo.toml',
     });
   });
 
-  it('shows shell-wrapped Codex sed range reads as Read tool calls', () => {
+  it('uses snake-case Codex parsed actions from app-server items', () => {
     const display = describeTool('Bash', {
       command: "/bin/zsh -lc \"sed -n '1,10p' apps/frontend/src/main.ts\"",
+      command_actions: [
+        {
+          type: 'read',
+          command: "sed -n '1,10p' apps/frontend/src/main.ts",
+          name: 'main.ts',
+          path: '/repo/apps/frontend/src/main.ts',
+        },
+      ],
     });
 
     expect(display).toMatchObject({
       kind: 'read',
       verb: 'Read',
-      target: 'apps/frontend/src/main.ts',
+      target: '…/frontend/src/main.ts',
     });
   });
 
-  it('shows Codex nl-to-sed range pipelines as Read tool calls', () => {
+  it('uses Codex pipeline parsing rather than local sed detection', () => {
     const display = describeTool('Bash', {
       command: "nl -ba core/src/parse_command.rs | sed -n '1200,1720p'",
+      commandActions: [
+        {
+          type: 'read',
+          command: "nl -ba core/src/parse_command.rs | sed -n '1200,1720p'",
+          name: 'parse_command.rs',
+          path: '/repo/core/src/parse_command.rs',
+        },
+      ],
     });
 
     expect(display).toMatchObject({
       kind: 'read',
       verb: 'Read',
-      target: 'core/src/parse_command.rs',
+      target: '…/core/src/parse_command.rs',
     });
   });
 
-  it('keeps invalid sed scripts and plain cat commands as run tool calls', () => {
+  it('keeps commands without Codex read actions as run tool calls', () => {
     expect(describeTool('Bash', { command: 'sed -n +10p file.txt' })).toMatchObject({
       kind: 'bash',
       verb: 'Run',

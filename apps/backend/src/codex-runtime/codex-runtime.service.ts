@@ -641,12 +641,16 @@ export class CodexRuntimeService extends EventEmitter {
     timestamp: string,
   ): ClaudeTranscriptItem | null {
     if (item.type === 'command_execution') {
+      const commandActions = commandActionsFrom(item);
       return {
         id: `${item.id}:tool_use`,
         kind: 'tool_use',
         toolUseId: item.id,
         toolName: 'Bash',
-        toolInput: { command: item.command },
+        toolInput: {
+          command: item.command,
+          ...(commandActions ? { commandActions } : {}),
+        },
         sourceMessageId: item.id,
         timestamp,
         receivedAt: timestamp,
@@ -1873,11 +1877,13 @@ export class CodexRuntimeService extends EventEmitter {
           text: opts.isFinal ? finalText : (planText.get(id) ?? finalText),
         } as unknown as ThreadItem;
       }
-      case 'commandExecution':
+      case 'commandExecution': {
+        const commandActions = commandActionsFrom(raw);
         return {
           id,
           type: 'command_execution',
           command: typeof raw.command === 'string' ? raw.command : '',
+          ...(commandActions ? { command_actions: commandActions } : {}),
           aggregated_output:
             typeof raw.aggregatedOutput === 'string'
               ? raw.aggregatedOutput
@@ -1887,6 +1893,7 @@ export class CodexRuntimeService extends EventEmitter {
             : {}),
           status,
         } as ThreadItem;
+      }
       case 'fileChange':
         return {
           id,
@@ -2064,6 +2071,15 @@ const importCodexSdk = new Function(
   'specifier',
   'return import(specifier)',
 ) as (specifier: string) => Promise<CodexSdkModule>;
+
+function commandActionsFrom(value: unknown): unknown[] | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const camel = record['commandActions'];
+  if (Array.isArray(camel)) return camel;
+  const snake = record['command_actions'];
+  return Array.isArray(snake) ? snake : null;
+}
 
 function normalizeStatus(
   value: unknown,
