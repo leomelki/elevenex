@@ -78,10 +78,13 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
     this.wss.on('connection', async (ws) => {
       this.clients.add(ws);
 
-      // Send initial state
+      // Fetch DB data first, then snapshot in-memory status. Any status-changed
+      // broadcasts that arrive at this client during the DB fetch will be queued
+      // before the init message; capturing statuses/activities after the await
+      // ensures init reflects those updates and does not overwrite them.
+      const sessions = await this.sessionsService.findAllCompletionStates().catch(() => []);
       const statuses = this.hooksService.getAllStatuses();
       const activities = this.hooksService.getAllActivities();
-      const sessions = await this.sessionsService.findAllCompletionStates().catch(() => []);
       const completions: Record<number, {
         hasUnreviewedCompletion: boolean;
         lastCompletionAt: string | null;
