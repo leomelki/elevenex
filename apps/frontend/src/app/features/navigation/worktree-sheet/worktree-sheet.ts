@@ -23,9 +23,7 @@ export class WorktreeSheet {
   repoPath = signal('');
   repoName = signal('');
   workspaceName = signal('');
-  startPoint = signal('HEAD');
   branchName = signal('');
-  createBranch = signal(false);
   worktreePath = signal('');
   creating = signal(false);
   autoCreateSession = signal(false);
@@ -36,11 +34,10 @@ export class WorktreeSheet {
     this.repoName.set(repoName);
     this.autoCreateSession.set(autoCreateSession);
     const parentDir = repoPath.substring(0, repoPath.lastIndexOf('/'));
-    const defaultName = branchName || 'Workspace';
+    const selectedBranch = branchName || 'HEAD';
+    const defaultName = selectedBranch === 'HEAD' ? 'Workspace' : selectedBranch;
     this.workspaceName.set(defaultName);
-    this.branchName.set(branchName);
-    this.startPoint.set(branchName || 'HEAD');
-    this.createBranch.set(false);
+    this.branchName.set(selectedBranch);
     this.worktreePath.set(`${parentDir}/.worktrees/${repoName}/${this.slugify(defaultName)}`);
     this.dialogRef.open();
   }
@@ -67,9 +64,7 @@ export class WorktreeSheet {
     this.workspacesService.create(this.repoId(), {
       name: this.workspaceName().trim(),
       path: this.worktreePath().trim(),
-      startPoint: this.startPoint().trim() || 'HEAD',
-      createBranch: this.createBranch(),
-      branchName: this.createBranch() ? this.branchName().trim() : undefined,
+      startPoint: this.branchName().trim() || 'HEAD',
     }).subscribe({
       next: (workspace) => {
         if (this.autoCreateSession()) {

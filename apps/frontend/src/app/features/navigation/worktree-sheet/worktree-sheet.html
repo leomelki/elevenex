@@ -2,6 +2,12 @@
   <h2 class="text-xl font-semibold text-foreground mb-4">New workspace</h2>
   <div class="space-y-4">
     <div>
+      <div class="text-sm font-semibold text-foreground block mb-1">Branch</div>
+      <div class="flex items-center rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
+        {{ branchName() }}
+      </div>
+    </div>
+    <div>
       <label for="workspaceName" class="text-sm font-semibold text-foreground block mb-1">Workspace name</label>
       <input
         id="workspaceName"
@@ -11,32 +17,6 @@
         [ngModel]="workspaceName()"
         (ngModelChange)="workspaceName.set($event); updatePathFromName()" />
     </div>
-    <div>
-      <label for="startPoint" class="text-sm font-semibold text-foreground block mb-1">Start from branch or ref</label>
-      <input
-        id="startPoint"
-        type="text"
-        class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        placeholder="HEAD, main, origin/main, tag"
-        [ngModel]="startPoint()"
-        (ngModelChange)="startPoint.set($event)" />
-    </div>
-    <label class="flex items-center gap-2 text-sm text-foreground">
-      <input type="checkbox" [ngModel]="createBranch()" (ngModelChange)="createBranch.set($event)" />
-      Create and check out a new branch
-    </label>
-    @if (createBranch()) {
-      <div>
-        <label for="branchName" class="text-sm font-semibold text-foreground block mb-1">New branch name</label>
-        <input
-          id="branchName"
-          type="text"
-          class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder="feature/workspace"
-          [ngModel]="branchName()"
-          (ngModelChange)="branchName.set($event)" />
-      </div>
-    }
     <div>
       <label for="worktreePath" class="text-sm font-semibold text-foreground block mb-1">Workspace path</label>
       <app-path-autocomplete-input
@@ -57,7 +37,7 @@
       <button
         class="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         (click)="submit()"
-        [disabled]="creating() || !worktreePath() || !workspaceName() || (createBranch() && !branchName())">
+        [disabled]="creating() || !worktreePath() || !workspaceName() || !branchName()">
         @if (creating()) {
           <span class="animate-spin inline-block w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full mr-2"></span>
         }

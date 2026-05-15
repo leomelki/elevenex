@@ -30,6 +30,7 @@ import { TabColorService } from '../../../shared/services/tab-color.service';
 import { TabService } from '../../session/tab-service';
 import { NavigationBranch, NavigationProject, NavigationRepo, NavigationWorkspace } from '../../../shared/models/navigation-tree.model';
 import { SessionInTree } from '../../../shared/models/session.model';
+import { BranchInfo } from '../../../shared/models/branch.model';
 import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
 import { BranchSearch } from '../branch-search/branch-search';
 import { WorkspacesService } from '@/shared/services/workspaces.service';
@@ -54,7 +55,7 @@ import { ThemeService } from '@/shared/services/theme.service';
 
 @Component({
   selector: 'app-sidebar',
-  imports: [NgIcon, RouterLink, WorktreeSheet, ZardInputDirective, ProjectOnboardingWizard, PathAutocompleteInputComponent, TrackNativeModalDirective, EnvironmentSwitcherComponent],
+  imports: [NgIcon, RouterLink, WorktreeSheet, BranchSearch, ZardInputDirective, ProjectOnboardingWizard, PathAutocompleteInputComponent, TrackNativeModalDirective, EnvironmentSwitcherComponent],
   templateUrl: './sidebar.html',
   styleUrl: './sidebar.scss',
   viewProviders: [
@@ -199,9 +200,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private openWorktreeTimer: number | null = null;
   openingWorktreeBranchKey = signal<string | null>(null);
 
-  // Compatibility hook for older branch-first tests/integrations. The template no
-  // longer renders BranchSearch, but callers may still assign a test double here.
-  branchSearch?: Pick<BranchSearch, 'open'>;
+  @ViewChild('branchSearch') branchSearch?: Pick<BranchSearch, 'open'>;
 
   private getOpenWorktreePathForSession(sessionId: number): string | null {
     return this.tabService.tabs().find(tab => tab.sessionId === sessionId)?.worktreePath ?? null;
@@ -570,7 +569,7 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   openCreateWorkspace(repo: NavigationRepo) {
-    this.openCreateWorkspaceSheet(repo, false);
+    this.openBranchSearchForRepo(repo);
   }
 
   isOpeningWorkspace(repo: NavigationRepo): boolean {
@@ -968,14 +967,14 @@ export class Sidebar implements OnInit, OnDestroy {
       this.branchSearch.open([repo]);
       return;
     }
-    this.openCreateWorkspace(repo);
+    this.openCreateWorkspaceSheet(repo, 'HEAD', false);
   }
 
-  onBranchSearchSelect() {
-    // Kept for template compatibility while the branch-first dialog is phased out.
+  onBranchSearchSelect(event: { repo: NavigationRepo; branch: BranchInfo }) {
+    this.openCreateWorktree(event.repo, event.branch);
   }
 
-  private openCreateWorkspaceSheet(repo: NavigationRepo, autoCreateSession: boolean) {
+  private openCreateWorkspaceSheet(repo: NavigationRepo, branchName: string, autoCreateSession: boolean) {
     if (this.openingWorkspaceRepoId() !== null) {
       return;
     }
@@ -984,14 +983,14 @@ export class Sidebar implements OnInit, OnDestroy {
     this.openWorktreeTimer = window.setTimeout(() => {
       this.openWorktreeTimer = null;
       try {
-        this.worktreeSheet.open(repo.id, '', repo.path, repo.name, autoCreateSession);
+        this.worktreeSheet.open(repo.id, branchName, repo.path, repo.name, autoCreateSession);
       } finally {
         this.openingWorkspaceRepoId.set(null);
       }
     }, 0);
   }
 
-  openCreateWorktree(repo: NavigationRepo, branch: NavigationBranch) {
+  openCreateWorktree(repo: NavigationRepo, branch: NavigationBranch | BranchInfo | { name: string }) {
     if (this.openingWorktreeBranchKey() !== null) {
       return;
     }
@@ -1007,7 +1006,7 @@ export class Sidebar implements OnInit, OnDestroy {
     }, 0);
   }
 
-  isOpeningWorktree(repo: NavigationRepo, branch: NavigationBranch): boolean {
+  isOpeningWorktree(repo: NavigationRepo, branch: NavigationBranch | BranchInfo | { name: string }): boolean {
     return this.openingWorktreeBranchKey() === this.getWorktreeBranchKey(repo.id, branch.name);
   }
 

@@ -490,7 +490,8 @@
     </div>
   }
 
-  <!-- Worktree creation sheet -->
+  <!-- Workspace creation flow -->
+  <app-branch-search #branchSearch (branchSelected)="onBranchSearchSelect($event)" />
   <app-worktree-sheet #worktreeSheet />
 
   @if (showCreateWizard()) {

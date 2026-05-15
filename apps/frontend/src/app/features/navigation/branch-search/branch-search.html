@@ -3,7 +3,7 @@
     <div class="p-4 border-b border-border">
       <div class="flex items-center gap-2 mb-3">
         <ng-icon name="lucideSearch" class="!w-5 !h-5 text-muted-foreground" />
-        <h2 class="text-lg font-semibold text-foreground">Add Branch</h2>
+        <h2 class="text-lg font-semibold text-foreground">Select branch</h2>
       </div>
       <input
         #searchInput
@@ -50,7 +50,7 @@
                 <button
                   class="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-accent"
                   [class.bg-accent]="i === selectedIndex()"
-                  [disabled]="creating()"
+                  [disabled]="creating() || isUnavailableBranch(branch)"
                   (click)="selectBranch(branch)"
                   (mouseenter)="selectedIndex.set(i)">
                   @if (selectingBranchName() === branch.name) {
@@ -60,9 +60,11 @@
                   } @else {
                     <ng-icon name="lucideCircleDashed" class="!w-4 !h-4 text-muted-foreground shrink-0" />
                   }
-                  <span class="text-sm truncate" [class.text-foreground]="branch.hasWorktree" [class.text-muted-foreground]="!branch.hasWorktree">{{ branch.name }}</span>
+                  <span class="text-sm truncate" [class.text-foreground]="!isUnavailableBranch(branch)" [class.text-muted-foreground]="isUnavailableBranch(branch)">{{ branch.name }}</span>
                   @if (branch.current) {
                     <span class="text-xs text-primary ml-auto">current</span>
+                  } @else if (branch.hasWorktree) {
+                    <span class="text-xs text-muted-foreground ml-auto">checked out</span>
                   }
                 </button>
               </li>

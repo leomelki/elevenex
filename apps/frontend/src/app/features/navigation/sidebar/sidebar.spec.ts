@@ -417,7 +417,7 @@ describe('Sidebar', () => {
     expect(navigationServiceMock.revealProject).toHaveBeenCalledWith(project.id);
   });
 
-  it('shows a visible add-branch action for a repo with no branches even when the repo is collapsed', () => {
+  it('shows a visible new-workspace action for a repo with no workspaces even when the repo is collapsed', () => {
     expandedKeys.set(new Set(['project-1']));
     tree.set([
       {
@@ -439,16 +439,16 @@ describe('Sidebar', () => {
     const branchSearch = { open: vi.fn() };
     component.branchSearch = branchSearch as any;
 
-    const addBranchButton = el.querySelector('[data-empty-repo-add-branch="1"]') as HTMLButtonElement | null;
-    expect(addBranchButton?.textContent).toContain('Add branch');
-    expect(addBranchButton?.textContent).toContain('Create a worktree');
+    const addBranchButton = el.querySelector('[data-empty-repo-add-workspace="1"]') as HTMLButtonElement | null;
+    expect(addBranchButton?.textContent).toContain('New workspace');
+    expect(addBranchButton?.textContent).toContain('Create a named worktree');
 
     addBranchButton?.click();
 
     expect(branchSearch.open).toHaveBeenCalledWith([tree()[0].repos[0]]);
   });
 
-  it('shows the add-branch action when a repo has Git branches but none added to elevenex', () => {
+  it('shows the new-workspace action when a repo has Git branches but none added to elevenex', () => {
     expandedKeys.set(new Set(['project-1']));
     tree.set([
       {
@@ -473,7 +473,7 @@ describe('Sidebar', () => {
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
 
-    expect(el.querySelector('[data-empty-repo-add-branch="1"]')).toBeTruthy();
+    expect(el.querySelector('[data-empty-repo-add-workspace="1"]')).toBeTruthy();
   });
 
   it('requires the 300ms guard before confirming delete', () => {

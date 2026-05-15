@@ -1,10 +1,12 @@
 import { Component, Directive, input, output } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { TestBed } from '@angular/core/testing';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { of } from 'rxjs';
 import { WorktreeSheet } from './worktree-sheet';
-import { WorktreesService } from '../../../shared/services/worktrees.service';
-import { PendingWorktreeCreationsService } from '../../../shared/services/pending-worktree-creations.service';
+import { WorkspacesService } from '../../../shared/services/workspaces.service';
+import { SessionsService } from '../../../shared/services/sessions.service';
+import { NavigationService } from '../../../shared/services/navigation.service';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -37,41 +39,48 @@ class MockPathAutocompleteInputComponent {
 }
 
 describe('WorktreeSheet', () => {
-  const worktreesServiceMock = {
+  const workspacesServiceMock = {
     create: vi.fn(),
   };
-  const pendingWorktreeCreationsMock = {
-    register: vi.fn(),
+  const sessionsServiceMock = {
+    create: vi.fn(),
+  };
+  const navigationServiceMock = {
+    refreshTree: vi.fn(),
+    openSession: vi.fn(),
   };
 
   beforeEach(async () => {
-    worktreesServiceMock.create.mockReset();
-    pendingWorktreeCreationsMock.register.mockReset();
+    workspacesServiceMock.create.mockReset();
+    sessionsServiceMock.create.mockReset();
+    navigationServiceMock.refreshTree.mockReset();
+    navigationServiceMock.openSession.mockReset();
 
     TestBed.resetTestingModule();
     TestBed.overrideComponent(WorktreeSheet, {
       set: {
-        imports: [MockTrackNativeModalDirective, MockPathAutocompleteInputComponent],
+        imports: [FormsModule, MockTrackNativeModalDirective, MockPathAutocompleteInputComponent],
       },
     });
 
     await TestBed.configureTestingModule({
       imports: [WorktreeSheet],
       providers: [
-        { provide: WorktreesService, useValue: worktreesServiceMock },
-        { provide: PendingWorktreeCreationsService, useValue: pendingWorktreeCreationsMock },
+        { provide: WorkspacesService, useValue: workspacesServiceMock },
+        { provide: SessionsService, useValue: sessionsServiceMock },
+        { provide: NavigationService, useValue: navigationServiceMock },
       ],
     }).compileComponents();
   });
 
-  it('registers the background job and closes immediately once the create request is accepted', () => {
-    worktreesServiceMock.create.mockReturnValue(of({
-      jobId: 'job-1',
+  it('creates a workspace from the selected branch and opens an auto-created session', () => {
+    workspacesServiceMock.create.mockReturnValue(of({
+      id: 99,
       repoId: 7,
-      branchName: 'feature',
-      worktreePath: '/tmp/repo/.worktrees/feature',
-      status: 'pending',
+      name: 'feature',
+      path: '/tmp/repo/.worktrees/feature',
     }));
+    sessionsServiceMock.create.mockReturnValue(of({ id: 123 }));
 
     const fixture = TestBed.createComponent(WorktreeSheet);
     const component = fixture.componentInstance;
@@ -80,18 +89,20 @@ describe('WorktreeSheet', () => {
     const dialog = component.dialogRef as unknown as MockTrackNativeModalDirective;
     component.repoId.set(7);
     component.branchName.set('feature');
+    component.workspaceName.set('feature');
     component.worktreePath.set('/tmp/repo/.worktrees/feature');
     component.autoCreateSession.set(true);
 
     component.submit();
 
-    expect(pendingWorktreeCreationsMock.register).toHaveBeenCalledWith({
-      jobId: 'job-1',
-      repoId: 7,
-      branchName: 'feature',
-      worktreePath: '/tmp/repo/.worktrees/feature',
-      status: 'pending',
-    }, true);
+    expect(workspacesServiceMock.create).toHaveBeenCalledWith(7, {
+      name: 'feature',
+      path: '/tmp/repo/.worktrees/feature',
+      startPoint: 'feature',
+    });
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 7, workspaceId: 99 });
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
+    expect(navigationServiceMock.openSession).toHaveBeenCalledWith(123);
     expect(dialog.close).toHaveBeenCalledOnce();
     expect(component.creating()).toBe(false);
   });

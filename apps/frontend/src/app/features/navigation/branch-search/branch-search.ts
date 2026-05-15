@@ -269,6 +269,11 @@ export class BranchSearch {
       return;
     }
 
+    if (this.isUnavailableBranch(branch)) {
+      toast.error('That branch is already checked out.');
+      return;
+    }
+
     const repo = this.repos().find((r) => r.id === this.selectedRepoId());
     if (repo) {
       this.creating.set(true);
@@ -278,6 +283,10 @@ export class BranchSearch {
         this.close();
       }, 0);
     }
+  }
+
+  isUnavailableBranch(branch: BranchInfo) {
+    return branch.current || branch.hasWorktree;
   }
 
   selectRemoteBranch(branch: BranchInfo) {
