@@ -326,7 +326,8 @@ export class WorkspacesService {
         continue;
       }
       // Two workspaces resolve to the same real path — deduplicate.
-      const [keep, drop] = workspace.isDefault || (!current.isDefault && workspace.id < current.id)
+      // Prefer isDefault; when equal, keep the lower id (the more established record).
+      const [keep, drop] = (!current.isDefault && workspace.isDefault) || (current.isDefault === workspace.isDefault && workspace.id < current.id)
         ? [workspace, current]
         : [current, workspace];
       await this.backfillSessionsForWorkspace(repo.id, keep.id, drop.path);
