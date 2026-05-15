@@ -218,6 +218,15 @@
                          <ng-icon name="lucideCircleMinus" class="!w-3.5 !h-3.5" />
                        </button>
                        <button
+                         class="sidebar-branch-action sidebar-branch-action--danger"
+                         title="Delete Workspace"
+                         aria-label="Delete Workspace"
+                         [disabled]="workspace.isDefault"
+                         [attr.data-workspace-delete-trigger]="workspace.path"
+                         (click)="$event.stopPropagation(); openDeleteWorkspace(repo, workspace)">
+                         <ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" />
+                       </button>
+                       <button
                          class="sidebar-branch-action"
                          title="Open in Cursor"
                          aria-label="Open in Cursor"
@@ -232,15 +241,6 @@
                          [disabled]="workspace.isMissing"
                          (click)="$event.stopPropagation(); createSessionOnWorkspace(repo, workspace)">
                          <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
-                       </button>
-                       <button
-                         class="sidebar-branch-action sidebar-branch-action--danger"
-                         title="Delete Workspace"
-                         aria-label="Delete Workspace"
-                         [disabled]="workspace.isDefault"
-                         [attr.data-workspace-delete-trigger]="workspace.path"
-                         (click)="$event.stopPropagation(); openDeleteWorkspace(repo, workspace)">
-                         <ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" />
                        </button>
                      }
                    </span>
