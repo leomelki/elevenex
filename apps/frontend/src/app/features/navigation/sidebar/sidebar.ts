@@ -201,6 +201,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private projectHighlightTimer: number | null = null;
   private openWorktreeTimer: number | null = null;
   openingWorktreeBranchKey = signal<string | null>(null);
+  switchingWorkspace = signal<{ repoId: number; workspaceId: number; branchName: string } | null>(null);
   private branchSelectionTarget: { repo: NavigationRepo; workspace: NavigationWorkspace } | null = null;
 
   @ViewChild('branchSearch') branchSearch?: Pick<BranchSearch, 'open'>;
@@ -1030,6 +1031,10 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   switchWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    if (this.isSwitchingWorkspace(repo, workspace)) {
+      return;
+    }
+
     this.branchSelectionTarget = { repo, workspace };
     if (this.branchSearch) {
       this.branchSearch.open([repo]);
@@ -1037,15 +1042,25 @@ export class Sidebar implements OnInit, OnDestroy {
     }
   }
 
+  isSwitchingWorkspace(repo: NavigationRepo, workspace: NavigationWorkspace): boolean {
+    const switching = this.switchingWorkspace();
+    return switching?.repoId === repo.id && switching.workspaceId === workspace.id;
+  }
+
   private checkoutWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace, branchName: string) {
     const force = workspace.isDirty && window.confirm('This workspace has uncommitted changes. Continue with checkout?');
     if (workspace.isDirty && !force) return;
+    this.switchingWorkspace.set({ repoId: repo.id, workspaceId: workspace.id, branchName });
     this.workspacesService.switchBranch(repo.id, workspace.id, branchName, force).subscribe({
       next: () => {
         toast.success('Workspace branch switched');
+        this.switchingWorkspace.set(null);
         this.navService.refreshTree();
       },
-      error: (err) => toast.error(err?.error?.message || 'Could not switch branch'),
+      error: (err) => {
+        this.switchingWorkspace.set(null);
+        toast.error(err?.error?.message || 'Could not switch branch');
+      },
     });
   }
 

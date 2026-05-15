@@ -175,8 +175,9 @@
                 <!-- Workspace node -->
                 <button
                   class="sidebar-tree-row w-full text-left group"
-                  [class.sidebar-tree-row--busy]="isOpeningWorkspace(repo)"
-                  [disabled]="openingWorkspaceRepoId() !== null"
+                  [class.sidebar-tree-row--busy]="isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)"
+                  [disabled]="openingWorkspaceRepoId() !== null || isSwitchingWorkspace(repo, workspace)"
+                  [attr.data-workspace-row]="workspace.path"
                   [style.padding-left]="'48px'"
                   (click)="onWorkspaceClick(repo, workspace)">
                   @if ((workspace.sessions && workspace.sessions.length > 0) || ((workspace.archivedSessions?.length ?? 0) > 0)) {
@@ -184,7 +185,7 @@
                   } @else {
                     <span class="w-4 shrink-0"></span>
                   }
-                  @if (isOpeningWorkspace(repo)) {
+                  @if (isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)) {
                     <span class="inline-block w-4 h-4 shrink-0 rounded-full border-2 border-muted-foreground/50 border-t-transparent animate-spin"></span>
                   } @else if (workspace.isMissing) {
                     <ng-icon name="lucideAlertCircle" class="!w-4 !h-4 text-destructive shrink-0" />
@@ -199,12 +200,15 @@
                    <span class="sidebar-actions">
                      @if (isOpeningWorkspace(repo)) {
                        <span class="text-xs text-muted-foreground">Opening…</span>
+                     } @else if (isSwitchingWorkspace(repo, workspace)) {
+                       <span class="text-xs text-muted-foreground">Switching…</span>
                      } @else {
                        <button
                          class="sidebar-branch-action"
                          title="Branches"
                          aria-label="Branches"
                          [disabled]="workspace.isMissing"
+                         [attr.data-workspace-branch-trigger]="workspace.path"
                          (click)="$event.stopPropagation(); switchWorkspaceBranch(repo, workspace)">
                          <ng-icon name="lucideGitBranch" class="!w-3.5 !h-3.5" />
                        </button>

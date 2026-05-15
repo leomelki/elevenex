@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { of, Subject } from 'rxjs';
 import { NgIcon } from '@ng-icons/core';
 import { Router } from '@angular/router';
+import { toast } from 'ngx-sonner';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -29,6 +30,7 @@ import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
 import { CursorService } from '@/shared/services/cursor.service';
 import { TodosService } from '@/features/productivity/todos.service';
 import { NavigationBranch, NavigationProject } from '../../../shared/models/navigation-tree.model';
+import { BranchInfo } from '../../../shared/models/branch.model';
 import { Project } from '@/shared/models/project.model';
 import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 import { ReposService } from '@/shared/services/repos.service';
@@ -79,6 +81,18 @@ describe('Sidebar', () => {
           lastStateChangeAt: null,
         },
       ],
+    };
+  }
+
+  function makeBranchInfo(name: string): BranchInfo {
+    return {
+      name,
+      commit: 'def456',
+      label: name,
+      current: false,
+      isRemote: false,
+      hasWorktree: false,
+      worktreePath: null,
     };
   }
 
@@ -287,6 +301,8 @@ describe('Sidebar', () => {
     workspacesServiceMock.removeFromProject.mockReturnValue(of({}));
     workspacesServiceMock.switchBranch.mockReset();
     workspacesServiceMock.switchBranch.mockReturnValue(of({}));
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
     tabServiceMock.closeTab.mockClear();
     tabServiceMock.updateTabName.mockClear();
     routerMock.navigate.mockClear();
@@ -377,6 +393,14 @@ describe('Sidebar', () => {
 
   function getWorktreeDeleteTrigger(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
     return container.querySelector(`[data-workspace-delete-trigger="${worktreePath}"]`);
+  }
+
+  function getWorkspaceBranchTrigger(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
+    return container.querySelector(`[data-workspace-branch-trigger="${worktreePath}"]`);
+  }
+
+  function getWorkspaceRow(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
+    return container.querySelector(`[data-workspace-row="${worktreePath}"]`);
   }
 
   it('arms inline confirmation on the first click instead of deleting immediately', () => {
@@ -592,6 +616,72 @@ describe('Sidebar', () => {
 
     expect(getWorktreeRemoveTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
     expect(getWorktreeDeleteTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
+  });
+
+  it('shows inline loading and blocks duplicate workspace branch switches while checkout is pending', () => {
+    const switchSubject = new Subject<{}>();
+    workspacesServiceMock.switchBranch.mockReturnValue(switchSubject.asObservable());
+
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const el = fixture.nativeElement as HTMLElement;
+    const repo = tree()[0].repos[0];
+    const workspace = component.filterWorkspaces(repo)[0];
+    component.branchSearch = { open: vi.fn() };
+
+    component.switchWorkspaceBranch(repo, workspace);
+    component.onBranchSearchSelect({ repo, branch: makeBranchInfo('feature') });
+    fixture.detectChanges();
+
+    expect(workspacesServiceMock.switchBranch).toHaveBeenCalledWith(1, workspace.id, 'feature', false);
+    expect(component.switchingWorkspace()).toEqual({
+      repoId: 1,
+      workspaceId: workspace.id,
+      branchName: 'feature',
+    });
+
+    const row = getWorkspaceRow(el, '/tmp/repo-one-main');
+    expect(row?.disabled).toBe(true);
+    expect(row?.textContent).toContain('Switching…');
+    expect(getWorkspaceBranchTrigger(el, '/tmp/repo-one-main')).toBeNull();
+
+    component.switchWorkspaceBranch(repo, workspace);
+    expect(workspacesServiceMock.switchBranch).toHaveBeenCalledOnce();
+
+    switchSubject.next({});
+    switchSubject.complete();
+    fixture.detectChanges();
+
+    expect(component.switchingWorkspace()).toBeNull();
+    expect(getWorkspaceRow(el, '/tmp/repo-one-main')?.textContent).not.toContain('Switching…');
+    expect(getWorkspaceBranchTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
+  });
+
+  it('clears workspace branch switch loading and shows the backend error on failure', () => {
+    const switchSubject = new Subject<{}>();
+    workspacesServiceMock.switchBranch.mockReturnValue(switchSubject.asObservable());
+
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const el = fixture.nativeElement as HTMLElement;
+    const repo = tree()[0].repos[0];
+    const workspace = component.filterWorkspaces(repo)[0];
+    component.branchSearch = { open: vi.fn() };
+
+    component.switchWorkspaceBranch(repo, workspace);
+    component.onBranchSearchSelect({ repo, branch: makeBranchInfo('feature') });
+    fixture.detectChanges();
+
+    expect(getWorkspaceRow(el, '/tmp/repo-one-main')?.textContent).toContain('Switching…');
+
+    switchSubject.error({ error: { message: 'Branch is already checked out' } });
+    fixture.detectChanges();
+
+    expect(component.switchingWorkspace()).toBeNull();
+    expect(getWorkspaceRow(el, '/tmp/repo-one-main')?.textContent).not.toContain('Switching…');
+    expect(toast.error).toHaveBeenCalledWith('Branch is already checked out');
+    expect(navigationServiceMock.refreshTree).not.toHaveBeenCalled();
   });
 
   it('renders a pending workspace row while creation is in progress', () => {
