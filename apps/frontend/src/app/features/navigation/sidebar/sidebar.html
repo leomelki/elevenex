@@ -202,19 +202,11 @@
                      } @else {
                        <button
                          class="sidebar-branch-action"
-                         title="Switch branch"
-                         aria-label="Switch branch"
+                         title="Branches"
+                         aria-label="Branches"
                          [disabled]="workspace.isMissing"
                          (click)="$event.stopPropagation(); switchWorkspaceBranch(repo, workspace)">
                          <ng-icon name="lucideGitBranch" class="!w-3.5 !h-3.5" />
-                       </button>
-                       <button
-                         class="sidebar-branch-action"
-                         title="Create branch"
-                         aria-label="Create branch"
-                         [disabled]="workspace.isMissing"
-                         (click)="$event.stopPropagation(); createWorkspaceBranch(repo, workspace)">
-                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                        </button>
                        <button
                          class="sidebar-branch-action sidebar-branch-action--soft"

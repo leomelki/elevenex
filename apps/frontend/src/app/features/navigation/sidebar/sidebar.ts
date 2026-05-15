@@ -199,6 +199,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private projectHighlightTimer: number | null = null;
   private openWorktreeTimer: number | null = null;
   openingWorktreeBranchKey = signal<string | null>(null);
+  private branchSelectionTarget: { repo: NavigationRepo; workspace: NavigationWorkspace } | null = null;
 
   @ViewChild('branchSearch') branchSearch?: Pick<BranchSearch, 'open'>;
 
@@ -963,6 +964,7 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   openBranchSearchForRepo(repo: NavigationRepo) {
+    this.branchSelectionTarget = null;
     if (this.branchSearch) {
       this.branchSearch.open([repo]);
       return;
@@ -971,6 +973,14 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   onBranchSearchSelect(event: { repo: NavigationRepo; branch: BranchInfo }) {
+    const target = this.branchSelectionTarget;
+    this.branchSelectionTarget = null;
+
+    if (target) {
+      this.checkoutWorkspaceBranch(target.repo, target.workspace, event.branch.name);
+      return;
+    }
+
     this.openCreateWorktree(event.repo, event.branch);
   }
 
@@ -1011,8 +1021,14 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   switchWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace) {
-    const branchName = window.prompt('Switch workspace to branch', workspace.currentBranch ?? 'main')?.trim();
-    if (!branchName) return;
+    this.branchSelectionTarget = { repo, workspace };
+    if (this.branchSearch) {
+      this.branchSearch.open([repo]);
+      return;
+    }
+  }
+
+  private checkoutWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace, branchName: string) {
     const force = workspace.isDirty && window.confirm('This workspace has uncommitted changes. Continue with checkout?');
     if (workspace.isDirty && !force) return;
     this.workspacesService.switchBranch(repo.id, workspace.id, branchName, force).subscribe({
@@ -1021,34 +1037,6 @@ export class Sidebar implements OnInit, OnDestroy {
         this.navService.refreshTree();
       },
       error: (err) => toast.error(err?.error?.message || 'Could not switch branch'),
-    });
-  }
-
-  createWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace) {
-    const branchName = window.prompt('New branch name')?.trim();
-    if (!branchName) return;
-    const defaultDestination = workspace.isDirty ? 'new' : 'current';
-    const choice = window.prompt('Destination: current, new, or only', defaultDestination)?.trim().toLowerCase();
-    if (!choice) return;
-    const destination =
-      choice === 'only'
-        ? 'branch-only'
-        : choice === 'new'
-          ? 'new-workspace'
-          : 'current-workspace';
-    const workspaceName = destination === 'new-workspace'
-      ? window.prompt('Workspace name', branchName)?.trim() || branchName
-      : undefined;
-    this.workspacesService.createBranch(repo.id, workspace.id, {
-      branchName,
-      destination,
-      workspaceName,
-    }).subscribe({
-      next: () => {
-        toast.success(destination === 'new-workspace' ? 'Branch workspace created' : 'Branch created');
-        this.navService.refreshTree();
-      },
-      error: (err) => toast.error(err?.error?.message || 'Could not create branch'),
     });
   }
 
