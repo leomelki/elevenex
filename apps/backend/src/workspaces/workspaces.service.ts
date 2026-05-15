@@ -315,11 +315,29 @@ export class WorkspacesService {
       .select()
       .from(schema.workspaces)
       .where(eq(schema.workspaces.repoId, repo.id));
-    const byPath = new Map(existing.map((workspace) => [workspace.path, workspace]));
+
+    // Use real paths as map keys so symlink vs resolved-path differences don't create duplicates.
+    const byRealPath = new Map<string, typeof existing[0]>();
+    for (const workspace of existing) {
+      const real = await this.realPathOrRaw(workspace.path);
+      const current = byRealPath.get(real);
+      if (!current) {
+        byRealPath.set(real, workspace);
+        continue;
+      }
+      // Two workspaces resolve to the same real path — deduplicate.
+      const [keep, drop] = workspace.isDefault || (!current.isDefault && workspace.id < current.id)
+        ? [workspace, current]
+        : [current, workspace];
+      await this.backfillSessionsForWorkspace(repo.id, keep.id, drop.path);
+      await this.db.delete(schema.workspaces).where(eq(schema.workspaces.id, drop.id));
+      byRealPath.set(real, keep);
+    }
 
     for (const worktree of await this.safeListWorktrees(repo.path)) {
-      if (byPath.has(worktree.path)) {
-        const workspace = byPath.get(worktree.path)!;
+      const realWorktreePath = await this.realPathOrRaw(worktree.path);
+      if (byRealPath.has(realWorktreePath)) {
+        const workspace = byRealPath.get(realWorktreePath)!;
         await this.backfillSessionsForWorkspace(repo.id, workspace.id, workspace.path);
         continue;
       }
@@ -332,6 +350,7 @@ export class WorkspacesService {
         isDefault: await this.samePath(worktree.path, repo.path),
         createdFromRef: worktree.branch ?? worktree.head,
       });
+      byRealPath.set(realWorktreePath, rows[0]);
       await this.backfillSessionsForWorkspace(repo.id, rows[0].id, worktree.path);
     }
   }
@@ -344,11 +363,14 @@ export class WorkspacesService {
         .where(eq(schema.workspaces.repoId, repo.id)),
       this.sessionsService.findByRepo(repo.id),
     ]);
-    const workspaceByPath = new Map(existing.map((workspace) => [workspace.path, workspace]));
+    const workspaceByRealPath = new Map<string, typeof existing[0]>();
+    for (const workspace of existing) {
+      workspaceByRealPath.set(await this.realPathOrRaw(workspace.path), workspace);
+    }
     const sessionsByPath = new Map<string, Awaited<ReturnType<SessionsService['findByRepo']>>>();
 
     for (const session of sessions) {
-      if (workspaceByPath.has(session.worktreePath)) {
+      if (workspaceByRealPath.has(await this.realPathOrRaw(session.worktreePath))) {
         continue;
       }
       const entry = sessionsByPath.get(session.worktreePath) ?? [];
@@ -369,7 +391,7 @@ export class WorkspacesService {
         isDefault: await this.samePath(worktreePath, repo.path),
         createdFromRef: first.branchName,
       });
-      workspaceByPath.set(worktreePath, rows[0]);
+      workspaceByRealPath.set(await this.realPathOrRaw(worktreePath), rows[0]);
       await this.backfillSessionsForWorkspace(repo.id, rows[0].id, worktreePath);
     }
   }
