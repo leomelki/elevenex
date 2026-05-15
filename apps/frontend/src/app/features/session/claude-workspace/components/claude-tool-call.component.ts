@@ -48,6 +48,7 @@ import {
 import { PairedTranscriptUnit, pairTranscript } from '../util/paired-transcript';
 import { ClaudeMessageComponent } from './claude-message.component';
 import { ClaudeThinkingComponent } from './claude-thinking.component';
+import { InlineDiffComponent } from './inline-diff.component';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
 
 interface Todo {
@@ -59,7 +60,7 @@ interface Todo {
 @Component({
   selector: 'cw-tool-call',
   standalone: true,
-  imports: [CommonModule, NgIcon, MarkdownPipe, ClaudeMessageComponent, ClaudeThinkingComponent, forwardRef(() => ClaudeToolCallComponent)],
+  imports: [CommonModule, NgIcon, MarkdownPipe, ClaudeMessageComponent, ClaudeThinkingComponent, InlineDiffComponent, forwardRef(() => ClaudeToolCallComponent)],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
@@ -178,7 +179,12 @@ interface Todo {
               }
               @case ('edit') {
                 @if (isEditDiff()) {
-                  <pre class="cw-tool__diff" [innerHTML]="diffHtml()"></pre>
+                  <cw-inline-diff
+                    [html]="diffHtml()"
+                    [label]="editDiffLabel()"
+                    [additions]="editStats().additions"
+                    [deletions]="editStats().deletions"
+                  />
                 }
                 @if (resultText() && state() === 'error') {
                   <pre class="cw-tool__output cw-tool__output--error">{{ resultText() }}</pre>
@@ -504,58 +510,6 @@ interface Todo {
         white-space: pre-wrap;
         max-height: 28rem;
         overflow: auto;
-      }
-      .cw-tool__diff {
-        margin: 0;
-        max-height: 24rem;
-        overflow: auto;
-        border-radius: 0.375rem;
-        background: color-mix(in oklab, var(--background) 88%, var(--surface-shade));
-        color: var(--foreground);
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.72rem;
-        line-height: 1.55;
-        white-space: pre;
-      }
-      :host ::ng-deep .cw-diff-line {
-        display: grid;
-        grid-template-columns: 2.5rem 2.5rem 1.15rem minmax(0, 1fr);
-        min-width: max-content;
-      }
-      :host ::ng-deep .cw-diff-ln,
-      :host ::ng-deep .cw-diff-marker {
-        user-select: none;
-        color: var(--muted-foreground);
-        background: color-mix(in oklab, var(--foreground) 3%, transparent);
-      }
-      :host ::ng-deep .cw-diff-ln {
-        padding: 0 0.45rem;
-        text-align: right;
-        border-right: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
-      }
-      :host ::ng-deep .cw-diff-marker {
-        padding: 0 0.25rem;
-        text-align: center;
-      }
-      :host ::ng-deep .cw-diff-code {
-        padding: 0 0.75rem 0 0.5rem;
-        min-width: 0;
-      }
-      :host ::ng-deep .cw-diff-add {
-        background: color-mix(in oklab, var(--success) 10%, transparent);
-      }
-      :host ::ng-deep .cw-diff-add .cw-diff-marker {
-        color: color-mix(in oklab, var(--success) 85%, var(--foreground));
-      }
-      :host ::ng-deep .cw-diff-del {
-        background: color-mix(in oklab, var(--destructive) 10%, transparent);
-      }
-      :host ::ng-deep .cw-diff-del .cw-diff-marker {
-        color: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
-      }
-      :host ::ng-deep .cw-diff-hunk {
-        color: color-mix(in oklab, var(--primary) 78%, var(--foreground));
-        background: color-mix(in oklab, var(--primary) 8%, transparent);
       }
       .cw-tool__write {
         margin: 0;
@@ -1146,6 +1100,17 @@ export class ClaudeToolCallComponent {
     return data?.file_path ?? '';
   });
 
+  readonly editDiffLabel = computed(() => this.editFilePath() || 'Edit');
+
+  readonly editStats = computed(() => {
+    if (!this.isEditDiff()) return { additions: 0, deletions: 0 };
+    const data = this.call().toolInput as { old_string?: string; new_string?: string } | undefined;
+    return {
+      additions: countTextLines(data?.new_string),
+      deletions: countTextLines(data?.old_string),
+    };
+  });
+
   readonly diffHtml = computed<SafeHtml>(() => {
     const data = this.call().toolInput as { old_string?: string; new_string?: string; __startLine?: number } | undefined;
     const html = highlightedUnifiedDiffHtml(data?.old_string ?? '', data?.new_string ?? '', this.editFilePath(), data?.__startLine ?? 1);
@@ -1447,4 +1412,10 @@ function formatElapsedSeconds(totalSeconds: number): string {
   if (minutes <= 0) return `${seconds}s`;
   if (seconds === 0) return `${minutes}m`;
   return `${minutes}m ${seconds}s`;
+}
+
+function countTextLines(text: string | undefined): number {
+  if (!text) return 0;
+  const parts = text.split('\n');
+  return text.endsWith('\n') ? parts.length - 1 : parts.length;
 }

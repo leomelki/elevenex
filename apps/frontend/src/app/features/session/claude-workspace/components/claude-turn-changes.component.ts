@@ -17,6 +17,7 @@ import {
   highlightedPatchHtml,
   highlightedUnifiedDiffHtml,
 } from '../util/code-highlight';
+import { InlineDiffComponent } from './inline-diff.component';
 
 interface RenderedHunk extends TurnChangeHunk {
   html: SafeHtml | null;
@@ -33,7 +34,7 @@ interface RenderedFile extends TurnChangedFile {
 @Component({
   selector: 'cw-turn-changes',
   standalone: true,
-  imports: [CommonModule, NgIcon],
+  imports: [CommonModule, NgIcon, InlineDiffComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
@@ -104,22 +105,13 @@ interface RenderedFile extends TurnChangedFile {
             @if (isFileOpen(file.path, i)) {
               <div class="cw-turn-changes__file-body">
                 @for (hunk of file.hunks; track hunk.id) {
-                  <div class="cw-turn-changes__hunk">
-                    <div class="cw-turn-changes__hunk-head">
-                      <span>{{ hunk.label }}</span>
-                      <span class="cw-turn-changes__hunk-stats">
-                        <span class="cw-turn-changes__add">+{{ hunk.additions }}</span>
-                        <span class="cw-turn-changes__del">-{{ hunk.deletions }}</span>
-                      </span>
-                    </div>
-                    @if (hunk.html) {
-                      <pre class="cw-turn-changes__diff" [innerHTML]="hunk.html"></pre>
-                    } @else {
-                      <div class="cw-turn-changes__empty-diff">
-                        Inline diff was not captured for this file.
-                      </div>
-                    }
-                  </div>
+                  <cw-inline-diff
+                    [html]="hunk.html"
+                    [label]="hunk.label"
+                    [additions]="hunk.additions"
+                    [deletions]="hunk.deletions"
+                    emptyText="Inline diff was not captured for this file."
+                  />
                 }
               </div>
             }
@@ -344,94 +336,6 @@ interface RenderedFile extends TurnChangedFile {
       padding: 0 0.75rem 0.75rem 2.6rem;
     }
 
-    .cw-turn-changes__hunk {
-      overflow: hidden;
-      border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
-      border-radius: 0.5rem;
-      background: color-mix(in oklab, var(--background) 78%, transparent);
-    }
-
-    .cw-turn-changes__hunk-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      padding: 0.4rem 0.55rem;
-      border-bottom: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
-      color: var(--muted-foreground);
-      font-size: 0.7rem;
-      font-weight: 600;
-    }
-
-    .cw-turn-changes__diff {
-      margin: 0;
-      max-height: 28rem;
-      overflow: auto;
-      background: color-mix(in oklab, var(--background) 88%, var(--surface-shade));
-      color: var(--foreground);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.72rem;
-      line-height: 1.55;
-      white-space: pre;
-    }
-
-    .cw-turn-changes__empty-diff {
-      padding: 0.65rem 0.75rem;
-      color: var(--muted-foreground);
-      font-size: 0.76rem;
-      background: color-mix(in oklab, var(--foreground) 4%, transparent);
-    }
-
-    :host ::ng-deep .cw-diff-line {
-      display: grid;
-      grid-template-columns: 2.5rem 2.5rem 1.15rem minmax(0, 1fr);
-      min-width: max-content;
-    }
-
-    :host ::ng-deep .cw-diff-ln,
-    :host ::ng-deep .cw-diff-marker {
-      user-select: none;
-      color: var(--muted-foreground);
-      background: color-mix(in oklab, var(--foreground) 3%, transparent);
-    }
-
-    :host ::ng-deep .cw-diff-ln {
-      padding: 0 0.45rem;
-      text-align: right;
-      border-right: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
-    }
-
-    :host ::ng-deep .cw-diff-marker {
-      padding: 0 0.25rem;
-      text-align: center;
-    }
-
-    :host ::ng-deep .cw-diff-code {
-      padding: 0 0.75rem 0 0.5rem;
-      min-width: 0;
-    }
-
-    :host ::ng-deep .cw-diff-add {
-      background: color-mix(in oklab, var(--success) 10%, transparent);
-    }
-
-    :host ::ng-deep .cw-diff-add .cw-diff-marker {
-      color: color-mix(in oklab, var(--success) 85%, var(--foreground));
-    }
-
-    :host ::ng-deep .cw-diff-del {
-      background: color-mix(in oklab, var(--destructive) 10%, transparent);
-    }
-
-    :host ::ng-deep .cw-diff-del .cw-diff-marker {
-      color: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
-    }
-
-    :host ::ng-deep .cw-diff-hunk {
-      color: color-mix(in oklab, var(--primary) 78%, var(--foreground));
-      background: color-mix(in oklab, var(--primary) 8%, transparent);
-    }
-
     @container cw-workspace (max-width: 42rem) {
       .cw-turn-changes__copy {
         flex-direction: column;
@@ -454,10 +358,6 @@ interface RenderedFile extends TurnChangedFile {
 
       .cw-turn-changes__file-body {
         padding-left: 0.75rem;
-      }
-
-      :host ::ng-deep .cw-diff-line {
-        grid-template-columns: 2rem 2rem 1rem minmax(0, 1fr);
       }
     }
   `],

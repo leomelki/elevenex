@@ -840,7 +840,7 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(panel?.textContent).toContain('app.ts');
     expect(panel?.textContent).toContain('new.ts');
     expect(panel?.querySelectorAll('.cw-turn-changes__file')).toHaveLength(2);
-    expect(panel?.querySelector('.cw-turn-changes__diff')?.innerHTML).toContain('cw-diff-line');
+    expect(panel?.querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-line');
   });
 
   it('opens turn changes from an already hydrated historical session', async () => {

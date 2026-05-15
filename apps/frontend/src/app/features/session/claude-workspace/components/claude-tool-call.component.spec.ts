@@ -115,4 +115,35 @@ describe('ClaudeToolCallComponent', () => {
 
     expect((fixture.nativeElement as HTMLElement).textContent ?? '').toContain('Running 20s');
   });
+
+  it('renders expanded edit diffs with the shared inline diff view', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeToolCallComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'tool-4',
+      kind: 'tool_use',
+      toolUseId: 'tool-4',
+      toolName: 'Edit',
+      toolInput: {
+        file_path: 'src/app.ts',
+        old_string: 'const a = 1;\nconst b = 2;',
+        new_string: 'const a = 1;\nconst b = 3;',
+      },
+      timestamp: '2026-04-24T08:00:00.000Z',
+    });
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
+    button.click();
+    fixture.detectChanges();
+
+    const diff = fixture.nativeElement.querySelector('cw-inline-diff') as HTMLElement | null;
+    expect(diff?.textContent).toContain('src/app.ts');
+    expect(diff?.textContent).toContain('+2');
+    expect(diff?.textContent).toContain('-2');
+    expect(diff?.querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-line');
+  });
 });
