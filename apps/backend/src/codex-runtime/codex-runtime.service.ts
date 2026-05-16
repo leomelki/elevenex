@@ -1809,15 +1809,20 @@ export class CodexRuntimeService extends EventEmitter {
   private toCodexUserInputQuestions(
     questions: any[],
   ): NonNullable<ClaudeUserInputRequest['questions']> {
+    type CodexUserInputQuestion =
+      NonNullable<ClaudeUserInputRequest['questions']>[number];
+
     return questions
-      .map((question: any) => {
+      .map((question: any): CodexUserInputQuestion | null => {
         const id = typeof question?.id === 'string' ? question.id : '';
         const text =
           typeof question?.question === 'string'
             ? question.question.trim()
             : '';
         if (!id || !text) return null;
-        const options = Array.isArray(question?.options)
+        const options: CodexUserInputQuestion['options'] = Array.isArray(
+          question?.options,
+        )
           ? question.options
               .map((option: any) => {
                 const label =
@@ -1861,13 +1866,7 @@ export class CodexRuntimeService extends EventEmitter {
         };
       })
       .filter(
-        (
-          question:
-            | NonNullable<ClaudeUserInputRequest['questions']>[number]
-            | null,
-        ): question is NonNullable<
-          ClaudeUserInputRequest['questions']
-        >[number] => question !== null,
+        (question): question is CodexUserInputQuestion => question !== null,
       );
   }
 
