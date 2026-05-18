@@ -354,6 +354,11 @@ export class ClaudeRuntimeService extends EventEmitter {
   private readonly activeRuns = new Map<number, ActiveRunState>();
   private readonly runtimeStates = new Map<number, RuntimeState>();
   private readonly invalidatedSessions = new Set<number>();
+  // Tracks runs that are still initializing (before activeRuns.set is called).
+  // Maps sessionId → runId so that an interrupt() arriving in this window can be
+  // recorded and honored the moment the run is registered.
+  private readonly initializingRuns = new Map<number, string>();
+  private readonly pendingInterrupts = new Map<number, string>(); // sessionId → runId
   private readonly wrapperScriptPath = getBackendHelperPath(
     'bin',
     'plannotator-wrapper.sh',
@@ -503,6 +508,8 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   async cleanupSession(sessionId: number): Promise<void> {
     this.invalidatedSessions.add(sessionId);
+    this.initializingRuns.delete(sessionId);
+    this.pendingInterrupts.delete(sessionId);
     const run = this.activeRuns.get(sessionId);
     if (run) {
       await this.requestRunTeardown(sessionId, run, { invalidateSession: true });
@@ -797,6 +804,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       return;
     }
 
+    // Register before the first await so that an interrupt() arriving during
+    // initialization is recorded against this specific runId and honored after
+    // activeRuns.set is called below.
+    this.initializingRuns.set(sessionId, runId);
+
     const session = await this.sessionsService.findOne(sessionId);
     const shouldGenerateSessionTitle =
       (!session.claudeSessionId || session.claudeSessionId === '-1')
@@ -1059,6 +1071,17 @@ export class ClaudeRuntimeService extends EventEmitter {
       observedPreVisibleMarkers: new Set(),
     });
 
+    // Honor any interrupt() that arrived during initialization (before this
+    // activeRuns.set call).  requestRunTeardown sets run.interruptRequested
+    // synchronously, so handleSdkMessage will see it on the very first tick.
+    const pendingRunId = this.pendingInterrupts.get(sessionId);
+    this.initializingRuns.delete(sessionId);
+    if (pendingRunId === runId) {
+      this.pendingInterrupts.delete(sessionId);
+      const registeredRun = this.activeRuns.get(sessionId)!;
+      void this.requestRunTeardown(sessionId, registeredRun);
+    }
+
     this.emitRunState(sessionId);
     if (shouldGenerateSessionTitle && sessionTitlePrompt) {
       setImmediate(() => {
@@ -1129,6 +1152,9 @@ export class ClaudeRuntimeService extends EventEmitter {
       });
       throw error;
     } finally {
+      // Guard against exits that happen before activeRuns.set (e.g. a thrown
+      // error during initialization).
+      this.initializingRuns.delete(sessionId);
       const run = this.activeRuns.get(sessionId);
       const interrupted = Boolean(run?.interruptRequested);
       try {
@@ -1258,6 +1284,13 @@ export class ClaudeRuntimeService extends EventEmitter {
   async interrupt(sessionId: number): Promise<void> {
     const run = this.activeRuns.get(sessionId);
     if (!run) {
+      // The run may still be initializing (between submitPrompt start and
+      // activeRuns.set).  Record the interrupt so it is honoured the moment
+      // the run is registered.
+      const initRunId = this.initializingRuns.get(sessionId);
+      if (initRunId) {
+        this.pendingInterrupts.set(sessionId, initRunId);
+      }
       return;
     }
 
@@ -1853,6 +1886,20 @@ export class ClaudeRuntimeService extends EventEmitter {
         ('errors' in message ? message.errors.join('\n') : '') ||
         'Claude run failed';
       state.lastError = errorMessage;
+      // If the error indicates that the local Claude session file no longer
+      // exists (e.g. corrupted by an earlier aborted write), reset the stored
+      // session ID so the next run starts a fresh session instead of hitting
+      // the same error repeatedly.
+      if (state.claudeSessionId && this.isStaleSessionIdError(errorMessage)) {
+        state.claudeSessionId = null;
+        void this.sessionsService
+          .updateClaudeSessionId(sessionId, '-1')
+          .catch((err) => {
+            this.logger.warn(
+              `Failed to reset stale claudeSessionId for session ${sessionId}: ${String(err)}`,
+            );
+          });
+      }
       this.emitEvent({
         type: 'error',
         payload: { sessionId, message: errorMessage },
@@ -2658,6 +2705,20 @@ export class ClaudeRuntimeService extends EventEmitter {
         normalized.includes('/v1/messages/count_tokens')
         && normalized.includes('unknown compliance rule')
       )
+    );
+  }
+
+  // Returns true when a result-error message indicates that the stored Claude
+  // session ID no longer refers to a valid session file on disk (e.g. the file
+  // was corrupted or deleted by an earlier aborted write).  Detecting this lets
+  // us reset the stored ID so the next run starts a fresh session.
+  private isStaleSessionIdError(errorMessage: string): boolean {
+    const normalized = errorMessage.toLowerCase();
+    return (
+      normalized.includes('does not exist')
+      || normalized.includes('session not found')
+      || normalized.includes('no such session')
+      || normalized.includes('could not be found')
     );
   }
 
