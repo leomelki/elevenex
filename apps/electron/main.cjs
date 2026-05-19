@@ -175,11 +175,9 @@ const SSH_FORWARD_CONFIG_EXCLUDED_OPTIONS = new Set([
   'localforward',
   'permitlocalcommand',
   'remotecommand',
-  'remoteforward',
   'requesttty',
   'sessiontype',
   'stdinnull',
-  'streamlocalforward',
   'streamlocalbindmask',
   'streamlocalbindunlink',
   'tunnel',
@@ -1056,6 +1054,13 @@ function buildResolvedSshConfig(forward) {
   if (!configLines.some((line) => line.startsWith('  hostname '))) {
     throw new Error(`Unable to resolve SSH host "${forward.sshHost}"`);
   }
+
+  // Keep user-defined RemoteForward/StreamLocalForward entries (e.g. forwarded
+  // gpg-agent sockets used for commit signing), but neutralise the surrounding
+  // strictness so a stale socket or one already bound by another muxed session
+  // never tears down elevenex's tunnel.
+  configLines.push('  ExitOnForwardFailure no');
+  configLines.push('  StreamLocalBindUnlink yes');
 
   if (forward.authMode === 'password') {
     configLines.push('  PreferredAuthentications password,keyboard-interactive');
