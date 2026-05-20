@@ -39,18 +39,35 @@ const COMMON_BINARY_PATHS = [
 // Resolve all of that in one shot by harvesting the login shell's env at
 // startup and merging it into process.env. Anything Electron has explicit
 // opinions about (NODE_*, ELECTRON_*, ELEVENEX_*) wins over the shell.
+// Run an interactive login shell (-il) so we source the same rc files iTerm
+// would (.zprofile/.zshenv/.zshrc, .bash_profile/.bashrc, etc.). Many users
+// only export their agent socket override (1Password, Secretive, yubikey-agent)
+// in .zshrc, so a login-only shell would miss it. Wrap the env dump in start/
+// end markers because interactive rc files routinely print prompts, MOTD,
+// plugin chatter, etc. on stdout; we slice between markers to recover just the
+// env output. ELEVENEX_RESOLVING_ENV is exported so rc files can short-circuit
+// expensive interactive setup if they want.
 function harvestLoginShellEnv() {
   const loginShell = process.env.SHELL || '/bin/zsh';
+  const startMarker = '__ELEVENEX_ENV_START__';
+  const endMarker = '__ELEVENEX_ENV_END__';
+  const script = `printf '%s\\n' '${startMarker}'; env -0; printf '%s\\n' '${endMarker}'`;
   try {
-    const result = spawnSync(loginShell, ['-l', '-c', 'env -0'], {
+    const result = spawnSync(loginShell, ['-ilc', script], {
       encoding: 'buffer',
       timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],
       maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, ELEVENEX_RESOLVING_ENV: '1' },
     });
-    if (result.status !== 0 || !result.stdout) return {};
+    if (!result.stdout) return {};
+    const stdout = result.stdout.toString('utf8');
+    const start = stdout.indexOf(startMarker);
+    const end = stdout.indexOf(endMarker, start + startMarker.length);
+    if (start === -1 || end === -1) return {};
+    const payload = stdout.slice(start + startMarker.length, end).replace(/^\r?\n/, '');
     const env = {};
-    for (const entry of result.stdout.toString('utf8').split('\0')) {
+    for (const entry of payload.split('\0')) {
       if (!entry) continue;
       const eq = entry.indexOf('=');
       if (eq <= 0) continue;
