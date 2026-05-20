@@ -29,24 +29,62 @@ const COMMON_BINARY_PATHS = [
   path.join(os.homedir(), '.local', 'bin'),
 ];
 
-function queryLoginShellEnv(variable) {
+// macOS/Linux Electron apps launched from Finder/Dock/DMG bypass the user's
+// login shell, so PATH is stripped, LANG/LC_* are unset, and agent sockets
+// (SSH_AUTH_SOCK, GPG_AGENT_INFO, IdentityAgent paths) never get populated.
+// Symptoms range from missing tmux/claude binaries, ASCII-only terminals, to
+// "Permission denied (publickey)" on every spawned ssh — until the user opens
+// Terminal once to establish a ControlMaster we can mux onto.
+//
+// Resolve all of that in one shot by harvesting the login shell's env at
+// startup and merging it into process.env. Anything Electron has explicit
+// opinions about (NODE_*, ELECTRON_*, ELEVENEX_*) wins over the shell.
+function harvestLoginShellEnv() {
   const loginShell = process.env.SHELL || '/bin/zsh';
   try {
-    const result = spawnSync(loginShell, ['-l', '-c', `printf %s "$${variable}"`], {
-      encoding: 'utf-8',
-      timeout: 3000,
+    const result = spawnSync(loginShell, ['-l', '-c', 'env -0'], {
+      encoding: 'buffer',
+      timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 4 * 1024 * 1024,
     });
-    if (result.status === 0) {
-      return result.stdout.trim();
+    if (result.status !== 0 || !result.stdout) return {};
+    const env = {};
+    for (const entry of result.stdout.toString('utf8').split('\0')) {
+      if (!entry) continue;
+      const eq = entry.indexOf('=');
+      if (eq <= 0) continue;
+      env[entry.slice(0, eq)] = entry.slice(eq + 1);
     }
+    return env;
   } catch {
-    // Fall through to empty string
+    return {};
   }
-  return '';
 }
 
-function augmentedProcessPath() {
+const PROTECTED_ENV_PREFIXES = ['NODE_', 'ELECTRON_', 'ELEVENEX_'];
+const PROTECTED_ENV_KEYS = new Set([
+  'PATH', // PATH is merged separately below to keep Electron's defaults
+  'PWD',
+  'OLDPWD',
+  'SHLVL',
+  '_',
+]);
+
+function mergeLoginShellEnv(loginEnv) {
+  for (const [key, value] of Object.entries(loginEnv)) {
+    if (!key || value === undefined) continue;
+    if (PROTECTED_ENV_KEYS.has(key)) continue;
+    if (PROTECTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+    // Only fill gaps — don't overwrite anything Electron already set
+    // intentionally (CI overrides, test harnesses, parent-shell overrides
+    // when launched from a terminal).
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = value;
+  }
+}
+
+function mergedPath(loginPath) {
   const seen = new Set();
   const parts = [];
   const addPart = (part) => {
@@ -55,57 +93,38 @@ function augmentedProcessPath() {
       parts.push(part);
     }
   };
-
-  const loginShellPath = queryLoginShellEnv('PATH');
-  for (const part of loginShellPath.split(':')) addPart(part);
+  for (const part of (loginPath || '').split(':')) addPart(part);
   for (const part of (process.env.PATH || '').split(':')) addPart(part);
   for (const part of COMMON_BINARY_PATHS) addPart(part);
-
   return parts.join(':');
 }
 
-// Augment PATH once at startup so every child process spawned by Electron
-// (embedded backend, ssh forwards, cursor) sees user-installed binaries.
-process.env.PATH = augmentedProcessPath();
-
-// macOS Electron apps launched from Finder/DMG also lose LANG / LC_* because
-// no shell rc files run. Without a UTF-8 locale, child processes (claude code,
-// shells inside tmux) fall back to POSIX/ASCII and render multibyte glyphs as
-// `_` or `?`. Pull the login shell's locale if set; otherwise default to a
-// UTF-8 locale so terminals always render Unicode correctly.
-function ensureUtf8Locale() {
+function ensureUtf8Locale(loginEnv) {
   const hasUtf8 = (value) => typeof value === 'string' && /utf-?8/i.test(value);
+  if (hasUtf8(process.env.LC_ALL) || hasUtf8(process.env.LANG) || hasUtf8(process.env.LC_CTYPE)) {
+    return;
+  }
+  const inherited = [loginEnv.LC_ALL, loginEnv.LANG, loginEnv.LC_CTYPE].find(hasUtf8);
+  const fallback = inherited || 'en_US.UTF-8';
+  if (!process.env.LANG) process.env.LANG = fallback;
+  if (!process.env.LC_CTYPE) process.env.LC_CTYPE = fallback;
+}
 
-  if (!hasUtf8(process.env.LC_ALL) && !hasUtf8(process.env.LANG) && !hasUtf8(process.env.LC_CTYPE)) {
-    const shellLang = queryLoginShellEnv('LANG');
-    const shellLcAll = queryLoginShellEnv('LC_ALL');
-    const shellLcCtype = queryLoginShellEnv('LC_CTYPE');
-    const inherited = [shellLcAll, shellLang, shellLcCtype].find(hasUtf8);
-    const fallback = inherited || 'en_US.UTF-8';
-    if (!process.env.LANG) process.env.LANG = fallback;
-    if (!process.env.LC_CTYPE) process.env.LC_CTYPE = fallback;
+function dropStaleSshAuthSock() {
+  // A stale SSH_AUTH_SOCK (eg. a launchd path whose backing process is gone)
+  // makes ssh fail before it ever tries the on-disk keys. Better to clear it
+  // than keep a value that's guaranteed to fail.
+  const sock = process.env.SSH_AUTH_SOCK;
+  if (sock && !existsSync(sock)) {
+    delete process.env.SSH_AUTH_SOCK;
   }
 }
 
-ensureUtf8Locale();
-
-// macOS Electron apps launched from Finder/DMG also start without
-// SSH_AUTH_SOCK pointing at the user's agent (Terminal gets it from launchd
-// via the login shell; GUI apps often don't). Without it, every ssh we spawn
-// falls back to on-disk keys and fails with "Permission denied (publickey)"
-// for hosts that expect an agent-loaded key — until the user opens a Terminal
-// ssh that establishes a ControlMaster we then mux onto. Inherit the login
-// shell's socket once at startup so child ssh processes can talk to the agent.
-function ensureSshAuthSock() {
-  const isUsable = (value) => typeof value === 'string' && value.length > 0 && existsSync(value);
-  if (isUsable(process.env.SSH_AUTH_SOCK)) return;
-  const inherited = queryLoginShellEnv('SSH_AUTH_SOCK');
-  if (isUsable(inherited)) {
-    process.env.SSH_AUTH_SOCK = inherited;
-  }
-}
-
-ensureSshAuthSock();
+const loginShellEnv = harvestLoginShellEnv();
+mergeLoginShellEnv(loginShellEnv);
+process.env.PATH = mergedPath(loginShellEnv.PATH);
+ensureUtf8Locale(loginShellEnv);
+dropStaleSshAuthSock();
 
 const proxyPort = process.env.ELEVENEX_PROXY_PORT || process.env.FRONTEND_PORT || '11111';
 const defaultBackendUrl = process.env.ELECTRON_BACKEND_URL || `http://127.0.0.1:${proxyPort}`;
