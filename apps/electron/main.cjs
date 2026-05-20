@@ -89,6 +89,24 @@ function ensureUtf8Locale() {
 
 ensureUtf8Locale();
 
+// macOS Electron apps launched from Finder/DMG also start without
+// SSH_AUTH_SOCK pointing at the user's agent (Terminal gets it from launchd
+// via the login shell; GUI apps often don't). Without it, every ssh we spawn
+// falls back to on-disk keys and fails with "Permission denied (publickey)"
+// for hosts that expect an agent-loaded key — until the user opens a Terminal
+// ssh that establishes a ControlMaster we then mux onto. Inherit the login
+// shell's socket once at startup so child ssh processes can talk to the agent.
+function ensureSshAuthSock() {
+  const isUsable = (value) => typeof value === 'string' && value.length > 0 && existsSync(value);
+  if (isUsable(process.env.SSH_AUTH_SOCK)) return;
+  const inherited = queryLoginShellEnv('SSH_AUTH_SOCK');
+  if (isUsable(inherited)) {
+    process.env.SSH_AUTH_SOCK = inherited;
+  }
+}
+
+ensureSshAuthSock();
+
 const proxyPort = process.env.ELEVENEX_PROXY_PORT || process.env.FRONTEND_PORT || '11111';
 const defaultBackendUrl = process.env.ELECTRON_BACKEND_URL || `http://127.0.0.1:${proxyPort}`;
 const defaultFrontendUrl = process.env.ELECTRON_FRONTEND_URL || '';
