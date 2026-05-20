@@ -248,7 +248,7 @@ export class Onboarding implements OnInit {
         this.activeStep.set(snapshot.currentStep === 'install' ? 'install' : 'project');
         this.installMessage.set(
           snapshot.currentStep === 'install'
-            ? 'Install Elevenex on the server, then retry the connection.'
+            ? 'The remote server is not reachable. Retry the connection.'
             : '',
         );
         return;

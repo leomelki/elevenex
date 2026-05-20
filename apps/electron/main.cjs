@@ -1708,8 +1708,12 @@ async function startSshForwardRuntime(forward) {
     '-N',
     '-L',
     bindSpec,
+    // Do not abort on RemoteForward failures (eg. a user-defined gpg-agent
+    // socket forward whose target path is already bound by another session).
+    // The local LocalForward (-L) is validated separately by probing the
+    // local port after spawn, so we don't need ssh to die for us here.
     '-o',
-    'ExitOnForwardFailure=yes',
+    'ExitOnForwardFailure=no',
     '-o',
     `BatchMode=${batchMode}`,
     '-o',
@@ -1777,7 +1781,14 @@ async function startSshForwardRuntime(forward) {
     if (!message) {
       return;
     }
-    runtime.error = message;
+    // RemoteForward bind failures (eg. forwarded gpg-agent sockets already
+    // taken by a parallel session) are non-fatal warnings — keep them in the
+    // debug stream but don't surface them as the runtime's connection error.
+    const isNonFatalForwardWarning = /remote port forwarding failed for listen (path|port)/i.test(message)
+      || /Warning: remote port forwarding failed/i.test(message);
+    if (!isNonFatalForwardWarning) {
+      runtime.error = message;
+    }
     runtime.stderrLines.push(message);
     runtime.stderrLines = runtime.stderrLines.slice(-20);
     runtime.debugDetails.stderr = [...runtime.stderrLines];
@@ -1786,6 +1797,7 @@ async function startSshForwardRuntime(forward) {
       id: forward.id,
       pid: runtime.pid,
       message,
+      nonFatal: isNonFatalForwardWarning,
     });
   });
 
@@ -1872,7 +1884,12 @@ async function startSshForwardRuntime(forward) {
     current.installStatus = probeSucceeded ? 'available' : 'missing';
     if (!probeSucceeded) {
       current.status = 'error';
-      current.error = `Elevenex is not reachable on ${forward.sshHost}. Install Elevenex on port ${forward.remotePort} first.`;
+      // Preserve a specific stderr error if one was already captured (eg. a
+      // local -L bind failure such as "bind: Address already in use"); the
+      // generic unreachable message would mask the real reason.
+      if (!current.error) {
+        current.error = `Elevenex is not reachable on ${forward.sshHost}.`;
+      }
       current.debugDetails.lastEvent = 'probe-missing';
     }
   }
