@@ -2014,7 +2014,10 @@ export class CodexRuntimeService extends EventEmitter {
     if (mode === 'plan') {
       return { sandboxMode: 'read-only', approvalPolicy: 'never' };
     }
-    if (!mode || mode === 'default' || mode === 'auto') {
+    if (mode === 'auto') {
+      return { sandboxMode: 'workspace-write', approvalPolicy: 'on-failure' };
+    }
+    if (!mode || mode === 'default') {
       return { sandboxMode: 'workspace-write', approvalPolicy: 'untrusted' };
     }
     throw new BadRequestException(

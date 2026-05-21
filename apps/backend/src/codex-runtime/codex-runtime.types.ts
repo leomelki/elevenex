@@ -23,6 +23,7 @@ import type {
 export type CodexRunPhase = 'idle' | 'running' | 'waiting' | 'error';
 export type CodexPermissionMode =
   | 'default'
+  | 'auto'
   | 'plan'
   | 'acceptEdits'
   | 'bypassPermissions'

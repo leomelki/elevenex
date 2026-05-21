@@ -281,6 +281,32 @@ describe('CodexRuntimeService', () => {
     await iterator.next();
   });
 
+  it('maps Codex auto mode to workspace-write with on-failure approvals', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+
+    const iterator = await startAppServerTurn(service, 'auto');
+
+    expect(appServer.request).toHaveBeenCalledWith(
+      'thread/start',
+      expect.objectContaining({
+        sandbox: 'workspace-write',
+        approvalPolicy: 'on-failure',
+      }),
+    );
+    expect(wire.turnStartParams).toEqual({
+      threadId: 'thread-1',
+      input: [{ type: 'text', text: 'Plan this change' }],
+    });
+
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { status: 'completed' } },
+    });
+    await iterator.next();
+    await iterator.next();
+  });
+
   it('normalizes streamed Codex plan deltas and completed plan items', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);
