@@ -93,10 +93,13 @@ export class WorktreesController {
     @Param('repoId') repoId: string,
     @Body() body: { worktreePath: string },
   ) {
-    const { repo } = await this.findRepo(repoId);
+    const { id, repo } = await this.findRepo(repoId);
 
-    // Delete sessions associated with this worktree before removing it
-    await this.sessionsService.deleteByWorktreePath(body.worktreePath);
+    // Delete sessions associated with this repo/worktree before removing it.
+    await this.sessionsService.deleteByRepoAndWorktreePath(
+      id,
+      body.worktreePath,
+    );
     await this.worktreesService.removeWorktree(repo.path, body.worktreePath);
     return { success: true };
   }

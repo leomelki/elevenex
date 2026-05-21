@@ -987,6 +987,10 @@ export class Sidebar implements OnInit, OnDestroy {
     this.branchSelectionTarget = null;
 
     if (target) {
+      if (event.branch.hasWorktree) {
+        toast.error('That branch is already checked out in another worktree.');
+        return;
+      }
       this.checkoutWorkspaceBranch(target.repo, target.workspace, event.branch.name);
       return;
     }
@@ -1019,11 +1023,51 @@ export class Sidebar implements OnInit, OnDestroy {
     this.openWorktreeTimer = window.setTimeout(() => {
       this.openWorktreeTimer = null;
       try {
+        const existingWorktreePath = this.getExistingWorktreePath(branch);
+        if (existingWorktreePath) {
+          this.attachExistingWorktree(repo, branch.name, existingWorktreePath);
+          return;
+        }
         this.worktreeSheet.open(repo.id, branch.name, repo.path, repo.name, true);
       } finally {
         this.openingWorktreeBranchKey.set(null);
       }
     }, 0);
+  }
+
+  private attachExistingWorktree(repo: NavigationRepo, branchName: string, worktreePath: string) {
+    this.workspacesService.attach(repo.id, {
+      path: worktreePath,
+      name: branchName,
+    }).subscribe({
+      next: (workspace) => {
+        this.sessionsService.create({
+          repoId: repo.id,
+          workspaceId: workspace.id,
+        }).subscribe({
+          next: (session) => {
+            this.navService.refreshTree();
+            this.navService.openSession(session.id);
+          },
+          error: (err) => {
+            const msg = err?.error?.message || 'Unknown error';
+            toast.error(`Worktree attached, but session could not be created. ${msg}`);
+            this.navService.refreshTree();
+          },
+        });
+      },
+      error: (err) => {
+        const msg = err?.error?.message || 'Unknown error';
+        toast.error(`Could not attach worktree. ${msg}`);
+      },
+    });
+  }
+
+  private getExistingWorktreePath(branch: NavigationBranch | BranchInfo | { name: string }): string | null {
+    if ('hasWorktree' in branch && branch.hasWorktree && branch.worktreePath) {
+      return branch.worktreePath;
+    }
+    return null;
   }
 
   isOpeningWorktree(repo: NavigationRepo, branch: NavigationBranch | BranchInfo | { name: string }): boolean {

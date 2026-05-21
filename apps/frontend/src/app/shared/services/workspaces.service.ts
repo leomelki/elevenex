@@ -51,6 +51,10 @@ export class WorkspacesService {
     return this.http.post<CreateWorkspaceJob>(`/api/repos/${repoId}/workspaces`, payload);
   }
 
+  attach(repoId: number, payload: { path: string; name?: string }) {
+    return this.http.post<Workspace>(`/api/repos/${repoId}/workspaces/attachments`, payload);
+  }
+
   getCreateJob(repoId: number, jobId: string) {
     return this.http.get<CreateWorkspaceJobStatus>(`/api/repos/${repoId}/workspaces/jobs/${jobId}`);
   }

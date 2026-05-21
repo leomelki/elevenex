@@ -32,9 +32,22 @@ function createTestDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(project_id, path)
     );
+    CREATE TABLE workspaces (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_from_ref TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(repo_id, name),
+      UNIQUE(repo_id, path)
+    );
     CREATE TABLE sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+      workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
       branch_name TEXT NOT NULL,
       worktree_path TEXT NOT NULL,
       name TEXT,
@@ -340,6 +353,8 @@ describe('SessionsService', () => {
       expect(ptyManagerMock.kill).toHaveBeenCalledWith(targetTwo.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(targetOne.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(targetTwo.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(targetOne.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(targetTwo.id);
     });
   });
 

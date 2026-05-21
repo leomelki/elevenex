@@ -286,7 +286,7 @@ export class BranchSearch {
   }
 
   isUnavailableBranch(branch: BranchInfo) {
-    return branch.current || branch.hasWorktree;
+    return branch.current;
   }
 
   selectRemoteBranch(branch: BranchInfo) {

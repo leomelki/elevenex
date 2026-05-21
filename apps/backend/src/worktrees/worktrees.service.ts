@@ -14,16 +14,21 @@ export interface WorktreeInfo {
   lockReason: string | null;
 }
 
+export interface ListWorktreesOptions {
+  prune?: boolean;
+}
+
 @Injectable()
 export class WorktreesService {
-  async listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
+  async listWorktrees(repoPath: string, options: ListWorktreesOptions = {}): Promise<WorktreeInfo[]> {
     const git: SimpleGit = worktreeSimpleGit(repoPath);
 
-    // Prune stale worktree references first
-    try {
-      await git.raw(['worktree', 'prune']);
-    } catch {
-      // Ignore prune errors
+    if (options.prune) {
+      try {
+        await git.raw(['worktree', 'prune']);
+      } catch {
+        // Ignore prune errors
+      }
     }
 
     const output = await git.raw(['worktree', 'list', '--porcelain']);

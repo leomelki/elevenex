@@ -14,6 +14,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import { AttachWorkspaceDto } from './dto/attach-workspace.dto.js';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto.js';
 import { CreateWorkspaceBranchDto } from './dto/create-workspace-branch.dto.js';
 import { SwitchWorkspaceBranchDto } from './dto/switch-workspace-branch.dto.js';
@@ -51,6 +52,12 @@ export class WorkspacesController {
     };
   }
 
+  @Post('repos/:repoId/workspaces/attachments')
+  async attach(@Param('repoId') repoId: string, @Body() dto: AttachWorkspaceDto) {
+    const repo = await this.findRepo(+repoId);
+    return this.workspacesService.attachExistingWorkspace(repo, dto);
+  }
+
   @Get('repos/:repoId/workspaces/jobs/:jobId')
   async getCreateWorkspaceJob(
     @Param('repoId') repoId: string,
@@ -72,36 +79,39 @@ export class WorkspacesController {
 
   @Patch('repos/:repoId/workspaces/:workspaceId')
   async update(
+    @Param('repoId') repoId: string,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: UpdateWorkspaceDto,
   ) {
-    return this.workspacesService.renameWorkspace(+workspaceId, dto.name);
+    return this.workspacesService.renameWorkspace(+workspaceId, dto.name, +repoId);
   }
 
   @Post('repos/:repoId/workspaces/:workspaceId/switch-branch')
   async switchBranch(
+    @Param('repoId') repoId: string,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: SwitchWorkspaceBranchDto,
   ) {
-    return this.workspacesService.switchBranch(+workspaceId, dto.branchName, dto.force);
+    return this.workspacesService.switchBranch(+workspaceId, dto.branchName, dto.force, +repoId);
   }
 
   @Post('repos/:repoId/workspaces/:workspaceId/create-branch')
   async createBranch(
+    @Param('repoId') repoId: string,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: CreateWorkspaceBranchDto,
   ) {
-    return this.workspacesService.createBranch(+workspaceId, dto);
+    return this.workspacesService.createBranch(+workspaceId, dto, +repoId);
   }
 
   @Delete('repos/:repoId/workspaces/:workspaceId')
-  async delete(@Param('workspaceId') workspaceId: string) {
-    return this.workspacesService.deleteWorkspace(+workspaceId, true);
+  async delete(@Param('repoId') repoId: string, @Param('workspaceId') workspaceId: string) {
+    return this.workspacesService.deleteWorkspace(+workspaceId, true, +repoId);
   }
 
   @Delete('repos/:repoId/workspaces/:workspaceId/project-attachment')
-  async forget(@Param('workspaceId') workspaceId: string) {
-    return this.workspacesService.deleteWorkspace(+workspaceId, false);
+  async forget(@Param('repoId') repoId: string, @Param('workspaceId') workspaceId: string) {
+    return this.workspacesService.deleteWorkspace(+workspaceId, false, +repoId);
   }
 
   private async findRepo(repoId: number) {

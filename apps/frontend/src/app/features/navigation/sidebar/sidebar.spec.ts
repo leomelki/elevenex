@@ -212,6 +212,7 @@ describe('Sidebar', () => {
   };
 
   const workspacesServiceMock = {
+    attach: vi.fn(() => of({})),
     remove: vi.fn(() => of({})),
     removeFromProject: vi.fn(() => of({})),
     switchBranch: vi.fn(() => of({})),
@@ -293,8 +294,12 @@ describe('Sidebar', () => {
     navigationServiceMock.revealProject.mockClear();
     navigationServiceMock.clearRevealProject.mockClear();
     navigationServiceMock.clearHighlightedProject.mockClear();
+    sessionsServiceMock.create.mockReset();
+    sessionsServiceMock.create.mockReturnValue(of({ id: 21 }));
     sessionsServiceMock.delete.mockReset();
     sessionsServiceMock.delete.mockReturnValue(of({}));
+    workspacesServiceMock.attach.mockReset();
+    workspacesServiceMock.attach.mockReturnValue(of({ id: 2, repoId: 1, name: 'Feature', path: '/tmp/repo-one/.worktrees/feature' }));
     workspacesServiceMock.remove.mockReset();
     workspacesServiceMock.remove.mockReturnValue(of({}));
     workspacesServiceMock.removeFromProject.mockReset();
@@ -857,6 +862,36 @@ describe('Sidebar', () => {
     expect(worktreeSheet.open).toHaveBeenCalledOnce();
     expect(worktreeSheet.open).toHaveBeenCalledWith(1, 'feature', '/tmp/repo-one', 'Repo One', true);
     expect(component.openingWorktreeBranchKey()).toBeNull();
+  });
+
+  it('attaches an existing git worktree and creates a session when selected manually', () => {
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const repo = tree()[0].repos[0];
+    const branch = {
+      ...makeBranch(),
+      name: 'feature',
+      label: 'feature',
+      hasWorktree: true,
+      worktreePath: '/tmp/repo-one/.worktrees/feature',
+      sessions: [],
+    };
+    const worktreeSheet = { open: vi.fn() };
+    component.worktreeSheet = worktreeSheet as any;
+
+    component.openCreateWorktree(repo, branch);
+    vi.advanceTimersByTime(0);
+
+    expect(worktreeSheet.open).not.toHaveBeenCalled();
+    expect(workspacesServiceMock.attach).toHaveBeenCalledWith(1, {
+      path: '/tmp/repo-one/.worktrees/feature',
+      name: 'feature',
+    });
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({
+      repoId: 1,
+      workspaceId: 2,
+    });
+    expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
   });
 
   it('removes a worktree from the project without calling destructive worktree deletion', () => {

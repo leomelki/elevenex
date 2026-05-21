@@ -87,6 +87,47 @@ describe('WorkspacesController', () => {
     expect(jobsServiceMock.getJob).toHaveBeenCalledWith(7, 'job-1');
   });
 
+  it('attaches an existing workspace for a repo', async () => {
+    const workspace = {
+      id: 99,
+      repoId: 7,
+      name: 'Feature',
+      path: '/tmp/test-repo/.worktrees/feature',
+    };
+    const workspacesServiceMock = {
+      listForRepo: jest.fn(),
+      attachExistingWorkspace: jest.fn(() => workspace),
+    };
+    const controller = new WorkspacesController(
+      workspacesServiceMock as any,
+      { startJob: jest.fn(), getJob: jest.fn() } as any,
+      makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
+    );
+
+    await expect(controller.attach('7', {
+      path: '/tmp/test-repo/.worktrees/feature',
+    })).resolves.toBe(workspace);
+    expect(workspacesServiceMock.attachExistingWorkspace).toHaveBeenCalledWith(
+      { id: 7, name: 'test-repo', path: '/tmp/test-repo' },
+      { path: '/tmp/test-repo/.worktrees/feature' },
+    );
+  });
+
+  it('passes repo id when removing a workspace attachment', async () => {
+    const workspacesServiceMock = {
+      listForRepo: jest.fn(),
+      deleteWorkspace: jest.fn(() => ({ success: true })),
+    };
+    const controller = new WorkspacesController(
+      workspacesServiceMock as any,
+      { startJob: jest.fn(), getJob: jest.fn() } as any,
+      makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
+    );
+
+    await expect(controller.forget('7', '99')).resolves.toEqual({ success: true });
+    expect(workspacesServiceMock.deleteWorkspace).toHaveBeenCalledWith(99, false, 7);
+  });
+
   it('throws when the repo does not exist for workspace creation', async () => {
     const controller = new WorkspacesController(
       { listForRepo: jest.fn() } as any,

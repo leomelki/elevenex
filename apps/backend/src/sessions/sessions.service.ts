@@ -524,15 +524,7 @@ export class SessionsService extends EventEmitter {
   async delete(id: number) {
     await this.findOne(id);
 
-    try {
-      await this.agentRuntimeCleanup.cleanupSession(id);
-    } finally {
-      // 1. Kill the PTY process if running
-      this.ptyManager.kill(id);
-
-      // 2. Kill the tmux session if exists
-      this.ptyManager.killTmuxSession(id);
-    }
+    await this.cleanupSessionProcesses(id);
 
     // 3. Delete from database
     const rows = await this.db
@@ -550,10 +542,7 @@ export class SessionsService extends EventEmitter {
   async deleteByWorktreePath(worktreePath: string) {
     // Kill PTY/tmux for all sessions in this worktree before deleting
     const sessions = await this.findByWorktreePath(worktreePath);
-    for (const session of sessions) {
-      this.ptyManager.kill(session.id);
-      this.ptyManager.killTmuxSession(session.id);
-    }
+    await this.cleanupSessionsBeforeBulkDelete(sessions.map((session) => session.id));
 
     await this.db
       .delete(schema.sessions)
@@ -562,10 +551,7 @@ export class SessionsService extends EventEmitter {
 
   async deleteByRepoAndWorktreePath(repoId: number, worktreePath: string) {
     const sessions = await this.findByRepoAndWorktreePath(repoId, worktreePath);
-    for (const session of sessions) {
-      this.ptyManager.kill(session.id);
-      this.ptyManager.killTmuxSession(session.id);
-    }
+    await this.cleanupSessionsBeforeBulkDelete(sessions.map((session) => session.id));
 
     await this.db
       .delete(schema.sessions)
@@ -575,6 +561,25 @@ export class SessionsService extends EventEmitter {
           eq(schema.sessions.worktreePath, worktreePath),
         ),
       );
+  }
+
+  private async cleanupSessionsBeforeBulkDelete(sessionIds: number[]) {
+    const results = await Promise.allSettled(
+      sessionIds.map((sessionId) => this.cleanupSessionProcesses(sessionId)),
+    );
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failed) {
+      throw failed.reason;
+    }
+  }
+
+  private async cleanupSessionProcesses(id: number) {
+    try {
+      await this.agentRuntimeCleanup.cleanupSession(id);
+    } finally {
+      this.ptyManager.kill(id);
+      this.ptyManager.killTmuxSession(id);
+    }
   }
 
   async archive(id: number) {

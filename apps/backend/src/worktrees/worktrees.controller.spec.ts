@@ -66,9 +66,11 @@ describe('WorktreesController', () => {
     });
 
     expect(result).toEqual({ success: true });
-    expect(sessionsServiceMock.deleteByWorktreePath).toHaveBeenCalledWith(
+    expect(sessionsServiceMock.deleteByRepoAndWorktreePath).toHaveBeenCalledWith(
+      7,
       '/tmp/test-repo/.worktrees/feature',
     );
+    expect(sessionsServiceMock.deleteByWorktreePath).not.toHaveBeenCalled();
     expect(worktreesServiceMock.removeWorktree).toHaveBeenCalledWith(
       '/tmp/test-repo',
       '/tmp/test-repo/.worktrees/feature',

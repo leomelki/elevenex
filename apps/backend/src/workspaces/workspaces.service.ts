@@ -64,7 +64,6 @@ export class WorkspacesService {
 
   async listForRepo(repo: typeof schema.repos.$inferSelect): Promise<WorkspaceSnapshot[]> {
     await this.ensureDefaultWorkspace(repo);
-    await this.reconcileGitWorktrees(repo);
     await this.reconcileSessionWorktrees(repo);
 
     const rows = await this.db
@@ -186,8 +185,51 @@ export class WorkspacesService {
     return rows[0];
   }
 
-  async renameWorkspace(id: number, name: string) {
-    const workspace = await this.findOne(id);
+  async attachExistingWorkspace(
+    repo: typeof schema.repos.$inferSelect,
+    input: {
+      path: string;
+      name?: string;
+    },
+  ) {
+    const requestedPath = input.path.trim();
+    if (!requestedPath) {
+      throw new BadRequestException('Workspace path is required');
+    }
+
+    const matchedWorktree = await this.findGitWorktree(repo.path, requestedPath);
+    if (!matchedWorktree) {
+      throw new BadRequestException('Path is not a git worktree for this repository.');
+    }
+
+    if (await this.samePath(matchedWorktree.path, repo.path)) {
+      return this.ensureDefaultWorkspace(repo);
+    }
+
+    const existing = await this.findWorkspaceByRepoAndRealPath(repo.id, matchedWorktree.path);
+    if (existing) {
+      return existing;
+    }
+
+    const name = await this.uniqueWorkspaceName(
+      repo.id,
+      input.name?.trim() || this.nameFromWorktree(repo, matchedWorktree),
+    );
+
+    const rows = await this.insertWorkspace({
+      repoId: repo.id,
+      name,
+      path: matchedWorktree.path,
+      isDefault: false,
+      createdFromRef: matchedWorktree.branch ?? matchedWorktree.head,
+    });
+
+    await this.backfillSessionsForWorkspace(repo.id, rows[0].id, matchedWorktree.path);
+    return rows[0];
+  }
+
+  async renameWorkspace(id: number, name: string, repoId?: number) {
+    const workspace = await this.findOneForRepo(id, repoId);
     const rows = await this.db
       .update(schema.workspaces)
       .set({ name: this.normalizeName(name), updatedAt: new Date().toISOString() })
@@ -196,8 +238,8 @@ export class WorkspacesService {
     return rows[0];
   }
 
-  async switchBranch(id: number, branchName: string, force = false) {
-    const workspace = await this.findOne(id);
+  async switchBranch(id: number, branchName: string, force = false, repoId?: number) {
+    const workspace = await this.findOneForRepo(id, repoId);
     const repo = await this.findRepo(workspace.repoId);
     const branch = branchName.trim();
     if (!branch) {
@@ -233,8 +275,9 @@ export class WorkspacesService {
       workspaceName?: string;
       workspacePath?: string;
     },
+    repoId?: number,
   ) {
-    const workspace = await this.findOne(workspaceId);
+    const workspace = await this.findOneForRepo(workspaceId, repoId);
     const repo = await this.findRepo(workspace.repoId);
     const branchName = input.branchName.trim();
     this.assertValidBranchName(branchName);
@@ -275,8 +318,8 @@ export class WorkspacesService {
     return { branchName, workspace: await this.findOne(workspace.id) };
   }
 
-  async deleteWorkspace(id: number, removeFromDisk: boolean) {
-    const workspace = await this.findOne(id);
+  async deleteWorkspace(id: number, removeFromDisk: boolean, repoId?: number) {
+    const workspace = await this.findOneForRepo(id, repoId);
     if (workspace.isDefault && removeFromDisk) {
       throw new BadRequestException('The default workspace cannot be deleted from disk.');
     }
@@ -308,52 +351,6 @@ export class WorkspacesService {
           eq(schema.sessions.worktreePath, worktreePath),
         ),
       );
-  }
-
-  private async reconcileGitWorktrees(repo: typeof schema.repos.$inferSelect) {
-    const existing = await this.db
-      .select()
-      .from(schema.workspaces)
-      .where(eq(schema.workspaces.repoId, repo.id));
-
-    // Use real paths as map keys so symlink vs resolved-path differences don't create duplicates.
-    const byRealPath = new Map<string, typeof existing[0]>();
-    for (const workspace of existing) {
-      const real = await this.realPathOrRaw(workspace.path);
-      const current = byRealPath.get(real);
-      if (!current) {
-        byRealPath.set(real, workspace);
-        continue;
-      }
-      // Two workspaces resolve to the same real path — deduplicate.
-      // Prefer isDefault; when equal, keep the lower id (the more established record).
-      const [keep, drop] = (!current.isDefault && workspace.isDefault) || (current.isDefault === workspace.isDefault && workspace.id < current.id)
-        ? [workspace, current]
-        : [current, workspace];
-      await this.backfillSessionsForWorkspace(repo.id, keep.id, drop.path);
-      await this.db.delete(schema.workspaces).where(eq(schema.workspaces.id, drop.id));
-      byRealPath.set(real, keep);
-    }
-
-    for (const worktree of await this.safeListWorktrees(repo.path)) {
-      const realWorktreePath = await this.realPathOrRaw(worktree.path);
-      if (byRealPath.has(realWorktreePath)) {
-        const workspace = byRealPath.get(realWorktreePath)!;
-        await this.backfillSessionsForWorkspace(repo.id, workspace.id, workspace.path);
-        continue;
-      }
-
-      const name = await this.uniqueWorkspaceName(repo.id, this.nameFromWorktree(repo, worktree));
-      const rows = await this.insertWorkspace({
-        repoId: repo.id,
-        name,
-        path: worktree.path,
-        isDefault: await this.samePath(worktree.path, repo.path),
-        createdFromRef: worktree.branch ?? worktree.head,
-      });
-      byRealPath.set(realWorktreePath, rows[0]);
-      await this.backfillSessionsForWorkspace(repo.id, rows[0].id, worktree.path);
-    }
   }
 
   private async reconcileSessionWorktrees(repo: typeof schema.repos.$inferSelect) {
@@ -414,6 +411,38 @@ export class WorkspacesService {
       throw new NotFoundException(`Repo with id ${repoId} not found`);
     }
     return rows[0];
+  }
+
+  private async findOneForRepo(id: number, repoId?: number) {
+    const workspace = await this.findOne(id);
+    if (repoId !== undefined && workspace.repoId !== repoId) {
+      throw new NotFoundException(`Workspace with id ${id} not found`);
+    }
+    return workspace;
+  }
+
+  private async findWorkspaceByRepoAndRealPath(repoId: number, worktreePath: string) {
+    const rows = await this.db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.repoId, repoId));
+    const target = await this.realPathOrRaw(worktreePath);
+    for (const workspace of rows) {
+      if (await this.realPathOrRaw(workspace.path) === target) {
+        return workspace;
+      }
+    }
+    return null;
+  }
+
+  private async findGitWorktree(repoPath: string, worktreePath: string): Promise<WorktreeInfo | null> {
+    const target = await this.realPathOrRaw(worktreePath);
+    for (const worktree of await this.safeListWorktrees(repoPath)) {
+      if (await this.realPathOrRaw(worktree.path) === target) {
+        return worktree;
+      }
+    }
+    return null;
   }
 
   private async findDefault(repoId: number) {
