@@ -226,7 +226,16 @@ describe('CodexRuntimeService', () => {
       '2026-05-15T12:00:00.000Z',
     );
 
-    expect(item.toolInput).toEqual({
+    expect(item).toMatchObject({
+      toolKind: 'read',
+      toolDisplayName: 'Read',
+    });
+    expect(item.toolInput).toMatchObject({
+      command: "sed -n '12,20p' Cargo.toml",
+      file_path: '/tmp/project/Cargo.toml',
+      commandActions,
+    });
+    expect(item.providerToolInput).toEqual({
       command: "sed -n '12,20p' Cargo.toml",
       commandActions,
     });

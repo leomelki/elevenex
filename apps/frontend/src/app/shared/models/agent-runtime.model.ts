@@ -27,7 +27,7 @@ export interface AgentRuntimeEvent {
   };
 }
 
-export type AgentTranscriptItem = unknown;
+export type AgentTranscriptItem = import('./claude-runtime.model').ClaudeTranscriptItem;
 
 export interface AgentAutocompleteItem {
   id: string;

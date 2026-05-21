@@ -91,6 +91,19 @@ describe('tool-format', () => {
     expect(display.target).not.toContain('prompt');
   });
 
+  it('prefers canonical tool metadata over provider-specific names', () => {
+    const display = describeTool('Bash', {
+      file_path: '/repo/apps/frontend/src/main.ts',
+      command: "sed -n '1,10p' apps/frontend/src/main.ts",
+    }, 'read', 'Read');
+
+    expect(display).toMatchObject({
+      kind: 'read',
+      verb: 'Read',
+      target: '…/frontend/src/main.ts',
+    });
+  });
+
   it('prefers interaction summaries for the collapsed result chip', () => {
     const summary = resultSummary(
       'ask_user_question',

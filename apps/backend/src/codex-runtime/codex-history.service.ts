@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { basename, join } from 'path';
+import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import type { CodexHistorySessionSummary } from './codex-runtime.types.js';
 
@@ -178,15 +179,21 @@ export class CodexHistoryService {
         stringValue(item.name) ?? stringValue(item.call_id) ?? type;
       const toolName = this.normalizeToolName(rawToolName);
       const toolUseId = stringValue(item.call_id) ?? id;
+      const providerToolInput = this.normalizeToolInput(
+        rawToolName,
+        item.arguments ?? item.input,
+      );
+      const canonicalTool = canonicalizeAgentTool(toolName, providerToolInput);
       return {
         id: `${id}:tool_use`,
         kind: 'tool_use',
         toolUseId,
         toolName,
-        toolInput: this.normalizeToolInput(
-          rawToolName,
-          item.arguments ?? item.input,
-        ),
+        providerToolName: toolName,
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
+        toolInput: canonicalTool.toolInput,
+        providerToolInput,
         sourceMessageId: id,
         timestamp,
         receivedAt: timestamp,

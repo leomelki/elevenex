@@ -24,12 +24,13 @@ import {
   lucideX,
 } from '@ng-icons/lucide';
 import {
+  AgentToolKind,
   ClaudePermissionApproval,
   ClaudePermissionRequest,
   ClaudePermissionUpdate,
 } from '@/shared/models/claude-runtime.model';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
-import { normalizeToolName as normalizeToolNameForUi } from '../util/tool-format';
+import { normalizeToolName as normalizeToolNameForUi } from '@/shared/agent-tools/agent-tool-format';
 import { highlightedDiffHtml } from '../util/code-highlight';
 import { AskUserQuestion, AskUserQuestionFlowComponent } from './ask-user-question-flow.component';
 
@@ -704,6 +705,10 @@ export class ClaudePermissionInlineComponent {
 
   readonly kind = computed<'generic' | 'ask_user_question' | 'enter_plan_mode' | 'exit_plan_mode'>(
     () => {
+      const canonicalKind = this.request().toolKind;
+      if (canonicalKind === 'ask_user_question') return 'ask_user_question';
+      if (canonicalKind === 'enter_plan_mode') return 'enter_plan_mode';
+      if (canonicalKind === 'exit_plan_mode') return 'exit_plan_mode';
       const name = normalizeToolName(this.request().toolName);
       if (name === 'askuserquestion') return 'ask_user_question';
       if (name === 'enterplanmode') return 'enter_plan_mode';
@@ -712,7 +717,9 @@ export class ClaudePermissionInlineComponent {
     },
   );
 
-  readonly permToolKind = computed<string>(() => normalizeToolName(this.request().toolName));
+  readonly permToolKind = computed<AgentToolKind | string>(
+    () => this.request().toolKind ?? normalizeToolName(this.request().toolName),
+  );
 
   readonly requestTitle = computed(() => {
     const title = this.request().title?.trim();
@@ -728,6 +735,8 @@ export class ClaudePermissionInlineComponent {
   });
 
   readonly requestToolLabel = computed(() => {
+    const toolDisplayName = this.request().toolDisplayName?.trim();
+    if (toolDisplayName) return toolDisplayName;
     const displayName = this.request().displayName?.trim();
     if (displayName) return displayName;
     const toolName = this.request().toolName?.trim();

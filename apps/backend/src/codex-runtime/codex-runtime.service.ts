@@ -13,6 +13,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import {
   ClaudeHooksService,
   type ClaudeSessionActivity,
@@ -642,71 +643,101 @@ export class CodexRuntimeService extends EventEmitter {
   ): ClaudeTranscriptItem | null {
     if (item.type === 'command_execution') {
       const commandActions = commandActionsFrom(item);
+      const providerToolInput = {
+        command: item.command,
+        ...(commandActions ? { commandActions } : {}),
+      };
+      const canonicalTool = canonicalizeAgentTool('Bash', providerToolInput);
       return {
         id: `${item.id}:tool_use`,
         kind: 'tool_use',
         toolUseId: item.id,
         toolName: 'Bash',
-        toolInput: {
-          command: item.command,
-          ...(commandActions ? { commandActions } : {}),
-        },
+        providerToolName: 'Bash',
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
+        toolInput: canonicalTool.toolInput,
+        providerToolInput,
         sourceMessageId: item.id,
         timestamp,
         receivedAt: timestamp,
       };
     }
     if (item.type === 'file_change') {
+      const providerToolInput = { changes: item.changes };
+      const canonicalTool = canonicalizeAgentTool('FileChanges', providerToolInput);
       return {
         id: `${item.id}:tool_use`,
         kind: 'tool_use',
         toolUseId: item.id,
         toolName: 'FileChanges',
-        toolInput: { changes: item.changes },
+        providerToolName: 'FileChanges',
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
+        toolInput: canonicalTool.toolInput,
+        providerToolInput,
         sourceMessageId: item.id,
         timestamp,
         receivedAt: timestamp,
       };
     }
     if (item.type === 'mcp_tool_call') {
+      const providerToolInput = {
+        server: item.server,
+        arguments: item.arguments,
+      };
+      const canonicalTool = canonicalizeAgentTool(item.tool, providerToolInput);
       return {
         id: `${item.id}:tool_use`,
         kind: 'tool_use',
         toolUseId: item.id,
         toolName: item.tool,
-        toolInput: {
-          server: item.server,
-          arguments: item.arguments,
-        },
+        providerToolName: item.tool,
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
+        toolInput: canonicalTool.toolInput,
+        providerToolInput,
         sourceMessageId: item.id,
         timestamp,
         receivedAt: timestamp,
       };
     }
     if (item.type === 'web_search') {
+      const providerToolInput = { query: item.query };
+      const canonicalTool = canonicalizeAgentTool('WebSearch', providerToolInput);
       return {
         id: `${item.id}:tool_use`,
         kind: 'tool_use',
         toolUseId: item.id,
         toolName: 'WebSearch',
-        toolInput: { query: item.query },
+        providerToolName: 'WebSearch',
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
+        toolInput: canonicalTool.toolInput,
+        providerToolInput,
         sourceMessageId: item.id,
         timestamp,
         receivedAt: timestamp,
       };
     }
     if (item.type === 'todo_list') {
+      const providerToolInput = {
+        todos: item.items.map((todo) => ({
+          content: todo.text,
+          status: todo.completed ? 'completed' : 'pending',
+        })),
+      };
+      const canonicalTool = canonicalizeAgentTool('TodoWrite', providerToolInput);
       return {
         id: `${item.id}:tool_use`,
         kind: 'tool_use',
         toolUseId: item.id,
         toolName: 'TodoWrite',
-        toolInput: {
-          todos: item.items.map((todo) => ({
-            content: todo.text,
-            status: todo.completed ? 'completed' : 'pending',
-          })),
-        },
+        providerToolName: 'TodoWrite',
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
+        toolInput: canonicalTool.toolInput,
+        providerToolInput,
         sourceMessageId: item.id,
         timestamp,
         receivedAt: timestamp,
@@ -1628,56 +1659,74 @@ export class CodexRuntimeService extends EventEmitter {
       typeof params?.itemId === 'string' ? params.itemId : requestId;
     if (method === 'item/commandExecution/requestApproval') {
       const command = typeof params?.command === 'string' ? params.command : '';
+      const providerInput = {
+        command,
+        cwd: params?.cwd,
+        reason: params?.reason,
+        commandActions: params?.commandActions,
+        networkApprovalContext: params?.networkApprovalContext,
+      };
+      const canonicalTool = canonicalizeAgentTool('Bash', providerInput);
       return {
         requestId,
         toolUseId: itemId,
         toolName: 'Bash',
+        providerToolName: 'Bash',
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
         title: 'Approve command execution?',
         displayName: 'Bash',
         description:
           typeof params?.reason === 'string' ? params.reason : undefined,
-        input: {
-          command,
-          cwd: params?.cwd,
-          reason: params?.reason,
-          commandActions: params?.commandActions,
-          networkApprovalContext: params?.networkApprovalContext,
-        },
+        input: canonicalTool.toolInput,
+        providerInput,
         createdAt,
       };
     }
     if (method === 'item/fileChange/requestApproval') {
+      const providerInput = {
+        itemId,
+        reason: params?.reason,
+        grantRoot: params?.grantRoot,
+      };
+      const canonicalTool = canonicalizeAgentTool('FileChanges', providerInput);
       return {
         requestId,
         toolUseId: itemId,
         toolName: 'FileChanges',
+        providerToolName: 'FileChanges',
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
         title: 'Approve file changes?',
         displayName: 'File changes',
         description:
           typeof params?.reason === 'string' ? params.reason : undefined,
         blockedPath:
           typeof params?.grantRoot === 'string' ? params.grantRoot : undefined,
-        input: {
-          itemId,
-          reason: params?.reason,
-          grantRoot: params?.grantRoot,
-        },
+        input: canonicalTool.toolInput,
+        providerInput,
         createdAt,
       };
     }
+    const providerInput = {
+      cwd: params?.cwd,
+      reason: params?.reason,
+      permissions: params?.permissions,
+    };
+    const canonicalTool = canonicalizeAgentTool('RequestPermissions', providerInput);
     return {
       requestId,
       toolUseId: itemId,
       toolName: 'RequestPermissions',
+      providerToolName: 'RequestPermissions',
+      toolKind: canonicalTool.toolKind,
+      toolDisplayName: canonicalTool.toolDisplayName,
       title: 'Approve requested permissions?',
       displayName: 'Permissions',
       description:
         typeof params?.reason === 'string' ? params.reason : undefined,
-      input: {
-        cwd: params?.cwd,
-        reason: params?.reason,
-        permissions: params?.permissions,
-      },
+      input: canonicalTool.toolInput,
+      providerInput,
       createdAt,
     };
   }

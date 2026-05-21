@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import {
   ClaudeHooksService,
   type ClaudeSessionActivity,
@@ -475,12 +476,18 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       case 'tool_execution_start': {
         const toolUseId = String(event.toolCallId ?? randomUUID());
         const toolName = String(event.toolName ?? 'Tool');
+        const providerToolInput = this.normalizePiToolInput(toolName, event.args);
+        const canonicalTool = canonicalizeAgentTool(toolName, providerToolInput);
         this.pushItem(sessionId, {
           id: `${toolUseId}:tool_use`,
           kind: 'tool_use',
           toolUseId,
           toolName,
-          toolInput: this.normalizePiToolInput(toolName, event.args),
+          providerToolName: toolName,
+          toolKind: canonicalTool.toolKind,
+          toolDisplayName: canonicalTool.toolDisplayName,
+          toolInput: canonicalTool.toolInput,
+          providerToolInput,
           sourceMessageId: toolUseId,
           timestamp: new Date().toISOString(),
           receivedAt: new Date().toISOString(),
@@ -577,12 +584,18 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       if (!toolCall) return;
       const toolUseId = String(toolCall.id ?? randomUUID());
       const toolName = String(toolCall.name ?? 'Tool');
+      const providerToolInput = this.normalizePiToolInput(toolName, toolCall.arguments);
+      const canonicalTool = canonicalizeAgentTool(toolName, providerToolInput);
       this.pushItem(sessionId, {
         id: `${sourceMessageId}:tool:${toolUseId}`,
         kind: 'tool_use',
         toolUseId,
         toolName,
-        toolInput: this.normalizePiToolInput(toolName, toolCall.arguments),
+        providerToolName: toolName,
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
+        toolInput: canonicalTool.toolInput,
+        providerToolInput,
         sourceMessageId,
         timestamp: this.timestampFromMessage(message),
         receivedAt: new Date().toISOString(),
@@ -979,12 +992,18 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
         } else if (block.type === 'toolCall') {
           const toolUseId = String(block.id ?? `${id}:${index}`);
           const toolName = String(block.name ?? 'Tool');
+          const providerToolInput = this.normalizePiToolInput(toolName, block.arguments);
+          const canonicalTool = canonicalizeAgentTool(toolName, providerToolInput);
           items.push({
             id: `${id}:tool:${toolUseId}`,
             kind: 'tool_use',
             toolUseId,
             toolName,
-            toolInput: this.normalizePiToolInput(toolName, block.arguments),
+            providerToolName: toolName,
+            toolKind: canonicalTool.toolKind,
+            toolDisplayName: canonicalTool.toolDisplayName,
+            toolInput: canonicalTool.toolInput,
+            providerToolInput,
             sourceMessageId: id,
             timestamp,
             receivedAt: timestamp,
@@ -1168,8 +1187,36 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
   }
 
   private normalizePiToolInput(toolName: string, args: unknown): unknown {
-    if (toolName !== 'edit' || !args || typeof args !== 'object') return args;
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+    const normalized = toolName.toLowerCase().replace(/[_\-\s]/g, '');
     const input = args as Record<string, unknown>;
+    if (normalized === 'read' || normalized === 'readfile' || normalized === 'fileread') {
+      return {
+        ...input,
+        file_path: typeof input['file_path'] === 'string'
+          ? input['file_path']
+          : input['path'],
+      };
+    }
+    if (normalized === 'write' || normalized === 'create' || normalized === 'filewrite') {
+      return {
+        ...input,
+        file_path: typeof input['file_path'] === 'string'
+          ? input['file_path']
+          : input['path'],
+      };
+    }
+    if (normalized === 'bash' || normalized === 'shell' || normalized === 'shellcommand') {
+      return {
+        ...input,
+        command: typeof input['command'] === 'string'
+          ? input['command']
+          : typeof input['cmd'] === 'string'
+            ? input['cmd']
+            : input['input'],
+      };
+    }
+    if (normalized !== 'edit' && normalized !== 'multiedit') return args;
     const edits = input['edits'];
     if (!Array.isArray(edits) || edits.length === 0) return args;
     const filePath = typeof input['path'] === 'string' ? input['path'] : input['file_path'];

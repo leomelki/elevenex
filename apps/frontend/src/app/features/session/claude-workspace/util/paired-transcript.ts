@@ -1,5 +1,5 @@
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
-import { shouldHideToolCall } from './tool-format';
+import { shouldHideToolCall } from '@/shared/agent-tools/agent-tool-format';
 
 export type PairedTranscriptUnit =
   | { kind: 'message'; id: string; item: ClaudeTranscriptItem }
@@ -25,7 +25,7 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
 
     if (item.kind === 'tool_use') {
       const toolUseId = item.toolUseId || item.id;
-      if (shouldHideToolCall(item.toolName, item.toolInput)) {
+      if (shouldHideToolCall(item.toolName, item.toolInput, item.toolKind)) {
         hiddenToolUseIds.add(toolUseId);
       }
     }
@@ -114,7 +114,7 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
         continue; // already paired
       }
       // orphan result — render as a tool card with no call
-      if (shouldHideToolCall(item.toolName, item.toolInput)) {
+      if (shouldHideToolCall(item.toolName, item.toolInput, item.toolKind)) {
         continue;
       }
       out.push({

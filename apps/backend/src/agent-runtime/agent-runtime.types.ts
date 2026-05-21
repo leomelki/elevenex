@@ -35,7 +35,8 @@ export interface AgentSessionSnapshotPayload extends AgentRuntimeStatePayload {
   history: AgentTranscriptItem[];
 }
 
-export type AgentTranscriptItem = unknown;
+export type AgentTranscriptItem =
+  import('../claude-runtime/claude-runtime.types.js').ClaudeTranscriptItem;
 
 export interface AgentAutocompleteItem {
   id: string;

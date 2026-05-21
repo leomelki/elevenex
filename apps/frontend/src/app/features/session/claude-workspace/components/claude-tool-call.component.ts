@@ -40,27 +40,39 @@ import {
   ResultSummary,
   ToolDisplay,
   contentToString,
-  describeTool,
+  describeAgentTool,
   extractToolError,
   isHardError,
   resultSummary,
-} from '../util/tool-format';
+} from '@/shared/agent-tools/agent-tool-format';
 import { PairedTranscriptUnit, pairTranscript } from '../util/paired-transcript';
 import { ClaudeMessageComponent } from './claude-message.component';
 import { ClaudeThinkingComponent } from './claude-thinking.component';
 import { InlineDiffComponent } from './inline-diff.component';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
+import { ToolCommandComponent } from './tool-command.component';
+import { ToolKeyValueComponent } from './tool-key-value.component';
+import { ToolOutputComponent } from './tool-output.component';
+import { ToolTodoItem, ToolTodosComponent } from './tool-todos.component';
 
-interface Todo {
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed' | string;
-  activeForm?: string;
-}
+type Todo = ToolTodoItem;
 
 @Component({
   selector: 'cw-tool-call',
   standalone: true,
-  imports: [CommonModule, NgIcon, MarkdownPipe, ClaudeMessageComponent, ClaudeThinkingComponent, InlineDiffComponent, forwardRef(() => ClaudeToolCallComponent)],
+  imports: [
+    CommonModule,
+    NgIcon,
+    MarkdownPipe,
+    ClaudeMessageComponent,
+    ClaudeThinkingComponent,
+    InlineDiffComponent,
+    ToolCommandComponent,
+    ToolKeyValueComponent,
+    ToolOutputComponent,
+    ToolTodosComponent,
+    forwardRef(() => ClaudeToolCallComponent),
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
@@ -93,20 +105,7 @@ interface Todo {
           <span class="cw-tool__verb">Todos</span>
           <span class="cw-tool__count">{{ todos().length }}</span>
         </div>
-        <ul class="cw-todos">
-          @for (todo of todos(); track $index) {
-            <li [attr.data-status]="todo.status">
-              @switch (todo.status) {
-                @case ('completed') { <span class="cw-todos__box cw-todos__box--done">✓</span> }
-                @case ('in_progress') { <span class="cw-todos__box cw-todos__box--active"></span> }
-                @default { <span class="cw-todos__box"></span> }
-              }
-              <span class="cw-todos__text">
-                {{ todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content }}
-              </span>
-            </li>
-          }
-        </ul>
+        <cw-tool-todos [todos]="todos()" />
       } @else {
         <button type="button" class="cw-tool__head" (click)="toggle()">
           <span class="cw-tool__state-icon">
@@ -172,9 +171,9 @@ interface Todo {
 
             @switch (display().kind) {
               @case ('bash') {
-                <pre class="cw-tool__cmd">$ {{ bashCommand() }}</pre>
+                <cw-tool-command [command]="bashCommand()" />
                 @if (resultText()) {
-                  <pre class="cw-tool__output" [class.cw-tool__output--error]="state() === 'error'">{{ resultText() }}</pre>
+                  <cw-tool-output [text]="resultText()" [error]="state() === 'error'" />
                 }
               }
               @case ('edit') {
@@ -187,7 +186,7 @@ interface Todo {
                   />
                 }
                 @if (resultText() && state() === 'error') {
-                  <pre class="cw-tool__output cw-tool__output--error">{{ resultText() }}</pre>
+                  <cw-tool-output [text]="resultText()" [error]="true" />
                 }
               }
               @case ('write') {
@@ -328,7 +327,7 @@ interface Todo {
                   </div>
                 }
               }
-              @case ('plan_mode') {
+              @case ('enter_plan_mode') {
                 <div class="cw-tool__web">Claude switched into planning mode and stayed read-only.</div>
               }
               @case ('exit_plan_mode') {
@@ -343,16 +342,9 @@ interface Todo {
                 }
               }
               @default {
-                <div class="cw-tool__kv">
-                  @for (entry of fallbackEntries(); track entry.k) {
-                    <div class="cw-tool__kv-row">
-                      <span class="cw-tool__kv-key">{{ entry.k }}</span>
-                      <span class="cw-tool__kv-val">{{ entry.v }}</span>
-                    </div>
-                  }
-                </div>
+                <cw-tool-kv [entries]="fallbackEntries()" />
                 @if (resultText()) {
-                  <pre class="cw-tool__output" [class.cw-tool__output--error]="state() === 'error'">{{ resultText() }}</pre>
+                  <cw-tool-output [text]="resultText()" [error]="state() === 'error'" />
                 }
               }
             }
@@ -1008,7 +1000,7 @@ export class ClaudeToolCallComponent {
     return text.length > 120 ? text.slice(0, 117) + '…' : text;
   });
 
-  readonly display = computed<ToolDisplay>(() => describeTool(this.call().toolName, this.call().toolInput));
+  readonly display = computed<ToolDisplay>(() => describeAgentTool(this.call()));
 
   readonly state = computed<'running' | 'waiting' | 'error' | 'done'>(() => {
     if (!this.result() && this.isLive()) return 'running';
@@ -1055,7 +1047,7 @@ export class ClaudeToolCallComponent {
     const k = this.display().kind;
     if (k === 'todo_write' || k === 'worktree') return false;
     // Always expandable if we have a result, or if this is an agent (has prompt)
-    if (k === 'plan_mode' || k === 'exit_plan_mode' || k === 'ask_user_question') {
+    if (k === 'plan_mode' || k === 'enter_plan_mode' || k === 'exit_plan_mode' || k === 'ask_user_question') {
       return !!this.result() || !!this.interaction();
     }
     return (
@@ -1332,12 +1324,12 @@ export class ClaudeToolCallComponent {
   }
 
   childSummary(unit: Extract<PairedTranscriptUnit, { kind: 'tool' }>): string {
-    const display = describeTool(unit.call.toolName, unit.call.toolInput);
+    const display = describeAgentTool(unit.call);
     return resultSummary(display.kind, unit.result)?.text ?? '';
   }
 
   childToolLabel(item: ClaudeTranscriptItem): string {
-    const display = describeTool(item.toolName, item.toolInput);
+    const display = describeAgentTool(item);
     return display.target ? `${display.verb} ${display.target}` : display.verb;
   }
 

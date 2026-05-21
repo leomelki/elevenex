@@ -20,6 +20,28 @@ export type ClaudeTranscriptItemKind =
   | 'system'
   | 'error';
 
+export type AgentToolKind =
+  | 'read'
+  | 'write'
+  | 'edit'
+  | 'notebook_edit'
+  | 'bash'
+  | 'grep'
+  | 'glob'
+  | 'web_fetch'
+  | 'web_search'
+  | 'file_changes'
+  | 'task_agent'
+  | 'todo_write'
+  | 'ask_user_question'
+  | 'enter_plan_mode'
+  | 'exit_plan_mode'
+  | 'worktree'
+  | 'lsp'
+  | 'skill'
+  | 'mcp'
+  | 'unknown';
+
 export type ClaudeToolInteractionKind =
   | 'permission'
   | 'ask_user_question'
@@ -53,7 +75,11 @@ export interface ClaudeTranscriptItem {
   toolUseId?: string;
   parentToolUseId?: string;
   toolName?: string;
+  providerToolName?: string;
+  toolKind?: AgentToolKind;
+  toolDisplayName?: string;
   toolInput?: unknown;
+  providerToolInput?: unknown;
   interaction?: ClaudeToolInteractionSummary;
   isError?: boolean;
   sourceMessageId?: string;
@@ -89,7 +115,11 @@ export interface ClaudePermissionRequest {
   requestId: string;
   toolUseId: string;
   toolName: string;
+  providerToolName?: string;
+  toolKind?: AgentToolKind;
+  toolDisplayName?: string;
   input: unknown;
+  providerInput?: unknown;
   agentId?: string;
   title?: string;
   displayName?: string;

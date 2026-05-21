@@ -74,6 +74,7 @@ import * as schema from '../database/schema/index.js';
 import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
 import { getBackendHelperPath, getBackendRuntimeRoot } from '../config/runtime-paths.js';
 import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
+import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import {
   ClaudeImageInput,
   ClaudeImageMediaType,
@@ -847,11 +848,16 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     const canUseTool: CanUseTool = async (toolName, input, options) => {
       const requestId = randomUUID();
+      const canonicalTool = canonicalizeAgentTool(toolName, input);
       const request: ClaudePermissionRequest = {
         requestId,
         toolUseId: options.toolUseID,
         toolName,
-        input,
+        providerToolName: toolName,
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
+        input: canonicalTool.toolInput,
+        providerInput: input,
         agentId: options.agentID,
         title: options.title,
         displayName: options.displayName,
@@ -1740,13 +1746,19 @@ export class ClaudeRuntimeService extends EventEmitter {
         }
         thinkingPartOrdinal += 1;
       } else if (part.type === 'tool_use') {
+        const providerToolInput = this.enrichEditToolInput(part.name, part.input, sessionId);
+        const canonicalTool = canonicalizeAgentTool(part.name, providerToolInput);
         const item: ClaudeTranscriptItem = {
           id: `${message.uuid}:tool:${part.id}`,
           kind: 'tool_use',
           toolUseId: part.id,
           parentToolUseId: message.parent_tool_use_id ?? undefined,
           toolName: part.name,
-          toolInput: this.enrichEditToolInput(part.name, part.input, sessionId),
+          providerToolName: part.name,
+          toolKind: canonicalTool.toolKind,
+          toolDisplayName: canonicalTool.toolDisplayName,
+          toolInput: canonicalTool.toolInput,
+          providerToolInput,
           sourceMessageId: streamMessageId,
           timestamp: receivedAt,
           receivedAt,
@@ -3842,13 +3854,18 @@ export class ClaudeRuntimeService extends EventEmitter {
               receivedAt: timestamp,
             });
           } else if (part.type === 'tool_use') {
+            const canonicalTool = canonicalizeAgentTool(part.name, part.input);
             normalized.push({
               id: `${apiMessageId}:tool_use:${part.id ?? index}`,
               kind: 'tool_use',
               toolUseId: part.id,
               parentToolUseId,
               toolName: part.name,
-              toolInput: part.input,
+              providerToolName: part.name,
+              toolKind: canonicalTool.toolKind,
+              toolDisplayName: canonicalTool.toolDisplayName,
+              toolInput: canonicalTool.toolInput,
+              providerToolInput: part.input,
               interaction:
                 typeof part.id === 'string'
                   ? interactionsByToolUseId.get(part.id)
