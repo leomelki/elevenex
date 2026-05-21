@@ -54,6 +54,11 @@ const PERMISSION_MODES: PermissionModeOption[] = [
   { id: 'bypassPermissions', label: 'Bypass permissions', hint: 'Skip all prompts — danger' },
 ];
 
+const CODEX_PERMISSION_MODE_HINTS: Partial<Record<ClaudePermissionMode, string>> = {
+  auto: 'Run sandboxed; auto-review elevated requests',
+  default: 'Run commands in the workspace sandbox',
+};
+
 const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: string }[] = [
   { id: '', label: 'Default effort', hint: 'Use the provider default' },
   { id: 'low', label: 'Low', hint: 'Fastest responses' },
@@ -530,7 +535,10 @@ export class ClaudeStatusBarComponent {
     if (this.currentProvider() === 'codex') {
       return PERMISSION_MODES.filter((opt) =>
         ['auto', 'default', 'plan', 'acceptEdits', 'bypassPermissions'].includes(opt.id),
-      );
+      ).map((opt) => ({
+        ...opt,
+        hint: CODEX_PERMISSION_MODE_HINTS[opt.id] ?? opt.hint,
+      }));
     }
     const modelId = this.selectedModel();
     const models = this.availableModels();

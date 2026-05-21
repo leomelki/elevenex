@@ -268,6 +268,13 @@ describe('CodexRuntimeService', () => {
 
     const iterator = await startAppServerTurn(service, 'default');
 
+    expect(appServer.request).toHaveBeenCalledWith(
+      'thread/start',
+      expect.objectContaining({
+        sandbox: 'workspace-write',
+        approvalPolicy: 'on-request',
+      }),
+    );
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'Plan this change' }],
@@ -281,7 +288,7 @@ describe('CodexRuntimeService', () => {
     await iterator.next();
   });
 
-  it('maps Codex auto mode to workspace-write with on-failure approvals', async () => {
+  it('maps Codex auto mode to workspace-write with automatic approval review', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);
 
@@ -291,7 +298,8 @@ describe('CodexRuntimeService', () => {
       'thread/start',
       expect.objectContaining({
         sandbox: 'workspace-write',
-        approvalPolicy: 'on-failure',
+        approvalPolicy: 'on-request',
+        approvalsReviewer: 'auto_review',
       }),
     );
     expect(wire.turnStartParams).toEqual({

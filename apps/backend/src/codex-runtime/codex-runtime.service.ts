@@ -1473,6 +1473,9 @@ export class CodexRuntimeService extends EventEmitter {
         ...(state.fastMode ? { serviceTier: 'flex', speedTier: 'fast' } : {}),
         sandbox: sandboxMap[permissionOptions.sandboxMode],
         approvalPolicy: approvalMap[permissionOptions.approvalPolicy],
+        ...(permissionOptions.approvalsReviewer
+          ? { approvalsReviewer: permissionOptions.approvalsReviewer }
+          : {}),
       };
 
       const startFreshThread = async (): Promise<string> => {
@@ -2004,6 +2007,7 @@ export class CodexRuntimeService extends EventEmitter {
   private mapPermissionMode(mode: CodexPermissionMode | null): {
     sandboxMode: SandboxMode;
     approvalPolicy: ApprovalMode;
+    approvalsReviewer?: 'auto_review';
   } {
     if (mode === 'bypassPermissions') {
       return { sandboxMode: 'danger-full-access', approvalPolicy: 'never' };
@@ -2015,10 +2019,14 @@ export class CodexRuntimeService extends EventEmitter {
       return { sandboxMode: 'read-only', approvalPolicy: 'never' };
     }
     if (mode === 'auto') {
-      return { sandboxMode: 'workspace-write', approvalPolicy: 'on-failure' };
+      return {
+        sandboxMode: 'workspace-write',
+        approvalPolicy: 'on-request',
+        approvalsReviewer: 'auto_review',
+      };
     }
     if (!mode || mode === 'default') {
-      return { sandboxMode: 'workspace-write', approvalPolicy: 'untrusted' };
+      return { sandboxMode: 'workspace-write', approvalPolicy: 'on-request' };
     }
     throw new BadRequestException(
       `Unsupported Codex permission mode "${mode}".`,
