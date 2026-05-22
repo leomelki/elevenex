@@ -29,6 +29,11 @@ import { GitService } from '@/shared/services/git.service';
 const POLL_INTERVAL_MS = 5000;
 const MAX_VISIBLE_FILES = 10;
 
+interface CommitFileRow extends FileStatus {
+  basename: string;
+  folder: string;
+}
+
 @Component({
   selector: 'app-commit-button',
   standalone: true,
@@ -103,7 +108,17 @@ export class CommitButtonComponent {
     };
   });
 
-  readonly visibleRows = computed(() => this.selectedRows().slice(0, MAX_VISIBLE_FILES));
+  readonly visibleRows = computed<CommitFileRow[]>(() =>
+    this.selectedRows().slice(0, MAX_VISIBLE_FILES).map(file => {
+      const pathParts = file.path.split(/[\\/]/).filter(Boolean);
+      const basename = pathParts.pop() ?? file.path;
+      return {
+        ...file,
+        basename,
+        folder: pathParts.length ? pathParts.join('/') : '',
+      };
+    }),
+  );
   readonly hiddenRowCount = computed(() => Math.max(0, this.selectedRows().length - MAX_VISIBLE_FILES));
   readonly canCommit = computed(() => this.selectedFileCount() > 0 && !this.submitting());
 
