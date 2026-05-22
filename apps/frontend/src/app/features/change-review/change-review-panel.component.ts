@@ -1,6 +1,6 @@
 import { CdkVirtualScrollViewport, ScrollingModule } from '@angular/cdk/scrolling';
 import { CommonModule } from '@angular/common';
-import { Component, computed, effect, inject, input, OnDestroy, signal, viewChild } from '@angular/core';
+import { Component, computed, effect, ElementRef, HostListener, inject, input, OnDestroy, signal, viewChild } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -16,6 +16,7 @@ import {
   lucideRefreshCw,
   lucideSearch,
   lucideTriangleAlert,
+  lucideX,
 } from '@ng-icons/lucide';
 import hljs from 'highlight.js/lib/common';
 import { firstValueFrom } from 'rxjs';
@@ -84,6 +85,7 @@ interface PrefetchState {
       lucideRefreshCw,
       lucideSearch,
       lucideTriangleAlert,
+      lucideX,
     }),
   ],
 })
@@ -91,6 +93,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   readonly worktreePath = input.required<string>();
 
   private readonly changeReview = inject(ChangeReviewService);
+  private readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly rowHtmlCache = new Map<string, SafeHtml>();
   private readonly diffViewport = viewChild<CdkVirtualScrollViewport>('diffViewport');
@@ -195,6 +198,14 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   setStatusFilter(filter: StatusFilter): void {
     this.statusFilter.set(filter);
+  }
+
+  @HostListener('document:keydown', ['$event'])
+  onDocumentKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    if (!this.eventStartedInsidePanel(event) || this.isEditableTarget(event.target)) return;
+    event.preventDefault();
+    void this.selectAdjacentFile(event.key === 'ArrowDown' ? 1 : -1);
   }
 
   async selectFile(file: ChangeReviewFileSummary): Promise<void> {
@@ -560,6 +571,36 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     }
 
     return { files, skipped };
+  }
+
+  private async selectAdjacentFile(delta: 1 | -1): Promise<void> {
+    const files = this.filteredFiles();
+    if (files.length === 0) return;
+    const selectedPath = this.selectedFile()?.path ?? null;
+    if (!selectedPath) {
+      await this.selectFile(delta > 0 ? files[0] : files[files.length - 1]);
+      return;
+    }
+    const currentIndex = files.findIndex((file) => file.path === selectedPath);
+    const nextIndex = currentIndex === -1
+      ? (delta > 0 ? 0 : files.length - 1)
+      : currentIndex + delta;
+    if (nextIndex < 0 || nextIndex >= files.length) return;
+    await this.selectFile(files[nextIndex]);
+  }
+
+  private eventStartedInsidePanel(event: KeyboardEvent): boolean {
+    const target = event.target;
+    return target instanceof Node && this.elementRef.nativeElement.contains(target);
+  }
+
+  private isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    return tagName === 'input'
+      || tagName === 'textarea'
+      || tagName === 'select'
+      || target.isContentEditable;
   }
 
   private prefetchPause(delayMs: number): Promise<void> {

@@ -196,7 +196,18 @@
               />
               Viewed
             </label>
-            <button z-button zType="ghost" zSize="sm" type="button" (click)="collapseFile()">Collapse</button>
+            <button
+              z-button
+              zType="ghost"
+              zSize="sm"
+              class="w-8 p-0"
+              type="button"
+              title="Close file"
+              aria-label="Close file"
+              (click)="collapseFile()"
+            >
+              <ng-icon name="lucideX" size="16" />
+            </button>
           </div>
         </header>
 

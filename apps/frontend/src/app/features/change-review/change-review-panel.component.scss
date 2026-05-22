@@ -76,11 +76,11 @@
 }
 
 .cr-diff-row--add {
-  background: color-mix(in oklch, var(--success) 10%, transparent);
+  background: color-mix(in oklch, oklch(0.72 0.12 235) 18%, var(--background));
 }
 
 .cr-diff-row--delete {
-  background: color-mix(in oklch, var(--destructive) 10%, transparent);
+  background: color-mix(in oklch, oklch(0.76 0.15 35) 24%, var(--background));
 }
 
 .cr-diff-row--hunk,
