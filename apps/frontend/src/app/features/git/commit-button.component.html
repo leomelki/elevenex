@@ -117,12 +117,12 @@
               @for (file of visibleRows(); track trackFile($index, file)) {
                 <div class="cx-file">
                   <span class="cx-file__dot" [class.cx-file__dot--staged]="file.staged"></span>
-                  <span class="cx-file__path" [title]="file.path">
+                  <span class="cx-file__path flex min-w-0 flex-1 items-baseline overflow-hidden text-foreground" [title]="file.path">
                     @if (file.folder) {
-                      <span class="cx-file__folder">{{ file.folder }}</span>
-                      <span class="cx-file__path-separator" aria-hidden="true">/</span>
+                      <span class="min-w-0 flex-auto overflow-hidden text-ellipsis whitespace-nowrap text-left font-mono text-[11px] text-muted-foreground [direction:rtl] [unicode-bidi:isolate]">{{ file.folder }}</span>
+                      <span class="shrink-0 px-0.5 font-mono text-[11px] text-muted-foreground" aria-hidden="true">/</span>
                     }
-                    <span class="cx-file__base">{{ file.basename }}</span>
+                    <span class="shrink-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs font-semibold">{{ file.basename }}</span>
                   </span>
                   <span class="cx-file__status">{{ statusLabel(file) }}</span>
                 </div>
