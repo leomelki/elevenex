@@ -972,7 +972,7 @@ export class GitService {
       '- Use an imperative lowercase description, for example "add", "fix", "remove", or "refactor".',
       '- Describe the semantic product or code behavior change, not just file operations.',
       '- Do not summarize as "rename files", "update files", or "change N files" when the diff changes behavior or adds a concept.',
-      '- Keep the full subject at most 72 characters.',
+      '- Prefer keeping the full subject at most 72 characters when possible.',
       '- Do not end the subject with a period.',
       '',
       'Body rules:',
@@ -1070,10 +1070,7 @@ export class GitService {
 
       return {
         subject,
-        body:
-          typeof body === 'string' && body.trim()
-            ? body.trim()
-            : null,
+        body: typeof body === 'string' && body.trim() ? body.trim() : null,
         confidence: 'medium',
         source,
       };
@@ -1148,10 +1145,6 @@ export class GitService {
 
     const normalized = subject.trim().replace(/\s+/g, ' ');
     if (!normalized) {
-      return null;
-    }
-
-    if (normalized.length > 72) {
       return null;
     }
 

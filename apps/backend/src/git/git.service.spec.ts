@@ -355,12 +355,18 @@ describe('GitService', () => {
       expect(suggestion).toBeNull();
     });
 
-    it('should reject commit suggestions with overlong subjects instead of trimming', () => {
+    it('should accept overlong conventional commit subjects', () => {
       const suggestion = (service as any).parseCommitSuggestion(
-        '{"subject":"fix(git): reject generated commit subjects that are too long to preserve without silently trimming them","body":null}',
+        '{"subject":"refactor(error-tracking): move manual code fix feature flag check into InlineCodeFix","body":null}',
       );
 
-      expect(suggestion).toBeNull();
+      expect(suggestion).toEqual({
+        subject:
+          'refactor(error-tracking): move manual code fix feature flag check into InlineCodeFix',
+        body: null,
+        confidence: 'medium',
+        source: 'claude',
+      });
     });
   });
 
