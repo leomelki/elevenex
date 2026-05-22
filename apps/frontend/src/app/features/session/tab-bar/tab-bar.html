@@ -77,6 +77,15 @@
       @if (worktreePath()) {
         <app-commit-button [worktreePath]="worktreePath()" />
       }
+      <button
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        [ngClass]="showGithub() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+        title="Changes"
+        aria-label="Toggle changes review panel"
+        (click)="toggleGithub.emit()"
+      >
+        <ng-icon name="lucideGitPullRequest" size="16" />
+      </button>
       @if (plannotatorAvailable()) {
         <button
           class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
