@@ -26,9 +26,6 @@
             [class.text-muted-foreground]="tab.status === 'archived'"
           >
             {{ tab.workspaceName || tab.branchName }}
-            @if (hasLinkedPullRequest(tab)) {
-              <span class="ml-2 inline-flex rounded-full bg-[color-mix(in_oklch,var(--primary)_16%,white)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">PR</span>
-            }
           </span>
           <span
             class="overflow-hidden text-ellipsis whitespace-nowrap text-xs leading-[1.3] font-normal text-muted-foreground"
@@ -79,10 +76,10 @@
       }
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showGithub() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+        [ngClass]="showChanges() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
         title="Changes"
         aria-label="Toggle changes review panel"
-        (click)="toggleGithub.emit()"
+        (click)="toggleChanges.emit()"
       >
         <ng-icon name="lucideGitPullRequest" size="16" />
       </button>

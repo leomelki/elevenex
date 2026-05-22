@@ -4,7 +4,6 @@ import { TabBar } from './tab-bar';
 import { ClaudeStatusService } from '../../../shared/services/claude-status.service';
 import { ProductivityStateService } from '../../productivity/productivity-state.service';
 import { PlannotatorStateService } from '../../plannotator';
-import { GitHubStateService } from '../../github/github-state.service';
 import { Tab } from '../tab-service';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { signal } from '@angular/core';
@@ -21,10 +20,6 @@ describe('TabBar', () => {
 
   const plannotatorStateMock = {
     isPanelVisible: vi.fn(() => false),
-  };
-
-  const githubStateMock = {
-    hasLinkedPullRequest: vi.fn(() => false),
   };
 
   const providerSelectionMock = {
@@ -59,7 +54,6 @@ describe('TabBar', () => {
         { provide: ClaudeStatusService, useValue: claudeStatusMock },
         { provide: ProductivityStateService, useValue: productivityStateMock },
         { provide: PlannotatorStateService, useValue: plannotatorStateMock },
-        { provide: GitHubStateService, useValue: githubStateMock },
         { provide: AgentRuntimeProviderService, useValue: providerSelectionMock },
       ],
     }).compileComponents();

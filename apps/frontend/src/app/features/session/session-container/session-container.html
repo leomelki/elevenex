@@ -8,7 +8,7 @@
         [worktreePath]="worktreePath()"
         [showFiles]="showFilesPanel()"
         [showBrowser]="showBrowserPanel()"
-        [showGithub]="showGithubPanel()"
+        [showChanges]="showChangesPanel()"
         [showTerminal]="terminalPanelVisible()"
         [showActions]="actionPanelVisible()"
         [showPlannotator]="showPlannotatorPanel()"
@@ -31,7 +31,7 @@
         (toggleTodos)="toggleTodos()"
         (toggleFiles)="toggleFilesPanel()"
         (toggleBrowser)="toggleBrowserPanel()"
-        (toggleGithub)="toggleGithubPanel()"
+        (toggleChanges)="toggleChangesPanel()"
         (toggleTerminal)="toggleTerminalPanel()"
         (toggleActions)="toggleActionsPanel()"
         (togglePlannotator)="togglePlannotatorPanel()"
@@ -98,7 +98,7 @@
                     [worktreePath]="worktreePath()!"
                     class="h-full"
                   />
-                } @else if (showGithubPanel()) {
+                } @else if (showChangesPanel()) {
                   <app-change-review-panel
                     [worktreePath]="worktreePath()!"
                     class="h-full"

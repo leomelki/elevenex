@@ -55,7 +55,7 @@ interface CompletionMarkerState {
   lastStateChangeAt: string | null;
 }
 
-type SidePanelMode = 'none' | 'files' | 'browser' | 'github' | 'plannotator' | 'planAnnotator';
+type SidePanelMode = 'none' | 'files' | 'browser' | 'changes' | 'plannotator' | 'planAnnotator';
 
 @Component({
   selector: 'app-session-container',
@@ -158,7 +158,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   activeSessionArchived = computed(() => this.activeTab()?.status === 'archived');
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
-  showGithubPanel = computed(() => this.sidePanelMode() === 'github');
+  showChangesPanel = computed(() => this.sidePanelMode() === 'changes');
   showPlannotatorPanel = computed(() => this.sidePanelMode() === 'plannotator' && this.plannotatorAvailable());
   showPlanAnnotatorPanel = computed(() => this.sidePanelMode() === 'planAnnotator' && this.planAnnotatorAvailable());
   sidePanelVisible = computed(() =>
@@ -245,7 +245,7 @@ export class SessionContainer implements OnInit, OnDestroy {
       const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
       if (stored) {
         const prefs = JSON.parse(stored);
-        if (prefs.sidePanelMode === 'github') {
+        if (prefs.sidePanelMode === 'github' || prefs.sidePanelMode === 'changes') {
           return 'none';
         }
         if (prefs.sidePanelMode === 'files' || prefs.sidePanelMode === 'browser' || prefs.sidePanelMode === 'none') {
@@ -266,7 +266,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     try {
       const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
       const current = stored ? JSON.parse(stored) : {};
-      const persistedMode = mode === 'github' || mode === 'plannotator' || mode === 'planAnnotator' ? 'none' : mode;
+      const persistedMode = mode === 'changes' || mode === 'plannotator' || mode === 'planAnnotator' ? 'none' : mode;
       localStorage.setItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY, JSON.stringify({
         ...current,
         filesPanelVisible: persistedMode === 'files',
@@ -323,8 +323,8 @@ export class SessionContainer implements OnInit, OnDestroy {
     window.open(buildMcpAuthPopupUrl(url), 'elevenex-mcp-auth', popupFeatures);
   }
 
-  toggleGithubPanel(): void {
-    const nextMode = this.showGithubPanel() ? 'none' : 'github';
+  toggleChangesPanel(): void {
+    const nextMode = this.showChangesPanel() ? 'none' : 'changes';
     this.sidePanelMode.set(nextMode);
     this.saveSidePanelPreference(nextMode);
   }

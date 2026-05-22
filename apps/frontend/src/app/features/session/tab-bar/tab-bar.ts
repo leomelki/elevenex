@@ -8,7 +8,6 @@ import { ProductivityStateService } from '@/features/productivity/productivity-s
 import { PlannotatorStateService } from '@/features/plannotator';
 import { PlanAnnotatorStateService } from '@/features/plan-annotator';
 import { ClaudeStatusService, ClaudeActivityStatus } from '@/shared/services/claude-status.service';
-import { GitHubStateService } from '@/features/github/github-state.service';
 import { CommitButtonComponent } from '@/features/git/commit-button.component';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 
@@ -46,7 +45,6 @@ export class TabBar {
   private plannotatorState = inject(PlannotatorStateService);
   private planAnnotatorState = inject(PlanAnnotatorStateService);
   private claudeStatusService = inject(ClaudeStatusService);
-  private githubState = inject(GitHubStateService);
   private providerSelection = inject(AgentRuntimeProviderService);
 
   isClaudeProvider = computed(() => this.providerSelection.selectedProvider() === 'claude');
@@ -58,7 +56,7 @@ export class TabBar {
 
   showFiles = input(false);
   showBrowser = input(false);
-  showGithub = input(false);
+  showChanges = input(false);
   showTerminal = input(false);
   showActions = input(false);
   showPlannotator = input(false);
@@ -82,7 +80,7 @@ export class TabBar {
   toggleTodos = output<void>();
   toggleFiles = output<void>();
   toggleBrowser = output<void>();
-  toggleGithub = output<void>();
+  toggleChanges = output<void>();
   toggleTerminal = output<void>();
   toggleActions = output<void>();
   togglePlannotator = output<void>();
@@ -144,10 +142,6 @@ export class TabBar {
   hasReview(tab: Tab): boolean {
     return this.plannotatorState.isPanelVisible(tab.sessionId)
       || this.planAnnotatorState.isVisible(tab.sessionId);
-  }
-
-  hasLinkedPullRequest(tab: Tab): boolean {
-    return this.githubState.hasLinkedPullRequest(tab.worktreePath);
   }
 
   getClaudeStatus(tab: Tab): ClaudeActivityStatus {
