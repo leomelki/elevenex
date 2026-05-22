@@ -89,6 +89,7 @@ export interface ChangeReviewFileWindow {
   totalRows: number;
   hasMore: boolean;
   context: number;
+  changeHash: string;
   rows: ChangeReviewRow[];
   contextRanges: ChangeReviewContextRange[];
 }

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { SimpleGit } from 'simple-git';
@@ -23,7 +24,8 @@ const DEFAULT_CONTEXT = 8;
 const DEFAULT_LIMIT = 400;
 const DEFAULT_CONTEXT_RANGE_LIMIT = 120;
 const MAX_LIMIT = 1_500;
-const CACHE_TTL_MS = 15_000;
+const CACHE_TTL_MS = 60 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 1_000;
 const STALE_ORIGIN_SECONDS = 24 * 60 * 60;
 
 interface ReviewBase {
@@ -48,11 +50,43 @@ interface CachedRows {
   binary: boolean;
   large: boolean;
   truncated: boolean;
+  changeHash: string;
+}
+
+interface CachedFileSummaries {
+  key: string;
+  createdAt: number;
+  files: ChangeReviewFileSummary[];
+}
+
+interface CachedBase {
+  key: string;
+  createdAt: number;
+  base: ReviewBase;
+}
+
+interface CachedFileLines {
+  key: string;
+  createdAt: number;
+  lines: {
+    oldLines: string[];
+    newLines: string[];
+  };
+}
+
+interface CachedContextWindow {
+  key: string;
+  createdAt: number;
+  window: ChangeReviewContextWindow;
 }
 
 @Injectable()
 export class ChangeReviewService {
+  private readonly baseCache = new Map<string, CachedBase>();
+  private readonly summaryCache = new Map<string, CachedFileSummaries>();
   private readonly rowCache = new Map<string, CachedRows>();
+  private readonly fileLinesCache = new Map<string, CachedFileLines>();
+  private readonly contextWindowCache = new Map<string, CachedContextWindow>();
 
   async getSummary(
     worktreePath: string,
@@ -60,6 +94,9 @@ export class ChangeReviewService {
     refreshBase = false,
   ): Promise<ChangeReviewSummary> {
     this.assertScope(scope);
+    if (refreshBase) {
+      this.clearScopeCache(worktreePath, scope);
+    }
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, refreshBase);
     const files = await this.readFileSummaries(git, worktreePath, scope, base);
@@ -133,6 +170,7 @@ export class ChangeReviewService {
       totalRows: full.rows.length,
       hasMore: offset + rows.length < full.rows.length,
       context,
+      changeHash: full.changeHash,
       rows,
       contextRanges: full.contextRanges,
     };
@@ -156,6 +194,23 @@ export class ChangeReviewService {
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, false);
     const summary = await this.readFileSummary(git, worktreePath, scope, base, filePath);
+    const contextCacheKey = [
+      worktreePath,
+      scope,
+      base.mergeBaseSha ?? base.baseSha ?? '',
+      base.headSha ?? '',
+      filePath,
+      oldStart,
+      newStart,
+      count,
+      limit,
+      summary.additions,
+      summary.deletions,
+      summary.status,
+    ].join('\0');
+    const cached = this.getCachedContextWindow(contextCacheKey);
+    if (cached) return cached;
+
     const fileLines = await this.readReviewFileLines(git, worktreePath, scope, base, summary);
     const rows = this.buildContextRows(
       summary.path,
@@ -165,7 +220,7 @@ export class ChangeReviewService {
       Math.min(count, limit),
     );
 
-    return {
+    return this.cachedContextWindow(contextCacheKey, {
       scope,
       path: summary.path,
       oldStart,
@@ -173,7 +228,7 @@ export class ChangeReviewService {
       count,
       limit,
       rows,
-    };
+    });
   }
 
   private async resolveBase(
@@ -182,6 +237,10 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     refreshBase: boolean,
   ): Promise<ReviewBase> {
+    const cacheKey = [worktreePath, scope, 'base'].join('\0');
+    const cached = refreshBase ? null : this.getCachedBase(cacheKey);
+    if (cached) return cached;
+
     const [repoRoot, branchSummary, headSha] = await Promise.all([
       git.revparse(['--show-toplevel']).then((value) => value.trim()),
       git.branchLocal(),
@@ -218,7 +277,7 @@ export class ChangeReviewService {
       compareLabel = baseRef ? `${branch} vs ${baseRef}` : `${branch} vs HEAD`;
     }
 
-    return {
+    return this.cachedBase(cacheKey, {
       repoRoot,
       branch,
       baseRef,
@@ -229,7 +288,7 @@ export class ChangeReviewService {
       originRefAgeSeconds,
       staleBase: originRefAgeSeconds !== null && originRefAgeSeconds > STALE_ORIGIN_SECONDS,
       pullRequest,
-    };
+    });
   }
 
   private async readFileSummaries(
@@ -238,6 +297,16 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     base: ReviewBase,
   ): Promise<ChangeReviewFileSummary[]> {
+    const cacheKey = [
+      worktreePath,
+      scope,
+      base.mergeBaseSha ?? base.baseSha ?? '',
+      base.headSha ?? '',
+      'summary',
+    ].join('\0');
+    const cached = this.getCachedFileSummaries(cacheKey);
+    if (cached) return cached;
+
     const [statusOutput, numstatOutput] = await Promise.all([
       git.raw(this.buildDiffArgs(scope, base, ['--name-status', '-z', '--find-renames'])),
       git.raw(this.buildDiffArgs(scope, base, ['--numstat', '-z', '--find-renames'])),
@@ -271,7 +340,10 @@ export class ChangeReviewService {
       }
     }
 
-    return tracked.sort((left, right) => left.path.localeCompare(right.path));
+    return this.cachedFileSummaries(
+      cacheKey,
+      tracked.sort((left, right) => left.path.localeCompare(right.path)),
+    );
   }
 
   private async readFileSummary(
@@ -359,7 +431,7 @@ export class ChangeReviewService {
         '--no-commit-id',
         '-r',
         ...flags,
-        'HEAD',
+        base.headSha ?? 'HEAD',
       ];
     }
     const ref = scope === 'branch'
@@ -580,12 +652,27 @@ export class ChangeReviewService {
     base: ReviewBase,
     summary: ChangeReviewFileSummary,
   ): Promise<{ oldLines: string[]; newLines: string[] }> {
+    const cacheKey = [
+      worktreePath,
+      scope,
+      base.mergeBaseSha ?? base.baseSha ?? '',
+      base.headSha ?? '',
+      summary.oldPath ?? '',
+      summary.path,
+      summary.status,
+      summary.additions,
+      summary.deletions,
+      'lines',
+    ].join('\0');
+    const cached = this.getCachedFileLines(cacheKey);
+    if (cached) return cached;
+
     const oldRef = scope === 'last-commit'
-      ? 'HEAD^'
+      ? base.baseSha ?? 'HEAD^'
       : scope === 'branch'
         ? base.mergeBaseSha ?? base.baseSha ?? 'HEAD'
         : 'HEAD';
-    const newRef = scope === 'last-commit' ? 'HEAD' : null;
+    const newRef = scope === 'last-commit' ? base.headSha ?? 'HEAD' : null;
     const oldPath = summary.oldPath ?? summary.path;
 
     const [oldText, newText] = await Promise.all([
@@ -599,10 +686,10 @@ export class ChangeReviewService {
           : this.readWorktreeFile(worktreePath, summary.path),
     ]);
 
-    return {
+    return this.cachedFileLines(cacheKey, {
       oldLines: this.splitFileLines(oldText),
       newLines: this.splitFileLines(newText),
-    };
+    });
   }
 
   private async readGitFile(git: SimpleGit, ref: string, filePath: string): Promise<string> {
@@ -829,19 +916,119 @@ export class ChangeReviewService {
   }
 
   private getCachedRows(key: string): CachedRows | null {
-    const cached = this.rowCache.get(key);
+    const cached = this.getFresh(this.rowCache, key);
+    if (!cached) return null;
+    return cached;
+  }
+
+  private cached(key: string, value: Omit<CachedRows, 'key' | 'createdAt' | 'changeHash'>): CachedRows {
+    const cached = {
+      key,
+      createdAt: Date.now(),
+      ...value,
+      changeHash: this.hashRows(value.rows),
+    };
+    this.rowCache.set(key, cached);
+    this.pruneCache(this.rowCache);
+    return cached;
+  }
+
+  private hashRows(rows: ChangeReviewRow[]): string {
+    const hash = createHash('sha256');
+    for (const row of rows) {
+      hash.update(row.type);
+      hash.update('\0');
+      hash.update(String(row.oldLine ?? ''));
+      hash.update('\0');
+      hash.update(String(row.newLine ?? ''));
+      hash.update('\0');
+      hash.update(row.content);
+      hash.update('\0');
+      hash.update(row.path);
+      hash.update('\n');
+    }
+    return hash.digest('hex');
+  }
+
+  private getCachedBase(key: string): ReviewBase | null {
+    return this.getFresh(this.baseCache, key)?.base ?? null;
+  }
+
+  private cachedBase(key: string, base: ReviewBase): ReviewBase {
+    this.baseCache.set(key, { key, createdAt: Date.now(), base });
+    this.pruneCache(this.baseCache);
+    return base;
+  }
+
+  private getCachedFileSummaries(key: string): ChangeReviewFileSummary[] | null {
+    return this.getFresh(this.summaryCache, key)?.files ?? null;
+  }
+
+  private cachedFileSummaries(key: string, files: ChangeReviewFileSummary[]): ChangeReviewFileSummary[] {
+    this.summaryCache.set(key, { key, createdAt: Date.now(), files });
+    this.pruneCache(this.summaryCache);
+    return files;
+  }
+
+  private getCachedFileLines(key: string): { oldLines: string[]; newLines: string[] } | null {
+    return this.getFresh(this.fileLinesCache, key)?.lines ?? null;
+  }
+
+  private cachedFileLines(
+    key: string,
+    lines: { oldLines: string[]; newLines: string[] },
+  ): { oldLines: string[]; newLines: string[] } {
+    this.fileLinesCache.set(key, { key, createdAt: Date.now(), lines });
+    this.pruneCache(this.fileLinesCache);
+    return lines;
+  }
+
+  private getCachedContextWindow(key: string): ChangeReviewContextWindow | null {
+    return this.getFresh(this.contextWindowCache, key)?.window ?? null;
+  }
+
+  private cachedContextWindow(
+    key: string,
+    window: ChangeReviewContextWindow,
+  ): ChangeReviewContextWindow {
+    this.contextWindowCache.set(key, { key, createdAt: Date.now(), window });
+    this.pruneCache(this.contextWindowCache);
+    return window;
+  }
+
+  private getFresh<T extends { createdAt: number }>(cache: Map<string, T>, key: string): T | null {
+    const cached = cache.get(key);
     if (!cached) return null;
     if (Date.now() - cached.createdAt > CACHE_TTL_MS) {
-      this.rowCache.delete(key);
+      cache.delete(key);
       return null;
     }
     return cached;
   }
 
-  private cached(key: string, value: Omit<CachedRows, 'key' | 'createdAt'>): CachedRows {
-    const cached = { key, createdAt: Date.now(), ...value };
-    this.rowCache.set(key, cached);
-    return cached;
+  private pruneCache<T>(cache: Map<string, T>): void {
+    while (cache.size > MAX_CACHE_ENTRIES) {
+      const oldestKey = cache.keys().next().value as string | undefined;
+      if (!oldestKey) return;
+      cache.delete(oldestKey);
+    }
+  }
+
+  private clearScopeCache(worktreePath: string, scope: ChangeReviewScope): void {
+    const prefix = `${worktreePath}\0${scope}`;
+    this.clearCacheMap(this.baseCache, prefix);
+    this.clearCacheMap(this.summaryCache, prefix);
+    this.clearCacheMap(this.rowCache, prefix);
+    this.clearCacheMap(this.fileLinesCache, prefix);
+    this.clearCacheMap(this.contextWindowCache, prefix);
+  }
+
+  private clearCacheMap<T>(cache: Map<string, T>, prefix: string): void {
+    for (const key of cache.keys()) {
+      if (key.startsWith(prefix)) {
+        cache.delete(key);
+      }
+    }
   }
 
   private assertScope(scope: ChangeReviewScope): void {

@@ -52,12 +52,16 @@
       <span>{{ current.totals.files }} files</span>
       <span class="text-success">+{{ current.totals.additions }}</span>
       <span class="text-destructive">-{{ current.totals.deletions }}</span>
+      <span>refreshed {{ refreshAgeText(current) }}</span>
+      @if (prefetchText(prefetchState()); as warmup) {
+        <span>{{ warmup }}</span>
+      }
       <span>base {{ shortSha(current.mergeBaseSha || current.baseSha) }}</span>
       <span>head {{ shortSha(current.headSha) }}</span>
       @if (current.staleBase) {
         <span class="inline-flex items-center gap-1 text-warning">
           <ng-icon name="lucideTriangleAlert" size="12" />
-          {{ staleText(current.originRefAgeSeconds) }}
+          base ref {{ staleText(current.originRefAgeSeconds) }}
         </span>
       }
     </div>
@@ -110,6 +114,8 @@
             class="grid h-[58px] w-full grid-cols-[1.45rem_minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-transparent px-2.5 text-left text-foreground transition-colors hover:bg-accent/70"
             [class.bg-accent]="selectedFile()?.path === file.path"
             (click)="selectFile(file)"
+            (mouseenter)="prefetchFile(file)"
+            (focus)="prefetchFile(file)"
             [title]="file.path"
           >
             <span class="cr-file-status" [ngClass]="statusClass(file.status)">{{ statusLabel(file.status) }}</span>
@@ -118,6 +124,11 @@
               <span class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground">{{ fileDirname(file.path) }}</span>
             </span>
             <span class="inline-flex gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground">
+              @if (isFileViewed(file)) {
+                <span class="inline-flex items-center gap-1 text-success" title="Viewed">
+                  <ng-icon name="lucideCheck" size="13" />
+                </span>
+              }
               @if (file.binary) {
                 <ng-icon name="lucideBinary" size="14" />
               } @else {
@@ -148,6 +159,18 @@
             </div>
           </div>
           <div class="flex shrink-0 gap-1.5">
+            <button
+              z-button
+              zType="outline"
+              zSize="sm"
+              type="button"
+              [zDisabled]="!fileWindow()"
+              [ngClass]="selectedFileViewed() ? '!bg-success !border-success !text-success-foreground' : ''"
+              (click)="toggleSelectedFileViewed()"
+            >
+              <ng-icon name="lucideCheck" size="14" />
+              Viewed
+            </button>
             <button z-button zType="ghost" zSize="sm" type="button" (click)="collapseFile()">Collapse</button>
           </div>
         </header>
