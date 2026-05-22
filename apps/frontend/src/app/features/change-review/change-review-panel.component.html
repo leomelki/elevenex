@@ -184,14 +184,14 @@
               [class.!bg-success]="selectedFileViewed()"
               [class.!border-success]="selectedFileViewed()"
               [class.!text-success-foreground]="selectedFileViewed()"
-              [class.pointer-events-none]="!fileWindow()"
-              [class.opacity-50]="!fileWindow()"
+              [class.pointer-events-none]="!selectedFileWindow()"
+              [class.opacity-50]="!selectedFileWindow()"
             >
               <input
                 type="checkbox"
                 class="size-4 accent-[var(--success)]"
                 [checked]="selectedFileViewed()"
-                [disabled]="!fileWindow()"
+                [disabled]="!selectedFileWindow()"
                 (change)="toggleSelectedFileViewed()"
               />
               Viewed
@@ -216,7 +216,7 @@
             <ng-icon name="lucideLoader" size="18" class="cr-spin" />
             Loading file window
           </div>
-        } @else if (fileWindow(); as activeWindow) {
+        } @else if (selectedFileWindow(); as activeWindow) {
           @if (activeWindow.message) {
             <div class="flex items-center gap-2 border-b border-[color-mix(in_oklch,var(--warning)_30%,var(--border))] bg-warning/10 px-3 py-2 text-[0.76rem] text-warning">
               <ng-icon name="lucideTriangleAlert" size="15" />

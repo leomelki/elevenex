@@ -101,6 +101,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.now.set(Date.now());
   }, 30_000);
   private prefetchGeneration = 0;
+  private fileLoadGeneration = 0;
 
   readonly scopes = SCOPES;
   readonly scope = signal<ChangeReviewScope>('branch');
@@ -155,13 +156,19 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   });
 
   readonly hasMoreRows = computed(() => {
-    const fileWindow = this.fileWindow();
+    const fileWindow = this.selectedFileWindow();
     return Boolean(fileWindow?.hasMore) && this.rows().length < (fileWindow?.totalRows ?? 0);
+  });
+
+  readonly selectedFileWindow = computed(() => {
+    const file = this.selectedFile();
+    const fileWindow = this.fileWindow();
+    return file && fileWindow?.path === file.path ? fileWindow : null;
   });
 
   readonly selectedFileViewed = computed(() => {
     const file = this.selectedFile();
-    const fileWindow = this.fileWindow();
+    const fileWindow = this.selectedFileWindow();
     if (!file || !fileWindow) return false;
     return this.isViewedHash(file.path, fileWindow.changeHash);
   });
@@ -211,12 +218,16 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   async selectFile(file: ChangeReviewFileSummary): Promise<void> {
     this.selectedFile.set(file);
     this.context.set(8);
+    this.fileWindow.set(null);
+    this.rows.set([]);
+    this.loadingMore.set(false);
+    this.loadingContextRanges.set(new Set());
     await this.loadWindow(file, 0, true);
   }
 
   toggleSelectedFileViewed(): void {
     const file = this.selectedFile();
-    const fileWindow = this.fileWindow();
+    const fileWindow = this.selectedFileWindow();
     if (!file || !fileWindow) return;
     if (this.selectedFileViewed()) {
       this.unmarkViewed(file.path);
@@ -250,6 +261,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.selectedFile.set(null);
     this.fileWindow.set(null);
     this.rows.set([]);
+    this.loadingWindow.set(false);
+    this.loadingMore.set(false);
     this.loadingContextRanges.set(new Set());
   }
 
@@ -415,6 +428,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.fileWindow.set(null);
     this.rows.set([]);
     this.selectedFile.set(null);
+    this.loadingWindow.set(false);
+    this.loadingMore.set(false);
     this.loadingContextRanges.set(new Set());
     this.fileChangeHashes.set(new Map());
     this.rowHtmlCache.clear();
@@ -440,6 +455,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   }
 
   private async loadWindow(file: ChangeReviewFileSummary, offset: number, replace: boolean): Promise<void> {
+    const loadGeneration = replace ? ++this.fileLoadGeneration : this.fileLoadGeneration;
     const options = {
       offset,
       limit: WINDOW_LIMIT,
@@ -465,15 +481,23 @@ export class ChangeReviewPanelComponent implements OnDestroy {
         file.path,
         options,
       ));
+      if (this.selectedFile()?.path !== file.path) {
+        return;
+      }
       this.rememberFileHash(fileWindow.path, fileWindow.changeHash);
       this.fileWindow.set(fileWindow);
       this.rows.set(replace ? fileWindow.rows : [...this.rows(), ...fileWindow.rows]);
     } catch (error: any) {
+      if (this.selectedFile()?.path !== file.path || loadGeneration !== this.fileLoadGeneration) {
+        return;
+      }
       const message = error?.error?.message || 'Could not load file diff.';
       toast.error(message);
     } finally {
-      this.loadingWindow.set(false);
-      this.loadingMore.set(false);
+      if (this.selectedFile()?.path === file.path && loadGeneration === this.fileLoadGeneration) {
+        this.loadingWindow.set(false);
+        this.loadingMore.set(false);
+      }
     }
   }
 
