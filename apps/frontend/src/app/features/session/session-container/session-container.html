@@ -13,6 +13,8 @@
         [showActions]="actionPanelVisible()"
         [showPlannotator]="showPlannotatorPanel()"
         [plannotatorAvailable]="plannotatorAvailable()"
+        [showPlanAnnotator]="showPlanAnnotatorPanel()"
+        [planAnnotatorAvailable]="planAnnotatorAvailable()"
         [showClaudeTerminalFallback]="showClaudeTerminalFallback()"
         [runningActionsCount]="runningActionsCount()"
         [pendingTodosCount]="pendingTodosCount()"
@@ -33,6 +35,7 @@
         (toggleTerminal)="toggleTerminalPanel()"
         (toggleActions)="toggleActionsPanel()"
         (togglePlannotator)="togglePlannotatorPanel()"
+        (togglePlanAnnotator)="togglePlanAnnotatorPanel()"
         (toggleClaudeTerminalFallback)="toggleClaudeTerminalFallback()"
       />
 
@@ -70,6 +73,8 @@
                         [unarchiveBusy]="unarchivingSessionId() === tab.sessionId"
                         (openTerminalFallback)="showClaudeTerminal()"
                         (openInBrowser)="onOpenInBrowser($event)"
+                        (planReviewRequested)="openPlanAnnotator($event)"
+                        (planReviewClosed)="onPlanReviewClosed($event)"
                         (activeAgentProviderChange)="onSessionProviderChange(tab.sessionId, $event)"
                         (agentRuntimeStarted)="onSessionRuntimeStarted(tab.sessionId)"
                         (unarchive)="onTabUnarchiveRequest(tab.sessionId)"
@@ -96,6 +101,15 @@
                 } @else if (showGithubPanel()) {
                   <app-github-panel
                     [worktreePath]="worktreePath()!"
+                    class="h-full"
+                  />
+                } @else if (showPlanAnnotatorPanel() && activePlanReview()) {
+                  <app-plan-annotator-panel
+                    [review]="activePlanReview()!"
+                    (close)="closePlanAnnotator($event)"
+                    (approve)="approvePlanReview($event)"
+                    (sendFeedback)="sendPlanReviewFeedback($event)"
+                    (reject)="rejectPlanReview($event)"
                     class="h-full"
                   />
                 } @else if (showPlannotatorPanel() && activePlannotatorPanel()) {

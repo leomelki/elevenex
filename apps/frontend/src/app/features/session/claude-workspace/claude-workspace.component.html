@@ -152,12 +152,12 @@
                     [actionsDisabled]="messageActionsDisabled()"
                     [editArmed]="isEditArmed(item.unit.item)"
                     [planReviewEnabled]="canReviewPlan(item.unit.item)"
+                    [planReview]="planReviewForMessage(item.unit.item)"
                     (copy)="copyMessage(item.unit.item, $event)"
                     (armEdit)="armEditMessage(item.unit.item)"
                     (confirmEdit)="confirmEditMessage(item.unit.item)"
                     (cancelEdit)="cancelArmedEdit()"
-                    (approvePlan)="approveProposedPlan()"
-                    (planFeedback)="sendPlanFeedback($event)"
+                    (openPlanReview)="openPlanReview($event)"
                   />
                 }
                 @case ('thinking') {
@@ -290,12 +290,12 @@
                             [actionsDisabled]="messageActionsDisabled()"
                             [editArmed]="isEditArmed(hiddenUnit.item)"
                             [planReviewEnabled]="canReviewPlan(hiddenUnit.item)"
+                            [planReview]="planReviewForMessage(hiddenUnit.item)"
                             (copy)="copyMessage(hiddenUnit.item, $event)"
                             (armEdit)="armEditMessage(hiddenUnit.item)"
                             (confirmEdit)="confirmEditMessage(hiddenUnit.item)"
                             (cancelEdit)="cancelArmedEdit()"
-                            (approvePlan)="approveProposedPlan()"
-                            (planFeedback)="sendPlanFeedback($event)"
+                            (openPlanReview)="openPlanReview($event)"
                           />
                         }
                         @case ('thinking') {
@@ -521,8 +521,10 @@
           class="cw-compose-shell__permission block w-full"
           [request]="req"
           [appearance]="'dock'"
+          [planReviewAvailable]="!!planReviewForPermission(req)"
           (approve)="approvePermission($event)"
           (deny)="denyPermission($event)"
+          (openPlanReview)="openPermissionPlanReview(req)"
         />
       }
 

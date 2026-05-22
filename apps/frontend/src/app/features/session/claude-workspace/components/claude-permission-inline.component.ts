@@ -29,7 +29,6 @@ import {
   ClaudePermissionRequest,
   ClaudePermissionUpdate,
 } from '@/shared/models/claude-runtime.model';
-import { MarkdownPipe } from '../pipes/markdown.pipe';
 import { normalizeToolName as normalizeToolNameForUi } from '@/shared/agent-tools/agent-tool-format';
 import { highlightedDiffHtml } from '../util/code-highlight';
 import { AskUserQuestion, AskUserQuestionFlowComponent } from './ask-user-question-flow.component';
@@ -43,7 +42,7 @@ interface AlwaysAllowPattern {
 @Component({
   selector: 'cw-permission-inline',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownPipe, NgIcon, AskUserQuestionFlowComponent],
+  imports: [CommonModule, FormsModule, NgIcon, AskUserQuestionFlowComponent],
   viewProviders: [
     provideIcons({
       lucideShield,
@@ -128,12 +127,17 @@ interface AlwaysAllowPattern {
           </header>
           <h3 class="cw-perm__title">{{ request().title || 'Approve plan?' }}</h3>
 
-          @if (planContent(); as plan) {
-            <div
-              class="cw-perm__preview cw-perm__preview--md"
-              [innerHTML]="plan | cwMarkdown"
-            ></div>
-          }
+          <div class="cw-perm__plan-launcher">
+            <span class="cw-perm__plan-copy">
+              Review the plan in the annotator before approving or requesting changes.
+            </span>
+            @if (planReviewAvailable()) {
+              <button type="button" class="cw-btn cw-btn--secondary" (click)="openPlanReview.emit()">
+                <ng-icon name="lucideClipboardList" size="13" aria-hidden="true" />
+                Open review
+              </button>
+            }
+          </div>
 
           @if (!denying()) {
             <footer class="cw-perm__actions">
@@ -376,6 +380,23 @@ interface AlwaysAllowPattern {
         overflow: hidden;
         text-overflow: ellipsis;
         max-width: 100%;
+      }
+      .cw-perm__plan-launcher {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-top: 0.15rem;
+        padding: 0.65rem 0.7rem;
+        border: 1px solid color-mix(in oklab, var(--primary) 24%, var(--border));
+        border-radius: 0.55rem;
+        background: color-mix(in oklab, var(--primary) 6%, var(--background));
+      }
+      .cw-perm__plan-copy {
+        min-width: 0;
+        color: var(--muted-foreground);
+        font-size: 0.78rem;
+        line-height: 1.45;
       }
 
       /* Preview area */
@@ -697,8 +718,10 @@ export class ClaudePermissionInlineComponent {
 
   readonly request = input.required<ClaudePermissionRequest>();
   readonly appearance = input<'inline' | 'dock'>('inline');
+  readonly planReviewAvailable = input(false);
   readonly approve = output<ClaudePermissionApproval>();
   readonly deny = output<string | undefined>();
+  readonly openPlanReview = output<void>();
 
   readonly denying = signal(false);
   readonly denyMessage = signal('');

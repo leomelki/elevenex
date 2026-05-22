@@ -71,6 +71,7 @@ export interface ClaudeToolInteractionSummary {
 export interface ClaudeTranscriptItem {
   id: string;
   kind: ClaudeTranscriptItemKind;
+  contentType?: 'message' | 'plan';
   content?: string;
   toolUseId?: string;
   parentToolUseId?: string;

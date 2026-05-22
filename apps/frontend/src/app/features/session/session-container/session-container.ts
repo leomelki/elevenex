@@ -18,6 +18,12 @@ import { TodosService } from '@/features/productivity/todos.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
 import { ZardResizableComponent, ZardResizablePanelComponent, ZardResizableHandleComponent, ZardResizeEvent } from '@/shared/components/resizable';
 import { PlannotatorEvent, PlannotatorPanelComponent, PlannotatorService, PlannotatorStateService } from '@/features/plannotator';
+import {
+  PlanAnnotatorPanelComponent,
+  PlanAnnotatorStateService,
+  PlanFeedbackPayload,
+  PlanReviewRequest,
+} from '@/features/plan-annotator';
 import { getBackendOrigin } from '@/shared/runtime/runtime-config';
 import { ActionsPanelComponent, ActionsStateService } from '@/features/actions';
 import { UserTerminalPanelComponent, UserTerminalStateService } from '@/features/user-terminal';
@@ -49,7 +55,7 @@ interface CompletionMarkerState {
   lastStateChangeAt: string | null;
 }
 
-type SidePanelMode = 'none' | 'files' | 'browser' | 'github' | 'plannotator';
+type SidePanelMode = 'none' | 'files' | 'browser' | 'github' | 'plannotator' | 'planAnnotator';
 
 @Component({
   selector: 'app-session-container',
@@ -66,6 +72,7 @@ type SidePanelMode = 'none' | 'files' | 'browser' | 'github' | 'plannotator';
     ZardResizableComponent,
     ZardResizablePanelComponent,
     ZardResizableHandleComponent,
+    PlanAnnotatorPanelComponent,
     PlannotatorPanelComponent,
     ActionsPanelComponent,
     UserTerminalPanelComponent,
@@ -87,6 +94,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private productivityState = inject(ProductivityStateService);
   private plannotatorService = inject(PlannotatorService);
   private plannotatorState = inject(PlannotatorStateService);
+  private planAnnotatorState = inject(PlanAnnotatorStateService);
   private actionsState = inject(ActionsStateService);
   private todosService = inject(TodosService);
   private userTerminalState = inject(UserTerminalStateService);
@@ -152,10 +160,12 @@ export class SessionContainer implements OnInit, OnDestroy {
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
   showGithubPanel = computed(() => this.sidePanelMode() === 'github');
   showPlannotatorPanel = computed(() => this.sidePanelMode() === 'plannotator' && this.plannotatorAvailable());
+  showPlanAnnotatorPanel = computed(() => this.sidePanelMode() === 'planAnnotator' && this.planAnnotatorAvailable());
   sidePanelVisible = computed(() =>
     !this.activeSessionArchived()
     && this.sidePanelMode() !== 'none'
-    && (this.sidePanelMode() !== 'plannotator' || this.plannotatorAvailable()),
+    && (this.sidePanelMode() !== 'plannotator' || this.plannotatorAvailable())
+    && (this.sidePanelMode() !== 'planAnnotator' || this.planAnnotatorAvailable()),
   );
   showClaudeTerminalFallback = computed(() => this.claudeSurfaceMode() === 'terminal');
 
@@ -204,6 +214,18 @@ export class SessionContainer implements OnInit, OnDestroy {
     return this.plannotatorState.getPanel(sessionId);
   });
 
+  planAnnotatorAvailable = computed(() => {
+    const sessionId = this.activeSessionId();
+    if (!sessionId) return false;
+    return this.planAnnotatorState.hasReview(sessionId);
+  });
+
+  activePlanReview = computed(() => {
+    const sessionId = this.activeSessionId();
+    if (!sessionId) return null;
+    return this.planAnnotatorState.getReview(sessionId);
+  });
+
   readonly hasBlockingOverlayPanel = computed(() => {
     return this.showScratchpad()
       || this.showTodos()
@@ -244,7 +266,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     try {
       const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
       const current = stored ? JSON.parse(stored) : {};
-      const persistedMode = mode === 'github' || mode === 'plannotator' ? 'none' : mode;
+      const persistedMode = mode === 'github' || mode === 'plannotator' || mode === 'planAnnotator' ? 'none' : mode;
       localStorage.setItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY, JSON.stringify({
         ...current,
         filesPanelVisible: persistedMode === 'files',
@@ -347,6 +369,66 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.plannotatorState.hidePanel(sessionId);
     this.sidePanelMode.set('none');
     this.saveSidePanelPreference('none');
+  }
+
+  togglePlanAnnotatorPanel(): void {
+    const sessionId = this.activeSessionId();
+    if (!sessionId || !this.planAnnotatorState.hasReview(sessionId)) {
+      return;
+    }
+
+    if (this.showPlanAnnotatorPanel()) {
+      this.planAnnotatorState.hide(sessionId);
+      this.sidePanelMode.set('none');
+      this.saveSidePanelPreference('none');
+      return;
+    }
+
+    this.planAnnotatorState.show(sessionId);
+    this.sidePanelMode.set('planAnnotator');
+    this.saveSidePanelPreference('planAnnotator');
+  }
+
+  openPlanAnnotator(review: PlanReviewRequest): void {
+    this.planAnnotatorState.openReview(review);
+    if (review.sessionId === this.activeSessionId()) {
+      this.sidePanelMode.set('planAnnotator');
+      this.saveSidePanelPreference('planAnnotator');
+    }
+  }
+
+  closePlanAnnotator(review?: PlanReviewRequest): void {
+    const sessionId = review?.sessionId ?? this.activeSessionId();
+    if (!sessionId) return;
+    this.planAnnotatorState.close(sessionId);
+    if (this.sidePanelMode() === 'planAnnotator') {
+      this.sidePanelMode.set('none');
+      this.saveSidePanelPreference('none');
+    }
+  }
+
+  async approvePlanReview(review: PlanReviewRequest): Promise<void> {
+    await this.workspaceForSession(review.sessionId)?.approvePlanReview(review);
+  }
+
+  async sendPlanReviewFeedback(payload: PlanFeedbackPayload): Promise<void> {
+    await this.workspaceForSession(payload.review.sessionId)?.sendPlanReviewFeedback(payload);
+  }
+
+  async rejectPlanReview(payload: PlanFeedbackPayload): Promise<void> {
+    await this.workspaceForSession(payload.review.sessionId)?.rejectPlanReview(payload);
+  }
+
+  onPlanReviewClosed(review: PlanReviewRequest): void {
+    this.planAnnotatorState.clear(review.sessionId);
+    if (this.sidePanelMode() === 'planAnnotator' && review.sessionId === this.activeSessionId()) {
+      this.sidePanelMode.set('none');
+      this.saveSidePanelPreference('none');
+    }
+  }
+
+  private workspaceForSession(sessionId: number): ClaudeWorkspaceComponent | null {
+    return this.claudeWorkspaces().find((workspace) => workspace.sessionId === sessionId) ?? null;
   }
 
   toggleClaudeTerminalFallback(): void {

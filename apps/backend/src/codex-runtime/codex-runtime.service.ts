@@ -571,6 +571,7 @@ export class CodexRuntimeService extends EventEmitter {
         {
           id: planItem.id,
           kind: 'assistant',
+          contentType: 'plan',
           content: planItem.text,
           sourceMessageId: planItem.id,
           timestamp,

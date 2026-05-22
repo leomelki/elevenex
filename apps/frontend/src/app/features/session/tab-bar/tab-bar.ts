@@ -1,11 +1,12 @@
 import { Component, output, input, inject, computed, signal, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore } from '@ng-icons/lucide';
+import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList } from '@ng-icons/lucide';
 import { Tab } from '../tab-service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
 import { PlannotatorStateService } from '@/features/plannotator';
+import { PlanAnnotatorStateService } from '@/features/plan-annotator';
 import { ClaudeStatusService, ClaudeActivityStatus } from '@/shared/services/claude-status.service';
 import { GitHubStateService } from '@/features/github/github-state.service';
 import { CommitButtonComponent } from '@/features/git/commit-button.component';
@@ -29,6 +30,7 @@ import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-pro
       lucideTrash2,
       lucideArchive,
       lucideArchiveRestore,
+      lucideClipboardList,
       lucideMessageSquare,
       lucideNotebookPen,
       lucideGlobe,
@@ -42,6 +44,7 @@ export class TabBar {
   private colorService = inject(TabColorService);
   private productivityState = inject(ProductivityStateService);
   private plannotatorState = inject(PlannotatorStateService);
+  private planAnnotatorState = inject(PlanAnnotatorStateService);
   private claudeStatusService = inject(ClaudeStatusService);
   private githubState = inject(GitHubStateService);
   private providerSelection = inject(AgentRuntimeProviderService);
@@ -60,6 +63,8 @@ export class TabBar {
   showActions = input(false);
   showPlannotator = input(false);
   plannotatorAvailable = input(false);
+  showPlanAnnotator = input(false);
+  planAnnotatorAvailable = input(false);
   showClaudeTerminalFallback = input(false);
   runningActionsCount = input(0);
   pendingTodosCount = input(0);
@@ -81,6 +86,7 @@ export class TabBar {
   toggleTerminal = output<void>();
   toggleActions = output<void>();
   togglePlannotator = output<void>();
+  togglePlanAnnotator = output<void>();
   toggleClaudeTerminalFallback = output<void>();
 
   // Context menu state
@@ -136,7 +142,8 @@ export class TabBar {
   }
 
   hasReview(tab: Tab): boolean {
-    return this.plannotatorState.isPanelVisible(tab.sessionId);
+    return this.plannotatorState.isPanelVisible(tab.sessionId)
+      || this.planAnnotatorState.isVisible(tab.sessionId);
   }
 
   hasLinkedPullRequest(tab: Tab): boolean {

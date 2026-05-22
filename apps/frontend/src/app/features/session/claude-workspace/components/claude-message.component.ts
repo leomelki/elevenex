@@ -12,6 +12,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
   lucideCopy,
+  lucideFileText,
   lucideInfo,
   lucidePencil,
   lucideTriangleAlert,
@@ -19,18 +20,19 @@ import {
 } from '@ng-icons/lucide';
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
-import { CodexPlanReviewComponent } from './codex-plan-review.component';
 import { hasProposedPlan } from '../util/proposed-plan';
+import { PlanReviewRequest } from '@/features/plan-annotator';
 
 @Component({
   selector: 'cw-message',
   standalone: true,
-  imports: [CommonModule, MarkdownPipe, NgIcon, CodexPlanReviewComponent],
+  imports: [CommonModule, MarkdownPipe, NgIcon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
       lucideCheck,
       lucideCopy,
+      lucideFileText,
       lucideInfo,
       lucidePencil,
       lucideTriangleAlert,
@@ -121,14 +123,33 @@ import { hasProposedPlan } from '../util/proposed-plan';
         <div class="cw-msg cw-msg--assistant" [attr.title]="timestampTitle()">
           <div class="cw-msg__body">
             @if (item().content) {
-              @if (isProposedPlan()) {
-                <cw-codex-plan-review
-                  [content]="item().content!"
-                  [streaming]="streaming()"
-                  [disabled]="!planReviewEnabled()"
-                  (approve)="approvePlan.emit()"
-                  (feedback)="planFeedback.emit($event)"
-                />
+              @if (planReview(); as review) {
+                <section class="cw-plan-launcher" [attr.data-disabled]="!planReviewEnabled() || null">
+                  <div class="cw-plan-launcher__copy">
+                    <span class="cw-plan-launcher__icon" aria-hidden="true">
+                      <ng-icon name="lucideFileText" size="15" />
+                    </span>
+                    <div class="cw-plan-launcher__text">
+                      <span class="cw-plan-launcher__eyebrow">
+                        {{ review.provider === 'codex' ? 'Codex' : 'Claude Code' }} plan
+                      </span>
+                      <strong>Plan ready for review</strong>
+                      @if (!planReviewEnabled()) {
+                        <span>Review is available when the session is idle.</span>
+                      } @else {
+                        <span>Open the annotator to read, comment, approve, or request changes.</span>
+                      }
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="cw-plan-launcher__button"
+                    [disabled]="!planReviewEnabled()"
+                    (click)="openPlanReview.emit(review)"
+                  >
+                    Review plan
+                  </button>
+                </section>
               } @else if (streaming()) {
                 <div class="cw-md cw-md--streaming" [innerHTML]="item().content | cwMarkdown"></div>
                 <span class="cw-caret"></span>
@@ -292,6 +313,87 @@ import { hasProposedPlan } from '../util/proposed-plan';
       .cw-msg--armed .cw-msg__meta-row {
         opacity: 1;
         transform: translateY(0);
+      }
+      .cw-plan-launcher {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.85rem;
+        width: min(100%, 42rem);
+        border: 1px solid color-mix(in oklab, var(--primary) 28%, var(--border));
+        border-radius: 0.7rem;
+        background: color-mix(in oklab, var(--primary) 6%, var(--card));
+        padding: 0.8rem;
+      }
+      .cw-plan-launcher[data-disabled='true'] {
+        border-color: var(--border);
+        background: color-mix(in oklab, var(--muted) 28%, var(--card));
+      }
+      .cw-plan-launcher__copy {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        min-width: 0;
+      }
+      .cw-plan-launcher__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        background: var(--background);
+        color: var(--primary);
+        flex-shrink: 0;
+      }
+      .cw-plan-launcher__text {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+        min-width: 0;
+      }
+      .cw-plan-launcher__eyebrow {
+        font-size: 0.66rem;
+        line-height: 1.2;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: var(--muted-foreground);
+      }
+      .cw-plan-launcher__text strong {
+        color: var(--foreground);
+        font-size: 0.9rem;
+        line-height: 1.3;
+      }
+      .cw-plan-launcher__text span:last-child {
+        color: var(--muted-foreground);
+        font-size: 0.78rem;
+        line-height: 1.4;
+      }
+      .cw-plan-launcher__button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2rem;
+        border: 1px solid var(--primary);
+        border-radius: 0.45rem;
+        background: var(--primary);
+        color: var(--primary-foreground);
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.78rem;
+        font-weight: 700;
+        padding: 0 0.75rem;
+        white-space: nowrap;
+      }
+      .cw-plan-launcher__button:hover:not(:disabled),
+      .cw-plan-launcher__button:focus-visible {
+        outline: none;
+        background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+      }
+      .cw-plan-launcher__button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
       }
       .cw-msg--diagnostic {
         font-size: 0.75rem;
@@ -457,6 +559,7 @@ export class ClaudeMessageComponent {
   readonly actionsDisabled = input<boolean>(false);
   readonly editArmed = input<boolean>(false);
   readonly planReviewEnabled = input<boolean>(false);
+  readonly planReview = input<PlanReviewRequest | null>(null);
 
   readonly copy = output<string | null>();
   readonly armEdit = output<void>();
@@ -464,6 +567,7 @@ export class ClaudeMessageComponent {
   readonly cancelEdit = output<void>();
   readonly approvePlan = output<void>();
   readonly planFeedback = output<string>();
+  readonly openPlanReview = output<PlanReviewRequest>();
 
   readonly isEmpty = computed(() => !this.item().content);
   readonly timestampLabel = computed(() => buildTimestampLabel(this.item(), this.streaming()));

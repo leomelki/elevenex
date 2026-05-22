@@ -160,6 +160,21 @@ export class CodexHistoryService {
           }
         : null;
     }
+    if (type === 'plan') {
+      const content =
+        stringValue(item.text) || this.contentToText(item.content);
+      return content
+        ? {
+            id,
+            kind: 'assistant',
+            contentType: 'plan',
+            content,
+            sourceMessageId: id,
+            timestamp,
+            receivedAt: timestamp,
+          }
+        : null;
+    }
     if (type === 'reasoning') {
       const content =
         this.contentToText(item.summary) || this.contentToText(item.content);

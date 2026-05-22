@@ -78,12 +78,18 @@ import {
 } from './components/claude-agent-inspector.component';
 import { ClaudeTurnChangesComponent } from './components/claude-turn-changes.component';
 import { PairedTranscriptUnit, pairTranscript } from './util/paired-transcript';
-import { hasProposedPlan } from './util/proposed-plan';
 import {
   TurnAgentSummary,
   buildTurnAgentSummary,
 } from './util/agent-deep-dive';
 import { TurnChangeDetails, computeTurnChangeDetails } from './util/turn-change-stats';
+import {
+  PlanFeedbackPayload,
+  PlanReviewRequest,
+  isSamePlanReview,
+  planReviewFromPermissionRequest,
+  planReviewFromTranscriptItem,
+} from '@/features/plan-annotator';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideWandSparkles,
@@ -161,6 +167,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   readonly openTerminalFallback = output<void>();
   readonly openInBrowser = output<string>();
+  readonly planReviewRequested = output<PlanReviewRequest>();
+  readonly planReviewClosed = output<PlanReviewRequest>();
   readonly activeAgentProviderChange = output<AgentProviderId>();
   readonly agentRuntimeStarted = output<void>();
   readonly unarchive = output<void>();
@@ -528,11 +536,18 @@ readonly messageActionsDisabled = computed(
     return null;
   });
 
-  readonly latestProposedPlanMessageId = computed(() => {
+  readonly latestPlanReview = computed(() => {
+    const permissionReview = this.planReviewForPermission(this.pendingPermissionRequest());
+    if (permissionReview) return permissionReview;
+
     const items = this.transcriptItems();
     for (let i = items.length - 1; i >= 0; i--) {
-      const item = items[i];
-      if (item.kind === 'assistant' && hasProposedPlan(item.content)) return item.id;
+      const review = planReviewFromTranscriptItem(
+        items[i],
+        this.sessionId,
+        this.currentProvider(),
+      );
+      if (review) return review;
     }
     return null;
   });
@@ -732,32 +747,106 @@ readonly messageActionsDisabled = computed(
 
   canReviewPlan(item: ClaudeTranscriptItem): boolean {
     if (this.archived) return false;
-    if (this.currentProvider() !== 'codex') return false;
-    if (item.id !== this.latestProposedPlanMessageId()) return false;
-    if (!hasProposedPlan(item.content)) return false;
+    const review = this.planReviewForMessage(item);
+    if (!review) return false;
     if (this.runPhase() !== 'idle' || this.submitting()) return false;
-    const mode = this.permissionMode();
-    return mode === 'plan' || mode === ('planBypass' as ClaudePermissionMode);
+    if (review.provider === 'codex') {
+      const mode = this.permissionMode();
+      return mode === 'plan' || mode === ('planBypass' as ClaudePermissionMode);
+    }
+    return !review.readonly;
   }
 
-  async sendPlanFeedback(message: string): Promise<void> {
-    const trimmed = message.trim();
-    if (!trimmed || this.archived || this.currentProvider() !== 'codex') return;
-    await this.submitPrompt({ text: trimmed, images: [] });
+  planReviewForMessage(item: ClaudeTranscriptItem): PlanReviewRequest | null {
+    if (this.isStreamingMessage(item.id)) return null;
+    const review = planReviewFromTranscriptItem(item, this.sessionId, this.currentProvider());
+    if (!review) return null;
+    const latest = this.latestPlanReview();
+    return isSamePlanReview(review, latest) ? review : null;
   }
 
-  async approveProposedPlan(): Promise<void> {
-    if (this.archived || this.currentProvider() !== 'codex') return;
-    if (this.runPhase() !== 'idle' || this.submitting()) return;
+  planReviewForPermission(req: ClaudePermissionRequest | null): PlanReviewRequest | null {
+    return planReviewFromPermissionRequest(req, this.sessionId, this.currentProvider());
+  }
+
+  openPlanReview(review: PlanReviewRequest): void {
+    this.planReviewRequested.emit(review);
+  }
+
+  openPermissionPlanReview(req: ClaudePermissionRequest): void {
+    const review = this.planReviewForPermission(req);
+    if (review) this.openPlanReview(review);
+  }
+
+  async approvePlanReview(review: PlanReviewRequest): Promise<void> {
+    if (this.archived || review.sessionId !== this.sessionId || review.readonly) return;
+    if (review.source === 'exit-plan-permission') {
+      this.approvePlanPermissionReview(review);
+      return;
+    }
+    if (review.provider !== 'codex' || this.runPhase() !== 'idle' || this.submitting()) return;
 
     try {
       this.planBypassActive.set(false);
       const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, 'default'));
       this.applyRuntimeState(next);
       await this.submitPrompt({ text: 'implement plan', images: [] });
+      this.planReviewClosed.emit(review);
     } catch (error) {
       toast.error(this.getHttpErrorMessage(error, 'Could not approve the plan.'));
     }
+  }
+
+  async sendPlanReviewFeedback(payload: PlanFeedbackPayload): Promise<void> {
+    const message = payload.message.trim();
+    const review = payload.review;
+    if (!message || this.archived || review.sessionId !== this.sessionId || review.readonly) return;
+
+    if (review.source === 'exit-plan-permission') {
+      this.denyPlanPermissionReview(review, message);
+      this.planReviewClosed.emit(review);
+      return;
+    }
+
+    if (review.provider !== 'codex') return;
+    await this.submitPrompt({ text: message, images: [] });
+    this.planReviewClosed.emit(review);
+  }
+
+  async rejectPlanReview(payload: PlanFeedbackPayload): Promise<void> {
+    const review = payload.review;
+    if (this.archived || review.sessionId !== this.sessionId || review.readonly) return;
+
+    if (review.source === 'exit-plan-permission') {
+      this.denyPlanPermissionReview(review, payload.message);
+      this.planReviewClosed.emit(review);
+      return;
+    }
+
+    if (review.provider !== 'codex') return;
+    await this.submitPrompt({ text: payload.message, images: [] });
+    this.planReviewClosed.emit(review);
+  }
+
+  private approvePlanPermissionReview(review: PlanReviewRequest): void {
+    const req = this.pendingPermissionRequest();
+    if (!req || req.requestId !== review.requestId) return;
+    this.sendRuntimeAction({
+      type: 'approve_permission',
+      requestId: req.requestId,
+      remember: false,
+    });
+    this.planReviewClosed.emit(review);
+  }
+
+  private denyPlanPermissionReview(review: PlanReviewRequest, message: string): void {
+    const req = this.pendingPermissionRequest();
+    if (!req || req.requestId !== review.requestId) return;
+    this.sendRuntimeAction({
+      type: 'deny_permission',
+      requestId: req.requestId,
+      message: message.trim() || undefined,
+    });
   }
 
   private toRuntimeImage(img: ComposerImageAttachment): {
