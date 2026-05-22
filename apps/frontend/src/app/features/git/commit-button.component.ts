@@ -56,6 +56,7 @@ interface CommitFileRow extends FileStatus {
 })
 export class CommitButtonComponent {
   readonly worktreePath = input<string | null>(null);
+  readonly contextKey = input<string | null>(null);
 
   private readonly gitService = inject(GitService);
   private readonly elementRef = inject(ElementRef<HTMLElement>);
@@ -69,7 +70,8 @@ export class CommitButtonComponent {
   readonly includeUnstaged = signal(false);
   readonly commitMessage = signal('');
 
-  private refreshInFlight = false;
+  private refreshInFlightKey: string | null = null;
+  private refreshRequestId = 0;
 
   readonly hasChanges = computed(() => this.summary()?.hasChanges ?? false);
   readonly hasPushableCommits = computed(() => {
@@ -78,12 +80,19 @@ export class CommitButtonComponent {
     return !summary.upstream || summary.ahead > 0;
   });
   readonly shouldShowButton = computed(
-    () => this.hasChanges() || this.hasPushableCommits() || this.open(),
+    () =>
+      Boolean(this.worktreePath()) &&
+      (this.loading() ||
+        this.hasChanges() ||
+        this.hasPushableCommits() ||
+        this.open() ||
+        this.isBusy()),
   );
   readonly isBusy = computed(() => this.submitting() || this.pushing());
   readonly triggerLabel = computed(() => {
     if (this.submitting()) return 'Committing…';
     if (this.pushing()) return 'Pushing…';
+    if (this.loading() && !this.summary()) return 'Checking…';
     return this.hasChanges() ? 'Commit' : 'Push';
   });
 
@@ -125,6 +134,12 @@ export class CommitButtonComponent {
   );
   readonly canCommit = computed(() => this.selectedFileCount() > 0 && !this.submitting());
 
+  private readonly activeContextKey = computed(() => {
+    const worktreePath = this.worktreePath();
+    if (!worktreePath) return null;
+    return this.contextKey() || worktreePath;
+  });
+
   readonly primaryActionLabel = computed(() => {
     if (this.submitting()) return 'Committing…';
     return this.commitMessage().trim() ? 'Commit' : 'Generate & commit';
@@ -133,11 +148,16 @@ export class CommitButtonComponent {
   constructor() {
     effect((onCleanup) => {
       const worktreePath = this.worktreePath();
+      const contextKey = this.activeContextKey();
 
       this.summary.set(null);
       this.open.set(false);
       this.commitMessage.set('');
       this.loading.set(Boolean(worktreePath));
+      this.refreshing.set(false);
+      if (this.refreshInFlightKey !== contextKey) {
+        this.refreshInFlightKey = null;
+      }
 
       if (!worktreePath) {
         this.loading.set(false);
@@ -244,9 +264,18 @@ export class CommitButtonComponent {
     options: { background?: boolean; force?: boolean } = {},
   ): Promise<void> {
     const worktreePath = this.worktreePath();
-    if (!worktreePath || this.refreshInFlight || (!options.force && this.isBusy())) return;
+    const contextKey = this.activeContextKey();
+    if (
+      !worktreePath ||
+      !contextKey ||
+      (!options.force && this.refreshInFlightKey === contextKey) ||
+      (!options.force && this.isBusy())
+    ) {
+      return;
+    }
 
-    this.refreshInFlight = true;
+    const requestId = ++this.refreshRequestId;
+    this.refreshInFlightKey = contextKey;
     if (options.background) {
       this.refreshing.set(true);
     } else {
@@ -255,6 +284,9 @@ export class CommitButtonComponent {
 
     try {
       const summary = await firstValueFrom(this.gitService.getSummary(worktreePath));
+      if (!this.isCurrentRefreshContext(worktreePath, contextKey, requestId)) {
+        return;
+      }
       this.summary.set(summary);
 
       if (summary.staged.files === 0 && summary.unstaged.files > 0) {
@@ -267,14 +299,31 @@ export class CommitButtonComponent {
         this.open.set(false);
       }
     } catch {
-      if (!options.background) {
+      if (
+        !options.background &&
+        this.isCurrentRefreshContext(worktreePath, contextKey, requestId)
+      ) {
         toast.error('Could not load git status.');
       }
     } finally {
-      this.loading.set(false);
-      this.refreshing.set(false);
-      this.refreshInFlight = false;
+      if (this.isCurrentRefreshContext(worktreePath, contextKey, requestId)) {
+        this.loading.set(false);
+        this.refreshing.set(false);
+        this.refreshInFlightKey = null;
+      }
     }
+  }
+
+  private isCurrentRefreshContext(
+    worktreePath: string,
+    contextKey: string,
+    requestId: number,
+  ): boolean {
+    return (
+      this.worktreePath() === worktreePath &&
+      this.activeContextKey() === contextKey &&
+      this.refreshRequestId === requestId
+    );
   }
 
   @HostListener('document:click', ['$event'])

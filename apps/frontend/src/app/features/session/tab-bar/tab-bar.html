@@ -72,7 +72,7 @@
   @if (projectId() && !activeTabIsArchived()) {
     <div class="ml-auto flex h-full shrink-0 items-center self-center gap-1 pl-2">
       @if (worktreePath()) {
-        <app-commit-button [worktreePath]="worktreePath()" />
+        <app-commit-button [worktreePath]="worktreePath()" [contextKey]="commitContextKey()" />
       }
       @if (plannotatorAvailable()) {
         <button

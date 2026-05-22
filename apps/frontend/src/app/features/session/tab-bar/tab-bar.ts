@@ -53,6 +53,19 @@ export class TabBar {
   activeSessionId = input.required<number | null>();
   projectId = input<number | null>(null);
   worktreePath = input<string | null>(null);
+  commitContextKey = computed(() => {
+    const activeId = this.activeSessionId();
+    const tab = this.tabs().find((candidate) => candidate.sessionId === activeId);
+    if (!tab) return null;
+    return [
+      tab.sessionId,
+      tab.projectId,
+      tab.repoId,
+      tab.worktreePath,
+      tab.branchName,
+      tab.workspaceName ?? '',
+    ].join(':');
+  });
 
   showFiles = input(false);
   showBrowser = input(false);
