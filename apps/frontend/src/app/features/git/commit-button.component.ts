@@ -39,10 +39,9 @@ interface CommitFileRow extends FileStatus {
   standalone: true,
   imports: [CommonModule, NgIcon, ZardInputDirective],
   templateUrl: './commit-button.component.html',
-  styleUrl: './commit-button.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class: 'commit-entry',
+    class: 'commit-entry relative flex items-center',
   },
   viewProviders: [
     provideIcons({
@@ -78,7 +77,9 @@ export class CommitButtonComponent {
     if (!summary || summary.hasChanges || summary.branch === 'HEAD') return false;
     return !summary.upstream || summary.ahead > 0;
   });
-  readonly shouldShowButton = computed(() => this.hasChanges() || this.hasPushableCommits() || this.open());
+  readonly shouldShowButton = computed(
+    () => this.hasChanges() || this.hasPushableCommits() || this.open(),
+  );
   readonly isBusy = computed(() => this.submitting() || this.pushing());
   readonly triggerLabel = computed(() => {
     if (this.submitting()) return 'Committing…';
@@ -89,13 +90,11 @@ export class CommitButtonComponent {
   readonly selectedRows = computed(() => {
     const summary = this.summary();
     if (!summary) return [];
-    return this.includeUnstaged()
-      ? summary.files
-      : summary.files.filter(file => file.staged);
+    return this.includeUnstaged() ? summary.files : summary.files.filter((file) => file.staged);
   });
 
   readonly selectedFileCount = computed(
-    () => new Set(this.selectedRows().map(file => file.path)).size,
+    () => new Set(this.selectedRows().map((file) => file.path)).size,
   );
 
   readonly selectedStats = computed(() => {
@@ -109,17 +108,21 @@ export class CommitButtonComponent {
   });
 
   readonly visibleRows = computed<CommitFileRow[]>(() =>
-    this.selectedRows().slice(0, MAX_VISIBLE_FILES).map(file => {
-      const pathParts = file.path.split(/[\\/]/).filter(Boolean);
-      const basename = pathParts.pop() ?? file.path;
-      return {
-        ...file,
-        basename,
-        folder: pathParts.length ? pathParts.join('/') : '',
-      };
-    }),
+    this.selectedRows()
+      .slice(0, MAX_VISIBLE_FILES)
+      .map((file) => {
+        const pathParts = file.path.split(/[\\/]/).filter(Boolean);
+        const basename = pathParts.pop() ?? file.path;
+        return {
+          ...file,
+          basename,
+          folder: pathParts.length ? pathParts.join('/') : '',
+        };
+      }),
   );
-  readonly hiddenRowCount = computed(() => Math.max(0, this.selectedRows().length - MAX_VISIBLE_FILES));
+  readonly hiddenRowCount = computed(() =>
+    Math.max(0, this.selectedRows().length - MAX_VISIBLE_FILES),
+  );
   readonly canCommit = computed(() => this.selectedFileCount() > 0 && !this.submitting());
 
   readonly primaryActionLabel = computed(() => {
@@ -128,7 +131,7 @@ export class CommitButtonComponent {
   });
 
   constructor() {
-    effect(onCleanup => {
+    effect((onCleanup) => {
       const worktreePath = this.worktreePath();
 
       this.summary.set(null);
@@ -185,14 +188,15 @@ export class CommitButtonComponent {
 
     this.submitting.set(true);
     try {
-      const result = await firstValueFrom(this.gitService.commit(worktreePath, {
-        message: this.commitMessage().trim() || undefined,
-        includeUnstaged: this.includeUnstaged(),
-      }));
+      const result = await firstValueFrom(
+        this.gitService.commit(worktreePath, {
+          message: this.commitMessage().trim() || undefined,
+          includeUnstaged: this.includeUnstaged(),
+        }),
+      );
 
-      const shortMsg = result.message.length > 64
-        ? result.message.slice(0, 61) + '…'
-        : result.message;
+      const shortMsg =
+        result.message.length > 64 ? result.message.slice(0, 61) + '…' : result.message;
       toast.success(`Committed: ${shortMsg}`);
 
       this.commitMessage.set('');
@@ -236,7 +240,9 @@ export class CommitButtonComponent {
     return file.status;
   }
 
-  private async refreshSummary(options: { background?: boolean; force?: boolean } = {}): Promise<void> {
+  private async refreshSummary(
+    options: { background?: boolean; force?: boolean } = {},
+  ): Promise<void> {
     const worktreePath = this.worktreePath();
     if (!worktreePath || this.refreshInFlight || (!options.force && this.isBusy())) return;
 

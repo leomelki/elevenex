@@ -1,10 +1,14 @@
 @if (shouldShowButton()) {
-  <div class="cx-shell">
+  <div class="cx-shell relative">
     <button
-      class="cx-trigger"
+      class="cx-trigger inline-flex h-7 items-center gap-[5px] whitespace-nowrap rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-[border-color,background] duration-[120ms] enabled:hover:border-[color-mix(in_oklch,var(--primary)_50%,var(--border))] enabled:hover:bg-[color-mix(in_oklch,var(--primary)_6%,var(--background))]"
       type="button"
-      [class.cx-trigger--open]="open()"
-      [class.cx-trigger--busy]="isBusy()"
+      [ngClass]="[
+        open()
+          ? 'border-[color-mix(in_oklch,var(--primary)_60%,var(--border))] bg-[color-mix(in_oklch,var(--primary)_8%,var(--background))]'
+          : '',
+        isBusy() ? 'cursor-wait opacity-70' : 'disabled:cursor-not-allowed disabled:opacity-[0.45]',
+      ]"
       [disabled]="(loading() && !summary()) || isBusy()"
       (click)="toggleOpen()"
     >
@@ -18,24 +22,36 @@
       <span>{{ triggerLabel() }}</span>
       @if (!isBusy()) {
         @if (hasChanges()) {
-          <span class="cx-trigger__count">{{ selectedFileCount() || summary()?.total?.files || 0 }}</span>
+          <span
+            class="cx-trigger__count inline-flex h-4 min-w-4 items-center justify-center rounded bg-muted px-1 text-[10px] font-semibold leading-none text-muted-foreground"
+            >{{ selectedFileCount() || summary()?.total?.files || 0 }}</span
+          >
         } @else if ((summary()?.ahead ?? 0) > 0) {
-          <span class="cx-trigger__count">{{ summary()?.ahead }}</span>
+          <span
+            class="cx-trigger__count inline-flex h-4 min-w-4 items-center justify-center rounded bg-muted px-1 text-[10px] font-semibold leading-none text-muted-foreground"
+            >{{ summary()?.ahead }}</span
+          >
         }
       }
     </button>
 
     @if (open()) {
-      <div class="cx-popover" [class.cx-popover--submitting]="submitting()">
-
-        <div class="cx-header">
-          <div class="cx-header__title">
-            <ng-icon name="lucideGitCommitVertical" size="14" />
+      <div
+        class="cx-popover absolute right-0 top-[calc(100%+8px)] z-[70] w-[min(400px,calc(100vw-32px))] overflow-hidden rounded-[10px] border border-border bg-popover text-popover-foreground shadow-[0_4px_6px_-1px_rgba(0,0,0,0.1),0_10px_32px_-4px_rgba(0,0,0,0.12)] max-sm:right-[-44px] max-sm:w-[min(380px,calc(100vw-20px))]"
+        [class.cursor-wait]="submitting()"
+      >
+        <div
+          class="cx-header flex items-center justify-between gap-2 border-b border-border px-3 py-2.5"
+        >
+          <div
+            class="cx-header__title flex items-center gap-[7px] text-[13px] font-semibold text-foreground"
+          >
+            <ng-icon class="text-muted-foreground" name="lucideGitCommitVertical" size="14" />
             <span>Commit changes</span>
           </div>
-          <div class="cx-header__actions">
+          <div class="cx-header__actions flex items-center gap-0.5">
             <button
-              class="cx-icon-btn"
+              class="cx-icon-btn inline-flex size-[26px] items-center justify-center rounded-[5px] bg-transparent text-muted-foreground transition-[background,color] duration-100 enabled:hover:bg-accent enabled:hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
               type="button"
               title="Refresh"
               [disabled]="refreshing() || submitting()"
@@ -43,60 +59,103 @@
             >
               <ng-icon name="lucideRefreshCw" size="13" [class.animate-spin]="refreshing()" />
             </button>
-            <button class="cx-icon-btn" type="button" title="Close" (click)="close()">
+            <button
+              class="cx-icon-btn inline-flex size-[26px] items-center justify-center rounded-[5px] bg-transparent text-muted-foreground transition-[background,color] duration-100 enabled:hover:bg-accent enabled:hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              type="button"
+              title="Close"
+              (click)="close()"
+            >
               <ng-icon name="lucideX" size="13" />
             </button>
           </div>
         </div>
 
-        <div class="cx-stats">
-          <span class="cx-stat">
-            <strong>{{ selectedStats().files }}</strong>
+        <div
+          class="cx-stats flex items-center gap-0 border-b border-border bg-muted px-3 py-1.5 text-xs"
+          [class.pointer-events-none]="submitting()"
+          [class.opacity-[0.55]]="submitting()"
+        >
+          <span class="cx-stat inline-flex items-baseline gap-[3px] text-muted-foreground">
+            <strong class="text-[13px] font-semibold tracking-normal text-foreground">{{
+              selectedStats().files
+            }}</strong>
             <span>{{ selectedStats().files === 1 ? 'file' : 'files' }}</span>
           </span>
-          <span class="cx-stat-divider"></span>
-          <span class="cx-stat cx-stat--add">
-            <strong>+{{ selectedStats().additions }}</strong>
+          <span class="cx-stat-divider mx-2 block h-2.5 w-px shrink-0 bg-border"></span>
+          <span
+            class="cx-stat cx-stat--add inline-flex items-baseline gap-[3px] text-muted-foreground"
+          >
+            <strong class="text-[13px] font-semibold tracking-normal text-[oklch(0.52_0.14_151)]"
+              >+{{ selectedStats().additions }}</strong
+            >
           </span>
-          <span class="cx-stat-divider"></span>
-          <span class="cx-stat cx-stat--del">
-            <strong>-{{ selectedStats().deletions }}</strong>
+          <span class="cx-stat-divider mx-2 block h-2.5 w-px shrink-0 bg-border"></span>
+          <span
+            class="cx-stat cx-stat--del inline-flex items-baseline gap-[3px] text-muted-foreground"
+          >
+            <strong class="text-[13px] font-semibold tracking-normal text-[oklch(0.56_0.17_28)]"
+              >-{{ selectedStats().deletions }}</strong
+            >
           </span>
-          <span class="cx-stat-scope">{{ includeUnstaged() ? 'staged + unstaged' : 'staged only' }}</span>
+          <span class="cx-stat-scope ml-auto text-[11px] italic text-muted-foreground">{{
+            includeUnstaged() ? 'staged + unstaged' : 'staged only'
+          }}</span>
         </div>
 
-        <div class="cx-body">
-
+        <div
+          class="cx-body flex flex-col gap-3.5 px-3 py-3.5"
+          [class.pointer-events-none]="submitting()"
+          [class.opacity-[0.55]]="submitting()"
+        >
           @if ((summary()?.unstaged?.files ?? 0) > 0) {
-            <div class="cx-scope-row">
-              <div class="cx-scope-row__info">
-                <span>Include unstaged</span>
-                <small>{{ summary()?.unstaged?.files }} unstaged change{{ (summary()?.unstaged?.files ?? 0) !== 1 ? 's' : '' }}</small>
+            <div class="cx-scope-row flex items-center justify-between gap-3">
+              <div class="cx-scope-row__info flex flex-col gap-px">
+                <span class="text-[13px] font-medium text-foreground">Include unstaged</span>
+                <small class="text-[11px] text-muted-foreground"
+                  >{{ summary()?.unstaged?.files }} unstaged change{{
+                    (summary()?.unstaged?.files ?? 0) !== 1 ? 's' : ''
+                  }}</small
+                >
               </div>
               <button
-                class="cx-switch"
+                class="cx-switch shrink-0 bg-transparent p-0 focus-visible:outline-none focus-visible:[&_.cx-switch__track]:outline-2 focus-visible:[&_.cx-switch__track]:outline-offset-2 focus-visible:[&_.cx-switch__track]:outline-ring"
                 type="button"
                 role="switch"
                 [attr.aria-checked]="includeUnstaged()"
                 [disabled]="submitting()"
                 (click)="includeUnstaged.set(!includeUnstaged())"
               >
-                <div class="cx-switch__track" [class.cx-switch__track--on]="includeUnstaged()">
-                  <div class="cx-switch__thumb"></div>
+                <div
+                  class="cx-switch__track relative h-[18px] w-[34px] cursor-pointer rounded-[9px] border border-border bg-input transition-[background,border-color] duration-150"
+                  [class.border-primary]="includeUnstaged()"
+                  [class.bg-primary]="includeUnstaged()"
+                  [class.cursor-not-allowed]="submitting()"
+                  [class.opacity-50]="submitting()"
+                >
+                  <div
+                    class="cx-switch__thumb absolute left-0.5 top-0.5 size-3 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.2)] transition-transform duration-150 ease-[cubic-bezier(0.4,0,0.2,1)]"
+                    [class.translate-x-4]="includeUnstaged()"
+                  ></div>
                 </div>
               </button>
             </div>
           }
 
           <div class="cx-message">
-            <div class="cx-field-header">
-              <span class="cx-field-label">Message</span>
-              <span class="cx-ai-badge">
+            <div class="cx-field-header mb-1.5 flex items-center justify-between">
+              <span
+                class="cx-field-label text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground"
+                >Message</span
+              >
+              <span
+                class="cx-ai-badge inline-flex h-[18px] items-center gap-1 rounded bg-[color-mix(in_oklch,var(--primary)_12%,var(--muted))] px-[7px] text-[10px] font-semibold text-[color-mix(in_oklch,var(--primary)_70%,var(--muted-foreground))]"
+              >
                 <ng-icon name="lucideSparkles" size="10" />
                 auto if blank
               </span>
             </div>
             <textarea
+              class="min-h-[76px] w-full resize-none text-xs"
               z-input
               rows="3"
               [disabled]="submitting()"
@@ -107,40 +166,77 @@
           </div>
 
           <div class="cx-files">
-            <div class="cx-field-header">
-              <span class="cx-field-label">{{ includeUnstaged() ? 'Staged + unstaged' : 'Staged' }}</span>
+            <div class="cx-field-header mb-1.5 flex items-center justify-between">
+              <span
+                class="cx-field-label text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground"
+                >{{ includeUnstaged() ? 'Staged + unstaged' : 'Staged' }}</span
+              >
               @if (selectedRows().length > 0) {
-                <span class="cx-count-badge">{{ selectedRows().length }}</span>
+                <span
+                  class="cx-count-badge inline-flex h-[18px] min-w-[18px] items-center justify-center rounded bg-muted px-[5px] text-[10px] font-semibold text-muted-foreground"
+                  >{{ selectedRows().length }}</span
+                >
               }
             </div>
-            <div class="cx-files__list">
+            <div class="cx-files__list max-h-40 overflow-y-auto rounded-md border border-border">
               @for (file of visibleRows(); track trackFile($index, file)) {
-                <div class="cx-file">
-                  <span class="cx-file__dot" [class.cx-file__dot--staged]="file.staged"></span>
-                  <span class="cx-file__path flex min-w-0 flex-1 items-baseline overflow-hidden text-foreground" [title]="file.path">
+                <div
+                  class="cx-file flex items-center gap-2 border-b border-border px-[9px] py-[5px] last:border-b-0 hover:bg-accent"
+                >
+                  <span
+                    class="cx-file__dot size-1.5 shrink-0 rounded-full bg-muted-foreground opacity-40"
+                    [class.bg-primary]="file.staged"
+                    [class.opacity-100]="file.staged"
+                  ></span>
+                  <span
+                    class="cx-file__path flex min-w-0 flex-1 items-baseline overflow-hidden text-foreground"
+                    [title]="file.path"
+                  >
                     @if (file.folder) {
-                      <span class="min-w-0 flex-auto overflow-hidden text-ellipsis whitespace-nowrap text-left font-mono text-[11px] text-muted-foreground [direction:rtl] [unicode-bidi:isolate]">{{ file.folder }}</span>
-                      <span class="shrink-0 px-0.5 font-mono text-[11px] text-muted-foreground" aria-hidden="true">/</span>
+                      <span
+                        class="min-w-0 flex-auto overflow-hidden text-ellipsis whitespace-nowrap text-left font-mono text-[11px] text-muted-foreground [direction:rtl] [unicode-bidi:isolate]"
+                        >{{ file.folder }}</span
+                      >
+                      <span
+                        class="shrink-0 px-0.5 font-mono text-[11px] text-muted-foreground"
+                        aria-hidden="true"
+                        >/</span
+                      >
                     }
-                    <span class="shrink-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs font-semibold">{{ file.basename }}</span>
+                    <span
+                      class="shrink-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs font-semibold"
+                      >{{ file.basename }}</span
+                    >
                   </span>
-                  <span class="cx-file__status">{{ statusLabel(file) }}</span>
+                  <span
+                    class="cx-file__status shrink-0 text-[11px] capitalize text-muted-foreground"
+                    >{{ statusLabel(file) }}</span
+                  >
                 </div>
               }
               @if (hiddenRowCount() > 0) {
-                <div class="cx-files__overflow">+{{ hiddenRowCount() }} more</div>
+                <div
+                  class="cx-files__overflow bg-muted px-[9px] py-[5px] text-center text-[11px] text-muted-foreground"
+                >
+                  +{{ hiddenRowCount() }} more
+                </div>
               }
               @if (selectedRows().length === 0) {
-                <div class="cx-files__empty">No staged changes. Stage files or enable "Include unstaged".</div>
+                <div
+                  class="cx-files__empty px-[9px] py-3.5 text-center text-xs text-muted-foreground"
+                >
+                  No staged changes. Stage files or enable "Include unstaged".
+                </div>
               }
             </div>
           </div>
-
         </div>
 
-        <div class="cx-actions">
+        <div
+          class="cx-actions flex items-center justify-end gap-2 border-t border-border px-3 py-2.5"
+        >
           <button
-            class="cx-btn cx-btn--ghost"
+            class="cx-btn cx-btn--ghost inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-transparent px-3.5 text-[13px] font-medium text-muted-foreground transition-[background,opacity] duration-100 enabled:hover:bg-accent enabled:hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
             type="button"
             [disabled]="submitting()"
             (click)="close()"
@@ -148,10 +244,14 @@
             Cancel
           </button>
           <button
-            class="cx-btn cx-btn--primary"
+            class="cx-btn cx-btn--primary inline-flex h-8 min-w-32 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground transition-[background,opacity] duration-100 enabled:hover:bg-[color-mix(in_oklch,var(--primary)_88%,black)]"
             type="button"
             [disabled]="!canCommit()"
-            [class.cx-btn--loading]="submitting()"
+            [ngClass]="
+              submitting()
+                ? 'cursor-wait opacity-[0.85]'
+                : 'disabled:cursor-not-allowed disabled:opacity-40'
+            "
             (click)="submitCommit()"
           >
             @if (submitting()) {
@@ -160,7 +260,6 @@
             {{ primaryActionLabel() }}
           </button>
         </div>
-
       </div>
     }
   </div>
