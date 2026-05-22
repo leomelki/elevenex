@@ -312,6 +312,33 @@ describe('GitService', () => {
       });
     });
 
+    it('should parse JSON commit suggestions surrounded by assistant text', () => {
+      const suggestion = (service as any).parseCommitSuggestion(
+        'I will inspect the diff first.{"subject":"style(investigator): condense doc comments in codefix package","body":null}',
+      );
+
+      expect(suggestion).toEqual({
+        subject:
+          'style(investigator): condense doc comments in codefix package',
+        body: null,
+        confidence: 'medium',
+        source: 'claude',
+      });
+    });
+
+    it('should parse a later valid JSON commit suggestion after invalid JSON-like text', () => {
+      const suggestion = (service as any).parseCommitSuggestion(
+        'Notes: {"subject":"Improve generated commit messages","body":null}\n{"subject":"fix(git): parse generated commit message json","body":"Handle assistant preambles without rejecting the suggestion."}',
+      );
+
+      expect(suggestion).toEqual({
+        subject: 'fix(git): parse generated commit message json',
+        body: 'Handle assistant preambles without rejecting the suggestion.',
+        confidence: 'medium',
+        source: 'claude',
+      });
+    });
+
     it('should reject conversational commit suggestions', () => {
       const suggestion = (service as any).parseCommitSuggestion(
         'Sure, let me work on this. fix(git): improve commit messages',

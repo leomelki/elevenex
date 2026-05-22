@@ -814,7 +814,10 @@ export class GitService {
         approvalPolicy: 'never',
       });
       const result = await thread.run(this.buildCommitMessagePrompt(input));
-      const suggestion = this.parseCommitSuggestion(result.finalResponse, 'codex');
+      const suggestion = this.parseCommitSuggestion(
+        result.finalResponse,
+        'codex',
+      );
       if (!suggestion && result.finalResponse?.trim()) {
         this.logger.warn(
           `[commit-message] codex response could not be parsed: ${result.finalResponse.trim()}`,
@@ -1057,11 +1060,11 @@ export class GitService {
       .replace(/\s*```$/, '')
       .trim();
 
-    try {
-      const parsed = JSON.parse(normalized);
+    for (const candidate of this.extractJsonObjectCandidates(normalized)) {
+      const parsed = this.parseCommitSuggestionJson(candidate);
       const subject = this.normalizeCommitSubject(parsed?.subject);
       if (!subject) {
-        return null;
+        continue;
       }
 
       return {
@@ -1073,9 +1076,68 @@ export class GitService {
         confidence: 'medium',
         source,
       };
+    }
+
+    return null;
+  }
+
+  private parseCommitSuggestionJson(
+    raw: string,
+  ): Record<string, unknown> | null {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
     } catch {
       return null;
     }
+  }
+
+  private extractJsonObjectCandidates(raw: string): string[] {
+    const candidates: string[] = [];
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = 0; index < raw.length; index += 1) {
+      const char = raw[index];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+
+      if (char === '{') {
+        if (depth === 0) {
+          start = index;
+        }
+        depth += 1;
+        continue;
+      }
+
+      if (char === '}' && depth > 0) {
+        depth -= 1;
+        if (depth === 0 && start >= 0) {
+          candidates.push(raw.slice(start, index + 1));
+          start = -1;
+        }
+      }
+    }
+
+    return candidates;
   }
 
   private normalizeCommitSubject(subject: unknown): string | null {
@@ -1085,6 +1147,10 @@ export class GitService {
 
     const normalized = subject.trim().replace(/\s+/g, ' ');
     if (!normalized) {
+      return null;
+    }
+
+    if (normalized.length > 72) {
       return null;
     }
 
