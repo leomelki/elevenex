@@ -74,15 +74,6 @@
       @if (worktreePath()) {
         <app-commit-button [worktreePath]="worktreePath()" />
       }
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showChanges() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Changes"
-        aria-label="Toggle changes review panel"
-        (click)="toggleChanges.emit()"
-      >
-        <ng-icon name="lucideGitPullRequest" size="16" />
-      </button>
       @if (plannotatorAvailable()) {
         <button
           class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
@@ -136,6 +127,15 @@
         @if (runningActionsCount() > 0) {
           <span class="absolute -top-1 -right-1 h-4 min-w-4 rounded-full bg-[color-mix(in_oklch,var(--primary)_84%,white)] px-1 text-[10px] leading-4 font-bold text-white">{{ runningActionsCount() }}</span>
         }
+      </button>
+      <button
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        [ngClass]="showChanges() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+        title="Changes"
+        aria-label="Toggle changes review panel"
+        (click)="toggleChanges.emit()"
+      >
+        <ng-icon name="lucideGitPullRequest" size="16" />
       </button>
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
