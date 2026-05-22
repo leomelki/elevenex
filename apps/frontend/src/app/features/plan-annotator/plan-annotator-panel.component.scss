@@ -417,6 +417,49 @@ h3 {
   background: color-mix(in oklab, var(--primary) 26%, transparent);
 }
 
+:host ::ng-deep .cw-md {
+  color: color-mix(in oklab, var(--foreground) 90%, var(--muted-foreground));
+  font-size: 0.9rem;
+  line-height: 1.68;
+}
+
+:host ::ng-deep .cw-md > :first-child {
+  margin-top: 0;
+}
+
+:host ::ng-deep .cw-md > :last-child {
+  margin-bottom: 0;
+}
+
+:host ::ng-deep .cw-md p,
+:host ::ng-deep .cw-md ul,
+:host ::ng-deep .cw-md ol,
+:host ::ng-deep .cw-md blockquote {
+  margin: 0.65rem 0;
+}
+
+:host ::ng-deep .cw-md h1,
+:host ::ng-deep .cw-md h2,
+:host ::ng-deep .cw-md h3,
+:host ::ng-deep .cw-md h4 {
+  margin: 0.9rem 0 0.45rem;
+  color: var(--foreground);
+  font-weight: 820;
+  letter-spacing: 0;
+  line-height: 1.22;
+}
+
+:host ::ng-deep .cw-md code {
+  border: 1px solid color-mix(in oklab, var(--primary) 24%, var(--border));
+  border-radius: 0.33rem;
+  background: color-mix(in oklab, var(--primary) 10%, var(--background));
+  color: color-mix(in oklab, var(--primary) 72%, var(--foreground));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.84em;
+  font-weight: 740;
+  padding: 0.1rem 0.34rem;
+}
+
 .pa-doc--selection {
   outline: 2px solid color-mix(in oklab, var(--primary) 36%, transparent);
   outline-offset: 0.45rem;

@@ -1,0 +1,119 @@
+<div class="pm-doc">
+  @for (group of groups(); track group[0].id) {
+    @if (groupIsList(group)) {
+      <div class="pm-list" data-plan-block-group="list">
+        @for (block of group; track block.id) {
+          <div
+            class="pm-block pm-list-item"
+            [class.pm-block--match]="blockMatches(block)"
+            [class.pm-list-item--checked]="block.checked === true"
+            [style.marginLeft.rem]="block.level * 1.15"
+            [attr.data-block-id]="block.id"
+            [attr.data-block-type]="block.type"
+            [attr.data-line]="block.startLine"
+          >
+            <span class="pm-list-item__marker" aria-hidden="true">
+              @if (block.checked === true) {
+                <ng-icon name="lucideCheckCircle2" size="16" />
+              } @else if (block.checked === false) {
+                <ng-icon name="lucideCircle" size="16" />
+              } @else if (block.ordered) {
+                <ng-icon name="lucideListOrdered" size="16" />
+              } @else {
+                <span></span>
+              }
+            </span>
+            <div class="pm-inline" [innerHTML]="block.content | cwMarkdown"></div>
+          </div>
+        }
+      </div>
+    } @else {
+      @let block = group[0];
+
+      @switch (block.type) {
+        @case ('heading') {
+          <section
+            class="pm-block pm-heading"
+            [class.pm-heading--1]="block.level === 1"
+            [class.pm-heading--2]="block.level === 2"
+            [class.pm-heading--3]="block.level === 3"
+            [class.pm-heading--minor]="block.level > 3"
+            [class.pm-block--match]="blockMatches(block)"
+            [attr.data-block-id]="block.id"
+            data-block-type="heading"
+            [attr.data-line]="block.startLine"
+          >
+            <span class="pm-heading__kicker">
+              <ng-icon name="lucideHash" size="13" />
+              Line {{ block.startLine }}
+            </span>
+            <ng-container [ngSwitch]="headingTag(block.level)">
+              <h1 *ngSwitchCase="'h1'">{{ block.content }}</h1>
+              <h2 *ngSwitchCase="'h2'">{{ block.content }}</h2>
+              <h3 *ngSwitchCase="'h3'">{{ block.content }}</h3>
+              <h4 *ngSwitchCase="'h4'">{{ block.content }}</h4>
+              <h5 *ngSwitchCase="'h5'">{{ block.content }}</h5>
+              <h6 *ngSwitchDefault>{{ block.content }}</h6>
+            </ng-container>
+          </section>
+        }
+
+        @case ('blockquote') {
+          <blockquote
+            class="pm-block pm-quote pm-inline"
+            [class.pm-block--match]="blockMatches(block)"
+            [attr.data-block-id]="block.id"
+            data-block-type="blockquote"
+            [attr.data-line]="block.startLine"
+            [innerHTML]="block.content | cwMarkdown"
+          ></blockquote>
+        }
+
+        @case ('code') {
+          <figure
+            class="pm-block pm-code"
+            [class.pm-block--match]="blockMatches(block)"
+            [attr.data-block-id]="block.id"
+            data-block-type="code"
+            [attr.data-line]="block.startLine"
+          >
+            <figcaption>{{ languageLabel(block) }}</figcaption>
+            <div class="pm-code__body cw-md" [innerHTML]="block.raw | cwMarkdown"></div>
+          </figure>
+        }
+
+        @case ('table') {
+          <div
+            class="pm-block pm-table cw-md"
+            [class.pm-block--match]="blockMatches(block)"
+            [attr.data-block-id]="block.id"
+            data-block-type="table"
+            [attr.data-line]="block.startLine"
+            [innerHTML]="block.content | cwMarkdown"
+          ></div>
+        }
+
+        @case ('hr') {
+          <hr
+            class="pm-block pm-rule"
+            [class.pm-block--match]="blockMatches(block)"
+            [attr.data-block-id]="block.id"
+            data-block-type="hr"
+            [attr.data-line]="block.startLine"
+          />
+        }
+
+        @default {
+          <div
+            class="pm-block pm-paragraph pm-inline"
+            [class.pm-block--match]="blockMatches(block)"
+            [attr.data-block-id]="block.id"
+            data-block-type="paragraph"
+            [attr.data-line]="block.startLine"
+            [innerHTML]="block.content | cwMarkdown"
+          ></div>
+        }
+      }
+    }
+  }
+</div>

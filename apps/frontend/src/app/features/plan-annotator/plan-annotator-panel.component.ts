@@ -30,6 +30,7 @@ import {
   formatPlanRejectionMessage,
   planDraftStorageKey,
 } from './plan-feedback';
+import { PlanMarkdownBlocksComponent } from './plan-markdown-blocks.component';
 import { PlanAnnotatorComment, PlanFeedbackPayload, PlanReviewRequest } from './plan-review.model';
 
 interface PlanHeading {
@@ -43,7 +44,7 @@ type DraftScope = 'selection' | 'document';
 @Component({
   selector: 'app-plan-annotator-panel',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownPipe, NgIcon],
+  imports: [CommonModule, FormsModule, MarkdownPipe, NgIcon, PlanMarkdownBlocksComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({

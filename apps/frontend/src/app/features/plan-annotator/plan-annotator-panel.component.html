@@ -89,12 +89,13 @@
 
         <article
           #planDocument
-          class="pa-doc cw-md"
+          class="pa-doc"
           [class.pa-doc--selection]="selectedQuote()"
           (mouseup)="captureSelection()"
           (keyup)="captureSelection()"
-          [innerHTML]="activeReview.planMarkdown | cwMarkdown"
-        ></article>
+        >
+          <app-plan-markdown-blocks [markdown]="activeReview.planMarkdown" [query]="query()" />
+        </article>
 
         @if (activeReview.after) {
           <section class="pa-preface cw-md" [innerHTML]="activeReview.after | cwMarkdown"></section>
