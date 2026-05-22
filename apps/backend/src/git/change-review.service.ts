@@ -1,0 +1,707 @@
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { execFile } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
+import { SimpleGit } from 'simple-git';
+
+import { buildAugmentedEnv, worktreeSimpleGit } from '../config/system-paths.js';
+import {
+  ChangeReviewContextRange,
+  ChangeReviewFileStatus,
+  ChangeReviewFileSummary,
+  ChangeReviewFileWindow,
+  ChangeReviewPullRequestInfo,
+  ChangeReviewRow,
+  ChangeReviewScope,
+  ChangeReviewSummary,
+} from './change-review.types.js';
+
+const LARGE_FILE_BYTES = 1_000_000;
+const LARGE_FILE_LINES = 25_000;
+const DEFAULT_CONTEXT = 8;
+const DEFAULT_LIMIT = 400;
+const MAX_LIMIT = 1_500;
+const CACHE_TTL_MS = 15_000;
+const STALE_ORIGIN_SECONDS = 24 * 60 * 60;
+
+interface ReviewBase {
+  repoRoot: string;
+  branch: string;
+  baseRef: string | null;
+  baseSha: string | null;
+  headSha: string | null;
+  mergeBaseSha: string | null;
+  compareLabel: string;
+  originRefAgeSeconds: number | null;
+  staleBase: boolean;
+  pullRequest: ChangeReviewPullRequestInfo | null;
+}
+
+interface CachedRows {
+  key: string;
+  createdAt: number;
+  rows: ChangeReviewRow[];
+  contextRanges: ChangeReviewContextRange[];
+  message: string | null;
+  binary: boolean;
+  large: boolean;
+  truncated: boolean;
+}
+
+@Injectable()
+export class ChangeReviewService {
+  private readonly rowCache = new Map<string, CachedRows>();
+
+  async getSummary(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    refreshBase = false,
+  ): Promise<ChangeReviewSummary> {
+    this.assertScope(scope);
+    const git = worktreeSimpleGit(worktreePath);
+    const base = await this.resolveBase(git, worktreePath, scope, refreshBase);
+    const files = await this.readFileSummaries(git, worktreePath, scope, base);
+
+    return {
+      scope,
+      worktreePath,
+      repoRoot: base.repoRoot,
+      branch: base.branch,
+      baseRef: base.baseRef,
+      baseSha: base.baseSha,
+      headSha: base.headSha,
+      mergeBaseSha: base.mergeBaseSha,
+      compareLabel: base.compareLabel,
+      generatedAt: new Date().toISOString(),
+      staleBase: base.staleBase,
+      originRefAgeSeconds: base.originRefAgeSeconds,
+      pullRequest: base.pullRequest,
+      totals: {
+        files: files.length,
+        additions: files.reduce((sum, file) => sum + file.additions, 0),
+        deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+      },
+      files,
+    };
+  }
+
+  async getFileWindow(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    filePath: string,
+    options: { offset?: number; limit?: number; context?: number } = {},
+  ): Promise<ChangeReviewFileWindow> {
+    this.assertScope(scope);
+    const offset = Math.max(0, Number(options.offset) || 0);
+    const limit = Math.min(
+      MAX_LIMIT,
+      Math.max(1, Number(options.limit) || DEFAULT_LIMIT),
+    );
+    const context = Math.max(0, Math.min(200, Number(options.context) || DEFAULT_CONTEXT));
+
+    const git = worktreeSimpleGit(worktreePath);
+    const base = await this.resolveBase(git, worktreePath, scope, false);
+    const summary = await this.readFileSummary(git, worktreePath, scope, base, filePath);
+    const cacheKey = [
+      worktreePath,
+      scope,
+      base.mergeBaseSha ?? base.baseSha ?? '',
+      base.headSha ?? '',
+      filePath,
+      context,
+      summary.additions,
+      summary.deletions,
+      summary.status,
+    ].join('\0');
+    const cached = this.getCachedRows(cacheKey);
+    const full = cached ?? await this.buildRows(git, worktreePath, scope, base, summary, context, cacheKey);
+    const rows = full.rows.slice(offset, offset + limit);
+
+    return {
+      scope,
+      path: summary.path,
+      oldPath: summary.oldPath,
+      status: summary.status,
+      binary: full.binary,
+      large: full.large,
+      truncated: full.truncated,
+      message: full.message,
+      offset,
+      limit,
+      totalRows: full.rows.length,
+      hasMore: offset + rows.length < full.rows.length,
+      context,
+      rows,
+      contextRanges: full.contextRanges,
+    };
+  }
+
+  private async resolveBase(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    refreshBase: boolean,
+  ): Promise<ReviewBase> {
+    const [repoRoot, branchSummary, headSha] = await Promise.all([
+      git.revparse(['--show-toplevel']).then((value) => value.trim()),
+      git.branchLocal(),
+      git.revparse(['HEAD']).then((value) => value.trim()).catch(() => null),
+    ]);
+    const branch = branchSummary.current || 'HEAD';
+    const pullRequest = await this.readPullRequestInfo(repoRoot, branch);
+    let baseRef: string | null = null;
+    let baseSha: string | null = null;
+    let mergeBaseSha: string | null = null;
+    let compareLabel = 'Working tree';
+    let originRefAgeSeconds: number | null = null;
+
+    if (scope === 'last-commit') {
+      baseSha = await git.revparse(['HEAD^']).then((value) => value.trim()).catch(() => null);
+      compareLabel = 'Last commit';
+    } else if (scope === 'uncommitted') {
+      baseRef = 'HEAD';
+      baseSha = headSha;
+      mergeBaseSha = headSha;
+      compareLabel = 'Uncommitted changes';
+    } else {
+      if (refreshBase) {
+        await this.refreshLikelyBase(git, repoRoot, pullRequest?.baseRefName ?? null);
+      }
+      baseRef = await this.detectBaseRef(git, pullRequest?.baseRefName ?? null);
+      baseSha = baseRef
+        ? await git.revparse([baseRef]).then((value) => value.trim()).catch(() => null)
+        : null;
+      mergeBaseSha = baseRef
+        ? await git.raw(['merge-base', 'HEAD', baseRef]).then((value) => value.trim()).catch(() => baseSha)
+        : headSha;
+      originRefAgeSeconds = baseRef ? await this.readRefAgeSeconds(git, baseRef) : null;
+      compareLabel = baseRef ? `${branch} vs ${baseRef}` : `${branch} vs HEAD`;
+    }
+
+    return {
+      repoRoot,
+      branch,
+      baseRef,
+      baseSha,
+      headSha,
+      mergeBaseSha,
+      compareLabel,
+      originRefAgeSeconds,
+      staleBase: originRefAgeSeconds !== null && originRefAgeSeconds > STALE_ORIGIN_SECONDS,
+      pullRequest,
+    };
+  }
+
+  private async readFileSummaries(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+  ): Promise<ChangeReviewFileSummary[]> {
+    const [statusOutput, numstatOutput] = await Promise.all([
+      git.raw(this.buildDiffArgs(scope, base, ['--name-status', '-z', '--find-renames'])),
+      git.raw(this.buildDiffArgs(scope, base, ['--numstat', '-z', '--find-renames'])),
+    ]);
+    const stats = this.parseNumstat(numstatOutput);
+    const tracked: ChangeReviewFileSummary[] = await Promise.all(this.parseNameStatus(statusOutput).map(async (file) => {
+      const stat = stats.get(file.path) ?? stats.get(file.oldPath ?? '') ?? {
+        additions: 0,
+        deletions: 0,
+        binary: false,
+      };
+      const size = await this.readCurrentFileSize(worktreePath, file.path);
+      return {
+        ...file,
+        additions: stat.additions,
+        deletions: stat.deletions,
+        binary: stat.binary,
+        large: stat.additions + stat.deletions > LARGE_FILE_LINES
+          || size !== null && size > LARGE_FILE_BYTES,
+        size,
+      };
+    }));
+
+    if (scope !== 'last-commit') {
+      const untracked = await this.readUntrackedSummaries(git, worktreePath);
+      const seen = new Set(tracked.map((file) => file.path));
+      for (const file of untracked) {
+        if (!seen.has(file.path)) {
+          tracked.push(file);
+        }
+      }
+    }
+
+    return tracked.sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  private async readFileSummary(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    filePath: string,
+  ): Promise<ChangeReviewFileSummary> {
+    const summaries = await this.readFileSummaries(git, worktreePath, scope, base);
+    const summary = summaries.find((file) => file.path === filePath || file.oldPath === filePath);
+    if (!summary) {
+      throw new BadRequestException(`File is not changed in this scope: ${filePath}`);
+    }
+    return summary;
+  }
+
+  private async buildRows(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    summary: ChangeReviewFileSummary,
+    context: number,
+    cacheKey: string,
+  ): Promise<CachedRows> {
+    let result: CachedRows;
+
+    if (summary.binary) {
+      result = this.cached(cacheKey, {
+        rows: [this.metaRow(summary.path, 'Binary file changed')],
+        contextRanges: [],
+        message: 'Binary file changed.',
+        binary: true,
+        large: false,
+        truncated: false,
+      });
+      return result;
+    }
+
+    if (summary.status === 'added' && await this.isUntracked(git, summary.path)) {
+      result = await this.buildUntrackedRows(worktreePath, summary, cacheKey);
+      return result;
+    }
+
+    if (summary.large) {
+      result = this.cached(cacheKey, {
+        rows: [this.metaRow(summary.path, 'Large file diff is windowed. Select a narrower scope or load targeted ranges.')],
+        contextRanges: [],
+        message: 'Large file diff omitted from automatic rendering.',
+        binary: false,
+        large: true,
+        truncated: true,
+      });
+      return result;
+    }
+
+    const patch = await git.raw([
+      ...this.buildDiffArgs(scope, base, [`--unified=${context}`, '--find-renames']),
+      '--',
+      summary.path,
+    ]);
+    const parsed = this.parsePatchRows(summary.path, patch);
+    result = this.cached(cacheKey, {
+      rows: parsed.rows.length ? parsed.rows : [this.metaRow(summary.path, 'No textual diff for this file.')],
+      contextRanges: parsed.contextRanges,
+      message: null,
+      binary: false,
+      large: false,
+      truncated: false,
+    });
+    return result;
+  }
+
+  private buildDiffArgs(
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    flags: string[],
+  ): string[] {
+    if (scope === 'last-commit') {
+      return [
+        'diff-tree',
+        '--root',
+        '--no-commit-id',
+        '-r',
+        ...flags,
+        'HEAD',
+      ];
+    }
+    const ref = scope === 'branch'
+      ? base.mergeBaseSha ?? base.baseSha ?? 'HEAD'
+      : 'HEAD';
+    return ['diff', ...flags, ref];
+  }
+
+  private parseNameStatus(output: string): Array<Pick<ChangeReviewFileSummary, 'path' | 'oldPath' | 'status'>> {
+    const tokens = output.split('\0').filter(Boolean);
+    const files: Array<Pick<ChangeReviewFileSummary, 'path' | 'oldPath' | 'status'>> = [];
+    for (let index = 0; index < tokens.length;) {
+      const rawStatus = tokens[index++] ?? '';
+      if (rawStatus.startsWith('R')) {
+        const oldPath = tokens[index++] ?? '';
+        const nextPath = tokens[index++] ?? oldPath;
+        files.push({ path: nextPath, oldPath, status: 'renamed' });
+        continue;
+      }
+      const filePath = tokens[index++] ?? '';
+      files.push({
+        path: filePath,
+        oldPath: null,
+        status: this.toFileStatus(rawStatus),
+      });
+    }
+    return files;
+  }
+
+  private parseNumstat(output: string): Map<string, { additions: number; deletions: number; binary: boolean }> {
+    const tokens = output.split('\0').filter(Boolean);
+    const stats = new Map<string, { additions: number; deletions: number; binary: boolean }>();
+    for (let index = 0; index < tokens.length; index += 1) {
+      const parts = tokens[index].split('\t');
+      if (parts.length >= 3) {
+        const [additions, deletions, filePath] = parts;
+        stats.set(filePath, {
+          additions: additions === '-' ? 0 : Number.parseInt(additions, 10) || 0,
+          deletions: deletions === '-' ? 0 : Number.parseInt(deletions, 10) || 0,
+          binary: additions === '-' || deletions === '-',
+        });
+        continue;
+      }
+      if (parts.length === 2 && index + 2 < tokens.length) {
+        const [additions, deletions] = parts;
+        const oldPath = tokens[++index];
+        const nextPath = tokens[++index];
+        const stat = {
+          additions: additions === '-' ? 0 : Number.parseInt(additions, 10) || 0,
+          deletions: deletions === '-' ? 0 : Number.parseInt(deletions, 10) || 0,
+          binary: additions === '-' || deletions === '-',
+        };
+        stats.set(nextPath, stat);
+        stats.set(oldPath, stat);
+      }
+    }
+    return stats;
+  }
+
+  private parsePatchRows(filePath: string, patch: string): { rows: ChangeReviewRow[]; contextRanges: ChangeReviewContextRange[] } {
+    const lines = patch.split('\n');
+    const rows: ChangeReviewRow[] = [];
+    const contextRanges: ChangeReviewContextRange[] = [];
+    let oldLine: number | null = null;
+    let newLine: number | null = null;
+    let previousOldEnd = 0;
+    let previousNewEnd = 0;
+    let rowIndex = 0;
+
+    for (const line of lines) {
+      if (!line || line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('new file mode') || line.startsWith('deleted file mode') || line.startsWith('similarity index') || line.startsWith('rename from') || line.startsWith('rename to')) {
+        continue;
+      }
+      if (line.startsWith('@@')) {
+        const match = line.match(/^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/);
+        if (match) {
+          const nextOld = Number(match[1]);
+          const oldCount = Number(match[2] ?? '1');
+          const nextNew = Number(match[3]);
+          const newCount = Number(match[4] ?? '1');
+          const gap = Math.min(nextOld - previousOldEnd, nextNew - previousNewEnd) - 1;
+          if (previousOldEnd > 0 && gap > 0) {
+            const range = {
+              id: `${filePath}:gap:${contextRanges.length}`,
+              oldStart: previousOldEnd + 1,
+              newStart: previousNewEnd + 1,
+              count: gap,
+            };
+            contextRanges.push(range);
+            rows.push({
+              id: `${filePath}:${rowIndex++}`,
+              type: 'expand',
+              oldLine: null,
+              newLine: null,
+              content: `${gap} unchanged line${gap === 1 ? '' : 's'}`,
+              path: filePath,
+              oldStart: range.oldStart,
+              newStart: range.newStart,
+              count: range.count,
+            });
+          }
+          oldLine = nextOld;
+          newLine = nextNew;
+          previousOldEnd = nextOld + oldCount - 1;
+          previousNewEnd = nextNew + newCount - 1;
+        }
+        rows.push({
+          id: `${filePath}:${rowIndex++}`,
+          type: 'hunk',
+          oldLine: null,
+          newLine: null,
+          content: line,
+          path: filePath,
+        });
+        continue;
+      }
+      if (line.startsWith('\\')) {
+        continue;
+      }
+      if (line.startsWith('+')) {
+        rows.push({
+          id: `${filePath}:${rowIndex++}`,
+          type: 'add',
+          oldLine: null,
+          newLine,
+          content: line.slice(1),
+          path: filePath,
+        });
+        if (newLine !== null) newLine += 1;
+        continue;
+      }
+      if (line.startsWith('-')) {
+        rows.push({
+          id: `${filePath}:${rowIndex++}`,
+          type: 'delete',
+          oldLine,
+          newLine: null,
+          content: line.slice(1),
+          path: filePath,
+        });
+        if (oldLine !== null) oldLine += 1;
+        continue;
+      }
+      rows.push({
+        id: `${filePath}:${rowIndex++}`,
+        type: 'context',
+        oldLine,
+        newLine,
+        content: line.startsWith(' ') ? line.slice(1) : line,
+        path: filePath,
+      });
+      if (oldLine !== null) oldLine += 1;
+      if (newLine !== null) newLine += 1;
+    }
+
+    return { rows, contextRanges };
+  }
+
+  private async buildUntrackedRows(
+    worktreePath: string,
+    summary: ChangeReviewFileSummary,
+    cacheKey: string,
+  ): Promise<CachedRows> {
+    const absolutePath = path.join(worktreePath, summary.path);
+    const stat = await fs.stat(absolutePath);
+    if (stat.size > LARGE_FILE_BYTES) {
+      return this.cached(cacheKey, {
+        rows: [this.metaRow(summary.path, 'Large untracked file omitted from automatic rendering.')],
+        contextRanges: [],
+        message: 'Large untracked file omitted from automatic rendering.',
+        binary: false,
+        large: true,
+        truncated: true,
+      });
+    }
+    const buffer = await fs.readFile(absolutePath);
+    if (buffer.includes(0)) {
+      return this.cached(cacheKey, {
+        rows: [this.metaRow(summary.path, 'Binary file changed')],
+        contextRanges: [],
+        message: 'Binary file changed.',
+        binary: true,
+        large: false,
+        truncated: false,
+      });
+    }
+    const text = buffer.toString('utf8');
+    const lines = text.split('\n');
+    const truncated = lines.length > LARGE_FILE_LINES;
+    const visible = truncated ? lines.slice(0, LARGE_FILE_LINES) : lines;
+    const rows: ChangeReviewRow[] = [
+      {
+        id: `${summary.path}:hunk`,
+        type: 'hunk',
+        oldLine: null,
+        newLine: null,
+        content: `@@ -0,0 +1,${visible.length} @@`,
+        path: summary.path,
+      },
+      ...visible.map((line, index) => ({
+        id: `${summary.path}:${index}`,
+        type: 'add' as const,
+        oldLine: null,
+        newLine: index + 1,
+        content: line,
+        path: summary.path,
+      })),
+    ];
+    return this.cached(cacheKey, {
+      rows,
+      contextRanges: [],
+      message: truncated ? 'Large untracked file was truncated.' : null,
+      binary: false,
+      large: truncated,
+      truncated,
+    });
+  }
+
+  private async readUntrackedSummaries(
+    git: SimpleGit,
+    worktreePath: string,
+  ): Promise<ChangeReviewFileSummary[]> {
+    const status = await git.status();
+    const files = await Promise.all(status.not_added.map(async (filePath): Promise<ChangeReviewFileSummary | null> => {
+      const absolutePath = path.join(worktreePath, filePath);
+      const stat = await fs.stat(absolutePath).catch(() => null);
+      if (!stat?.isFile()) {
+        return null;
+      }
+      const stats = await this.readTextStats(absolutePath, stat.size);
+      return {
+        path: filePath,
+        oldPath: null,
+        status: 'added' as const,
+        additions: stats.binary ? 0 : stats.lines,
+        deletions: 0,
+        binary: stats.binary,
+        large: stat.size > LARGE_FILE_BYTES || stats.lines > LARGE_FILE_LINES,
+        size: stat.size,
+      };
+    }));
+    return files.filter((file): file is ChangeReviewFileSummary => file !== null);
+  }
+
+  private async readTextStats(absolutePath: string, size: number): Promise<{ lines: number; binary: boolean }> {
+    const buffer = await fs.readFile(absolutePath);
+    if (buffer.includes(0)) {
+      return { lines: 0, binary: true };
+    }
+    if (size === 0) {
+      return { lines: 0, binary: false };
+    }
+    const text = buffer.toString('utf8');
+    return {
+      lines: text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length,
+      binary: false,
+    };
+  }
+
+  private async readCurrentFileSize(worktreePath: string, relativePath: string): Promise<number | null> {
+    const stat = await fs.stat(path.join(worktreePath, relativePath)).catch(() => null);
+    return stat?.isFile() ? stat.size : null;
+  }
+
+  private async isUntracked(git: SimpleGit, filePath: string): Promise<boolean> {
+    const status = await git.status();
+    return status.not_added.includes(filePath);
+  }
+
+  private async detectBaseRef(git: SimpleGit, prBaseRef: string | null): Promise<string | null> {
+    const candidates = [
+      prBaseRef ? `origin/${prBaseRef}` : null,
+      await git.raw(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']).then((value) => value.trim()).catch(() => null),
+      'origin/main',
+      'origin/master',
+    ].filter((value): value is string => Boolean(value));
+
+    for (const candidate of candidates) {
+      const exists = await git.raw(['rev-parse', '--verify', '--quiet', candidate]).then(() => true).catch(() => false);
+      if (exists) return candidate;
+    }
+    return null;
+  }
+
+  private async refreshLikelyBase(git: SimpleGit, repoRoot: string, prBaseRef: string | null): Promise<void> {
+    const ref = prBaseRef ?? 'HEAD';
+    const remote = await git.getRemotes(true).then((remotes) => remotes.find((candidate) => candidate.name === 'origin') ?? remotes[0]).catch(() => null);
+    if (!remote) return;
+    await this.execGit(['fetch', '--prune', remote.name, ref], repoRoot, 8_000).catch(() => undefined);
+  }
+
+  private async readPullRequestInfo(repoRoot: string, branch: string): Promise<ChangeReviewPullRequestInfo | null> {
+    const stdout = await this.execFileSafe(
+      'gh',
+      ['pr', 'view', branch, '--json', 'number,title,url,state,isDraft,baseRefName'],
+      repoRoot,
+      3_000,
+    );
+    if (!stdout) return null;
+    try {
+      const parsed = JSON.parse(stdout);
+      return {
+        number: parsed.number,
+        title: parsed.title,
+        url: parsed.url,
+        state: parsed.state,
+        isDraft: Boolean(parsed.isDraft),
+        baseRefName: parsed.baseRefName ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async readRefAgeSeconds(git: SimpleGit, ref: string): Promise<number | null> {
+    const timestamp = await git.raw(['for-each-ref', '--format=%(committerdate:unix)', `refs/remotes/${ref}`])
+      .then((value) => Number(value.trim()))
+      .catch(() => 0);
+    if (!timestamp) return null;
+    return Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
+  }
+
+  private execGit(args: string[], cwd: string, timeout: number): Promise<string> {
+    return this.execFileSafe('git', args, cwd, timeout).then((output) => output ?? '');
+  }
+
+  private execFileSafe(command: string, args: string[], cwd: string, timeout: number): Promise<string | null> {
+    return new Promise((resolve) => {
+      execFile(
+        command,
+        args,
+        {
+          cwd,
+          timeout,
+          maxBuffer: 2_000_000,
+          env: {
+            ...buildAugmentedEnv(process.env, cwd),
+            GH_PROMPT_DISABLED: '1',
+            GIT_TERMINAL_PROMPT: '0',
+            NO_COLOR: '1',
+          },
+        },
+        (error, stdout) => resolve(error ? null : stdout),
+      );
+    });
+  }
+
+  private toFileStatus(raw: string): ChangeReviewFileStatus {
+    if (raw.startsWith('A')) return 'added';
+    if (raw.startsWith('D')) return 'deleted';
+    return 'modified';
+  }
+
+  private metaRow(filePath: string, content: string): ChangeReviewRow {
+    return {
+      id: `${filePath}:meta`,
+      type: 'meta',
+      oldLine: null,
+      newLine: null,
+      content,
+      path: filePath,
+    };
+  }
+
+  private getCachedRows(key: string): CachedRows | null {
+    const cached = this.rowCache.get(key);
+    if (!cached) return null;
+    if (Date.now() - cached.createdAt > CACHE_TTL_MS) {
+      this.rowCache.delete(key);
+      return null;
+    }
+    return cached;
+  }
+
+  private cached(key: string, value: Omit<CachedRows, 'key' | 'createdAt'>): CachedRows {
+    const cached = { key, createdAt: Date.now(), ...value };
+    this.rowCache.set(key, cached);
+    return cached;
+  }
+
+  private assertScope(scope: ChangeReviewScope): void {
+    if (!['uncommitted', 'last-commit', 'branch'].includes(scope)) {
+      throw new BadRequestException(`Invalid change review scope: ${scope}`);
+    }
+  }
+}

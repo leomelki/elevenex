@@ -34,7 +34,7 @@ import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-s
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
 import { BrowserIsolationConfig } from '@/shared/models/browser-isolation.model';
 import { toast } from 'ngx-sonner';
-import { GitHubPanelComponent } from '@/features/github/github-panel.component';
+import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { Session } from '@/shared/models/session.model';
 import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
@@ -76,7 +76,7 @@ type SidePanelMode = 'none' | 'files' | 'browser' | 'github' | 'plannotator' | '
     PlannotatorPanelComponent,
     ActionsPanelComponent,
     UserTerminalPanelComponent,
-    GitHubPanelComponent,
+    ChangeReviewPanelComponent,
     TrackNativeModalDirective,
   ],
   templateUrl: './session-container.html',

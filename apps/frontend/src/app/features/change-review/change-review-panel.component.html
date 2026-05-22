@@ -1,0 +1,212 @@
+<section class="cr-panel">
+  <header class="cr-toolbar">
+    <div class="cr-toolbar__title">
+      <ng-icon name="lucideGitPullRequest" size="16" />
+      <div class="cr-toolbar__copy">
+        <span class="cr-title">Changes</span>
+        @if (summary(); as current) {
+          <span class="cr-subtitle">
+            <ng-icon name="lucideGitBranch" size="12" />
+            {{ current.compareLabel }}
+          </span>
+        }
+      </div>
+    </div>
+
+    <div class="cr-scope" aria-label="Change scope">
+      @for (item of scopes; track item.value) {
+        <button
+          type="button"
+          class="cr-scope__button"
+          [class.cr-scope__button--active]="scope() === item.value"
+          (click)="setScope(item.value)"
+        >
+          {{ item.label }}
+        </button>
+      }
+    </div>
+
+    <div class="cr-toolbar__actions">
+      @if (summary()?.pullRequest) {
+        <button z-button zType="ghost" zSize="sm" class="cr-icon-button" type="button" title="Open pull request" (click)="openPullRequest()">
+          <ng-icon name="lucideExternalLink" size="15" />
+        </button>
+      }
+      <button z-button zType="ghost" zSize="sm" class="cr-icon-button" type="button" title="Refresh base refs" [zDisabled]="loadingSummary()" (click)="refresh(true)">
+        <ng-icon name="lucideRefreshCw" size="15" [class.cr-spin]="loadingSummary()" />
+      </button>
+    </div>
+  </header>
+
+  @if (error(); as message) {
+    <div class="cr-error">
+      <ng-icon name="lucideTriangleAlert" size="16" />
+      <span>{{ message }}</span>
+    </div>
+  }
+
+  @if (summary(); as current) {
+    <div class="cr-meta">
+      <span>{{ current.totals.files }} files</span>
+      <span class="cr-add">+{{ current.totals.additions }}</span>
+      <span class="cr-del">-{{ current.totals.deletions }}</span>
+      <span>base {{ shortSha(current.mergeBaseSha || current.baseSha) }}</span>
+      <span>head {{ shortSha(current.headSha) }}</span>
+      @if (current.staleBase) {
+        <span class="cr-stale">
+          <ng-icon name="lucideTriangleAlert" size="12" />
+          {{ staleText(current.originRefAgeSeconds) }}
+        </span>
+      }
+    </div>
+  }
+
+  <div class="cr-body">
+    <aside class="cr-files">
+      <div class="cr-search">
+        <ng-icon name="lucideSearch" size="14" />
+        <input
+          z-input
+          type="search"
+          placeholder="Search files"
+          [value]="search()"
+          (input)="search.set($any($event.target).value)"
+        />
+      </div>
+
+      <div class="cr-filters">
+        @for (filter of statusFilters(); track filter.value) {
+          <button
+            type="button"
+            class="cr-filter"
+            [class.cr-filter--active]="statusFilter() === filter.value"
+            (click)="setStatusFilter(filter.value)"
+          >
+            {{ filter.label }}
+            <span>{{ filter.count }}</span>
+          </button>
+        }
+      </div>
+
+      @if (loadingSummary()) {
+        <div class="cr-loading">
+          <ng-icon name="lucideLoader" size="16" class="cr-spin" />
+          Loading summary
+        </div>
+      } @else if (filteredFiles().length === 0) {
+        <div class="cr-empty">
+          <ng-icon name="lucideFileCode" size="18" />
+          <span>No files in this scope</span>
+        </div>
+      } @else {
+        <cdk-virtual-scroll-viewport itemSize="58" class="cr-file-viewport">
+          <button
+            *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
+            type="button"
+            class="cr-file-row"
+            [class.cr-file-row--active]="selectedFile()?.path === file.path"
+            (click)="selectFile(file)"
+            [title]="file.path"
+          >
+            <span class="cr-file-status" [class]="'cr-file-status--' + file.status">{{ statusLabel(file.status) }}</span>
+            <span class="cr-file-main">
+              <span class="cr-file-name">{{ fileBasename(file.path) }}</span>
+              <span class="cr-file-dir">{{ fileDirname(file.path) }}</span>
+            </span>
+            <span class="cr-file-stats">
+              @if (file.binary) {
+                <ng-icon name="lucideBinary" size="14" />
+              } @else {
+                <span class="cr-add">+{{ file.additions }}</span>
+                <span class="cr-del">-{{ file.deletions }}</span>
+              }
+            </span>
+          </button>
+        </cdk-virtual-scroll-viewport>
+      }
+    </aside>
+
+    <main class="cr-diff">
+      @if (!selectedFile()) {
+        <div class="cr-empty cr-empty--main">
+          <ng-icon name="lucideFileCode" size="24" />
+          <span>Select a file to inspect its changes</span>
+        </div>
+      } @else {
+        <header class="cr-diff-header">
+          <div class="cr-diff-header__path">
+            <span class="cr-file-status" [class]="'cr-file-status--' + selectedFile()!.status">{{ statusLabel(selectedFile()!.status) }}</span>
+            <div>
+              <strong>{{ selectedFile()!.path }}</strong>
+              @if (selectedFile()!.oldPath) {
+                <span>renamed from {{ selectedFile()!.oldPath }}</span>
+              }
+            </div>
+          </div>
+          <div class="cr-diff-header__actions">
+            @if ((fileWindow()?.contextRanges?.length ?? 0) > 0) {
+              <button z-button zType="outline" zSize="sm" type="button" (click)="expandContext()">
+                <ng-icon name="lucideChevronDown" size="14" />
+                More context
+              </button>
+            }
+            <button z-button zType="ghost" zSize="sm" type="button" (click)="collapseFile()">Collapse</button>
+          </div>
+        </header>
+
+        @if (loadingWindow()) {
+          <div class="cr-loading cr-loading--main">
+            <ng-icon name="lucideLoader" size="18" class="cr-spin" />
+            Loading file window
+          </div>
+        } @else if (fileWindow(); as activeWindow) {
+          @if (activeWindow.message) {
+            <div class="cr-notice">
+              <ng-icon name="lucideTriangleAlert" size="15" />
+              <span>{{ activeWindow.message }}</span>
+            </div>
+          }
+
+          <cdk-virtual-scroll-viewport
+            #diffViewport
+            itemSize="24"
+            class="cr-diff-viewport"
+            (scrolledIndexChange)="onDiffIndexChange($event)"
+          >
+            <div
+              *cdkVirtualFor="let row of rows(); trackBy: rowTrack"
+              class="cr-diff-row"
+              [class.cr-diff-row--add]="row.type === 'add'"
+              [class.cr-diff-row--delete]="row.type === 'delete'"
+              [class.cr-diff-row--hunk]="row.type === 'hunk'"
+              [class.cr-diff-row--expand]="row.type === 'expand'"
+              [class.cr-diff-row--meta]="row.type === 'meta'"
+            >
+              <span class="cr-line cr-line--old">{{ row.oldLine ?? '' }}</span>
+              <span class="cr-line cr-line--new">{{ row.newLine ?? '' }}</span>
+              <span class="cr-marker">
+                @if (row.type === 'add') { + }
+                @else if (row.type === 'delete') { - }
+                @else { &nbsp; }
+              </span>
+              @if (row.type === 'expand') {
+                <button class="cr-expand-row" type="button" (click)="expandContext()">
+                  <ng-icon name="lucideChevronDown" size="13" />
+                  {{ row.content }}
+                </button>
+              } @else {
+                <code class="cr-code" [innerHTML]="rowHtml(row)"></code>
+              }
+            </div>
+            @if (loadingMore()) {
+              <div class="cr-loading cr-loading--inline">
+                <ng-icon name="lucideLoader" size="14" class="cr-spin" />
+                Loading more rows
+              </div>
+            }
+          </cdk-virtual-scroll-viewport>
+        }
+      }
+    </main>
+  </div>
+</section>

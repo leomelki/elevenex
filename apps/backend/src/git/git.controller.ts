@@ -1,5 +1,11 @@
 import { Controller, Get, Post, Body, Query, Logger } from '@nestjs/common';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
+import { ChangeReviewService } from './change-review.service.js';
+import type {
+  ChangeReviewFileWindow,
+  ChangeReviewScope,
+  ChangeReviewSummary,
+} from './change-review.types.js';
 import {
   GitService,
   FileStatus,
@@ -14,7 +20,10 @@ import {
 export class GitController {
   private readonly logger = new Logger(GitController.name);
 
-  constructor(private readonly gitService: GitService) {}
+  constructor(
+    private readonly gitService: GitService,
+    private readonly changeReviewService: ChangeReviewService,
+  ) {}
 
   @Get('status')
   async getStatus(
@@ -28,6 +37,59 @@ export class GitController {
     @Query('worktreePath') worktreePath: string,
   ): Promise<GitStatusSummary> {
     return this.gitService.getStatusSummary(decodeURIComponent(worktreePath));
+  }
+
+  @Get('change-review/summary')
+  async getChangeReviewSummary(
+    @Query('worktreePath') worktreePath: string,
+    @Query('scope') scope: ChangeReviewScope = 'branch',
+    @Query('refreshBase') refreshBase?: string,
+  ): Promise<ChangeReviewSummary> {
+    return this.changeReviewService.getSummary(
+      decodeURIComponent(worktreePath),
+      scope,
+      refreshBase === 'true',
+    );
+  }
+
+  @Get('change-review/file')
+  async getChangeReviewFile(
+    @Query('worktreePath') worktreePath: string,
+    @Query('scope') scope: ChangeReviewScope = 'branch',
+    @Query('path') filePath: string,
+    @Query('offset') offset?: string,
+    @Query('limit') limit?: string,
+    @Query('context') context?: string,
+  ): Promise<ChangeReviewFileWindow> {
+    return this.changeReviewService.getFileWindow(
+      decodeURIComponent(worktreePath),
+      scope,
+      decodeURIComponent(filePath),
+      {
+        offset: offset ? Number.parseInt(offset, 10) : undefined,
+        limit: limit ? Number.parseInt(limit, 10) : undefined,
+        context: context ? Number.parseInt(context, 10) : undefined,
+      },
+    );
+  }
+
+  @Get('change-review/window')
+  async getChangeReviewWindow(
+    @Query('worktreePath') worktreePath: string,
+    @Query('scope') scope: ChangeReviewScope = 'branch',
+    @Query('path') filePath: string,
+    @Query('offset') offset?: string,
+    @Query('limit') limit?: string,
+    @Query('context') context?: string,
+  ): Promise<ChangeReviewFileWindow> {
+    return this.getChangeReviewFile(
+      worktreePath,
+      scope,
+      filePath,
+      offset,
+      limit,
+      context,
+    );
   }
 
   @Post('stage')

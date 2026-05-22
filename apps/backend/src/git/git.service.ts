@@ -1066,12 +1066,13 @@ export class GitService {
       if (!subject) {
         continue;
       }
+      const body = parsed?.['body'];
 
       return {
         subject,
         body:
-          typeof parsed.body === 'string' && parsed.body.trim()
-            ? parsed.body.trim()
+          typeof body === 'string' && body.trim()
+            ? body.trim()
             : null,
         confidence: 'medium',
         source,
