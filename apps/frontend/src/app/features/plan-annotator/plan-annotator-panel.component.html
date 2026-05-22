@@ -80,6 +80,22 @@
       </aside>
 
       <main #scrollRoot class="pa-reader" (scroll)="onReaderScroll()">
+        <div class="pa-reader-tools" aria-label="Plan navigation">
+          <label class="pa-search">
+            <ng-icon name="lucideSearch" size="13" aria-hidden="true" />
+            <input
+              type="search"
+              placeholder="Search plan"
+              [ngModel]="query()"
+              (ngModelChange)="query.set($event)"
+            />
+          </label>
+
+          <div class="pa-progress" aria-hidden="true">
+            <span [style.width.%]="readingProgress()"></span>
+          </div>
+        </div>
+
         @if (activeReview.before) {
           <section
             class="pa-preface cw-md"

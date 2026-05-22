@@ -1,4 +1,5 @@
 :host {
+  container-type: inline-size;
   display: block;
 }
 
@@ -53,7 +54,7 @@
 }
 
 .pm-heading--1 h1 {
-  font-size: clamp(1.72rem, 2.4vw, 2.2rem);
+  font-size: 1.95rem;
   line-height: 1.08;
 }
 
@@ -314,7 +315,7 @@
   background: color-mix(in oklab, var(--primary) 26%, transparent);
 }
 
-@media (max-width: 760px) {
+@container (max-width: 42rem) {
   .pm-heading--1 {
     padding: 0.85rem 0.9rem;
   }
