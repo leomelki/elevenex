@@ -14,6 +14,7 @@ The project is meant to be used in repositories with multiple thousands of files
 
 - Keep Angular components split by responsibility when they are more than trivially small: use `.component.ts` for behavior and wiring, `.component.html` for substantial templates, and `.component.scss` for substantial component styles.
 - Inline `template` and `styles` are acceptable only for very small, self-contained components where the markup and styling are brief enough to read comfortably inside the TypeScript file.
+- Prefer Zard UI components and Tailwind utilities for styling. Use component SCSS sparingly, only when utilities would be impractical or noisy, such as host selectors, third-party/rendered markdown/document styling, or edge-case component states. If styling or markup is reusable, create or extract an Angular component that owns the Tailwind/Zard implementation instead of sharing CSS rules across duplicated HTML.
 
 ### Dark mode and color best practices
 
