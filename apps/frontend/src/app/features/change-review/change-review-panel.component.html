@@ -111,24 +111,44 @@
           <button
             *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
             type="button"
-            class="grid h-[58px] w-full grid-cols-[1.45rem_minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-transparent px-2.5 text-left text-foreground transition-colors hover:bg-accent/70"
-            [class.bg-accent]="selectedFile()?.path === file.path"
+            class="grid h-[58px] w-full grid-cols-[1.35rem_1.45rem_minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-transparent px-2.5 text-left text-foreground transition-colors hover:bg-accent/70"
+            [ngClass]="{
+              'bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))] shadow-[inset_3px_0_0_var(--primary)]': isSelectedFile(file),
+              'opacity-55': isFileViewed(file) && !isSelectedFile(file)
+            }"
             (click)="selectFile(file)"
             (mouseenter)="prefetchFile(file)"
             (focus)="prefetchFile(file)"
             [title]="file.path"
           >
+            <span
+              class="flex size-4 items-center justify-center rounded border text-[0.6rem]"
+              [ngClass]="isFileViewed(file)
+                ? 'border-success bg-success text-success-foreground'
+                : isSelectedFile(file)
+                  ? 'border-primary bg-background text-primary'
+                  : 'border-border bg-background text-transparent'"
+              aria-hidden="true"
+            >
+              <ng-icon name="lucideCheck" size="11" />
+            </span>
             <span class="cr-file-status" [ngClass]="statusClass(file.status)">{{ statusLabel(file.status) }}</span>
             <span class="flex min-w-0 flex-col">
-              <span class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.78rem] font-semibold">{{ fileBasename(file.path) }}</span>
-              <span class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground">{{ fileDirname(file.path) }}</span>
+              <span
+                class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.78rem] font-semibold"
+                [class.line-through]="isFileViewed(file)"
+                [class.text-muted-foreground]="isFileViewed(file) && !isSelectedFile(file)"
+              >
+                {{ fileBasename(file.path) }}
+              </span>
+              <span
+                class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground"
+                [class.line-through]="isFileViewed(file)"
+              >
+                {{ fileDirname(file.path) }}
+              </span>
             </span>
             <span class="inline-flex gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground">
-              @if (isFileViewed(file)) {
-                <span class="inline-flex items-center gap-1 text-success" title="Viewed">
-                  <ng-icon name="lucideCheck" size="13" />
-                </span>
-              }
               @if (file.binary) {
                 <ng-icon name="lucideBinary" size="14" />
               } @else {
@@ -159,18 +179,23 @@
             </div>
           </div>
           <div class="flex shrink-0 gap-1.5">
-            <button
-              z-button
-              zType="outline"
-              zSize="sm"
-              type="button"
-              [zDisabled]="!fileWindow()"
-              [ngClass]="selectedFileViewed() ? '!bg-success !border-success !text-success-foreground' : ''"
-              (click)="toggleSelectedFileViewed()"
+            <label
+              class="inline-flex h-8 cursor-pointer select-none items-center gap-2 rounded-md border border-border bg-background px-3 text-xs font-semibold text-foreground transition-colors hover:bg-accent"
+              [class.!bg-success]="selectedFileViewed()"
+              [class.!border-success]="selectedFileViewed()"
+              [class.!text-success-foreground]="selectedFileViewed()"
+              [class.pointer-events-none]="!fileWindow()"
+              [class.opacity-50]="!fileWindow()"
             >
-              <ng-icon name="lucideCheck" size="14" />
+              <input
+                type="checkbox"
+                class="size-4 accent-[var(--success)]"
+                [checked]="selectedFileViewed()"
+                [disabled]="!fileWindow()"
+                (change)="toggleSelectedFileViewed()"
+              />
               Viewed
-            </button>
+            </label>
             <button z-button zType="ghost" zSize="sm" type="button" (click)="collapseFile()">Collapse</button>
           </div>
         </header>

@@ -212,6 +212,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       return;
     }
     this.markViewed(file.path, fileWindow.changeHash);
+    void this.selectNextUnviewedFile(file.path);
   }
 
   prefetchFile(file: ChangeReviewFileSummary): void {
@@ -332,6 +333,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   isFileViewed(file: ChangeReviewFileSummary): boolean {
     const hash = this.fileChangeHashes().get(file.path);
     return Boolean(hash) && this.isViewedHash(file.path, hash!);
+  }
+
+  isSelectedFile(file: ChangeReviewFileSummary): boolean {
+    return this.selectedFile()?.path === file.path;
   }
 
   fileTrack(index: number, file: ChangeReviewFileSummary): string {
@@ -458,6 +463,20 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     } finally {
       this.loadingWindow.set(false);
       this.loadingMore.set(false);
+    }
+  }
+
+  private async selectNextUnviewedFile(currentPath: string): Promise<void> {
+    const files = this.filteredFiles();
+    if (files.length === 0) return;
+    const currentIndex = files.findIndex((file) => file.path === currentPath);
+    const ordered = [
+      ...files.slice(Math.max(0, currentIndex + 1)),
+      ...files.slice(0, Math.max(0, currentIndex)),
+    ];
+    const nextFile = ordered.find((file) => !this.isFileViewed(file));
+    if (nextFile) {
+      await this.selectFile(nextFile);
     }
   }
 
