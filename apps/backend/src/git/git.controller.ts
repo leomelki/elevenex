@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Query, Logger } from '@nestjs/common';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import { ChangeReviewService } from './change-review.service.js';
 import type {
+  ChangeReviewContextWindow,
   ChangeReviewFileWindow,
   ChangeReviewScope,
   ChangeReviewSummary,
@@ -89,6 +90,29 @@ export class GitController {
       offset,
       limit,
       context,
+    );
+  }
+
+  @Get('change-review/context')
+  async getChangeReviewContext(
+    @Query('worktreePath') worktreePath: string,
+    @Query('scope') scope: ChangeReviewScope = 'branch',
+    @Query('path') filePath: string,
+    @Query('oldStart') oldStart: string,
+    @Query('newStart') newStart: string,
+    @Query('count') count: string,
+    @Query('limit') limit?: string,
+  ): Promise<ChangeReviewContextWindow> {
+    return this.changeReviewService.getContextWindow(
+      decodeURIComponent(worktreePath),
+      scope,
+      decodeURIComponent(filePath),
+      {
+        oldStart: Number.parseInt(oldStart, 10),
+        newStart: Number.parseInt(newStart, 10),
+        count: Number.parseInt(count, 10),
+        limit: limit ? Number.parseInt(limit, 10) : undefined,
+      },
     );
   }
 

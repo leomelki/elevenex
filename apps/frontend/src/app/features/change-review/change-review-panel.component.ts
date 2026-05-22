@@ -47,6 +47,7 @@ const SCOPES: ScopeOption[] = [
 ];
 
 const WINDOW_LIMIT = 700;
+const CONTEXT_RANGE_LIMIT = 120;
 
 @Component({
   selector: 'app-change-review-panel',
@@ -91,6 +92,7 @@ export class ChangeReviewPanelComponent {
   readonly loadingSummary = signal(false);
   readonly loadingWindow = signal(false);
   readonly loadingMore = signal(false);
+  readonly loadingContextRanges = signal<ReadonlySet<string>>(new Set());
   readonly error = signal<string | null>(null);
 
   readonly filteredFiles = computed(() => {
@@ -154,17 +156,11 @@ export class ChangeReviewPanelComponent {
     await this.loadWindow(file, 0, true);
   }
 
-  async expandContext(): Promise<void> {
-    const file = this.selectedFile();
-    if (!file || this.loadingWindow()) return;
-    this.context.set(Math.min(200, this.context() + 24));
-    await this.loadWindow(file, 0, true);
-  }
-
   async collapseFile(): Promise<void> {
     this.selectedFile.set(null);
     this.fileWindow.set(null);
     this.rows.set([]);
+    this.loadingContextRanges.set(new Set());
   }
 
   onDiffIndexChange(index: number): void {
@@ -201,6 +197,58 @@ export class ChangeReviewPanelComponent {
     const safe = this.sanitizer.bypassSecurityTrustHtml(html);
     this.rowHtmlCache.set(key, safe);
     return safe;
+  }
+
+  async expandContext(row: ChangeReviewRow): Promise<void> {
+    const file = this.selectedFile();
+    if (!file || row.type !== 'expand' || !row.oldStart || !row.newStart || !row.count) return;
+    if (this.loadingContextRanges().has(row.id)) return;
+    this.setContextRangeLoading(row.id, true);
+    try {
+      const contextWindow = await firstValueFrom(this.changeReview.getContextWindow(
+        this.worktreePath(),
+        this.scope(),
+        file.path,
+        {
+          oldStart: row.oldStart,
+          newStart: row.newStart,
+          count: row.count,
+          limit: CONTEXT_RANGE_LIMIT,
+        },
+      ));
+      const loaded = contextWindow.rows.length;
+      const replacement: ChangeReviewRow[] = [...contextWindow.rows];
+      const remaining = Math.max(0, row.count - loaded);
+      if (remaining > 0) {
+        replacement.push({
+          ...row,
+          id: `${row.path}:expand:${row.oldStart + loaded}:${row.newStart + loaded}:${remaining}`,
+          oldStart: row.oldStart + loaded,
+          newStart: row.newStart + loaded,
+          count: remaining,
+          content: `${remaining} unchanged line${remaining === 1 ? '' : 's'}`,
+        });
+      }
+
+      this.rows.update((rows) => {
+        const index = rows.findIndex((candidate) => candidate.id === row.id);
+        if (index === -1) return rows;
+        return [
+          ...rows.slice(0, index),
+          ...replacement,
+          ...rows.slice(index + 1),
+        ];
+      });
+    } catch (error: any) {
+      const message = error?.error?.message || 'Could not load context lines.';
+      toast.error(message);
+    } finally {
+      this.setContextRangeLoading(row.id, false);
+    }
+  }
+
+  isContextRangeLoading(row: ChangeReviewRow): boolean {
+    return this.loadingContextRanges().has(row.id);
   }
 
   fileTrack(index: number, file: ChangeReviewFileSummary): string {
@@ -251,6 +299,7 @@ export class ChangeReviewPanelComponent {
     this.fileWindow.set(null);
     this.rows.set([]);
     this.selectedFile.set(null);
+    this.loadingContextRanges.set(new Set());
     this.rowHtmlCache.clear();
     try {
       const summary = await firstValueFrom(this.changeReview.getSummary(worktreePath, scope, refreshBase));
@@ -271,6 +320,7 @@ export class ChangeReviewPanelComponent {
   private async loadWindow(file: ChangeReviewFileSummary, offset: number, replace: boolean): Promise<void> {
     if (replace) {
       this.loadingWindow.set(true);
+      this.loadingContextRanges.set(new Set());
       this.diffViewport()?.scrollToIndex(0);
     } else {
       this.loadingMore.set(true);
@@ -295,5 +345,17 @@ export class ChangeReviewPanelComponent {
       this.loadingWindow.set(false);
       this.loadingMore.set(false);
     }
+  }
+
+  private setContextRangeLoading(rowId: string, loading: boolean): void {
+    this.loadingContextRanges.update((current) => {
+      const next = new Set(current);
+      if (loading) {
+        next.add(rowId);
+      } else {
+        next.delete(rowId);
+      }
+      return next;
+    });
   }
 }

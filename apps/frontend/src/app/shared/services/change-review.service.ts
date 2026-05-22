@@ -1,6 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import {
+  ChangeReviewContextWindow,
   ChangeReviewFileWindow,
   ChangeReviewScope,
   ChangeReviewSummary,
@@ -34,6 +35,25 @@ export class ChangeReviewService {
         offset: String(options.offset ?? 0),
         limit: String(options.limit ?? 600),
         context: String(options.context ?? 8),
+      },
+    });
+  }
+
+  getContextWindow(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    path: string,
+    range: { oldStart: number; newStart: number; count: number; limit?: number },
+  ) {
+    return this.http.get<ChangeReviewContextWindow>('/api/git/change-review/context', {
+      params: {
+        worktreePath,
+        scope,
+        path,
+        oldStart: String(range.oldStart),
+        newStart: String(range.newStart),
+        count: String(range.count),
+        limit: String(range.limit ?? 120),
       },
     });
   }

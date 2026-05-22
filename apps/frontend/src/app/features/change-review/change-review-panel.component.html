@@ -148,12 +148,6 @@
             </div>
           </div>
           <div class="flex shrink-0 gap-1.5">
-            @if ((fileWindow()?.contextRanges?.length ?? 0) > 0) {
-              <button z-button zType="outline" zSize="sm" type="button" (click)="expandContext()">
-                <ng-icon name="lucideChevronDown" size="14" />
-                More context
-              </button>
-            }
             <button z-button zType="ghost" zSize="sm" type="button" (click)="collapseFile()">Collapse</button>
           </div>
         </header>
@@ -194,9 +188,19 @@
                 @else { &nbsp; }
               </span>
               @if (row.type === 'expand') {
-                <button class="cr-expand-row" type="button" (click)="expandContext()">
-                  <ng-icon name="lucideChevronDown" size="13" />
-                  {{ row.content }}
+                <button
+                  class="cr-expand-row"
+                  type="button"
+                  [disabled]="isContextRangeLoading(row)"
+                  (click)="expandContext(row)"
+                >
+                  @if (isContextRangeLoading(row)) {
+                    <ng-icon name="lucideLoader" size="13" class="cr-spin" />
+                    Loading context
+                  } @else {
+                    <ng-icon name="lucideChevronDown" size="13" />
+                    {{ row.content }}
+                  }
                 </button>
               } @else {
                 <code class="cr-code" [innerHTML]="rowHtml(row)"></code>

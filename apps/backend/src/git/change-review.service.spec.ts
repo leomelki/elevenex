@@ -73,6 +73,41 @@ describe('ChangeReviewService', () => {
     expect(second.rows[0].id).not.toBe(first.rows[0].id);
   });
 
+  it('exposes expandable unchanged ranges before and after hunks without reloading the file window', async () => {
+    write('README.md', Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join('\n'));
+    git('add README.md');
+    git('commit -m "long readme"');
+    write('README.md', Array.from({ length: 60 }, (_, index) => (
+      index === 29 ? 'line 30 changed' : `line ${index + 1}`
+    )).join('\n'));
+
+    const fileWindow = await service.getFileWindow(repoPath, 'uncommitted', 'README.md', {
+      offset: 0,
+      limit: 200,
+      context: 2,
+    });
+    const expandRows = fileWindow.rows.filter((row) => row.type === 'expand');
+
+    expect(expandRows.length).toBeGreaterThanOrEqual(2);
+    expect(expandRows[0].oldStart).toBe(1);
+    expect(expandRows[0].newStart).toBe(1);
+
+    const contextWindow = await service.getContextWindow(repoPath, 'uncommitted', 'README.md', {
+      oldStart: expandRows[0].oldStart!,
+      newStart: expandRows[0].newStart!,
+      count: expandRows[0].count!,
+      limit: 5,
+    });
+
+    expect(contextWindow.rows).toHaveLength(5);
+    expect(contextWindow.rows[0]).toMatchObject({
+      type: 'context',
+      oldLine: 1,
+      newLine: 1,
+      content: 'line 1',
+    });
+  });
+
   it('summarizes only HEAD for last-commit scope', async () => {
     write('committed.txt', 'committed\n');
     git('add committed.txt');

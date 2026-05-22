@@ -107,6 +107,11 @@
   text-align: left;
 }
 
+.cr-expand-row:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .cr-spin {
   animation: cr-spin 0.8s linear infinite;
 }

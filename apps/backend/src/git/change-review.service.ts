@@ -6,6 +6,7 @@ import { SimpleGit } from 'simple-git';
 
 import { buildAugmentedEnv, worktreeSimpleGit } from '../config/system-paths.js';
 import {
+  ChangeReviewContextWindow,
   ChangeReviewContextRange,
   ChangeReviewFileStatus,
   ChangeReviewFileSummary,
@@ -20,6 +21,7 @@ const LARGE_FILE_BYTES = 1_000_000;
 const LARGE_FILE_LINES = 25_000;
 const DEFAULT_CONTEXT = 8;
 const DEFAULT_LIMIT = 400;
+const DEFAULT_CONTEXT_RANGE_LIMIT = 120;
 const MAX_LIMIT = 1_500;
 const CACHE_TTL_MS = 15_000;
 const STALE_ORIGIN_SECONDS = 24 * 60 * 60;
@@ -133,6 +135,44 @@ export class ChangeReviewService {
       context,
       rows,
       contextRanges: full.contextRanges,
+    };
+  }
+
+  async getContextWindow(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    filePath: string,
+    range: { oldStart: number; newStart: number; count: number; limit?: number },
+  ): Promise<ChangeReviewContextWindow> {
+    this.assertScope(scope);
+    const oldStart = Math.max(1, Number(range.oldStart) || 1);
+    const newStart = Math.max(1, Number(range.newStart) || 1);
+    const count = Math.max(0, Number(range.count) || 0);
+    const limit = Math.min(
+      MAX_LIMIT,
+      Math.max(1, Number(range.limit) || DEFAULT_CONTEXT_RANGE_LIMIT),
+    );
+
+    const git = worktreeSimpleGit(worktreePath);
+    const base = await this.resolveBase(git, worktreePath, scope, false);
+    const summary = await this.readFileSummary(git, worktreePath, scope, base, filePath);
+    const fileLines = await this.readReviewFileLines(git, worktreePath, scope, base, summary);
+    const rows = this.buildContextRows(
+      summary.path,
+      fileLines,
+      oldStart,
+      newStart,
+      Math.min(count, limit),
+    );
+
+    return {
+      scope,
+      path: summary.path,
+      oldStart,
+      newStart,
+      count,
+      limit,
+      rows,
     };
   }
 
@@ -294,7 +334,8 @@ export class ChangeReviewService {
       '--',
       summary.path,
     ]);
-    const parsed = this.parsePatchRows(summary.path, patch);
+    const fileLines = await this.readReviewFileLines(git, worktreePath, scope, base, summary);
+    const parsed = this.parsePatchRows(summary.path, patch, fileLines);
     result = this.cached(cacheKey, {
       rows: parsed.rows.length ? parsed.rows : [this.metaRow(summary.path, 'No textual diff for this file.')],
       contextRanges: parsed.contextRanges,
@@ -378,7 +419,11 @@ export class ChangeReviewService {
     return stats;
   }
 
-  private parsePatchRows(filePath: string, patch: string): { rows: ChangeReviewRow[]; contextRanges: ChangeReviewContextRange[] } {
+  private parsePatchRows(
+    filePath: string,
+    patch: string,
+    fileLines: { oldLines: string[]; newLines: string[] },
+  ): { rows: ChangeReviewRow[]; contextRanges: ChangeReviewContextRange[] } {
     const lines = patch.split('\n');
     const rows: ChangeReviewRow[] = [];
     const contextRanges: ChangeReviewContextRange[] = [];
@@ -400,7 +445,7 @@ export class ChangeReviewService {
           const nextNew = Number(match[3]);
           const newCount = Number(match[4] ?? '1');
           const gap = Math.min(nextOld - previousOldEnd, nextNew - previousNewEnd) - 1;
-          if (previousOldEnd > 0 && gap > 0) {
+          if (gap > 0) {
             const range = {
               id: `${filePath}:gap:${contextRanges.length}`,
               oldStart: previousOldEnd + 1,
@@ -474,7 +519,107 @@ export class ChangeReviewService {
       if (newLine !== null) newLine += 1;
     }
 
+    const trailingGap = Math.min(
+      fileLines.oldLines.length - previousOldEnd,
+      fileLines.newLines.length - previousNewEnd,
+    );
+    if (previousOldEnd > 0 && trailingGap > 0) {
+      const range = {
+        id: `${filePath}:gap:${contextRanges.length}`,
+        oldStart: previousOldEnd + 1,
+        newStart: previousNewEnd + 1,
+        count: trailingGap,
+      };
+      contextRanges.push(range);
+      rows.push({
+        id: `${filePath}:${rowIndex++}`,
+        type: 'expand',
+        oldLine: null,
+        newLine: null,
+        content: `${trailingGap} unchanged line${trailingGap === 1 ? '' : 's'}`,
+        path: filePath,
+        oldStart: range.oldStart,
+        newStart: range.newStart,
+        count: range.count,
+      });
+    }
+
     return { rows, contextRanges };
+  }
+
+  private buildContextRows(
+    filePath: string,
+    fileLines: { oldLines: string[]; newLines: string[] },
+    oldStart: number,
+    newStart: number,
+    count: number,
+  ): ChangeReviewRow[] {
+    const rows: ChangeReviewRow[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const oldLine = oldStart + index;
+      const newLine = newStart + index;
+      const content = fileLines.newLines[newLine - 1]
+        ?? fileLines.oldLines[oldLine - 1]
+        ?? '';
+      rows.push({
+        id: `${filePath}:context:${oldLine}:${newLine}`,
+        type: 'context',
+        oldLine,
+        newLine,
+        content,
+        path: filePath,
+      });
+    }
+    return rows;
+  }
+
+  private async readReviewFileLines(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    summary: ChangeReviewFileSummary,
+  ): Promise<{ oldLines: string[]; newLines: string[] }> {
+    const oldRef = scope === 'last-commit'
+      ? 'HEAD^'
+      : scope === 'branch'
+        ? base.mergeBaseSha ?? base.baseSha ?? 'HEAD'
+        : 'HEAD';
+    const newRef = scope === 'last-commit' ? 'HEAD' : null;
+    const oldPath = summary.oldPath ?? summary.path;
+
+    const [oldText, newText] = await Promise.all([
+      summary.status === 'added'
+        ? Promise.resolve('')
+        : this.readGitFile(git, oldRef, oldPath),
+      summary.status === 'deleted'
+        ? Promise.resolve('')
+        : newRef
+          ? this.readGitFile(git, newRef, summary.path)
+          : this.readWorktreeFile(worktreePath, summary.path),
+    ]);
+
+    return {
+      oldLines: this.splitFileLines(oldText),
+      newLines: this.splitFileLines(newText),
+    };
+  }
+
+  private async readGitFile(git: SimpleGit, ref: string, filePath: string): Promise<string> {
+    return git.raw(['show', `${ref}:${filePath}`]).catch(() => '');
+  }
+
+  private async readWorktreeFile(worktreePath: string, filePath: string): Promise<string> {
+    return fs.readFile(path.join(worktreePath, filePath), 'utf8').catch(() => '');
+  }
+
+  private splitFileLines(text: string): string[] {
+    if (!text) return [];
+    const lines = text.split(/\r?\n/);
+    if (text.endsWith('\n')) {
+      lines.pop();
+    }
+    return lines;
   }
 
   private async buildUntrackedRows(

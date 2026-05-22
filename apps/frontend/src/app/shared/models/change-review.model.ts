@@ -92,3 +92,13 @@ export interface ChangeReviewFileWindow {
   rows: ChangeReviewRow[];
   contextRanges: ChangeReviewContextRange[];
 }
+
+export interface ChangeReviewContextWindow {
+  scope: ChangeReviewScope;
+  path: string;
+  oldStart: number;
+  newStart: number;
+  count: number;
+  limit: number;
+  rows: ChangeReviewRow[];
+}
