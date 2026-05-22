@@ -2,7 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
+import { NavigationProject } from '../models/navigation-tree.model';
 import { NavigationService } from './navigation.service';
 
 describe('NavigationService', () => {
@@ -35,6 +36,55 @@ describe('NavigationService', () => {
 
     service = TestBed.inject(NavigationService);
   });
+
+  function makeTree(sessionIds: number[], head = 'abc123'): NavigationProject[] {
+    return [
+      {
+        id: 1,
+        name: 'Project',
+        repos: [
+          {
+            id: 2,
+            name: 'Repo',
+            path: '/tmp/repo',
+            branches: [],
+            workspaces: [
+              {
+                id: 3,
+                repoId: 2,
+                name: 'Default',
+                path: '/tmp/repo',
+                isDefault: true,
+                createdFromRef: 'main',
+                currentBranch: 'main',
+                head,
+                isDetached: false,
+                isBare: false,
+                isLocked: false,
+                lockReason: null,
+                isMissing: false,
+                isDirty: false,
+                branchCheckedOutElsewhere: false,
+                checkedOutElsewherePath: null,
+                sessions: sessionIds.map((id) => ({
+                  id,
+                  repoId: 2,
+                  branchName: 'main',
+                  name: `Session ${id}`,
+                  status: 'active',
+                  hasUnreviewedCompletion: false,
+                  lastCompletionAt: null,
+                  lastCompletionKind: null,
+                  lastStateChangeAt: null,
+                })),
+                archivedSessions: [],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+  }
 
   it('patches completion fields for a session in the navigation tree', () => {
     service.tree.set([
@@ -280,5 +330,44 @@ describe('NavigationService', () => {
         'project-4',
       ]),
     );
+  });
+
+  it('ignores stale full-tree responses after a newer light-tree refresh removes a session', () => {
+    const firstLight$ = new Subject<NavigationProject[]>();
+    const firstFull$ = new Subject<NavigationProject[]>();
+    const secondLight$ = new Subject<NavigationProject[]>();
+    const secondFull$ = new Subject<NavigationProject[]>();
+
+    httpGetMock
+      .mockReturnValueOnce(firstLight$.asObservable())
+      .mockReturnValueOnce(firstFull$.asObservable())
+      .mockReturnValueOnce(secondLight$.asObservable())
+      .mockReturnValueOnce(secondFull$.asObservable());
+
+    service.loadTree();
+    firstLight$.next(makeTree([42]));
+
+    expect(service.tree()[0].repos[0].workspaces![0].sessions.map((session) => session.id)).toEqual([42]);
+    expect(httpGetMock).toHaveBeenNthCalledWith(2, '/api/navigation/tree');
+
+    service.loadTree();
+    secondLight$.next(makeTree([]));
+
+    expect(service.tree()[0].repos[0].workspaces![0].sessions).toEqual([]);
+
+    firstFull$.next(makeTree([42], 'stale-head'));
+
+    expect(service.tree()[0].repos[0].workspaces![0].sessions).toEqual([]);
+    expect(service.tree()[0].repos[0].workspaces![0].head).toBe('abc123');
+    expect(httpGetMock).toHaveBeenCalledTimes(3);
+
+    firstFull$.complete();
+
+    expect(httpGetMock).toHaveBeenNthCalledWith(4, '/api/navigation/tree');
+
+    secondFull$.next(makeTree([], 'fresh-head'));
+
+    expect(service.tree()[0].repos[0].workspaces![0].sessions).toEqual([]);
+    expect(service.tree()[0].repos[0].workspaces![0].head).toBe('fresh-head');
   });
 });

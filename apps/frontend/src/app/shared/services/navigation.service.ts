@@ -43,7 +43,7 @@ export class NavigationService {
         }
         this.tree.set(data);
         this.loading.set(false);
-        this.refreshFullTree();
+        this.refreshFullTree(version);
       },
       error: () => this.loading.set(false),
     });
@@ -121,7 +121,7 @@ export class NavigationService {
     this.loadTree();
   }
 
-  private refreshFullTree(): void {
+  private refreshFullTree(version: number): void {
     if (this.fullRefreshInFlight) {
       this.fullRefreshQueued = true;
       return;
@@ -135,12 +135,15 @@ export class NavigationService {
           this.fullRefreshInFlight = false;
           if (this.fullRefreshQueued) {
             this.fullRefreshQueued = false;
-            this.refreshFullTree();
+            this.refreshFullTree(this.loadVersion);
           }
         }),
       )
       .subscribe({
         next: (data) => {
+          if (version !== this.loadVersion) {
+            return;
+          }
           this.expandNewTreeItems(this.tree(), data);
           this.tree.set(data);
         },
