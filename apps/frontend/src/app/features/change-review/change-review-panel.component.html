@@ -1,11 +1,11 @@
-<section class="cr-panel">
-  <header class="cr-toolbar">
-    <div class="cr-toolbar__title">
+<section class="flex h-full min-h-0 flex-col bg-background text-foreground">
+  <header class="flex min-h-13 items-center gap-3 border-b border-border px-3 py-2">
+    <div class="flex min-w-0 items-center gap-2">
       <ng-icon name="lucideGitPullRequest" size="16" />
-      <div class="cr-toolbar__copy">
-        <span class="cr-title">Changes</span>
+      <div class="flex min-w-0 flex-col">
+        <span class="text-[0.82rem] font-bold">Changes</span>
         @if (summary(); as current) {
-          <span class="cr-subtitle">
+          <span class="inline-flex max-w-72 items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.7rem] text-muted-foreground">
             <ng-icon name="lucideGitBranch" size="12" />
             {{ current.compareLabel }}
           </span>
@@ -13,12 +13,14 @@
       </div>
     </div>
 
-    <div class="cr-scope" aria-label="Change scope">
+    <div class="inline-flex shrink-0 gap-0.5 rounded-md border border-border bg-muted/50 p-0.5" aria-label="Change scope">
       @for (item of scopes; track item.value) {
         <button
           type="button"
-          class="cr-scope__button"
-          [class.cr-scope__button--active]="scope() === item.value"
+          class="min-h-7 rounded-sm px-2 text-[0.72rem] font-semibold text-muted-foreground transition-colors hover:text-foreground"
+          [class.bg-background]="scope() === item.value"
+          [class.text-foreground]="scope() === item.value"
+          [class.shadow-sm]="scope() === item.value"
           (click)="setScope(item.value)"
         >
           {{ item.label }}
@@ -26,34 +28,34 @@
       }
     </div>
 
-    <div class="cr-toolbar__actions">
+    <div class="ml-auto flex gap-1">
       @if (summary()?.pullRequest) {
-        <button z-button zType="ghost" zSize="sm" class="cr-icon-button" type="button" title="Open pull request" (click)="openPullRequest()">
+        <button z-button zType="ghost" zSize="sm" class="w-8 p-0" type="button" title="Open pull request" (click)="openPullRequest()">
           <ng-icon name="lucideExternalLink" size="15" />
         </button>
       }
-      <button z-button zType="ghost" zSize="sm" class="cr-icon-button" type="button" title="Refresh base refs" [zDisabled]="loadingSummary()" (click)="refresh(true)">
+      <button z-button zType="ghost" zSize="sm" class="w-8 p-0" type="button" title="Refresh base refs" [zDisabled]="loadingSummary()" (click)="refresh(true)">
         <ng-icon name="lucideRefreshCw" size="15" [class.cr-spin]="loadingSummary()" />
       </button>
     </div>
   </header>
 
   @if (error(); as message) {
-    <div class="cr-error">
+    <div class="flex items-center gap-2 border-b border-[color-mix(in_oklch,var(--warning)_30%,var(--border))] bg-warning/10 px-3 py-2 text-[0.76rem] text-warning">
       <ng-icon name="lucideTriangleAlert" size="16" />
       <span>{{ message }}</span>
     </div>
   }
 
   @if (summary(); as current) {
-    <div class="cr-meta">
+    <div class="flex min-h-8 items-center gap-3 overflow-x-auto whitespace-nowrap border-b border-border px-3 font-mono text-[0.68rem] text-muted-foreground">
       <span>{{ current.totals.files }} files</span>
-      <span class="cr-add">+{{ current.totals.additions }}</span>
-      <span class="cr-del">-{{ current.totals.deletions }}</span>
+      <span class="text-success">+{{ current.totals.additions }}</span>
+      <span class="text-destructive">-{{ current.totals.deletions }}</span>
       <span>base {{ shortSha(current.mergeBaseSha || current.baseSha) }}</span>
       <span>head {{ shortSha(current.headSha) }}</span>
       @if (current.staleBase) {
-        <span class="cr-stale">
+        <span class="inline-flex items-center gap-1 text-warning">
           <ng-icon name="lucideTriangleAlert" size="12" />
           {{ staleText(current.originRefAgeSeconds) }}
         </span>
@@ -61,12 +63,13 @@
     </div>
   }
 
-  <div class="cr-body">
-    <aside class="cr-files">
-      <div class="cr-search">
+  <div class="grid min-h-0 flex-1 grid-cols-[minmax(15rem,28%)_minmax(0,1fr)]">
+    <aside class="flex min-h-0 min-w-0 flex-col border-r border-border">
+      <div class="flex items-center gap-2 border-b border-border p-2">
         <ng-icon name="lucideSearch" size="14" />
         <input
           z-input
+          class="h-8 min-w-0 text-xs"
           type="search"
           placeholder="Search files"
           [value]="search()"
@@ -74,12 +77,13 @@
         />
       </div>
 
-      <div class="cr-filters">
+      <div class="flex gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
         @for (filter of statusFilters(); track filter.value) {
           <button
             type="button"
-            class="cr-filter"
-            [class.cr-filter--active]="statusFilter() === filter.value"
+            class="inline-flex min-h-6 items-center gap-1 rounded px-2 text-[0.68rem] font-semibold text-muted-foreground transition-colors hover:text-foreground"
+            [class.bg-accent]="statusFilter() === filter.value"
+            [class.text-accent-foreground]="statusFilter() === filter.value"
             (click)="setStatusFilter(filter.value)"
           >
             {{ filter.label }}
@@ -89,12 +93,12 @@
       </div>
 
       @if (loadingSummary()) {
-        <div class="cr-loading">
+        <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
           <ng-icon name="lucideLoader" size="16" class="cr-spin" />
           Loading summary
         </div>
       } @else if (filteredFiles().length === 0) {
-        <div class="cr-empty">
+        <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
           <ng-icon name="lucideFileCode" size="18" />
           <span>No files in this scope</span>
         </div>
@@ -103,22 +107,22 @@
           <button
             *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
             type="button"
-            class="cr-file-row"
-            [class.cr-file-row--active]="selectedFile()?.path === file.path"
+            class="grid h-[58px] w-full grid-cols-[1.45rem_minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-transparent px-2.5 text-left text-foreground transition-colors hover:bg-accent/70"
+            [class.bg-accent]="selectedFile()?.path === file.path"
             (click)="selectFile(file)"
             [title]="file.path"
           >
-            <span class="cr-file-status" [class]="'cr-file-status--' + file.status">{{ statusLabel(file.status) }}</span>
-            <span class="cr-file-main">
-              <span class="cr-file-name">{{ fileBasename(file.path) }}</span>
-              <span class="cr-file-dir">{{ fileDirname(file.path) }}</span>
+            <span class="cr-file-status" [ngClass]="statusClass(file.status)">{{ statusLabel(file.status) }}</span>
+            <span class="flex min-w-0 flex-col">
+              <span class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.78rem] font-semibold">{{ fileBasename(file.path) }}</span>
+              <span class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground">{{ fileDirname(file.path) }}</span>
             </span>
-            <span class="cr-file-stats">
+            <span class="inline-flex gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground">
               @if (file.binary) {
                 <ng-icon name="lucideBinary" size="14" />
               } @else {
-                <span class="cr-add">+{{ file.additions }}</span>
-                <span class="cr-del">-{{ file.deletions }}</span>
+                <span class="text-success">+{{ file.additions }}</span>
+                <span class="text-destructive">-{{ file.deletions }}</span>
               }
             </span>
           </button>
@@ -126,24 +130,24 @@
       }
     </aside>
 
-    <main class="cr-diff">
+    <main class="flex min-h-0 min-w-0 flex-col">
       @if (!selectedFile()) {
-        <div class="cr-empty cr-empty--main">
+        <div class="flex h-full items-center justify-center gap-2 p-3 text-xs text-muted-foreground">
           <ng-icon name="lucideFileCode" size="24" />
           <span>Select a file to inspect its changes</span>
         </div>
       } @else {
-        <header class="cr-diff-header">
-          <div class="cr-diff-header__path">
-            <span class="cr-file-status" [class]="'cr-file-status--' + selectedFile()!.status">{{ statusLabel(selectedFile()!.status) }}</span>
-            <div>
-              <strong>{{ selectedFile()!.path }}</strong>
+        <header class="flex min-h-12 items-center justify-between gap-3 border-b border-border px-3 py-2">
+          <div class="flex min-w-0 items-center gap-2">
+            <span class="cr-file-status" [ngClass]="statusClass(selectedFile()!.status)">{{ statusLabel(selectedFile()!.status) }}</span>
+            <div class="min-w-0">
+              <strong class="block overflow-hidden text-ellipsis whitespace-nowrap text-xs">{{ selectedFile()!.path }}</strong>
               @if (selectedFile()!.oldPath) {
-                <span>renamed from {{ selectedFile()!.oldPath }}</span>
+                <span class="block overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground">renamed from {{ selectedFile()!.oldPath }}</span>
               }
             </div>
           </div>
-          <div class="cr-diff-header__actions">
+          <div class="flex shrink-0 gap-1.5">
             @if ((fileWindow()?.contextRanges?.length ?? 0) > 0) {
               <button z-button zType="outline" zSize="sm" type="button" (click)="expandContext()">
                 <ng-icon name="lucideChevronDown" size="14" />
@@ -155,13 +159,13 @@
         </header>
 
         @if (loadingWindow()) {
-          <div class="cr-loading cr-loading--main">
+          <div class="flex h-full items-center justify-center gap-2 p-3 text-xs text-muted-foreground">
             <ng-icon name="lucideLoader" size="18" class="cr-spin" />
             Loading file window
           </div>
         } @else if (fileWindow(); as activeWindow) {
           @if (activeWindow.message) {
-            <div class="cr-notice">
+            <div class="flex items-center gap-2 border-b border-[color-mix(in_oklch,var(--warning)_30%,var(--border))] bg-warning/10 px-3 py-2 text-[0.76rem] text-warning">
               <ng-icon name="lucideTriangleAlert" size="15" />
               <span>{{ activeWindow.message }}</span>
             </div>
@@ -199,7 +203,7 @@
               }
             </div>
             @if (loadingMore()) {
-              <div class="cr-loading cr-loading--inline">
+              <div class="flex h-8 items-center gap-2 p-3 text-xs text-muted-foreground">
                 <ng-icon name="lucideLoader" size="14" class="cr-spin" />
                 Loading more rows
               </div>

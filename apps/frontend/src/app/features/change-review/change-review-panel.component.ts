@@ -230,6 +230,10 @@ export class ChangeReviewPanelComponent {
     }
   }
 
+  statusClass(status: ChangeReviewFileStatus): string {
+    return `cr-file-status--${status}`;
+  }
+
   shortSha(value: string | null): string {
     return value ? value.slice(0, 8) : '-';
   }
