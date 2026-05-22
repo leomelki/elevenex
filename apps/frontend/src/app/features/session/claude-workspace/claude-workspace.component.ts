@@ -225,7 +225,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private interruptedRunShouldRestorePrompt = false;
   private currentRunHadSubstantiveOutput = false;
   private bootstrappedProvider: AgentProviderId | null = null;
-  private deferredCodexContextGenerationTimer: number | null = null;
+  private deferredContextGenerationTimer: number | null = null;
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
   readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
@@ -635,8 +635,8 @@ readonly messageActionsDisabled = computed(
       if (this.flushRafId !== null) {
         cancelAnimationFrame(this.flushRafId);
       }
-      if (this.deferredCodexContextGenerationTimer !== null) {
-        window.clearTimeout(this.deferredCodexContextGenerationTimer);
+      if (this.deferredContextGenerationTimer !== null) {
+        window.clearTimeout(this.deferredContextGenerationTimer);
       }
       this.ws.disconnect(this.sessionId);
     });
@@ -1292,7 +1292,7 @@ readonly messageActionsDisabled = computed(
     const version = ++this.bootstrapVersion;
     this.bootstrappedProvider = this.currentProvider();
     this.loading.set(true);
-    void this.loadWorktreeContext(true);
+    void this.loadWorktreeContext(false);
     void this.loadProviders();
 
     this.ws
@@ -1304,11 +1304,8 @@ readonly messageActionsDisabled = computed(
 
     this.ws.send(this.sessionId, { type: 'hydrate' });
 
-    try {
-      await this.refreshAutocomplete(version);
-    } finally {
-      if (version === this.bootstrapVersion) this.loading.set(false);
-    }
+    void this.refreshAutocomplete(version).catch(() => undefined);
+    if (version === this.bootstrapVersion) this.loading.set(false);
   }
 
   private async bootstrapArchived(): Promise<void> {
@@ -1402,14 +1399,17 @@ readonly messageActionsDisabled = computed(
 
   private async loadWorktreeContext(triggerGenerate = true): Promise<void> {
     this.worktreeContextLoading.set(true);
-    const deferCodexGeneration =
+    const deferGeneration =
       triggerGenerate
-      && this.currentProvider() === 'codex'
-      && !this.runtimeStarted();
+      && (
+        !this.runtimeStarted()
+        || this.runPhase() !== 'idle'
+        || this.submitting()
+      );
     try {
       const snapshot = await firstValueFrom(
         this.worktreeContextService.get(this.repoId, this.worktreePath, {
-          cachedOnly: deferCodexGeneration,
+          cachedOnly: !triggerGenerate || deferGeneration,
         }),
       );
       this.worktreeContext.set(snapshot);
@@ -1417,7 +1417,7 @@ readonly messageActionsDisabled = computed(
 
       const shouldAutoGenerate =
         triggerGenerate
-        && !deferCodexGeneration
+        && !deferGeneration
         && !snapshot.hasRecord
         && snapshot.canGenerate
         && snapshot.generationStatus !== 'generating'
@@ -1441,8 +1441,8 @@ readonly messageActionsDisabled = computed(
         console.info(
           `[worktree-context] skipping auto-generate for ${this.worktreePath} (hasRecord=${snapshot.hasRecord}, canGenerate=${snapshot.canGenerate}, status=${snapshot.generationStatus})`,
         );
-        if (deferCodexGeneration) {
-          this.scheduleDeferredCodexContextGeneration();
+        if (deferGeneration) {
+          this.scheduleDeferredContextGeneration();
         }
       }
     } catch (error) {
@@ -1453,19 +1453,17 @@ readonly messageActionsDisabled = computed(
     }
   }
 
-  private scheduleDeferredCodexContextGeneration(): void {
-    if (this.currentProvider() !== 'codex') return;
+  private scheduleDeferredContextGeneration(): void {
     if (!this.runtimeStarted()) return;
     if (this.hasInjectedContext()) return;
     const context = this.worktreeContext();
     if (!context?.canGenerate || context.contextSentence) return;
-    if (this.deferredCodexContextGenerationTimer !== null) return;
+    if (this.deferredContextGenerationTimer !== null) return;
 
-    this.deferredCodexContextGenerationTimer = window.setTimeout(() => {
-      this.deferredCodexContextGenerationTimer = null;
+    this.deferredContextGenerationTimer = window.setTimeout(() => {
+      this.deferredContextGenerationTimer = null;
       if (
-        this.currentProvider() !== 'codex'
-        || !this.runtimeStarted()
+        !this.runtimeStarted()
         || this.hasInjectedContext()
         || this.runPhase() !== 'idle'
         || this.submitting()
@@ -1473,7 +1471,7 @@ readonly messageActionsDisabled = computed(
         || this.worktreeContextLoading()
         || this.worktreeContext()?.contextSentence
       ) {
-        this.scheduleDeferredCodexContextGeneration();
+        this.scheduleDeferredContextGeneration();
         return;
       }
       void this.loadWorktreeContext(true);
@@ -1517,14 +1515,28 @@ readonly messageActionsDisabled = computed(
         this.applyRuntimeState(event.payload);
         this.hydrated.set(true);
         return;
+      case 'runtime_snapshot':
+        this.applyRuntimeState(event.payload);
+        this.hydrated.set(true);
+        this.loading.set(false);
+        return;
+      case 'history_snapshot':
+        this.historyItems.set(event.payload.history);
+        if (this.runPhase() === 'idle' && !this.submitting()) {
+          this.optimisticUserItems.set([]);
+        }
+        return;
+      case 'runtime_warm_state':
+        return;
       case 'session_created':
         this.claudeSessionId.set(event.payload.claudeSessionId);
         this.runtimeStarted.set(true);
         this.agentRuntimeStarted.emit();
+        this.scheduleDeferredContextGeneration();
         return;
       case 'session_metadata':
         this.sessionMetadata.set(event.payload.metadata);
-        void this.refreshAutocomplete();
+        void this.refreshAutocomplete().catch(() => undefined);
         return;
       case 'hook_event':
         this.recentHookEvents.update((items) => [event.payload.hookEvent, ...items].slice(0, 50));
@@ -1656,7 +1668,7 @@ readonly messageActionsDisabled = computed(
     if (version !== this.bootstrapVersion) return;
 
     await this.restoreInterruptedPromptIfNothingSubstantiveHappened();
-    this.scheduleDeferredCodexContextGeneration();
+    this.scheduleDeferredContextGeneration();
   }
 
   private upsertLiveItem(item: ClaudeTranscriptItem): void {
@@ -1775,6 +1787,9 @@ readonly messageActionsDisabled = computed(
     this.sessionState.set(state.sessionState);
     this.canInterrupt.set(state.canInterrupt);
     this.claudeSessionId.set(state.claudeSessionId);
+    if (state.claudeSessionId && state.claudeSessionId !== '-1') {
+      this.runtimeStarted.set(true);
+    }
     this.selectedModel.set(state.selectedModel);
     this.reasoningEffort.set(state.reasoningEffort ?? null);
     this.fastMode.set(state.fastMode ?? false);
@@ -1856,9 +1871,9 @@ readonly messageActionsDisabled = computed(
     this.worktreeContextLoading.set(false);
     this.worktreeContextBusy.set(false);
     this.firstPromptContextEnabled.set(true);
-    if (this.deferredCodexContextGenerationTimer !== null) {
-      window.clearTimeout(this.deferredCodexContextGenerationTimer);
-      this.deferredCodexContextGenerationTimer = null;
+    if (this.deferredContextGenerationTimer !== null) {
+      window.clearTimeout(this.deferredContextGenerationTimer);
+      this.deferredContextGenerationTimer = null;
     }
     this.worktreeRootEditorOpen.set(false);
     this.draftRootRef.set('');

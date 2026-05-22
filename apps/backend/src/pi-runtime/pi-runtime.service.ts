@@ -877,6 +877,11 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       latestPromptSuggestion: null,
       latestCompactBoundary: null,
       latestMirrorError: null,
+      warmState: this.runtimes.has(sessionId) ? 'warm' : 'cold',
+      lastWarmedAt: this.runtimes.has(sessionId)
+        ? new Date(this.runtimes.get(sessionId)!.lastIdleAt).toISOString()
+        : null,
+      lastPromptTiming: null,
     };
   }
 

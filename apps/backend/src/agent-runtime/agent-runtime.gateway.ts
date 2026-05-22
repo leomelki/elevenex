@@ -139,10 +139,36 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     try {
       switch (action.type) {
         case 'hydrate': {
-          const snapshot = await provider.getSnapshot(sessionId);
+          const runtimeState = await provider.getRuntimeState(sessionId);
           ws.send(
-            JSON.stringify({ type: 'session_snapshot', payload: snapshot }),
+            JSON.stringify({ type: 'runtime_snapshot', payload: runtimeState }),
           );
+          void provider
+            .getHistory(sessionId)
+            .then((history) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(
+                  JSON.stringify({
+                    type: 'history_snapshot',
+                    payload: { sessionId, history },
+                  }),
+                );
+              }
+            })
+            .catch((error) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(
+                  JSON.stringify({
+                    type: 'error',
+                    payload: {
+                      sessionId,
+                      message:
+                        error instanceof Error ? error.message : String(error),
+                    },
+                  }),
+                );
+              }
+            });
           return;
         }
         case 'submit_prompt':
@@ -253,10 +279,11 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   ): void {
     const current = this.clients.get(key);
     const hadClient = current?.delete(ws) ?? false;
+    const hasRemainingClients = Boolean(current && current.size > 0);
     if (current && current.size === 0) {
       this.clients.delete(key);
     }
-    if (hadClient) {
+    if (hadClient && !hasRemainingClients) {
       this.registry.getProvider(providerId).onClientDetached?.(sessionId);
     }
   }

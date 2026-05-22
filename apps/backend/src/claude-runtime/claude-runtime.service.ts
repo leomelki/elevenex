@@ -95,6 +95,8 @@ import {
   ClaudeRuntimeEvent,
   ClaudeRuntimeSessionMetadata,
   ClaudeRuntimeStatus,
+  ClaudeRuntimeWarmState,
+  ClaudeRuntimePromptTiming,
   ClaudeSessionExecutionState,
   ClaudeRuntimeStatePayload,
   ClaudeRunPhase,
@@ -119,6 +121,7 @@ import {
   ClaudeToolInteractionKind,
   ClaudeToolInteractionSummary,
 } from './claude-runtime.types.js';
+import { ClaudeSessionRuntime } from './claude-session-runtime.js';
 
 type PermissionDecision =
   | { behavior: 'allow'; remember: boolean; content?: Record<string, unknown> }
@@ -154,7 +157,7 @@ interface ActiveUserInputRequest {
 }
 
 interface ActiveRunState {
-  query: Query;
+  query: ClaudeSessionRuntime;
   worktreePath: string;
   interruptRequested: boolean;
   tornDown: boolean;
@@ -237,6 +240,9 @@ interface RuntimeState {
   lastHistoryLoadedAtMs: number | null;
   lastHistorySource: 'sdk' | 'transcript' | null;
   transcriptFallbackUsed: boolean;
+  warmState: ClaudeRuntimeWarmState;
+  lastWarmedAt: string | null;
+  lastPromptTiming: ClaudeRuntimePromptTiming | null;
 }
 
 type ClaudeSdkPackageMetadata = {
@@ -348,11 +354,18 @@ const MAX_RECENT_HOOK_EVENTS = 50;
 const MAX_RECENT_TASK_LIFECYCLE = 50;
 const MAX_RECENT_SUBAGENTS = 25;
 const MAX_SESSION_TITLE_PROMPT_CHARS = 4000;
+const CLAUDE_PREWARM_IDLE_SHUTDOWN_MS = 90_000;
+const CLAUDE_POST_TURN_IDLE_SHUTDOWN_MS = 5 * 60_000;
+const CLAUDE_PREWARM_COOLDOWN_MS = 30_000;
+const MAX_IDLE_CLAUDE_RUNTIMES = 2;
 
 @Injectable()
 export class ClaudeRuntimeService extends EventEmitter {
   private readonly logger = new Logger('ClaudeRuntimeService');
   private readonly activeRuns = new Map<number, ActiveRunState>();
+  private readonly sessionRuntimes = new Map<number, ClaudeSessionRuntime>();
+  private readonly prewarmInFlight = new Map<number, Promise<void>>();
+  private readonly lastPrewarmAt = new Map<number, number>();
   private readonly runtimeStates = new Map<number, RuntimeState>();
   private readonly invalidatedSessions = new Set<number>();
   // Tracks runs that are still initializing (before activeRuns.set is called).
@@ -516,8 +529,15 @@ export class ClaudeRuntimeService extends EventEmitter {
       await this.requestRunTeardown(sessionId, run, { invalidateSession: true });
       await run.completionPromise.catch(() => undefined);
     }
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (runtime) {
+      await runtime.close().catch(() => undefined);
+      this.sessionRuntimes.delete(sessionId);
+    }
     this.activeRuns.delete(sessionId);
     this.runtimeStates.delete(sessionId);
+    this.prewarmInFlight.delete(sessionId);
+    this.lastPrewarmAt.delete(sessionId);
     this.claudeHooksService.clearStatus(sessionId);
   }
 
@@ -603,9 +623,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
     state.selectedModel = model;
 
-    const activeRun = this.activeRuns.get(sessionId);
-    if (activeRun) {
-      await activeRun.query.setModel(model ?? undefined);
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (runtime) {
+      await runtime.setModel(model ?? undefined);
       await this.refreshRuntimeMetadata(sessionId);
       this.emitRunState(sessionId);
     }
@@ -628,9 +648,9 @@ export class ClaudeRuntimeService extends EventEmitter {
       };
     }
 
-    const activeRun = this.activeRuns.get(sessionId);
-    if (activeRun && mode) {
-      await activeRun.query.setPermissionMode(mode as PermissionMode);
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (runtime && mode) {
+      await runtime.setPermissionMode(mode as PermissionMode);
       this.emitRunState(sessionId);
     }
 
@@ -644,6 +664,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
     state.reasoningEffort = effort;
+    this.restartIdleRuntimeForOptionChange(sessionId);
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -661,6 +682,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         fastModeState: enabled ? 'on' : 'off',
       };
     }
+    this.restartIdleRuntimeForOptionChange(sessionId);
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -772,81 +794,11 @@ export class ClaudeRuntimeService extends EventEmitter {
     return [...commandItems, ...skillItems];
   }
 
-  async submitPrompt(
+  private createCanUseTool(
     sessionId: number,
-    prompt: string,
-    titlePrompt?: string,
-    images?: ClaudeImageInput[],
-  ): Promise<void> {
-    const startedAtMs = Date.now();
-    const runId = randomUUID().slice(0, 8);
-    const trimmedPrompt = prompt.trim();
-    const validatedImages = this.validateImageInputs(sessionId, images);
-    if (!trimmedPrompt && !validatedImages.length) {
-      return;
-    }
-
-    if (this.activeRuns.has(sessionId)) {
-      const existingSession = await this.sessionsService.findOne(sessionId);
-      const existingState = this.ensureRuntimeState(
-        sessionId,
-        existingSession.claudeSessionId,
-      );
-      existingState.pendingPrompts = [
-        ...existingState.pendingPrompts,
-        {
-          id: randomUUID(),
-          prompt: trimmedPrompt,
-          queuedAt: new Date().toISOString(),
-          ...(validatedImages.length ? { images: validatedImages } : {}),
-        },
-      ];
-      this.emitRunState(sessionId);
-      return;
-    }
-
-    // Register before the first await so that an interrupt() arriving during
-    // initialization is recorded against this specific runId and honored after
-    // activeRuns.set is called below.
-    this.initializingRuns.set(sessionId, runId);
-
-    const session = await this.sessionsService.findOne(sessionId);
-    const shouldGenerateSessionTitle =
-      (!session.claudeSessionId || session.claudeSessionId === '-1')
-      && this.isAutoGeneratedSessionName(session.name);
-    const sessionTitlePrompt = (titlePrompt ?? trimmedPrompt).trim();
-    this.logStartupTiming(sessionId, runId, startedAtMs, 'submit_start');
-    this.logStartupTiming(sessionId, runId, startedAtMs, 'session_loaded', {
-      hasClaudeSessionId:
-        Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1',
-    });
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
-    state.liveItems = [];
-    state.pendingPermissionRequest = null;
-    state.pendingUserInputRequest = null;
-    state.lastError = null;
-    state.runPhase = 'running';
-    state.sessionState = 'running';
-    state.canInterrupt = true;
-    await this.sessionsService.updateStatus(sessionId, 'active');
-    this.logStartupTiming(
-      sessionId,
-      runId,
-      startedAtMs,
-      'session_status_marked_active',
-    );
-    await this.claudeHooksService.updateStatus(sessionId, 'running', {
-      markCompletion: false,
-    });
-    this.logStartupTiming(
-      sessionId,
-      runId,
-      startedAtMs,
-      'hook_status_marked_running',
-    );
-    this.emitRunState(sessionId);
-
-    const canUseTool: CanUseTool = async (toolName, input, options) => {
+    state: RuntimeState,
+  ): CanUseTool {
+    return async (toolName, input, options) => {
       const requestId = randomUUID();
       const canonicalTool = canonicalizeAgentTool(toolName, input);
       const request: ClaudePermissionRequest = {
@@ -951,10 +903,13 @@ export class ClaudeRuntimeService extends EventEmitter {
         toolUseID: options.toolUseID,
       } satisfies PermissionResult;
     };
+  }
 
-    const onElicitation = async (
-      request: ElicitationRequest,
-    ): Promise<ElicitationResult> => {
+  private createOnElicitation(
+    sessionId: number,
+    state: RuntimeState,
+  ): (request: ElicitationRequest) => Promise<ElicitationResult> {
+    return async (request): Promise<ElicitationResult> => {
       const requestId = randomUUID();
       const pendingRequest: ClaudeUserInputRequest = {
         requestId,
@@ -994,39 +949,311 @@ export class ClaudeRuntimeService extends EventEmitter {
         });
       });
     };
+  }
+
+  async prewarmSession(sessionId: number): Promise<void> {
+    if (this.invalidatedSessions.has(sessionId) || this.activeRuns.has(sessionId)) {
+      return;
+    }
+
+    const existingPrewarm = this.prewarmInFlight.get(sessionId);
+    if (existingPrewarm) {
+      return existingPrewarm;
+    }
+
+    const lastPrewarmAt = this.lastPrewarmAt.get(sessionId);
+    if (lastPrewarmAt && Date.now() - lastPrewarmAt < CLAUDE_PREWARM_COOLDOWN_MS) {
+      return;
+    }
+
+    const promise = (async () => {
+      const session = await this.sessionsService.findOne(sessionId);
+      if (session.status === 'archived' || this.activeRuns.has(sessionId)) {
+        return;
+      }
+
+      const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+      const runtime = this.ensureSessionRuntime(sessionId, session, state);
+      await runtime.ensureStarted('prewarm');
+      this.lastPrewarmAt.set(sessionId, Date.now());
+      this.enforceIdleRuntimeLimit(sessionId);
+    })()
+      .catch((error) => {
+        this.logger.debug(
+          `Claude prewarm failed session=${sessionId}: ${String(error)}`,
+        );
+      })
+      .finally(() => {
+        this.prewarmInFlight.delete(sessionId);
+      });
+
+    this.prewarmInFlight.set(sessionId, promise);
+    return promise;
+  }
+
+  private ensureSessionRuntime(
+    sessionId: number,
+    session: { worktreePath: string; claudeSessionId: string | null },
+    state: RuntimeState,
+  ): ClaudeSessionRuntime {
+    const existing = this.sessionRuntimes.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+
+    const canUseTool = this.createCanUseTool(sessionId, state);
+    const onElicitation = this.createOnElicitation(sessionId, state);
+    const runtime = new ClaudeSessionRuntime({
+      sessionId,
+      options: this.buildQueryOptions(
+        sessionId,
+        session.worktreePath,
+        session.claudeSessionId,
+        state.selectedModel,
+        state.reasoningEffort,
+        state.fastMode,
+        state.selectedPermissionMode,
+        canUseTool,
+        onElicitation,
+      ),
+      onMessage: async (message) => {
+        await this.handleSdkMessage(sessionId, message);
+        if (message.type === 'stream_event') {
+          await flushIo();
+        }
+      },
+      onFatal: (error) => this.handleRuntimeFatal(sessionId, error),
+      onClosed: () => this.handleRuntimeClosed(sessionId, runtime),
+      onWarmStateChange: (warmState) =>
+        this.updateRuntimeWarmState(sessionId, state, runtime, warmState),
+      prewarmIdleShutdownMs: CLAUDE_PREWARM_IDLE_SHUTDOWN_MS,
+      postTurnIdleShutdownMs: CLAUDE_POST_TURN_IDLE_SHUTDOWN_MS,
+    });
+
+    this.sessionRuntimes.set(sessionId, runtime);
+    return runtime;
+  }
+
+  private handleRuntimeFatal(sessionId: number, error: unknown): void {
+    if (this.invalidatedSessions.has(sessionId)) {
+      return;
+    }
+
+    const state = this.ensureRuntimeState(sessionId);
+    const run = this.activeRuns.get(sessionId);
+    if (!run) {
+      this.logger.debug(
+        `Claude idle runtime stopped session=${sessionId}: ${String(error)}`,
+      );
+      return;
+    }
+    if (
+      this.isIgnorableInterruptedRunError(error)
+      && run.interruptRequested
+    ) {
+      return;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    state.lastError = message;
+    state.runPhase = 'error';
+    state.sessionState = 'idle';
+    state.canInterrupt = false;
+    this.emitEvent({ type: 'error', payload: { sessionId, message } });
+    this.emitRunState(sessionId);
+    void this.claudeHooksService.updateStatus(sessionId, 'idle', {
+      markCompletion: false,
+    });
+  }
+
+  private handleRuntimeClosed(
+    sessionId: number,
+    runtime: ClaudeSessionRuntime,
+  ): void {
+    const currentRuntime = this.sessionRuntimes.get(sessionId);
+    if (currentRuntime && currentRuntime !== runtime) {
+      return;
+    }
+    if (currentRuntime === runtime) {
+      this.sessionRuntimes.delete(sessionId);
+    }
+
+    const state = this.runtimeStates.get(sessionId);
+    if (!state || this.invalidatedSessions.has(sessionId)) {
+      return;
+    }
+    this.updateRuntimeWarmState(sessionId, state, runtime, 'cold');
+  }
+
+  private updateRuntimeWarmState(
+    sessionId: number,
+    state: RuntimeState,
+    runtime: ClaudeSessionRuntime,
+    warmState: ClaudeRuntimeWarmState,
+  ): void {
+    state.warmState = warmState;
+    state.lastWarmedAt =
+      runtime.lastWarmedAtMs == null
+        ? state.lastWarmedAt
+        : new Date(runtime.lastWarmedAtMs).toISOString();
+    this.emitEvent({
+      type: 'runtime_warm_state',
+      payload: {
+        sessionId,
+        warmState: state.warmState,
+        lastWarmedAt: state.lastWarmedAt,
+      },
+    });
+  }
+
+  private enforceIdleRuntimeLimit(preferredSessionId?: number): void {
+    const idleRuntimes = [...this.sessionRuntimes.entries()]
+      .filter(([sessionId, runtime]) => {
+        if (sessionId === preferredSessionId) return false;
+        if (this.activeRuns.has(sessionId)) return false;
+        return runtime.isIdle && runtime.warmState !== 'closing';
+      })
+      .sort(([, left], [, right]) => {
+        const leftUsed = left.lastUsedAtMs ?? 0;
+        const rightUsed = right.lastUsedAtMs ?? 0;
+        return leftUsed - rightUsed;
+      });
+
+    const allowedIdleRuntimes =
+      preferredSessionId == null
+        ? MAX_IDLE_CLAUDE_RUNTIMES
+        : Math.max(0, MAX_IDLE_CLAUDE_RUNTIMES - 1);
+    while (idleRuntimes.length > allowedIdleRuntimes) {
+      const [sessionId, runtime] = idleRuntimes.shift()!;
+      void runtime.close().finally(() => {
+        if (this.sessionRuntimes.get(sessionId) === runtime) {
+          this.sessionRuntimes.delete(sessionId);
+        }
+      });
+    }
+  }
+
+  private restartIdleRuntimeForOptionChange(sessionId: number): void {
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (!runtime || !runtime.isIdle || this.activeRuns.has(sessionId)) {
+      return;
+    }
+
+    this.sessionRuntimes.delete(sessionId);
+    this.lastPrewarmAt.delete(sessionId);
+    void runtime.close().catch((error) => {
+      this.logger.debug(
+        `Claude idle runtime close failed during option change session=${sessionId}: ${String(error)}`,
+      );
+    });
+    void this.prewarmSession(sessionId);
+  }
+
+  async submitPrompt(
+    sessionId: number,
+    prompt: string,
+    titlePrompt?: string,
+    images?: ClaudeImageInput[],
+  ): Promise<void> {
+    const startedAtMs = Date.now();
+    const runId = randomUUID().slice(0, 8);
+    const trimmedPrompt = prompt.trim();
+    const validatedImages = this.validateImageInputs(sessionId, images);
+    if (!trimmedPrompt && !validatedImages.length) {
+      return;
+    }
+
+    if (this.activeRuns.has(sessionId)) {
+      const existingSession = await this.sessionsService.findOne(sessionId);
+      const existingState = this.ensureRuntimeState(
+        sessionId,
+        existingSession.claudeSessionId,
+      );
+      existingState.pendingPrompts = [
+        ...existingState.pendingPrompts,
+        {
+          id: randomUUID(),
+          prompt: trimmedPrompt,
+          queuedAt: new Date().toISOString(),
+          ...(validatedImages.length ? { images: validatedImages } : {}),
+        },
+      ];
+      this.emitRunState(sessionId);
+      return;
+    }
+
+    // Register before the first await so that an interrupt() arriving during
+    // initialization is recorded against this specific runId and honored after
+    // activeRuns.set is called below.
+    this.initializingRuns.set(sessionId, runId);
+
+    const session = await this.sessionsService.findOne(sessionId);
+    const shouldGenerateSessionTitle =
+      (!session.claudeSessionId || session.claudeSessionId === '-1')
+      && this.isAutoGeneratedSessionName(session.name);
+    const sessionTitlePrompt = (titlePrompt ?? trimmedPrompt).trim();
+    this.logStartupTiming(sessionId, runId, startedAtMs, 'submit_start');
+    this.logStartupTiming(sessionId, runId, startedAtMs, 'session_loaded', {
+      hasClaudeSessionId:
+        Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1',
+    });
+    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    state.liveItems = [];
+    state.pendingPermissionRequest = null;
+    state.pendingUserInputRequest = null;
+    state.lastError = null;
+    state.runPhase = 'running';
+    state.sessionState = 'running';
+    state.canInterrupt = true;
+    void Promise.resolve(this.sessionsService.updateStatus(sessionId, 'active'))
+      .then(() => {
+        this.logStartupTiming(
+          sessionId,
+          runId,
+          startedAtMs,
+          'session_status_marked_active',
+        );
+      })
+      .catch((error) => {
+        this.logger.warn(
+          `Failed to mark session active session=${sessionId}: ${String(error)}`,
+        );
+      });
+    void Promise.resolve(
+      this.claudeHooksService.updateStatus(sessionId, 'running', {
+        markCompletion: false,
+      }),
+    )
+      .then(() => {
+        this.logStartupTiming(
+          sessionId,
+          runId,
+          startedAtMs,
+          'hook_status_marked_running',
+        );
+      })
+      .catch((error) => {
+        this.logger.warn(
+          `Failed to mark Claude hook status running session=${sessionId}: ${String(error)}`,
+        );
+      });
+    this.emitRunState(sessionId);
 
     let resolveCompletion = () => {};
     const completionPromise = new Promise<void>((resolve) => {
       resolveCompletion = resolve;
     });
 
-    const queryOptions = this.buildQueryOptions(
-      sessionId,
-      session.worktreePath,
-      session.claudeSessionId,
-      state.selectedModel,
-      state.reasoningEffort,
-      state.fastMode,
-      state.selectedPermissionMode,
-      canUseTool,
-      onElicitation,
-    );
-    const runtimeQuery = validatedImages.length
-      ? query({
-          prompt: this.buildMultimodalPromptIterable(trimmedPrompt, validatedImages),
-          options: queryOptions,
-        })
-      : query({
-          prompt: trimmedPrompt,
-          options: queryOptions,
-        });
+    const runtime = this.ensureSessionRuntime(sessionId, session, state);
+    const hadStartedRuntime = runtime.startedAtMs != null;
     const queryCreatedAtMs = Date.now();
     const resume = Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1';
-    this.logStartupTiming(sessionId, runId, startedAtMs, 'runtime_query_created', {
+    this.logStartupTiming(sessionId, runId, startedAtMs, hadStartedRuntime ? 'runtime_query_reused' : 'runtime_query_created', {
       resume:
         resume,
       model: state.selectedModel ?? 'default',
       permissionMode: state.selectedPermissionMode ?? 'default',
+      warmState: runtime.warmState,
       claudeBinary:
         this.claudeCliOverride?.path
         ?? this.resolveSdkClaudePath()
@@ -1054,7 +1281,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     this.activeRuns.set(sessionId, {
-      query: runtimeQuery,
+      query: runtime,
       worktreePath: session.worktreePath,
       interruptRequested: false,
       tornDown: false,
@@ -1089,50 +1316,14 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     this.emitRunState(sessionId);
-    if (shouldGenerateSessionTitle && sessionTitlePrompt) {
-      setImmediate(() => {
-        this.generateAndSaveSessionTitle(
-          sessionId,
-          session.worktreePath,
-          sessionTitlePrompt,
-        ).catch((error) => {
-          this.logger.warn(
-            `Session title generation failed session=${sessionId}: ${String(error)}`,
-          );
-        });
-      });
-    }
-    void this.refreshRuntimeMetadata(sessionId, {
-      reason: 'startup',
-      runId,
-      startedAtMs,
-    })
-      .then(() => {
-        this.logStartupTiming(
-          sessionId,
-          runId,
-          startedAtMs,
-          'initial_metadata_refreshed',
-        );
-      })
-      .catch((error) => {
-        this.logger.debug(
-          `Claude startup metadata refresh failed session=${sessionId} run=${runId} elapsedMs=${Date.now() - startedAtMs} error=${String(error)}`,
-        );
-      })
-      .finally(() => {
-        if (this.invalidatedSessions.has(sessionId)) {
-          return;
-        }
-        this.emitRunState(sessionId);
-      });
-
+    let completedWithoutRuntimeError = false;
     try {
-      for await (const message of runtimeQuery) {
-        await this.handleSdkMessage(sessionId, message);
-        if (message.type === 'stream_event') {
-          await flushIo();
-        }
+      const run = this.activeRuns.get(sessionId);
+      if (!run?.interruptRequested) {
+        await runtime.submitTurn(
+          this.buildSdkUserMessage(trimmedPrompt, validatedImages),
+        );
+        completedWithoutRuntimeError = true;
       }
     } catch (error) {
       const run = this.activeRuns.get(sessionId);
@@ -1153,7 +1344,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       state.canInterrupt = false;
       this.emitEvent({ type: 'error', payload: { sessionId, message } });
       this.emitRunState(sessionId);
-      await this.claudeHooksService.updateStatus(sessionId, 'idle', {
+      void this.claudeHooksService.updateStatus(sessionId, 'idle', {
         markCompletion: false,
       });
       throw error;
@@ -1163,11 +1354,6 @@ export class ClaudeRuntimeService extends EventEmitter {
       this.initializingRuns.delete(sessionId);
       const run = this.activeRuns.get(sessionId);
       const interrupted = Boolean(run?.interruptRequested);
-      try {
-        run?.query.close();
-      } catch {
-        // Ignore duplicate close attempts during teardown.
-      }
       this.activeRuns.delete(sessionId);
       state.pendingPermissionRequest = null;
       state.pendingUserInputRequest = null;
@@ -1175,6 +1361,25 @@ export class ClaudeRuntimeService extends EventEmitter {
       run?.resolveCompletion();
       if (interrupted) {
         this.finalizeInterruptedRun(sessionId);
+      }
+      if (
+        completedWithoutRuntimeError
+        && !interrupted
+        && !state.lastError
+        && shouldGenerateSessionTitle
+        && sessionTitlePrompt
+      ) {
+        setImmediate(() => {
+          this.generateAndSaveSessionTitle(
+            sessionId,
+            session.worktreePath,
+            sessionTitlePrompt,
+          ).catch((error) => {
+            this.logger.warn(
+              `Session title generation failed session=${sessionId}: ${String(error)}`,
+            );
+          });
+        });
       }
       if (
         !interrupted
@@ -1194,6 +1399,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           });
         });
       }
+      this.enforceIdleRuntimeLimit(sessionId);
     }
   }
 
@@ -1251,10 +1457,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     this.emitEvent({ type: 'error', payload: { sessionId, message } });
   }
 
-  private buildMultimodalPromptIterable(
+  private buildSdkUserMessage(
     text: string,
     images: ClaudeImageInput[],
-  ): AsyncIterable<SDKUserMessage> {
+  ): SDKUserMessage {
     const content: Array<
       | { type: 'text'; text: string }
       | {
@@ -1269,13 +1475,14 @@ export class ClaudeRuntimeService extends EventEmitter {
         source: { type: 'base64', media_type: img.mediaType, data: img.data },
       });
     }
-    return (async function* () {
-      yield {
-        type: 'user',
-        message: { role: 'user', content },
-        parent_tool_use_id: null,
-      } as SDKUserMessage;
-    })();
+    return {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: images.length ? content : text,
+      },
+      parent_tool_use_id: null,
+    } as SDKUserMessage;
   }
 
   async cancelPendingPrompt(sessionId: number, id: string): Promise<void> {
@@ -1467,6 +1674,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     if (run?.interruptRequested) {
       return;
     }
+    if (!run && message.type === 'result') {
+      return;
+    }
 
     if (run && !run.sawFirstSdkMessage) {
       run.sawFirstSdkMessage = true;
@@ -1488,7 +1698,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       this.logPreVisibleMessage(sessionId, run, message);
     }
 
-    await this.captureClaudeSessionId(sessionId, message);
+    this.captureClaudeSessionId(sessionId, message);
     this.logSdkMessageDiagnostics(sessionId, message);
 
     if (message.type === 'stream_event') {
@@ -2612,10 +2822,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
   }
 
-  private async captureClaudeSessionId(
+  private captureClaudeSessionId(
     sessionId: number,
     message: SDKMessage,
-  ): Promise<void> {
+  ): void {
     if (this.invalidatedSessions.has(sessionId)) {
       return;
     }
@@ -2626,16 +2836,26 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const state = this.ensureRuntimeState(sessionId);
+    if (!this.activeRuns.has(sessionId)) {
+      return;
+    }
     if (state.claudeSessionId === claudeSessionId) {
       return;
     }
 
     state.claudeSessionId = claudeSessionId;
-    await this.sessionsService.updateClaudeSessionId(sessionId, claudeSessionId);
     this.emitEvent({
       type: 'session_created',
       payload: { sessionId, claudeSessionId },
     });
+    void Promise.resolve(
+      this.sessionsService.updateClaudeSessionId(sessionId, claudeSessionId),
+    )
+      .catch((error) => {
+        this.logger.warn(
+          `Failed to persist Claude session id for session ${sessionId}: ${String(error)}`,
+        );
+      });
   }
 
   private finishRun(sessionId: number): void {
@@ -2661,6 +2881,9 @@ export class ClaudeRuntimeService extends EventEmitter {
         hadError: Boolean(state.lastError),
       });
     }
+    this.emitRunState(sessionId);
+    this.emitEvent({ type: 'complete', payload: { sessionId } });
+    void this.claudeHooksService.updateStatus(sessionId, 'idle');
     void this.refreshRuntimeMetadata(sessionId, {
       reason: 'finish_run',
       runId: run?.runId,
@@ -2669,8 +2892,6 @@ export class ClaudeRuntimeService extends EventEmitter {
       .catch(() => undefined)
       .finally(() => {
         this.emitRunState(sessionId);
-        this.emitEvent({ type: 'complete', payload: { sessionId } });
-        void this.claudeHooksService.updateStatus(sessionId, 'idle');
       });
   }
 
@@ -2692,16 +2913,17 @@ export class ClaudeRuntimeService extends EventEmitter {
     if (run) {
       run.permissionRequestOrder = [];
     }
+    this.emitRunState(sessionId);
+    this.emitEvent({ type: 'complete', payload: { sessionId } });
+    void this.claudeHooksService.updateStatus(sessionId, 'idle', {
+      markCompletion: false,
+    });
     void this.refreshRuntimeMetadata(sessionId, {
       reason: 'interrupt_finalize',
     })
       .catch(() => undefined)
       .finally(() => {
         this.emitRunState(sessionId);
-        this.emitEvent({ type: 'complete', payload: { sessionId } });
-        void this.claudeHooksService.updateStatus(sessionId, 'idle', {
-          markCompletion: false,
-        });
       });
   }
 
@@ -2790,6 +3012,9 @@ export class ClaudeRuntimeService extends EventEmitter {
       lastHistoryLoadedAtMs: null,
       lastHistorySource: null,
       transcriptFallbackUsed: false,
+      warmState: 'cold',
+      lastWarmedAt: null,
+      lastPromptTiming: null,
     };
     this.runtimeStates.set(sessionId, state);
     return state;
@@ -3077,6 +3302,23 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const state = this.ensureRuntimeState(sessionId);
+    if (run?.firstVisibleAtMs != null && run.sawFirstVisibleItem) {
+      state.lastPromptTiming = {
+        runId: run.runId,
+        startedAt: new Date(run.startedAtMs).toISOString(),
+        queryCreatedToFirstSdkMs:
+          run.firstSdkMessageAtMs == null
+            ? null
+            : run.firstSdkMessageAtMs - run.queryCreatedAtMs,
+        firstSdkToFirstVisibleMs:
+          run.firstSdkMessageAtMs == null
+            ? null
+            : run.firstVisibleAtMs - run.firstSdkMessageAtMs,
+        submitToFirstVisibleMs: run.firstVisibleAtMs - run.startedAtMs,
+        preVisibleSummary: this.summarizePreVisibleActivity(run),
+        systemSubtypes: [...run.systemSubtypesBeforeVisible],
+      };
+    }
     state.liveItems = [...state.liveItems, item];
 
     if (eventType === 'thinking_start') {
@@ -3195,9 +3437,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     canUseTool: CanUseTool,
     onElicitation: (request: ElicitationRequest) => Promise<ElicitationResult>,
   ): Options {
-    // This runtime uses short-lived SDK queries resumed by Claude session id.
-    // Keeping the last N Claude sessions truly warm would require a separate
-    // long-lived process/runtime model rather than more tuning at this boundary.
+    // Use the SDK-managed Claude Code binary by default so the query process
+    // and SDK protocol stay in lockstep across prompt turns.
     const pathToClaudeCodeExecutable =
       this.claudeCliOverride?.path
       ?? this.resolveSdkClaudePath()
@@ -3544,6 +3785,9 @@ export class ClaudeRuntimeService extends EventEmitter {
       latestPromptSuggestion: state.latestPromptSuggestion,
       latestCompactBoundary: state.latestCompactBoundary,
       latestMirrorError: state.latestMirrorError,
+      warmState: state.warmState,
+      lastWarmedAt: state.lastWarmedAt,
+      lastPromptTiming: state.lastPromptTiming,
     };
   }
 
@@ -3560,8 +3804,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       return;
     }
 
-    const run = this.activeRuns.get(sessionId);
-    if (!run) {
+    const runtime = this.activeRuns.get(sessionId)?.query ?? this.sessionRuntimes.get(sessionId);
+    if (!runtime) {
       return;
     }
 
@@ -3600,8 +3844,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     const refreshPromise = (async () => {
       try {
         const [models, contextUsage] = await Promise.all([
-          run.query.supportedModels(),
-          run.query.getContextUsage(),
+          runtime.supportedModels(),
+          runtime.getContextUsage(),
         ]);
         state.availableModels = models.map((model) => this.toModelOption(model));
         state.contextUsage = this.toContextUsage(contextUsage);
@@ -4835,12 +5079,17 @@ export class ClaudeRuntimeService extends EventEmitter {
       }
     }
 
-    try {
-      run.query.close();
-    } catch (error) {
-      this.logger.debug(
-        `Closing interrupted query failed for session ${sessionId}: ${String(error)}`,
-      );
+    if (options.invalidateSession) {
+      try {
+        await run.query.close();
+      } catch (error) {
+        this.logger.debug(
+          `Closing interrupted query failed for session ${sessionId}: ${String(error)}`,
+        );
+      }
+      if (this.sessionRuntimes.get(sessionId) === run.query) {
+        this.sessionRuntimes.delete(sessionId);
+      }
     }
   }
 }
@@ -4916,8 +5165,13 @@ function withTimeout<T>(
   });
 }
 
-export function loadClaudeSdkPackageMetadata(): ClaudeSdkPackageMetadata {
-  const runtimeRoot = getBackendRuntimeRoot();
+export function loadClaudeSdkPackageMetadata(
+  options: {
+    runtimeRoot?: string;
+    packageAnchors?: string[];
+  } = {},
+): ClaudeSdkPackageMetadata {
+  const runtimeRoot = options.runtimeRoot ?? getBackendRuntimeRoot();
   const candidates = new Set<string>([
     join(
       runtimeRoot,
@@ -4937,12 +5191,12 @@ export function loadClaudeSdkPackageMetadata(): ClaudeSdkPackageMetadata {
     ),
   ]);
 
-  const packageAnchors = [
-    join(runtimeRoot, 'package.json'),
-    join(runtimeRoot, 'apps', 'backend', 'package.json'),
-    join(__dirname, '..', '..', '..', 'package.json'),
-    join(__dirname, '..', '..', '..', '..', '..', 'package.json'),
-  ];
+  const packageAnchors = options.packageAnchors ?? [
+      join(runtimeRoot, 'package.json'),
+      join(runtimeRoot, 'apps', 'backend', 'package.json'),
+      join(__dirname, '..', '..', '..', 'package.json'),
+      join(__dirname, '..', '..', '..', '..', '..', 'package.json'),
+    ];
 
   for (const packageAnchor of packageAnchors) {
     try {

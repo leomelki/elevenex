@@ -4,6 +4,7 @@ export type ClaudeSessionExecutionState =
   | 'running'
   | 'requires_action'
   | null;
+export type ClaudeRuntimeWarmState = 'cold' | 'prewarming' | 'warm' | 'closing';
 export type ClaudePermissionMode =
   | 'default'
   | 'acceptEdits'
@@ -567,6 +568,16 @@ export interface ClaudePendingPrompt {
   images?: ClaudeImageInput[];
 }
 
+export interface ClaudeRuntimePromptTiming {
+  runId: string;
+  startedAt: string;
+  queryCreatedToFirstSdkMs: number | null;
+  firstSdkToFirstVisibleMs: number | null;
+  submitToFirstVisibleMs: number | null;
+  preVisibleSummary: 'system_only' | 'tooling' | 'auth_or_mcp' | 'opaque';
+  systemSubtypes: string[];
+}
+
 export interface ClaudeRuntimeStatePayload {
   sessionId: number;
   claudeSessionId: string | null;
@@ -604,6 +615,9 @@ export interface ClaudeRuntimeStatePayload {
   latestPromptSuggestion: ClaudePromptSuggestion | null;
   latestCompactBoundary: ClaudeCompactBoundary | null;
   latestMirrorError: ClaudeMirrorError | null;
+  warmState: ClaudeRuntimeWarmState;
+  lastWarmedAt: string | null;
+  lastPromptTiming: ClaudeRuntimePromptTiming | null;
 }
 
 export interface ClaudeSessionSnapshotPayload extends ClaudeRuntimeStatePayload {
@@ -612,6 +626,19 @@ export interface ClaudeSessionSnapshotPayload extends ClaudeRuntimeStatePayload 
 
 export type ClaudeRuntimeEvent =
   | { type: 'session_snapshot'; payload: ClaudeSessionSnapshotPayload }
+  | { type: 'runtime_snapshot'; payload: ClaudeRuntimeStatePayload }
+  | {
+      type: 'history_snapshot';
+      payload: { sessionId: number; history: ClaudeTranscriptItem[] };
+    }
+  | {
+      type: 'runtime_warm_state';
+      payload: {
+        sessionId: number;
+        warmState: ClaudeRuntimeWarmState;
+        lastWarmedAt: string | null;
+      };
+    }
   | {
       type: 'session_created';
       payload: { sessionId: number; claudeSessionId: string };

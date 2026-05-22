@@ -1,11 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { Logger } from '@nestjs/common';
 import { EventEmitter } from 'events';
-import * as fs from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import * as module_ from 'module';
-import * as runtimePaths from '../config/runtime-paths.js';
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   getSubagentMessages: jest.fn(),
   getSessionMessages: jest.fn(),
@@ -22,6 +19,43 @@ import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { TerminalService } from '../terminal/terminal.service.js';
 import { DRIZZLE } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+
+function successfulResultMessage(sessionId = 'claude-session-1') {
+  return {
+    type: 'result',
+    subtype: 'success',
+    duration_ms: 10,
+    duration_api_ms: 10,
+    is_error: false,
+    num_turns: 1,
+    session_id: sessionId,
+    total_cost_usd: 0,
+    usage: {
+      input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      output_tokens: 0,
+      server_tool_use: {
+        web_search_requests: 0,
+      },
+    },
+    result: 'Done',
+    stop_reason: 'end_turn',
+  };
+}
+
+function successfulResultIterator(sessionId?: string) {
+  let emitted = false;
+  return {
+    next: async () => {
+      if (emitted) {
+        return { done: true, value: undefined };
+      }
+      emitted = true;
+      return { done: false, value: successfulResultMessage(sessionId) };
+    },
+  };
+}
 
 describe('ClaudeRuntimeService', () => {
   let service: ClaudeRuntimeService;
@@ -133,17 +167,12 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('falls back to unknown SDK metadata when package.json is unavailable', () => {
-    jest.spyOn(runtimePaths, 'getBackendRuntimeRoot').mockReturnValue('/tmp/elevenex-runtime');
-    jest.spyOn(fs, 'readFileSync').mockImplementation(() => {
-      throw new Error('missing');
-    });
-    jest.spyOn(module_, 'createRequire').mockImplementation(() => ({
-      resolve: () => {
-        throw new Error('missing');
-      },
-    }) as unknown as NodeJS.Require);
-
-    expect(loadClaudeSdkPackageMetadata()).toEqual({ version: 'unknown' });
+    expect(
+      loadClaudeSdkPackageMetadata({
+        runtimeRoot: '/tmp/elevenex-runtime',
+        packageAnchors: [],
+      }),
+    ).toEqual({ version: 'unknown' });
   });
 
   it('returns a pending MCP URL elicitation for the requested server', () => {
@@ -1143,15 +1172,13 @@ describe('ClaudeRuntimeService', () => {
         mcpTools: [],
       }),
       close: jest.fn(),
-      [Symbol.asyncIterator]: () => ({
-        next: async () => ({ done: true, value: undefined }),
-      }),
+      [Symbol.asyncIterator]: () => successfulResultIterator(),
     });
 
     await service.submitPrompt(7, 'Stream this');
 
     expect(query).toHaveBeenCalledTimes(1);
-    expect((query as jest.Mock).mock.calls[0][0].options).not.toHaveProperty(
+    expect((query as jest.Mock).mock.calls[0][0].options).toHaveProperty(
       'pathToClaudeCodeExecutable',
     );
   });
@@ -1186,7 +1213,11 @@ describe('ClaudeRuntimeService', () => {
           return {
             next: async () => {
               if (!isTitleQuery) {
-                return { done: true, value: undefined };
+                if (emitted) {
+                  return { done: true, value: undefined };
+                }
+                emitted = true;
+                return { done: false, value: successfulResultMessage() };
               }
 
               if (emitted) {
@@ -1248,9 +1279,7 @@ describe('ClaudeRuntimeService', () => {
         mcpTools: [],
       }),
       close: jest.fn(),
-      [Symbol.asyncIterator]: () => ({
-        next: async () => ({ done: true, value: undefined }),
-      }),
+      [Symbol.asyncIterator]: () => successfulResultIterator(),
     });
 
     await service.submitPrompt(7, 'Continue this');
@@ -1281,9 +1310,7 @@ describe('ClaudeRuntimeService', () => {
         mcpTools: [],
       }),
       close: jest.fn(),
-      [Symbol.asyncIterator]: () => ({
-        next: async () => ({ done: true, value: undefined }),
-      }),
+      [Symbol.asyncIterator]: () => successfulResultIterator(),
     });
 
     await service.submitPrompt(7, 'Start this');
@@ -1324,14 +1351,21 @@ describe('ClaudeRuntimeService', () => {
           mcpTools: [],
         }),
         close: jest.fn(),
-        [Symbol.asyncIterator]: () => ({
-          next: async () => {
-            if (isTitleQuery) {
-              throw new Error('title failed');
-            }
-            return { done: true, value: undefined };
-          },
-        }),
+        [Symbol.asyncIterator]: () => {
+          let emitted = false;
+          return {
+            next: async () => {
+              if (isTitleQuery) {
+                throw new Error('title failed');
+              }
+              if (emitted) {
+                return { done: true, value: undefined };
+              }
+              emitted = true;
+              return { done: false, value: successfulResultMessage() };
+            },
+          };
+        },
       };
     });
 
@@ -1343,6 +1377,12 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('does not block the first Claude stream event on initial metadata refresh', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 7,
+      name: 'Manual Session Name',
+      worktreePath: '/tmp/project',
+      claudeSessionId: '-1',
+    });
     let resolveModels: ((value: unknown[]) => void) | null = null;
     let resolveUsage:
       ((value: {
@@ -1357,6 +1397,7 @@ describe('ClaudeRuntimeService', () => {
         mcpTools: never[];
       }) => void) | null = null;
     let emitted = false;
+    let emittedResult = false;
     let releaseIterator: (() => void) | null = null;
 
     const emittedEvents: string[] = [];
@@ -1397,13 +1438,19 @@ describe('ClaudeRuntimeService', () => {
           await new Promise<void>((resolve) => {
             releaseIterator = resolve;
           });
+          if (!emittedResult) {
+            emittedResult = true;
+            return { done: false, value: successfulResultMessage() };
+          }
           return { done: true, value: undefined };
         },
       }),
     });
 
     const submitPromise = service.submitPrompt(7, 'Start streaming');
-    await new Promise((resolve) => setImmediate(resolve));
+    while (!releaseIterator) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
 
     expect(emittedEvents).toContain('session_created');
 
@@ -1694,7 +1741,7 @@ describe('ClaudeRuntimeService', () => {
 
     expect(loggerWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining(
-        'Claude CLI override version mismatch: sdk expects 2.1.118, override reports 2.1.81 (Claude Code).',
+        'Claude CLI override version mismatch: sdk expects 2.1.131, override reports 2.1.81 (Claude Code).',
       ),
     );
   });
@@ -2059,7 +2106,7 @@ describe('ClaudeRuntimeService', () => {
       message: 'Run interrupted by user',
     });
     expect(interrupt).toHaveBeenCalled();
-    expect(close).toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
     expect(runtimeState.pendingPermissionRequest).toBeNull();
     expect(runtimeState.canInterrupt).toBe(false);
     expect(runtimeState.runPhase).toBe('idle');
@@ -2283,7 +2330,7 @@ describe('ClaudeRuntimeService', () => {
     const runtimeState = await service.getRuntimeState(7);
     expect(resolveUserInput).toHaveBeenCalledWith({ action: 'cancel' });
     expect(interrupt).toHaveBeenCalled();
-    expect(close).toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
     expect(runtimeState.pendingUserInputRequest).toBeNull();
     expect(runtimeState.canInterrupt).toBe(false);
     expect(runtimeState.runPhase).toBe('idle');

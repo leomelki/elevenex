@@ -22,7 +22,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.118",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.131",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",

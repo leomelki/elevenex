@@ -6,6 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
+import { existsSync } from 'fs';
+import { createRequire } from 'module';
 import { type DefaultLogFields, type ListLogLine, type SimpleGit } from 'simple-git';
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { buildAugmentedEnv, findBinary, worktreeSimpleGit } from '../config/system-paths.js';
@@ -14,7 +16,7 @@ import * as schema from '../database/schema/index.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 
-const CLAUDE_BIN = findBinary('claude') ?? 'claude';
+const CLAUDE_BIN = resolveSdkClaudePath() ?? findBinary('claude') ?? 'claude';
 const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const MAX_CHANGED_FILES = 40;
 const MAX_COMMITS = 20;
@@ -55,6 +57,29 @@ interface CachedSnapshotEntry {
   expiresAt: number;
   fingerprint: string;
   snapshot: WorktreeContextSnapshot;
+}
+
+function resolveSdkClaudePath(): string | null {
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  const candidates =
+    process.platform === 'linux'
+      ? [
+          `@anthropic-ai/claude-agent-sdk-linux-${process.arch}-musl/claude${ext}`,
+          `@anthropic-ai/claude-agent-sdk-linux-${process.arch}/claude${ext}`,
+        ]
+      : [`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`];
+  const scopedRequire = createRequire(__filename);
+  for (const candidate of candidates) {
+    try {
+      const resolved = scopedRequire.resolve(candidate);
+      if (existsSync(resolved)) {
+        return resolved;
+      }
+    } catch {
+      // Try next SDK-managed binary package.
+    }
+  }
+  return null;
 }
 
 @Injectable()

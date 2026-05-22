@@ -43,6 +43,10 @@ export class ClaudeAgentRuntimeProvider
     });
   }
 
+  onClientAttached(sessionId: number): void {
+    void this.runtimeService.prewarmSession(sessionId);
+  }
+
   getHistory(sessionId: number) {
     return this.runtimeService.getHistory(sessionId);
   }

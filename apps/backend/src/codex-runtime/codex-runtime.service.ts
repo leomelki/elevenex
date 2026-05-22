@@ -1202,6 +1202,14 @@ export class CodexRuntimeService extends EventEmitter {
       latestPromptSuggestion: null,
       latestCompactBoundary: null,
       latestMirrorError: null,
+      warmState: this.activeRuns.has(sessionId)
+        || this.lastPrewarmAt.has(sessionId)
+        ? 'warm'
+        : 'cold',
+      lastWarmedAt: this.lastPrewarmAt.has(sessionId)
+        ? new Date(this.lastPrewarmAt.get(sessionId)!).toISOString()
+        : null,
+      lastPromptTiming: null,
     };
   }
 

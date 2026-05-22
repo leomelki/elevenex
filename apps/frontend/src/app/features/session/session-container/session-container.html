@@ -48,15 +48,12 @@
             <!-- Claude Terminal Panel (Primary) - Always visible -->
             <z-resizable-panel [zDefaultSize]="sidePanelVisible() ? 55 : 100" [zMin]="30" [zMax]="sidePanelVisible() ? 70 : 100">
               <div class="claude-terminal-area h-full">
-                @for (tab of tabs(); track tab.sessionId) {
-                  <div
-                    class="claude-terminal-wrapper h-full"
-                    [class.hidden]="tab.sessionId !== activeSessionId()"
-                  >
+                @if (activeTab(); as tab) {
+                  <div class="claude-terminal-wrapper h-full">
                     @if (tab.status !== 'archived' && showClaudeTerminalFallback()) {
                       <app-claude-terminal
                         [sessionId]="tab.sessionId"
-                        [isVisible]="tab.sessionId === activeSessionId()"
+                        [isVisible]="true"
                         class="h-full block"
                       />
                     } @else {
@@ -67,7 +64,7 @@
                         [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
                         [activeAgentProvider]="tab.activeAgentProvider"
                         [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
-                        [isVisible]="tab.sessionId === activeSessionId()"
+                        [isVisible]="true"
                         [archived]="tab.status === 'archived'"
                         [sessionName]="tab.sessionName"
                         [unarchiveBusy]="unarchivingSessionId() === tab.sessionId"
