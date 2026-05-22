@@ -10,6 +10,11 @@ The project is meant to be used in repositories with multiple thousands of files
 - Use Zard UI components and Tailwind CSS utilities as much as possible when building or modifying frontend UI.
 - When a needed Zard UI component is not already installed, do not hesitate to install the relevant component instead of hand-rolling a replacement.
 
+### Angular component organization
+
+- Keep Angular components split by responsibility when they are more than trivially small: use `.component.ts` for behavior and wiring, `.component.html` for substantial templates, and `.component.scss` for substantial component styles.
+- Inline `template` and `styles` are acceptable only for very small, self-contained components where the markup and styling are brief enough to read comfortably inside the TypeScript file.
+
 ### Dark mode and color best practices
 
 - Dark mode is class-based. The app toggles the `dark` class on the root `html` element, and Tailwind dark variants should be written for that model.
