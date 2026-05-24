@@ -1,10 +1,9 @@
-import { CdkVirtualScrollViewport, ScrollingModule } from '@angular/cdk/scrolling';
+import { ScrollingModule } from '@angular/cdk/scrolling';
 import { CommonModule } from '@angular/common';
 import { Component, computed, effect, ElementRef, HostListener, inject, input, OnDestroy, signal, viewChild } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  lucideArrowUpDown,
   lucideBinary,
   lucideChevronDown,
   lucideCheck,
@@ -16,7 +15,6 @@ import {
   lucideRefreshCw,
   lucideSearch,
   lucideTriangleAlert,
-  lucideX,
 } from '@ng-icons/lucide';
 import hljs from 'highlight.js/lib/common';
 import { firstValueFrom } from 'rxjs';
@@ -34,12 +32,70 @@ import { ChangeReviewService } from '@/shared/services/change-review.service';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { detectHljsLang, escapeHtml } from '@/features/session/claude-workspace/util/code-highlight';
+import {
+  ChangeReviewVirtualAnchor,
+  ChangeReviewVirtualLayout,
+  estimateChangeReviewDiffRows,
+} from './change-review-virtual-layout';
 
 type StatusFilter = 'all' | ChangeReviewFileStatus;
+type RenderRowKind = 'fileHeader' | 'fileMeta' | 'diff';
 
 interface ScopeOption {
   value: ChangeReviewScope;
   label: string;
+}
+
+interface WindowLoadState {
+  running: boolean;
+  total: number;
+}
+
+interface DiffReplacement {
+  baseIndex: number;
+  rows: ChangeReviewRow[];
+}
+
+interface FileRenderState {
+  file: ChangeReviewFileSummary;
+  diffRowCount: number;
+  baseRowCount: number | null;
+  baseRows: ReadonlyMap<number, ChangeReviewRow>;
+  loadingOffsets: ReadonlySet<number>;
+  replacements: readonly DiffReplacement[];
+  message: string | null;
+  binary: boolean;
+  large: boolean;
+  truncated: boolean;
+  changeHash: string | null;
+}
+
+interface ResolvedDiffRow {
+  row: ChangeReviewRow | null;
+  baseIndex: number | null;
+}
+
+interface RenderRow {
+  id: string;
+  kind: RenderRowKind;
+  file: ChangeReviewFileSummary;
+  state: FileRenderState;
+  row: ChangeReviewRow | null;
+  diffIndex: number | null;
+  baseIndex: number | null;
+}
+
+interface WindowRequest {
+  generation: number;
+  filePath: string;
+  offset: number;
+  key: string;
+}
+
+interface WindowCacheEntry {
+  path: string;
+  offset: number;
+  length: number;
 }
 
 const SCOPES: ScopeOption[] = [
@@ -48,21 +104,15 @@ const SCOPES: ScopeOption[] = [
   { value: 'branch', label: 'Branch' },
 ];
 
+const ROW_HEIGHT_PX = 24;
 const WINDOW_LIMIT = 700;
 const CONTEXT_RANGE_LIMIT = 120;
+const VIEW_OVERSCAN_ROWS = 160;
+const WINDOW_LOAD_CONCURRENCY = 3;
+const MAX_WINDOW_CACHE_ROWS = 120_000;
+const MAX_WINDOW_CACHE_WINDOWS = 400;
+const MAX_ROW_HTML_CACHE = 8_000;
 const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
-const PREFETCH_CONCURRENCY = 2;
-const PREFETCH_PAUSE_MS = 35;
-const PREFETCH_MAX_FILES = 2_000;
-const PREFETCH_MAX_CHANGED_LINES_PER_FILE = 8_000;
-const PREFETCH_MAX_TOTAL_CHANGED_LINES = 220_000;
-
-interface PrefetchState {
-  running: boolean;
-  completed: number;
-  total: number;
-  skipped: number;
-}
 
 @Component({
   selector: 'app-change-review-panel',
@@ -73,7 +123,6 @@ interface PrefetchState {
   host: { class: 'block h-full min-h-0 bg-background text-foreground' },
   viewProviders: [
     provideIcons({
-      lucideArrowUpDown,
       lucideBinary,
       lucideChevronDown,
       lucideCheck,
@@ -85,7 +134,6 @@ interface PrefetchState {
       lucideRefreshCw,
       lucideSearch,
       lucideTriangleAlert,
-      lucideX,
     }),
   ],
 })
@@ -95,37 +143,40 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private readonly changeReview = inject(ChangeReviewService);
   private readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly sanitizer = inject(DomSanitizer);
+  private readonly diffScroll = viewChild<ElementRef<HTMLElement>>('diffScroll');
   private readonly rowHtmlCache = new Map<string, SafeHtml>();
-  private readonly diffViewport = viewChild<CdkVirtualScrollViewport>('diffViewport');
+  private readonly windowQueue: WindowRequest[] = [];
+  private readonly pendingWindowKeys = new Set<string>();
+  private readonly windowCache = new Map<string, WindowCacheEntry>();
   private readonly relativeTimeInterval = window.setInterval(() => {
     this.now.set(Date.now());
   }, 30_000);
-  private prefetchGeneration = 0;
-  private fileLoadGeneration = 0;
 
+  private windowCacheRows = 0;
+  private inFlightWindowLoads = 0;
+  private generation = 0;
+
+  readonly rowHeightPx = ROW_HEIGHT_PX;
   readonly scopes = SCOPES;
   readonly scope = signal<ChangeReviewScope>('branch');
   readonly statusFilter = signal<StatusFilter>('all');
   readonly search = signal('');
   readonly context = signal(8);
   readonly summary = signal<ChangeReviewSummary | null>(null);
-  readonly selectedFile = signal<ChangeReviewFileSummary | null>(null);
-  readonly fileWindow = signal<ChangeReviewFileWindow | null>(null);
-  readonly rows = signal<ChangeReviewRow[]>([]);
   readonly loadingSummary = signal(false);
-  readonly loadingWindow = signal(false);
-  readonly loadingMore = signal(false);
-  readonly loadingContextRanges = signal<ReadonlySet<string>>(new Set());
   readonly error = signal<string | null>(null);
   readonly now = signal(Date.now());
+  readonly fileStates = signal<ReadonlyMap<string, FileRenderState>>(new Map());
+  readonly activeFilePath = signal<string | null>(null);
+  readonly layout = signal(new ChangeReviewVirtualLayout([]));
+  readonly visibleRows = signal<RenderRow[]>([]);
+  readonly renderedOffsetPx = signal(0);
+  readonly loadingContextRanges = signal<ReadonlySet<string>>(new Set());
   readonly fileChangeHashes = signal<ReadonlyMap<string, string>>(new Map());
   readonly viewedHashes = signal<Record<string, string>>(this.readViewedHashes());
-  readonly prefetchState = signal<PrefetchState>({
-    running: false,
-    completed: 0,
-    total: 0,
-    skipped: 0,
-  });
+  readonly windowLoadState = signal<WindowLoadState>({ running: false, total: 0 });
+
+  readonly totalHeightPx = computed(() => this.layout().totalRows * ROW_HEIGHT_PX);
 
   readonly filteredFiles = computed(() => {
     const summary = this.summary();
@@ -155,56 +206,40 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     return filters.filter((filter) => filter.value === 'all' || filter.count > 0);
   });
 
-  readonly hasMoreRows = computed(() => {
-    const fileWindow = this.selectedFileWindow();
-    return Boolean(fileWindow?.hasMore) && this.rows().length < (fileWindow?.totalRows ?? 0);
-  });
-
-  readonly selectedFileWindow = computed(() => {
-    const file = this.selectedFile();
-    const fileWindow = this.fileWindow();
-    return file && fileWindow?.path === file.path ? fileWindow : null;
-  });
-
-  readonly selectedFileViewed = computed(() => {
-    const file = this.selectedFile();
-    const fileWindow = this.selectedFileWindow();
-    if (!file || !fileWindow) return false;
-    return this.isViewedHash(file.path, fileWindow.changeHash);
-  });
-
   constructor() {
     effect(() => {
       const worktreePath = this.worktreePath();
       const scope = this.scope();
-      if (!worktreePath) return;
-      void this.loadSummary(worktreePath, scope, false);
+      if (!worktreePath || !scope) return;
+      void this.loadForCurrentScope(false);
     });
   }
 
   ngOnDestroy(): void {
-    this.prefetchGeneration += 1;
+    this.generation += 1;
     window.clearInterval(this.relativeTimeInterval);
   }
 
   async refresh(refreshBase = false): Promise<void> {
-    this.prefetchGeneration += 1;
-    this.prefetchState.set({ running: false, completed: 0, total: 0, skipped: 0 });
     if (refreshBase) {
       this.changeReview.clearCache(this.worktreePath(), this.scope());
     }
-    await this.loadSummary(this.worktreePath(), this.scope(), refreshBase);
+    await this.loadForCurrentScope(refreshBase);
   }
 
   setScope(scope: ChangeReviewScope): void {
     if (scope === this.scope()) return;
-    this.prefetchGeneration += 1;
-    this.prefetchState.set({ running: false, completed: 0, total: 0, skipped: 0 });
     this.scope.set(scope);
   }
 
   setStatusFilter(filter: StatusFilter): void {
     this.statusFilter.set(filter);
+    this.applyFilters(true);
+  }
+
+  setSearch(value: string): void {
+    this.search.set(value);
+    this.applyFilters(true);
   }
 
   @HostListener('document:keydown', ['$event'])
@@ -212,67 +247,40 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     if (!this.eventStartedInsidePanel(event) || this.isEditableTarget(event.target)) return;
     event.preventDefault();
-    void this.selectAdjacentFile(event.key === 'ArrowDown' ? 1 : -1);
+    this.scrollToAdjacentFile(event.key === 'ArrowDown' ? 1 : -1);
   }
 
-  async selectFile(file: ChangeReviewFileSummary): Promise<void> {
-    this.selectedFile.set(file);
-    this.context.set(8);
-    this.fileWindow.set(null);
-    this.rows.set([]);
-    this.loadingMore.set(false);
-    this.loadingContextRanges.set(new Set());
-    await this.loadWindow(file, 0, true);
+  onDiffScroll(): void {
+    this.refreshRenderedRows();
+    this.ensureVisibleRangeLoaded();
   }
 
-  toggleSelectedFileViewed(): void {
-    const file = this.selectedFile();
-    const fileWindow = this.selectedFileWindow();
-    if (!file || !fileWindow) return;
-    if (this.selectedFileViewed()) {
-      this.unmarkViewed(file.path);
+  scrollToFile(file: ChangeReviewFileSummary): void {
+    this.activeFilePath.set(file.path);
+    const start = this.layout().fileStart(file.path);
+    const scrollEl = this.diffScroll()?.nativeElement;
+    if (start !== null && scrollEl) {
+      scrollEl.scrollTop = start * ROW_HEIGHT_PX;
+      this.refreshRenderedRows();
+      this.ensureVisibleRangeLoaded();
       return;
     }
-    this.markViewed(file.path, fileWindow.changeHash);
-    void this.selectNextUnviewedFile(file.path);
+    this.enqueueWindow(file.path, 0, true);
   }
 
   prefetchFile(file: ChangeReviewFileSummary): void {
-    if (file.binary || file.large) return;
-    const options = {
-      offset: 0,
-      limit: WINDOW_LIMIT,
-      context: this.context(),
-    };
-    if (this.changeReview.hasFileWindowCache(this.worktreePath(), this.scope(), file.path, options)) {
+    this.enqueueWindow(file.path, 0, true);
+  }
+
+  toggleFileViewed(file: ChangeReviewFileSummary): void {
+    const hash = this.fileChangeHashes().get(file.path);
+    if (!hash) return;
+    if (this.isViewedHash(file.path, hash)) {
+      this.unmarkViewed(file.path);
       return;
     }
-    void firstValueFrom(this.changeReview.getFileWindow(
-      this.worktreePath(),
-      this.scope(),
-      file.path,
-      options,
-    ))
-      .then((fileWindow) => this.rememberFileHash(fileWindow.path, fileWindow.changeHash))
-      .catch(() => undefined);
-  }
-
-  async collapseFile(): Promise<void> {
-    this.selectedFile.set(null);
-    this.fileWindow.set(null);
-    this.rows.set([]);
-    this.loadingWindow.set(false);
-    this.loadingMore.set(false);
-    this.loadingContextRanges.set(new Set());
-  }
-
-  onDiffIndexChange(index: number): void {
-    const rows = this.rows();
-    const file = this.selectedFile();
-    if (!file || this.loadingMore() || !this.hasMoreRows()) return;
-    if (index + 80 >= rows.length) {
-      void this.loadWindow(file, rows.length, false);
-    }
+    this.markViewed(file.path, hash);
+    this.scrollToNextUnviewedFile(file.path);
   }
 
   openPullRequest(): void {
@@ -285,7 +293,12 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   rowHtml(row: ChangeReviewRow): SafeHtml {
     const key = `${row.path}:${row.type}:${row.content}`;
     const cached = this.rowHtmlCache.get(key);
-    if (cached) return cached;
+    if (cached) {
+      this.rowHtmlCache.delete(key);
+      this.rowHtmlCache.set(key, cached);
+      return cached;
+    }
+
     const lang = detectHljsLang(row.path);
     let html = escapeHtml(row.content || ' ');
     if (row.type !== 'hunk' && row.type !== 'expand' && row.type !== 'meta') {
@@ -299,14 +312,22 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     }
     const safe = this.sanitizer.bypassSecurityTrustHtml(html);
     this.rowHtmlCache.set(key, safe);
+    while (this.rowHtmlCache.size > MAX_ROW_HTML_CACHE) {
+      const oldest = this.rowHtmlCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.rowHtmlCache.delete(oldest);
+    }
     return safe;
   }
 
-  async expandContext(row: ChangeReviewRow): Promise<void> {
-    const file = this.selectedFile();
-    if (!file || row.type !== 'expand' || !row.oldStart || !row.newStart || !row.count) return;
+  async expandContext(renderRow: RenderRow): Promise<void> {
+    const row = renderRow.row;
+    const file = renderRow.file;
+    if (!row || row.type !== 'expand' || !row.oldStart || !row.newStart || !row.count) return;
     if (this.loadingContextRanges().has(row.id)) return;
+
     this.setContextRangeLoading(row.id, true);
+    const requestGeneration = this.generation;
     try {
       const contextWindow = await firstValueFrom(this.changeReview.getContextWindow(
         this.worktreePath(),
@@ -319,6 +340,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
           limit: CONTEXT_RANGE_LIMIT,
         },
       ));
+      if (requestGeneration !== this.generation) return;
+
       const loaded = contextWindow.rows.length;
       const replacement: ChangeReviewRow[] = [...contextWindow.rows];
       const remaining = Math.max(0, row.count - loaded);
@@ -333,15 +356,11 @@ export class ChangeReviewPanelComponent implements OnDestroy {
         });
       }
 
-      this.rows.update((rows) => {
-        const index = rows.findIndex((candidate) => candidate.id === row.id);
-        if (index === -1) return rows;
-        return [
-          ...rows.slice(0, index),
-          ...replacement,
-          ...rows.slice(index + 1),
-        ];
-      });
+      const anchor = this.captureAnchor();
+      this.setFileState(file.path, (state) => this.replaceDiffRow(state, row.id, replacement));
+      this.rebuildLayout();
+      this.restoreAnchor(anchor);
+      this.refreshRenderedRows();
     } catch (error: any) {
       const message = error?.error?.message || 'Could not load context lines.';
       toast.error(message);
@@ -350,8 +369,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     }
   }
 
-  isContextRangeLoading(row: ChangeReviewRow): boolean {
-    return this.loadingContextRanges().has(row.id);
+  isContextRangeLoading(row: ChangeReviewRow | null): boolean {
+    return row !== null && this.loadingContextRanges().has(row.id);
   }
 
   isFileViewed(file: ChangeReviewFileSummary): boolean {
@@ -359,15 +378,19 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     return Boolean(hash) && this.isViewedHash(file.path, hash!);
   }
 
+  isFileLoaded(file: ChangeReviewFileSummary): boolean {
+    return Boolean(this.fileChangeHashes().get(file.path));
+  }
+
   isSelectedFile(file: ChangeReviewFileSummary): boolean {
-    return this.selectedFile()?.path === file.path;
+    return this.activeFilePath() === file.path;
   }
 
   fileTrack(index: number, file: ChangeReviewFileSummary): string {
     return `${file.status}:${file.oldPath ?? ''}:${file.path}`;
   }
 
-  rowTrack(index: number, row: ChangeReviewRow): string {
+  renderRowTrack(index: number, row: RenderRow): string {
     return row.id;
   }
 
@@ -379,6 +402,14 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const parts = filePath.split('/');
     parts.pop();
     return parts.join('/');
+  }
+
+  fileMetaText(row: RenderRow): string {
+    if (row.state.message) return row.state.message;
+    if (row.file.oldPath) return `renamed from ${row.file.oldPath}`;
+    if (row.state.loadingOffsets.size > 0) return 'Loading diff window';
+    if (!row.state.changeHash) return 'Diff not loaded yet';
+    return row.state.baseRowCount === null ? '' : `${row.state.baseRowCount} diff rows`;
   }
 
   statusLabel(status: ChangeReviewFileStatus): string {
@@ -416,92 +447,448 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     return `${Math.floor(elapsedHours / 24)}d ago`;
   }
 
-  prefetchText(state: PrefetchState): string {
-    if (!state.running && state.total === 0) return '';
-    if (state.running) return `warming ${state.completed}/${state.total}`;
-    return `warmed ${state.completed}/${state.total}`;
+  prefetchText(state: WindowLoadState): string {
+    if (!state.running) return '';
+    return `loading ${state.total} diff window${state.total === 1 ? '' : 's'}`;
   }
 
-  private async loadSummary(worktreePath: string, scope: ChangeReviewScope, refreshBase: boolean): Promise<void> {
+  private async loadForCurrentScope(refreshBase: boolean): Promise<void> {
+    const worktreePath = this.worktreePath();
+    const scope = this.scope();
+    const requestGeneration = ++this.generation;
+    this.resetQueues();
     this.loadingSummary.set(true);
     this.error.set(null);
-    this.fileWindow.set(null);
-    this.rows.set([]);
-    this.selectedFile.set(null);
-    this.loadingWindow.set(false);
-    this.loadingMore.set(false);
-    this.loadingContextRanges.set(new Set());
+    this.summary.set(null);
+    this.fileStates.set(new Map());
     this.fileChangeHashes.set(new Map());
+    this.activeFilePath.set(null);
+    this.layout.set(new ChangeReviewVirtualLayout([]));
+    this.visibleRows.set([]);
+    this.renderedOffsetPx.set(0);
+    this.loadingContextRanges.set(new Set());
     this.rowHtmlCache.clear();
     this.now.set(Date.now());
-    const generation = ++this.prefetchGeneration;
-    this.prefetchState.set({ running: false, completed: 0, total: 0, skipped: 0 });
+
     try {
       const summary = await firstValueFrom(this.changeReview.getSummary(worktreePath, scope, refreshBase));
+      if (requestGeneration !== this.generation) return;
+
       this.summary.set(summary);
-      const first = summary.files[0] ?? null;
-      if (first) {
-        const firstFile = this.selectFile(first);
-        void this.prefetchFileWindows(summary, generation, first.path);
-        await firstFile;
-      }
+      this.fileStates.set(new Map(summary.files.map((file) => [
+        file.path,
+        this.createFileState(file),
+      ])));
+      this.applyFilters(true);
     } catch (error: any) {
+      if (requestGeneration !== this.generation) return;
       const message = error?.error?.message || 'Could not load changes.';
       this.error.set(message);
       toast.error(message);
     } finally {
-      this.loadingSummary.set(false);
+      if (requestGeneration === this.generation) {
+        this.loadingSummary.set(false);
+      }
     }
   }
 
-  private async loadWindow(file: ChangeReviewFileSummary, offset: number, replace: boolean): Promise<void> {
-    const loadGeneration = replace ? ++this.fileLoadGeneration : this.fileLoadGeneration;
-    const options = {
-      offset,
-      limit: WINDOW_LIMIT,
-      context: this.context(),
+  private createFileState(file: ChangeReviewFileSummary): FileRenderState {
+    return {
+      file,
+      diffRowCount: estimateChangeReviewDiffRows(file, this.context()),
+      baseRowCount: null,
+      baseRows: new Map(),
+      loadingOffsets: new Set(),
+      replacements: [],
+      message: null,
+      binary: file.binary,
+      large: file.large,
+      truncated: false,
+      changeHash: null,
     };
-    const cacheHit = this.changeReview.hasFileWindowCache(
+  }
+
+  private applyFilters(scrollToTop: boolean): void {
+    this.rebuildLayout();
+    const files = this.filteredFiles();
+    this.activeFilePath.set(files[0]?.path ?? null);
+    if (scrollToTop) {
+      window.setTimeout(() => {
+        const scrollEl = this.diffScroll()?.nativeElement;
+        if (scrollEl) scrollEl.scrollTop = 0;
+        this.refreshRenderedRows();
+        this.ensureVisibleRangeLoaded();
+      }, 0);
+      return;
+    }
+    this.refreshRenderedRows();
+    this.ensureVisibleRangeLoaded();
+  }
+
+  private rebuildLayout(): void {
+    const states = this.fileStates();
+    this.layout.set(new ChangeReviewVirtualLayout(this.filteredFiles().map((file) => ({
+      path: file.path,
+      diffRows: states.get(file.path)?.diffRowCount ?? estimateChangeReviewDiffRows(file, this.context()),
+    }))));
+  }
+
+  private refreshRenderedRows(): void {
+    const layout = this.layout();
+    const scrollEl = this.diffScroll()?.nativeElement;
+    if (!scrollEl || layout.totalRows === 0) {
+      this.visibleRows.set([]);
+      this.renderedOffsetPx.set(0);
+      return;
+    }
+
+    const visibleStart = Math.max(0, Math.floor(scrollEl.scrollTop / ROW_HEIGHT_PX));
+    const visibleEnd = Math.min(
+      layout.totalRows,
+      Math.ceil((scrollEl.scrollTop + scrollEl.clientHeight) / ROW_HEIGHT_PX),
+    );
+    const renderStart = Math.max(0, visibleStart - VIEW_OVERSCAN_ROWS);
+    const renderEnd = Math.min(layout.totalRows, Math.max(visibleEnd + VIEW_OVERSCAN_ROWS, renderStart + 1));
+    const topPosition = layout.positionForIndex(visibleStart);
+
+    this.renderedOffsetPx.set(renderStart * ROW_HEIGHT_PX);
+    this.visibleRows.set(this.buildRenderRows(renderStart, renderEnd));
+    if (topPosition && topPosition.path !== this.activeFilePath()) {
+      this.activeFilePath.set(topPosition.path);
+    }
+  }
+
+  private buildRenderRows(startIndex: number, endIndex: number): RenderRow[] {
+    const layout = this.layout();
+    const states = this.fileStates();
+    const rows: RenderRow[] = [];
+
+    for (let index = startIndex; index < endIndex; index += 1) {
+      const position = layout.positionForIndex(index);
+      if (!position) continue;
+      const state = states.get(position.path);
+      if (!state) continue;
+
+      if (position.headerIndex === 0) {
+        rows.push({
+          id: `${position.path}:header`,
+          kind: 'fileHeader',
+          file: state.file,
+          state,
+          row: null,
+          diffIndex: null,
+          baseIndex: null,
+        });
+        continue;
+      }
+
+      if (position.headerIndex === 1) {
+        rows.push({
+          id: `${position.path}:meta`,
+          kind: 'fileMeta',
+          file: state.file,
+          state,
+          row: null,
+          diffIndex: null,
+          baseIndex: null,
+        });
+        continue;
+      }
+
+      const diffIndex = position.diffIndex ?? 0;
+      const resolved = this.resolveDiffRow(state, diffIndex);
+      if (resolved.baseIndex !== null && resolved.row) {
+        this.touchWindow(state.file.path, resolved.baseIndex);
+      }
+      rows.push({
+        id: resolved.row
+          ? `${position.path}:diff:${diffIndex}:${resolved.row.id}`
+          : `${position.path}:placeholder:${diffIndex}`,
+        kind: 'diff',
+        file: state.file,
+        state,
+        row: resolved.row,
+        diffIndex,
+        baseIndex: resolved.baseIndex,
+      });
+    }
+
+    return rows;
+  }
+
+  private ensureVisibleRangeLoaded(): void {
+    const scrollEl = this.diffScroll()?.nativeElement;
+    const layout = this.layout();
+    if (layout.totalRows === 0) return;
+
+    const viewportRows = scrollEl
+      ? Math.ceil(scrollEl.clientHeight / ROW_HEIGHT_PX)
+      : 40;
+    const visibleStart = scrollEl
+      ? Math.floor(scrollEl.scrollTop / ROW_HEIGHT_PX)
+      : 0;
+    this.ensureRangeLoaded(
+      Math.max(0, visibleStart - VIEW_OVERSCAN_ROWS),
+      Math.min(layout.totalRows, visibleStart + viewportRows + VIEW_OVERSCAN_ROWS),
+    );
+  }
+
+  private ensureRangeLoaded(startIndex: number, endIndex: number): void {
+    const states = this.fileStates();
+    for (const segment of this.layout().segmentsForRange(startIndex, endIndex)) {
+      const state = states.get(segment.path);
+      if (!state) continue;
+
+      if (segment.includesHeader || segment.diffEnd > segment.diffStart) {
+        this.enqueueWindow(segment.path, 0, segment.includesHeader);
+      }
+
+      for (let diffIndex = segment.diffStart; diffIndex < segment.diffEnd; diffIndex += 1) {
+        const resolved = this.resolveDiffRow(state, diffIndex);
+        if (resolved.baseIndex === null || resolved.row) continue;
+        if (state.baseRowCount !== null && resolved.baseIndex >= state.baseRowCount) continue;
+        const offset = Math.floor(resolved.baseIndex / WINDOW_LIMIT) * WINDOW_LIMIT;
+        this.enqueueWindow(segment.path, offset, false);
+        diffIndex = Math.min(segment.diffEnd, offset + WINDOW_LIMIT) - 1;
+      }
+    }
+  }
+
+  private enqueueWindow(filePath: string, offset: number, priority: boolean): void {
+    const state = this.fileStates().get(filePath);
+    if (!state) return;
+    const safeOffset = Math.max(0, Math.floor(offset / WINDOW_LIMIT) * WINDOW_LIMIT);
+    if (state.baseRowCount !== null && state.baseRowCount <= safeOffset && state.baseRowCount > 0) return;
+    const key = this.windowKey(filePath, safeOffset);
+    if (
+      this.windowCache.has(key)
+      || this.pendingWindowKeys.has(key)
+      || state.loadingOffsets.has(safeOffset)
+    ) {
+      return;
+    }
+
+    const request: WindowRequest = {
+      generation: this.generation,
+      filePath,
+      offset: safeOffset,
+      key,
+    };
+    this.pendingWindowKeys.add(key);
+    if (priority) {
+      this.windowQueue.unshift(request);
+    } else {
+      this.windowQueue.push(request);
+    }
+    this.updateWindowLoadState();
+    this.pumpWindowQueue();
+  }
+
+  private pumpWindowQueue(): void {
+    while (this.inFlightWindowLoads < WINDOW_LOAD_CONCURRENCY && this.windowQueue.length > 0) {
+      const request = this.windowQueue.shift()!;
+      if (request.generation !== this.generation) {
+        this.pendingWindowKeys.delete(request.key);
+        continue;
+      }
+      this.startWindowLoad(request);
+    }
+    this.updateWindowLoadState();
+  }
+
+  private startWindowLoad(request: WindowRequest): void {
+    this.inFlightWindowLoads += 1;
+    this.setFileState(request.filePath, (state) => ({
+      ...state,
+      loadingOffsets: new Set(state.loadingOffsets).add(request.offset),
+    }));
+
+    void firstValueFrom(this.changeReview.getFileWindow(
       this.worktreePath(),
       this.scope(),
-      file.path,
-      options,
-    );
-    if (replace) {
-      this.loadingWindow.set(!cacheHit);
-      this.loadingContextRanges.set(new Set());
-      this.diffViewport()?.scrollToIndex(0);
-    } else {
-      this.loadingMore.set(true);
-    }
-    try {
-      const fileWindow = await firstValueFrom(this.changeReview.getFileWindow(
-        this.worktreePath(),
-        this.scope(),
-        file.path,
-        options,
-      ));
-      if (this.selectedFile()?.path !== file.path) {
-        return;
-      }
-      this.rememberFileHash(fileWindow.path, fileWindow.changeHash);
-      this.fileWindow.set(fileWindow);
-      this.rows.set(replace ? fileWindow.rows : [...this.rows(), ...fileWindow.rows]);
-    } catch (error: any) {
-      if (this.selectedFile()?.path !== file.path || loadGeneration !== this.fileLoadGeneration) {
-        return;
-      }
-      const message = error?.error?.message || 'Could not load file diff.';
-      toast.error(message);
-    } finally {
-      if (this.selectedFile()?.path === file.path && loadGeneration === this.fileLoadGeneration) {
-        this.loadingWindow.set(false);
-        this.loadingMore.set(false);
-      }
-    }
+      request.filePath,
+      {
+        offset: request.offset,
+        limit: WINDOW_LIMIT,
+        context: this.context(),
+      },
+    ))
+      .then((fileWindow) => this.applyFileWindow(fileWindow, request))
+      .catch((error: any) => {
+        if (request.generation === this.generation) {
+          const message = error?.error?.message || 'Could not load file diff.';
+          toast.error(message);
+        }
+      })
+      .finally(() => {
+        if (request.generation !== this.generation) return;
+        this.inFlightWindowLoads = Math.max(0, this.inFlightWindowLoads - 1);
+        this.pendingWindowKeys.delete(request.key);
+        this.setFileState(request.filePath, (state) => {
+          const loadingOffsets = new Set(state.loadingOffsets);
+          loadingOffsets.delete(request.offset);
+          return { ...state, loadingOffsets };
+        });
+        this.updateWindowLoadState();
+        this.refreshRenderedRows();
+        this.pumpWindowQueue();
+      });
   }
 
-  private async selectNextUnviewedFile(currentPath: string): Promise<void> {
+  private applyFileWindow(fileWindow: ChangeReviewFileWindow, request: WindowRequest): void {
+    if (request.generation !== this.generation) return;
+    const anchor = this.captureAnchor();
+    this.rememberFileHash(fileWindow.path, fileWindow.changeHash);
+    this.setFileState(fileWindow.path, (state) => {
+      const baseRows = new Map(state.baseRows);
+      fileWindow.rows.forEach((row, index) => {
+        baseRows.set(request.offset + index, row);
+      });
+      const replacements = state.replacements;
+      const replacementDelta = this.replacementDelta(replacements);
+      const baseRowCount = fileWindow.totalRows;
+      return {
+        ...state,
+        file: {
+          ...state.file,
+          oldPath: fileWindow.oldPath,
+          status: fileWindow.status,
+          binary: fileWindow.binary,
+          large: fileWindow.large,
+        },
+        baseRows,
+        baseRowCount,
+        diffRowCount: Math.max(1, baseRowCount + replacementDelta),
+        message: fileWindow.message,
+        binary: fileWindow.binary,
+        large: fileWindow.large,
+        truncated: fileWindow.truncated,
+        changeHash: fileWindow.changeHash,
+      };
+    });
+    this.rememberWindow(fileWindow.path, request.offset, fileWindow.rows.length);
+    this.rebuildLayout();
+    this.restoreAnchor(anchor);
+    this.refreshRenderedRows();
+    this.pruneWindowCache();
+  }
+
+  private resolveDiffRow(state: FileRenderState, diffIndex: number): ResolvedDiffRow {
+    let shift = 0;
+    for (let replacementIndex = 0; replacementIndex < state.replacements.length; replacementIndex += 1) {
+      const replacement = state.replacements[replacementIndex];
+      const virtualStart = replacement.baseIndex + shift;
+      const virtualEnd = virtualStart + replacement.rows.length;
+      if (diffIndex < virtualStart) {
+        const baseIndex = diffIndex - shift;
+        return {
+          row: state.baseRows.get(baseIndex) ?? null,
+          baseIndex,
+        };
+      }
+      if (diffIndex < virtualEnd) {
+        return {
+          row: replacement.rows[diffIndex - virtualStart] ?? null,
+          baseIndex: null,
+        };
+      }
+      shift += replacement.rows.length - 1;
+    }
+
+    const baseIndex = diffIndex - shift;
+    return {
+      row: state.baseRows.get(baseIndex) ?? null,
+      baseIndex,
+    };
+  }
+
+  private replaceDiffRow(
+    state: FileRenderState,
+    rowId: string,
+    replacementRows: ChangeReviewRow[],
+  ): FileRenderState {
+    for (let replacementIndex = 0; replacementIndex < state.replacements.length; replacementIndex += 1) {
+      const replacement = state.replacements[replacementIndex];
+      const rowIndex = replacement.rows.findIndex((row) => row.id === rowId);
+      if (rowIndex === -1) continue;
+
+      const nextRows = [
+        ...replacement.rows.slice(0, rowIndex),
+        ...replacementRows,
+        ...replacement.rows.slice(rowIndex + 1),
+      ];
+      const replacements = state.replacements.map((candidate, index) => index === replacementIndex
+        ? { ...candidate, rows: nextRows }
+        : candidate);
+      return {
+        ...state,
+        replacements,
+        diffRowCount: this.diffRowCountFor(state.baseRowCount, state.diffRowCount, replacements),
+      };
+    }
+
+    for (const [baseIndex, row] of state.baseRows.entries()) {
+      if (row.id !== rowId) continue;
+      const replacements = [
+        ...state.replacements,
+        { baseIndex, rows: replacementRows },
+      ].sort((left, right) => left.baseIndex - right.baseIndex);
+      return {
+        ...state,
+        replacements,
+        diffRowCount: this.diffRowCountFor(state.baseRowCount, state.diffRowCount, replacements),
+      };
+    }
+
+    return state;
+  }
+
+  private diffRowCountFor(
+    baseRowCount: number | null,
+    currentDiffRowCount: number,
+    replacements: readonly DiffReplacement[],
+  ): number {
+    const baseCount = baseRowCount ?? currentDiffRowCount;
+    return Math.max(1, baseCount + this.replacementDelta(replacements));
+  }
+
+  private replacementDelta(replacements: readonly DiffReplacement[]): number {
+    return replacements.reduce((sum, replacement) => sum + replacement.rows.length - 1, 0);
+  }
+
+  private captureAnchor(): ChangeReviewVirtualAnchor | null {
+    const scrollEl = this.diffScroll()?.nativeElement;
+    return scrollEl ? this.layout().anchorForScrollTop(scrollEl.scrollTop, ROW_HEIGHT_PX) : null;
+  }
+
+  private restoreAnchor(anchor: ChangeReviewVirtualAnchor | null): void {
+    if (!anchor) return;
+    queueMicrotask(() => {
+      const scrollEl = this.diffScroll()?.nativeElement;
+      if (!scrollEl) return;
+      scrollEl.scrollTop = this.layout().scrollTopForAnchor(anchor, ROW_HEIGHT_PX);
+      this.refreshRenderedRows();
+      this.ensureVisibleRangeLoaded();
+    });
+  }
+
+  private scrollToAdjacentFile(delta: 1 | -1): void {
+    const files = this.filteredFiles();
+    if (files.length === 0) return;
+    const activePath = this.activeFilePath();
+    if (!activePath) {
+      this.scrollToFile(delta > 0 ? files[0] : files[files.length - 1]);
+      return;
+    }
+    const currentIndex = files.findIndex((file) => file.path === activePath);
+    const nextIndex = currentIndex === -1
+      ? (delta > 0 ? 0 : files.length - 1)
+      : currentIndex + delta;
+    if (nextIndex < 0 || nextIndex >= files.length) return;
+    this.scrollToFile(files[nextIndex]);
+  }
+
+  private scrollToNextUnviewedFile(currentPath: string): void {
     const files = this.filteredFiles();
     if (files.length === 0) return;
     const currentIndex = files.findIndex((file) => file.path === currentPath);
@@ -511,124 +898,103 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     ];
     const nextFile = ordered.find((file) => !this.isFileViewed(file));
     if (nextFile) {
-      await this.selectFile(nextFile);
+      this.scrollToFile(nextFile);
     }
   }
 
-  private async prefetchFileWindows(
-    summary: ChangeReviewSummary,
-    generation: number,
-    selectedPath: string,
-  ): Promise<void> {
-    const { files, skipped } = this.prefetchCandidates(summary, selectedPath);
-    if (generation !== this.prefetchGeneration) return;
-    this.prefetchState.set({
-      running: files.length > 0,
-      completed: 0,
-      total: files.length,
-      skipped,
+  private setFileState(
+    filePath: string,
+    updater: (state: FileRenderState) => FileRenderState,
+  ): void {
+    this.fileStates.update((current) => {
+      const state = current.get(filePath);
+      if (!state) return current;
+      const nextState = updater(state);
+      if (nextState === state) return current;
+      const next = new Map(current);
+      next.set(filePath, nextState);
+      return next;
     });
-    if (files.length === 0) return;
-
-    await this.prefetchPause(180);
-    const workerCount = Math.min(PREFETCH_CONCURRENCY, files.length);
-    await Promise.all(Array.from({ length: workerCount }, async (_, workerIndex) => {
-      for (let index = workerIndex; index < files.length; index += workerCount) {
-        if (generation !== this.prefetchGeneration) return;
-        const file = files[index];
-        const fileWindow = await firstValueFrom(this.changeReview.getFileWindow(
-          summary.worktreePath,
-          summary.scope,
-          file.path,
-          {
-            offset: 0,
-            limit: WINDOW_LIMIT,
-            context: this.context(),
-          },
-        )).catch(() => undefined);
-        if (fileWindow) {
-          this.rememberFileHash(fileWindow.path, fileWindow.changeHash);
-        }
-        if (generation !== this.prefetchGeneration) return;
-        this.prefetchState.update((state) => ({
-          ...state,
-          completed: Math.min(state.total, state.completed + 1),
-        }));
-        await this.prefetchPause(PREFETCH_PAUSE_MS);
-      }
-    }));
-
-    if (generation === this.prefetchGeneration) {
-      this.prefetchState.update((state) => ({ ...state, running: false }));
-    }
   }
 
-  private prefetchCandidates(
-    summary: ChangeReviewSummary,
-    selectedPath: string,
-  ): { files: ChangeReviewFileSummary[]; skipped: number } {
-    let skipped = 0;
-    let totalChangedLines = 0;
-    const files: ChangeReviewFileSummary[] = [];
-    const candidates = summary.files
-      .filter((file) => file.path !== selectedPath)
-      .sort((left, right) => {
-        const leftSize = left.additions + left.deletions;
-        const rightSize = right.additions + right.deletions;
-        return leftSize - rightSize || left.path.localeCompare(right.path);
-      });
-
-    for (const file of candidates) {
-      const changedLines = file.additions + file.deletions;
-      if (
-        file.binary
-        || file.large
-        || changedLines > PREFETCH_MAX_CHANGED_LINES_PER_FILE
-        || files.length >= PREFETCH_MAX_FILES
-        || totalChangedLines + changedLines > PREFETCH_MAX_TOTAL_CHANGED_LINES
-      ) {
-        skipped += 1;
-        continue;
-      }
-      files.push(file);
-      totalChangedLines += changedLines;
+  private rememberWindow(filePath: string, offset: number, length: number): void {
+    if (length <= 0) return;
+    const key = this.windowKey(filePath, offset);
+    const existing = this.windowCache.get(key);
+    if (existing) {
+      this.windowCacheRows -= existing.length;
+      this.windowCache.delete(key);
     }
-
-    return { files, skipped };
+    this.windowCache.set(key, { path: filePath, offset, length });
+    this.windowCacheRows += length;
   }
 
-  private async selectAdjacentFile(delta: 1 | -1): Promise<void> {
-    const files = this.filteredFiles();
-    if (files.length === 0) return;
-    const selectedPath = this.selectedFile()?.path ?? null;
-    if (!selectedPath) {
-      await this.selectFile(delta > 0 ? files[0] : files[files.length - 1]);
+  private touchWindow(filePath: string, baseIndex: number): void {
+    const offset = Math.floor(baseIndex / WINDOW_LIMIT) * WINDOW_LIMIT;
+    const key = this.windowKey(filePath, offset);
+    const entry = this.windowCache.get(key);
+    if (!entry) return;
+    this.windowCache.delete(key);
+    this.windowCache.set(key, entry);
+  }
+
+  private pruneWindowCache(): void {
+    if (
+      this.windowCache.size <= MAX_WINDOW_CACHE_WINDOWS
+      && this.windowCacheRows <= MAX_WINDOW_CACHE_ROWS
+    ) {
       return;
     }
-    const currentIndex = files.findIndex((file) => file.path === selectedPath);
-    const nextIndex = currentIndex === -1
-      ? (delta > 0 ? 0 : files.length - 1)
-      : currentIndex + delta;
-    if (nextIndex < 0 || nextIndex >= files.length) return;
-    await this.selectFile(files[nextIndex]);
+
+    const protectedKeys = new Set(
+      this.visibleRows()
+        .filter((row) => row.baseIndex !== null)
+        .map((row) => this.windowKey(
+          row.file.path,
+          Math.floor((row.baseIndex ?? 0) / WINDOW_LIMIT) * WINDOW_LIMIT,
+        )),
+    );
+
+    while (
+      this.windowCache.size > MAX_WINDOW_CACHE_WINDOWS
+      || this.windowCacheRows > MAX_WINDOW_CACHE_ROWS
+    ) {
+      const victimKey = [...this.windowCache.keys()].find((key) => !protectedKeys.has(key));
+      if (!victimKey) return;
+      const victim = this.windowCache.get(victimKey);
+      if (!victim) return;
+      this.windowCache.delete(victimKey);
+      this.windowCacheRows -= victim.length;
+      this.removeWindowRows(victim);
+    }
   }
 
-  private eventStartedInsidePanel(event: KeyboardEvent): boolean {
-    const target = event.target;
-    return target instanceof Node && this.elementRef.nativeElement.contains(target);
+  private removeWindowRows(entry: WindowCacheEntry): void {
+    this.setFileState(entry.path, (state) => {
+      const baseRows = new Map(state.baseRows);
+      for (let index = entry.offset; index < entry.offset + entry.length; index += 1) {
+        baseRows.delete(index);
+      }
+      return { ...state, baseRows };
+    });
   }
 
-  private isEditableTarget(target: EventTarget | null): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    const tagName = target.tagName.toLowerCase();
-    return tagName === 'input'
-      || tagName === 'textarea'
-      || tagName === 'select'
-      || target.isContentEditable;
+  private windowKey(filePath: string, offset: number): string {
+    return `${this.worktreePath()}\0${this.scope()}\0${filePath}\0${this.context()}\0${offset}`;
   }
 
-  private prefetchPause(delayMs: number): Promise<void> {
-    return new Promise((resolve) => window.setTimeout(resolve, delayMs));
+  private updateWindowLoadState(): void {
+    const total = this.windowQueue.length + this.inFlightWindowLoads;
+    this.windowLoadState.set({ running: total > 0, total });
+  }
+
+  private resetQueues(): void {
+    this.windowQueue.length = 0;
+    this.pendingWindowKeys.clear();
+    this.windowCache.clear();
+    this.windowCacheRows = 0;
+    this.inFlightWindowLoads = 0;
+    this.windowLoadState.set({ running: false, total: 0 });
   }
 
   private rememberFileHash(filePath: string, changeHash: string): void {
@@ -704,5 +1070,19 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       }
       return next;
     });
+  }
+
+  private eventStartedInsidePanel(event: KeyboardEvent): boolean {
+    const target = event.target;
+    return target instanceof Node && this.elementRef.nativeElement.contains(target);
+  }
+
+  private isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    return tagName === 'input'
+      || tagName === 'textarea'
+      || tagName === 'select'
+      || target.isContentEditable;
   }
 }

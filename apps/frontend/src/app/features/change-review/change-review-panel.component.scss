@@ -37,7 +37,72 @@
 .cr-diff-viewport {
   flex: 1;
   min-height: 0;
+  position: relative;
+  overflow: auto;
   background: color-mix(in oklch, var(--background) 90%, var(--surface-shade));
+  will-change: scroll-position;
+}
+
+.cr-diff-spacer {
+  width: 1px;
+  min-height: 100%;
+}
+
+.cr-diff-rendered {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 100%;
+  contain: content;
+}
+
+.cr-file-header-row {
+  display: flex;
+  align-items: center;
+  min-width: max-content;
+  height: 24px;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
+  font-size: 0.72rem;
+}
+
+.cr-file-header-row--main {
+  gap: 0.5rem;
+  background: color-mix(in oklch, var(--card) 82%, var(--surface-shade));
+  color: var(--foreground);
+}
+
+.cr-file-header-row--meta {
+  padding-left: 2.85rem;
+  background: color-mix(in oklch, var(--muted) 42%, transparent);
+  color: var(--muted-foreground);
+}
+
+.cr-viewed-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 20px;
+  margin-left: 0.35rem;
+  padding: 0 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cr-viewed-control--checked {
+  border-color: var(--success);
+  background: var(--success);
+  color: var(--success-foreground);
+}
+
+.cr-viewed-control--disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 .cr-diff-row {
@@ -94,6 +159,11 @@
   background: color-mix(in oklch, var(--muted) 40%, transparent);
 }
 
+.cr-diff-row--loading {
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--muted) 24%, transparent);
+}
+
 .cr-expand-row {
   display: inline-flex;
   align-items: center;
@@ -110,6 +180,12 @@
 .cr-expand-row:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.cr-code--loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .cr-spin {

@@ -1,0 +1,215 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { Subject } from 'rxjs';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  ChangeReviewFileSummary,
+  ChangeReviewFileWindow,
+  ChangeReviewScope,
+  ChangeReviewSummary,
+} from '@/shared/models/change-review.model';
+import { ChangeReviewService } from '@/shared/services/change-review.service';
+import { ChangeReviewPanelComponent } from './change-review-panel.component';
+
+const flush = () => new Promise((resolve) => window.setTimeout(resolve, 0));
+
+const file = (
+  path: string,
+  additions = 2,
+  deletions = 1,
+  overrides: Partial<ChangeReviewFileSummary> = {},
+): ChangeReviewFileSummary => ({
+  path,
+  oldPath: null,
+  status: 'modified',
+  additions,
+  deletions,
+  binary: false,
+  large: false,
+  size: null,
+  ...overrides,
+});
+
+const summary = (
+  files: ChangeReviewFileSummary[],
+  scope: ChangeReviewScope = 'branch',
+): ChangeReviewSummary => ({
+  scope,
+  worktreePath: '/tmp/repo',
+  repoRoot: '/tmp/repo',
+  branch: 'feature',
+  baseRef: 'origin/main',
+  baseSha: 'base123',
+  headSha: 'head123',
+  mergeBaseSha: 'merge123',
+  compareLabel: 'feature vs origin/main',
+  generatedAt: new Date().toISOString(),
+  staleBase: false,
+  originRefAgeSeconds: 1,
+  pullRequest: null,
+  totals: {
+    files: files.length,
+    additions: files.reduce((sum, item) => sum + item.additions, 0),
+    deletions: files.reduce((sum, item) => sum + item.deletions, 0),
+  },
+  files,
+});
+
+const row = (path: string, index: number) => ({
+  id: `${path}:${index}`,
+  type: 'context' as const,
+  oldLine: index + 1,
+  newLine: index + 1,
+  content: `line ${index + 1}`,
+  path,
+});
+
+const fileWindow = (
+  path: string,
+  scope: ChangeReviewScope = 'branch',
+  offset = 0,
+  rows = [row(path, offset)],
+): ChangeReviewFileWindow => ({
+  scope,
+  path,
+  oldPath: null,
+  status: 'modified',
+  binary: false,
+  large: false,
+  truncated: false,
+  message: null,
+  offset,
+  limit: 700,
+  totalRows: rows.length,
+  hasMore: false,
+  context: 8,
+  changeHash: `${path}:hash`,
+  rows,
+  contextRanges: [],
+});
+
+const setViewport = (el: HTMLElement, clientHeight = 240, scrollTop = 0) => {
+  Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight });
+  el.scrollTop = scrollTop;
+};
+
+describe('ChangeReviewPanelComponent', () => {
+  let fixture: ComponentFixture<ChangeReviewPanelComponent>;
+  let serviceMock: {
+    getSummary: ReturnType<typeof vi.fn>;
+    getFileWindow: ReturnType<typeof vi.fn>;
+    getContextWindow: ReturnType<typeof vi.fn>;
+    clearCache: ReturnType<typeof vi.fn>;
+    hasFileWindowCache: ReturnType<typeof vi.fn>;
+  };
+  let summaryCalls: Array<{ scope: ChangeReviewScope; response: Subject<ChangeReviewSummary> }>;
+  let windowCalls: Array<{ path: string; offset: number; response: Subject<ChangeReviewFileWindow> }>;
+
+  beforeEach(async () => {
+    summaryCalls = [];
+    windowCalls = [];
+    localStorage.clear();
+    serviceMock = {
+      getSummary: vi.fn((_worktreePath: string, scope: ChangeReviewScope) => {
+        const response = new Subject<ChangeReviewSummary>();
+        summaryCalls.push({ scope, response });
+        return response.asObservable();
+      }),
+      getFileWindow: vi.fn((_worktreePath: string, _scope: ChangeReviewScope, path: string, options: { offset?: number }) => {
+        const response = new Subject<ChangeReviewFileWindow>();
+        windowCalls.push({ path, offset: options.offset ?? 0, response });
+        return response.asObservable();
+      }),
+      getContextWindow: vi.fn(),
+      clearCache: vi.fn(),
+      hasFileWindowCache: vi.fn(() => false),
+    };
+
+    await TestBed.configureTestingModule({
+      imports: [ChangeReviewPanelComponent],
+      providers: [{ provide: ChangeReviewService, useValue: serviceMock }],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(ChangeReviewPanelComponent);
+    fixture.componentRef.setInput('worktreePath', '/tmp/repo');
+    fixture.detectChanges();
+  });
+
+  async function flushSummary(value: ChangeReviewSummary): Promise<HTMLElement> {
+    summaryCalls[summaryCalls.length - 1].response.next(value);
+    summaryCalls[summaryCalls.length - 1].response.complete();
+    await flush();
+    fixture.detectChanges();
+    await flush();
+    fixture.detectChanges();
+    const viewport = fixture.nativeElement.querySelector('.cr-diff-viewport') as HTMLElement;
+    setViewport(viewport);
+    fixture.componentInstance.onDiffScroll();
+    fixture.detectChanges();
+    return viewport;
+  }
+
+  it('renders multiple file headers in one continuous diff surface', async () => {
+    await flushSummary(summary([file('src/a.ts'), file('src/b.ts')]));
+
+    const headers = [...fixture.nativeElement.querySelectorAll('.cr-file-header-row--main')]
+      .map((item) => item.textContent);
+
+    expect(headers.join(' ')).toContain('src/a.ts');
+    expect(headers.join(' ')).toContain('src/b.ts');
+  });
+
+  it('uses the sidebar as navigation into the continuous scroller', async () => {
+    const files = [file('src/a.ts'), file('src/b.ts')];
+    const viewport = await flushSummary(summary(files));
+    const expectedTop = fixture.componentInstance.layout().fileStart('src/b.ts')! * 24;
+
+    fixture.componentInstance.scrollToFile(files[1]);
+
+    expect(viewport.scrollTop).toBe(expectedTop);
+    expect(fixture.componentInstance.activeFilePath()).toBe('src/b.ts');
+  });
+
+  it('loads the next file when scrolling near its virtual range', async () => {
+    const files = [file('src/large.ts', 2_000, 0), file('src/next.ts', 2, 0)];
+    const viewport = await flushSummary(summary(files));
+    expect(windowCalls.some((call) => call.path === 'src/next.ts')).toBe(false);
+
+    setViewport(viewport, 240, fixture.componentInstance.layout().fileStart('src/next.ts')! * 24);
+    fixture.componentInstance.onDiffScroll();
+
+    expect(windowCalls.some((call) => call.path === 'src/next.ts')).toBe(true);
+  });
+
+  it('ignores stale file windows after the scope changes', async () => {
+    await flushSummary(summary([file('src/old.ts')], 'branch'));
+    const oldWindow = windowCalls.find((call) => call.path === 'src/old.ts')!;
+
+    fixture.componentInstance.setScope('last-commit');
+    fixture.detectChanges();
+    expect(summaryCalls[summaryCalls.length - 1].scope).toBe('last-commit');
+    await flushSummary(summary([file('src/new.ts')], 'last-commit'));
+
+    oldWindow.response.next(fileWindow('src/old.ts'));
+    oldWindow.response.complete();
+    await flush();
+
+    expect(fixture.componentInstance.fileChangeHashes().has('src/old.ts')).toBe(false);
+  });
+
+  it('enables viewed state after a file hash loads', async () => {
+    const files = [file('src/a.ts')];
+    await flushSummary(summary(files));
+
+    fixture.componentInstance.toggleFileViewed(files[0]);
+    expect(fixture.componentInstance.isFileViewed(files[0])).toBe(false);
+
+    windowCalls[0].response.next(fileWindow('src/a.ts'));
+    windowCalls[0].response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    fixture.componentInstance.toggleFileViewed(files[0]);
+    expect(fixture.componentInstance.isFileViewed(files[0])).toBe(true);
+  });
+});
