@@ -1833,6 +1833,50 @@ describe('ClaudeRuntimeService', () => {
     ]);
   });
 
+  it('normalizes transcript user messages whose content is a plain string', async () => {
+    (getSessionMessages as jest.Mock).mockResolvedValue([]);
+    jest
+      .spyOn(service as never, 'findTranscriptPath' as never)
+      .mockResolvedValue('/tmp/.claude/projects/project/claude-session-1.jsonl');
+    jest
+      .spyOn(service as never, 'loadTranscriptRecords' as never)
+      .mockResolvedValue([
+        {
+          type: 'user',
+          uuid: 'user-string-1',
+          timestamp: '2026-04-24T09:00:00.000Z',
+          message: {
+            role: 'user',
+            content: 'how r u ?',
+          },
+        },
+        {
+          type: 'user',
+          uuid: 'user-string-2',
+          timestamp: '2026-04-24T09:00:01.000Z',
+          message: {
+            role: 'user',
+            content: 'yes',
+          },
+        },
+      ]);
+
+    const history = await service.getHistory(7);
+
+    expect(history).toEqual([
+      expect.objectContaining({
+        id: 'user-string-1:user:0',
+        kind: 'user',
+        content: 'how r u ?',
+      }),
+      expect.objectContaining({
+        id: 'user-string-2:user:0',
+        kind: 'user',
+        content: 'yes',
+      }),
+    ]);
+  });
+
   it('falls back to transcript records when SDK history lookup throws', async () => {
     (getSessionMessages as jest.Mock).mockRejectedValue(new Error('lookup failed'));
     jest

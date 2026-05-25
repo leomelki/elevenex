@@ -4018,8 +4018,15 @@ export class ClaudeRuntimeService extends EventEmitter {
     const normalized: ClaudeTranscriptItem[] = [];
 
     for (const message of messages) {
-      const payload = message.message as Record<string, any> | null;
-      if (!payload || !Array.isArray(payload.content)) {
+      const rawPayload = message.message as Record<string, any> | null;
+      if (!rawPayload) {
+        continue;
+      }
+      const payload =
+        typeof rawPayload.content === 'string'
+          ? { ...rawPayload, content: [{ type: 'text', text: rawPayload.content }] }
+          : rawPayload;
+      if (!Array.isArray(payload.content)) {
         continue;
       }
       const timestamp = this.resolveMessageTimestamp(message);
