@@ -109,17 +109,20 @@ describe('ClaudeComposerComponent', () => {
     }).compileComponents();
 
     const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    const diffMention = mention({ filePath: 'src/main/java/package/folder/Test.java' });
     fixture.componentRef.setInput('value', '');
-    fixture.componentRef.setInput('diffMentions', [mention()]);
+    fixture.componentRef.setInput('diffMentions', [diffMention]);
     const sendSpy = vi.fn();
     fixture.componentInstance.send.subscribe(sendSpy);
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
-    expect(element.textContent).toContain('src/app.ts');
+    expect(element.querySelector('.cw-comp__mention-dir')?.textContent).toBe('src/main/java/package/folder');
+    expect(element.querySelector('.cw-comp__mention-name')?.textContent).toBe('Test.java');
+    expect(element.querySelector('.cw-comp__mention-name')?.tagName.toLowerCase()).toBe('strong');
     expect(element.textContent).toContain('const value = true;');
 
     fixture.componentInstance.submit();
-    expect(sendSpy).toHaveBeenCalledWith({ text: '', images: [], diffMentions: [mention()] });
+    expect(sendSpy).toHaveBeenCalledWith({ text: '', images: [], diffMentions: [diffMention] });
   });
 });

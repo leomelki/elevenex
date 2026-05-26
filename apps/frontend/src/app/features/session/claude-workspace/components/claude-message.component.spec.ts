@@ -176,11 +176,12 @@ describe('ClaudeMessageComponent', () => {
       imports: [ClaudeMessageComponent],
     }).compileComponents();
 
+    const diffMention = mention({ filePath: 'src/main/java/package/folder/Test.java' });
     const fixture = TestBed.createComponent(ClaudeMessageComponent);
     fixture.componentRef.setInput('item', {
       id: 'user-mention',
       kind: 'user',
-      content: `Please review this\n\n${serializeDiffSelectionMention(mention())}`,
+      content: `Please review this\n\n${serializeDiffSelectionMention(diffMention)}`,
       timestamp: '2026-04-24T08:00:00.000Z',
       authoredAt: '2026-04-24T08:00:00.000Z',
       sourceMessageId: 'source-user-mention',
@@ -189,7 +190,9 @@ describe('ClaudeMessageComponent', () => {
 
     const element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).toContain('Please review this');
-    expect(element.textContent).toContain('src/app.ts');
+    expect(element.querySelector('.cw-msg__mention-dir')?.textContent).toBe('src/main/java/package/folder');
+    expect(element.querySelector('.cw-msg__mention-name')?.textContent).toBe('Test.java');
+    expect(element.querySelector('.cw-msg__mention-name')?.tagName.toLowerCase()).toBe('strong');
     expect(element.textContent).toContain('return next;');
     expect(element.textContent).not.toContain(DIFF_SELECTION_MENTION_TAG);
     expect(element.querySelector('.cw-msg__mention')).not.toBeNull();

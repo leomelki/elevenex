@@ -10,6 +10,7 @@ import {
   ChangeReviewScope,
   ChangeReviewSummary,
 } from '@/shared/models/change-review.model';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import { GitStatusSummary } from '@/shared/models/git.model';
 import { ChangeReviewService } from '@/shared/services/change-review.service';
 import { GitService } from '@/shared/services/git.service';
@@ -100,6 +101,40 @@ const fileWindow = (
   changeHash: `${path}:hash`,
   rows,
   contextRanges: [],
+});
+
+const diffMention = (
+  path: string,
+  selected: ChangeReviewRow[],
+  overrides: Partial<DiffSelectionMention> = {},
+): DiffSelectionMention => ({
+  id: 'mention-1',
+  version: 1,
+  scope: 'branch',
+  compareLabel: 'feature vs origin/main',
+  baseSha: 'base123',
+  headSha: 'head123',
+  filePath: path,
+  oldPath: null,
+  status: 'modified',
+  changeHash: `${path}:hash`,
+  oldLineStart: null,
+  oldLineEnd: null,
+  newLineStart: 2,
+  newLineEnd: 2,
+  selectedText: selected.map((item) => item.content).join('\n'),
+  context: {
+    before: [],
+    selected: selected.map((item) => ({
+      type: item.type,
+      oldLine: item.oldLine,
+      newLine: item.newLine,
+      content: item.content,
+    })),
+    after: [],
+  },
+  truncated: false,
+  ...overrides,
 });
 
 const gitSummary = (overrides: Partial<GitStatusSummary> = {}): GitStatusSummary => ({
@@ -388,5 +423,30 @@ describe('ChangeReviewPanelComponent', () => {
     expect(mentions[0].newLineStart).toBe(2);
     expect(mentions[0].context.before[0].content).toBe('line 1');
     expect(mentions[0].context.after[0].content).toBe('line 3');
+  });
+
+  it('highlights rows that are pending diff mentions', async () => {
+    const path = 'src/a.ts';
+    const selected = addRow(path, 1, 'const selected = true;');
+    await flushSummary(summary([file(path)]));
+    windowCalls[0].response.next(fileWindow(path, 'branch', 0, [
+      row(path, 0),
+      selected,
+      row(path, 2),
+    ]));
+    windowCalls[0].response.complete();
+    await flush();
+
+    fixture.componentRef.setInput('highlightedMentions', [diffMention(path, [selected])]);
+    fixture.detectChanges();
+
+    const rows = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('.cr-diff-row'),
+    );
+    const selectedRow = rows.find((element) => element.textContent?.includes('const selected = true;'));
+    const otherRow = rows.find((element) => element.textContent?.includes('line 1'));
+
+    expect(selectedRow?.classList.contains('cr-diff-row--mentioned')).toBe(true);
+    expect(otherRow?.classList.contains('cr-diff-row--mentioned')).toBe(false);
   });
 });

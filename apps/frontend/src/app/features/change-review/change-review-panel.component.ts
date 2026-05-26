@@ -163,6 +163,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
 })
 export class ChangeReviewPanelComponent implements OnDestroy {
   readonly worktreePath = input.required<string>();
+  readonly highlightedMentions = input<readonly DiffSelectionMention[]>([]);
   readonly mentionSelection = output<DiffSelectionMention[]>();
   readonly openConflicts = output<void>();
 
@@ -206,6 +207,23 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   readonly selectionMentionAction = signal<DiffSelectionMentionAction | null>(null);
   readonly diffScrollLeftPx = signal(0);
   readonly diffViewportWidthPx = signal<number | null>(null);
+  readonly mentionedRowKeys = computed(() => {
+    const keys = new Set<string>();
+    for (const mention of this.highlightedMentions()) {
+      for (const row of mention.context.selected) {
+        keys.add(diffMentionRowKey(
+          mention.scope,
+          mention.filePath,
+          mention.changeHash,
+          row.type,
+          row.oldLine,
+          row.newLine,
+          row.content,
+        ));
+      }
+    }
+    return keys;
+  });
 
   readonly totalHeightPx = computed(() => this.layout().totalRows * ROW_HEIGHT_PX);
   readonly latestGitSummary = computed(() => this.gitService.latestSummary(this.worktreePath()));
@@ -520,6 +538,20 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   renderRowTrack(index: number, row: RenderRow): string {
     return row.id;
+  }
+
+  isMentionedDiffRow(renderRow: RenderRow): boolean {
+    const row = renderRow.row;
+    if (renderRow.kind !== 'diff' || !row) return false;
+    return this.mentionedRowKeys().has(diffMentionRowKey(
+      this.scope(),
+      renderRow.file.path,
+      renderRow.state.changeHash,
+      row.type,
+      row.oldLine,
+      row.newLine,
+      row.content,
+    ));
   }
 
   fileBasename(filePath: string): string {
@@ -1424,4 +1456,16 @@ function maxLine(rows: RenderRow[], key: 'oldLine' | 'newLine'): number | null {
     .map((row) => row.row?.[key])
     .filter((value): value is number => typeof value === 'number');
   return values.length ? Math.max(...values) : null;
+}
+
+function diffMentionRowKey(
+  scope: DiffSelectionMention['scope'],
+  filePath: string,
+  changeHash: string | null,
+  type: ChangeReviewRow['type'],
+  oldLine: number | null,
+  newLine: number | null,
+  content: string,
+): string {
+  return JSON.stringify([scope, filePath, changeHash, type, oldLine, newLine, content]);
 }

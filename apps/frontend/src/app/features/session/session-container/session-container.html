@@ -98,6 +98,7 @@
                 } @else if (showChangesPanel()) {
                   <app-change-review-panel
                     [worktreePath]="worktreePath()!"
+                    [highlightedMentions]="activePendingDiffMentions()"
                     (mentionSelection)="mentionDiffSelection($event)"
                     (openConflicts)="openConflictsPanel()"
                     class="h-full"

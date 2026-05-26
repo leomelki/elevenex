@@ -329,6 +329,7 @@
                   [class.cr-diff-row--expand]="renderRow.row?.type === 'expand'"
                   [class.cr-diff-row--meta]="renderRow.row?.type === 'meta'"
                   [class.cr-diff-row--loading]="!renderRow.row"
+                  [class.cr-diff-row--mentioned]="isMentionedDiffRow(renderRow)"
                 >
                   @if (renderRow.row; as row) {
                     <span class="cr-line cr-line--old">{{ row.oldLine ?? '' }}</span>

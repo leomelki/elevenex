@@ -32,6 +32,7 @@ import {
   diffSelectionMentionPreview,
   parseDiffSelectionMentions,
 } from '@/shared/utils/diff-selection-mention';
+import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
 
 interface Range {
   start: number;
@@ -135,7 +136,13 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
                 </span>
                 <div class="cw-comp__mention-body">
                   <div class="cw-comp__mention-head">
-                    <span class="cw-comp__mention-path" [title]="mention.filePath">{{ mention.filePath }}</span>
+                    <span class="cw-comp__mention-path" [title]="mention.filePath">
+                      @if (mentionDirname(mention); as dirname) {
+                        <span class="cw-comp__mention-dir">{{ dirname }}</span>
+                        <span class="cw-comp__mention-slash" aria-hidden="true">/</span>
+                      }
+                      <strong class="cw-comp__mention-name">{{ mentionBasename(mention) }}</strong>
+                    </span>
                     <span class="cw-comp__mention-lines">{{ mentionLineLabel(mention) }}</span>
                   </div>
                   <p class="cw-comp__mention-preview">{{ mentionPreview(mention) }}</p>
@@ -352,13 +359,39 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         min-width: 0;
       }
       .cw-comp__mention-path {
+        display: inline-flex;
+        align-items: baseline;
+        flex: 1 1 auto;
         min-width: 0;
         overflow: hidden;
-        text-overflow: ellipsis;
         white-space: nowrap;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 0.74rem;
-        font-weight: 700;
+      }
+      .cw-comp__mention-dir {
+        min-width: 0;
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        direction: rtl;
+        text-align: left;
+        unicode-bidi: isolate;
+        color: var(--muted-foreground);
+        font-weight: 500;
+      }
+      .cw-comp__mention-slash {
+        flex: 0 0 auto;
+        padding: 0 0.08rem;
+        color: var(--muted-foreground);
+        font-weight: 500;
+      }
+      .cw-comp__mention-name {
+        max-width: 100%;
+        flex: 0 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--foreground);
+        font-weight: 800;
       }
       .cw-comp__mention-lines {
         flex-shrink: 0;
@@ -744,6 +777,14 @@ export class ClaudeComposerComponent {
 
   mentionLineLabel(mention: DiffSelectionMention): string {
     return diffSelectionMentionLineLabel(mention);
+  }
+
+  mentionDirname(mention: DiffSelectionMention): string {
+    return splitFilePathForDisplay(mention.filePath).dirname;
+  }
+
+  mentionBasename(mention: DiffSelectionMention): string {
+    return splitFilePathForDisplay(mention.filePath).basename;
   }
 
   mentionPreview(mention: DiffSelectionMention): string {

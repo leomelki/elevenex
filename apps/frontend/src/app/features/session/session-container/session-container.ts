@@ -127,6 +127,11 @@ export class SessionContainer implements OnInit, OnDestroy {
   activeSessionId = this.tabService.activeSessionId;
   hasTabs = this.tabService.hasTabs;
   activeTab = this.tabService.activeTab;
+  activePendingDiffMentions = computed<DiffSelectionMention[]>(() => {
+    const sessionId = this.activeSessionId();
+    if (!sessionId) return [];
+    return this.claudeWorkspaces().find((workspace) => workspace.sessionId === sessionId)?.pendingDiffMentions() ?? [];
+  });
 
   // Computed worktreePath from active session
   worktreePath = computed(() => {

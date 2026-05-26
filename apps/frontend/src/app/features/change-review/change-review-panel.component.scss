@@ -121,6 +121,7 @@
 
 .cr-path__dir {
   min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   direction: rtl;
   text-align: left;
@@ -136,10 +137,7 @@
 }
 
 .cr-path__name {
-  max-width: 55%;
-  flex: 0 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
   font-weight: 800;
   color: var(--foreground);
 }
@@ -246,6 +244,17 @@
 .cr-diff-row--loading {
   color: var(--muted-foreground);
   background: color-mix(in oklch, var(--muted) 24%, transparent);
+}
+
+.cr-diff-row--mentioned {
+  background: color-mix(in oklch, var(--warning) 22%, var(--background));
+  box-shadow: inset 3px 0 0 color-mix(in oklch, var(--warning) 88%, var(--foreground));
+}
+
+.cr-diff-row--mentioned .cr-line,
+.cr-diff-row--mentioned .cr-marker {
+  background: color-mix(in oklch, var(--warning) 16%, var(--background));
+  color: color-mix(in oklch, var(--warning) 78%, var(--foreground));
 }
 
 .cr-expand-row {
