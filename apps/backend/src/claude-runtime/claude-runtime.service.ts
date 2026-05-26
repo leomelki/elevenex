@@ -604,6 +604,12 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     await this.persistTranscriptRecords(transcriptPath, retainedRecords);
 
+    const existingRuntime = this.sessionRuntimes.get(sessionId);
+    if (existingRuntime) {
+      await existingRuntime.close().catch(() => undefined);
+      this.sessionRuntimes.delete(sessionId);
+    }
+
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
     this.resetEphemeralRuntimeState(state);
     this.emitRunState(sessionId);
