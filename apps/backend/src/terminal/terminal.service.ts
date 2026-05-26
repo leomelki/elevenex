@@ -48,7 +48,17 @@ export class TerminalService {
     if (await this.ptyManager.hasTmuxSession(sessionId)) {
       console.log(`Found existing tmux session for ${sessionId}, reattaching`);
       try {
-        await this.ptyManager.spawn(sessionId, session.worktreePath);
+        const spawned = await this.ptyManager.spawn(
+          sessionId,
+          session.worktreePath,
+        );
+        if (spawned === null) {
+          return {
+            success: false,
+            resumed: false,
+            error: 'Terminal start was cancelled',
+          };
+        }
         await this.sessionsService.updateStatus(sessionId, 'active');
         return { success: true, resumed: true };
       } catch (error) {
@@ -65,11 +75,18 @@ export class TerminalService {
     // Check if we have a valid Claude session ID to resume
     if (claudeSessionId && claudeSessionId !== '-1') {
       try {
-        await this.ptyManager.spawn(
+        const spawned = await this.ptyManager.spawn(
           sessionId,
           session.worktreePath,
           claudeSessionId,
         );
+        if (spawned === null) {
+          return {
+            success: false,
+            resumed: false,
+            error: 'Terminal start was cancelled',
+          };
+        }
 
         // Wait a bit to see if the process exits immediately (invalid session ID)
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -88,7 +105,17 @@ export class TerminalService {
 
     // Start fresh session
     try {
-      await this.ptyManager.spawn(sessionId, session.worktreePath);
+      const spawned = await this.ptyManager.spawn(
+        sessionId,
+        session.worktreePath,
+      );
+      if (spawned === null) {
+        return {
+          success: false,
+          resumed: false,
+          error: 'Terminal start was cancelled',
+        };
+      }
       await this.sessionsService.updateStatus(sessionId, 'active');
       return { success: true, resumed: false };
     } catch (error) {

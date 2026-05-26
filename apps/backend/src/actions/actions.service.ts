@@ -165,11 +165,23 @@ export class ActionsService implements OnModuleInit {
       );
     }
 
-    await this.ptyManager.start({
-      id: action.id,
-      worktreePath: action.worktreePath,
-      command: action.command,
-    });
+    try {
+      await this.ptyManager.start({
+        id: action.id,
+        worktreePath: action.worktreePath,
+        command: action.command,
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === `Action ${action.id} is already running`
+      ) {
+        throw new BadRequestException(
+          `Action "${action.name}" is already running`,
+        );
+      }
+      throw error;
+    }
 
     return this.findOne(id);
   }

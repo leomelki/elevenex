@@ -102,11 +102,14 @@ export class UserTerminalService {
 
     // Spawn (handles both fresh create and tmux reattach internally)
     try {
-      await this.ptyManager.spawn(
+      const spawned = await this.ptyManager.spawn(
         terminalId,
         terminal.worktreePath,
         terminal.shell,
       );
+      if (spawned === null) {
+        return { success: false, error: 'Terminal start was cancelled' };
+      }
       return { success: true };
     } catch (error) {
       this.logger.error(

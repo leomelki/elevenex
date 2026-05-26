@@ -101,4 +101,50 @@ describe('TerminalService', () => {
     expect(result).toEqual({ success: true, resumed: false });
     expect(sessionsService.updateStatus).toHaveBeenCalledWith(1, 'active');
   });
+
+  it('does not mark a fresh start active when async spawn was cancelled', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 1,
+      worktreePath: process.cwd(),
+      claudeSessionId: '-1',
+    });
+    ptyManager.isAlive.mockReturnValue(false);
+    ptyManager.hasTmuxSession.mockResolvedValue(false);
+    ptyManager.spawn.mockResolvedValue(null);
+
+    const result = await service.startSession(1);
+
+    expect(result).toEqual({
+      success: false,
+      resumed: false,
+      error: 'Terminal start was cancelled',
+    });
+    expect(sessionsService.updateStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not fall through to a fresh start when a resume spawn was cancelled', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 1,
+      worktreePath: process.cwd(),
+      claudeSessionId: 'claude-session-1',
+    });
+    ptyManager.isAlive.mockReturnValue(false);
+    ptyManager.hasTmuxSession.mockResolvedValue(false);
+    ptyManager.spawn.mockResolvedValue(null);
+
+    const result = await service.startSession(1);
+
+    expect(ptyManager.spawn).toHaveBeenCalledTimes(1);
+    expect(ptyManager.spawn).toHaveBeenCalledWith(
+      1,
+      process.cwd(),
+      'claude-session-1',
+    );
+    expect(result).toEqual({
+      success: false,
+      resumed: false,
+      error: 'Terminal start was cancelled',
+    });
+    expect(sessionsService.updateStatus).not.toHaveBeenCalled();
+  });
 });
