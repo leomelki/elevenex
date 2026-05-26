@@ -12,7 +12,6 @@ import { access, readdir, readFile, realpath, writeFile } from 'fs/promises';
 import { constants as fsConstants, readFileSync } from 'fs';
 import { createRequire } from 'module';
 import { homedir } from 'os';
-import { execFileSync } from 'child_process';
 import { basename, dirname, join, relative, resolve } from 'path';
 import { eq } from 'drizzle-orm';
 import {
@@ -66,13 +65,14 @@ import {
   type ClaudeSessionActivity,
 } from '../claude-hooks/claude-hooks.service.js';
 import { TerminalService } from '../terminal/terminal.service.js';
-import {
-  DRIZZLE,
-  type DrizzleDB,
-} from '../database/database.provider.js';
+import { execFileAsync } from '../terminal/async-process.js';
+import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
-import { getBackendHelperPath, getBackendRuntimeRoot } from '../config/runtime-paths.js';
+import {
+  getBackendHelperPath,
+  getBackendRuntimeRoot,
+} from '../config/runtime-paths.js';
 import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import {
@@ -134,8 +134,7 @@ type UserInputDecision = {
   content?: UserInputContent;
 };
 
-type ToolInteractionRow =
-  typeof schema.claudeToolInteractions.$inferSelect;
+type ToolInteractionRow = typeof schema.claudeToolInteractions.$inferSelect;
 
 type HistoryMessage = {
   type: SessionMessage['type'];
@@ -377,7 +376,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     'bin',
     'plannotator-wrapper.sh',
   );
-  private readonly claudeCliOverride = this.resolveClaudeCliOverride();
+  private claudeCliOverride = this.resolveClaudeCliOverride();
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -387,6 +386,7 @@ export class ClaudeRuntimeService extends EventEmitter {
   ) {
     super();
     this.logClaudeRuntimeConfiguration();
+    void this.refreshClaudeCliOverrideVersion();
 
     this.claudeHooksService.on(
       'hook-event',
@@ -408,14 +408,18 @@ export class ClaudeRuntimeService extends EventEmitter {
       return [];
     }
 
-    const interactionsByToolUseId = await this.getInteractionSummaryMap(sessionId);
+    const interactionsByToolUseId =
+      await this.getInteractionSummaryMap(sessionId);
 
     try {
       const messages = await getSessionMessages(session.claudeSessionId, {
         dir: session.worktreePath,
       });
       if (messages.length > 0) {
-        const normalized = this.normalizeHistory(messages, interactionsByToolUseId);
+        const normalized = this.normalizeHistory(
+          messages,
+          interactionsByToolUseId,
+        );
         this.recordHistorySnapshot(
           this.ensureRuntimeState(sessionId, session.claudeSessionId),
           normalized,
@@ -526,7 +530,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     this.pendingInterrupts.delete(sessionId);
     const run = this.activeRuns.get(sessionId);
     if (run) {
-      await this.requestRunTeardown(sessionId, run, { invalidateSession: true });
+      await this.requestRunTeardown(sessionId, run, {
+        invalidateSession: true,
+      });
       await run.completionPromise.catch(() => undefined);
     }
     const runtime = this.sessionRuntimes.get(sessionId);
@@ -573,8 +579,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     const records = await this.loadTranscriptRecords(transcriptPath);
     const targetIndex = records.findIndex(
       (record) =>
-        record.type === 'user' && typeof record.uuid === 'string'
-        && record.uuid === trimmedMessageId,
+        record.type === 'user' &&
+        typeof record.uuid === 'string' &&
+        record.uuid === trimmedMessageId,
     );
 
     if (targetIndex === -1) {
@@ -592,8 +599,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     let truncateFrom = targetIndex;
     const previousRecord = records[targetIndex - 1];
     if (
-      previousRecord?.type === 'file-history-snapshot'
-      && previousRecord.messageId === trimmedMessageId
+      previousRecord?.type === 'file-history-snapshot' &&
+      previousRecord.messageId === trimmedMessageId
     ) {
       truncateFrom -= 1;
     }
@@ -706,10 +713,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       ]);
 
     const runtimeItems = this.collectRuntimeAutocompleteItems(state);
-    const baseCommandItems =
-      runtimeItems.some((item) => item.kind === 'command')
-        ? [...runtimeItems, ...BUILTIN_COMMANDS]
-        : BUILTIN_COMMANDS;
+    const baseCommandItems = runtimeItems.some(
+      (item) => item.kind === 'command',
+    )
+      ? [...runtimeItems, ...BUILTIN_COMMANDS]
+      : BUILTIN_COMMANDS;
 
     const sourceRank: Record<ClaudeAutocompleteItem['source'], number> = {
       builtin: 0,
@@ -800,10 +808,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     return [...commandItems, ...skillItems];
   }
 
-  private createCanUseTool(
-    sessionId: number,
-    state: RuntimeState,
-  ): CanUseTool {
+  private createCanUseTool(sessionId: number, state: RuntimeState): CanUseTool {
     return async (toolName, input, options) => {
       const requestId = randomUUID();
       const canonicalTool = canonicalizeAgentTool(toolName, input);
@@ -958,7 +963,10 @@ export class ClaudeRuntimeService extends EventEmitter {
   }
 
   async prewarmSession(sessionId: number): Promise<void> {
-    if (this.invalidatedSessions.has(sessionId) || this.activeRuns.has(sessionId)) {
+    if (
+      this.invalidatedSessions.has(sessionId) ||
+      this.activeRuns.has(sessionId)
+    ) {
       return;
     }
 
@@ -968,7 +976,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const lastPrewarmAt = this.lastPrewarmAt.get(sessionId);
-    if (lastPrewarmAt && Date.now() - lastPrewarmAt < CLAUDE_PREWARM_COOLDOWN_MS) {
+    if (
+      lastPrewarmAt &&
+      Date.now() - lastPrewarmAt < CLAUDE_PREWARM_COOLDOWN_MS
+    ) {
       return;
     }
 
@@ -1053,10 +1064,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       );
       return;
     }
-    if (
-      this.isIgnorableInterruptedRunError(error)
-      && run.interruptRequested
-    ) {
+    if (this.isIgnorableInterruptedRunError(error) && run.interruptRequested) {
       return;
     }
 
@@ -1195,8 +1203,8 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     const session = await this.sessionsService.findOne(sessionId);
     const shouldGenerateSessionTitle =
-      (!session.claudeSessionId || session.claudeSessionId === '-1')
-      && this.isAutoGeneratedSessionName(session.name);
+      (!session.claudeSessionId || session.claudeSessionId === '-1') &&
+      this.isAutoGeneratedSessionName(session.name);
     const sessionTitlePrompt = (titlePrompt ?? trimmedPrompt).trim();
     this.logStartupTiming(sessionId, runId, startedAtMs, 'submit_start');
     this.logStartupTiming(sessionId, runId, startedAtMs, 'session_loaded', {
@@ -1253,29 +1261,23 @@ export class ClaudeRuntimeService extends EventEmitter {
     const runtime = this.ensureSessionRuntime(sessionId, session, state);
     const hadStartedRuntime = runtime.startedAtMs != null;
     const queryCreatedAtMs = Date.now();
-    const resume = Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1';
-    this.logStartupTiming(sessionId, runId, startedAtMs, hadStartedRuntime ? 'runtime_query_reused' : 'runtime_query_created', {
-      resume:
-        resume,
-      model: state.selectedModel ?? 'default',
-      permissionMode: state.selectedPermissionMode ?? 'default',
-      warmState: runtime.warmState,
-      claudeBinary:
-        this.claudeCliOverride?.path
-        ?? this.resolveSdkClaudePath()
-        ?? findBinary('claude')
-        ?? 'sdk-default',
-      historyItems: state.lastHistoryItemCount,
-      historySource: state.lastHistorySource,
-      historyAgeMs:
-        state.lastHistoryLoadedAtMs == null
-          ? null
-          : startedAtMs - state.lastHistoryLoadedAtMs,
-      transcriptFallbackUsed: state.transcriptFallbackUsed,
-    });
-    if (resume) {
-      this.logStartupTiming(sessionId, runId, startedAtMs, 'resume_diagnostics', {
-        hasClaudeSessionId: true,
+    const resume =
+      Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1';
+    this.logStartupTiming(
+      sessionId,
+      runId,
+      startedAtMs,
+      hadStartedRuntime ? 'runtime_query_reused' : 'runtime_query_created',
+      {
+        resume: resume,
+        model: state.selectedModel ?? 'default',
+        permissionMode: state.selectedPermissionMode ?? 'default',
+        warmState: runtime.warmState,
+        claudeBinary:
+          this.claudeCliOverride?.path ??
+          this.resolveSdkClaudePath() ??
+          findBinary('claude') ??
+          'sdk-default',
         historyItems: state.lastHistoryItemCount,
         historySource: state.lastHistorySource,
         historyAgeMs:
@@ -1283,7 +1285,25 @@ export class ClaudeRuntimeService extends EventEmitter {
             ? null
             : startedAtMs - state.lastHistoryLoadedAtMs,
         transcriptFallbackUsed: state.transcriptFallbackUsed,
-      });
+      },
+    );
+    if (resume) {
+      this.logStartupTiming(
+        sessionId,
+        runId,
+        startedAtMs,
+        'resume_diagnostics',
+        {
+          hasClaudeSessionId: true,
+          historyItems: state.lastHistoryItemCount,
+          historySource: state.lastHistorySource,
+          historyAgeMs:
+            state.lastHistoryLoadedAtMs == null
+              ? null
+              : startedAtMs - state.lastHistoryLoadedAtMs,
+          transcriptFallbackUsed: state.transcriptFallbackUsed,
+        },
+      );
     }
 
     this.activeRuns.set(sessionId, {
@@ -1334,11 +1354,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     } catch (error) {
       const run = this.activeRuns.get(sessionId);
       if (
-        run?.interruptRequested
-        && (
-          this.isIgnorableInterruptedRunError(error)
-          || this.invalidatedSessions.has(sessionId)
-        )
+        run?.interruptRequested &&
+        (this.isIgnorableInterruptedRunError(error) ||
+          this.invalidatedSessions.has(sessionId))
       ) {
         return;
       }
@@ -1369,11 +1387,11 @@ export class ClaudeRuntimeService extends EventEmitter {
         this.finalizeInterruptedRun(sessionId);
       }
       if (
-        completedWithoutRuntimeError
-        && !interrupted
-        && !state.lastError
-        && shouldGenerateSessionTitle
-        && sessionTitlePrompt
+        completedWithoutRuntimeError &&
+        !interrupted &&
+        !state.lastError &&
+        shouldGenerateSessionTitle &&
+        sessionTitlePrompt
       ) {
         setImmediate(() => {
           this.generateAndSaveSessionTitle(
@@ -1387,16 +1405,17 @@ export class ClaudeRuntimeService extends EventEmitter {
           });
         });
       }
-      if (
-        !interrupted
-        && !state.lastError
-        && state.pendingPrompts.length > 0
-      ) {
+      if (!interrupted && !state.lastError && state.pendingPrompts.length > 0) {
         const [next, ...rest] = state.pendingPrompts;
         state.pendingPrompts = rest;
         this.emitRunState(sessionId);
         setImmediate(() => {
-          this.submitPrompt(sessionId, next.prompt, undefined, next.images).catch((err) => {
+          this.submitPrompt(
+            sessionId,
+            next.prompt,
+            undefined,
+            next.images,
+          ).catch((err) => {
             this.logger.error(
               `Pending prompt drain failed session=${sessionId}: ${
                 err instanceof Error ? err.message : String(err)
@@ -1409,12 +1428,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
   }
 
-  private static readonly IMAGE_MIME_ALLOWLIST: readonly ClaudeImageMediaType[] = [
-    'image/png',
-    'image/jpeg',
-    'image/gif',
-    'image/webp',
-  ];
+  private static readonly IMAGE_MIME_ALLOWLIST: readonly ClaudeImageMediaType[] =
+    ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
   private static readonly IMAGE_MAX_BYTES_PER_IMAGE = 5 * 1024 * 1024;
   private static readonly IMAGE_MAX_BYTES_TOTAL = 20 * 1024 * 1024;
 
@@ -1471,7 +1486,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       | { type: 'text'; text: string }
       | {
           type: 'image';
-          source: { type: 'base64'; media_type: ClaudeImageMediaType; data: string };
+          source: {
+            type: 'base64';
+            media_type: ClaudeImageMediaType;
+            data: string;
+          };
         }
     > = [];
     if (text) content.push({ type: 'text', text });
@@ -1577,7 +1596,10 @@ export class ClaudeRuntimeService extends EventEmitter {
       return;
     }
 
-    if (state.pendingPermissionRequest?.requestId === nextPermission.request.requestId) {
+    if (
+      state.pendingPermissionRequest?.requestId ===
+      nextPermission.request.requestId
+    ) {
       return;
     }
 
@@ -1616,12 +1638,13 @@ export class ClaudeRuntimeService extends EventEmitter {
   }
 
   getPendingMcpAuthUrl(sessionId: number, serverName: string): string | null {
-    const pendingRequest = this.runtimeStates.get(sessionId)?.pendingUserInputRequest;
+    const pendingRequest =
+      this.runtimeStates.get(sessionId)?.pendingUserInputRequest;
     if (
-      pendingRequest?.serverName === serverName
-      && pendingRequest.mode === 'url'
-      && typeof pendingRequest.url === 'string'
-      && pendingRequest.url.trim()
+      pendingRequest?.serverName === serverName &&
+      pendingRequest.mode === 'url' &&
+      typeof pendingRequest.url === 'string' &&
+      pendingRequest.url.trim()
     ) {
       return pendingRequest.url;
     }
@@ -1629,7 +1652,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     return null;
   }
 
-  async startMcpAuthFlow(sessionId: number, serverName: string): Promise<string | null> {
+  async startMcpAuthFlow(
+    sessionId: number,
+    serverName: string,
+  ): Promise<string | null> {
     const pendingUrl = this.getPendingMcpAuthUrl(sessionId, serverName);
     if (pendingUrl) {
       return pendingUrl;
@@ -1688,9 +1714,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       run.sawFirstSdkMessage = true;
       run.firstSdkMessageAtMs = Date.now();
       const details =
-        message.type === 'system'
-          ? { subtype: message.subtype }
-          : undefined;
+        message.type === 'system' ? { subtype: message.subtype } : undefined;
       this.logStartupTiming(
         sessionId,
         run.runId,
@@ -1713,7 +1737,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     if (message.type === 'assistant') {
-      this.handleAssistantMessage(sessionId, message);
+      await this.handleAssistantMessage(sessionId, message);
       return;
     }
 
@@ -1861,16 +1885,17 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
   }
 
-  private handleAssistantMessage(
+  private async handleAssistantMessage(
     sessionId: number,
     message: SDKAssistantMessage,
-  ): void {
+  ): Promise<void> {
     const content = Array.isArray(message.message.content)
       ? message.message.content
       : [];
     const run = this.activeRuns.get(sessionId);
     const receivedAt = this.resolveMessageTimestamp(message);
-    const streamMessageId = message.message.id ?? run?.currentStreamMessageId ?? message.uuid;
+    const streamMessageId =
+      message.message.id ?? run?.currentStreamMessageId ?? message.uuid;
     let assistantPartOrdinal = 0;
     let thinkingPartOrdinal = 0;
     for (const [partIndex, part] of (
@@ -1962,8 +1987,15 @@ export class ClaudeRuntimeService extends EventEmitter {
         }
         thinkingPartOrdinal += 1;
       } else if (part.type === 'tool_use') {
-        const providerToolInput = this.enrichEditToolInput(part.name, part.input, sessionId);
-        const canonicalTool = canonicalizeAgentTool(part.name, providerToolInput);
+        const providerToolInput = await this.enrichEditToolInput(
+          part.name,
+          part.input,
+          sessionId,
+        );
+        const canonicalTool = canonicalizeAgentTool(
+          part.name,
+          providerToolInput,
+        );
         const item: ClaudeTranscriptItem = {
           id: `${message.uuid}:tool:${part.id}`,
           kind: 'tool_use',
@@ -1984,33 +2016,51 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
   }
 
-  private enrichEditToolInput(toolName: string, input: unknown, sessionId: number): unknown {
+  private async enrichEditToolInput(
+    toolName: string,
+    input: unknown,
+    sessionId: number,
+  ): Promise<unknown> {
     const normalized = toolName.toLowerCase().replace(/[_\-]/g, '');
-    const isEdit = normalized === 'edit' || normalized === 'strreplace' || normalized === 'strreplacebasededittool' || normalized === 'strreplacebasedeittool';
+    const isEdit =
+      normalized === 'edit' ||
+      normalized === 'strreplace' ||
+      normalized === 'strreplacebasededittool' ||
+      normalized === 'strreplacebasedeittool';
     const isMultiEdit = normalized === 'multiedit';
     if (!isEdit && !isMultiEdit) return input;
 
-    const record = input && typeof input === 'object' && !Array.isArray(input)
-      ? (input as Record<string, unknown>)
-      : null;
+    const record =
+      input && typeof input === 'object' && !Array.isArray(input)
+        ? (input as Record<string, unknown>)
+        : null;
     if (!record) return input;
 
     const worktreePath = this.activeRuns.get(sessionId)?.worktreePath;
     if (!worktreePath) return input;
 
-    const rawPath = typeof record['file_path'] === 'string' ? record['file_path']
-      : typeof record['filePath'] === 'string' ? record['filePath']
-      : typeof record['path'] === 'string' ? record['path']
-      : null;
+    const rawPath =
+      typeof record['file_path'] === 'string'
+        ? record['file_path']
+        : typeof record['filePath'] === 'string'
+          ? record['filePath']
+          : typeof record['path'] === 'string'
+            ? record['path']
+            : null;
     if (!rawPath) return input;
 
-    const absolutePath = rawPath.startsWith('/') ? rawPath : join(worktreePath, rawPath);
+    const absolutePath = rawPath.startsWith('/')
+      ? rawPath
+      : join(worktreePath, rawPath);
 
     try {
-      const content = readFileSync(absolutePath, 'utf-8');
+      const content = await readFile(absolutePath, 'utf-8');
 
       if (isEdit) {
-        const oldString = typeof record['old_string'] === 'string' ? record['old_string'] : null;
+        const oldString =
+          typeof record['old_string'] === 'string'
+            ? record['old_string']
+            : null;
         if (!oldString) return input;
         const idx = content.indexOf(oldString);
         if (idx === -1) return input;
@@ -2022,9 +2072,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       const rawEdits = Array.isArray(record['edits']) ? record['edits'] : null;
       if (!rawEdits) return input;
       const enrichedEdits = rawEdits.map((edit) => {
-        if (!edit || typeof edit !== 'object' || Array.isArray(edit)) return edit;
+        if (!edit || typeof edit !== 'object' || Array.isArray(edit))
+          return edit;
         const e = edit as Record<string, unknown>;
-        const oldStr = typeof e['old_string'] === 'string' ? e['old_string'] : null;
+        const oldStr =
+          typeof e['old_string'] === 'string' ? e['old_string'] : null;
         if (!oldStr) return edit;
         const idx = content.indexOf(oldStr);
         if (idx === -1) return edit;
@@ -2047,7 +2099,10 @@ export class ClaudeRuntimeService extends EventEmitter {
       content as Array<Record<string, any>>
     ).entries()) {
       if (part.type === 'tool_result') {
-        this.reconcileResolvedPermissionFromToolResult(sessionId, part.tool_use_id);
+        this.reconcileResolvedPermissionFromToolResult(
+          sessionId,
+          part.tool_use_id,
+        );
         const item: ClaudeTranscriptItem = {
           id: `${message.uuid ?? randomUUID()}:tool_result:${part.tool_use_id ?? partIndex}`,
           kind: 'tool_result',
@@ -2828,10 +2883,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
   }
 
-  private captureClaudeSessionId(
-    sessionId: number,
-    message: SDKMessage,
-  ): void {
+  private captureClaudeSessionId(sessionId: number, message: SDKMessage): void {
     if (this.invalidatedSessions.has(sessionId)) {
       return;
     }
@@ -2856,12 +2908,11 @@ export class ClaudeRuntimeService extends EventEmitter {
     });
     void Promise.resolve(
       this.sessionsService.updateClaudeSessionId(sessionId, claudeSessionId),
-    )
-      .catch((error) => {
-        this.logger.warn(
-          `Failed to persist Claude session id for session ${sessionId}: ${String(error)}`,
-        );
-      });
+    ).catch((error) => {
+      this.logger.warn(
+        `Failed to persist Claude session id for session ${sessionId}: ${String(error)}`,
+      );
+    });
   }
 
   private finishRun(sessionId: number): void {
@@ -2883,9 +2934,15 @@ export class ClaudeRuntimeService extends EventEmitter {
       run.permissionRequestOrder = [];
     }
     if (run) {
-      this.logStartupTiming(sessionId, run.runId, run.startedAtMs, 'run_complete', {
-        hadError: Boolean(state.lastError),
-      });
+      this.logStartupTiming(
+        sessionId,
+        run.runId,
+        run.startedAtMs,
+        'run_complete',
+        {
+          hadError: Boolean(state.lastError),
+        },
+      );
     }
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
@@ -2938,13 +2995,11 @@ export class ClaudeRuntimeService extends EventEmitter {
     const normalized = message.toLowerCase();
 
     return (
-      normalized.includes('request was aborted')
-      || normalized.includes('aborted')
-      || normalized.includes('fetchrequestcanceledexception')
-      || (
-        normalized.includes('/v1/messages/count_tokens')
-        && normalized.includes('unknown compliance rule')
-      )
+      normalized.includes('request was aborted') ||
+      normalized.includes('aborted') ||
+      normalized.includes('fetchrequestcanceledexception') ||
+      (normalized.includes('/v1/messages/count_tokens') &&
+        normalized.includes('unknown compliance rule'))
     );
   }
 
@@ -2955,10 +3010,10 @@ export class ClaudeRuntimeService extends EventEmitter {
   private isStaleSessionIdError(errorMessage: string): boolean {
     const normalized = errorMessage.toLowerCase();
     return (
-      normalized.includes('does not exist')
-      || normalized.includes('session not found')
-      || normalized.includes('no such session')
-      || normalized.includes('could not be found')
+      normalized.includes('does not exist') ||
+      normalized.includes('session not found') ||
+      normalized.includes('no such session') ||
+      normalized.includes('could not be found')
     );
   }
 
@@ -3047,7 +3102,10 @@ export class ClaudeRuntimeService extends EventEmitter {
         selectedModel: state.selectedModel,
         reasoningEffort: state.reasoningEffort,
         fastMode: state.fastMode,
-        permissionMode: state.sessionMetadata?.permissionMode ?? state.selectedPermissionMode ?? null,
+        permissionMode:
+          state.sessionMetadata?.permissionMode ??
+          state.selectedPermissionMode ??
+          null,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
         pendingPermissionRequest: state.pendingPermissionRequest,
@@ -3075,9 +3133,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     return {
-      activityStatus: state.runPhase === 'running' || state.runPhase === 'waiting'
-        ? state.runPhase
-        : 'idle',
+      activityStatus:
+        state.runPhase === 'running' || state.runPhase === 'waiting'
+          ? state.runPhase
+          : 'idle',
       actionKind: null,
       actionLabel: null,
     };
@@ -3150,39 +3209,42 @@ export class ClaudeRuntimeService extends EventEmitter {
       return 'opaque';
     }
     if (
-      markers.some((marker) =>
-        marker === 'tool_progress'
-        || marker === 'tool_use_summary'
-        || marker.startsWith('system:hook_')
-        || marker.startsWith('system:task_')
-        || marker === 'system:files_persisted'
-        || marker === 'system:memory_recall'
+      markers.some(
+        (marker) =>
+          marker === 'tool_progress' ||
+          marker === 'tool_use_summary' ||
+          marker.startsWith('system:hook_') ||
+          marker.startsWith('system:task_') ||
+          marker === 'system:files_persisted' ||
+          marker === 'system:memory_recall',
       )
     ) {
       return 'tooling';
     }
     if (
-      markers.some((marker) =>
-        marker === 'auth_status'
-        || marker === 'system:auth_status'
-        || marker === 'system:plugin_install'
-        || marker === 'system:elicitation_complete'
+      markers.some(
+        (marker) =>
+          marker === 'auth_status' ||
+          marker === 'system:auth_status' ||
+          marker === 'system:plugin_install' ||
+          marker === 'system:elicitation_complete',
       )
     ) {
       return 'auth_or_mcp';
     }
     if (
-      markers.every((marker) =>
-        marker === 'assistant'
-        || marker === 'prompt_suggestion'
-        || marker === 'rate_limit_event'
-        || marker === 'system:init'
-        || marker === 'system:status'
-        || marker === 'system:session_state_changed'
-        || marker === 'system:notification'
-        || marker === 'system:api_retry'
-        || marker === 'system:compact_boundary'
-        || marker === 'system:mirror_error'
+      markers.every(
+        (marker) =>
+          marker === 'assistant' ||
+          marker === 'prompt_suggestion' ||
+          marker === 'rate_limit_event' ||
+          marker === 'system:init' ||
+          marker === 'system:status' ||
+          marker === 'system:session_state_changed' ||
+          marker === 'system:notification' ||
+          marker === 'system:api_retry' ||
+          marker === 'system:compact_boundary' ||
+          marker === 'system:mirror_error',
       )
     ) {
       return 'system_only';
@@ -3388,9 +3450,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     partIndex: number,
     ordinal: number,
   ): string | null {
-    const items = kind === 'assistant'
-      ? run?.partialAssistantItems
-      : run?.partialThinkingItems;
+    const items =
+      kind === 'assistant'
+        ? run?.partialAssistantItems
+        : run?.partialThinkingItems;
     if (!items) {
       return null;
     }
@@ -3403,8 +3466,14 @@ export class ClaudeRuntimeService extends EventEmitter {
     const matchingKeys = [...items.keys()]
       .filter((key) => key.startsWith(`${streamMessageId}:`))
       .sort((left, right) => {
-        const leftIndex = Number.parseInt(left.slice(left.lastIndexOf(':') + 1), 10);
-        const rightIndex = Number.parseInt(right.slice(right.lastIndexOf(':') + 1), 10);
+        const leftIndex = Number.parseInt(
+          left.slice(left.lastIndexOf(':') + 1),
+          10,
+        );
+        const rightIndex = Number.parseInt(
+          right.slice(right.lastIndexOf(':') + 1),
+          10,
+        );
         return leftIndex - rightIndex;
       });
 
@@ -3419,7 +3488,9 @@ export class ClaudeRuntimeService extends EventEmitter {
             `@anthropic-ai/claude-agent-sdk-linux-${process.arch}-musl/claude${ext}`,
             `@anthropic-ai/claude-agent-sdk-linux-${process.arch}/claude${ext}`,
           ]
-        : [`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`];
+        : [
+            `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`,
+          ];
 
     const scopedRequire = createRequire(__filename);
     for (const candidate of candidates) {
@@ -3446,10 +3517,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     // Use the SDK-managed Claude Code binary by default so the query process
     // and SDK protocol stay in lockstep across prompt turns.
     const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path
-      ?? this.resolveSdkClaudePath()
-      ?? findBinary('claude')
-      ?? undefined;
+      this.claudeCliOverride?.path ??
+      this.resolveSdkClaudePath() ??
+      findBinary('claude') ??
+      undefined;
     const options: Options & {
       fastMode?: boolean;
       fastModePerSessionOptIn?: boolean;
@@ -3459,7 +3530,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       effort: (reasoningEffort as EffortLevel | null) ?? undefined,
       fastMode,
       fastModePerSessionOptIn: true,
-      permissionMode: (selectedPermissionMode as PermissionMode | undefined) ?? undefined,
+      permissionMode:
+        (selectedPermissionMode as PermissionMode | undefined) ?? undefined,
       resume:
         claudeSessionId && claudeSessionId !== '-1'
           ? claudeSessionId
@@ -3507,13 +3579,13 @@ export class ClaudeRuntimeService extends EventEmitter {
     prompt: string,
   ): Promise<string | null> {
     const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path
-      ?? this.resolveSdkClaudePath()
-      ?? findBinary('claude')
-      ?? undefined;
+      this.claudeCliOverride?.path ??
+      this.resolveSdkClaudePath() ??
+      findBinary('claude') ??
+      undefined;
     const runtimeQuery = query({
       prompt: [
-        'Name this Claude Code session based on the user\'s first message.',
+        "Name this Claude Code session based on the user's first message.",
         'Respond promptly with a broad short title. Do not investigate, browse, inspect files, or dig into details.',
         'Return only the session name, with no quotes, markdown, or commentary.',
         'Rules:',
@@ -3577,13 +3649,15 @@ export class ClaudeRuntimeService extends EventEmitter {
       ? message.message.content
       : [];
     return content
-      .map((part) => part.type === 'text' ? part.text : '')
+      .map((part) => (part.type === 'text' ? part.text : ''))
       .join('');
   }
 
   private normalizeGeneratedSessionTitle(rawTitle: string): string | null {
     const cleaned = rawTitle
-      .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z]*|```/g, ''))
+      .replace(/```[\s\S]*?```/g, (block) =>
+        block.replace(/```[a-zA-Z]*|```/g, ''),
+      )
       .replace(/^[\s"'`*_#>-]+|[\s"'`*_#>-]+$/g, '')
       .replace(/[.!?;:,\s"'`*_#>-]+$/g, '')
       .replace(/\s+/g, ' ')
@@ -3609,10 +3683,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     abortController: AbortController,
   ): Options {
     const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path
-      ?? this.resolveSdkClaudePath()
-      ?? findBinary('claude')
-      ?? undefined;
+      this.claudeCliOverride?.path ??
+      this.resolveSdkClaudePath() ??
+      findBinary('claude') ??
+      undefined;
 
     return {
       abortController,
@@ -3631,10 +3705,10 @@ export class ClaudeRuntimeService extends EventEmitter {
       },
       onElicitation: async (request) => {
         if (
-          request.serverName === serverName
-          && request.mode === 'url'
-          && typeof request.url === 'string'
-          && request.url.trim()
+          request.serverName === serverName &&
+          request.mode === 'url' &&
+          typeof request.url === 'string' &&
+          request.url.trim()
         ) {
           return { action: 'accept' };
         }
@@ -3663,7 +3737,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     };
   }
 
-  private resolveClaudeCliOverride(): { path: string; version: string | null } | null {
+  private resolveClaudeCliOverride(): {
+    path: string;
+    version: string | null;
+  } | null {
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     if (!configuredPath) {
       return null;
@@ -3672,17 +3749,32 @@ export class ClaudeRuntimeService extends EventEmitter {
     const resolvedPath = findBinary(configuredPath) ?? configuredPath;
     return {
       path: resolvedPath,
-      version: this.readClaudeCliVersion(resolvedPath),
+      version: null,
     };
   }
 
-  private readClaudeCliVersion(binaryPath: string): string | null {
+  private async refreshClaudeCliOverrideVersion(): Promise<void> {
+    if (!this.claudeCliOverride) {
+      return;
+    }
+    const version = await this.readClaudeCliVersion(
+      this.claudeCliOverride.path,
+    );
+    this.claudeCliOverride = {
+      ...this.claudeCliOverride,
+      version,
+    };
+  }
+
+  private async readClaudeCliVersion(
+    binaryPath: string,
+  ): Promise<string | null> {
     try {
-      const output = execFileSync(binaryPath, ['--version'], {
-        encoding: 'utf-8',
+      const { stdout } = await execFileAsync(binaryPath, ['--version'], {
         env: buildAugmentedEnv(),
         timeout: 5000,
-      }).trim();
+      });
+      const output = stdout.trim();
       return output || null;
     } catch (error) {
       this.logger.warn(
@@ -3694,7 +3786,8 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   private logClaudeRuntimeConfiguration(): void {
     const sdkVersion = CLAUDE_SDK_PACKAGE.version;
-    const sdkClaudeCodeVersion = CLAUDE_SDK_PACKAGE.claudeCodeVersion ?? 'unknown';
+    const sdkClaudeCodeVersion =
+      CLAUDE_SDK_PACKAGE.claudeCodeVersion ?? 'unknown';
 
     if (!this.claudeCliOverride) {
       this.logger.log(
@@ -3709,9 +3802,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     );
 
     if (
-      CLAUDE_SDK_PACKAGE.claudeCodeVersion
-      && overrideVersion !== 'unknown'
-      && !overrideVersion.includes(CLAUDE_SDK_PACKAGE.claudeCodeVersion)
+      CLAUDE_SDK_PACKAGE.claudeCodeVersion &&
+      overrideVersion !== 'unknown' &&
+      !overrideVersion.includes(CLAUDE_SDK_PACKAGE.claudeCodeVersion)
     ) {
       this.logger.warn(
         `Claude CLI override version mismatch: sdk expects ${CLAUDE_SDK_PACKAGE.claudeCodeVersion}, override reports ${overrideVersion}. Streaming and SDK behavior may degrade.`,
@@ -3719,7 +3812,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
   }
 
-  private logSdkMessageDiagnostics(sessionId: number, message: SDKMessage): void {
+  private logSdkMessageDiagnostics(
+    sessionId: number,
+    message: SDKMessage,
+  ): void {
     if (message.type === 'assistant') {
       const content = Array.isArray(message.message.content)
         ? message.message.content
@@ -3755,7 +3851,10 @@ export class ClaudeRuntimeService extends EventEmitter {
       selectedModel: state.selectedModel,
       reasoningEffort: state.reasoningEffort,
       fastMode: state.fastMode,
-      permissionMode: state.sessionMetadata?.permissionMode ?? state.selectedPermissionMode ?? null,
+      permissionMode:
+        state.sessionMetadata?.permissionMode ??
+        state.selectedPermissionMode ??
+        null,
       availableModels: state.availableModels,
       contextUsage: state.contextUsage,
       sessionMetadata: state.sessionMetadata,
@@ -3797,7 +3896,9 @@ export class ClaudeRuntimeService extends EventEmitter {
       return;
     }
 
-    const runtime = this.activeRuns.get(sessionId)?.query ?? this.sessionRuntimes.get(sessionId);
+    const runtime =
+      this.activeRuns.get(sessionId)?.query ??
+      this.sessionRuntimes.get(sessionId);
     if (!runtime) {
       return;
     }
@@ -3812,9 +3913,9 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     const now = Date.now();
     if (
-      !options.force
-      && state.metadataRefreshCompletedAtMs != null
-      && now - state.metadataRefreshCompletedAtMs < 1500
+      !options.force &&
+      state.metadataRefreshCompletedAtMs != null &&
+      now - state.metadataRefreshCompletedAtMs < 1500
     ) {
       this.logger.debug(
         `Claude runtime metadata refresh skipped session=${sessionId} reason=${options.reason ?? 'unspecified'} ageMs=${now - state.metadataRefreshCompletedAtMs}`,
@@ -3840,7 +3941,9 @@ export class ClaudeRuntimeService extends EventEmitter {
           runtime.supportedModels(),
           runtime.getContextUsage(),
         ]);
-        state.availableModels = models.map((model) => this.toModelOption(model));
+        state.availableModels = models.map((model) =>
+          this.toModelOption(model),
+        );
         state.contextUsage = this.toContextUsage(contextUsage);
         state.selectedModel = contextUsage.model || state.selectedModel;
         if (state.sessionMetadata && contextUsage.model) {
@@ -4017,7 +4120,10 @@ export class ClaudeRuntimeService extends EventEmitter {
       }
       const payload =
         typeof rawPayload.content === 'string'
-          ? { ...rawPayload, content: [{ type: 'text', text: rawPayload.content }] }
+          ? {
+              ...rawPayload,
+              content: [{ type: 'text', text: rawPayload.content }],
+            }
           : rawPayload;
       if (!Array.isArray(payload.content)) {
         continue;
@@ -4068,7 +4174,9 @@ export class ClaudeRuntimeService extends EventEmitter {
         // `msg_xxx` (stream) prefixes derived from different identifiers and fails,
         // re-rendering the streamed message after history sync.
         const apiMessageId =
-          typeof payload.id === 'string' && payload.id ? payload.id : message.uuid;
+          typeof payload.id === 'string' && payload.id
+            ? payload.id
+            : message.uuid;
         for (const [index, part] of payload.content.entries()) {
           if (
             part.type === 'text' &&
@@ -4128,14 +4236,17 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   private normalizeTranscriptRecords(
     records: ClaudeTranscriptRecord[],
-    interactionsByToolUseId: Map<string, ClaudeToolInteractionSummary> = new Map(),
+    interactionsByToolUseId: Map<
+      string,
+      ClaudeToolInteractionSummary
+    > = new Map(),
   ): ClaudeTranscriptItem[] {
     const messages = records
       .filter((record): record is SessionMessage & ClaudeTranscriptRecord => {
         return (
-          (record.type === 'user' || record.type === 'assistant')
-          && typeof record.uuid === 'string'
-          && !!record.message
+          (record.type === 'user' || record.type === 'assistant') &&
+          typeof record.uuid === 'string' &&
+          !!record.message
         );
       })
       .map((record) => ({
@@ -4258,7 +4369,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     const createdAt = request.createdAt;
     const resolvedAt = new Date().toISOString();
     const kind = this.getInteractionKind(request.toolName);
-    const content = decision.behavior === 'allow' ? decision.content ?? null : null;
+    const content =
+      decision.behavior === 'allow' ? (decision.content ?? null) : null;
 
     if (kind === 'ask_user_question') {
       const answers = this.extractInteractionAnswers(content);
@@ -4280,7 +4392,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       return {
         kind,
         decision: decision.behavior === 'allow' ? 'approved' : 'denied',
-        decisionLabel: decision.behavior === 'allow' ? 'Start planning' : 'Not now',
+        decisionLabel:
+          decision.behavior === 'allow' ? 'Start planning' : 'Not now',
         decisionTone: decision.behavior === 'allow' ? 'ok' : 'warn',
         remember: false,
         content,
@@ -4294,7 +4407,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       return {
         kind,
         decision: decision.behavior === 'allow' ? 'approved' : 'denied',
-        decisionLabel: decision.behavior === 'allow' ? 'Approve plan' : 'Keep planning',
+        decisionLabel:
+          decision.behavior === 'allow' ? 'Approve plan' : 'Keep planning',
         decisionTone: decision.behavior === 'allow' ? 'ok' : 'warn',
         remember: false,
         content,
@@ -4327,7 +4441,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     };
   }
 
-  private getInteractionKind(toolName: string | undefined): ClaudeToolInteractionKind {
+  private getInteractionKind(
+    toolName: string | undefined,
+  ): ClaudeToolInteractionKind {
     const normalized = this.normalizeToolName(toolName ?? '');
     if (normalized === 'askuserquestion') return 'ask_user_question';
     if (normalized === 'enterplanmode') return 'plan_mode';
@@ -4338,7 +4454,11 @@ export class ClaudeRuntimeService extends EventEmitter {
   private extractInteractionAnswers(
     content: Record<string, unknown> | null,
   ): ClaudeToolInteractionAnswer[] {
-    if (!content || typeof content['answers'] !== 'object' || !content['answers']) {
+    if (
+      !content ||
+      typeof content['answers'] !== 'object' ||
+      !content['answers']
+    ) {
       return [];
     }
     return Object.entries(content['answers'] as Record<string, unknown>).map(
@@ -4424,7 +4544,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     return decision === 'denied' || decision === 'declined' ? 'warn' : 'ok';
   }
 
-  private parseJsonRecord(value: string | null): Record<string, unknown> | null {
+  private parseJsonRecord(
+    value: string | null,
+  ): Record<string, unknown> | null {
     if (!value) return null;
     try {
       const parsed = JSON.parse(value);
@@ -4436,7 +4558,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
   }
 
-  private stringifyJson(value: Record<string, unknown> | null | undefined): string | null {
+  private stringifyJson(
+    value: Record<string, unknown> | null | undefined,
+  ): string | null {
     if (!value) return null;
     return JSON.stringify(value);
   }
@@ -4456,7 +4580,9 @@ export class ClaudeRuntimeService extends EventEmitter {
       return text;
     }
 
-    const afterClose = trimmed.slice(closingIndex + WORKTREE_CONTEXT_CLOSE.length);
+    const afterClose = trimmed.slice(
+      closingIndex + WORKTREE_CONTEXT_CLOSE.length,
+    );
     return afterClose.replace(/^\s+/, '');
   }
 
@@ -4478,8 +4604,12 @@ export class ClaudeRuntimeService extends EventEmitter {
       this.collectClaudeConfigDirectories('commands'),
     ]);
     const [projectItems, userItems] = await Promise.all([
-      Promise.all(projectDirs.map((dir) => this.scanCommandDirectory(dir, 'project'))),
-      Promise.all(userDirs.map((dir) => this.scanCommandDirectory(dir, 'user'))),
+      Promise.all(
+        projectDirs.map((dir) => this.scanCommandDirectory(dir, 'project')),
+      ),
+      Promise.all(
+        userDirs.map((dir) => this.scanCommandDirectory(dir, 'user')),
+      ),
     ]);
     return [...projectItems.flat(), ...userItems.flat()];
   }
@@ -4492,8 +4622,12 @@ export class ClaudeRuntimeService extends EventEmitter {
       this.collectClaudeConfigDirectories('skills'),
     ]);
     const [projectItems, userItems] = await Promise.all([
-      Promise.all(projectDirs.map((dir) => this.scanClaudeSkillDirectory(dir, 'project'))),
-      Promise.all(userDirs.map((dir) => this.scanClaudeSkillDirectory(dir, 'user'))),
+      Promise.all(
+        projectDirs.map((dir) => this.scanClaudeSkillDirectory(dir, 'project')),
+      ),
+      Promise.all(
+        userDirs.map((dir) => this.scanClaudeSkillDirectory(dir, 'user')),
+      ),
     ]);
     return [...projectItems.flat(), ...userItems.flat()];
   }
@@ -4657,30 +4791,38 @@ export class ClaudeRuntimeService extends EventEmitter {
       entryName.endsWith('.md'),
     );
     const entries = this.normalizeLegacyCommandFiles(baseDir, files);
-    const items: Array<ClaudeAutocompleteItem | null> = await Promise.all(entries.map(async (entry) => {
-      const metadata = await this.readAutocompleteMetadata(
-        entry.filePath,
-        entry.isSkillFile ? 'Use this Claude skill' : 'Custom Claude command',
-      );
-      if (!metadata.userInvocable) {
-        return null;
-      }
+    const items: Array<ClaudeAutocompleteItem | null> = await Promise.all(
+      entries.map(async (entry) => {
+        const metadata = await this.readAutocompleteMetadata(
+          entry.filePath,
+          entry.isSkillFile ? 'Use this Claude skill' : 'Custom Claude command',
+        );
+        if (!metadata.userInvocable) {
+          return null;
+        }
 
-      const commandName = entry.isSkillFile
-        ? this.buildLegacySkillCommandName(baseDir, entry.filePath)
-        : this.buildLegacyRegularCommandName(baseDir, entry.filePath);
-      return {
-        id: `${source}:command:${commandName}`,
-        kind: entry.isSkillFile ? ('skill' as const) : ('command' as const),
-        trigger: '/' as const,
-        label: commandName,
-        insertText: `${commandName} `,
-        description: metadata.description,
-        detail: this.getClaudeDetailLabel(dirname(baseDir), 'commands', source),
-        source,
-      };
-    }));
-    return items.filter((item): item is ClaudeAutocompleteItem => item !== null);
+        const commandName = entry.isSkillFile
+          ? this.buildLegacySkillCommandName(baseDir, entry.filePath)
+          : this.buildLegacyRegularCommandName(baseDir, entry.filePath);
+        return {
+          id: `${source}:command:${commandName}`,
+          kind: entry.isSkillFile ? ('skill' as const) : ('command' as const),
+          trigger: '/' as const,
+          label: commandName,
+          insertText: `${commandName} `,
+          description: metadata.description,
+          detail: this.getClaudeDetailLabel(
+            dirname(baseDir),
+            'commands',
+            source,
+          ),
+          source,
+        };
+      }),
+    );
+    return items.filter(
+      (item): item is ClaudeAutocompleteItem => item !== null,
+    );
   }
 
   private async scanClaudeSkillDirectory(
@@ -4695,40 +4837,46 @@ export class ClaudeRuntimeService extends EventEmitter {
       baseDir,
       (entryName) => entryName === 'SKILL.md',
     );
-    const items = await Promise.all(files.map(async (filePath) => {
-      const metadata = await this.readAutocompleteMetadata(
-        filePath,
-        `Use the ${basename(dirname(filePath))} skill`,
-      );
-      if (!metadata.userInvocable) {
-        return [];
-      }
+    const items = await Promise.all(
+      files.map(async (filePath) => {
+        const metadata = await this.readAutocompleteMetadata(
+          filePath,
+          `Use the ${basename(dirname(filePath))} skill`,
+        );
+        if (!metadata.userInvocable) {
+          return [];
+        }
 
-      const skillDir = basename(dirname(filePath));
-      const detail = this.getClaudeDetailLabel(dirname(baseDir), 'skills', source);
-      return [
-        {
-          id: `${source}:skill:slash:${skillDir}`,
-          kind: 'skill' as const,
-          trigger: '/' as const,
-          label: `/${skillDir}`,
-          insertText: `/${skillDir} `,
-          description: metadata.description,
-          detail,
+        const skillDir = basename(dirname(filePath));
+        const detail = this.getClaudeDetailLabel(
+          dirname(baseDir),
+          'skills',
           source,
-        },
-        {
-          id: `${source}:skill:dollar:${skillDir}`,
-          kind: 'skill' as const,
-          trigger: '$' as const,
-          label: `$${skillDir}`,
-          insertText: `$${skillDir} `,
-          description: metadata.description,
-          detail,
-          source,
-        },
-      ];
-    }));
+        );
+        return [
+          {
+            id: `${source}:skill:slash:${skillDir}`,
+            kind: 'skill' as const,
+            trigger: '/' as const,
+            label: `/${skillDir}`,
+            insertText: `/${skillDir} `,
+            description: metadata.description,
+            detail,
+            source,
+          },
+          {
+            id: `${source}:skill:dollar:${skillDir}`,
+            kind: 'skill' as const,
+            trigger: '$' as const,
+            label: `$${skillDir}`,
+            insertText: `$${skillDir} `,
+            description: metadata.description,
+            detail,
+            source,
+          },
+        ];
+      }),
+    );
     return items.flat();
   }
 
@@ -4778,7 +4926,9 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     const result: Array<{ filePath: string; isSkillFile: boolean }> = [];
     for (const dirFiles of filesByDir.values()) {
-      const skillFile = dirFiles.find((file) => /^skill\.md$/i.test(basename(file)));
+      const skillFile = dirFiles.find((file) =>
+        /^skill\.md$/i.test(basename(file)),
+      );
       if (skillFile) {
         result.push({ filePath: skillFile, isSkillFile: true });
         continue;
@@ -4790,14 +4940,23 @@ export class ClaudeRuntimeService extends EventEmitter {
     return result;
   }
 
-  private buildLegacySkillCommandName(baseDir: string, filePath: string): string {
+  private buildLegacySkillCommandName(
+    baseDir: string,
+    filePath: string,
+  ): string {
     const skillDirectory = dirname(filePath);
-    const namespace = this.buildLegacyNamespace(dirname(skillDirectory), baseDir);
+    const namespace = this.buildLegacyNamespace(
+      dirname(skillDirectory),
+      baseDir,
+    );
     const commandBaseName = basename(skillDirectory);
     return `/${namespace ? `${namespace}/` : ''}${commandBaseName}`;
   }
 
-  private buildLegacyRegularCommandName(baseDir: string, filePath: string): string {
+  private buildLegacyRegularCommandName(
+    baseDir: string,
+    filePath: string,
+  ): string {
     const namespace = this.buildLegacyNamespace(dirname(filePath), baseDir);
     const commandBaseName = basename(filePath).replace(/\.md$/i, '');
     return `/${namespace ? `${namespace}/` : ''}${commandBaseName}`;
@@ -4837,9 +4996,9 @@ export class ClaudeRuntimeService extends EventEmitter {
       const raw = await readFile(filePath, 'utf8');
       const { content, frontmatter } = this.parseFrontmatter(raw);
       const description =
-        frontmatter['description']
-        || this.extractDescription(content)
-        || fallback;
+        frontmatter['description'] ||
+        this.extractDescription(content) ||
+        fallback;
       const userInvocableRaw = frontmatter['user-invocable'];
       const userInvocable =
         userInvocableRaw == null
@@ -4853,9 +5012,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
   }
 
-  private parseFrontmatter(
-    raw: string,
-  ): { content: string; frontmatter: Record<string, string> } {
+  private parseFrontmatter(raw: string): {
+    content: string;
+    frontmatter: Record<string, string>;
+  } {
     const match = raw.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/);
     if (!match) {
       return { content: raw, frontmatter: {} };
@@ -4882,8 +5042,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       .map((line) => line.trim())
       .filter(Boolean);
     return (
-      lines.find((line) => !line.startsWith('#') && !line.startsWith('---'))
-      ?? null
+      lines.find((line) => !line.startsWith('#') && !line.startsWith('---')) ??
+      null
     );
   }
 
@@ -4937,7 +5097,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
   }
 
-  private getTranscriptPath(worktreePath: string, claudeSessionId: string): string {
+  private getTranscriptPath(
+    worktreePath: string,
+    claudeSessionId: string,
+  ): string {
     return join(
       homedir(),
       '.claude',
@@ -4958,7 +5121,10 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     const resolvedPath = await this.resolveWorktreePath(worktreePath);
     if (resolvedPath !== worktreePath) {
-      const resolvedComputedPath = this.getTranscriptPath(resolvedPath, claudeSessionId);
+      const resolvedComputedPath = this.getTranscriptPath(
+        resolvedPath,
+        claudeSessionId,
+      );
       if (await this.pathExists(resolvedComputedPath)) {
         return resolvedComputedPath;
       }
@@ -4968,7 +5134,11 @@ export class ClaudeRuntimeService extends EventEmitter {
     try {
       const entries = await readdir(projectsDir);
       for (const entry of entries) {
-        const candidatePath = join(projectsDir, entry, `${claudeSessionId}.jsonl`);
+        const candidatePath = join(
+          projectsDir,
+          entry,
+          `${claudeSessionId}.jsonl`,
+        );
         if (await this.pathExists(candidatePath)) {
           return candidatePath;
         }
@@ -5006,8 +5176,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     records: ClaudeTranscriptRecord[],
   ): Promise<void> {
     const serialized =
-      records.map((record) => JSON.stringify(record)).join('\n')
-      + (records.length ? '\n' : '');
+      records.map((record) => JSON.stringify(record)).join('\n') +
+      (records.length ? '\n' : '');
     await writeFile(transcriptPath, serialized, 'utf8');
   }
 
@@ -5032,9 +5202,15 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     run.tornDown = true;
     run.interruptRequested = true;
-    this.logStartupTiming(sessionId, run.runId, run.startedAtMs, 'interrupt_requested', {
-      invalidateSession: Boolean(options.invalidateSession),
-    });
+    this.logStartupTiming(
+      sessionId,
+      run.runId,
+      run.startedAtMs,
+      'interrupt_requested',
+      {
+        invalidateSession: Boolean(options.invalidateSession),
+      },
+    );
     if (options.invalidateSession) {
       this.invalidatedSessions.add(sessionId);
     }
@@ -5052,7 +5228,10 @@ export class ClaudeRuntimeService extends EventEmitter {
       this.emitRunState(sessionId);
     }
 
-    for (const [queuedPermissionRequestId, permission] of run.permissionRequests.entries()) {
+    for (const [
+      queuedPermissionRequestId,
+      permission,
+    ] of run.permissionRequests.entries()) {
       permission?.resolve({
         behavior: 'deny',
         message: 'Run interrupted by user',
@@ -5192,16 +5371,18 @@ export function loadClaudeSdkPackageMetadata(
   ]);
 
   const packageAnchors = options.packageAnchors ?? [
-      join(runtimeRoot, 'package.json'),
-      join(runtimeRoot, 'apps', 'backend', 'package.json'),
-      join(__dirname, '..', '..', '..', 'package.json'),
-      join(__dirname, '..', '..', '..', '..', '..', 'package.json'),
-    ];
+    join(runtimeRoot, 'package.json'),
+    join(runtimeRoot, 'apps', 'backend', 'package.json'),
+    join(__dirname, '..', '..', '..', 'package.json'),
+    join(__dirname, '..', '..', '..', '..', '..', 'package.json'),
+  ];
 
   for (const packageAnchor of packageAnchors) {
     try {
       const scopedRequire = createRequire(packageAnchor);
-      candidates.add(scopedRequire.resolve('@anthropic-ai/claude-agent-sdk/package.json'));
+      candidates.add(
+        scopedRequire.resolve('@anthropic-ai/claude-agent-sdk/package.json'),
+      );
     } catch {
       // Ignore missing package resolution for this anchor and continue searching.
     }
@@ -5209,7 +5390,9 @@ export function loadClaudeSdkPackageMetadata(
 
   for (const candidate of candidates) {
     try {
-      return JSON.parse(readFileSync(candidate, 'utf-8')) as ClaudeSdkPackageMetadata;
+      return JSON.parse(
+        readFileSync(candidate, 'utf-8'),
+      ) as ClaudeSdkPackageMetadata;
     } catch {
       // Try next package location.
     }

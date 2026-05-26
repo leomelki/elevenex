@@ -1,10 +1,11 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { execSync, spawn, ChildProcess } from 'child_process';
-import * as fs from 'fs';
+import { spawn, ChildProcess } from 'child_process';
+import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { generateTmuxScrollConfig } from './tmux-scroll-config.js';
 import { findBinary } from '../config/system-paths.js';
+import { execFileAsync, execFileQuiet } from './async-process.js';
 
 const TMUX_SESSION_PREFIX = 'elevenex';
 
@@ -25,7 +26,9 @@ export class TmuxManager implements OnModuleDestroy {
     this.tmuxBin = this.resolveTmuxPath();
     this.tmuxAvailable = this.tmuxBin !== '';
     if (this.tmuxAvailable) {
-      console.log(`tmux detected at ${this.tmuxBin} - session persistence enabled`);
+      console.log(
+        `tmux detected at ${this.tmuxBin} - session persistence enabled`,
+      );
     } else {
       console.log('tmux not found - sessions will not persist on reconnect');
     }
@@ -44,18 +47,22 @@ export class TmuxManager implements OnModuleDestroy {
   }
 
   /** Configure global tmux key bindings for scroll + auto-exit copy-mode */
-  configureScrollBindings(): void {
+  async configureScrollBindings(): Promise<void> {
     if (this.scrollBindingsConfigured) return;
 
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `elevenex-tmux-scroll-${process.pid}.conf`,
+    );
     try {
-      const tmpFile = path.join(os.tmpdir(), `elevenex-tmux-scroll-${process.pid}.conf`);
-      fs.writeFileSync(tmpFile, generateTmuxScrollConfig());
-      execSync(`${this.tmuxBin} source-file ${tmpFile}`, { stdio: 'ignore' });
-      fs.unlinkSync(tmpFile);
+      await fs.writeFile(tmpFile, generateTmuxScrollConfig());
+      await execFileQuiet(this.tmuxBin, ['source-file', tmpFile]);
+      await fs.unlink(tmpFile).catch(() => undefined);
 
       this.scrollBindingsConfigured = true;
       console.log('tmux scroll + copy-mode-exit bindings configured');
     } catch (error) {
+      await fs.unlink(tmpFile).catch(() => undefined);
       console.error('Failed to configure tmux scroll bindings:', error);
     }
   }
@@ -64,19 +71,23 @@ export class TmuxManager implements OnModuleDestroy {
     return `${TMUX_SESSION_PREFIX}-${sessionId}`;
   }
 
-  sessionExists(sessionId: number): boolean {
+  async sessionExists(sessionId: number): Promise<boolean> {
     if (!this.tmuxAvailable) return false;
-    
+
     const sessionName = this.getSessionName(sessionId);
     try {
-      execSync(`${this.tmuxBin} has-session -t ${sessionName} 2>/dev/null`, { stdio: 'ignore' });
+      await execFileQuiet(this.tmuxBin, ['has-session', '-t', sessionName]);
       return true;
     } catch {
       return false;
     }
   }
 
-  createSession(sessionId: number, worktreePath: string, claudePath: string): ChildProcess | null {
+  async createSession(
+    sessionId: number,
+    worktreePath: string,
+    claudePath: string,
+  ): Promise<ChildProcess | null> {
     if (!this.tmuxAvailable) {
       return null;
     }
@@ -84,24 +95,26 @@ export class TmuxManager implements OnModuleDestroy {
     const sessionName = this.getSessionName(sessionId);
 
     // Kill existing tmux session if any
-    this.killSession(sessionId);
+    await this.killSession(sessionId);
 
     try {
       // Create new tmux session with Claude running inside
       // -d: detached, -s: session name, -c: working directory
-      execSync(
-        `${this.tmuxBin} new-session -d -s ${sessionName} -c "${worktreePath}" "${claudePath}"`,
-        { stdio: 'pipe' }
-      );
+      await execFileQuiet(this.tmuxBin, [
+        'new-session',
+        '-d',
+        '-s',
+        sessionName,
+        '-c',
+        worktreePath,
+        claudePath,
+      ]);
 
       // Enable mouse mode so tmux handles scrollback via copy-mode
-      execSync(`${this.tmuxBin} set-window-option -t ${sessionName} alternate-screen on`, { stdio: 'ignore' });
-      execSync(`${this.tmuxBin} set-option -t ${sessionName} mouse on`, { stdio: 'ignore' });
-      execSync(`${this.tmuxBin} set-option -t ${sessionName} history-limit 50000`, { stdio: 'ignore' });
-      execSync(`${this.tmuxBin} set-option -t ${sessionName} status off`, { stdio: 'ignore' });
+      await this.configureSessionOptions(sessionName, true);
 
       // Configure global scroll bindings (once, after server is running)
-      this.configureScrollBindings();
+      await this.configureScrollBindings();
 
       this.sessions.set(sessionId, {
         sessionId,
@@ -116,26 +129,24 @@ export class TmuxManager implements OnModuleDestroy {
     }
   }
 
-  attachToSession(sessionId: number): ChildProcess | null {
+  async attachToSession(sessionId: number): Promise<ChildProcess | null> {
     if (!this.tmuxAvailable) return null;
 
     const sessionName = this.getSessionName(sessionId);
-    
-    if (!this.sessionExists(sessionId)) {
+
+    if (!(await this.sessionExists(sessionId))) {
       return null;
     }
 
     // Enable mouse mode so tmux handles scrollback via copy-mode
     try {
-      execSync(`${this.tmuxBin} set-window-option -t ${sessionName} alternate-screen on`, { stdio: 'ignore' });
-      execSync(`${this.tmuxBin} set-option -t ${sessionName} mouse on`, { stdio: 'ignore' });
-      execSync(`${this.tmuxBin} set-option -t ${sessionName} status off`, { stdio: 'ignore' });
+      await this.configureSessionOptions(sessionName, false);
     } catch {
       // Ignore
     }
 
     // Configure global scroll bindings (once, after server is running)
-    this.configureScrollBindings();
+    await this.configureScrollBindings();
 
     // Attach to tmux session and capture output
     // -C: control mode (for programmatic control)
@@ -157,36 +168,40 @@ export class TmuxManager implements OnModuleDestroy {
     if (!this.tmuxAvailable) return;
 
     const sessionName = this.getSessionName(sessionId);
-    
-    try {
-      // Send keys to tmux session
-      // Use send-keys with literal flag to handle special characters
-      execSync(`${this.tmuxBin} send-keys -t ${sessionName} -l "${data.replace(/"/g, '\\"')}"`, { stdio: 'ignore' });
-    } catch (error) {
-      console.error(`Failed to send input to tmux session ${sessionName}:`, error);
-    }
+
+    // Send keys to tmux session. Keep this fire-and-forget so terminal input
+    // never blocks the Node event loop behind tmux process startup.
+    void execFileQuiet(this.tmuxBin, [
+      'send-keys',
+      '-t',
+      sessionName,
+      '-l',
+      data,
+    ]).catch((error) => {
+      console.error(
+        `Failed to send input to tmux session ${sessionName}:`,
+        error,
+      );
+    });
   }
 
   resize(sessionId: number, cols: number, rows: number): void {
     if (!this.tmuxAvailable) return;
 
     const sessionName = this.getSessionName(sessionId);
-    
-    try {
-      execSync(`${this.tmuxBin} set-option -t ${sessionName} default-size ${cols}x${rows}`, { stdio: 'ignore' });
-      execSync(`${this.tmuxBin} resize-window -t ${sessionName} ${cols} ${rows}`, { stdio: 'ignore' });
-    } catch (error) {
+
+    void this.resizeWindow(sessionName, cols, rows).catch(() => {
       // Ignore resize errors
-    }
+    });
   }
 
-  killSession(sessionId: number): boolean {
+  async killSession(sessionId: number): Promise<boolean> {
     if (!this.tmuxAvailable) return false;
 
     const sessionName = this.getSessionName(sessionId);
-    
+
     try {
-      execSync(`${this.tmuxBin} kill-session -t ${sessionName} 2>/dev/null`, { stdio: 'ignore' });
+      await execFileQuiet(this.tmuxBin, ['kill-session', '-t', sessionName]);
       this.sessions.delete(sessionId);
       return true;
     } catch {
@@ -195,21 +210,85 @@ export class TmuxManager implements OnModuleDestroy {
     }
   }
 
-  listSessions(): string[] {
+  async listSessions(): Promise<string[]> {
     if (!this.tmuxAvailable) return [];
 
     try {
-      const output = execSync(`${this.tmuxBin} list-sessions -F "#{session_name}" 2>/dev/null`, { encoding: 'utf-8' });
-      return output.trim().split('\n').filter(s => s.startsWith(`${TMUX_SESSION_PREFIX}-`));
+      const { stdout } = await execFileAsync(this.tmuxBin, [
+        'list-sessions',
+        '-F',
+        '#{session_name}',
+      ]);
+      return stdout
+        .trim()
+        .split('\n')
+        .filter((s) => s.startsWith(`${TMUX_SESSION_PREFIX}-`));
     } catch {
       return [];
     }
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
     // Kill all elevenex tmux sessions on shutdown
     for (const [sessionId] of this.sessions) {
-      this.killSession(sessionId);
+      await this.killSession(sessionId);
     }
+  }
+
+  private async configureSessionOptions(
+    sessionName: string,
+    includeHistoryLimit: boolean,
+  ): Promise<void> {
+    await execFileQuiet(this.tmuxBin, [
+      'set-window-option',
+      '-t',
+      sessionName,
+      'alternate-screen',
+      'on',
+    ]);
+    await execFileQuiet(this.tmuxBin, [
+      'set-option',
+      '-t',
+      sessionName,
+      'mouse',
+      'on',
+    ]);
+    if (includeHistoryLimit) {
+      await execFileQuiet(this.tmuxBin, [
+        'set-option',
+        '-t',
+        sessionName,
+        'history-limit',
+        '50000',
+      ]);
+    }
+    await execFileQuiet(this.tmuxBin, [
+      'set-option',
+      '-t',
+      sessionName,
+      'status',
+      'off',
+    ]);
+  }
+
+  private async resizeWindow(
+    sessionName: string,
+    cols: number,
+    rows: number,
+  ): Promise<void> {
+    await execFileQuiet(this.tmuxBin, [
+      'set-option',
+      '-t',
+      sessionName,
+      'default-size',
+      `${cols}x${rows}`,
+    ]);
+    await execFileQuiet(this.tmuxBin, [
+      'resize-window',
+      '-t',
+      sessionName,
+      String(cols),
+      String(rows),
+    ]);
   }
 }

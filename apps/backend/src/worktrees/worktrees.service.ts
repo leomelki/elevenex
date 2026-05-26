@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { SimpleGit } from 'simple-git';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 import * as path from 'node:path';
-import * as fs from 'node:fs';
+import { promises as fs } from 'node:fs';
 
 export interface WorktreeInfo {
   path: string;
@@ -20,7 +20,10 @@ export interface ListWorktreesOptions {
 
 @Injectable()
 export class WorktreesService {
-  async listWorktrees(repoPath: string, options: ListWorktreesOptions = {}): Promise<WorktreeInfo[]> {
+  async listWorktrees(
+    repoPath: string,
+    options: ListWorktreesOptions = {},
+  ): Promise<WorktreeInfo[]> {
     const git: SimpleGit = worktreeSimpleGit(repoPath);
 
     if (options.prune) {
@@ -51,24 +54,21 @@ export class WorktreesService {
     try {
       await git.raw(['worktree', 'add', targetPath, branchName]);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(
-        `Failed to create worktree: ${message}`,
-      );
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(`Failed to create worktree: ${message}`);
     }
 
     // Re-list to get the created worktree info
     // Use realpath for comparison (macOS symlink issue)
-    const realTargetPath = fs.realpathSync(targetPath);
+    const realTargetPath = await this.realPathOrRaw(targetPath);
     const worktrees = await this.listWorktrees(repoPath);
-    const created = worktrees.find((w) => {
-      try {
-        return fs.realpathSync(w.path) === realTargetPath;
-      } catch {
-        return w.path === targetPath;
+    let created: WorktreeInfo | undefined;
+    for (const worktree of worktrees) {
+      if ((await this.realPathOrRaw(worktree.path)) === realTargetPath) {
+        created = worktree;
+        break;
       }
-    });
+    }
 
     if (!created) {
       throw new BadRequestException(
@@ -83,14 +83,13 @@ export class WorktreesService {
     // Use realpath for comparison (macOS symlink issue)
     let normalizedRepoPath = repoPath;
     let normalizedWorktreePath = worktreePath;
-    
+
     try {
-      normalizedRepoPath = fs.realpathSync(repoPath);
-    } catch { /* ignore */ }
-    
-    try {
-      normalizedWorktreePath = fs.realpathSync(worktreePath);
-    } catch { /* ignore */ }
+      normalizedRepoPath = await this.realPathOrRaw(repoPath);
+    } catch {
+      /* ignore */
+    }
+    normalizedWorktreePath = await this.realPathOrRaw(worktreePath);
 
     if (normalizedWorktreePath === normalizedRepoPath) {
       throw new BadRequestException('Cannot remove the main working tree');
@@ -101,11 +100,8 @@ export class WorktreesService {
     try {
       await git.raw(['worktree', 'remove', worktreePath]);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(
-        `Failed to remove worktree: ${message}`,
-      );
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(`Failed to remove worktree: ${message}`);
     }
   }
 
@@ -154,5 +150,13 @@ export class WorktreesService {
     }
 
     return worktrees;
+  }
+
+  private async realPathOrRaw(value: string): Promise<string> {
+    try {
+      return await fs.realpath(value);
+    } catch {
+      return path.resolve(value);
+    }
   }
 }

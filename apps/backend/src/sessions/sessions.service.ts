@@ -28,7 +28,8 @@ export class SessionsService extends EventEmitter {
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
-    @Inject(forwardRef(() => PtyManager)) private readonly ptyManager: PtyManager,
+    @Inject(forwardRef(() => PtyManager))
+    private readonly ptyManager: PtyManager,
     private readonly tmuxManager: TmuxManager,
     @Inject(AGENT_RUNTIME_CLEANUP_SERVICE)
     private readonly agentRuntimeCleanup: AgentRuntimeCleanup,
@@ -79,7 +80,11 @@ export class SessionsService extends EventEmitter {
     workspaceId?: number;
     branchName?: string;
     worktreePath?: string;
-  }): Promise<{ workspaceId: number | null; branchName: string; worktreePath: string }> {
+  }): Promise<{
+    workspaceId: number | null;
+    branchName: string;
+    worktreePath: string;
+  }> {
     if (dto.workspaceId) {
       const rows = await this.db
         .select()
@@ -87,7 +92,9 @@ export class SessionsService extends EventEmitter {
         .where(eq(schema.workspaces.id, dto.workspaceId));
 
       if (rows.length === 0 || rows[0].repoId !== dto.repoId) {
-        throw new NotFoundException(`Workspace with id ${dto.workspaceId} not found`);
+        throw new NotFoundException(
+          `Workspace with id ${dto.workspaceId} not found`,
+        );
       }
 
       const branchName = await this.resolveCurrentBranch(rows[0].path);
@@ -99,10 +106,15 @@ export class SessionsService extends EventEmitter {
     }
 
     if (!dto.branchName || !dto.worktreePath) {
-      throw new BadRequestException('workspaceId or branchName and worktreePath are required');
+      throw new BadRequestException(
+        'workspaceId or branchName and worktreePath are required',
+      );
     }
 
-    const workspace = await this.findWorkspaceByRepoAndPath(dto.repoId, dto.worktreePath);
+    const workspace = await this.findWorkspaceByRepoAndPath(
+      dto.repoId,
+      dto.worktreePath,
+    );
     return {
       workspaceId: workspace?.id ?? null,
       branchName: dto.branchName,
@@ -179,7 +191,10 @@ export class SessionsService extends EventEmitter {
       })
       .from(schema.sessions)
       .innerJoin(schema.repos, eq(schema.sessions.repoId, schema.repos.id))
-      .leftJoin(schema.workspaces, eq(schema.sessions.workspaceId, schema.workspaces.id))
+      .leftJoin(
+        schema.workspaces,
+        eq(schema.sessions.workspaceId, schema.workspaces.id),
+      )
       .where(eq(schema.sessions.id, id));
 
     if (rows.length === 0) {
@@ -187,7 +202,12 @@ export class SessionsService extends EventEmitter {
     }
 
     const { session, projectId, repoColor, workspaceName } = rows[0];
-    return this.withInferredActiveAgentProvider({ ...session, projectId, repoColor, workspaceName });
+    return this.withInferredActiveAgentProvider({
+      ...session,
+      projectId,
+      repoColor,
+      workspaceName,
+    });
   }
 
   async update(id: number, data: { name?: string }) {
@@ -367,9 +387,9 @@ export class SessionsService extends EventEmitter {
     piSessionPath?: string | null;
   }): boolean {
     return Boolean(
-      (session.claudeSessionId && session.claudeSessionId !== '-1')
-        || (session.codexSessionId && session.codexSessionId !== '-1')
-        || (session.piSessionPath && session.piSessionPath !== '-1'),
+      (session.claudeSessionId && session.claudeSessionId !== '-1') ||
+      (session.codexSessionId && session.codexSessionId !== '-1') ||
+      (session.piSessionPath && session.piSessionPath !== '-1'),
     );
   }
 
@@ -381,15 +401,22 @@ export class SessionsService extends EventEmitter {
       piSessionPath?: string | null;
     },
   >(session: T): T & { activeAgentProvider: AgentProviderId } {
-    const hasClaude = Boolean(session.claudeSessionId && session.claudeSessionId !== '-1');
-    const hasCodex = Boolean(session.codexSessionId && session.codexSessionId !== '-1');
-    const hasPi = Boolean(session.piSessionPath && session.piSessionPath !== '-1');
+    const hasClaude = Boolean(
+      session.claudeSessionId && session.claudeSessionId !== '-1',
+    );
+    const hasCodex = Boolean(
+      session.codexSessionId && session.codexSessionId !== '-1',
+    );
+    const hasPi = Boolean(
+      session.piSessionPath && session.piSessionPath !== '-1',
+    );
     const persisted = session.activeAgentProvider?.trim();
 
     return {
       ...session,
       activeAgentProvider:
-        persisted && (persisted !== 'claude' || hasClaude || (!hasCodex && !hasPi))
+        persisted &&
+        (persisted !== 'claude' || hasClaude || (!hasCodex && !hasPi))
           ? persisted
           : hasPi
             ? 'pi'
@@ -542,7 +569,9 @@ export class SessionsService extends EventEmitter {
   async deleteByWorktreePath(worktreePath: string) {
     // Kill PTY/tmux for all sessions in this worktree before deleting
     const sessions = await this.findByWorktreePath(worktreePath);
-    await this.cleanupSessionsBeforeBulkDelete(sessions.map((session) => session.id));
+    await this.cleanupSessionsBeforeBulkDelete(
+      sessions.map((session) => session.id),
+    );
 
     await this.db
       .delete(schema.sessions)
@@ -551,7 +580,9 @@ export class SessionsService extends EventEmitter {
 
   async deleteByRepoAndWorktreePath(repoId: number, worktreePath: string) {
     const sessions = await this.findByRepoAndWorktreePath(repoId, worktreePath);
-    await this.cleanupSessionsBeforeBulkDelete(sessions.map((session) => session.id));
+    await this.cleanupSessionsBeforeBulkDelete(
+      sessions.map((session) => session.id),
+    );
 
     await this.db
       .delete(schema.sessions)
@@ -567,7 +598,9 @@ export class SessionsService extends EventEmitter {
     const results = await Promise.allSettled(
       sessionIds.map((sessionId) => this.cleanupSessionProcesses(sessionId)),
     );
-    const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
     if (failed) {
       throw failed.reason;
     }
@@ -578,7 +611,7 @@ export class SessionsService extends EventEmitter {
       await this.agentRuntimeCleanup.cleanupSession(id);
     } finally {
       this.ptyManager.kill(id);
-      this.ptyManager.killTmuxSession(id);
+      await this.ptyManager.killTmuxSession(id);
     }
   }
 
@@ -609,7 +642,7 @@ export class SessionsService extends EventEmitter {
       this.ptyManager.kill(id);
 
       // 2. Kill the tmux session if exists
-      this.ptyManager.killTmuxSession(id);
+      await this.ptyManager.killTmuxSession(id);
     }
   }
 
@@ -681,14 +714,16 @@ export class SessionsService extends EventEmitter {
       this.ptyManager.kill(id);
 
       // 2. Kill the tmux session if exists
-      this.ptyManager.killTmuxSession(id);
+      await this.ptyManager.killTmuxSession(id);
     }
 
     // 3. Update status to stopped (NOT archived - session remains accessible)
     return this.updateStatus(id, 'stopped');
   }
 
-  async start(id: number): Promise<{ success: boolean; resumed: boolean; error?: string }> {
+  async start(
+    id: number,
+  ): Promise<{ success: boolean; resumed: boolean; error?: string }> {
     // Just return session info - actual PTY spawn happens via TerminalService
     // when WebSocket connects
     const session = await this.findOne(id);
@@ -726,7 +761,10 @@ export class SessionsService extends EventEmitter {
     return result[0].count;
   }
 
-  private async findWorkspaceByRepoAndPath(repoId: number, worktreePath: string) {
+  private async findWorkspaceByRepoAndPath(
+    repoId: number,
+    worktreePath: string,
+  ) {
     const rows = await this.db
       .select()
       .from(schema.workspaces)
@@ -739,9 +777,14 @@ export class SessionsService extends EventEmitter {
     return rows[0] ?? null;
   }
 
-  private async resolveCurrentBranch(worktreePath: string): Promise<string | null> {
+  private async resolveCurrentBranch(
+    worktreePath: string,
+  ): Promise<string | null> {
     try {
-      const branch = await worktreeSimpleGit(worktreePath).revparse(['--abbrev-ref', 'HEAD']);
+      const branch = await worktreeSimpleGit(worktreePath).revparse([
+        '--abbrev-ref',
+        'HEAD',
+      ]);
       return branch.trim() === 'HEAD' ? null : branch.trim();
     } catch {
       return null;

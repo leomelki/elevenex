@@ -2,7 +2,7 @@ import { Injectable, OnModuleDestroy, Logger } from '@nestjs/common';
 import { IncomingMessage, ServerResponse } from 'http';
 import { EventEmitter } from 'events';
 import * as http from 'http';
-import * as fs from 'fs';
+import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -14,7 +14,10 @@ export interface ProxyRewriteResult {
 const COOKIE_FILE = path.join(os.homedir(), '.plannotator', 'app-cookies.json');
 
 @Injectable()
-export class CookieProxyService extends EventEmitter implements OnModuleDestroy {
+export class CookieProxyService
+  extends EventEmitter
+  implements OnModuleDestroy
+{
   private readonly logger = new Logger('CookieProxy');
 
   private upstreamCookies: Map<number, string> = new Map();
@@ -22,27 +25,23 @@ export class CookieProxyService extends EventEmitter implements OnModuleDestroy 
 
   constructor() {
     super();
-    this.loadPersistedCookies();
+    void this.loadPersistedCookies();
   }
 
-  private loadPersistedCookies(): void {
+  private async loadPersistedCookies(): Promise<void> {
     try {
-      if (fs.existsSync(COOKIE_FILE)) {
-        const data = JSON.parse(fs.readFileSync(COOKIE_FILE, 'utf-8'));
-        this.persistedCookies = data.cookies || '';
-      }
+      const data = JSON.parse(await fs.readFile(COOKIE_FILE, 'utf-8'));
+      this.persistedCookies = data.cookies || '';
     } catch {
       this.persistedCookies = '';
     }
   }
 
-  private savePersistedCookies(cookies: string): void {
+  private async savePersistedCookies(cookies: string): Promise<void> {
     try {
       const dir = path.dirname(COOKIE_FILE);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      fs.writeFileSync(COOKIE_FILE, JSON.stringify({ cookies }));
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(COOKIE_FILE, JSON.stringify({ cookies }));
       this.persistedCookies = cookies;
     } catch (err) {
       this.logger.warn(`Failed to persist cookies: ${err}`);
@@ -52,10 +51,11 @@ export class CookieProxyService extends EventEmitter implements OnModuleDestroy 
   /** Pre-populate cookies for a new upstream port from persisted storage */
   initUpstreamCookies(upstreamPort: number): void {
     if (!this.upstreamCookies.has(upstreamPort)) {
-      this.loadPersistedCookies();
-      if (this.persistedCookies) {
-        this.upstreamCookies.set(upstreamPort, this.persistedCookies);
-      }
+      void this.loadPersistedCookies().then(() => {
+        if (this.persistedCookies) {
+          this.upstreamCookies.set(upstreamPort, this.persistedCookies);
+        }
+      });
     }
   }
 
@@ -113,10 +113,17 @@ export class CookieProxyService extends EventEmitter implements OnModuleDestroy 
                 const html = Buffer.concat(chunks).toString('utf-8');
 
                 // Parse Set-Cookie headers from upstream and merge into saved cookies
-                const upstreamSetCookies = this.parseSetCookieHeaders(proxyRes.headers['set-cookie']);
+                const upstreamSetCookies = this.parseSetCookieHeaders(
+                  proxyRes.headers['set-cookie'],
+                );
                 if (Object.keys(upstreamSetCookies).length > 0) {
-                  const merged = { ...this.parseCookieString(savedCookies), ...upstreamSetCookies };
-                  const mergedStr = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join('; ');
+                  const merged = {
+                    ...this.parseCookieString(savedCookies),
+                    ...upstreamSetCookies,
+                  };
+                  const mergedStr = Object.entries(merged)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join('; ');
                   this.upstreamCookies.set(upstreamPort, mergedStr);
                 }
 
@@ -138,7 +145,9 @@ export class CookieProxyService extends EventEmitter implements OnModuleDestroy 
         );
 
         proxyReq.on('error', (err) => {
-          this.logger.warn(`Proxy request error (attempt ${attempt}): ${err.message}`);
+          this.logger.warn(
+            `Proxy request error (attempt ${attempt}): ${err.message}`,
+          );
           if (attempt < MAX_RETRIES) {
             const delay = BASE_DELAY * Math.pow(2, attempt);
             setTimeout(() => tryUpstreamRequest(attempt + 1), delay);
@@ -155,18 +164,26 @@ export class CookieProxyService extends EventEmitter implements OnModuleDestroy 
     });
   }
 
-  handleSaveCookies(req: IncomingMessage, res: ServerResponse, upstreamPort: number): void {
+  handleSaveCookies(
+    req: IncomingMessage,
+    res: ServerResponse,
+    upstreamPort: number,
+  ): void {
     let body = '';
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
       this.upstreamCookies.set(upstreamPort, body);
-      this.savePersistedCookies(body);
+      void this.savePersistedCookies(body);
       res.writeHead(200);
       res.end('ok');
     });
   }
 
-  handleClose(req: IncomingMessage, res: ServerResponse, upstreamPort: number): void {
+  handleClose(
+    req: IncomingMessage,
+    res: ServerResponse,
+    upstreamPort: number,
+  ): void {
     this.emit('close', upstreamPort);
     res.writeHead(200);
     res.end('ok');
@@ -180,10 +197,14 @@ export class CookieProxyService extends EventEmitter implements OnModuleDestroy 
     this.upstreamCookies.delete(upstreamPort);
   }
 
-  private parseSetCookieHeaders(setCookieHeader: string | string[] | undefined): Record<string, string> {
+  private parseSetCookieHeaders(
+    setCookieHeader: string | string[] | undefined,
+  ): Record<string, string> {
     const cookies: Record<string, string> = {};
     if (!setCookieHeader) return cookies;
-    const headers = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+    const headers = Array.isArray(setCookieHeader)
+      ? setCookieHeader
+      : [setCookieHeader];
     for (const header of headers) {
       const parts = header.split(';');
       const nameValue = parts[0]?.trim();
@@ -208,7 +229,9 @@ export class CookieProxyService extends EventEmitter implements OnModuleDestroy 
   }
 
   private injectScript(html: string, upstreamPort: number): string {
-    const initialCookies = JSON.stringify(this.parseCookieString(this.getCookies(upstreamPort)));
+    const initialCookies = JSON.stringify(
+      this.parseCookieString(this.getCookies(upstreamPort)),
+    );
     const proxyBase = `/api/plannotator/proxy/${upstreamPort}`;
     const extBase = `/api/plannotator/___ext`;
 

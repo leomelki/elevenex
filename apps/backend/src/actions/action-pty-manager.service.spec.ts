@@ -2,7 +2,6 @@ import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
 import * as pty from 'node-pty';
 import { ActionPtyManager } from './action-pty-manager.service.js';
 import {
@@ -10,19 +9,20 @@ import {
   buildTmuxInlineEnvPrefix,
   findBinary,
 } from '../config/system-paths.js';
+import { execFileQuiet } from '../terminal/async-process.js';
 
 jest.mock('node-pty', () => ({
   spawn: jest.fn(),
-}));
-
-jest.mock('node:child_process', () => ({
-  execSync: jest.fn(),
 }));
 
 jest.mock('../config/system-paths.js', () => ({
   buildAugmentedEnv: jest.fn(),
   buildTmuxInlineEnvPrefix: jest.fn(() => "PATH='/repo/bin'"),
   findBinary: jest.fn(),
+}));
+
+jest.mock('../terminal/async-process.js', () => ({
+  execFileQuiet: jest.fn(),
 }));
 
 type MockPty = EventEmitter & {
@@ -43,7 +43,7 @@ function createMockPty(): MockPty {
 
 describe('ActionPtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
-  const mockExecSync = jest.mocked(execSync);
+  const mockExecFileQuiet = jest.mocked(execFileQuiet);
   const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnv);
   const mockBuildTmuxInlineEnvPrefix = jest.mocked(buildTmuxInlineEnvPrefix);
   const mockFindBinary = jest.mocked(findBinary);
@@ -64,6 +64,7 @@ describe('ActionPtyManager', () => {
       'ELEVENEX-INVALID-KEY': 'ignored',
     });
     mockBuildTmuxInlineEnvPrefix.mockReturnValue("PATH='/repo/bin'");
+    mockExecFileQuiet.mockResolvedValue(undefined);
     mockSpawn.mockReturnValue(createMockPty() as never);
   });
 
@@ -105,7 +106,6 @@ describe('ActionPtyManager', () => {
 
   it('reattaches tmux actions with the original worktree env and cwd', async () => {
     mockFindBinary.mockReturnValue('/usr/bin/tmux');
-    mockExecSync.mockReturnValue(Buffer.from(''));
     manager = new ActionPtyManager();
 
     await expect(manager.reattach(42, tmpDir)).resolves.toBe(true);
@@ -130,7 +130,6 @@ describe('ActionPtyManager', () => {
 
   it('starts tmux actions with the full augmented env inlined into the command wrapper', async () => {
     mockFindBinary.mockReturnValue('/usr/bin/tmux');
-    mockExecSync.mockReturnValue(Buffer.from(''));
     manager = new ActionPtyManager();
     manager.registerPersistence({
       markRunning: jest.fn().mockResolvedValue(undefined),
@@ -156,9 +155,9 @@ describe('ActionPtyManager', () => {
     );
     expect(mockBuildTmuxInlineEnvPrefix).toHaveBeenCalledTimes(1);
 
-    const newSessionCall = mockExecSync.mock.calls.find(([command]) =>
-      String(command).includes(' new-session '),
+    const newSessionCall = mockExecFileQuiet.mock.calls.find(([, args]) =>
+      args.includes('new-session'),
     );
-    expect(newSessionCall?.[0]).toContain("PATH='\\''/repo/bin'\\''");
+    expect(newSessionCall?.[1].join(' ')).toContain("PATH='\\''/repo/bin'\\''");
   });
 });

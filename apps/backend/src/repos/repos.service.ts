@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { eq, count } from 'drizzle-orm';
-import * as fs from 'node:fs';
+import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
@@ -38,17 +38,22 @@ export class ReposService {
   }
 
   async addRepo(projectId: number, repoPath: string) {
-    if (!fs.existsSync(repoPath)) {
+    let stat;
+    try {
+      stat = await fs.stat(repoPath);
+    } catch {
       throw new BadRequestException(
         'Folder not found. Verify the path exists and points to a git repository.',
       );
     }
 
-    if (!fs.statSync(repoPath).isDirectory()) {
+    if (!stat.isDirectory()) {
       throw new BadRequestException('Path is not a directory');
     }
 
-    if (!fs.existsSync(path.join(repoPath, '.git'))) {
+    try {
+      await fs.access(path.join(repoPath, '.git'));
+    } catch {
       throw new BadRequestException(
         'Not a git repository. Verify the folder contains a .git directory.',
       );
@@ -82,7 +87,9 @@ export class ReposService {
    */
   private async assignColor(projectId: number): Promise<string> {
     const existingRepos = await this.findByProject(projectId);
-    const usedColors = new Set(existingRepos.map(r => r.color).filter(Boolean));
+    const usedColors = new Set(
+      existingRepos.map((r) => r.color).filter(Boolean),
+    );
 
     // Find first unused color
     for (const color of REPO_COLORS) {
@@ -116,7 +123,10 @@ export class ReposService {
     return result[0].count;
   }
 
-  async updatePreferredContextRootRef(id: number, preferredContextRootRef: string | null) {
+  async updatePreferredContextRootRef(
+    id: number,
+    preferredContextRootRef: string | null,
+  ) {
     const rows = await this.db
       .update(schema.repos)
       .set({

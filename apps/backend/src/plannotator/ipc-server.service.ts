@@ -1,7 +1,12 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Logger,
+} from '@nestjs/common';
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { EventEmitter } from 'events';
-import * as fs from 'fs';
+import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -14,7 +19,10 @@ export interface IpcUrlEvent {
 const IPC_REGISTRY = path.join(os.homedir(), '.plannotator', 'vscode-ipc.json');
 
 @Injectable()
-export class IpcServerService extends EventEmitter implements OnModuleInit, OnModuleDestroy {
+export class IpcServerService
+  extends EventEmitter
+  implements OnModuleInit, OnModuleDestroy
+{
   private server: ReturnType<typeof createServer> | null = null;
   private port: number = 0;
   private readonly logger = new Logger('IpcServer');
@@ -24,27 +32,29 @@ export class IpcServerService extends EventEmitter implements OnModuleInit, OnMo
     await this.startServer();
   }
 
-  onModuleDestroy() {
-    this.unregisterAllWorktrees();
+  async onModuleDestroy() {
+    await this.unregisterAllWorktrees();
     if (this.server) {
       this.server.close();
     }
   }
 
   private async startServer(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.server = createServer((req: IncomingMessage, res: ServerResponse) => {
-        this.handleRequest(req, res);
-      });
+    const lastPort = await this.getLastPort();
+    const tryPort = lastPort || 0;
 
-      const lastPort = this.getLastPort();
-      const tryPort = lastPort || 0;
+    return new Promise((resolve, reject) => {
+      this.server = createServer(
+        (req: IncomingMessage, res: ServerResponse) => {
+          this.handleRequest(req, res);
+        },
+      );
 
       this.server.listen(tryPort, '127.0.0.1', () => {
         const address = this.server!.address();
         if (address && typeof address === 'object') {
           this.port = address.port;
-          this.saveLastPort(this.port);
+          void this.saveLastPort(this.port);
           this.logger.log(`IPC server listening on port ${this.port}`);
           resolve();
         } else {
@@ -59,7 +69,7 @@ export class IpcServerService extends EventEmitter implements OnModuleInit, OnMo
             const address = this.server!.address();
             if (address && typeof address === 'object') {
               this.port = address.port;
-              this.saveLastPort(this.port);
+              void this.saveLastPort(this.port);
               this.logger.log(`IPC server listening on port ${this.port}`);
               resolve();
             }
@@ -80,7 +90,9 @@ export class IpcServerService extends EventEmitter implements OnModuleInit, OnMo
       const sessionId = sessionIdStr ? parseInt(sessionIdStr, 10) : null;
       const upstreamPort = this.extractPortFromUrl(targetUrl);
 
-      this.logger.log(`Received URL: ${targetUrl}, sessionId: ${sessionId}, upstreamPort: ${upstreamPort}`);
+      this.logger.log(
+        `Received URL: ${targetUrl}, sessionId: ${sessionId}, upstreamPort: ${upstreamPort}`,
+      );
 
       const event: IpcUrlEvent = {
         url: targetUrl,
@@ -113,58 +125,58 @@ export class IpcServerService extends EventEmitter implements OnModuleInit, OnMo
     return this.port;
   }
 
-  private getLastPort(): number | null {
+  private async getLastPort(): Promise<number | null> {
     try {
-      const portFile = path.join(os.homedir(), '.plannotator', 'app-ipc-port.json');
-      if (fs.existsSync(portFile)) {
-        const data = JSON.parse(fs.readFileSync(portFile, 'utf-8'));
-        return data.port;
-      }
+      const portFile = path.join(
+        os.homedir(),
+        '.plannotator',
+        'app-ipc-port.json',
+      );
+      const data = JSON.parse(await fs.readFile(portFile, 'utf-8'));
+      return data.port;
     } catch {}
     return null;
   }
 
-  private saveLastPort(port: number): void {
+  private async saveLastPort(port: number): Promise<void> {
     try {
       const dir = path.dirname(IPC_REGISTRY);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      const portFile = path.join(os.homedir(), '.plannotator', 'app-ipc-port.json');
-      fs.writeFileSync(portFile, JSON.stringify({ port }));
+      await fs.mkdir(dir, { recursive: true });
+      const portFile = path.join(
+        os.homedir(),
+        '.plannotator',
+        'app-ipc-port.json',
+      );
+      await fs.writeFile(portFile, JSON.stringify({ port }));
     } catch {}
   }
 
   registerWorktree(worktreePath: string): void {
     if (!worktreePath) return;
     this.registeredWorktrees.add(worktreePath);
-    this.updateRegistry();
+    void this.updateRegistry();
   }
 
   unregisterWorktree(worktreePath: string): void {
     this.registeredWorktrees.delete(worktreePath);
-    this.updateRegistry();
+    void this.updateRegistry();
   }
 
-  private unregisterAllWorktrees(): void {
+  private async unregisterAllWorktrees(): Promise<void> {
     this.registeredWorktrees.clear();
-    this.updateRegistry();
+    await this.updateRegistry();
   }
 
-  private updateRegistry(): void {
+  private async updateRegistry(): Promise<void> {
     try {
       const dir = path.dirname(IPC_REGISTRY);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+      await fs.mkdir(dir, { recursive: true });
 
       let registry: Record<string, number> = {};
-      if (fs.existsSync(IPC_REGISTRY)) {
-        try {
-          registry = JSON.parse(fs.readFileSync(IPC_REGISTRY, 'utf-8'));
-        } catch {
-          registry = {};
-        }
+      try {
+        registry = JSON.parse(await fs.readFile(IPC_REGISTRY, 'utf-8'));
+      } catch {
+        registry = {};
       }
 
       for (const worktree of this.registeredWorktrees) {
@@ -178,7 +190,7 @@ export class IpcServerService extends EventEmitter implements OnModuleInit, OnMo
         }
       }
 
-      fs.writeFileSync(IPC_REGISTRY, JSON.stringify(registry, null, 2));
+      await fs.writeFile(IPC_REGISTRY, JSON.stringify(registry, null, 2));
     } catch (err) {
       this.logger.error(`Failed to update IPC registry: ${err}`);
     }

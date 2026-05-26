@@ -2,7 +2,6 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import { execFile as execFileCallback } from 'child_process';
 import { createServer, type Server } from 'http';
-import { existsSync, mkdirSync, chmodSync } from 'fs';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
@@ -14,19 +13,27 @@ import type {
   PiOAuthProvider,
   PiApiKeyProvider,
 } from './pi-runtime.types.js';
-import type { AgentAuthStatus, AgentLoginMode, AgentLoginStartResult } from '../agent-runtime/agent-runtime.types.js';
+import type {
+  AgentAuthStatus,
+  AgentLoginMode,
+  AgentLoginStartResult,
+} from '../agent-runtime/agent-runtime.types.js';
 
 const execFile = promisify(execFileCallback);
 const VERSION_TTL_MS = 60 * 60 * 1000;
 
 // Anthropic OAuth constants (from PI source)
-const ANTHROPIC_CLIENT_ID = Buffer.from('OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl', 'base64').toString();
+const ANTHROPIC_CLIENT_ID = Buffer.from(
+  'OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl',
+  'base64',
+).toString();
 const ANTHROPIC_AUTHORIZE_URL = 'https://claude.ai/oauth/authorize';
 const ANTHROPIC_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 const ANTHROPIC_CALLBACK_PORT = 53692;
 const ANTHROPIC_CALLBACK_PATH = '/callback';
 const ANTHROPIC_REDIRECT_URI = `http://localhost:${ANTHROPIC_CALLBACK_PORT}${ANTHROPIC_CALLBACK_PATH}`;
-const ANTHROPIC_SCOPES = 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload';
+const ANTHROPIC_SCOPES =
+  'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload';
 
 // OpenAI Codex OAuth constants (from PI source)
 const OPENAI_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -38,7 +45,10 @@ const OPENAI_CODEX_REDIRECT_URI = `http://localhost:${OPENAI_CODEX_CALLBACK_PORT
 const OPENAI_CODEX_SCOPES = 'openid profile email offline_access';
 
 // GitHub Copilot OAuth constants (from PI source)
-const GITHUB_COPILOT_CLIENT_ID = Buffer.from('SXYxLmI1MDdhMDhjODdlY2ZlOTg=', 'base64').toString();
+const GITHUB_COPILOT_CLIENT_ID = Buffer.from(
+  'SXYxLmI1MDdhMDhjODdlY2ZlOTg=',
+  'base64',
+).toString();
 const GITHUB_COPILOT_DOMAIN = 'github.com';
 const GITHUB_DEVICE_CODE_URL = `https://${GITHUB_COPILOT_DOMAIN}/login/device/code`;
 const GITHUB_ACCESS_TOKEN_URL = `https://${GITHUB_COPILOT_DOMAIN}/login/oauth/access_token`;
@@ -78,14 +88,21 @@ type ActiveLogin = PkceActive | DeviceActive | ApiKeyActive;
 
 type AuthCredential =
   | { type: 'api_key'; key: string }
-  | { type: 'oauth'; access: string; refresh: string; expires: number; [key: string]: unknown };
+  | {
+      type: 'oauth';
+      access: string;
+      refresh: string;
+      expires: number;
+      [key: string]: unknown;
+    };
 
 @Injectable()
 export class PiAuthService extends EventEmitter {
   private readonly logger = new Logger('PiAuthService');
   private readonly authPath = join(homedir(), '.pi', 'agent', 'auth.json');
   private readonly modelsPath = join(homedir(), '.pi', 'agent', 'models.json');
-  private versionCache: { value: string | null; expiresAt: number } | null = null;
+  private versionCache: { value: string | null; expiresAt: number } | null =
+    null;
   private active: ActiveLogin | null = null;
   private lastError: string | null = null;
 
@@ -93,7 +110,7 @@ export class PiAuthService extends EventEmitter {
     const version = await this.readVersion();
     const storedCredentials = await this.readAuthFile();
     const hasStoredCredentials = Object.keys(storedCredentials).length > 0;
-    const hasModels = existsSync(this.modelsPath);
+    const hasModels = await this.pathExists(this.modelsPath);
     const hasEnvKey = this.hasProviderEnv();
     const authenticated = hasStoredCredentials || hasEnvKey;
     const active = this.active;
@@ -105,7 +122,9 @@ export class PiAuthService extends EventEmitter {
           ? `Pi auth configured at ${this.authPath}`
           : 'Provider API key available in environment'
         : 'No Pi credentials found',
-      hasModels ? `Models configured at ${this.modelsPath}` : 'No Pi models.json found',
+      hasModels
+        ? `Models configured at ${this.modelsPath}`
+        : 'No Pi models.json found',
     ];
 
     if (active) {
@@ -120,7 +139,9 @@ export class PiAuthService extends EventEmitter {
       output.push(this.lastError);
     }
 
-    const credentialTypes = Object.values(storedCredentials).map((c) => c?.type);
+    const credentialTypes = Object.values(storedCredentials).map(
+      (c) => c?.type,
+    );
     const hasOAuthStored = credentialTypes.includes('oauth');
     const hasApiKeyStored = credentialTypes.includes('api_key');
     const authMethod: PiAuthStatus['authMethod'] = !authenticated
@@ -138,9 +159,14 @@ export class PiAuthService extends EventEmitter {
       authMethod,
       authPath: this.authPath,
       modelsPath: this.modelsPath,
-      loginMode: active ? (active.kind === 'api_key' ? 'api_key' : 'oauth') : null,
+      loginMode: active
+        ? active.kind === 'api_key'
+          ? 'api_key'
+          : 'oauth'
+        : null,
       loginUrl: active && active.kind !== 'api_key' ? active.authUrl : null,
-      loginUserCode: active && active.kind === 'device' ? active.userCode : null,
+      loginUserCode:
+        active && active.kind === 'device' ? active.userCode : null,
       loginError: active ? null : this.lastError,
     };
   }
@@ -155,7 +181,10 @@ export class PiAuthService extends EventEmitter {
     this.lastError = null;
 
     if (options.mode === 'api_key') {
-      return this.runApiKeyLogin(options.apiKeyProvider ?? 'anthropic', options.apiKey ?? '');
+      return this.runApiKeyLogin(
+        options.apiKeyProvider ?? 'anthropic',
+        options.apiKey ?? '',
+      );
     }
 
     const provider = (options.oauthProvider ?? 'anthropic') as PiOAuthProvider;
@@ -167,7 +196,9 @@ export class PiAuthService extends EventEmitter {
       case 'openai-codex':
         return this.runPkceLogin('openai-codex');
       default:
-        throw new BadRequestException(`Unknown OAuth provider: ${String(provider)}`);
+        throw new BadRequestException(
+          `Unknown OAuth provider: ${String(provider)}`,
+        );
     }
   }
 
@@ -184,13 +215,18 @@ export class PiAuthService extends EventEmitter {
     }
     const parsed = this.parseAuthInput(options.code);
     if (!parsed.code) {
-      throw new BadRequestException('Could not extract authorization code from input.');
+      throw new BadRequestException(
+        'Could not extract authorization code from input.',
+      );
     }
     active.resolvePkce(parsed.code);
     return this.getStatus();
   }
 
-  private async runApiKeyLogin(provider: string, apiKey: string): Promise<AgentLoginStartResult> {
+  private async runApiKeyLogin(
+    provider: string,
+    apiKey: string,
+  ): Promise<AgentLoginStartResult> {
     const key = apiKey.trim();
     if (!key) {
       throw new BadRequestException('API key cannot be empty.');
@@ -201,7 +237,10 @@ export class PiAuthService extends EventEmitter {
 
     try {
       const current = await this.readAuthFile();
-      const updated = { ...current, [provider]: { type: 'api_key' as const, key } };
+      const updated = {
+        ...current,
+        [provider]: { type: 'api_key' as const, key },
+      };
       await this.writeAuthFile(updated);
       this.lastError = null;
     } catch (err) {
@@ -222,15 +261,25 @@ export class PiAuthService extends EventEmitter {
     };
   }
 
-  private runPkceLogin(provider: 'anthropic' | 'openai-codex'): Promise<AgentLoginStartResult> {
+  private runPkceLogin(
+    provider: 'anthropic' | 'openai-codex',
+  ): Promise<AgentLoginStartResult> {
     const { verifier, challenge } = this.generatePkce();
     const state = randomBytes(16).toString('hex');
 
     const isAnthropic = provider === 'anthropic';
-    const authorizeUrl = isAnthropic ? ANTHROPIC_AUTHORIZE_URL : OPENAI_CODEX_AUTHORIZE_URL;
-    const redirectUri = isAnthropic ? ANTHROPIC_REDIRECT_URI : OPENAI_CODEX_REDIRECT_URI;
-    const callbackPort = isAnthropic ? ANTHROPIC_CALLBACK_PORT : OPENAI_CODEX_CALLBACK_PORT;
-    const callbackPath = isAnthropic ? ANTHROPIC_CALLBACK_PATH : OPENAI_CODEX_CALLBACK_PATH;
+    const authorizeUrl = isAnthropic
+      ? ANTHROPIC_AUTHORIZE_URL
+      : OPENAI_CODEX_AUTHORIZE_URL;
+    const redirectUri = isAnthropic
+      ? ANTHROPIC_REDIRECT_URI
+      : OPENAI_CODEX_REDIRECT_URI;
+    const callbackPort = isAnthropic
+      ? ANTHROPIC_CALLBACK_PORT
+      : OPENAI_CODEX_CALLBACK_PORT;
+    const callbackPath = isAnthropic
+      ? ANTHROPIC_CALLBACK_PATH
+      : OPENAI_CODEX_CALLBACK_PATH;
     const clientId = isAnthropic ? ANTHROPIC_CLIENT_ID : OPENAI_CODEX_CLIENT_ID;
     const scopes = isAnthropic ? ANTHROPIC_SCOPES : OPENAI_CODEX_SCOPES;
 
@@ -270,23 +319,33 @@ export class PiAuthService extends EventEmitter {
             const error = url.searchParams.get('error');
 
             if (error) {
-              res.writeHead(400, { 'Content-Type': 'text/html' })
-                .end('<h1>Authorization failed</h1><p>You can close this window.</p>');
+              res
+                .writeHead(400, { 'Content-Type': 'text/html' })
+                .end(
+                  '<h1>Authorization failed</h1><p>You can close this window.</p>',
+                );
               rejectPkce(new Error(`OAuth error: ${error}`));
               return;
             }
             if (!code) {
-              res.writeHead(400, { 'Content-Type': 'text/html' })
+              res
+                .writeHead(400, { 'Content-Type': 'text/html' })
                 .end('<h1>Missing code</h1><p>You can close this window.</p>');
               return;
             }
             if (returnedState && returnedState !== state) {
-              res.writeHead(400, { 'Content-Type': 'text/html' })
-                .end('<h1>State mismatch</h1><p>You can close this window.</p>');
+              res
+                .writeHead(400, { 'Content-Type': 'text/html' })
+                .end(
+                  '<h1>State mismatch</h1><p>You can close this window.</p>',
+                );
               return;
             }
-            res.writeHead(200, { 'Content-Type': 'text/html' })
-              .end('<h1>Authorization complete</h1><p>You can close this window and return to the app.</p>');
+            res
+              .writeHead(200, { 'Content-Type': 'text/html' })
+              .end(
+                '<h1>Authorization complete</h1><p>You can close this window and return to the app.</p>',
+              );
             resolvePkce(code);
           } catch {
             res.writeHead(500).end('Internal error');
@@ -294,7 +353,9 @@ export class PiAuthService extends EventEmitter {
         });
         callbackServer.on('error', (err) => {
           if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-            this.logger.debug(`Port ${callbackPort} in use, skipping local callback server`);
+            this.logger.debug(
+              `Port ${callbackPort} in use, skipping local callback server`,
+            );
           } else {
             this.logger.warn(`Callback server error: ${err.message}`);
           }
@@ -320,27 +381,35 @@ export class PiAuthService extends EventEmitter {
     this.emitChanged();
 
     // Complete the exchange once a code is available from either path
-    void pkcePromise.then(async (code) => {
-      if (this.active !== pkceActive) return;
-      this.active = null;
-      pkceActive.callbackServer?.close();
-      try {
-        const credential = await this.exchangePkceCode(provider, code, verifier, redirectUri, clientId);
-        const current = await this.readAuthFile();
-        await this.writeAuthFile({ ...current, [provider]: credential });
-        this.lastError = null;
-      } catch (err) {
+    void pkcePromise
+      .then(async (code) => {
+        if (this.active !== pkceActive) return;
+        this.active = null;
+        pkceActive.callbackServer?.close();
+        try {
+          const credential = await this.exchangePkceCode(
+            provider,
+            code,
+            verifier,
+            redirectUri,
+            clientId,
+          );
+          const current = await this.readAuthFile();
+          await this.writeAuthFile({ ...current, [provider]: credential });
+          this.lastError = null;
+        } catch (err) {
+          this.lastError = err instanceof Error ? err.message : String(err);
+          this.logger.error(`PKCE exchange failed: ${this.lastError}`);
+        }
+        this.emitChanged();
+      })
+      .catch((err: unknown) => {
+        if (this.active !== pkceActive) return;
+        this.active = null;
+        pkceActive.callbackServer?.close();
         this.lastError = err instanceof Error ? err.message : String(err);
-        this.logger.error(`PKCE exchange failed: ${this.lastError}`);
-      }
-      this.emitChanged();
-    }).catch((err: unknown) => {
-      if (this.active !== pkceActive) return;
-      this.active = null;
-      pkceActive.callbackServer?.close();
-      this.lastError = err instanceof Error ? err.message : String(err);
-      this.emitChanged();
-    });
+        this.emitChanged();
+      });
 
     return Promise.resolve({
       mode: 'oauth' as AgentLoginMode,
@@ -371,10 +440,12 @@ export class PiAuthService extends EventEmitter {
 
     if (!deviceResponse.ok) {
       const text = await deviceResponse.text().catch(() => '');
-      throw new BadRequestException(`GitHub device flow failed: ${deviceResponse.status} ${text}`);
+      throw new BadRequestException(
+        `GitHub device flow failed: ${deviceResponse.status} ${text}`,
+      );
     }
 
-    const deviceData = await deviceResponse.json() as {
+    const deviceData = (await deviceResponse.json()) as {
       device_code: string;
       user_code: string;
       verification_uri: string;
@@ -419,10 +490,12 @@ export class PiAuthService extends EventEmitter {
     let intervalMs = Math.max(1000, intervalSeconds * 1000 * 1.2);
 
     while (Date.now() < deadline) {
-      if (active.abortController.signal.aborted || this.active !== active) return;
+      if (active.abortController.signal.aborted || this.active !== active)
+        return;
 
       await this.sleep(intervalMs, active.abortController.signal);
-      if (active.abortController.signal.aborted || this.active !== active) return;
+      if (active.abortController.signal.aborted || this.active !== active)
+        return;
 
       try {
         const raw = await fetch(GITHUB_ACCESS_TOKEN_URL, {
@@ -439,7 +512,7 @@ export class PiAuthService extends EventEmitter {
           }),
           signal: AbortSignal.timeout(15_000),
         });
-        const data = await raw.json() as Record<string, unknown>;
+        const data = (await raw.json()) as Record<string, unknown>;
 
         if (typeof data['access_token'] === 'string') {
           const githubToken = data['access_token'];
@@ -454,9 +527,15 @@ export class PiAuthService extends EventEmitter {
             },
             signal: AbortSignal.timeout(15_000),
           });
-          const copilotData = await copilotResp.json() as Record<string, unknown>;
+          const copilotData = (await copilotResp.json()) as Record<
+            string,
+            unknown
+          >;
 
-          if (typeof copilotData['token'] !== 'string' || typeof copilotData['expires_at'] !== 'number') {
+          if (
+            typeof copilotData['token'] !== 'string' ||
+            typeof copilotData['expires_at'] !== 'number'
+          ) {
             throw new Error('Invalid Copilot token response');
           }
 
@@ -464,13 +543,17 @@ export class PiAuthService extends EventEmitter {
             type: 'oauth',
             access: copilotData['token'] as string,
             refresh: githubToken,
-            expires: (copilotData['expires_at'] as number) * 1000 - 5 * 60 * 1000,
+            expires:
+              (copilotData['expires_at'] as number) * 1000 - 5 * 60 * 1000,
           };
 
           if (this.active !== active) return;
           this.active = null;
           const current = await this.readAuthFile();
-          await this.writeAuthFile({ ...current, 'github-copilot': credential });
+          await this.writeAuthFile({
+            ...current,
+            'github-copilot': credential,
+          });
           this.lastError = null;
           this.emitChanged();
           return;
@@ -488,8 +571,11 @@ export class PiAuthService extends EventEmitter {
           throw new Error(`Device flow error: ${error}`);
         }
       } catch (err) {
-        if (active.abortController.signal.aborted || this.active !== active) return;
-        this.logger.warn(`GitHub Copilot poll error: ${err instanceof Error ? err.message : String(err)}`);
+        if (active.abortController.signal.aborted || this.active !== active)
+          return;
+        this.logger.warn(
+          `GitHub Copilot poll error: ${err instanceof Error ? err.message : String(err)}`,
+        );
         // Continue polling on transient errors
       }
     }
@@ -508,11 +594,15 @@ export class PiAuthService extends EventEmitter {
     redirectUri: string,
     clientId: string,
   ): Promise<AuthCredential> {
-    const tokenUrl = provider === 'anthropic' ? ANTHROPIC_TOKEN_URL : OPENAI_CODEX_TOKEN_URL;
+    const tokenUrl =
+      provider === 'anthropic' ? ANTHROPIC_TOKEN_URL : OPENAI_CODEX_TOKEN_URL;
 
     const resp = await fetch(tokenUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
       body: JSON.stringify({
         grant_type: 'authorization_code',
         client_id: clientId,
@@ -529,13 +619,19 @@ export class PiAuthService extends EventEmitter {
       throw new Error(`Token exchange failed (${resp.status}): ${text}`);
     }
 
-    const data = await resp.json() as Record<string, unknown>;
+    const data = (await resp.json()) as Record<string, unknown>;
     const accessToken = data['access_token'];
     const refreshToken = data['refresh_token'];
     const expiresIn = data['expires_in'];
 
-    if (typeof accessToken !== 'string' || typeof refreshToken !== 'string' || typeof expiresIn !== 'number') {
-      throw new Error(`Token exchange returned unexpected fields: ${JSON.stringify(data)}`);
+    if (
+      typeof accessToken !== 'string' ||
+      typeof refreshToken !== 'string' ||
+      typeof expiresIn !== 'number'
+    ) {
+      throw new Error(
+        `Token exchange returned unexpected fields: ${JSON.stringify(data)}`,
+      );
     }
 
     return {
@@ -599,9 +695,19 @@ export class PiAuthService extends EventEmitter {
 
   private sleep(ms: number, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (signal?.aborted) { reject(new Error('Aborted')); return; }
+      if (signal?.aborted) {
+        reject(new Error('Aborted'));
+        return;
+      }
       const t = setTimeout(resolve, ms);
-      signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('Aborted')); }, { once: true });
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(t);
+          reject(new Error('Aborted'));
+        },
+        { once: true },
+      );
     });
   }
 
@@ -625,7 +731,10 @@ export class PiAuthService extends EventEmitter {
       this.versionCache = { value, expiresAt: Date.now() + VERSION_TTL_MS };
       return value;
     } catch {
-      this.versionCache = { value: null, expiresAt: Date.now() + VERSION_TTL_MS };
+      this.versionCache = {
+        value: null,
+        expiresAt: Date.now() + VERSION_TTL_MS,
+      };
       return null;
     }
   }
@@ -649,12 +758,21 @@ export class PiAuthService extends EventEmitter {
     }
   }
 
-  private async writeAuthFile(data: Record<string, AuthCredential>): Promise<void> {
+  private async writeAuthFile(
+    data: Record<string, AuthCredential>,
+  ): Promise<void> {
     const dir = dirname(this.authPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-    }
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     await fs.writeFile(this.authPath, JSON.stringify(data, null, 2), 'utf-8');
-    chmodSync(this.authPath, 0o600);
+    await fs.chmod(this.authPath, 0o600);
+  }
+
+  private async pathExists(targetPath: string): Promise<boolean> {
+    try {
+      await fs.access(targetPath);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

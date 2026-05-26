@@ -1,7 +1,7 @@
 import { accessSync, constants } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import { Logger } from '@nestjs/common';
 import simpleGit, { SimpleGit } from 'simple-git';
 
@@ -33,12 +33,13 @@ const ENV_BOUNDARY = '>>>ELEVENEX_ENV_BOUNDARY<<<';
 const REFRESH_THROTTLE_MS = 60_000;
 const SHELL_TIMEOUT_MS = 5_000;
 
-// Cached login-shell env. Populated on first call to `loadLoginShellEnv()`
-// or via `refreshLoginShellEnv()`. Mutated through the helpers below; not
-// exported directly so all access goes through `getCachedShellEnv()`.
+// Cached login-shell env. Populated via async `refreshLoginShellEnv()`.
+// Mutated through the helpers below; not exported directly so all access goes
+// through `getCachedShellEnv()`.
 let _shellEnvCache: NodeJS.ProcessEnv | null = null;
 let _lastRefreshAt = 0;
 let _refreshInFlight: Promise<void> | null = null;
+const binaryPathCache = new Map<string, string | null>();
 
 // Per-cwd login-shell env cache. Some users wire version managers (nvm/fnm/
 // rbenv/…) into their rc files via `chpwd` hooks that read `.nvmrc`/`.tool-
@@ -202,12 +203,11 @@ function getCachedShellEnv(): NodeJS.ProcessEnv {
 }
 
 // Project the augmented shell-env baseline onto `process.env` itself so that
-// any child process spawned with default env (simple-git, libraries that
-// don't accept an env override, ad-hoc execSync calls, etc.) inherits the
-// correct PATH and locale. Without this, every spawn site would have to
-// remember to pass `buildAugmentedEnv()` — auditing all of them is a losing
-// battle. Mutating process.env is normal Node practice and what every shell
-// integration ultimately does.
+// any child process spawned with default env (simple-git, libraries that don't
+// accept an env override, etc.) inherits the correct PATH and locale. Without
+// this, every spawn site would have to remember to pass `buildAugmentedEnv()`
+// — auditing all of them is a losing battle. Mutating process.env is normal
+// Node practice and what every shell integration ultimately does.
 //
 // Rules:
 //   - PATH is always recomputed (combined merge) so a user dotfile edit
@@ -241,54 +241,6 @@ function applyShellEnvToProcess(): void {
     process.env.LANG = process.env.LANG || 'en_US.UTF-8';
     process.env.LC_CTYPE = process.env.LC_CTYPE || 'en_US.UTF-8';
   }
-}
-
-// Synchronous shell-env load. Used both for the global cache warm-up and for
-// per-cwd cold misses where we need the right env before the first spawn.
-// `cwd` is optional; when provided, the shell starts in that directory.
-//
-// This blocks the event loop for the duration of the shell startup (~100ms-
-// 500ms typically, capped at SHELL_TIMEOUT_MS), so the timing log is the
-// primary lever for spotting users whose rc files have grown slow.
-function loadLoginShellEnvSync(cwd?: string): NodeJS.ProcessEnv {
-  const shell = getUserShell();
-  const startedAt = Date.now();
-  try {
-    const raw = execSync(
-      `${shell} -i -l -c "printf '%s' '${ENV_BOUNDARY}'; env" < /dev/null`,
-      {
-        encoding: 'utf-8',
-        timeout: SHELL_TIMEOUT_MS,
-        env: getShellBaselineEnv(cwd !== undefined),
-        cwd,
-      },
-    );
-    const parsed = parseEnvOutput(raw);
-    const elapsed = Date.now() - startedAt;
-    logger.log(
-      `sync shell-env loaded (${cwdTag(cwd)} keys=${Object.keys(parsed).length} elapsed=${elapsed}ms)`,
-    );
-    return parsed;
-  } catch (err) {
-    const elapsed = Date.now() - startedAt;
-    logger.warn(
-      `sync shell-env load failed (${cwdTag(cwd)} elapsed=${elapsed}ms): ${(err as Error).message}`,
-    );
-    return {};
-  }
-}
-
-// Synchronous warm-up for the global cache. Used when a caller needs the
-// shell env before any async warm-up has completed (rare, but possible during
-// NestJS bootstrap before `OnApplicationBootstrap` fires). Subsequent calls
-// hit the cache.
-function loadLoginShellEnv(): NodeJS.ProcessEnv {
-  if (_shellEnvCache) return _shellEnvCache;
-
-  _shellEnvCache = loadLoginShellEnvSync();
-  _lastRefreshAt = Date.now();
-  applyShellEnvToProcess();
-  return _shellEnvCache;
 }
 
 // Mark a per-cwd entry as recently used and evict the oldest if we exceed the
@@ -410,25 +362,35 @@ export function refreshLoginShellEnv(force = false): Promise<void> {
 }
 
 export function findBinary(name: string): string | null {
+  if (binaryPathCache.has(name)) {
+    return binaryPathCache.get(name) ?? null;
+  }
+
   for (const dir of COMMON_BINARY_PATHS) {
     const candidate = join(dir, name);
     try {
       accessSync(candidate, constants.X_OK);
+      binaryPathCache.set(name, candidate);
       return candidate;
     } catch {
       // Try next
     }
   }
 
-  try {
-    const found = execSync(`command -v ${name}`, {
-      encoding: 'utf-8',
-      env: { ...process.env, PATH: buildAugmentedPath() },
-    }).trim();
-    return found || null;
-  } catch {
-    return null;
+  for (const dir of buildAugmentedPath().split(':')) {
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      binaryPathCache.set(name, candidate);
+      return candidate;
+    } catch {
+      // Try next
+    }
   }
+
+  binaryPathCache.set(name, null);
+  return null;
 }
 
 export function buildAugmentedPath(
@@ -502,7 +464,7 @@ function shSingleQuote(value: string): string {
 // Critical env vars that must reach the actual command spawned inside a tmux
 // session. The tmux *server* captures its env at startup and shares it with
 // every session it creates; new sessions inherit the server's stale env, not
-// the env we pass to the tmux *client* via `execSync`. Inlining these as
+// the env we pass to the tmux *client*. Inlining these as
 // `KEY=value cmd` shell prefixes is the simplest way to override per-command.
 //
 // PATH covers binary resolution (the actual reported bug — wrong `node`).
@@ -558,12 +520,12 @@ export function buildAugmentedEnv(
   // When `cwd` is provided we use the per-cwd cache so version-manager hooks (nvm,
   // fnm, direnv, …) resolve the project-local version. Without a cwd we fall back
   // to the global cache, which may be empty during early bootstrap — in that case
-  // we still augment PATH from process.env, just without rc-file additions.
-  const shellEnv = cwd
-    ? getCwdEnv(cwd)
-    : _shellEnvCache
-      ? getCachedShellEnv()
-      : loadLoginShellEnv();
+  // we start a background refresh and still augment PATH from process.env, just
+  // without rc-file additions.
+  const shellEnv = cwd ? getCwdEnv(cwd) : getCachedShellEnv();
+  if (!cwd && !_shellEnvCache && !_refreshInFlight) {
+    void refreshLoginShellEnv(true);
+  }
   const merged = { ...shellEnv, ...base };
   // PATH ordering matters because dedup keeps the first occurrence: whichever
   // version-manager bin appears first wins for `node`/`python`/etc lookups.

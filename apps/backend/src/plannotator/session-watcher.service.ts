@@ -1,9 +1,14 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Logger,
+} from '@nestjs/common';
 import { EventEmitter } from 'events';
-import * as fs from 'fs';
+import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { execFileSync } from 'child_process';
+import { execFileAsync } from '../terminal/async-process.js';
 
 export interface PlannotatorSessionInfo {
   pid: number;
@@ -22,9 +27,13 @@ export interface SessionMatchResult {
 }
 
 @Injectable()
-export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleInit, OnModuleDestroy {
+export class PlannotatorSessionWatcher
+  extends EventEmitter
+  implements OnModuleInit, OnModuleDestroy
+{
   private sessionsDir: string;
   private interval: NodeJS.Timeout | null = null;
+  private pollInFlight = false;
   private knownSessions: Map<number, PlannotatorSessionInfo> = new Map();
   private readonly logger = new Logger('PlannotatorSessionWatcher');
 
@@ -45,17 +54,21 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
 
   registerWorktreeSession(worktreePath: string, sessionId: number): void {
     this.worktreeToSession.set(worktreePath, sessionId);
-    this.logger.log(`[DEBUG] registerWorktreeSession: worktreePath="${worktreePath}", sessionId=${sessionId}, map size=${this.worktreeToSession.size}`);
+    this.logger.log(
+      `[DEBUG] registerWorktreeSession: worktreePath="${worktreePath}", sessionId=${sessionId}, map size=${this.worktreeToSession.size}`,
+    );
   }
 
   unregisterWorktreeSession(worktreePath: string): void {
     this.worktreeToSession.delete(worktreePath);
-    this.logger.log(`[DEBUG] unregisterWorktreeSession: worktreePath="${worktreePath}", map size=${this.worktreeToSession.size}`);
+    this.logger.log(
+      `[DEBUG] unregisterWorktreeSession: worktreePath="${worktreePath}", map size=${this.worktreeToSession.size}`,
+    );
   }
 
   private startPolling(): void {
-    this.poll();
-    this.interval = setInterval(() => this.poll(), 500);
+    void this.poll();
+    this.interval = setInterval(() => void this.poll(), 500);
   }
 
   private stopPolling(): void {
@@ -65,53 +78,67 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
     }
   }
 
-  private poll(): void {
-    if (!fs.existsSync(this.sessionsDir)) {
-      return;
-    }
+  private async poll(): Promise<void> {
+    if (this.pollInFlight) return;
+    this.pollInFlight = true;
 
-    const entries = fs.readdirSync(this.sessionsDir);
-    const currentPids = new Set<number>();
-
-    for (const entry of entries) {
-      if (!entry.endsWith('.json')) continue;
-
-      const filePath = path.join(this.sessionsDir, entry);
-      try {
-        const data: PlannotatorSessionInfo = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-
-        if (!this.isProcessAlive(data.pid)) {
-          fs.unlinkSync(filePath);
-          continue;
-        }
-
-        currentPids.add(data.pid);
-
-        if (!this.knownSessions.has(data.pid)) {
-          this.knownSessions.set(data.pid, data);
-          const match = this.matchToElevenexSession(data);
-          this.emit('session-started', match);
-          this.logger.log(`New plannotator session: pid=${data.pid}, port=${data.port}, mode=${data.mode}`);
-        } else {
-          const existing = this.knownSessions.get(data.pid);
-          if (existing && JSON.stringify(existing) !== JSON.stringify(data)) {
-            this.knownSessions.set(data.pid, data);
+    try {
+      const entries = await fs
+        .readdir(this.sessionsDir)
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') {
+            return null;
           }
-        }
-      } catch (err) {
-        this.logger.warn(`Failed to read session file ${entry}: ${err}`);
-        try {
-          fs.unlinkSync(filePath);
-        } catch {}
-      }
-    }
+          throw error;
+        });
+      if (!entries) return;
 
-    for (const [pid, session] of this.knownSessions) {
-      if (!currentPids.has(pid)) {
-        this.knownSessions.delete(pid);
-        this.emit('session-ended', { pid, port: session.port });
-        this.logger.log(`Plannotator session ended: pid=${pid}`);
+      const currentPids = new Set<number>();
+
+      for (const entry of entries) {
+        if (!entry.endsWith('.json')) continue;
+
+        const filePath = path.join(this.sessionsDir, entry);
+        try {
+          const data: PlannotatorSessionInfo = JSON.parse(
+            await fs.readFile(filePath, 'utf-8'),
+          );
+
+          if (!this.isProcessAlive(data.pid)) {
+            await fs.unlink(filePath).catch(() => undefined);
+            continue;
+          }
+
+          currentPids.add(data.pid);
+
+          if (!this.knownSessions.has(data.pid)) {
+            this.knownSessions.set(data.pid, data);
+            const match = await this.matchToElevenexSession(data);
+            this.emit('session-started', match);
+            this.logger.log(
+              `New plannotator session: pid=${data.pid}, port=${data.port}, mode=${data.mode}`,
+            );
+          } else {
+            const existing = this.knownSessions.get(data.pid);
+            if (existing && JSON.stringify(existing) !== JSON.stringify(data)) {
+              this.knownSessions.set(data.pid, data);
+            }
+          }
+        } catch (err) {
+          this.logger.warn(`Failed to read session file ${entry}: ${err}`);
+          await fs.unlink(filePath).catch(() => undefined);
+        }
       }
+
+      for (const [pid, session] of this.knownSessions) {
+        if (!currentPids.has(pid)) {
+          this.knownSessions.delete(pid);
+          this.emit('session-ended', { pid, port: session.port });
+          this.logger.log(`Plannotator session ended: pid=${pid}`);
+        }
+      }
+    } finally {
+      this.pollInFlight = false;
     }
   }
 
@@ -124,21 +151,27 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
     }
   }
 
-  private getProcessCommandLine(pid: number): string | null {
+  private async getProcessCommandLine(pid: number): Promise<string | null> {
     try {
-      const output = execFileSync('ps', ['eww', '-p', pid.toString(), '-o', 'command='], {
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      return output.trim() || null;
+      const { stdout } = await execFileAsync(
+        'ps',
+        ['eww', '-p', pid.toString(), '-o', 'command='],
+        {
+          maxBuffer: 1024 * 1024,
+        },
+      );
+      return stdout.trim() || null;
     } catch {
       return null;
     }
   }
 
-  private getProcessEnvVar(pid: number, varName: string): string | null {
+  private async getProcessEnvVar(
+    pid: number,
+    varName: string,
+  ): Promise<string | null> {
     try {
-      const environ = fs.readFileSync(`/proc/${pid}/environ`, 'utf-8');
+      const environ = await fs.readFile(`/proc/${pid}/environ`, 'utf-8');
       const vars = environ.split('\0');
       for (const v of vars) {
         if (v.startsWith(varName + '=')) {
@@ -149,9 +182,11 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
       // /proc not available (macOS) or process not accessible
     }
 
-    const commandLine = this.getProcessCommandLine(pid);
+    const commandLine = await this.getProcessCommandLine(pid);
     if (commandLine) {
-      const match = commandLine.match(new RegExp(`(?:^|\\s)${varName}=([^\\s]+)`));
+      const match = commandLine.match(
+        new RegExp(`(?:^|\\s)${varName}=([^\\s]+)`),
+      );
       if (match?.[1]) {
         return match[1];
       }
@@ -160,25 +195,44 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
     return null;
   }
 
-  private matchToElevenexSession(plannotatorSession: PlannotatorSessionInfo): SessionMatchResult {
+  private async matchToElevenexSession(
+    plannotatorSession: PlannotatorSessionInfo,
+  ): Promise<SessionMatchResult> {
     // Primary: read ELEVENEX_SESSION_ID directly from the plannotator process environment
-    const sessionIdStr = this.getProcessEnvVar(plannotatorSession.pid, 'ELEVENEX_SESSION_ID');
+    const sessionIdStr = await this.getProcessEnvVar(
+      plannotatorSession.pid,
+      'ELEVENEX_SESSION_ID',
+    );
     if (sessionIdStr) {
       const sessionId = parseInt(sessionIdStr, 10);
       if (!isNaN(sessionId)) {
         for (const [worktreePath, sid] of this.worktreeToSession) {
           if (sid === sessionId) {
-            this.logger.log(`Matched plannotator pid=${plannotatorSession.pid} to sessionId=${sessionId} via ELEVENEX_SESSION_ID env var`);
-            return { plannotatorSession, elevenexSessionId: sessionId, worktreePath };
+            this.logger.log(
+              `Matched plannotator pid=${plannotatorSession.pid} to sessionId=${sessionId} via ELEVENEX_SESSION_ID env var`,
+            );
+            return {
+              plannotatorSession,
+              elevenexSessionId: sessionId,
+              worktreePath,
+            };
           }
         }
         // Session ID found but worktree not registered yet — still use the ID
-        this.logger.log(`Matched plannotator pid=${plannotatorSession.pid} to sessionId=${sessionId} via env var (no worktree registered)`);
-        return { plannotatorSession, elevenexSessionId: sessionId, worktreePath: null };
+        this.logger.log(
+          `Matched plannotator pid=${plannotatorSession.pid} to sessionId=${sessionId} via env var (no worktree registered)`,
+        );
+        return {
+          plannotatorSession,
+          elevenexSessionId: sessionId,
+          worktreePath: null,
+        };
       }
     }
 
-    this.logger.log(`No ELEVENEX_SESSION_ID env var found for plannotator pid=${plannotatorSession.pid}`);
+    this.logger.log(
+      `No ELEVENEX_SESSION_ID env var found for plannotator pid=${plannotatorSession.pid}`,
+    );
     return {
       plannotatorSession,
       elevenexSessionId: null,
@@ -188,7 +242,8 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
 
   getActiveSessions(): PlannotatorSessionInfo[] {
     return Array.from(this.knownSessions.values()).sort(
-      (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+      (a, b) =>
+        new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
     );
   }
 
@@ -214,7 +269,9 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
     try {
       process.kill(session.pid, 'SIGTERM');
     } catch (error) {
-      this.logger.warn(`Failed to terminate plannotator pid=${session.pid}: ${error}`);
+      this.logger.warn(
+        `Failed to terminate plannotator pid=${session.pid}: ${error}`,
+      );
       return false;
     }
 
@@ -233,15 +290,15 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
     return true;
   }
 
-  getMatchingSessionId(port: number): number | null {
+  async getMatchingSessionId(port: number): Promise<number | null> {
     const session = this.getSessionByPort(port);
     if (!session) return null;
 
-    const match = this.matchToElevenexSession(session);
+    const match = await this.matchToElevenexSession(session);
     return match.elevenexSessionId;
   }
 
-  getMatchByPort(port: number): SessionMatchResult | null {
+  async getMatchByPort(port: number): Promise<SessionMatchResult | null> {
     const session = this.getSessionByPort(port);
     if (!session) {
       return null;
@@ -250,7 +307,9 @@ export class PlannotatorSessionWatcher extends EventEmitter implements OnModuleI
     return this.matchToElevenexSession(session);
   }
 
-  getMatchForSession(session: PlannotatorSessionInfo): SessionMatchResult {
+  getMatchForSession(
+    session: PlannotatorSessionInfo,
+  ): Promise<SessionMatchResult> {
     return this.matchToElevenexSession(session);
   }
 }

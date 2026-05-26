@@ -1,7 +1,7 @@
-import { execSync } from 'child_process';
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { getElevenexProxyPort } from '../config/ports.js';
 import { PlannotatorRegistryService } from './plannotator-registry.service.js';
+import { execFileQuiet } from '../terminal/async-process.js';
 import type {
   RegisterClosePayload,
   RegisterOpenPayload,
@@ -31,9 +31,9 @@ export class PlannotatorController {
   }
 
   @Get('installed')
-  isInstalled(): { installed: boolean } {
+  async isInstalled(): Promise<{ installed: boolean }> {
     try {
-      execSync('which plannotator', { stdio: 'ignore' });
+      await execFileQuiet('which', ['plannotator']);
       return { installed: true };
     } catch {
       return { installed: false };

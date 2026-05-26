@@ -23,7 +23,8 @@ export class ActionsService implements OnModuleInit {
   ) {
     this.ptyManager.registerPersistence({
       markRunning: (actionId) => this.markRunning(actionId),
-      flushCurrentOutput: (actionId, output) => this.flushCurrentOutput(actionId, output),
+      flushCurrentOutput: (actionId, output) =>
+        this.flushCurrentOutput(actionId, output),
       finalizeRun: (actionId, payload) => this.finalizeRun(actionId, payload),
     });
   }
@@ -35,14 +36,21 @@ export class ActionsService implements OnModuleInit {
       .where(eq(schema.actions.status, 'running'));
 
     for (const action of runningActions) {
-      if (this.ptyManager.hasTmuxSessionForAction(action.id)) {
-        this.logger.log(`Action ${action.id} ("${action.name}") has surviving tmux session, reattaching...`);
-        const reattached = await this.ptyManager.reattach(action.id, action.worktreePath);
+      if (await this.ptyManager.hasTmuxSessionForAction(action.id)) {
+        this.logger.log(
+          `Action ${action.id} ("${action.name}") has surviving tmux session, reattaching...`,
+        );
+        const reattached = await this.ptyManager.reattach(
+          action.id,
+          action.worktreePath,
+        );
         if (reattached) {
           this.logger.log(`Successfully reattached to action ${action.id}`);
           continue;
         }
-        this.logger.warn(`Failed to reattach to action ${action.id}, marking as stopped`);
+        this.logger.warn(
+          `Failed to reattach to action ${action.id}, marking as stopped`,
+        );
       }
 
       const now = new Date().toISOString();
@@ -87,10 +95,12 @@ export class ActionsService implements OnModuleInit {
     const rows = await this.db
       .select()
       .from(schema.actions)
-      .where(and(
-        eq(schema.actions.worktreePath, worktreePath),
-        eq(schema.actions.status, 'running'),
-      ));
+      .where(
+        and(
+          eq(schema.actions.worktreePath, worktreePath),
+          eq(schema.actions.status, 'running'),
+        ),
+      );
 
     return { count: rows.length };
   }
@@ -140,11 +150,9 @@ export class ActionsService implements OnModuleInit {
       throw new BadRequestException(`Action "${existing.name}" is running`);
     }
 
-    this.ptyManager.killTmuxSession(id);
+    await this.ptyManager.killTmuxSession(id);
 
-    await this.db
-      .delete(schema.actions)
-      .where(eq(schema.actions.id, id));
+    await this.db.delete(schema.actions).where(eq(schema.actions.id, id));
 
     return { success: true };
   }
@@ -152,7 +160,9 @@ export class ActionsService implements OnModuleInit {
   async run(id: number) {
     const action = await this.findOne(id);
     if (this.ptyManager.isRunning(id) || action.status === 'running') {
-      throw new BadRequestException(`Action "${action.name}" is already running`);
+      throw new BadRequestException(
+        `Action "${action.name}" is already running`,
+      );
     }
 
     await this.ptyManager.start({
@@ -197,14 +207,17 @@ export class ActionsService implements OnModuleInit {
       .where(eq(schema.actions.id, actionId));
   }
 
-  async finalizeRun(actionId: number, payload: {
-    status: ActionStatus;
-    currentOutput: string;
-    lastOutput: string;
-    lastExitCode: number | null;
-    lastFinishedAt: string;
-    updatedAt: string;
-  }): Promise<void> {
+  async finalizeRun(
+    actionId: number,
+    payload: {
+      status: ActionStatus;
+      currentOutput: string;
+      lastOutput: string;
+      lastExitCode: number | null;
+      lastFinishedAt: string;
+      updatedAt: string;
+    },
+  ): Promise<void> {
     await this.db
       .update(schema.actions)
       .set(payload)

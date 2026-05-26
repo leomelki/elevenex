@@ -76,16 +76,19 @@ export class PlannotatorGateway
     this.logger.log('Plannotator WebSocket gateway initialized');
 
     this.ipcServer.on('url-received', (event) => {
-      this.handleIpcUrlReceived(event);
+      void this.handleIpcUrlReceived(event);
     });
 
     this.sessionWatcher.on('session-started', (match: SessionMatchResult) => {
       this.handleSessionStarted(match);
     });
 
-    this.sessionWatcher.on('session-ended', (data: { pid: number; port: number }) => {
-      this.handleSessionEnded(data);
-    });
+    this.sessionWatcher.on(
+      'session-ended',
+      (data: { pid: number; port: number }) => {
+        this.handleSessionEnded(data);
+      },
+    );
 
     this.registry.on('panel-opened', (panel) => {
       this.handlePanelOpened(panel);
@@ -95,12 +98,17 @@ export class PlannotatorGateway
       this.handleProxyClose(upstreamPort);
     });
 
-    this.registry.on('panel-closed', (data: { sessionId: number; upstreamPort: number }) => {
-      this.handlePanelClosed(data.sessionId, data.upstreamPort);
-    });
+    this.registry.on(
+      'panel-closed',
+      (data: { sessionId: number; upstreamPort: number }) => {
+        this.handlePanelClosed(data.sessionId, data.upstreamPort);
+      },
+    );
 
     for (const session of this.sessionWatcher.getActiveSessions()) {
-      this.handleSessionStarted(this.sessionWatcher.getMatchForSession(session));
+      void this.sessionWatcher
+        .getMatchForSession(session)
+        .then((match) => this.handleSessionStarted(match));
     }
   }
 
@@ -132,13 +140,14 @@ export class PlannotatorGateway
     );
   }
 
-  private handleIpcUrlReceived(event: {
+  private async handleIpcUrlReceived(event: {
     url: string;
     sessionId: number | null;
     upstreamPort: number;
-  }): void {
+  }): Promise<void> {
     const resolvedSessionId =
-      event.sessionId ?? this.sessionWatcher.getMatchingSessionId(event.upstreamPort);
+      event.sessionId ??
+      (await this.sessionWatcher.getMatchingSessionId(event.upstreamPort));
 
     if (!resolvedSessionId) {
       this.logger.log(
@@ -210,7 +219,9 @@ export class PlannotatorGateway
     };
 
     this.server.emit('event', outgoingEvent);
-    this.logger.log(`Close event: upstreamPort=${upstreamPort}, sessionId=${sessionId}`);
+    this.logger.log(
+      `Close event: upstreamPort=${upstreamPort}, sessionId=${sessionId}`,
+    );
   }
 
   @SubscribeMessage('get-sessions')
@@ -231,7 +242,9 @@ export class PlannotatorGateway
         upstreamPort: panel.upstreamPort,
       });
     }
-    this.logger.log(`[DEBUG] get-active-panels request from ${client.id}: returning ${panels.length} panels: ${JSON.stringify(panels.map(p => ({ sessionId: p.sessionId, port: p.upstreamPort })))}`);
+    this.logger.log(
+      `[DEBUG] get-active-panels request from ${client.id}: returning ${panels.length} panels: ${JSON.stringify(panels.map((p) => ({ sessionId: p.sessionId, port: p.upstreamPort })))}`,
+    );
     client.emit('active-panels', panels);
   }
 
@@ -252,9 +265,14 @@ export class PlannotatorGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { worktreePath: string; sessionId: number },
   ): void {
-    this.logger.log(`[DEBUG] register-worktree from ${client.id}: worktreePath="${data.worktreePath}", sessionId=${data.sessionId}`);
+    this.logger.log(
+      `[DEBUG] register-worktree from ${client.id}: worktreePath="${data.worktreePath}", sessionId=${data.sessionId}`,
+    );
     this.ipcServer.registerWorktree(data.worktreePath);
-    this.sessionWatcher.registerWorktreeSession(data.worktreePath, data.sessionId);
+    this.sessionWatcher.registerWorktreeSession(
+      data.worktreePath,
+      data.sessionId,
+    );
     client.emit('worktree-registered', { worktreePath: data.worktreePath });
   }
 

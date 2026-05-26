@@ -1,3 +1,4 @@
+import { promises as fs } from 'fs';
 import { TerminalService } from './terminal.service.js';
 
 describe('TerminalService', () => {
@@ -13,6 +14,8 @@ describe('TerminalService', () => {
   };
 
   beforeEach(() => {
+    jest.spyOn(fs, 'access').mockResolvedValue(undefined);
+
     sessionsService = {
       findOne: jest.fn(),
       updateStatus: jest.fn(),
@@ -32,6 +35,7 @@ describe('TerminalService', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+    jest.restoreAllMocks();
   });
 
   it('reattaches to an existing tmux session without spawning a fresh Claude resume', async () => {
@@ -57,15 +61,17 @@ describe('TerminalService', () => {
       worktreePath: process.cwd(),
       claudeSessionId: 'claude-session-1',
     });
-    ptyManager.isAlive
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true);
+    ptyManager.isAlive.mockReturnValueOnce(false).mockReturnValueOnce(true);
     ptyManager.hasTmuxSession.mockReturnValue(false);
     ptyManager.spawn.mockImplementation(() => {});
 
     const result = await service.startSession(1);
 
-    expect(ptyManager.spawn).toHaveBeenCalledWith(1, process.cwd(), 'claude-session-1');
+    expect(ptyManager.spawn).toHaveBeenCalledWith(
+      1,
+      process.cwd(),
+      'claude-session-1',
+    );
     expect(result).toEqual({ success: true, resumed: true });
     expect(sessionsService.updateStatus).toHaveBeenCalledWith(1, 'active');
   });
@@ -77,9 +83,7 @@ describe('TerminalService', () => {
       worktreePath: process.cwd(),
       claudeSessionId: 'claude-session-1',
     });
-    ptyManager.isAlive
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(false);
+    ptyManager.isAlive.mockReturnValueOnce(false).mockReturnValueOnce(false);
     ptyManager.hasTmuxSession.mockReturnValue(false);
     ptyManager.spawn.mockImplementation(() => {});
 
@@ -87,7 +91,12 @@ describe('TerminalService', () => {
     await jest.advanceTimersByTimeAsync(500);
     const result = await resultPromise;
 
-    expect(ptyManager.spawn).toHaveBeenNthCalledWith(1, 1, process.cwd(), 'claude-session-1');
+    expect(ptyManager.spawn).toHaveBeenNthCalledWith(
+      1,
+      1,
+      process.cwd(),
+      'claude-session-1',
+    );
     expect(ptyManager.spawn).toHaveBeenNthCalledWith(2, 1, process.cwd());
     expect(result).toEqual({ success: true, resumed: false });
     expect(sessionsService.updateStatus).toHaveBeenCalledWith(1, 'active');

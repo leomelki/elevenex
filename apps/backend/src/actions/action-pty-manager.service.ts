@@ -1,14 +1,19 @@
-import { Injectable, Logger, OnApplicationShutdown, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnApplicationShutdown,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import * as pty from 'node-pty';
-import * as fs from 'fs';
+import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execSync } from 'child_process';
 import {
   buildAugmentedEnv,
   buildTmuxInlineEnvPrefix,
   findBinary,
 } from '../config/system-paths.js';
+import { execFileQuiet } from '../terminal/async-process.js';
 
 type ActionStatus = 'idle' | 'running' | 'success' | 'failed' | 'stopped';
 
@@ -28,19 +33,23 @@ interface RunningAction {
   tmuxSessionName?: string;
   logFilePath?: string;
   completionMonitor?: NodeJS.Timeout;
+  completionCheckInFlight?: boolean;
 }
 
 interface ActionPersistence {
   markRunning(actionId: number): Promise<void>;
   flushCurrentOutput(actionId: number, output: string): Promise<void>;
-  finalizeRun(actionId: number, payload: {
-    status: ActionStatus;
-    currentOutput: string;
-    lastOutput: string;
-    lastExitCode: number | null;
-    lastFinishedAt: string;
-    updatedAt: string;
-  }): Promise<void>;
+  finalizeRun(
+    actionId: number,
+    payload: {
+      status: ActionStatus;
+      currentOutput: string;
+      lastOutput: string;
+      lastExitCode: number | null;
+      lastFinishedAt: string;
+      updatedAt: string;
+    },
+  ): Promise<void>;
 }
 
 interface ActionGatewayLike {
@@ -54,7 +63,9 @@ const TMUX_SESSION_PREFIX = 'elevenex-action';
 const COMPLETION_POLL_MS = 300;
 
 @Injectable()
-export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown {
+export class ActionPtyManager
+  implements OnModuleDestroy, OnApplicationShutdown
+{
   private readonly logger = new Logger('ActionPtyManager');
   private readonly processes = new Map<number, RunningAction>();
   private readonly defaultShell = process.env.SHELL || '/bin/zsh';
@@ -87,7 +98,7 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
       throw new Error(`Action ${action.id} is already running`);
     }
 
-    if (!fs.existsSync(action.worktreePath)) {
+    if (!(await this.pathExists(action.worktreePath))) {
       throw new Error(`Worktree path does not exist: ${action.worktreePath}`);
     }
 
@@ -102,7 +113,7 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
     let ptyProcess: pty.IPty | null = null;
 
     if (this.isTmuxAvailable()) {
-      ptyProcess = this.spawnWithTmux(action, env);
+      ptyProcess = await this.spawnWithTmux(action, env);
     }
 
     if (!ptyProcess) {
@@ -123,21 +134,35 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
 
       // Kill tmux session (kills the command inside)
       try {
-        execSync(`${this.tmuxBin} kill-session -t ${session.tmuxSessionName} 2>/dev/null`, { stdio: 'ignore' });
-      } catch { /* already dead */ }
+        await execFileQuiet(this.tmuxBin, [
+          'kill-session',
+          '-t',
+          session.tmuxSessionName,
+        ]);
+      } catch {
+        /* already dead */
+      }
 
       // Kill the tail process
-      try { session.pty.kill(); } catch { /* ignore */ }
+      try {
+        session.pty.kill();
+      } catch {
+        /* ignore */
+      }
 
       // Read final output from log file
       if (session.logFilePath) {
         try {
-          session.output = this.trimOutput(fs.readFileSync(session.logFilePath, 'utf-8'));
-        } catch { /* ignore */ }
+          session.output = this.trimOutput(
+            await fs.readFile(session.logFilePath, 'utf-8'),
+          );
+        } catch {
+          /* ignore */
+        }
       }
 
       // Finalize immediately
-      const exitCode = this.readExitCode(actionId) ?? -1;
+      const exitCode = (await this.readExitCode(actionId)) ?? -1;
       void this.handleExit(actionId, exitCode);
     } else {
       session.pty.kill('SIGTERM');
@@ -159,11 +184,13 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
   async reattach(actionId: number, worktreePath: string): Promise<boolean> {
     const tmuxSessionName = this.getTmuxSessionName(actionId);
 
-    if (!this.tmuxSessionExists(tmuxSessionName)) {
+    if (!(await this.tmuxSessionExists(tmuxSessionName))) {
       return false;
     }
 
-    this.logger.log(`Reattaching to tmux session ${tmuxSessionName} for action ${actionId}`);
+    this.logger.log(
+      `Reattaching to tmux session ${tmuxSessionName} for action ${actionId}`,
+    );
 
     const logFilePath = this.getLogFilePath(actionId);
     const env = this.buildEnv(worktreePath);
@@ -172,16 +199,25 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
       // Read existing log content (pipe-pane has been writing since action started)
       let initialOutput = '';
       try {
-        initialOutput = this.trimOutput(fs.readFileSync(logFilePath, 'utf-8'));
-      } catch { /* log file may not exist if pipe-pane died */ }
+        initialOutput = this.trimOutput(
+          await fs.readFile(logFilePath, 'utf-8'),
+        );
+      } catch {
+        /* log file may not exist if pipe-pane died */
+      }
 
       // Re-start pipe-pane in case it died (idempotent — replaces existing pipe)
       try {
-        execSync(
-          `${this.tmuxBin} pipe-pane -t ${tmuxSessionName} -o ${this.shellEscape(`cat >> ${logFilePath}`)}`,
-          { stdio: 'ignore' },
-        );
-      } catch { /* ignore */ }
+        await execFileQuiet(this.tmuxBin, [
+          'pipe-pane',
+          '-t',
+          tmuxSessionName,
+          '-o',
+          `cat >> ${this.shellEscape(logFilePath)}`,
+        ]);
+      } catch {
+        /* ignore */
+      }
 
       // Spawn tail to follow only new content (-n 0 = start from current end)
       const ptyProcess = pty.spawn('tail', ['-n', '0', '-f', logFilePath], {
@@ -213,7 +249,9 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
         this.scheduleFlush(actionId);
       });
 
-      ptyProcess.onExit(() => { /* lifecycle handled by completion monitor */ });
+      ptyProcess.onExit(() => {
+        /* lifecycle handled by completion monitor */
+      });
 
       this.startCompletionMonitor(actionId);
 
@@ -223,26 +261,32 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
 
       return true;
     } catch (error) {
-      this.logger.error(`Failed to reattach to tmux session ${tmuxSessionName}: ${error}`);
+      this.logger.error(
+        `Failed to reattach to tmux session ${tmuxSessionName}: ${error}`,
+      );
       return false;
     }
   }
 
-  hasTmuxSessionForAction(actionId: number): boolean {
+  hasTmuxSessionForAction(actionId: number): Promise<boolean> {
     return this.tmuxSessionExists(this.getTmuxSessionName(actionId));
   }
 
-  killTmuxSession(actionId: number): void {
+  async killTmuxSession(actionId: number): Promise<void> {
     if (!this.isTmuxAvailable()) return;
     const tmuxSessionName = this.getTmuxSessionName(actionId);
     try {
-      execSync(`${this.tmuxBin} kill-session -t ${tmuxSessionName} 2>/dev/null`, { stdio: 'ignore' });
+      await execFileQuiet(this.tmuxBin, [
+        'kill-session',
+        '-t',
+        tmuxSessionName,
+      ]);
     } catch {
       // Session may not exist
     }
     // Clean up associated files
-    try { fs.unlinkSync(this.getLogFilePath(actionId)); } catch { /* ignore */ }
-    try { fs.unlinkSync(this.getExitCodePath(actionId)); } catch { /* ignore */ }
+    await fs.unlink(this.getLogFilePath(actionId)).catch(() => undefined);
+    await fs.unlink(this.getExitCodePath(actionId)).catch(() => undefined);
   }
 
   // --- tmux infrastructure ---
@@ -259,10 +303,10 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
     return `${TMUX_SESSION_PREFIX}-${actionId}`;
   }
 
-  private tmuxSessionExists(tmuxSessionName: string): boolean {
+  private async tmuxSessionExists(tmuxSessionName: string): Promise<boolean> {
     if (!this.isTmuxAvailable()) return false;
     try {
-      execSync(`${this.tmuxBin} has-session -t ${tmuxSessionName} 2>/dev/null`, { stdio: 'ignore' });
+      await execFileQuiet(this.tmuxBin, ['has-session', '-t', tmuxSessionName]);
       return true;
     } catch {
       return false;
@@ -277,11 +321,11 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
     return path.join(os.tmpdir(), `elevenex-action-${actionId}.log`);
   }
 
-  private readExitCode(actionId: number): number | null {
+  private async readExitCode(actionId: number): Promise<number | null> {
     const exitCodePath = this.getExitCodePath(actionId);
     try {
-      const content = fs.readFileSync(exitCodePath, 'utf-8').trim();
-      fs.unlinkSync(exitCodePath);
+      const content = (await fs.readFile(exitCodePath, 'utf-8')).trim();
+      await fs.unlink(exitCodePath).catch(() => undefined);
       const code = parseInt(content, 10);
       return Number.isFinite(code) ? code : null;
     } catch {
@@ -291,6 +335,15 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
 
   private shellEscape(cmd: string): string {
     return `'${cmd.replace(/'/g, "'\\''")}'`;
+  }
+
+  private async pathExists(targetPath: string): Promise<boolean> {
+    try {
+      await fs.access(targetPath);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private buildEnv(worktreePath?: string): NodeJS.ProcessEnv {
@@ -308,26 +361,30 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
 
   // --- spawn methods ---
 
-  private spawnWithTmux(
+  private async spawnWithTmux(
     action: ActionRecord,
     env: NodeJS.ProcessEnv,
-  ): pty.IPty | null {
+  ): Promise<pty.IPty | null> {
     const tmuxSessionName = this.getTmuxSessionName(action.id);
     const logFilePath = this.getLogFilePath(action.id);
     const exitCodePath = this.getExitCodePath(action.id);
 
     try {
       // Actions always start fresh — kill any stale session
-      if (this.tmuxSessionExists(tmuxSessionName)) {
-        execSync(`${this.tmuxBin} kill-session -t ${tmuxSessionName} 2>/dev/null`, { stdio: 'ignore' });
+      if (await this.tmuxSessionExists(tmuxSessionName)) {
+        await execFileQuiet(this.tmuxBin, [
+          'kill-session',
+          '-t',
+          tmuxSessionName,
+        ]);
       }
 
       // Clean up stale files
-      try { fs.unlinkSync(logFilePath); } catch { /* ignore */ }
-      try { fs.unlinkSync(exitCodePath); } catch { /* ignore */ }
+      await fs.unlink(logFilePath).catch(() => undefined);
+      await fs.unlink(exitCodePath).catch(() => undefined);
 
       // Create empty log file so tail can start immediately
-      fs.writeFileSync(logFilePath, '');
+      await fs.writeFile(logFilePath, '');
 
       // Wrap command to capture exit code before tmux session dies. Prefix
       // with PATH / version-manager env so the user's command resolves to the
@@ -339,22 +396,49 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
       const shell = this.resolveShell(env);
       const innerCmd = `${tmuxEnvPrefix} ${this.shellEscape(shell)} -lc ${this.shellEscape(action.command)}; echo $? > ${this.shellEscape(exitCodePath)}`;
 
-      execSync(
-        `${this.tmuxBin} new-session -d -s ${tmuxSessionName} -c ${this.shellEscape(action.worktreePath)} -x 120 -y 32 /bin/sh -c ${this.shellEscape(innerCmd)}`,
+      await execFileQuiet(
+        this.tmuxBin,
+        [
+          'new-session',
+          '-d',
+          '-s',
+          tmuxSessionName,
+          '-c',
+          action.worktreePath,
+          '-x',
+          '120',
+          '-y',
+          '32',
+          `/bin/sh -c ${this.shellEscape(innerCmd)}`,
+        ],
         {
-          stdio: 'pipe',
           env: { ...env, TERM: 'xterm-256color' },
         },
       );
 
-      execSync(`${this.tmuxBin} set-option -t ${tmuxSessionName} status off`, { stdio: 'ignore' });
-      execSync(`${this.tmuxBin} set-option -t ${tmuxSessionName} history-limit 50000`, { stdio: 'ignore' });
+      await execFileQuiet(this.tmuxBin, [
+        'set-option',
+        '-t',
+        tmuxSessionName,
+        'status',
+        'off',
+      ]);
+      await execFileQuiet(this.tmuxBin, [
+        'set-option',
+        '-t',
+        tmuxSessionName,
+        'history-limit',
+        '50000',
+      ]);
 
       // Pipe pane output to log file (raw command output, no tmux wrapping)
-      execSync(
-        `${this.tmuxBin} pipe-pane -t ${tmuxSessionName} -o ${this.shellEscape(`cat >> ${logFilePath}`)}`,
-        { stdio: 'ignore' },
-      );
+      await execFileQuiet(this.tmuxBin, [
+        'pipe-pane',
+        '-t',
+        tmuxSessionName,
+        '-o',
+        `cat >> ${this.shellEscape(logFilePath)}`,
+      ]);
 
       // Tail the log file for live streaming (instead of tmux attach)
       // This gives xterm.js clean output with proper scrollback
@@ -387,26 +471,34 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
         this.scheduleFlush(action.id);
       });
 
-      ptyProcess.onExit(() => { /* lifecycle handled by completion monitor */ });
+      ptyProcess.onExit(() => {
+        /* lifecycle handled by completion monitor */
+      });
 
       // Poll for tmux session death to detect command completion
       this.startCompletionMonitor(action.id);
 
       return ptyProcess;
     } catch (error) {
-      this.logger.error(`Failed to create tmux session ${tmuxSessionName}: ${error}`);
+      this.logger.error(
+        `Failed to create tmux session ${tmuxSessionName}: ${error}`,
+      );
       return null;
     }
   }
 
   private spawnDirect(action: ActionRecord, env: NodeJS.ProcessEnv): pty.IPty {
-    const ptyProcess = pty.spawn(this.resolveShell(env), ['-lc', action.command], {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 32,
-      cwd: action.worktreePath,
-      env,
-    });
+    const ptyProcess = pty.spawn(
+      this.resolveShell(env),
+      ['-lc', action.command],
+      {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 32,
+        cwd: action.worktreePath,
+        env,
+      },
+    );
 
     const running: RunningAction = {
       id: action.id,
@@ -443,10 +535,23 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
     const tmuxSessionName = session.tmuxSessionName;
 
     session.completionMonitor = setInterval(() => {
-      if (!this.tmuxSessionExists(tmuxSessionName)) {
-        this.stopCompletionMonitor(actionId);
-        void this.handleTmuxCompletion(actionId);
-      }
+      const current = this.processes.get(actionId);
+      if (!current || current.completionCheckInFlight) return;
+
+      current.completionCheckInFlight = true;
+      void this.tmuxSessionExists(tmuxSessionName)
+        .then((exists) => {
+          if (!exists) {
+            this.stopCompletionMonitor(actionId);
+            void this.handleTmuxCompletion(actionId);
+          }
+        })
+        .finally(() => {
+          const latest = this.processes.get(actionId);
+          if (latest) {
+            latest.completionCheckInFlight = false;
+          }
+        });
     }, COMPLETION_POLL_MS);
   }
 
@@ -463,17 +568,25 @@ export class ActionPtyManager implements OnModuleDestroy, OnApplicationShutdown 
     if (!session) return;
 
     // Kill the tail process
-    try { session.pty.kill(); } catch { /* ignore */ }
+    try {
+      session.pty.kill();
+    } catch {
+      /* ignore */
+    }
 
     // Read final output from the log file (clean, no tmux artifacts)
     if (session.logFilePath) {
       try {
-        session.output = this.trimOutput(fs.readFileSync(session.logFilePath, 'utf-8'));
-      } catch { /* keep accumulated output */ }
-      try { fs.unlinkSync(session.logFilePath); } catch { /* ignore */ }
+        session.output = this.trimOutput(
+          await fs.readFile(session.logFilePath, 'utf-8'),
+        );
+      } catch {
+        /* keep accumulated output */
+      }
+      await fs.unlink(session.logFilePath).catch(() => undefined);
     }
 
-    const exitCode = this.readExitCode(actionId) ?? -1;
+    const exitCode = (await this.readExitCode(actionId)) ?? -1;
     await this.handleExit(actionId, exitCode);
   }
 

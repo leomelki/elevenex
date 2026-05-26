@@ -1,16 +1,25 @@
-import { BadRequestException, Injectable, forwardRef, Inject } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  forwardRef,
+  Inject,
+} from '@nestjs/common';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { PtyManager } from './pty-manager.service.js';
-import * as fs from 'fs';
+import { promises as fs } from 'fs';
 
 @Injectable()
 export class TerminalService {
   constructor(
-    @Inject(forwardRef(() => SessionsService)) private readonly sessionsService: SessionsService,
-    @Inject(forwardRef(() => PtyManager)) private readonly ptyManager: PtyManager,
+    @Inject(forwardRef(() => SessionsService))
+    private readonly sessionsService: SessionsService,
+    @Inject(forwardRef(() => PtyManager))
+    private readonly ptyManager: PtyManager,
   ) {}
 
-  async startSession(sessionId: number): Promise<{ success: boolean; resumed: boolean; error?: string }> {
+  async startSession(
+    sessionId: number,
+  ): Promise<{ success: boolean; resumed: boolean; error?: string }> {
     const session = await this.sessionsService.findOne(sessionId);
 
     if (session.status === 'archived') {
@@ -18,11 +27,13 @@ export class TerminalService {
     }
 
     // Verify worktree path exists
-    if (!fs.existsSync(session.worktreePath)) {
-      return { 
-        success: false, 
-        resumed: false, 
-        error: `Worktree path does not exist: ${session.worktreePath}` 
+    try {
+      await fs.access(session.worktreePath);
+    } catch {
+      return {
+        success: false,
+        resumed: false,
+        error: `Worktree path does not exist: ${session.worktreePath}`,
       };
     }
 
@@ -34,14 +45,17 @@ export class TerminalService {
     }
 
     // Check if tmux session exists (we can reattach)
-    if (this.ptyManager.hasTmuxSession(sessionId)) {
+    if (await this.ptyManager.hasTmuxSession(sessionId)) {
       console.log(`Found existing tmux session for ${sessionId}, reattaching`);
       try {
-        this.ptyManager.spawn(sessionId, session.worktreePath);
+        await this.ptyManager.spawn(sessionId, session.worktreePath);
         await this.sessionsService.updateStatus(sessionId, 'active');
         return { success: true, resumed: true };
       } catch (error) {
-        console.error(`Failed to reattach to tmux session ${sessionId}:`, error);
+        console.error(
+          `Failed to reattach to tmux session ${sessionId}:`,
+          error,
+        );
         // Fall through to create new session
       }
     }
@@ -51,10 +65,14 @@ export class TerminalService {
     // Check if we have a valid Claude session ID to resume
     if (claudeSessionId && claudeSessionId !== '-1') {
       try {
-        this.ptyManager.spawn(sessionId, session.worktreePath, claudeSessionId);
+        await this.ptyManager.spawn(
+          sessionId,
+          session.worktreePath,
+          claudeSessionId,
+        );
 
         // Wait a bit to see if the process exits immediately (invalid session ID)
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         if (this.ptyManager.isAlive(sessionId)) {
           await this.sessionsService.updateStatus(sessionId, 'active');
@@ -70,7 +88,7 @@ export class TerminalService {
 
     // Start fresh session
     try {
-      this.ptyManager.spawn(sessionId, session.worktreePath);
+      await this.ptyManager.spawn(sessionId, session.worktreePath);
       await this.sessionsService.updateStatus(sessionId, 'active');
       return { success: true, resumed: false };
     } catch (error) {

@@ -7,16 +7,20 @@ import {
   Logger,
 } from '@nestjs/common';
 import * as pty from 'node-pty';
-import * as fs from 'fs';
+import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execSync } from 'child_process';
 import { TerminalGateway } from './terminal.gateway.js';
 import { TmuxManager } from './tmux-manager.service.js';
 import { PlannotatorRegistryService } from '../plannotator/plannotator-registry.service.js';
 import { getBackendHelperPath } from '../config/runtime-paths.js';
-import { buildAugmentedEnv, buildTmuxInlineEnvPrefix, findBinary } from '../config/system-paths.js';
+import {
+  buildAugmentedEnv,
+  buildTmuxInlineEnvPrefix,
+  findBinary,
+} from '../config/system-paths.js';
 import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
+import { execFileQuiet } from './async-process.js';
 
 interface PtySession {
   pty: pty.IPty;
@@ -81,19 +85,19 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     );
   }
 
-  spawn(
+  async spawn(
     sessionId: number,
     worktreePath: string,
     resumeSessionId?: string,
-  ): pty.IPty | null {
+  ): Promise<pty.IPty | null> {
     const reusingTmuxSession =
       this.tmuxManager.isTmuxAvailable() &&
-      this.tmuxManager.sessionExists(sessionId);
+      (await this.tmuxManager.sessionExists(sessionId));
 
     // Kill existing process if any
     this.kill(sessionId);
 
-    const hooksArgs = this.buildHooksSettingsArgs();
+    const hooksArgs = await this.buildHooksSettingsArgs();
     const args = [
       '--enable-auto-mode',
       ...hooksArgs,
@@ -114,7 +118,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
     // Try tmux first if available
     if (this.tmuxManager.isTmuxAvailable()) {
-      const tmuxSession = this.spawnWithTmux(
+      const tmuxSession = await this.spawnWithTmux(
         sessionId,
         worktreePath,
         args,
@@ -129,18 +133,18 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     return this.spawnDirect(sessionId, worktreePath, args, env);
   }
 
-  private spawnWithTmux(
+  private async spawnWithTmux(
     sessionId: number,
     worktreePath: string,
     args: string[],
     env: NodeJS.ProcessEnv,
-  ): pty.IPty | null {
+  ): Promise<pty.IPty | null> {
     const sessionName = `elevenex-${sessionId}`;
     const tmuxBin = this.tmuxManager.getTmuxBin();
 
     try {
       // Check if tmux session already exists
-      if (this.tmuxManager.sessionExists(sessionId)) {
+      if (await this.tmuxManager.sessionExists(sessionId)) {
         this.logger.log(`Attaching to existing tmux session ${sessionName}`);
         // Update tmux session environment so new processes inherit plannotator vars
         const plannotatorEnvVars = [
@@ -152,9 +156,12 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
         for (const key of plannotatorEnvVars) {
           if (env[key]) {
             try {
-              execSync(
-                `${tmuxBin} set-environment -t ${sessionName} ${key} "${env[key]}"`,
-                { stdio: 'ignore', env },
+              await execFileQuiet(
+                tmuxBin,
+                ['set-environment', '-t', sessionName, key, env[key]],
+                {
+                  env,
+                },
               );
             } catch {
               // Ignore - tmux may not support set-environment in all cases
@@ -162,31 +169,21 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
           }
         }
         try {
-          execSync(
-            `${tmuxBin} set-environment -u -t ${sessionName} PLANNOTATOR_PORT`,
-            { stdio: 'ignore', env },
+          await execFileQuiet(
+            tmuxBin,
+            ['set-environment', '-u', '-t', sessionName, 'PLANNOTATOR_PORT'],
+            { env },
           );
         } catch {
           // Ignore - tmux may not support unset in all cases
         }
         // Enable mouse mode so tmux handles scrollback via copy-mode
         try {
-          execSync(
-            `${tmuxBin} set-window-option -t ${sessionName} alternate-screen on`,
-            { stdio: 'ignore', env },
-          );
-          execSync(`${tmuxBin} set-option -t ${sessionName} mouse on`, {
-            stdio: 'ignore',
-            env,
-          });
-          execSync(`${tmuxBin} set-option -t ${sessionName} status off`, {
-            stdio: 'ignore',
-            env,
-          });
+          await this.configureTmuxSession(tmuxBin, sessionName, env, false);
         } catch {
           // Ignore
         }
-        this.tmuxManager.configureScrollBindings();
+        await this.tmuxManager.configureScrollBindings();
         return this.attachTmuxSession(sessionId, env);
       }
 
@@ -196,7 +193,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       );
 
       // Inline critical env vars in the shell command inside tmux.
-      // The env passed to execSync only affects the tmux client, not
+      // The env passed to the tmux client does not affect the tmux server
       // the server which spawns the actual process — so PATH and
       // version-manager hints must be inlined to reach claude.
       const envPrefix = buildTmuxInlineEnvPrefix(env, [
@@ -206,41 +203,34 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
         'PLANNOTATOR_BROWSER',
       ]);
 
-      const claudeCmd =
-        args.length > 0
-          ? `unset SSH_TTY SSH_CONNECTION PLANNOTATOR_PORT && ${envPrefix} ${CLAUDE_BIN} ${args.join(' ')}`
-          : `unset SSH_TTY SSH_CONNECTION PLANNOTATOR_PORT && ${envPrefix} ${CLAUDE_BIN}`;
+      const claudeArgv = [CLAUDE_BIN, ...args]
+        .map((arg) => this.shellEscape(arg))
+        .join(' ');
+      const claudeCmd = `unset SSH_TTY SSH_CONNECTION PLANNOTATOR_PORT && ${envPrefix} ${claudeArgv}`;
 
-      execSync(
-        `${tmuxBin} new-session -d -s ${sessionName} -c "${worktreePath}" -x 80 -y 24 "${claudeCmd}"`,
+      await execFileQuiet(
+        tmuxBin,
+        [
+          'new-session',
+          '-d',
+          '-s',
+          sessionName,
+          '-c',
+          worktreePath,
+          '-x',
+          '80',
+          '-y',
+          '24',
+          claudeCmd,
+        ],
         {
-          stdio: 'pipe',
           env: { ...env, TERM: 'xterm-256color' },
         },
       );
 
       // Enable mouse mode so tmux handles scrollback via copy-mode
-      execSync(
-        `${tmuxBin} set-window-option -t ${sessionName} alternate-screen on`,
-        { stdio: 'ignore', env },
-      );
-      execSync(`${tmuxBin} set-option -t ${sessionName} mouse on`, {
-        stdio: 'ignore',
-        env,
-      });
-      execSync(`${tmuxBin} set-option -t ${sessionName} history-limit 50000`, {
-        stdio: 'ignore',
-        env,
-      });
-      execSync(`${tmuxBin} set-option -t ${sessionName} status off`, {
-        stdio: 'ignore',
-        env,
-      });
-
-      this.tmuxManager.configureScrollBindings();
-
-      // Small delay to let tmux initialize
-      setTimeout(() => {}, 100);
+      await this.configureTmuxSession(tmuxBin, sessionName, env, true);
+      await this.tmuxManager.configureScrollBindings();
 
       // Attach to the tmux session via PTY
       return this.attachTmuxSession(sessionId, env);
@@ -357,17 +347,9 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     if (session.useTmux) {
       const sessionName = `elevenex-${sessionId}`;
       const tmuxBin = this.tmuxManager.getTmuxBin();
-      try {
-        execSync(
-          `${tmuxBin} set-option -t ${sessionName} default-size ${cols}x${rows}`,
-          { stdio: 'ignore' },
-        );
-        execSync(`${tmuxBin} resize-window -t ${sessionName} ${cols} ${rows}`, {
-          stdio: 'ignore',
-        });
-      } catch {
+      void this.resizeTmuxWindow(tmuxBin, sessionName, cols, rows).catch(() => {
         // Ignore resize errors
-      }
+      });
     }
   }
 
@@ -424,10 +406,10 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     return false;
   }
 
-  killTmuxSession(sessionId: number): void {
+  async killTmuxSession(sessionId: number): Promise<void> {
     this.plannotatorRegistry.markLaunchInactive(sessionId);
     if (this.tmuxManager.isTmuxAvailable()) {
-      this.tmuxManager.killSession(sessionId);
+      await this.tmuxManager.killSession(sessionId);
     }
   }
 
@@ -437,10 +419,10 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     return this.processes.has(sessionId);
   }
 
-  hasTmuxSession(sessionId: number): boolean {
+  async hasTmuxSession(sessionId: number): Promise<boolean> {
     return (
       this.tmuxManager.isTmuxAvailable() &&
-      this.tmuxManager.sessionExists(sessionId)
+      (await this.tmuxManager.sessionExists(sessionId))
     );
   }
 
@@ -469,7 +451,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
    * Writes the settings JSON to a temp file to avoid shell quoting issues
    * (especially inside tmux commands). The temp file persists for the session lifetime.
    */
-  private buildHooksSettingsArgs(): string[] {
+  private async buildHooksSettingsArgs(): Promise<string[]> {
     const curlCmd = () =>
       `body=$(cat); curl -s -X POST -H 'Content-Type: application/json' -H "X-Elevenex-Session-Id: $ELEVENEX_SESSION_ID" --data-binary "$body" http://localhost:$ELEVENEX_PORT/api/claude-hooks/event > /dev/null 2>&1 || true`;
 
@@ -492,8 +474,68 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       os.tmpdir(),
       `elevenex-hooks-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
     );
-    fs.writeFileSync(tmpFile, JSON.stringify(hooksConfig));
+    await fs.writeFile(tmpFile, JSON.stringify(hooksConfig));
 
     return ['--settings', tmpFile];
+  }
+
+  private shellEscape(value: string): string {
+    return `'${value.replace(/'/g, "'\\''")}'`;
+  }
+
+  private async configureTmuxSession(
+    tmuxBin: string,
+    sessionName: string,
+    env: NodeJS.ProcessEnv,
+    includeHistoryLimit: boolean,
+  ): Promise<void> {
+    await execFileQuiet(
+      tmuxBin,
+      ['set-window-option', '-t', sessionName, 'alternate-screen', 'on'],
+      { env },
+    );
+    await execFileQuiet(
+      tmuxBin,
+      ['set-option', '-t', sessionName, 'mouse', 'on'],
+      {
+        env,
+      },
+    );
+    if (includeHistoryLimit) {
+      await execFileQuiet(
+        tmuxBin,
+        ['set-option', '-t', sessionName, 'history-limit', '50000'],
+        { env },
+      );
+    }
+    await execFileQuiet(
+      tmuxBin,
+      ['set-option', '-t', sessionName, 'status', 'off'],
+      {
+        env,
+      },
+    );
+  }
+
+  private async resizeTmuxWindow(
+    tmuxBin: string,
+    sessionName: string,
+    cols: number,
+    rows: number,
+  ): Promise<void> {
+    await execFileQuiet(tmuxBin, [
+      'set-option',
+      '-t',
+      sessionName,
+      'default-size',
+      `${cols}x${rows}`,
+    ]);
+    await execFileQuiet(tmuxBin, [
+      'resize-window',
+      '-t',
+      sessionName,
+      String(cols),
+      String(rows),
+    ]);
   }
 }
