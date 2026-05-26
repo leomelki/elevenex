@@ -1226,6 +1226,40 @@ describe('ClaudeRuntimeService', () => {
     );
   });
 
+  it('queues prompts submitted while a run is still initializing', async () => {
+    (service as any).initializingRuns.set(7, 'run-1');
+
+    await service.submitPrompt(7, 'Queue this while startup awaits');
+
+    expect(query).not.toHaveBeenCalled();
+    expect((service as any).ensureRuntimeState(7).pendingPrompts).toEqual([
+      expect.objectContaining({
+        prompt: 'Queue this while startup awaits',
+      }),
+    ]);
+  });
+
+  it('clears the initializing guard if async runtime setup fails before the run is active', async () => {
+    (service as any).buildQueryOptions = jest
+      .fn()
+      .mockRejectedValue(new Error('runtime setup failed'));
+
+    await expect(service.submitPrompt(7, 'Start this')).rejects.toThrow(
+      'runtime setup failed',
+    );
+
+    expect((service as any).initializingRuns.has(7)).toBe(false);
+    expect((service as any).activeRuns.has(7)).toBe(false);
+    expect((service as any).ensureRuntimeState(7)).toEqual(
+      expect.objectContaining({
+        lastError: 'runtime setup failed',
+        runPhase: 'error',
+        sessionState: 'idle',
+        canInterrupt: false,
+      }),
+    );
+  });
+
   it('generates a Haiku title for the first prompt of an auto-named session', async () => {
     sessionsService.findOne.mockResolvedValue({
       id: 7,

@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { PiSessionRuntime } from './pi-session-runtime.js';
+import { buildAugmentedEnvAsync } from '../config/system-paths.js';
 
 jest.mock('child_process', () => ({
   spawn: jest.fn(),
@@ -31,6 +32,7 @@ type MockPiProcess = EventEmitter & {
 };
 
 const mockSpawn = jest.mocked(spawn);
+const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
 
 function createPiProcess(): MockPiProcess {
   const child = new EventEmitter() as MockPiProcess;
@@ -57,12 +59,23 @@ function flushAsyncStart(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('PiSessionRuntime', () => {
   let child: MockPiProcess;
 
   beforeEach(() => {
     jest.useRealTimers();
     jest.clearAllMocks();
+    mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
     child = createPiProcess();
     mockSpawn.mockReturnValue(child as never);
   });
@@ -112,6 +125,21 @@ describe('PiSessionRuntime', () => {
       ],
       expect.objectContaining({ cwd: '/repo/worktree' }),
     );
+  });
+
+  it('coalesces concurrent async starts into one Pi process', async () => {
+    const env = createDeferred<NodeJS.ProcessEnv>();
+    mockBuildAugmentedEnv.mockReturnValueOnce(env.promise);
+    const runtime = new PiSessionRuntime({ cwd: '/repo/worktree' });
+
+    const firstStart = runtime.start();
+    const secondStart = runtime.start();
+
+    expect(mockBuildAugmentedEnv).toHaveBeenCalledTimes(1);
+    env.resolve({ PATH: '/mock/bin' });
+    await Promise.all([firstStart, secondStart]);
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 
   it('routes extension UI requests and responses without command correlation', async () => {

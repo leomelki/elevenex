@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { PiRuntimeService } from './pi-runtime.service.js';
+import { buildAugmentedEnvAsync } from '../config/system-paths.js';
 
 jest.mock('../session-title/session-title.service.js', () => ({
   SessionTitleService: jest.fn(),
@@ -18,9 +19,11 @@ jest.mock('../config/system-paths.js', () => ({
 
 class MockWritable extends EventEmitter {
   writable = true;
+  readonly writes: string[] = [];
   private nextWrite?: (chunk: string) => void;
 
   write(chunk: string): boolean {
+    this.writes.push(chunk);
     this.nextWrite?.(chunk);
     return true;
   }
@@ -41,6 +44,17 @@ type MockPiProcess = EventEmitter & {
 };
 
 const mockSpawn = jest.mocked(spawn);
+const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
 
 function createPiProcess(sessionFile: string): MockPiProcess {
   const child = new EventEmitter() as MockPiProcess;
@@ -167,6 +181,7 @@ describe('PiRuntimeService lifecycle', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
     delete process.env.PI_RUNTIME_IDLE_MS;
     delete process.env.PI_RUNTIME_IDLE_CAP;
   });
@@ -192,6 +207,43 @@ describe('PiRuntimeService lifecycle', () => {
     await Promise.resolve();
 
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('queues prompts submitted while the Pi run is still initializing', async () => {
+    const child = createPiProcess('/tmp/pi-session-1.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    const env = createDeferred<NodeJS.ProcessEnv>();
+    mockBuildAugmentedEnv.mockReturnValueOnce(env.promise);
+    const { service } = createService({ idleMs: '60000' });
+
+    const firstPrompt = service.submitPrompt(1, 'first');
+    while (mockBuildAugmentedEnv.mock.calls.length === 0) {
+      await Promise.resolve();
+    }
+
+    await service.submitPrompt(1, 'second');
+    expect((service as any).ensureRuntimeState(1).pendingPrompts).toEqual([
+      expect.objectContaining({ prompt: 'second' }),
+    ]);
+    expect(mockSpawn).not.toHaveBeenCalled();
+
+    env.resolve({ PATH: '/mock/bin' });
+    await firstPrompt;
+
+    const promptMessages = () =>
+      child.stdin.writes
+        .map((write) => JSON.parse(write) as { type: string; message?: string })
+        .filter((write) => write.type === 'prompt')
+        .map((write) => write.message);
+
+    expect(promptMessages()).toEqual(['first']);
+
+    await jest.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+
+    expect(promptMessages()).toEqual(['first', 'second']);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    await service.onModuleDestroy();
   });
 
   it('closes the oldest idle detached runtime when the global cap is exceeded', async () => {

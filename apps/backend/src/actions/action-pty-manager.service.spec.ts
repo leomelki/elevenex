@@ -41,6 +41,16 @@ function createMockPty(): MockPty {
   return process;
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('ActionPtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
   const mockExecFileQuiet = jest.mocked(execFileQuiet);
@@ -159,5 +169,44 @@ describe('ActionPtyManager', () => {
       args.includes('new-session'),
     );
     expect(newSessionCall?.[1].join(' ')).toContain("PATH='\\''/repo/bin'\\''");
+  });
+
+  it('rejects concurrent starts for the same action while async env setup is pending', async () => {
+    mockFindBinary.mockReturnValue(null);
+    const env = createDeferred<NodeJS.ProcessEnv>();
+    const envRequested = createDeferred<void>();
+    mockBuildAugmentedEnv.mockImplementation(() => {
+      envRequested.resolve();
+      return env.promise;
+    });
+    manager = new ActionPtyManager();
+    manager.registerPersistence({
+      markRunning: jest.fn().mockResolvedValue(undefined),
+      flushCurrentOutput: jest.fn().mockResolvedValue(undefined),
+      finalizeRun: jest.fn().mockResolvedValue(undefined),
+    });
+
+    const firstStart = manager.start({
+      id: 12,
+      worktreePath: tmpDir,
+      command: 'node -v',
+    });
+    await envRequested.promise;
+
+    await expect(
+      manager.start({
+        id: 12,
+        worktreePath: tmpDir,
+        command: 'node -v',
+      }),
+    ).rejects.toThrow('Action 12 is already running');
+
+    env.resolve({
+      PATH: '/repo/bin:/usr/bin',
+      SHELL: '/custom/zsh',
+    });
+    await firstStart;
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 });

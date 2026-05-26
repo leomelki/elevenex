@@ -27,10 +27,13 @@ interface UserPtySession {
 @Injectable()
 export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private processes = new Map<number, UserPtySession>();
+  private readonly spawnInFlight = new Map<number, Promise<pty.IPty | null>>();
+  private readonly cancelledSpawns = new Set<number>();
   private pendingKills = new Set<number>();
   private readonly logger = new Logger('UserPtyManager');
   private tmuxBin: string;
   private scrollBindingsConfigured = false;
+  private scrollBindingsConfigurePromise: Promise<void> | null = null;
 
   constructor(
     @Inject(forwardRef(() => UserTerminalGateway))
@@ -52,19 +55,27 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
   private async configureScrollBindings(): Promise<void> {
     if (this.scrollBindingsConfigured) return;
+    if (this.scrollBindingsConfigurePromise) {
+      return this.scrollBindingsConfigurePromise;
+    }
     const tmpFile = path.join(
       os.tmpdir(),
       `elevenex-tmux-scroll-uterm-${process.pid}.conf`,
     );
-    try {
-      await fs.writeFile(tmpFile, generateTmuxScrollConfig());
-      await execFileQuiet(this.tmuxBin, ['source-file', tmpFile]);
-      await fs.unlink(tmpFile).catch(() => undefined);
-      this.scrollBindingsConfigured = true;
-    } catch {
-      await fs.unlink(tmpFile).catch(() => undefined);
-      // Ignore
-    }
+    this.scrollBindingsConfigurePromise = (async () => {
+      try {
+        await fs.writeFile(tmpFile, generateTmuxScrollConfig());
+        await execFileQuiet(this.tmuxBin, ['source-file', tmpFile]);
+        await fs.unlink(tmpFile).catch(() => undefined);
+        this.scrollBindingsConfigured = true;
+      } catch {
+        await fs.unlink(tmpFile).catch(() => undefined);
+        // Ignore
+      } finally {
+        this.scrollBindingsConfigurePromise = null;
+      }
+    })();
+    return this.scrollBindingsConfigurePromise;
   }
 
   private getTmuxSessionName(terminalId: number): string {
@@ -76,9 +87,30 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     worktreePath: string,
     shell: string,
   ): Promise<pty.IPty | null> {
+    const inFlight = this.spawnInFlight.get(terminalId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const promise = this.spawnInternal(terminalId, worktreePath, shell).finally(
+      () => {
+        if (this.spawnInFlight.get(terminalId) === promise) {
+          this.spawnInFlight.delete(terminalId);
+        }
+      },
+    );
+    this.spawnInFlight.set(terminalId, promise);
+    return promise;
+  }
+
+  private async spawnInternal(
+    terminalId: number,
+    worktreePath: string,
+    shell: string,
+  ): Promise<pty.IPty | null> {
     // Kill existing PTY attachment if any
     if (this.processes.has(terminalId)) {
-      this.kill(terminalId);
+      this.killProcess(terminalId);
     }
 
     const env: NodeJS.ProcessEnv = {
@@ -86,9 +118,13 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     };
+    if (this.cancelledSpawns.has(terminalId)) {
+      this.cancelledSpawns.delete(terminalId);
+      return null;
+    }
 
     if (this.processes.has(terminalId)) {
-      this.kill(terminalId);
+      this.killProcess(terminalId);
     }
 
     const tmuxSessionName = this.getTmuxSessionName(terminalId);
@@ -276,10 +312,18 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
   /** Kill PTY attachment only — tmux session survives for later reattach */
   kill(terminalId: number): boolean {
-    this.pendingKills.add(terminalId);
+    const hadInFlightSpawn = this.spawnInFlight.has(terminalId);
+    if (hadInFlightSpawn) {
+      this.cancelledSpawns.add(terminalId);
+    }
+    return this.killProcess(terminalId) || hadInFlightSpawn;
+  }
+
+  private killProcess(terminalId: number): boolean {
     const session = this.processes.get(terminalId);
 
     if (session) {
+      this.pendingKills.add(terminalId);
       try {
         session.pty.kill();
 

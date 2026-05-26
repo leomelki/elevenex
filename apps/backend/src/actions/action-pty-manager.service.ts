@@ -34,6 +34,7 @@ interface RunningAction {
   logFilePath?: string;
   completionMonitor?: NodeJS.Timeout;
   completionCheckInFlight?: boolean;
+  finalizing?: boolean;
 }
 
 interface ActionPersistence {
@@ -68,6 +69,7 @@ export class ActionPtyManager
 {
   private readonly logger = new Logger('ActionPtyManager');
   private readonly processes = new Map<number, RunningAction>();
+  private readonly startingActions = new Set<number>();
   private readonly defaultShell = process.env.SHELL || '/bin/zsh';
   private gateway?: ActionGatewayLike;
   private persistence?: ActionPersistence;
@@ -94,33 +96,39 @@ export class ActionPtyManager
   }
 
   async start(action: ActionRecord): Promise<void> {
-    if (this.isRunning(action.id)) {
+    if (this.isRunning(action.id) || this.startingActions.has(action.id)) {
       throw new Error(`Action ${action.id} is already running`);
     }
 
-    if (!(await this.pathExists(action.worktreePath))) {
-      throw new Error(`Worktree path does not exist: ${action.worktreePath}`);
+    this.startingActions.add(action.id);
+
+    try {
+      if (!(await this.pathExists(action.worktreePath))) {
+        throw new Error(`Worktree path does not exist: ${action.worktreePath}`);
+      }
+
+      if (!this.persistence) {
+        throw new Error('Action persistence is not registered');
+      }
+
+      await this.persistence.markRunning(action.id);
+
+      const env = await this.buildEnv(action.worktreePath);
+
+      let ptyProcess: pty.IPty | null = null;
+
+      if (this.isTmuxAvailable()) {
+        ptyProcess = await this.spawnWithTmux(action, env);
+      }
+
+      if (!ptyProcess) {
+        ptyProcess = this.spawnDirect(action, env);
+      }
+
+      this.gateway?.notifyStatus(action.id, 'running');
+    } finally {
+      this.startingActions.delete(action.id);
     }
-
-    if (!this.persistence) {
-      throw new Error('Action persistence is not registered');
-    }
-
-    await this.persistence.markRunning(action.id);
-
-    const env = await this.buildEnv(action.worktreePath);
-
-    let ptyProcess: pty.IPty | null = null;
-
-    if (this.isTmuxAvailable()) {
-      ptyProcess = await this.spawnWithTmux(action, env);
-    }
-
-    if (!ptyProcess) {
-      ptyProcess = this.spawnDirect(action, env);
-    }
-
-    this.gateway?.notifyStatus(action.id, 'running');
   }
 
   async stop(actionId: number): Promise<boolean> {
@@ -163,7 +171,7 @@ export class ActionPtyManager
 
       // Finalize immediately
       const exitCode = (await this.readExitCode(actionId)) ?? -1;
-      void this.handleExit(actionId, exitCode);
+      await this.handleExit(actionId, exitCode);
     } else {
       session.pty.kill('SIGTERM');
 
@@ -612,6 +620,8 @@ export class ActionPtyManager
   private async handleExit(actionId: number, exitCode: number): Promise<void> {
     const session = this.processes.get(actionId);
     if (!session || !this.persistence) return;
+    if (session.finalizing) return;
+    session.finalizing = true;
 
     if (session.flushTimer) {
       clearTimeout(session.flushTimer);

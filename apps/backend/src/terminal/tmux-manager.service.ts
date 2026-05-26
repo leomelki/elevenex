@@ -21,6 +21,7 @@ export class TmuxManager implements OnModuleDestroy {
   private tmuxAvailable: boolean;
   private tmuxBin: string;
   private scrollBindingsConfigured = false;
+  private scrollBindingsConfigurePromise: Promise<void> | null = null;
 
   constructor() {
     this.tmuxBin = this.resolveTmuxPath();
@@ -63,22 +64,30 @@ export class TmuxManager implements OnModuleDestroy {
   /** Configure global tmux key bindings for scroll + auto-exit copy-mode */
   async configureScrollBindings(): Promise<void> {
     if (this.scrollBindingsConfigured) return;
+    if (this.scrollBindingsConfigurePromise) {
+      return this.scrollBindingsConfigurePromise;
+    }
 
     const tmpFile = path.join(
       os.tmpdir(),
       `elevenex-tmux-scroll-${process.pid}.conf`,
     );
-    try {
-      await fs.writeFile(tmpFile, generateTmuxScrollConfig());
-      await execFileQuiet(this.tmuxBin, ['source-file', tmpFile]);
-      await fs.unlink(tmpFile).catch(() => undefined);
+    this.scrollBindingsConfigurePromise = (async () => {
+      try {
+        await fs.writeFile(tmpFile, generateTmuxScrollConfig());
+        await execFileQuiet(this.tmuxBin, ['source-file', tmpFile]);
+        await fs.unlink(tmpFile).catch(() => undefined);
 
-      this.scrollBindingsConfigured = true;
-      console.log('tmux scroll + copy-mode-exit bindings configured');
-    } catch (error) {
-      await fs.unlink(tmpFile).catch(() => undefined);
-      console.error('Failed to configure tmux scroll bindings:', error);
-    }
+        this.scrollBindingsConfigured = true;
+        console.log('tmux scroll + copy-mode-exit bindings configured');
+      } catch (error) {
+        await fs.unlink(tmpFile).catch(() => undefined);
+        console.error('Failed to configure tmux scroll bindings:', error);
+      } finally {
+        this.scrollBindingsConfigurePromise = null;
+      }
+    })();
+    return this.scrollBindingsConfigurePromise;
   }
 
   private getSessionName(sessionId: number): string {

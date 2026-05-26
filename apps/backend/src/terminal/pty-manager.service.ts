@@ -68,6 +68,8 @@ logger.log(`Using claude binary: ${CLAUDE_BIN}`);
 @Injectable()
 export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private processes = new Map<number, PtySession>();
+  private readonly spawnInFlight = new Map<number, Promise<pty.IPty | null>>();
+  private readonly cancelledSpawns = new Set<number>();
   private pendingKills = new Set<number>();
   private readonly logger = new Logger('PtyManager');
 
@@ -90,14 +92,45 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     worktreePath: string,
     resumeSessionId?: string,
   ): Promise<pty.IPty | null> {
+    const inFlight = this.spawnInFlight.get(sessionId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const promise = this.spawnInternal(
+      sessionId,
+      worktreePath,
+      resumeSessionId,
+    ).finally(() => {
+      if (this.spawnInFlight.get(sessionId) === promise) {
+        this.spawnInFlight.delete(sessionId);
+      }
+    });
+    this.spawnInFlight.set(sessionId, promise);
+    return promise;
+  }
+
+  private async spawnInternal(
+    sessionId: number,
+    worktreePath: string,
+    resumeSessionId?: string,
+  ): Promise<pty.IPty | null> {
     const reusingTmuxSession =
       this.tmuxManager.isTmuxAvailable() &&
       (await this.tmuxManager.sessionExists(sessionId));
+    if (this.cancelledSpawns.has(sessionId)) {
+      this.cancelledSpawns.delete(sessionId);
+      return null;
+    }
 
     // Kill existing process if any
-    this.kill(sessionId);
+    this.killProcess(sessionId);
 
     const hooksArgs = await this.buildHooksSettingsArgs();
+    if (this.cancelledSpawns.has(sessionId)) {
+      this.cancelledSpawns.delete(sessionId);
+      return null;
+    }
     const args = [
       '--enable-auto-mode',
       ...hooksArgs,
@@ -113,9 +146,14 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     });
+    if (this.cancelledSpawns.has(sessionId)) {
+      this.cancelledSpawns.delete(sessionId);
+      this.plannotatorRegistry.markLaunchInactive(sessionId);
+      return null;
+    }
 
     if (this.processes.has(sessionId)) {
-      this.kill(sessionId);
+      this.killProcess(sessionId);
     }
 
     this.logger.log(`Spawning PTY for session ${sessionId} in ${worktreePath}`);
@@ -375,10 +413,18 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
   }
 
   kill(sessionId: number): boolean {
-    this.pendingKills.add(sessionId);
+    const hadInFlightSpawn = this.spawnInFlight.has(sessionId);
+    if (hadInFlightSpawn) {
+      this.cancelledSpawns.add(sessionId);
+    }
+    return this.killProcess(sessionId) || hadInFlightSpawn;
+  }
+
+  private killProcess(sessionId: number): boolean {
     const session = this.processes.get(sessionId);
 
     if (session) {
+      this.pendingKills.add(sessionId);
       if (!session.useTmux) {
         this.plannotatorRegistry.markLaunchInactive(sessionId);
       }
