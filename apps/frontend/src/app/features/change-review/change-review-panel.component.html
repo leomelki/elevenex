@@ -34,9 +34,25 @@
           <ng-icon name="lucideExternalLink" size="15" />
         </button>
       }
-      <button z-button zType="ghost" zSize="sm" class="w-8 p-0" type="button" title="Refresh base refs" [zDisabled]="loadingSummary()" (click)="refresh(true)">
-        <ng-icon name="lucideRefreshCw" size="15" [class.cr-spin]="loadingSummary()" />
-      </button>
+      @if (diffsOutdated()) {
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          class="cr-outdated-button"
+          type="button"
+          title="Reload outdated diffs"
+          [zDisabled]="loadingSummary()"
+          (click)="refreshOutdatedDiffs()"
+        >
+          <span>Outdated</span>
+          <ng-icon name="lucideRefreshCw" size="14" [class.cr-spin]="loadingSummary()" />
+        </button>
+      } @else {
+        <button z-button zType="ghost" zSize="sm" class="w-8 p-0" type="button" title="Refresh base refs" [zDisabled]="loadingSummary()" (click)="refresh(true)">
+          <ng-icon name="lucideRefreshCw" size="15" [class.cr-spin]="loadingSummary()" />
+        </button>
+      }
     </div>
   </header>
 
@@ -180,13 +196,79 @@
           (mouseup)="captureDiffSelection()"
           (keyup)="captureDiffSelection()"
         >
+          @if (activeFile(); as file) {
+            <div
+              class="cr-file-header-row cr-file-header-row--main cr-file-header-row--sticky"
+              [style.transform]="headerTranslateX()"
+              [style.width.px]="diffViewportWidthPx()"
+            >
+              <button
+                type="button"
+                class="cr-collapse-button"
+                [attr.aria-label]="isFileCollapsed(file) ? 'Expand ' + file.path : 'Collapse ' + file.path"
+                [title]="isFileCollapsed(file) ? 'Expand file' : 'Collapse file'"
+                (click)="toggleFileCollapsed(file)"
+              >
+                <ng-icon [name]="isFileCollapsed(file) ? 'lucideChevronRight' : 'lucideChevronDown'" size="14" />
+              </button>
+              <span class="cr-file-status" [ngClass]="statusClass(file.status)">{{ statusLabel(file.status) }}</span>
+              <span class="cr-path" [title]="file.path">
+                @if (fileDirname(file.path); as dirname) {
+                  <span class="cr-path__dir">{{ dirname }}</span>
+                  <span class="cr-path__slash" aria-hidden="true">/</span>
+                }
+                <strong class="cr-path__name">{{ fileBasename(file.path) }}</strong>
+              </span>
+              <span class="ml-auto inline-flex shrink-0 gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground">
+                @if (file.binary) {
+                  <ng-icon name="lucideBinary" size="14" />
+                } @else {
+                  <span class="text-success">+{{ file.additions }}</span>
+                  <span class="text-destructive">-{{ file.deletions }}</span>
+                }
+              </span>
+              <label
+                class="cr-viewed-control"
+                [class.cr-viewed-control--checked]="isFileViewed(file)"
+                [class.cr-viewed-control--disabled]="!isFileLoaded(file)"
+              >
+                <input
+                  type="checkbox"
+                  class="size-3.5 accent-[var(--success)]"
+                  [checked]="isFileViewed(file)"
+                  [disabled]="!isFileLoaded(file)"
+                  (change)="toggleFileViewed(file)"
+                />
+                Viewed
+              </label>
+            </div>
+          }
           <div class="cr-diff-spacer" [style.height.px]="totalHeightPx()"></div>
           <div class="cr-diff-rendered" [style.transform]="'translateY(' + renderedOffsetPx() + 'px)'">
             @for (renderRow of visibleRows(); track renderRowTrack($index, renderRow)) {
               @if (renderRow.kind === 'fileHeader') {
-                <div class="cr-file-header-row cr-file-header-row--main">
+                <div
+                  class="cr-file-header-row cr-file-header-row--main"
+                  [style.transform]="headerTranslateX()"
+                  [style.width.px]="diffViewportWidthPx()"
+                >
+                  <button
+                    type="button"
+                    class="cr-collapse-button"
+                    [attr.aria-label]="isFileCollapsed(renderRow.file) ? 'Expand ' + renderRow.file.path : 'Collapse ' + renderRow.file.path"
+                    [title]="isFileCollapsed(renderRow.file) ? 'Expand file' : 'Collapse file'"
+                    (click)="toggleFileCollapsed(renderRow.file)"
+                  >
+                    <ng-icon [name]="isFileCollapsed(renderRow.file) ? 'lucideChevronRight' : 'lucideChevronDown'" size="14" />
+                  </button>
                   <span class="cr-file-status" [ngClass]="statusClass(renderRow.file.status)">{{ statusLabel(renderRow.file.status) }}</span>
-                  <strong class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-xs">{{ renderRow.file.path }}</strong>
+                  <span class="cr-path" [title]="renderRow.file.path">
+                    @if (fileDirname(renderRow.file.path); as dirname) {
+                      <span class="cr-path__dir">{{ dirname }}</span>
+                      <span class="cr-path__slash" aria-hidden="true">/</span>
+                    }
+                    <strong class="cr-path__name">{{ fileBasename(renderRow.file.path) }}</strong>
+                  </span>
                   <span class="ml-auto inline-flex shrink-0 gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground">
                     @if (renderRow.file.binary) {
                       <ng-icon name="lucideBinary" size="14" />
@@ -211,7 +293,11 @@
                   </label>
                 </div>
               } @else if (renderRow.kind === 'fileMeta') {
-                <div class="cr-file-header-row cr-file-header-row--meta">
+                <div
+                  class="cr-file-header-row cr-file-header-row--meta"
+                  [style.transform]="headerTranslateX()"
+                  [style.width.px]="diffViewportWidthPx()"
+                >
                   <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{{ fileMetaText(renderRow) }}</span>
                 </div>
               } @else {

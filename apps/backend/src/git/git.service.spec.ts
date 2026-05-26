@@ -380,6 +380,8 @@ describe('GitService', () => {
 
       expect(summary.hasChanges).toBe(true);
       expect(summary.upstream).toBeNull();
+      expect(summary.headSha).toMatch(/^[a-f0-9]{40}$/);
+      expect(summary.worktreeFingerprint).toMatch(/^[a-f0-9]{64}$/);
       expect(summary.ahead).toBe(0);
       expect(summary.behind).toBe(0);
       expect(summary.staged.files).toBe(1);
@@ -403,8 +405,21 @@ describe('GitService', () => {
 
       expect(summary.hasChanges).toBe(false);
       expect(summary.upstream).toMatch(/^origin\//);
+      expect(summary.headSha).toMatch(/^[a-f0-9]{40}$/);
+      expect(summary.worktreeFingerprint).toMatch(/^[a-f0-9]{64}$/);
       expect(summary.ahead).toBe(1);
       expect(summary.behind).toBe(0);
+    });
+
+    it('changes the worktree fingerprint when local file content changes', async () => {
+      fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'note\nline\n');
+      const before = await service.getStatusSummary(repoPath);
+
+      fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'note\nchanged\n');
+      const after = await service.getStatusSummary(repoPath);
+
+      expect(before.headSha).toBe(after.headSha);
+      expect(before.worktreeFingerprint).not.toBe(after.worktreeFingerprint);
     });
   });
 

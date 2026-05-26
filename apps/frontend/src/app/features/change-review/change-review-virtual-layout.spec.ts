@@ -77,6 +77,18 @@ describe('ChangeReviewVirtualLayout', () => {
     expect(expanded.fileStart('b.ts')).toBe(layout.fileStart('b.ts')! + 4);
   });
 
+  it('supports files collapsed to a single header row', () => {
+    const layout = new ChangeReviewVirtualLayout([
+      { path: 'a.ts', diffRows: 0, headerRows: 1 },
+      { path: 'b.ts', diffRows: 2 },
+    ]);
+
+    expect(layout.totalRows).toBe(1 + CHANGE_REVIEW_HEADER_ROWS + 2);
+    expect(layout.positionForIndex(0)).toMatchObject({ path: 'a.ts', kind: 'header', headerIndex: 0 });
+    expect(layout.positionForIndex(1)).toMatchObject({ path: 'b.ts', kind: 'header', headerIndex: 0 });
+    expect(layout.positionForIndex(3)).toMatchObject({ path: 'b.ts', kind: 'diff', diffIndex: 0 });
+  });
+
   it('estimates binary and textual file row counts', () => {
     expect(estimateChangeReviewDiffRows(file('image.png', 0, 0, { binary: true }), 8)).toBe(1);
     expect(estimateChangeReviewDiffRows(file('large.txt', 100_000, 0, { large: true }), 8)).toBe(1);

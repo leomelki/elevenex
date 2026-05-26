@@ -21,6 +21,8 @@ export interface GitScopeSummary {
 export interface GitStatusSummary {
   branch: string;
   upstream: string | null;
+  headSha: string | null;
+  worktreeFingerprint: string;
   ahead: number;
   behind: number;
   hasChanges: boolean;

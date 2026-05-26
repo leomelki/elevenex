@@ -1,5 +1,6 @@
-import { inject, Injectable } from '@angular/core';
+import { inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { tap } from 'rxjs';
 import {
   CommitMessageSuggestion,
   CommitResult,
@@ -13,6 +14,7 @@ import { AgentRuntimeProviderService } from './agent-runtime-provider.service';
 export class GitService {
   private http = inject(HttpClient);
   private providerSelection = inject(AgentRuntimeProviderService);
+  private readonly latestSummaries = signal<ReadonlyMap<string, GitStatusSummary>>(new Map());
 
   getStatus(worktreePath: string) {
     return this.http.get<FileStatus[]>('/api/git/status', {
@@ -23,7 +25,11 @@ export class GitService {
   getSummary(worktreePath: string) {
     return this.http.get<GitStatusSummary>('/api/git/summary', {
       params: { worktreePath },
-    });
+    }).pipe(tap((summary) => this.rememberSummary(worktreePath, summary)));
+  }
+
+  latestSummary(worktreePath: string | null): GitStatusSummary | null {
+    return worktreePath ? this.latestSummaries().get(worktreePath) ?? null : null;
   }
 
   stageFiles(worktreePath: string, files: string[]) {
@@ -52,5 +58,13 @@ export class GitService {
 
   push(worktreePath: string) {
     return this.http.post<PushResult>('/api/git/push', { worktreePath });
+  }
+
+  private rememberSummary(worktreePath: string, summary: GitStatusSummary): void {
+    this.latestSummaries.update((current) => {
+      const next = new Map(current);
+      next.set(worktreePath, summary);
+      return next;
+    });
   }
 }

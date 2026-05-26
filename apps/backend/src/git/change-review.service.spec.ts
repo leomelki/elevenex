@@ -49,9 +49,23 @@ describe('ChangeReviewService', () => {
     const summary = await service.getSummary(repoPath, 'uncommitted');
 
     expect(summary.compareLabel).toBe('Uncommitted changes');
+    expect(summary.headSha).toMatch(/^[a-f0-9]{40}$/);
+    expect(summary.worktreeFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.files.map((file) => file.path)).toEqual(['README.md', 'src/new.ts']);
     expect(summary.totals.files).toBe(2);
     expect(summary.totals.additions).toBeGreaterThanOrEqual(2);
+  });
+
+  it('updates the summary fingerprint when working tree content changes', async () => {
+    write('README.md', 'one\ntwo\n');
+    const before = await service.getSummary(repoPath, 'uncommitted');
+
+    write('README.md', 'one\ntwo\nthree\n');
+    const after = await service.getSummary(repoPath, 'uncommitted');
+
+    expect(before.headSha).toBe(after.headSha);
+    expect(before.worktreeFingerprint).not.toBe(after.worktreeFingerprint);
+    expect(after.totals.additions).toBeGreaterThan(before.totals.additions);
   });
 
   it('loads a windowed textual diff for a changed file', async () => {

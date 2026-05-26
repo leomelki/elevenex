@@ -9,6 +9,8 @@ import { CommitButtonComponent } from './commit-button.component';
 const changedSummary: GitStatusSummary = {
   branch: 'main',
   upstream: 'origin/main',
+  headSha: 'head-main',
+  worktreeFingerprint: 'fingerprint-changed',
   ahead: 0,
   behind: 0,
   hasChanges: true,
@@ -39,6 +41,8 @@ const changedSummary: GitStatusSummary = {
 const cleanSummary: GitStatusSummary = {
   branch: 'feature',
   upstream: 'origin/feature',
+  headSha: 'head-feature',
+  worktreeFingerprint: 'fingerprint-clean',
   ahead: 0,
   behind: 0,
   hasChanges: false,

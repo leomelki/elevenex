@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { signal, WritableSignal } from '@angular/core';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +10,9 @@ import {
   ChangeReviewScope,
   ChangeReviewSummary,
 } from '@/shared/models/change-review.model';
+import { GitStatusSummary } from '@/shared/models/git.model';
 import { ChangeReviewService } from '@/shared/services/change-review.service';
+import { GitService } from '@/shared/services/git.service';
 import { ChangeReviewPanelComponent } from './change-review-panel.component';
 
 const flush = () => new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -42,6 +45,7 @@ const summary = (
   baseRef: 'origin/main',
   baseSha: 'base123',
   headSha: 'head123',
+  worktreeFingerprint: 'worktree-a',
   mergeBaseSha: 'merge123',
   compareLabel: 'feature vs origin/main',
   generatedAt: new Date().toISOString(),
@@ -98,6 +102,21 @@ const fileWindow = (
   contextRanges: [],
 });
 
+const gitSummary = (overrides: Partial<GitStatusSummary> = {}): GitStatusSummary => ({
+  branch: 'feature',
+  upstream: 'origin/feature',
+  headSha: 'head123',
+  worktreeFingerprint: 'worktree-a',
+  ahead: 0,
+  behind: 0,
+  hasChanges: true,
+  files: [],
+  staged: { files: 0, additions: 0, deletions: 0 },
+  unstaged: { files: 0, additions: 0, deletions: 0 },
+  total: { files: 0, additions: 0, deletions: 0 },
+  ...overrides,
+});
+
 const setViewport = (el: HTMLElement, clientHeight = 240, scrollTop = 0) => {
   Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight });
   Object.defineProperty(el, 'scrollTop', { configurable: true, writable: true, value: scrollTop });
@@ -127,11 +146,16 @@ describe('ChangeReviewPanelComponent', () => {
   };
   let summaryCalls: Array<{ scope: ChangeReviewScope; response: Subject<ChangeReviewSummary> }>;
   let windowCalls: Array<{ path: string; offset: number; response: Subject<ChangeReviewFileWindow> }>;
+  let latestGitSummary: WritableSignal<GitStatusSummary | null>;
+  let gitServiceMock: {
+    latestSummary: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     installStorageStub();
     summaryCalls = [];
     windowCalls = [];
+    latestGitSummary = signal<GitStatusSummary | null>(null);
     localStorage.clear();
     serviceMock = {
       getSummary: vi.fn((_worktreePath: string, scope: ChangeReviewScope) => {
@@ -148,10 +172,16 @@ describe('ChangeReviewPanelComponent', () => {
       clearCache: vi.fn(),
       hasFileWindowCache: vi.fn(() => false),
     };
+    gitServiceMock = {
+      latestSummary: vi.fn(() => latestGitSummary()),
+    };
 
     await TestBed.configureTestingModule({
       imports: [ChangeReviewPanelComponent],
-      providers: [{ provide: ChangeReviewService, useValue: serviceMock }],
+      providers: [
+        { provide: ChangeReviewService, useValue: serviceMock },
+        { provide: GitService, useValue: gitServiceMock },
+      ],
     }).compileComponents();
 
     fixture = TestBed.createComponent(ChangeReviewPanelComponent);
@@ -235,6 +265,61 @@ describe('ChangeReviewPanelComponent', () => {
 
     fixture.componentInstance.toggleFileViewed(files[0]);
     expect(fixture.componentInstance.isFileViewed(files[0])).toBe(true);
+    expect(fixture.componentInstance.isFileCollapsed(files[0])).toBe(true);
+  });
+
+  it('collapses a file to its main header row', async () => {
+    const files = [file('src/a.ts'), file('src/b.ts')];
+    await flushSummary(summary(files));
+
+    fixture.componentInstance.toggleFileCollapsed(files[0]);
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.isFileCollapsed(files[0])).toBe(true);
+    expect(fixture.componentInstance.layout().fileStart('src/b.ts')).toBe(1);
+
+    fixture.componentInstance.toggleFileCollapsed(files[0]);
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.isFileCollapsed(files[0])).toBe(false);
+    expect(fixture.componentInstance.layout().fileStart('src/b.ts')).toBeGreaterThan(1);
+  });
+
+  it('renders file headers with a suffix-preserving path structure', async () => {
+    await flushSummary(summary([file('src/main/java/package/folder/Test.java')]));
+
+    const path = fixture.nativeElement.querySelector('.cr-path') as HTMLElement;
+    const dirname = path.querySelector('.cr-path__dir') as HTMLElement;
+    const basename = path.querySelector('.cr-path__name') as HTMLElement;
+
+    expect(path.getAttribute('title')).toBe('src/main/java/package/folder/Test.java');
+    expect(dirname.textContent).toBe('src/main/java/package/folder');
+    expect(basename.textContent).toBe('Test.java');
+    expect(basename.tagName.toLowerCase()).toBe('strong');
+  });
+
+  it('detects outdated branch diffs from the latest git status summary', async () => {
+    await flushSummary(summary([file('src/a.ts')]));
+
+    latestGitSummary.set(gitSummary({ worktreeFingerprint: 'worktree-a', headSha: 'head123' }));
+    fixture.detectChanges();
+    expect(fixture.componentInstance.diffsOutdated()).toBe(false);
+
+    latestGitSummary.set(gitSummary({ worktreeFingerprint: 'worktree-b', headSha: 'head123' }));
+    fixture.detectChanges();
+    expect(fixture.componentInstance.diffsOutdated()).toBe(true);
+  });
+
+  it('uses only HEAD drift for last-commit outdated detection', async () => {
+    fixture.componentInstance.summary.set(summary([file('src/a.ts')], 'last-commit'));
+
+    latestGitSummary.set(gitSummary({ worktreeFingerprint: 'worktree-b', headSha: 'head123' }));
+    fixture.detectChanges();
+    expect(fixture.componentInstance.diffsOutdated()).toBe(false);
+
+    latestGitSummary.set(gitSummary({ worktreeFingerprint: 'worktree-a', headSha: 'head456' }));
+    fixture.detectChanges();
+    expect(fixture.componentInstance.diffsOutdated()).toBe(true);
   });
 
   it('emits a structured mention for selected diff text', async () => {

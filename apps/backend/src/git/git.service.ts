@@ -10,6 +10,7 @@ import {
 } from '../config/system-paths.js';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
+import { readWorktreeFingerprint } from './git-worktree-fingerprint.js';
 
 const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
 const CLAUDE_BIN = findBinary('claude') ?? 'claude';
@@ -83,6 +84,8 @@ export interface GitScopeSummary {
 export interface GitStatusSummary {
   branch: string;
   upstream: string | null;
+  headSha: string | null;
+  worktreeFingerprint: string;
   ahead: number;
   behind: number;
   hasChanges: boolean;
@@ -145,11 +148,13 @@ export class GitService {
 
   async getStatusSummary(worktreePath: string): Promise<GitStatusSummary> {
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    const [files, status, stagedStats, unstagedStats] = await Promise.all([
+    const [files, status, stagedStats, unstagedStats, headSha, worktreeFingerprint] = await Promise.all([
       this.getStatus(worktreePath),
       git.status(),
       this.getScopeStats(worktreePath, true),
       this.getScopeStats(worktreePath, false),
+      git.revparse(['HEAD']).then((value) => value.trim()).catch(() => null),
+      readWorktreeFingerprint(worktreePath, git),
     ]);
 
     const branch = status.current || 'HEAD';
@@ -161,6 +166,8 @@ export class GitService {
     return {
       branch,
       upstream,
+      headSha,
+      worktreeFingerprint,
       ahead,
       behind,
       hasChanges: files.length > 0,

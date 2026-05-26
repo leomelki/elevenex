@@ -34,6 +34,7 @@ export interface ChangeReviewSummary {
   baseRef: string | null;
   baseSha: string | null;
   headSha: string | null;
+  worktreeFingerprint: string;
   mergeBaseSha: string | null;
   compareLabel: string;
   generatedAt: string;

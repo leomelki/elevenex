@@ -6,6 +6,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideBinary,
   lucideChevronDown,
+  lucideChevronRight,
   lucideCheck,
   lucideExternalLink,
   lucideFileCode,
@@ -36,6 +37,7 @@ import {
   DiffSelectionMentionContextRow,
 } from '@/shared/models/diff-selection-mention.model';
 import { ChangeReviewService } from '@/shared/services/change-review.service';
+import { GitService } from '@/shared/services/git.service';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { detectHljsLang, escapeHtml } from '@/features/session/claude-workspace/util/code-highlight';
@@ -143,6 +145,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
     provideIcons({
       lucideBinary,
       lucideChevronDown,
+      lucideChevronRight,
       lucideCheck,
       lucideExternalLink,
       lucideFileCode,
@@ -161,6 +164,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   readonly mentionSelection = output<DiffSelectionMention[]>();
 
   private readonly changeReview = inject(ChangeReviewService);
+  private readonly gitService = inject(GitService);
   private readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly diffScroll = viewChild<ElementRef<HTMLElement>>('diffScroll');
@@ -194,10 +198,30 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   readonly loadingContextRanges = signal<ReadonlySet<string>>(new Set());
   readonly fileChangeHashes = signal<ReadonlyMap<string, string>>(new Map());
   readonly viewedHashes = signal<Record<string, string>>(this.readViewedHashes());
+  readonly collapsedPaths = signal<ReadonlySet<string>>(new Set());
   readonly windowLoadState = signal<WindowLoadState>({ running: false, total: 0 });
   readonly selectionMentionAction = signal<DiffSelectionMentionAction | null>(null);
+  readonly diffScrollLeftPx = signal(0);
+  readonly diffViewportWidthPx = signal<number | null>(null);
 
   readonly totalHeightPx = computed(() => this.layout().totalRows * ROW_HEIGHT_PX);
+  readonly latestGitSummary = computed(() => this.gitService.latestSummary(this.worktreePath()));
+  readonly diffsOutdated = computed(() => {
+    const summary = this.summary();
+    const latest = this.latestGitSummary();
+    if (!summary || !latest) return false;
+    if (summary.headSha !== latest.headSha) return true;
+    if (summary.scope === 'last-commit') return false;
+    return summary.worktreeFingerprint !== latest.worktreeFingerprint;
+  });
+
+  readonly activeFile = computed(() => {
+    const activePath = this.activeFilePath();
+    if (!activePath) return null;
+    return this.fileStates().get(activePath)?.file
+      ?? this.filteredFiles().find((file) => file.path === activePath)
+      ?? null;
+  });
 
   readonly filteredFiles = computed(() => {
     const summary = this.summary();
@@ -248,6 +272,11 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     await this.loadForCurrentScope(refreshBase);
   }
 
+  async refreshOutdatedDiffs(): Promise<void> {
+    this.changeReview.clearCache(this.worktreePath(), this.scope());
+    await this.loadForCurrentScope(false);
+  }
+
   setScope(scope: ChangeReviewScope): void {
     if (scope === this.scope()) return;
     this.scope.set(scope);
@@ -273,8 +302,15 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   onDiffScroll(): void {
     this.selectionMentionAction.set(null);
+    this.updateDiffViewportMetrics();
     this.refreshRenderedRows();
     this.ensureVisibleRangeLoaded();
+  }
+
+  @HostListener('window:resize')
+  onWindowResize(): void {
+    this.updateDiffViewportMetrics();
+    this.refreshRenderedRows();
   }
 
   scrollToFile(file: ChangeReviewFileSummary): void {
@@ -294,6 +330,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.enqueueWindow(file.path, 0, true);
   }
 
+  toggleFileCollapsed(file: ChangeReviewFileSummary): void {
+    this.setFileCollapsed(file.path, !this.isFileCollapsed(file), true);
+  }
+
   toggleFileViewed(file: ChangeReviewFileSummary): void {
     const hash = this.fileChangeHashes().get(file.path);
     if (!hash) return;
@@ -302,6 +342,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       return;
     }
     this.markViewed(file.path, hash);
+    this.setFileCollapsed(file.path, true, false);
     this.scrollToNextUnviewedFile(file.path);
   }
 
@@ -454,6 +495,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     return Boolean(this.fileChangeHashes().get(file.path));
   }
 
+  isFileCollapsed(file: ChangeReviewFileSummary): boolean {
+    return this.collapsedPaths().has(file.path);
+  }
+
   isSelectedFile(file: ChangeReviewFileSummary): boolean {
     return this.activeFilePath() === file.path;
   }
@@ -474,6 +519,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const parts = filePath.split('/');
     parts.pop();
     return parts.join('/');
+  }
+
+  headerTranslateX(): string {
+    return `translateX(${this.diffScrollLeftPx()}px)`;
   }
 
   fileMetaText(row: RenderRow): string {
@@ -538,6 +587,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.layout.set(new ChangeReviewVirtualLayout([]));
     this.visibleRows.set([]);
     this.renderedOffsetPx.set(0);
+    this.diffScrollLeftPx.set(0);
+    this.diffViewportWidthPx.set(null);
     this.loadingContextRanges.set(new Set());
     this.selectionMentionAction.set(null);
     this.rowHtmlCache.clear();
@@ -589,11 +640,13 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       window.setTimeout(() => {
         const scrollEl = this.diffScroll()?.nativeElement;
         if (scrollEl) scrollEl.scrollTop = 0;
+        this.updateDiffViewportMetrics();
         this.refreshRenderedRows();
         this.ensureVisibleRangeLoaded();
       }, 0);
       return;
     }
+    this.updateDiffViewportMetrics();
     this.refreshRenderedRows();
     this.ensureVisibleRangeLoaded();
   }
@@ -602,7 +655,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const states = this.fileStates();
     this.layout.set(new ChangeReviewVirtualLayout(this.filteredFiles().map((file) => ({
       path: file.path,
-      diffRows: states.get(file.path)?.diffRowCount ?? estimateChangeReviewDiffRows(file, this.context()),
+      headerRows: this.isFileCollapsed(file) ? 1 : 2,
+      diffRows: this.isFileCollapsed(file)
+        ? 0
+        : states.get(file.path)?.diffRowCount ?? estimateChangeReviewDiffRows(file, this.context()),
     }))));
   }
 
@@ -614,6 +670,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       this.renderedOffsetPx.set(0);
       return;
     }
+    this.updateDiffViewportMetrics();
 
     const visibleStart = Math.max(0, Math.floor(scrollEl.scrollTop / ROW_HEIGHT_PX));
     const visibleEnd = Math.min(
@@ -712,6 +769,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     for (const segment of this.layout().segmentsForRange(startIndex, endIndex)) {
       const state = states.get(segment.path);
       if (!state) continue;
+      if (this.collapsedPaths().has(segment.path)) continue;
 
       if (segment.includesHeader || segment.diffEnd > segment.diffStart) {
         this.enqueueWindow(segment.path, 0, segment.includesHeader);
@@ -974,6 +1032,35 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     if (nextFile) {
       this.scrollToFile(nextFile);
     }
+  }
+
+  private setFileCollapsed(filePath: string, collapsed: boolean, preserveAnchor: boolean): void {
+    const current = this.collapsedPaths();
+    if (current.has(filePath) === collapsed) return;
+    const anchor = preserveAnchor ? this.captureAnchor() : null;
+    this.collapsedPaths.update((paths) => {
+      const next = new Set(paths);
+      if (collapsed) {
+        next.add(filePath);
+      } else {
+        next.delete(filePath);
+      }
+      return next;
+    });
+    this.rebuildLayout();
+    if (preserveAnchor) {
+      this.restoreAnchor(anchor);
+    } else {
+      this.refreshRenderedRows();
+      this.ensureVisibleRangeLoaded();
+    }
+  }
+
+  private updateDiffViewportMetrics(): void {
+    const scrollEl = this.diffScroll()?.nativeElement;
+    if (!scrollEl) return;
+    this.diffScrollLeftPx.set(scrollEl.scrollLeft);
+    this.diffViewportWidthPx.set(scrollEl.clientWidth || null);
   }
 
   private setFileState(

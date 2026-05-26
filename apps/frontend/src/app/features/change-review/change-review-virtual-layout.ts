@@ -5,6 +5,7 @@ export const CHANGE_REVIEW_HEADER_ROWS = 2;
 export interface ChangeReviewVirtualFile {
   path: string;
   diffRows: number;
+  headerRows?: number;
 }
 
 export interface ChangeReviewVirtualPosition {
@@ -56,8 +57,9 @@ export class ChangeReviewVirtualLayout {
     this.files = files.map((file) => {
       starts.push(offset);
       const diffRows = Math.max(0, Math.floor(file.diffRows));
-      offset += CHANGE_REVIEW_HEADER_ROWS + diffRows;
-      return { path: file.path, diffRows };
+      const headerRows = Math.max(1, Math.floor(file.headerRows ?? CHANGE_REVIEW_HEADER_ROWS));
+      offset += headerRows + diffRows;
+      return { path: file.path, diffRows, headerRows };
     });
     this.starts = starts;
     this.totalRows = offset;
@@ -72,7 +74,7 @@ export class ChangeReviewVirtualLayout {
     const index = this.files.findIndex((file) => file.path === path);
     return index === -1
       ? null
-      : this.starts[index] + CHANGE_REVIEW_HEADER_ROWS + this.files[index].diffRows;
+      : this.starts[index] + this.headerRowsFor(index) + this.files[index].diffRows;
   }
 
   positionForIndex(index: number): ChangeReviewVirtualPosition | null {
@@ -83,9 +85,10 @@ export class ChangeReviewVirtualLayout {
 
     const file = this.files[fileIndex];
     const rowInFile = safeIndex - this.starts[fileIndex];
-    const headerIndex = rowInFile < CHANGE_REVIEW_HEADER_ROWS ? rowInFile : null;
-    const diffIndex = rowInFile >= CHANGE_REVIEW_HEADER_ROWS
-      ? rowInFile - CHANGE_REVIEW_HEADER_ROWS
+    const headerRows = this.headerRowsFor(fileIndex);
+    const headerIndex = rowInFile < headerRows ? rowInFile : null;
+    const diffIndex = rowInFile >= headerRows
+      ? rowInFile - headerRows
       : null;
 
     return {
@@ -111,13 +114,14 @@ export class ChangeReviewVirtualLayout {
     while (fileIndex < this.files.length) {
       const file = this.files[fileIndex];
       const fileStart = this.starts[fileIndex];
-      const fileEnd = fileStart + CHANGE_REVIEW_HEADER_ROWS + file.diffRows;
+      const headerRows = this.headerRowsFor(fileIndex);
+      const fileEnd = fileStart + headerRows + file.diffRows;
       if (fileStart >= end) break;
 
       const rowStart = Math.max(start, fileStart) - fileStart;
       const rowEnd = Math.min(end, fileEnd) - fileStart;
-      const diffStart = Math.max(0, rowStart - CHANGE_REVIEW_HEADER_ROWS);
-      const diffEnd = Math.max(0, rowEnd - CHANGE_REVIEW_HEADER_ROWS);
+      const diffStart = Math.max(0, rowStart - headerRows);
+      const diffEnd = Math.max(0, rowEnd - headerRows);
 
       segments.push({
         fileIndex,
@@ -128,7 +132,7 @@ export class ChangeReviewVirtualLayout {
         rowEnd,
         diffStart,
         diffEnd,
-        includesHeader: rowStart < CHANGE_REVIEW_HEADER_ROWS,
+        includesHeader: rowStart < headerRows,
       });
 
       fileIndex += 1;
@@ -152,7 +156,7 @@ export class ChangeReviewVirtualLayout {
     const fileIndex = this.files.findIndex((file) => file.path === anchor.path);
     if (fileIndex === -1) return 0;
     const file = this.files[fileIndex];
-    const fileRows = CHANGE_REVIEW_HEADER_ROWS + file.diffRows;
+    const fileRows = this.headerRowsFor(fileIndex) + file.diffRows;
     const rowInFile = Math.min(Math.max(0, anchor.rowInFile), Math.max(0, fileRows - 1));
     return (this.starts[fileIndex] + rowInFile) * rowHeight + Math.max(0, anchor.offsetPx);
   }
@@ -177,5 +181,9 @@ export class ChangeReviewVirtualLayout {
       }
     }
     return result;
+  }
+
+  private headerRowsFor(fileIndex: number): number {
+    return Math.max(1, this.files[fileIndex].headerRows ?? CHANGE_REVIEW_HEADER_ROWS);
   }
 }

@@ -17,6 +17,7 @@ import {
   ChangeReviewScope,
   ChangeReviewSummary,
 } from './change-review.types.js';
+import { readWorktreeFingerprint } from './git-worktree-fingerprint.js';
 
 const LARGE_FILE_BYTES = 1_000_000;
 const LARGE_FILE_LINES = 25_000;
@@ -99,7 +100,14 @@ export class ChangeReviewService {
     }
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, refreshBase);
-    const files = await this.readFileSummaries(git, worktreePath, scope, base);
+    const worktreeFingerprint = await readWorktreeFingerprint(worktreePath, git);
+    const files = await this.readFileSummaries(
+      git,
+      worktreePath,
+      scope,
+      base,
+      worktreeFingerprint,
+    );
 
     return {
       scope,
@@ -109,6 +117,7 @@ export class ChangeReviewService {
       baseRef: base.baseRef,
       baseSha: base.baseSha,
       headSha: base.headSha,
+      worktreeFingerprint,
       mergeBaseSha: base.mergeBaseSha,
       compareLabel: base.compareLabel,
       generatedAt: new Date().toISOString(),
@@ -140,12 +149,21 @@ export class ChangeReviewService {
 
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, false);
-    const summary = await this.readFileSummary(git, worktreePath, scope, base, filePath);
+    const worktreeFingerprint = await readWorktreeFingerprint(worktreePath, git);
+    const summary = await this.readFileSummary(
+      git,
+      worktreePath,
+      scope,
+      base,
+      filePath,
+      worktreeFingerprint,
+    );
     const cacheKey = [
       worktreePath,
       scope,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
+      scope === 'last-commit' ? '' : worktreeFingerprint,
       filePath,
       context,
       summary.additions,
@@ -153,7 +171,16 @@ export class ChangeReviewService {
       summary.status,
     ].join('\0');
     const cached = this.getCachedRows(cacheKey);
-    const full = cached ?? await this.buildRows(git, worktreePath, scope, base, summary, context, cacheKey);
+    const full = cached ?? await this.buildRows(
+      git,
+      worktreePath,
+      scope,
+      base,
+      summary,
+      context,
+      cacheKey,
+      worktreeFingerprint,
+    );
     const rows = full.rows.slice(offset, offset + limit);
 
     return {
@@ -193,12 +220,21 @@ export class ChangeReviewService {
 
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, false);
-    const summary = await this.readFileSummary(git, worktreePath, scope, base, filePath);
+    const worktreeFingerprint = await readWorktreeFingerprint(worktreePath, git);
+    const summary = await this.readFileSummary(
+      git,
+      worktreePath,
+      scope,
+      base,
+      filePath,
+      worktreeFingerprint,
+    );
     const contextCacheKey = [
       worktreePath,
       scope,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
+      scope === 'last-commit' ? '' : worktreeFingerprint,
       filePath,
       oldStart,
       newStart,
@@ -211,7 +247,14 @@ export class ChangeReviewService {
     const cached = this.getCachedContextWindow(contextCacheKey);
     if (cached) return cached;
 
-    const fileLines = await this.readReviewFileLines(git, worktreePath, scope, base, summary);
+    const fileLines = await this.readReviewFileLines(
+      git,
+      worktreePath,
+      scope,
+      base,
+      summary,
+      worktreeFingerprint,
+    );
     const rows = this.buildContextRows(
       summary.path,
       fileLines,
@@ -296,12 +339,14 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     base: ReviewBase,
+    worktreeFingerprint: string,
   ): Promise<ChangeReviewFileSummary[]> {
     const cacheKey = [
       worktreePath,
       scope,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
+      scope === 'last-commit' ? '' : worktreeFingerprint,
       'summary',
     ].join('\0');
     const cached = this.getCachedFileSummaries(cacheKey);
@@ -352,8 +397,15 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     base: ReviewBase,
     filePath: string,
+    worktreeFingerprint: string,
   ): Promise<ChangeReviewFileSummary> {
-    const summaries = await this.readFileSummaries(git, worktreePath, scope, base);
+    const summaries = await this.readFileSummaries(
+      git,
+      worktreePath,
+      scope,
+      base,
+      worktreeFingerprint,
+    );
     const summary = summaries.find((file) => file.path === filePath || file.oldPath === filePath);
     if (!summary) {
       throw new BadRequestException(`File is not changed in this scope: ${filePath}`);
@@ -369,6 +421,7 @@ export class ChangeReviewService {
     summary: ChangeReviewFileSummary,
     context: number,
     cacheKey: string,
+    worktreeFingerprint: string,
   ): Promise<CachedRows> {
     let result: CachedRows;
 
@@ -406,7 +459,14 @@ export class ChangeReviewService {
       '--',
       summary.path,
     ]);
-    const fileLines = await this.readReviewFileLines(git, worktreePath, scope, base, summary);
+    const fileLines = await this.readReviewFileLines(
+      git,
+      worktreePath,
+      scope,
+      base,
+      summary,
+      worktreeFingerprint,
+    );
     const parsed = this.parsePatchRows(summary.path, patch, fileLines);
     result = this.cached(cacheKey, {
       rows: parsed.rows.length ? parsed.rows : [this.metaRow(summary.path, 'No textual diff for this file.')],
@@ -651,12 +711,14 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     base: ReviewBase,
     summary: ChangeReviewFileSummary,
+    worktreeFingerprint: string,
   ): Promise<{ oldLines: string[]; newLines: string[] }> {
     const cacheKey = [
       worktreePath,
       scope,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
+      scope === 'last-commit' ? '' : worktreeFingerprint,
       summary.oldPath ?? '',
       summary.path,
       summary.status,

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { GitController } from './git.controller.js';
 import { GitService } from './git.service.js';
+import { ChangeReviewService } from './change-review.service.js';
 
 describe('GitController', () => {
   let controller: GitController;
@@ -18,6 +19,14 @@ describe('GitController', () => {
             getStatusSummary: jest.fn(),
             commit: jest.fn(),
             push: jest.fn(),
+          },
+        },
+        {
+          provide: ChangeReviewService,
+          useValue: {
+            getSummary: jest.fn(),
+            getFileWindow: jest.fn(),
+            getContextWindow: jest.fn(),
           },
         },
       ],
@@ -137,6 +146,8 @@ describe('GitController', () => {
       const mockSummary = {
         branch: 'main',
         upstream: 'origin/main',
+        headSha: 'head123',
+        worktreeFingerprint: 'fingerprint-a',
         ahead: 1,
         behind: 0,
         hasChanges: true,

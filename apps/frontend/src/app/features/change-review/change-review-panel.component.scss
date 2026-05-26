@@ -59,11 +59,13 @@
 .cr-file-header-row {
   display: flex;
   align-items: center;
-  min-width: max-content;
+  box-sizing: border-box;
+  min-width: 100%;
   height: 24px;
   padding: 0 0.75rem;
   border-bottom: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
   font-size: 0.72rem;
+  will-change: transform;
 }
 
 .cr-file-header-row--main {
@@ -72,10 +74,92 @@
   color: var(--foreground);
 }
 
+.cr-file-header-row--sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin-bottom: -24px;
+  box-shadow: 0 1px 0 color-mix(in oklch, var(--border) 80%, transparent);
+}
+
 .cr-file-header-row--meta {
   padding-left: 2.85rem;
   background: color-mix(in oklch, var(--muted) 42%, transparent);
   color: var(--muted-foreground);
+}
+
+.cr-collapse-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.cr-collapse-button:hover,
+.cr-collapse-button:focus-visible {
+  outline: none;
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.cr-path {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.76rem;
+}
+
+.cr-path__dir {
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  unicode-bidi: isolate;
+  color: var(--muted-foreground);
+}
+
+.cr-path__slash {
+  flex: 0 0 auto;
+  padding: 0 0.08rem;
+  color: var(--muted-foreground);
+}
+
+.cr-path__name {
+  max-width: 55%;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 800;
+  color: var(--foreground);
+}
+
+.cr-outdated-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 1.75rem;
+  border-color: color-mix(in oklch, var(--destructive) 55%, var(--border));
+  background: var(--destructive);
+  color: var(--destructive-foreground);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.cr-outdated-button:hover,
+.cr-outdated-button:focus-visible {
+  background: color-mix(in oklch, var(--destructive) 88%, var(--surface-shade));
+  color: var(--destructive-foreground);
 }
 
 .cr-viewed-control {
