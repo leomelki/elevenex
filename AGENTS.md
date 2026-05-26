@@ -34,6 +34,13 @@ The project is meant to be used in repositories with multiple thousands of files
 - **Migrations**: SQL files in `apps/backend/drizzle/`, auto-applied on app startup via `drizzle-orm/better-sqlite3/migrator`
 - **No manual setup required**: The database and all tables are created automatically when the backend starts for the first time
 
+## Backend async and process handling
+
+- Prefer async Node APIs and libraries for filesystem, process, shell, git, and network operations whenever practical.
+- Avoid blocking the backend main thread with synchronous calls such as `execSync`, `spawnSync`, `readFileSync`, heavy CPU loops, or large synchronous directory scans in request handlers, WebSocket paths, startup hot paths, and polling loops.
+- When synchronous work is unavoidable, keep it small and isolated, and document why an async alternative is not suitable.
+- For expensive or slow operations, use async flows with in-flight request coalescing, cancellation/cleanup guards, and stale-response checks so repeated UI refreshes or reconnects do not launch duplicate work or apply old results.
+
 ### When modifying the database schema
 
 1. Edit or create schema files in `apps/backend/src/database/schema/`
