@@ -178,6 +178,7 @@
                   [class.sidebar-tree-row--busy]="isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)"
                   [disabled]="openingWorkspaceRepoId() !== null || isSwitchingWorkspace(repo, workspace)"
                   [attr.data-workspace-row]="workspace.path"
+                  [attr.title]="getWorkspaceTooltip(workspace)"
                   [style.padding-left]="'48px'"
                   (click)="onWorkspaceClick(repo, workspace)">
                   @if ((workspace.sessions && workspace.sessions.length > 0) || ((workspace.archivedSessions?.length ?? 0) > 0)) {
@@ -192,7 +193,7 @@
                   } @else {
                     <ng-icon name="lucideFolderOpen" class="!w-4 !h-4 text-foreground shrink-0" />
                   }
-                  <span class="text-sm truncate flex-1 sidebar-label--branch" [title]="workspace.name + ' - ' + workspace.path">
+                  <span class="text-sm truncate flex-1 sidebar-label--branch" [title]="getWorkspaceTooltip(workspace)">
                     {{ workspace.name }}
                     <span class="text-xs text-muted-foreground">{{ workspace.currentBranch || 'detached' }}</span>
                   </span>

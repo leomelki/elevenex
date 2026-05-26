@@ -451,6 +451,15 @@ describe('Sidebar', () => {
     expect(navigationServiceMock.revealProject).toHaveBeenCalledWith(project.id);
   });
 
+  it('includes the workspace current branch in the row tooltip', () => {
+    const fixture = createSidebar();
+    const el = fixture.nativeElement as HTMLElement;
+
+    const row = getWorkspaceRow(el, '/tmp/repo-one-main');
+
+    expect(row?.getAttribute('title')).toBe('main\nBranch: main\nPath: /tmp/repo-one-main');
+  });
+
   it('shows a visible new-workspace action for a repo with no workspaces even when the repo is collapsed', () => {
     expandedKeys.set(new Set(['project-1']));
     tree.set([

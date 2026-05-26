@@ -358,6 +358,14 @@ export class Sidebar implements OnInit, OnDestroy {
     this.clearDeleteSessionConfirmationIfHidden();
   }
 
+  getWorkspaceTooltip(workspace: NavigationWorkspace): string {
+    return [
+      workspace.name,
+      `Branch: ${workspace.currentBranch || 'detached'}`,
+      `Path: ${workspace.path}`,
+    ].join('\n');
+  }
+
   onSessionClick(session: SessionInTree) {
     // Just navigate - SessionContainer will load the full session and open the tab
     this.router.navigate(['/sessions', session.id]);
