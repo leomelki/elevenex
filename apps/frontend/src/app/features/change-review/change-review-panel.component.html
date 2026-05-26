@@ -173,7 +173,13 @@
           <span>No files in this scope</span>
         </div>
       } @else {
-        <div #diffScroll class="cr-diff-viewport" (scroll)="onDiffScroll()">
+        <div
+          #diffScroll
+          class="cr-diff-viewport"
+          (scroll)="onDiffScroll()"
+          (mouseup)="captureDiffSelection()"
+          (keyup)="captureDiffSelection()"
+        >
           <div class="cr-diff-spacer" [style.height.px]="totalHeightPx()"></div>
           <div class="cr-diff-rendered" [style.transform]="'translateY(' + renderedOffsetPx() + 'px)'">
             @for (renderRow of visibleRows(); track renderRowTrack($index, renderRow)) {
@@ -211,6 +217,7 @@
               } @else {
                 <div
                   class="cr-diff-row"
+                  [attr.data-cr-row-id]="renderRow.id"
                   [class.cr-diff-row--add]="renderRow.row?.type === 'add'"
                   [class.cr-diff-row--delete]="renderRow.row?.type === 'delete'"
                   [class.cr-diff-row--hunk]="renderRow.row?.type === 'hunk'"
@@ -257,6 +264,22 @@
               }
             }
           </div>
+          @if (selectionMentionAction(); as action) {
+            <button
+              type="button"
+              class="cr-mention-action"
+              [style.top.px]="action.top"
+              [style.left.px]="action.left"
+              (mousedown)="$event.preventDefault()"
+              (click)="mentionCurrentSelection()"
+            >
+              <ng-icon name="lucideMessageSquarePlus" size="14" />
+              <span>Mention in chat</span>
+              @if (action.mentions.length > 1) {
+                <span class="cr-mention-action__count">{{ action.mentions.length }}</span>
+              }
+            </button>
+          }
         </div>
       }
     </main>

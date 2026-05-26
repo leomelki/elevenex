@@ -540,11 +540,13 @@
         [allowImages]="currentProviderSupportsImages()"
         [autocompleteItems]="autocompleteItems()"
         [pendingPrompts]="pendingPrompts()"
+        [diffMentions]="pendingDiffMentions()"
         [disconnected]="hydrated() && !wsConnected()"
         (valueChange)="onPromptChange($event)"
         (send)="submitPrompt($event)"
         (interrupt)="interrupt()"
         (cancelPending)="cancelPendingPrompt($event)"
+        (removeDiffMention)="removeDiffMention($event)"
       />
     </div>
 

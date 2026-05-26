@@ -98,6 +98,7 @@
                 } @else if (showChangesPanel()) {
                   <app-change-review-panel
                     [worktreePath]="worktreePath()!"
+                    (mentionSelection)="mentionDiffSelection($event)"
                     class="h-full"
                   />
                 } @else if (showPlanAnnotatorPanel() && activePlanReview()) {

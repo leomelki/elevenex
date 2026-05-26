@@ -45,6 +45,7 @@ import {
   ClaudeUserInputRequest,
 } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import {
   AgentAuthStatus,
   AgentProviderId,
@@ -101,6 +102,10 @@ import {
   lucideArchiveRestore,
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '@/shared/components/button/button.component';
+import {
+  appendDiffSelectionMentions,
+  parseDiffSelectionMentions,
+} from '@/shared/utils/diff-selection-mention';
 
 type TranscriptRenderItem =
   | { kind: 'unit'; id: string; unit: PairedTranscriptUnit }
@@ -186,6 +191,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly hydrated = signal(false);
   readonly submitting = signal(false);
   readonly prompt = signal('');
+  readonly pendingDiffMentions = signal<DiffSelectionMention[]>([]);
   readonly runPhase = signal<ClaudeRunPhase>('idle');
   readonly sessionState = signal<ClaudeSessionExecutionState>('idle');
   readonly canInterrupt = signal(false);
@@ -701,13 +707,26 @@ readonly messageActionsDisabled = computed(
     this.prompt.set(value);
   }
 
+  addDiffMentions(mentions: readonly DiffSelectionMention[]): void {
+    if (this.archived || !mentions.length) return;
+    this.pendingDiffMentions.update((items) => [...items, ...mentions]);
+    queueMicrotask(() => this.composer?.focusAtEnd());
+  }
+
+  removeDiffMention(id: string): void {
+    this.pendingDiffMentions.update((items) => items.filter((mention) => mention.id !== id));
+  }
+
   async submitPrompt(payload: ComposerSendPayload | string): Promise<void> {
     if (this.archived) return;
     const normalized: ComposerSendPayload =
-      typeof payload === 'string' ? { text: payload, images: [] } : payload;
+      typeof payload === 'string' ? { text: payload, images: [], diffMentions: [] } : payload;
     const trimmed = normalized.text.trim();
+    const diffMentions = normalized.diffMentions ?? [];
+    const visiblePrompt = trimmed || (diffMentions.length ? 'Review the mentioned diff selection.' : '');
+    const promptWithMentions = appendDiffSelectionMentions(visiblePrompt, diffMentions);
     const images = this.currentProviderSupportsImages() ? normalized.images : [];
-    if (!trimmed && !images.length) return;
+    if (!promptWithMentions.trim() && !images.length) return;
     const isIdle = this.runPhase() === 'idle';
     if (isIdle && this.submitting()) return;
     const now = new Date().toISOString();
@@ -717,8 +736,8 @@ readonly messageActionsDisabled = computed(
       this.submitting.set(true);
       const optimisticContent =
         images.length
-          ? [trimmed, ...images.map(() => '[image]')].filter(Boolean).join('\n')
-          : trimmed;
+          ? [promptWithMentions, ...images.map(() => '[image]')].filter(Boolean).join('\n')
+          : promptWithMentions;
       this.optimisticUserItems.update((items) => [
         ...items,
         {
@@ -732,11 +751,12 @@ readonly messageActionsDisabled = computed(
     }
     this.cancelArmedEdit();
     this.prompt.set('');
-    const prepared = this.prepareRuntimePrompt(trimmed);
+    this.pendingDiffMentions.set([]);
+    const prepared = this.prepareRuntimePrompt(promptWithMentions);
     this.sendRuntimeAction({
       type: 'submit_prompt',
       prompt: prepared.prompt,
-      titlePrompt: trimmed,
+      titlePrompt: visiblePrompt,
       ...(images.length
         ? { images: images.map((i) => this.toRuntimeImage(i)) }
         : {}),
@@ -1168,7 +1188,7 @@ readonly messageActionsDisabled = computed(
 
   async copyMessage(item: ClaudeTranscriptItem, selectedText?: string | null): Promise<void> {
     const selectedContent = typeof selectedText === 'string' ? selectedText.trim() : '';
-    const itemContent = typeof item.content === 'string' ? item.content.trim() : '';
+    const itemContent = parseDiffSelectionMentions(item.content).text;
     const content = selectedContent || itemContent;
     if (!content || this.messageActionsDisabled()) return;
     if (!navigator.clipboard?.writeText) {
@@ -1212,6 +1232,7 @@ readonly messageActionsDisabled = computed(
   ): Promise<void> {
     const messageId = item.sourceMessageId;
     const content = item.content ?? '';
+    const restored = parseDiffSelectionMentions(content);
     if (!messageId) return;
 
     this.rewindingMessageId.set(messageId);
@@ -1231,7 +1252,8 @@ readonly messageActionsDisabled = computed(
       this.pendingUserInputRequest.set(null);
       this.expandedTurns.set({});
       this.expandedTurnChanges.set({});
-      this.prompt.set(content);
+      this.prompt.set(restored.text);
+      this.pendingDiffMentions.set(restored.mentions);
       this.cancelArmedEdit();
       this.closeAgentInspector();
       queueMicrotask(() => this.composer?.focusAtEnd());
@@ -1860,6 +1882,7 @@ readonly messageActionsDisabled = computed(
     this.hydrated.set(false);
     this.submitting.set(false);
     this.prompt.set('');
+    this.pendingDiffMentions.set([]);
     this.runPhase.set('idle');
     this.sessionState.set('idle');
     this.canInterrupt.set(false);

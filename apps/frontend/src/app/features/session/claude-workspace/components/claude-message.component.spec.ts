@@ -2,6 +2,32 @@ import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeMessageComponent } from './claude-message.component';
+import {
+  DIFF_SELECTION_MENTION_TAG,
+  serializeDiffSelectionMention,
+} from '@/shared/utils/diff-selection-mention';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+
+const mention = (overrides: Partial<DiffSelectionMention> = {}): DiffSelectionMention => ({
+  id: 'mention-1',
+  version: 1,
+  scope: 'branch',
+  compareLabel: 'feature vs origin/main',
+  baseSha: 'base',
+  headSha: 'head',
+  filePath: 'src/app.ts',
+  oldPath: null,
+  status: 'modified',
+  changeHash: 'hash',
+  oldLineStart: 4,
+  oldLineEnd: 4,
+  newLineStart: 5,
+  newLineEnd: 5,
+  selectedText: 'return next;',
+  context: { before: [], selected: [], after: [] },
+  truncated: false,
+  ...overrides,
+});
 
 describe('ClaudeMessageComponent', () => {
   afterEach(() => {
@@ -105,8 +131,8 @@ describe('ClaudeMessageComponent', () => {
     fixture.componentInstance.copy.subscribe(copySpy);
     fixture.detectChanges();
 
-    const bubble = fixture.nativeElement.querySelector('.cw-msg__bubble') as HTMLElement;
-    const textNode = bubble.firstChild as Text;
+    const text = fixture.nativeElement.querySelector('.cw-msg__user-text') as HTMLElement;
+    const textNode = text.firstChild as Text;
     const range = document.createRange();
     range.setStart(textNode, 5);
     range.setEnd(textNode, 14);
@@ -143,5 +169,29 @@ describe('ClaudeMessageComponent', () => {
     expect(element.querySelector('.cw-md--streaming code')?.textContent).toBe('code');
     expect(element.textContent).not.toContain('**Bold**');
     expect(element.querySelector('.cw-caret')).not.toBeNull();
+  });
+
+  it('renders user diff mention payloads as cards instead of raw tags', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeMessageComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeMessageComponent);
+    fixture.componentRef.setInput('item', {
+      id: 'user-mention',
+      kind: 'user',
+      content: `Please review this\n\n${serializeDiffSelectionMention(mention())}`,
+      timestamp: '2026-04-24T08:00:00.000Z',
+      authoredAt: '2026-04-24T08:00:00.000Z',
+      sourceMessageId: 'source-user-mention',
+    });
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.textContent).toContain('Please review this');
+    expect(element.textContent).toContain('src/app.ts');
+    expect(element.textContent).toContain('return next;');
+    expect(element.textContent).not.toContain(DIFF_SELECTION_MENTION_TAG);
+    expect(element.querySelector('.cw-msg__mention')).not.toBeNull();
   });
 });

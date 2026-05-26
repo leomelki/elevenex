@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ChangeReviewFileSummary,
   ChangeReviewFileWindow,
+  ChangeReviewRow,
   ChangeReviewScope,
   ChangeReviewSummary,
 } from '@/shared/models/change-review.model';
@@ -64,11 +65,20 @@ const row = (path: string, index: number) => ({
   path,
 });
 
+const addRow = (path: string, index: number, content = `added ${index + 1}`) => ({
+  id: `${path}:add:${index}`,
+  type: 'add' as const,
+  oldLine: null,
+  newLine: index + 1,
+  content,
+  path,
+});
+
 const fileWindow = (
   path: string,
   scope: ChangeReviewScope = 'branch',
   offset = 0,
-  rows = [row(path, offset)],
+  rows: ChangeReviewRow[] = [row(path, offset)],
 ): ChangeReviewFileWindow => ({
   scope,
   path,
@@ -90,7 +100,20 @@ const fileWindow = (
 
 const setViewport = (el: HTMLElement, clientHeight = 240, scrollTop = 0) => {
   Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight });
-  el.scrollTop = scrollTop;
+  Object.defineProperty(el, 'scrollTop', { configurable: true, writable: true, value: scrollTop });
+};
+
+const installStorageStub = () => {
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+      removeItem: vi.fn((key: string) => values.delete(key)),
+      clear: vi.fn(() => values.clear()),
+    },
+  });
 };
 
 describe('ChangeReviewPanelComponent', () => {
@@ -106,6 +129,7 @@ describe('ChangeReviewPanelComponent', () => {
   let windowCalls: Array<{ path: string; offset: number; response: Subject<ChangeReviewFileWindow> }>;
 
   beforeEach(async () => {
+    installStorageStub();
     summaryCalls = [];
     windowCalls = [];
     localStorage.clear();
@@ -211,5 +235,44 @@ describe('ChangeReviewPanelComponent', () => {
 
     fixture.componentInstance.toggleFileViewed(files[0]);
     expect(fixture.componentInstance.isFileViewed(files[0])).toBe(true);
+  });
+
+  it('emits a structured mention for selected diff text', async () => {
+    const files = [file('src/a.ts')];
+    await flushSummary(summary(files));
+    windowCalls[0].response.next(fileWindow('src/a.ts', 'branch', 0, [
+      row('src/a.ts', 0),
+      addRow('src/a.ts', 1, 'const selected = true;'),
+      row('src/a.ts', 2),
+    ]));
+    windowCalls[0].response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    const emitted: unknown[] = [];
+    fixture.componentInstance.mentionSelection.subscribe((mentions) => emitted.push(mentions));
+
+    const code = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('.cr-code'))
+      .find((element) => element.textContent?.includes('const selected = true;')) as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(code);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+
+    fixture.componentInstance.captureDiffSelection();
+    fixture.detectChanges();
+
+    const action = fixture.nativeElement.querySelector('.cr-mention-action') as HTMLButtonElement;
+    expect(action).not.toBeNull();
+    action.click();
+
+    expect(emitted).toHaveLength(1);
+    const mentions = emitted[0] as any[];
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0].filePath).toBe('src/a.ts');
+    expect(mentions[0].selectedText).toBe('const selected = true;');
+    expect(mentions[0].newLineStart).toBe(2);
+    expect(mentions[0].context.before[0].content).toBe('line 1');
+    expect(mentions[0].context.after[0].content).toBe('line 3');
   });
 });

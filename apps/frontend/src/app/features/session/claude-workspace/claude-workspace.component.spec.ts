@@ -62,6 +62,9 @@ describe('ClaudeWorkspaceComponent', () => {
     latestPromptSuggestion: null,
     latestCompactBoundary: null,
     latestMirrorError: null,
+    warmState: 'cold',
+    lastWarmedAt: null,
+    lastPromptTiming: null,
   });
 
   let apiMock: {

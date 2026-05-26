@@ -37,6 +37,7 @@ import { toast } from 'ngx-sonner';
 import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { Session } from '@/shared/models/session.model';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
 import { shouldAutoReviewSessionCompletion } from '../session-completion-review.util';
 import { shouldCloseActiveSessionTab } from '../close-tab-shortcut.util';
@@ -420,6 +421,12 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   async rejectPlanReview(payload: PlanFeedbackPayload): Promise<void> {
     await this.workspaceForSession(payload.review.sessionId)?.rejectPlanReview(payload);
+  }
+
+  mentionDiffSelection(mentions: DiffSelectionMention[]): void {
+    const sessionId = this.activeSessionId();
+    if (!sessionId || !mentions.length) return;
+    this.workspaceForSession(sessionId)?.addDiffMentions(mentions);
   }
 
   onPlanReviewClosed(review: PlanReviewRequest): void {

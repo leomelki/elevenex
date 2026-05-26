@@ -1,6 +1,6 @@
 import { ScrollingModule } from '@angular/cdk/scrolling';
 import { CommonModule } from '@angular/common';
-import { Component, computed, effect, ElementRef, HostListener, inject, input, OnDestroy, signal, viewChild } from '@angular/core';
+import { Component, computed, effect, ElementRef, HostListener, inject, input, OnDestroy, output, signal, viewChild } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -12,6 +12,7 @@ import {
   lucideGitBranch,
   lucideGitPullRequest,
   lucideLoader,
+  lucideMessageSquarePlus,
   lucideRefreshCw,
   lucideSearch,
   lucideTriangleAlert,
@@ -28,6 +29,12 @@ import {
   ChangeReviewScope,
   ChangeReviewSummary,
 } from '@/shared/models/change-review.model';
+import {
+  DIFF_SELECTION_MENTION_MAX_FILES,
+  DIFF_SELECTION_MENTION_MAX_TEXT,
+  DiffSelectionMention,
+  DiffSelectionMentionContextRow,
+} from '@/shared/models/diff-selection-mention.model';
 import { ChangeReviewService } from '@/shared/services/change-review.service';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
@@ -85,6 +92,17 @@ interface RenderRow {
   baseIndex: number | null;
 }
 
+interface SelectedDiffRow {
+  renderRow: RenderRow;
+  text: string;
+}
+
+interface DiffSelectionMentionAction {
+  top: number;
+  left: number;
+  mentions: DiffSelectionMention[];
+}
+
 interface WindowRequest {
   generation: number;
   filePath: string;
@@ -131,6 +149,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
       lucideGitBranch,
       lucideGitPullRequest,
       lucideLoader,
+      lucideMessageSquarePlus,
       lucideRefreshCw,
       lucideSearch,
       lucideTriangleAlert,
@@ -139,6 +158,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
 })
 export class ChangeReviewPanelComponent implements OnDestroy {
   readonly worktreePath = input.required<string>();
+  readonly mentionSelection = output<DiffSelectionMention[]>();
 
   private readonly changeReview = inject(ChangeReviewService);
   private readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -175,6 +195,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   readonly fileChangeHashes = signal<ReadonlyMap<string, string>>(new Map());
   readonly viewedHashes = signal<Record<string, string>>(this.readViewedHashes());
   readonly windowLoadState = signal<WindowLoadState>({ running: false, total: 0 });
+  readonly selectionMentionAction = signal<DiffSelectionMentionAction | null>(null);
 
   readonly totalHeightPx = computed(() => this.layout().totalRows * ROW_HEIGHT_PX);
 
@@ -251,6 +272,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   }
 
   onDiffScroll(): void {
+    this.selectionMentionAction.set(null);
     this.refreshRenderedRows();
     this.ensureVisibleRangeLoaded();
   }
@@ -288,6 +310,56 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     if (url) {
       window.open(url, '_blank', 'noopener,noreferrer');
     }
+  }
+
+  captureDiffSelection(): void {
+    const selection = window.getSelection();
+    const scrollEl = this.diffScroll()?.nativeElement;
+    if (!selection || selection.isCollapsed || !selection.rangeCount || !scrollEl) {
+      this.selectionMentionAction.set(null);
+      return;
+    }
+
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    if (!anchorNode || !focusNode || !scrollEl.contains(anchorNode) || !scrollEl.contains(focusNode)) {
+      this.selectionMentionAction.set(null);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const selectedRows = this.selectedDiffRows(range, scrollEl);
+    if (!selectedRows.length) {
+      this.selectionMentionAction.set(null);
+      return;
+    }
+
+    const mentions = this.buildDiffSelectionMentions(selectedRows);
+    if (!mentions.length) {
+      this.selectionMentionAction.set(null);
+      return;
+    }
+
+    const firstRect = typeof range.getBoundingClientRect === 'function'
+      ? range.getBoundingClientRect()
+      : scrollEl.getBoundingClientRect();
+    const containerRect = scrollEl.getBoundingClientRect();
+    this.selectionMentionAction.set({
+      top: Math.max(8, firstRect.top - containerRect.top + scrollEl.scrollTop - 38),
+      left: Math.max(8, firstRect.left - containerRect.left + scrollEl.scrollLeft),
+      mentions,
+    });
+  }
+
+  mentionCurrentSelection(): void {
+    const action = this.selectionMentionAction();
+    if (!action?.mentions.length) return;
+    this.mentionSelection.emit(action.mentions);
+    this.selectionMentionAction.set(null);
+    window.getSelection()?.removeAllRanges();
+    toast.success(action.mentions.length === 1
+      ? 'Added diff selection to chat'
+      : `Added ${action.mentions.length} diff selections to chat`);
   }
 
   rowHtml(row: ChangeReviewRow): SafeHtml {
@@ -467,6 +539,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.visibleRows.set([]);
     this.renderedOffsetPx.set(0);
     this.loadingContextRanges.set(new Set());
+    this.selectionMentionAction.set(null);
     this.rowHtmlCache.clear();
     this.now.set(Date.now());
 
@@ -555,6 +628,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.visibleRows.set(this.buildRenderRows(renderStart, renderEnd));
     if (topPosition && topPosition.path !== this.activeFilePath()) {
       this.activeFilePath.set(topPosition.path);
+      this.enqueueWindow(topPosition.path, 0, true);
     }
   }
 
@@ -1085,4 +1159,160 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       || tagName === 'select'
       || target.isContentEditable;
   }
+
+  private selectedDiffRows(range: Range, scrollEl: HTMLElement): SelectedDiffRow[] {
+    const rowsById = new Map(this.visibleRows().map((row) => [row.id, row]));
+    return Array.from(scrollEl.querySelectorAll<HTMLElement>('.cr-diff-row[data-cr-row-id]'))
+      .filter((element) => {
+        try {
+          return range.intersectsNode(element);
+        } catch {
+          return false;
+        }
+      })
+      .map((element): SelectedDiffRow | null => {
+        const id = element.dataset['crRowId'];
+        const renderRow = id ? rowsById.get(id) ?? null : null;
+        if (!renderRow || renderRow.kind !== 'diff' || !renderRow.row) return null;
+        const text = this.selectedTextWithinRow(range, element, renderRow.row.content);
+        if (!text.trim()) return null;
+        return { renderRow, text };
+      })
+      .filter((item): item is SelectedDiffRow => item !== null);
+  }
+
+  private selectedTextWithinRow(range: Range, element: HTMLElement, fallback: string): string {
+    const contentEl = element.querySelector<HTMLElement>('.cr-code, .cr-expand-row');
+    if (!contentEl) return fallback;
+    try {
+      const contentRange = document.createRange();
+      contentRange.selectNodeContents(contentEl);
+      const intersection = document.createRange();
+      const startsInsideContent = contentEl.contains(range.startContainer);
+      const endsInsideContent = contentEl.contains(range.endContainer);
+
+      if (startsInsideContent && range.compareBoundaryPoints(Range.START_TO_START, contentRange) > 0) {
+        intersection.setStart(range.startContainer, range.startOffset);
+      } else {
+        intersection.setStart(contentRange.startContainer, contentRange.startOffset);
+      }
+
+      if (endsInsideContent && range.compareBoundaryPoints(Range.END_TO_END, contentRange) < 0) {
+        intersection.setEnd(range.endContainer, range.endOffset);
+      } else {
+        intersection.setEnd(contentRange.endContainer, contentRange.endOffset);
+      }
+
+      const text = intersection.toString();
+      contentRange.detach();
+      intersection.detach();
+      return text || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private buildDiffSelectionMentions(selectedRows: SelectedDiffRow[]): DiffSelectionMention[] {
+    const grouped = new Map<string, SelectedDiffRow[]>();
+    for (const item of selectedRows) {
+      const filePath = item.renderRow.file.path;
+      grouped.set(filePath, [...(grouped.get(filePath) ?? []), item]);
+    }
+
+    if (grouped.size > DIFF_SELECTION_MENTION_MAX_FILES) {
+      toast.message(`Mentioned the first ${DIFF_SELECTION_MENTION_MAX_FILES} files. Narrow the selection to mention more precisely.`);
+    }
+
+    const summary = this.summary();
+    return Array.from(grouped.values())
+      .slice(0, DIFF_SELECTION_MENTION_MAX_FILES)
+      .map((items) => this.buildFileMention(items, summary))
+      .filter((mention): mention is DiffSelectionMention => mention !== null);
+  }
+
+  private buildFileMention(
+    items: SelectedDiffRow[],
+    summary: ChangeReviewSummary | null,
+  ): DiffSelectionMention | null {
+    const first = items[0]?.renderRow;
+    if (!first) return null;
+
+    const selectedTextRaw = items.map((item) => item.text.trimEnd()).join('\n').trim();
+    if (!selectedTextRaw) return null;
+    const selectedText = selectedTextRaw.slice(0, DIFF_SELECTION_MENTION_MAX_TEXT);
+    const selectedRenderRows = items.map((item) => item.renderRow);
+
+    return {
+      id: `diff-mention-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      version: 1,
+      scope: this.scope(),
+      compareLabel: summary?.compareLabel ?? null,
+      baseSha: summary?.mergeBaseSha ?? summary?.baseSha ?? null,
+      headSha: summary?.headSha ?? null,
+      filePath: first.file.path,
+      oldPath: first.file.oldPath ?? null,
+      status: first.file.status,
+      changeHash: first.state.changeHash,
+      oldLineStart: minLine(selectedRenderRows, 'oldLine'),
+      oldLineEnd: maxLine(selectedRenderRows, 'oldLine'),
+      newLineStart: minLine(selectedRenderRows, 'newLine'),
+      newLineEnd: maxLine(selectedRenderRows, 'newLine'),
+      selectedText,
+      context: this.contextForSelection(first.file.path, selectedRenderRows),
+      truncated: selectedTextRaw.length > DIFF_SELECTION_MENTION_MAX_TEXT,
+    };
+  }
+
+  private contextForSelection(
+    filePath: string,
+    selectedRows: RenderRow[],
+  ): DiffSelectionMention['context'] {
+    const selectedIndexes = selectedRows
+      .map((row) => row.diffIndex)
+      .filter((index): index is number => typeof index === 'number');
+    if (!selectedIndexes.length) {
+      return { before: [], selected: [], after: [] };
+    }
+
+    const start = Math.min(...selectedIndexes);
+    const end = Math.max(...selectedIndexes);
+    const rows = this.visibleRows()
+      .filter((row) => row.kind === 'diff' && row.file.path === filePath && row.row && row.diffIndex !== null)
+      .sort((left, right) => (left.diffIndex ?? 0) - (right.diffIndex ?? 0));
+
+    return {
+      before: rows
+        .filter((row) => (row.diffIndex ?? 0) < start)
+        .slice(-3)
+        .map((row) => this.toMentionContextRow(row)),
+      selected: selectedRows.map((row) => this.toMentionContextRow(row)),
+      after: rows
+        .filter((row) => (row.diffIndex ?? 0) > end)
+        .slice(0, 3)
+        .map((row) => this.toMentionContextRow(row)),
+    };
+  }
+
+  private toMentionContextRow(row: RenderRow): DiffSelectionMentionContextRow {
+    return {
+      type: row.row?.type ?? 'context',
+      oldLine: row.row?.oldLine ?? null,
+      newLine: row.row?.newLine ?? null,
+      content: row.row?.content ?? '',
+    };
+  }
+}
+
+function minLine(rows: RenderRow[], key: 'oldLine' | 'newLine'): number | null {
+  const values = rows
+    .map((row) => row.row?.[key])
+    .filter((value): value is number => typeof value === 'number');
+  return values.length ? Math.min(...values) : null;
+}
+
+function maxLine(rows: RenderRow[], key: 'oldLine' | 'newLine'): number | null {
+  const values = rows
+    .map((row) => row.row?.[key])
+    .filter((value): value is number => typeof value === 'number');
+  return values.length ? Math.max(...values) : null;
 }

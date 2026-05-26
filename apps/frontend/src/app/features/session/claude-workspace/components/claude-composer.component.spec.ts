@@ -2,6 +2,28 @@ import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { ClaudeComposerComponent } from './claude-composer.component';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+
+const mention = (overrides: Partial<DiffSelectionMention> = {}): DiffSelectionMention => ({
+  id: 'mention-1',
+  version: 1,
+  scope: 'branch',
+  compareLabel: 'feature vs origin/main',
+  baseSha: 'base',
+  headSha: 'head',
+  filePath: 'src/app.ts',
+  oldPath: null,
+  status: 'modified',
+  changeHash: 'hash',
+  oldLineStart: 10,
+  oldLineEnd: 10,
+  newLineStart: 11,
+  newLineEnd: 11,
+  selectedText: 'const value = true;',
+  context: { before: [], selected: [], after: [] },
+  truncated: false,
+  ...overrides,
+});
 
 describe('ClaudeComposerComponent', () => {
   it('shrinks the textarea when the value is cleared programmatically', async () => {
@@ -78,6 +100,26 @@ describe('ClaudeComposerComponent', () => {
     fixture.detectChanges();
 
     fixture.componentInstance.submit();
-    expect(sendSpy).toHaveBeenCalledWith({ text: 'Continue', images: [] });
+    expect(sendSpy).toHaveBeenCalledWith({ text: 'Continue', images: [], diffMentions: [] });
+  });
+
+  it('renders and sends diff mentions without typed text', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('value', '');
+    fixture.componentRef.setInput('diffMentions', [mention()]);
+    const sendSpy = vi.fn();
+    fixture.componentInstance.send.subscribe(sendSpy);
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.textContent).toContain('src/app.ts');
+    expect(element.textContent).toContain('const value = true;');
+
+    fixture.componentInstance.submit();
+    expect(sendSpy).toHaveBeenCalledWith({ text: '', images: [], diffMentions: [mention()] });
   });
 });

@@ -14,6 +14,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideFileCode,
   lucideLoaderCircle,
   lucidePaperclip,
   lucideSend,
@@ -25,6 +26,12 @@ import {
   ClaudeAutocompleteItem,
   ClaudePendingPrompt,
 } from '@/shared/models/claude-runtime.model';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import {
+  diffSelectionMentionLineLabel,
+  diffSelectionMentionPreview,
+  parseDiffSelectionMentions,
+} from '@/shared/utils/diff-selection-mention';
 
 interface Range {
   start: number;
@@ -48,6 +55,7 @@ export interface ComposerImageAttachment {
 export interface ComposerSendPayload {
   text: string;
   images: ComposerImageAttachment[];
+  diffMentions?: DiffSelectionMention[];
 }
 
 const COMPOSER_IMAGE_ALLOWED_MIME: readonly ComposerImageMediaType[] = [
@@ -68,7 +76,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
     '(document:mousedown)': 'onDocumentMousedown($event)',
   },
   viewProviders: [
-    provideIcons({ lucideLoaderCircle, lucidePaperclip, lucideSend, lucideSquare, lucideX }),
+    provideIcons({ lucideFileCode, lucideLoaderCircle, lucidePaperclip, lucideSend, lucideSquare, lucideX }),
   ],
   template: `
     <div class="cw-comp">
@@ -118,11 +126,41 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
             }
           </div>
         }
+        @if (diffMentions().length) {
+          <div class="cw-comp__mentions" role="list" aria-label="Mentioned diff selections">
+            @for (mention of diffMentions(); track mention.id) {
+              <article class="cw-comp__mention" role="listitem">
+                <span class="cw-comp__mention-icon" aria-hidden="true">
+                  <ng-icon name="lucideFileCode" size="14" />
+                </span>
+                <div class="cw-comp__mention-body">
+                  <div class="cw-comp__mention-head">
+                    <span class="cw-comp__mention-path" [title]="mention.filePath">{{ mention.filePath }}</span>
+                    <span class="cw-comp__mention-lines">{{ mentionLineLabel(mention) }}</span>
+                  </div>
+                  <p class="cw-comp__mention-preview">{{ mentionPreview(mention) }}</p>
+                  <span class="cw-comp__mention-meta">
+                    {{ mention.status }} · {{ mention.context.before.length + mention.context.after.length }} context lines{{ mention.truncated ? ' · truncated' : '' }}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  class="cw-comp__mention-remove"
+                  title="Remove diff mention"
+                  aria-label="Remove diff mention"
+                  (click)="removeDiffMention.emit(mention.id)"
+                >
+                  <ng-icon name="lucideX" size="12" />
+                </button>
+              </article>
+            }
+          </div>
+        }
         @if (pendingPrompts().length) {
           <div class="cw-comp__pending" role="list" aria-label="Queued messages">
             @for (p of pendingPrompts(); track p.id) {
               <div class="cw-comp__pending-item" role="listitem">
-                <span class="cw-comp__pending-text">{{ p.prompt }}</span>
+                <span class="cw-comp__pending-text">{{ pendingPromptPreview(p.prompt) }}</span>
                 <button
                   type="button"
                   class="cw-comp__pending-remove"
@@ -199,7 +237,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
             <button
               type="button"
               class="cw-comp__btn cw-comp__btn--send"
-              [disabled]="(!value().trim() && !attachedImages().length) || (submitting() && !running()) || blockedByPermission() || disconnected()"
+              [disabled]="(!value().trim() && !attachedImages().length && !diffMentions().length) || (submitting() && !running()) || blockedByPermission() || disconnected()"
               (click)="submit()"
               [title]="running() ? 'Queue message' : 'Send'"
             >
@@ -273,6 +311,95 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         gap: 0.25rem;
         padding: 0.5rem 0.625rem 0.25rem 0.875rem;
         border-bottom: 1px dashed color-mix(in oklab, var(--foreground) 12%, transparent);
+      }
+      .cw-comp__mentions {
+        display: grid;
+        gap: 0.375rem;
+        padding: 0.5rem 0.625rem 0.25rem 0.875rem;
+        border-bottom: 1px dashed color-mix(in oklab, var(--foreground) 12%, transparent);
+      }
+      .cw-comp__mention {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 0.55rem;
+        padding: 0.5rem 0.55rem;
+        border: 1px solid color-mix(in oklab, var(--primary) 20%, var(--border));
+        border-radius: 0.55rem;
+        background: color-mix(in oklab, var(--primary) 5%, var(--background));
+      }
+      .cw-comp__mention-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.55rem;
+        height: 1.55rem;
+        border-radius: 0.45rem;
+        background: var(--background);
+        color: var(--primary);
+        border: 1px solid var(--border);
+      }
+      .cw-comp__mention-body {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+      .cw-comp__mention-head {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-width: 0;
+      }
+      .cw-comp__mention-path {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+      .cw-comp__mention-lines {
+        flex-shrink: 0;
+        border-radius: 999px;
+        padding: 0.08rem 0.38rem;
+        background: color-mix(in oklab, var(--foreground) 7%, transparent);
+        color: var(--muted-foreground);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.64rem;
+        font-weight: 700;
+      }
+      .cw-comp__mention-preview {
+        margin: 0;
+        color: var(--foreground);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.72rem;
+        line-height: 1.35;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .cw-comp__mention-meta {
+        color: var(--muted-foreground);
+        font-size: 0.67rem;
+        line-height: 1.25;
+      }
+      .cw-comp__mention-remove {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.35rem;
+        height: 1.35rem;
+        border-radius: 0.4rem;
+        border: 0;
+        background: transparent;
+        color: var(--muted-foreground);
+        cursor: pointer;
+      }
+      .cw-comp__mention-remove:hover {
+        background: color-mix(in oklab, var(--foreground) 9%, transparent);
+        color: var(--foreground);
       }
       .cw-comp__pending-item {
         display: flex;
@@ -478,11 +605,13 @@ export class ClaudeComposerComponent {
   readonly placeholderText = input<string>('Tell Claude what to do…');
   readonly pendingPrompts = input<ClaudePendingPrompt[]>([]);
   readonly disconnected = input<boolean>(false);
+  readonly diffMentions = input<DiffSelectionMention[]>([]);
 
   readonly send = output<ComposerSendPayload>();
   readonly valueChange = output<string>();
   readonly interrupt = output<void>();
   readonly cancelPending = output<string>();
+  readonly removeDiffMention = output<string>();
 
   readonly attachedImages = signal<ComposerImageAttachment[]>([]);
   readonly isDropTarget = signal(false);
@@ -605,11 +734,27 @@ export class ClaudeComposerComponent {
   submit(): void {
     const v = this.value().trim();
     const images = this.allowImages() ? this.attachedImages() : [];
-    if (!v && !images.length) return;
+    const diffMentions = this.diffMentions();
+    if (!v && !images.length && !diffMentions.length) return;
     if (this.blockedByPermission()) return;
     if (this.submitting() && !this.running()) return;
-    this.send.emit({ text: v, images });
+    this.send.emit({ text: v, images, diffMentions });
     this.attachedImages.set([]);
+  }
+
+  mentionLineLabel(mention: DiffSelectionMention): string {
+    return diffSelectionMentionLineLabel(mention);
+  }
+
+  mentionPreview(mention: DiffSelectionMention): string {
+    return diffSelectionMentionPreview(mention);
+  }
+
+  pendingPromptPreview(prompt: string): string {
+    const parsed = parseDiffSelectionMentions(prompt);
+    const text = parsed.text || (parsed.mentions.length ? 'Review the mentioned diff selection.' : prompt);
+    if (!parsed.mentions.length) return text;
+    return `${text} · ${parsed.mentions.length} diff mention${parsed.mentions.length === 1 ? '' : 's'}`;
   }
 
   removeImage(id: string): void {

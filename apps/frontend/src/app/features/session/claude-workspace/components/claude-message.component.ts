@@ -12,6 +12,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
   lucideCopy,
+  lucideFileCode,
   lucideFileText,
   lucideInfo,
   lucidePencil,
@@ -22,6 +23,12 @@ import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
 import { hasProposedPlan } from '../util/proposed-plan';
 import { PlanReviewRequest } from '@/features/plan-annotator';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import {
+  diffSelectionMentionLineLabel,
+  diffSelectionMentionPreview,
+  parseDiffSelectionMentions,
+} from '@/shared/utils/diff-selection-mention';
 
 @Component({
   selector: 'cw-message',
@@ -32,6 +39,7 @@ import { PlanReviewRequest } from '@/features/plan-annotator';
     provideIcons({
       lucideCheck,
       lucideCopy,
+      lucideFileCode,
       lucideFileText,
       lucideInfo,
       lucidePencil,
@@ -48,7 +56,32 @@ import { PlanReviewRequest } from '@/features/plan-annotator';
           [attr.title]="timestampTitle()"
         >
           <div class="cw-msg__body">
-            <div class="cw-msg__bubble">{{ item().content }}</div>
+            <div class="cw-msg__bubble">
+              @if (userMessageText(); as text) {
+                <div class="cw-msg__user-text">{{ text }}</div>
+              }
+              @if (userDiffMentions().length) {
+                <div class="cw-msg__mentions" aria-label="Mentioned diff selections">
+                  @for (mention of userDiffMentions(); track mention.id) {
+                    <article class="cw-msg__mention">
+                      <span class="cw-msg__mention-icon" aria-hidden="true">
+                        <ng-icon name="lucideFileCode" size="14" />
+                      </span>
+                      <div class="cw-msg__mention-body">
+                        <div class="cw-msg__mention-head">
+                          <span class="cw-msg__mention-path" [title]="mention.filePath">{{ mention.filePath }}</span>
+                          <span class="cw-msg__mention-lines">{{ mentionLineLabel(mention) }}</span>
+                        </div>
+                        <p class="cw-msg__mention-preview">{{ mentionPreview(mention) }}</p>
+                        <span class="cw-msg__mention-meta">
+                          {{ mention.status }} · {{ mention.context.before.length + mention.context.after.length }} context lines{{ mention.truncated ? ' · truncated' : '' }}
+                        </span>
+                      </div>
+                    </article>
+                  }
+                </div>
+              }
+            </div>
             @if (timestampLabel() || showActions()) {
               <div class="cw-msg__meta-row">
                 @if (showActions()) {
@@ -219,6 +252,9 @@ import { PlanReviewRequest } from '@/features/plan-annotator';
         padding-bottom: 1.45rem;
       }
       .cw-msg--user .cw-msg__bubble {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
         max-width: 100%;
         min-width: 0;
         width: fit-content;
@@ -228,6 +264,82 @@ import { PlanReviewRequest } from '@/features/plan-annotator';
         border-radius: 1rem 1rem 0.25rem 1rem;
         white-space: pre-wrap;
         word-break: break-word;
+      }
+      .cw-msg__user-text {
+        white-space: pre-wrap;
+      }
+      .cw-msg__mentions {
+        display: grid;
+        gap: 0.4rem;
+        width: min(100%, 34rem);
+        white-space: normal;
+      }
+      .cw-msg__mention {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 0.55rem;
+        align-items: start;
+        padding: 0.55rem;
+        border: 1px solid color-mix(in oklab, var(--primary) 24%, var(--border));
+        border-radius: 0.65rem;
+        background: color-mix(in oklab, var(--background) 76%, transparent);
+      }
+      .cw-msg__mention-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.55rem;
+        height: 1.55rem;
+        border-radius: 0.45rem;
+        border: 1px solid var(--border);
+        background: var(--background);
+        color: var(--primary);
+      }
+      .cw-msg__mention-body {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+      .cw-msg__mention-head {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-width: 0;
+      }
+      .cw-msg__mention-path {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+      .cw-msg__mention-lines {
+        flex-shrink: 0;
+        border-radius: 999px;
+        padding: 0.08rem 0.38rem;
+        background: color-mix(in oklab, var(--foreground) 7%, transparent);
+        color: var(--muted-foreground);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.64rem;
+        font-weight: 700;
+      }
+      .cw-msg__mention-preview {
+        margin: 0;
+        overflow: hidden;
+        color: var(--foreground);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.72rem;
+        line-height: 1.35;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cw-msg__mention-meta {
+        color: var(--muted-foreground);
+        font-size: 0.67rem;
+        line-height: 1.25;
       }
       .cw-msg--assistant {
         color: var(--foreground);
@@ -585,6 +697,17 @@ export class ClaudeMessageComponent {
     if (!content) return 'No details';
     return content.length > 180 ? `${content.slice(0, 180)}...` : content;
   });
+  readonly userMessageDisplay = computed(() => parseDiffSelectionMentions(this.item().content));
+  readonly userMessageText = computed(() => this.userMessageDisplay().text);
+  readonly userDiffMentions = computed(() => this.userMessageDisplay().mentions);
+
+  mentionLineLabel(mention: DiffSelectionMention): string {
+    return diffSelectionMentionLineLabel(mention);
+  }
+
+  mentionPreview(mention: DiffSelectionMention): string {
+    return diffSelectionMentionPreview(mention);
+  }
 
   preserveSelection(event: MouseEvent): void {
     event.preventDefault();
