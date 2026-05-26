@@ -238,6 +238,7 @@ const SSH_FORWARD_CONFIG_EXCLUDED_OPTIONS = new Set([
   'tunneldevice',
 ]);
 const SSH_FORWARD_PROBE_TIMEOUT_MS = 1800;
+const SSH_PORT_BOUND_TIMEOUT_MS = 10000;
 
 function getLocalFrontendEntry() {
   return findExistingPath([
@@ -1680,6 +1681,26 @@ async function ensureRemoteServerReady(forward) {
   });
 }
 
+function waitForLocalPortBound(address, port, timeoutMs) {
+  const host = address === '0.0.0.0' ? '127.0.0.1' : address;
+  const deadline = Date.now() + timeoutMs;
+  const poll = (resolve) => {
+    if (Date.now() >= deadline) {
+      resolve(false);
+      return;
+    }
+    const socket = new net.Socket();
+    const done = (result) => { socket.destroy(); resolve(result); };
+    socket.once('connect', () => done(true));
+    socket.once('error', () => {
+      setTimeout(() => poll(resolve), 150);
+    });
+    socket.setTimeout(200, () => { socket.destroy(); setTimeout(() => poll(resolve), 150); });
+    socket.connect(port, host);
+  };
+  return new Promise(poll);
+}
+
 function probeElevenexBackend(localPort) {
   return new Promise((resolve) => {
     const request = http.get(
@@ -1818,7 +1839,6 @@ async function startSshForwardRuntime(forward) {
       stderr: [],
       lastEvent: 'spawned',
     },
-    activationTimer: null,
     stopTimer: null,
   };
   sshForwardRuntimes.set(forward.id, runtime);
@@ -1869,7 +1889,6 @@ async function startSshForwardRuntime(forward) {
   });
 
   childProcess.once('exit', (code, signal) => {
-    if (runtime.activationTimer) clearTimeout(runtime.activationTimer);
     if (runtime.stopTimer) clearTimeout(runtime.stopTimer);
 
     runtime.stoppedAt = new Date().toISOString();
@@ -1911,22 +1930,33 @@ async function startSshForwardRuntime(forward) {
     }, 500);
   });
 
-  runtime.activationTimer = setTimeout(() => {
+  const portBound = await waitForLocalPortBound(forward.bindAddress, forward.localPort, SSH_PORT_BOUND_TIMEOUT_MS);
+  {
     const current = sshForwardRuntimes.get(forward.id);
     if (current === runtime && current.status === 'connecting') {
-      runtime.status = 'active';
-      runtime.error = null;
-      runtime.debugDetails.lastEvent = 'active';
-      console.info('[ssh-forward] active', {
-        id: forward.id,
-        pid: runtime.pid,
-        target,
-        bindSpec,
-      });
+      if (portBound) {
+        runtime.status = 'active';
+        runtime.error = null;
+        runtime.debugDetails.lastEvent = 'active';
+        console.info('[ssh-forward] active', {
+          id: forward.id,
+          pid: runtime.pid,
+          target,
+          bindSpec,
+        });
+      } else {
+        runtime.status = 'error';
+        runtime.error = runtime.error || 'SSH tunnel port was not bound within the timeout.';
+        runtime.debugDetails.lastEvent = 'activation-timeout';
+        console.error('[ssh-forward] port not bound within timeout', {
+          id: forward.id,
+          pid: runtime.pid,
+          target,
+          bindSpec,
+        });
+      }
     }
-  }, 600);
-
-  await new Promise((resolve) => setTimeout(resolve, 700));
+  }
 
   const current = sshForwardRuntimes.get(forward.id);
   if (
@@ -1956,8 +1986,6 @@ async function stopSshForwardRuntime(id) {
   if (!runtime) {
     return toSshRuntimeView(id, null);
   }
-
-  if (runtime.activationTimer) clearTimeout(runtime.activationTimer);
 
   if (runtime.process.exitCode !== null || runtime.process.killed) {
     sshForwardRuntimes.delete(id);
