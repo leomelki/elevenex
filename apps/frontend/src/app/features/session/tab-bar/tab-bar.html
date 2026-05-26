@@ -98,10 +98,11 @@
       }
       @if (isClaudeProvider()) {
         <button
-          class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+          class="relative flex size-8 items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-100 enabled:cursor-pointer enabled:hover:bg-muted enabled:hover:text-foreground"
           [ngClass]="showClaudeTerminalFallback() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-          title="Claude Raw Terminal"
-          aria-label="Toggle Claude raw terminal fallback"
+          [disabled]="showClaudeTerminalFallback()"
+          [title]="showClaudeTerminalFallback() ? 'Already in raw terminal mode (one-way switch for this session)' : 'Switch to Claude raw terminal (one-way — cannot switch back without reopening the tab)'"
+          aria-label="Switch to Claude raw terminal fallback"
           (click)="toggleClaudeTerminalFallback.emit()"
         >
           <ng-icon name="lucideSquareTerminal" size="16" />
