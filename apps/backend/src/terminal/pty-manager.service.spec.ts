@@ -52,6 +52,10 @@ describe('PtyManager', () => {
   const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
 
   let manager: PtyManager;
+  let gateway: {
+    sendToSession: jest.Mock;
+    onUnexpectedExit: jest.Mock;
+  };
   let tmuxManager: {
     isTmuxAvailable: jest.Mock;
     sessionExists: jest.Mock;
@@ -79,11 +83,12 @@ describe('PtyManager', () => {
       registerLaunch: jest.fn(),
       markLaunchInactive: jest.fn(),
     };
+    gateway = {
+      sendToSession: jest.fn(),
+      onUnexpectedExit: jest.fn(),
+    };
     manager = new PtyManager(
-      {
-        sendToSession: jest.fn(),
-        onUnexpectedExit: jest.fn(),
-      } as never,
+      gateway as never,
       tmuxManager as never,
       plannotatorRegistry as never,
     );
@@ -124,5 +129,40 @@ describe('PtyManager', () => {
     await expect(spawnPromise).resolves.toBeNull();
     expect(mockSpawn).not.toHaveBeenCalled();
     expect(plannotatorRegistry.markLaunchInactive).toHaveBeenCalledWith(7);
+  });
+
+  it('ignores stale exit events from a replaced PTY process', async () => {
+    jest.useFakeTimers();
+    let nextPid = 100;
+    mockSpawn.mockImplementation(() => {
+      const process = createMockPty();
+      process.pid = nextPid++;
+      return process as never;
+    });
+
+    try {
+      const first = await manager.spawn(7, '/repo/worktree');
+      expect(first).not.toBeNull();
+      manager.kill(7);
+      const second = await manager.spawn(7, '/repo/worktree');
+      expect(second).not.toBeNull();
+
+      (first as MockPty).onExit.mock.calls[0][0]({
+        exitCode: 0,
+        signal: undefined,
+      });
+
+      expect(manager.getPid(7)).toBe((second as MockPty).pid);
+
+      (second as MockPty).onExit.mock.calls[0][0]({
+        exitCode: 1,
+        signal: undefined,
+      });
+
+      expect(gateway.onUnexpectedExit).toHaveBeenCalledWith(7, 1, undefined);
+      jest.advanceTimersByTime(5000);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

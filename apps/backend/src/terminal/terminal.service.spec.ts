@@ -1,6 +1,16 @@
 import { promises as fs } from 'fs';
 import { TerminalService } from './terminal.service.js';
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('TerminalService', () => {
   let service: TerminalService;
   let sessionsService: {
@@ -146,5 +156,30 @@ describe('TerminalService', () => {
       error: 'Terminal start was cancelled',
     });
     expect(sessionsService.updateStatus).not.toHaveBeenCalled();
+  });
+
+  it('coalesces concurrent starts for the same session', async () => {
+    const access = createDeferred<void>();
+    jest.spyOn(fs, 'access').mockReturnValue(access.promise);
+    sessionsService.findOne.mockResolvedValue({
+      id: 1,
+      worktreePath: process.cwd(),
+      claudeSessionId: '-1',
+    });
+    ptyManager.isAlive.mockReturnValue(false);
+    ptyManager.hasTmuxSession.mockResolvedValue(false);
+    ptyManager.spawn.mockResolvedValue({} as never);
+
+    const firstStart = service.startSession(1);
+    const secondStart = service.startSession(1);
+
+    access.resolve();
+
+    await expect(Promise.all([firstStart, secondStart])).resolves.toEqual([
+      { success: true, resumed: false },
+      { success: true, resumed: false },
+    ]);
+    expect(sessionsService.findOne).toHaveBeenCalledTimes(1);
+    expect(ptyManager.spawn).toHaveBeenCalledTimes(1);
   });
 });

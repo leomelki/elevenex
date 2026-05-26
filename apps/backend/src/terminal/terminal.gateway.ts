@@ -1,5 +1,10 @@
 // apps/backend/src/terminal/terminal.gateway.ts
-import { Injectable, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleDestroy,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
 import { PtyManager } from './pty-manager.service.js';
@@ -18,8 +23,10 @@ export class TerminalGateway implements OnModuleDestroy {
   private lastRestartTime = new Map<number, number>();
 
   constructor(
-    @Inject(forwardRef(() => PtyManager)) private readonly ptyManager: PtyManager,
-    @Inject(forwardRef(() => TerminalService)) private readonly terminalService: TerminalService,
+    @Inject(forwardRef(() => PtyManager))
+    private readonly ptyManager: PtyManager,
+    @Inject(forwardRef(() => TerminalService))
+    private readonly terminalService: TerminalService,
     private readonly claudeHooksService: ClaudeHooksService,
   ) {}
 
@@ -58,13 +65,21 @@ export class TerminalGateway implements OnModuleDestroy {
     }
 
     this.sessions.set(sessionId, { ws });
+    const isCurrentConnection = () => this.sessions.get(sessionId)?.ws === ws;
 
     // Start the PTY process when WebSocket connects
-    void this.terminalService.startSession(sessionId)
-      .then(result => {
+    void this.terminalService
+      .startSession(sessionId)
+      .then((result) => {
+        if (!isCurrentConnection()) {
+          return;
+        }
+
         if (!result.success) {
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(`\x1b[31mFailed to start terminal: ${result.error}\x1b[0m\r\n`);
+            ws.send(
+              `\x1b[31mFailed to start terminal: ${result.error}\x1b[0m\r\n`,
+            );
             ws.close(1011, 'Failed to start terminal');
           }
 
@@ -75,6 +90,10 @@ export class TerminalGateway implements OnModuleDestroy {
         }
       })
       .catch((error) => {
+        if (!isCurrentConnection()) {
+          return;
+        }
+
         console.error(`Failed to start terminal session ${sessionId}:`, error);
 
         if (ws.readyState === WebSocket.OPEN) {
@@ -89,6 +108,10 @@ export class TerminalGateway implements OnModuleDestroy {
       });
 
     ws.on('message', (data) => {
+      if (!isCurrentConnection()) {
+        return;
+      }
+
       try {
         const message = data.toString();
 
@@ -104,23 +127,31 @@ export class TerminalGateway implements OnModuleDestroy {
         }
 
         if (message.includes('\x03')) {
-          void this.claudeHooksService.handleInterrupt(sessionId).catch((error) => {
-            console.error(
-              `Failed to update Claude status after Ctrl-C for session ${sessionId}:`,
-              error,
-            );
-          });
+          void this.claudeHooksService
+            .handleInterrupt(sessionId)
+            .catch((error) => {
+              console.error(
+                `Failed to update Claude status after Ctrl-C for session ${sessionId}:`,
+                error,
+              );
+            });
         }
 
         // Terminal input
         this.ptyManager.write(sessionId, message);
       } catch (error) {
-        console.error(`Error handling message for session ${sessionId}:`, error);
+        console.error(
+          `Error handling message for session ${sessionId}:`,
+          error,
+        );
       }
     });
 
     ws.on('close', () => {
       console.log(`WebSocket closed for session ${sessionId}`);
+      if (!isCurrentConnection()) {
+        return;
+      }
       // Kill the PTY process (detaches from tmux, but tmux session lives on)
       this.ptyManager.kill(sessionId);
       this.sessions.delete(sessionId);
@@ -129,12 +160,19 @@ export class TerminalGateway implements OnModuleDestroy {
 
     ws.on('error', (error) => {
       console.error(`WebSocket error for session ${sessionId}:`, error);
+      if (!isCurrentConnection()) {
+        return;
+      }
       this.ptyManager.kill(sessionId);
       this.sessions.delete(sessionId);
     });
   }
 
-  onUnexpectedExit(sessionId: number, exitCode: number, signal: number | undefined): void {
+  onUnexpectedExit(
+    sessionId: number,
+    exitCode: number,
+    signal: number | undefined,
+  ): void {
     const session = this.sessions.get(sessionId);
     if (!session || session.ws.readyState !== WebSocket.OPEN) return;
 
@@ -142,9 +180,11 @@ export class TerminalGateway implements OnModuleDestroy {
     const lastRestart = this.lastRestartTime.get(sessionId);
 
     // Crash loop prevention: don't restart if last restart was < 5s ago
-    if (lastRestart && (now - lastRestart) < 5000) {
+    if (lastRestart && now - lastRestart < 5000) {
       if (session.ws.readyState === WebSocket.OPEN) {
-        session.ws.send('\r\n\x1b[31m[Claude crashed repeatedly — not restarting. Reconnect to try again.]\x1b[0m\r\n');
+        session.ws.send(
+          '\r\n\x1b[31m[Claude crashed repeatedly — not restarting. Reconnect to try again.]\x1b[0m\r\n',
+        );
       }
       return;
     }
@@ -156,16 +196,24 @@ export class TerminalGateway implements OnModuleDestroy {
 
     setTimeout(() => {
       if (this.sessions.has(sessionId)) {
-        void this.terminalService.startSession(sessionId)
-          .then(result => {
+        void this.terminalService
+          .startSession(sessionId)
+          .then((result) => {
             if (!result.success && session.ws.readyState === WebSocket.OPEN) {
-              session.ws.send(`\r\n\x1b[31m[Failed to restart: ${result.error}]\x1b[0m\r\n`);
+              session.ws.send(
+                `\r\n\x1b[31m[Failed to restart: ${result.error}]\x1b[0m\r\n`,
+              );
             }
           })
           .catch((error) => {
-            console.error(`Failed to restart terminal session ${sessionId}:`, error);
+            console.error(
+              `Failed to restart terminal session ${sessionId}:`,
+              error,
+            );
             if (session.ws.readyState === WebSocket.OPEN) {
-              session.ws.send('\r\n\x1b[31m[Failed to restart terminal.]\x1b[0m\r\n');
+              session.ws.send(
+                '\r\n\x1b[31m[Failed to restart terminal.]\x1b[0m\r\n',
+              );
             }
           });
       }

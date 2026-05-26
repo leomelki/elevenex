@@ -1,4 +1,9 @@
-import { Injectable, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleDestroy,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
 import { UserPtyManager } from './user-pty-manager.service.js';
@@ -14,8 +19,10 @@ export class UserTerminalGateway implements OnModuleDestroy {
   private connections = new Map<number, TerminalConnection>();
 
   constructor(
-    @Inject(forwardRef(() => UserPtyManager)) private readonly ptyManager: UserPtyManager,
-    @Inject(forwardRef(() => UserTerminalService)) private readonly terminalService: UserTerminalService,
+    @Inject(forwardRef(() => UserPtyManager))
+    private readonly ptyManager: UserPtyManager,
+    @Inject(forwardRef(() => UserTerminalService))
+    private readonly terminalService: UserTerminalService,
   ) {}
 
   attachToServer(server: HttpServer): void {
@@ -52,16 +59,49 @@ export class UserTerminalGateway implements OnModuleDestroy {
     }
 
     this.connections.set(terminalId, { ws });
+    const isCurrentConnection = () =>
+      this.connections.get(terminalId)?.ws === ws;
 
     // Start or reattach the terminal
-    this.terminalService.startTerminal(terminalId).then(result => {
-      if (!result.success) {
-        ws.send(`\x1b[31mFailed to start terminal: ${result.error}\x1b[0m\r\n`);
-        ws.close(1011, 'Failed to start terminal');
-      }
-    });
+    void this.terminalService
+      .startTerminal(terminalId)
+      .then((result) => {
+        if (!isCurrentConnection()) {
+          return;
+        }
+
+        if (!result.success) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              `\x1b[31mFailed to start terminal: ${result.error}\x1b[0m\r\n`,
+            );
+            ws.close(1011, 'Failed to start terminal');
+          }
+          if (isCurrentConnection()) {
+            this.connections.delete(terminalId);
+          }
+        }
+      })
+      .catch((error) => {
+        if (!isCurrentConnection()) {
+          return;
+        }
+
+        console.error(`Failed to start user terminal ${terminalId}:`, error);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send('\x1b[31mFailed to start terminal.\x1b[0m\r\n');
+          ws.close(1011, 'Failed to start terminal');
+        }
+        if (isCurrentConnection()) {
+          this.connections.delete(terminalId);
+        }
+      });
 
     ws.on('message', (data) => {
+      if (!isCurrentConnection()) {
+        return;
+      }
+
       try {
         const message = data.toString();
 
@@ -78,12 +118,18 @@ export class UserTerminalGateway implements OnModuleDestroy {
 
         this.ptyManager.write(terminalId, message);
       } catch (error) {
-        console.error(`Error handling message for terminal ${terminalId}:`, error);
+        console.error(
+          `Error handling message for terminal ${terminalId}:`,
+          error,
+        );
       }
     });
 
     ws.on('close', () => {
       console.log(`WebSocket closed for user terminal ${terminalId}`);
+      if (!isCurrentConnection()) {
+        return;
+      }
       // Kill PTY attachment but tmux session persists
       this.ptyManager.kill(terminalId);
       this.connections.delete(terminalId);
@@ -91,6 +137,9 @@ export class UserTerminalGateway implements OnModuleDestroy {
 
     ws.on('error', (error) => {
       console.error(`WebSocket error for user terminal ${terminalId}:`, error);
+      if (!isCurrentConnection()) {
+        return;
+      }
       this.ptyManager.kill(terminalId);
       this.connections.delete(terminalId);
     });

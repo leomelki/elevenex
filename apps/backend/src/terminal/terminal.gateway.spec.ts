@@ -71,7 +71,10 @@ describe('TerminalGateway', () => {
 
     const connectionHandler = mockWss.on.mock.calls.find(
       (call) => call[0] === 'connection',
-    )?.[1] as ((ws: WebSocket, request: { url: string; headers: { host: string } }) => void);
+    )?.[1] as (
+      ws: WebSocket,
+      request: { url: string; headers: { host: string } },
+    ) => void;
 
     const mockWs = {
       on: jest.fn().mockReturnThis(),
@@ -85,11 +88,17 @@ describe('TerminalGateway', () => {
       headers: { host: 'localhost:3000' },
     });
 
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
 
-    expect(mockWs.send).toHaveBeenCalledWith('\x1b[31mFailed to start terminal: boom\x1b[0m\r\n');
+    expect(mockWs.send).toHaveBeenCalledWith(
+      '\x1b[31mFailed to start terminal: boom\x1b[0m\r\n',
+    );
     expect(mockWs.close).toHaveBeenCalledWith(1011, 'Failed to start terminal');
-    expect((gateway as unknown as { sessions: Map<number, unknown> }).sessions.has(97)).toBe(false);
+    expect(
+      (gateway as unknown as { sessions: Map<number, unknown> }).sessions.has(
+        97,
+      ),
+    ).toBe(false);
   });
 
   it('closes and cleans up the websocket when startup throws', async () => {
@@ -99,7 +108,10 @@ describe('TerminalGateway', () => {
 
     const connectionHandler = mockWss.on.mock.calls.find(
       (call) => call[0] === 'connection',
-    )?.[1] as ((ws: WebSocket, request: { url: string; headers: { host: string } }) => void);
+    )?.[1] as (
+      ws: WebSocket,
+      request: { url: string; headers: { host: string } },
+    ) => void;
 
     const mockWs = {
       on: jest.fn().mockReturnThis(),
@@ -113,11 +125,17 @@ describe('TerminalGateway', () => {
       headers: { host: 'localhost:3000' },
     });
 
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
 
-    expect(mockWs.send).toHaveBeenCalledWith('\x1b[31mFailed to start terminal.\x1b[0m\r\n');
+    expect(mockWs.send).toHaveBeenCalledWith(
+      '\x1b[31mFailed to start terminal.\x1b[0m\r\n',
+    );
     expect(mockWs.close).toHaveBeenCalledWith(1011, 'Failed to start terminal');
-    expect((gateway as unknown as { sessions: Map<number, unknown> }).sessions.has(98)).toBe(false);
+    expect(
+      (gateway as unknown as { sessions: Map<number, unknown> }).sessions.has(
+        98,
+      ),
+    ).toBe(false);
   });
 
   it('marks Claude idle when ctrl-c is sent to the terminal', async () => {
@@ -130,7 +148,10 @@ describe('TerminalGateway', () => {
 
     const connectionHandler = mockWss.on.mock.calls.find(
       (call) => call[0] === 'connection',
-    )?.[1] as ((ws: WebSocket, request: { url: string; headers: { host: string } }) => void);
+    )?.[1] as (
+      ws: WebSocket,
+      request: { url: string; headers: { host: string } },
+    ) => void;
 
     const messageHandlers = new Map<string, (data?: unknown) => void>();
     const mockWs = {
@@ -149,9 +170,63 @@ describe('TerminalGateway', () => {
     });
 
     messageHandlers.get('message')?.(Buffer.from('\x03'));
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
 
     expect(mockClaudeHooksService.handleInterrupt).toHaveBeenCalledWith(99);
     expect(mockPtyManager.write).toHaveBeenCalledWith(99, '\x03');
+  });
+
+  it('does not let a stale websocket close kill a newer terminal connection', async () => {
+    gateway.attachToServer(mockServer);
+    mockTerminalService.startSession.mockResolvedValue({
+      success: true,
+      resumed: false,
+    });
+
+    const connectionHandler = mockWss.on.mock.calls.find(
+      (call) => call[0] === 'connection',
+    )?.[1] as (
+      ws: WebSocket,
+      request: { url: string; headers: { host: string } },
+    ) => void;
+
+    const firstHandlers = new Map<string, () => void>();
+    const firstWs = {
+      on: jest.fn((event: string, handler: () => void) => {
+        firstHandlers.set(event, handler);
+        return firstWs;
+      }),
+      close: jest.fn(),
+      send: jest.fn(),
+      readyState: WebSocket.OPEN,
+    } as unknown as jest.Mocked<WebSocket>;
+    const secondWs = {
+      on: jest.fn().mockReturnThis(),
+      close: jest.fn(),
+      send: jest.fn(),
+      readyState: WebSocket.OPEN,
+    } as unknown as jest.Mocked<WebSocket>;
+
+    connectionHandler(firstWs, {
+      url: '/terminal?sessionId=101',
+      headers: { host: 'localhost:3000' },
+    });
+    connectionHandler(secondWs, {
+      url: '/terminal?sessionId=101',
+      headers: { host: 'localhost:3000' },
+    });
+
+    firstHandlers.get('close')?.();
+
+    expect(firstWs.close).toHaveBeenCalledWith(
+      1000,
+      'New connection established',
+    );
+    expect(mockPtyManager.kill).not.toHaveBeenCalled();
+    expect(
+      (
+        gateway as unknown as { sessions: Map<number, { ws: WebSocket }> }
+      ).sessions.get(101)?.ws,
+    ).toBe(secondWs);
   });
 });

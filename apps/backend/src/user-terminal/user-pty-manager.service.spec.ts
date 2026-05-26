@@ -92,4 +92,39 @@ describe('UserPtyManager', () => {
     await expect(spawnPromise).resolves.toBeNull();
     expect(mockSpawn).not.toHaveBeenCalled();
   });
+
+  it('ignores stale exit events from a replaced terminal PTY process', async () => {
+    jest.useFakeTimers();
+    let nextPid = 200;
+    mockSpawn.mockImplementation(() => {
+      const process = createMockPty();
+      process.pid = nextPid++;
+      return process as never;
+    });
+
+    try {
+      const first = await manager.spawn(3, '/repo/worktree', '/bin/zsh');
+      expect(first).not.toBeNull();
+      manager.kill(3);
+      const second = await manager.spawn(3, '/repo/worktree', '/bin/zsh');
+      expect(second).not.toBeNull();
+
+      (first as MockPty).onExit.mock.calls[0][0]({
+        exitCode: 0,
+        signal: undefined,
+      });
+
+      expect(manager.isAlive(3)).toBe(true);
+
+      (second as MockPty).onExit.mock.calls[0][0]({
+        exitCode: 0,
+        signal: undefined,
+      });
+
+      expect(manager.isAlive(3)).toBe(false);
+      jest.advanceTimersByTime(5000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

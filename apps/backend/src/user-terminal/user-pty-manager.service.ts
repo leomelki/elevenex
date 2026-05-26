@@ -130,13 +130,24 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     const tmuxSessionName = this.getTmuxSessionName(terminalId);
 
     if (this.isTmuxAvailable()) {
-      return this.spawnWithTmux(
+      const tmuxSession = await this.spawnWithTmux(
         terminalId,
         worktreePath,
         shell,
         env,
         tmuxSessionName,
       );
+      if (this.cancelledSpawns.has(terminalId)) {
+        this.cancelledSpawns.delete(terminalId);
+        if (
+          tmuxSession &&
+          this.processes.get(terminalId)?.pty === tmuxSession
+        ) {
+          this.killProcess(terminalId);
+        }
+        return null;
+      }
+      return tmuxSession;
     }
 
     // Fallback: direct PTY spawn (no persistence)
@@ -235,6 +246,9 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     });
 
     ptyProcess.onData((data) => {
+      if (this.processes.get(terminalId)?.pty !== ptyProcess) {
+        return;
+      }
       this.gateway.sendToTerminal(terminalId, data);
     });
 
@@ -242,6 +256,9 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       this.logger.log(
         `tmux attach exited for terminal ${terminalId}: code=${exitCode}, signal=${signal}`,
       );
+      if (this.processes.get(terminalId)?.pty !== ptyProcess) {
+        return;
+      }
       this.processes.delete(terminalId);
       // No auto-restart for user terminals
     });
@@ -274,6 +291,9 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     });
 
     ptyProcess.onData((data) => {
+      if (this.processes.get(terminalId)?.pty !== ptyProcess) {
+        return;
+      }
       this.gateway.sendToTerminal(terminalId, data);
     });
 
@@ -281,6 +301,9 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       this.logger.log(
         `PTY exited for terminal ${terminalId}: code=${exitCode}, signal=${signal}`,
       );
+      if (this.processes.get(terminalId)?.pty !== ptyProcess) {
+        return;
+      }
       this.processes.delete(terminalId);
     });
 
@@ -328,7 +351,8 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
         session.pty.kill();
 
         setTimeout(() => {
-          if (this.processes.has(terminalId) && session.pid) {
+          const current = this.processes.get(terminalId);
+          if (current?.pty === session.pty && session.pid) {
             try {
               process.kill(session.pid, 'SIGKILL');
             } catch {
@@ -337,13 +361,17 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
           }
         }, 5000);
 
-        this.processes.delete(terminalId);
+        if (this.processes.get(terminalId)?.pty === session.pty) {
+          this.processes.delete(terminalId);
+        }
         return true;
       } catch (error) {
         this.logger.error(
           `Failed to kill PTY for terminal ${terminalId}: ${error}`,
         );
-        this.processes.delete(terminalId);
+        if (this.processes.get(terminalId)?.pty === session.pty) {
+          this.processes.delete(terminalId);
+        }
         return false;
       }
     }

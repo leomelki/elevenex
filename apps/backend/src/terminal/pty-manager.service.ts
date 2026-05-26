@@ -70,7 +70,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private processes = new Map<number, PtySession>();
   private readonly spawnInFlight = new Map<number, Promise<pty.IPty | null>>();
   private readonly cancelledSpawns = new Set<number>();
-  private pendingKills = new Set<number>();
+  private pendingKills = new Map<number, pty.IPty>();
   private readonly logger = new Logger('PtyManager');
 
   private wrapperScriptPath: string;
@@ -166,6 +166,13 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
         args,
         env,
       );
+      if (this.cancelledSpawns.has(sessionId)) {
+        this.cancelledSpawns.delete(sessionId);
+        if (tmuxSession && this.processes.get(sessionId)?.pty === tmuxSession) {
+          this.killProcess(sessionId);
+        }
+        return null;
+      }
       if (tmuxSession) {
         return tmuxSession;
       }
@@ -315,6 +322,9 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
     // Pipe PTY output to WebSocket
     ptyProcess.onData((data) => {
+      if (this.processes.get(sessionId)?.pty !== ptyProcess) {
+        return;
+      }
       this.gateway.sendToSession(sessionId, data);
     });
 
@@ -322,8 +332,14 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       this.logger.log(
         `tmux attach exited for session ${sessionId}: code=${exitCode}, signal=${signal}`,
       );
+      if (this.processes.get(sessionId)?.pty !== ptyProcess) {
+        if (this.pendingKills.get(sessionId) === ptyProcess) {
+          this.pendingKills.delete(sessionId);
+        }
+        return;
+      }
       this.processes.delete(sessionId);
-      this.handleProcessExit(sessionId, exitCode, signal, true);
+      this.handleProcessExit(sessionId, exitCode, signal, true, ptyProcess);
     });
 
     return ptyProcess;
@@ -355,6 +371,9 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
     // Pipe PTY output to WebSocket
     ptyProcess.onData((data) => {
+      if (this.processes.get(sessionId)?.pty !== ptyProcess) {
+        return;
+      }
       this.gateway.sendToSession(sessionId, data);
     });
 
@@ -362,8 +381,14 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       this.logger.log(
         `PTY exited for session ${sessionId}: code=${exitCode}, signal=${signal}`,
       );
+      if (this.processes.get(sessionId)?.pty !== ptyProcess) {
+        if (this.pendingKills.get(sessionId) === ptyProcess) {
+          this.pendingKills.delete(sessionId);
+        }
+        return;
+      }
       this.processes.delete(sessionId);
-      this.handleProcessExit(sessionId, exitCode, signal, false);
+      this.handleProcessExit(sessionId, exitCode, signal, false, ptyProcess);
     });
 
     return ptyProcess;
@@ -400,12 +425,13 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     exitCode: number,
     signal: number | undefined,
     useTmux: boolean,
+    ptyProcess: pty.IPty,
   ): void {
     if (!useTmux) {
       this.plannotatorRegistry.markLaunchInactive(sessionId);
     }
 
-    if (this.pendingKills.has(sessionId)) {
+    if (this.pendingKills.get(sessionId) === ptyProcess) {
       this.pendingKills.delete(sessionId);
       return; // Intentional kill, don't restart
     }
@@ -424,7 +450,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     const session = this.processes.get(sessionId);
 
     if (session) {
-      this.pendingKills.add(sessionId);
+      this.pendingKills.set(sessionId, session.pty);
       if (!session.useTmux) {
         this.plannotatorRegistry.markLaunchInactive(sessionId);
       }
@@ -434,7 +460,8 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
         // Force kill after timeout
         setTimeout(() => {
-          if (this.processes.has(sessionId) && session.pid) {
+          const current = this.processes.get(sessionId);
+          if (current?.pty === session.pty && session.pid) {
             try {
               process.kill(session.pid, 'SIGKILL');
             } catch {
@@ -443,13 +470,17 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
           }
         }, 5000);
 
-        this.processes.delete(sessionId);
+        if (this.processes.get(sessionId)?.pty === session.pty) {
+          this.processes.delete(sessionId);
+        }
         return true;
       } catch (error) {
         this.logger.error(
           `Failed to kill PTY for session ${sessionId}: ${error}`,
         );
-        this.processes.delete(sessionId);
+        if (this.processes.get(sessionId)?.pty === session.pty) {
+          this.processes.delete(sessionId);
+        }
         return false;
       }
     }

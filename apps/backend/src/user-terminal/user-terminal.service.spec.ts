@@ -1,6 +1,16 @@
 import { promises as fs } from 'fs';
 import { UserTerminalService } from './user-terminal.service.js';
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('UserTerminalService', () => {
   let service: UserTerminalService;
   let ptyManager: {
@@ -47,14 +57,29 @@ describe('UserTerminalService', () => {
 
     const result = await service.startTerminal(3);
 
-    expect(ptyManager.spawn).toHaveBeenCalledWith(
-      3,
-      process.cwd(),
-      '/bin/zsh',
-    );
+    expect(ptyManager.spawn).toHaveBeenCalledWith(3, process.cwd(), '/bin/zsh');
     expect(result).toEqual({
       success: false,
       error: 'Terminal start was cancelled',
     });
+  });
+
+  it('coalesces concurrent starts for the same terminal', async () => {
+    const access = createDeferred<void>();
+    jest.spyOn(fs, 'access').mockReturnValue(access.promise);
+    ptyManager.isAlive.mockReturnValue(false);
+    ptyManager.spawn.mockResolvedValue({} as never);
+
+    const firstStart = service.startTerminal(3);
+    const secondStart = service.startTerminal(3);
+
+    access.resolve();
+
+    await expect(Promise.all([firstStart, secondStart])).resolves.toEqual([
+      { success: true },
+      { success: true },
+    ]);
+    expect(service.findOne).toHaveBeenCalledTimes(1);
+    expect(ptyManager.spawn).toHaveBeenCalledTimes(1);
   });
 });

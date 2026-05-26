@@ -251,7 +251,7 @@ export class ActionPtyManager
 
       ptyProcess.onData((data) => {
         const session = this.processes.get(actionId);
-        if (!session) return;
+        if (!session || session.pty !== ptyProcess) return;
         session.output = this.trimOutput(session.output + data);
         this.gateway?.sendToAction(actionId, data);
         this.scheduleFlush(actionId);
@@ -476,7 +476,7 @@ export class ActionPtyManager
 
       ptyProcess.onData((data) => {
         const session = this.processes.get(action.id);
-        if (!session) return;
+        if (!session || session.pty !== ptyProcess) return;
         session.output = this.trimOutput(session.output + data);
         this.gateway?.sendToAction(action.id, data);
         this.scheduleFlush(action.id);
@@ -524,13 +524,14 @@ export class ActionPtyManager
 
     ptyProcess.onData((data) => {
       const session = this.processes.get(action.id);
-      if (!session) return;
+      if (!session || session.pty !== ptyProcess) return;
       session.output = this.trimOutput(session.output + data);
       this.gateway?.sendToAction(action.id, data);
       this.scheduleFlush(action.id);
     });
 
     ptyProcess.onExit(({ exitCode }) => {
+      if (this.processes.get(action.id)?.pty !== ptyProcess) return;
       void this.handleExit(action.id, exitCode);
     });
 

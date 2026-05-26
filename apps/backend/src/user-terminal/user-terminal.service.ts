@@ -16,6 +16,10 @@ import * as path from 'path';
 export class UserTerminalService {
   private readonly logger = new Logger('UserTerminalService');
   private readonly defaultShell = process.env.SHELL || '/bin/zsh';
+  private readonly startInFlight = new Map<
+    number,
+    Promise<{ success: boolean; error?: string }>
+  >();
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -78,6 +82,23 @@ export class UserTerminalService {
   }
 
   async startTerminal(
+    terminalId: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    const inFlight = this.startInFlight.get(terminalId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const promise = this.startTerminalInternal(terminalId).finally(() => {
+      if (this.startInFlight.get(terminalId) === promise) {
+        this.startInFlight.delete(terminalId);
+      }
+    });
+    this.startInFlight.set(terminalId, promise);
+    return promise;
+  }
+
+  private async startTerminalInternal(
     terminalId: number,
   ): Promise<{ success: boolean; error?: string }> {
     const terminal = await this.findOne(terminalId);

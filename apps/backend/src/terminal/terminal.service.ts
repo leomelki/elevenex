@@ -10,6 +10,11 @@ import { promises as fs } from 'fs';
 
 @Injectable()
 export class TerminalService {
+  private readonly startInFlight = new Map<
+    number,
+    Promise<{ success: boolean; resumed: boolean; error?: string }>
+  >();
+
   constructor(
     @Inject(forwardRef(() => SessionsService))
     private readonly sessionsService: SessionsService,
@@ -18,6 +23,23 @@ export class TerminalService {
   ) {}
 
   async startSession(
+    sessionId: number,
+  ): Promise<{ success: boolean; resumed: boolean; error?: string }> {
+    const inFlight = this.startInFlight.get(sessionId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const promise = this.startSessionInternal(sessionId).finally(() => {
+      if (this.startInFlight.get(sessionId) === promise) {
+        this.startInFlight.delete(sessionId);
+      }
+    });
+    this.startInFlight.set(sessionId, promise);
+    return promise;
+  }
+
+  private async startSessionInternal(
     sessionId: number,
   ): Promise<{ success: boolean; resumed: boolean; error?: string }> {
     const session = await this.sessionsService.findOne(sessionId);
