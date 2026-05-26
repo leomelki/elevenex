@@ -653,6 +653,7 @@ readonly messageActionsDisabled = computed(
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['sessionId'] && !changes['sessionId'].firstChange) {
+      this.ws.disconnect(changes['sessionId'].previousValue as number);
       this.reset();
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       if (this.isVisible) {
