@@ -2,7 +2,7 @@ import { Component, Directive, input, output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TestBed } from '@angular/core/testing';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { WorktreeSheet } from './worktree-sheet';
 import { WorkspacesService } from '../../../shared/services/workspaces.service';
 import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
@@ -43,11 +43,14 @@ describe('WorktreeSheet', () => {
   };
   const pendingWorkspaceCreationsMock = {
     register: vi.fn(),
+    hasPendingForRepoPath: vi.fn(() => false),
   };
 
   beforeEach(async () => {
     workspacesServiceMock.create.mockReset();
     pendingWorkspaceCreationsMock.register.mockReset();
+    pendingWorkspaceCreationsMock.hasPendingForRepoPath.mockReset();
+    pendingWorkspaceCreationsMock.hasPendingForRepoPath.mockReturnValue(false);
 
     TestBed.resetTestingModule();
     TestBed.overrideComponent(WorktreeSheet, {
@@ -97,6 +100,48 @@ describe('WorktreeSheet', () => {
     expect(pendingWorkspaceCreationsMock.register).toHaveBeenCalledWith(job, true);
     expect(dialog.close).toHaveBeenCalledOnce();
     expect(component.creating()).toBe(false);
+  });
+
+  it('ignores duplicate submits while creation is already in progress', () => {
+    const createSubject = new Subject<any>();
+    workspacesServiceMock.create.mockReturnValue(createSubject.asObservable());
+
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.branchName.set('feature');
+    component.workspaceName.set('feature');
+    component.worktreePath.set('/tmp/repo/.worktrees/feature');
+
+    component.submit();
+    component.submit();
+
+    expect(workspacesServiceMock.create).toHaveBeenCalledOnce();
+    expect(pendingWorkspaceCreationsMock.register).not.toHaveBeenCalled();
+  });
+
+  it('ignores duplicate submits when the path is already pending', () => {
+    pendingWorkspaceCreationsMock.hasPendingForRepoPath.mockReturnValue(true);
+
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.branchName.set('feature');
+    component.workspaceName.set('feature');
+    component.worktreePath.set('/tmp/repo/.worktrees/feature');
+
+    component.submit();
+
+    expect(pendingWorkspaceCreationsMock.hasPendingForRepoPath).toHaveBeenCalledWith(
+      7,
+      '/tmp/repo/.worktrees/feature',
+    );
+    expect(workspacesServiceMock.create).not.toHaveBeenCalled();
+    expect(pendingWorkspaceCreationsMock.register).not.toHaveBeenCalled();
   });
 
   it('prefills the default path with the supplied repo name segment', () => {

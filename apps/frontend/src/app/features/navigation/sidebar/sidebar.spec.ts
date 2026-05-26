@@ -230,7 +230,7 @@ describe('Sidebar', () => {
     sessionTitles: signal(new Map<number, string>()).asReadonly(),
   };
   const pendingWorkspaceCreationsMock = {
-    getByRepo: vi.fn<(repoId: number) => any[]>(() => []),
+    getVisibleByRepo: vi.fn<(repoId: number, existingWorkspacePaths: readonly string[]) => any[]>(() => []),
   };
 
   const reposServiceMock = {
@@ -321,8 +321,8 @@ describe('Sidebar', () => {
     });
     claudeStatusMock.getSessionStatus.mockReturnValue(null);
     claudeStatusMock.getSessionCompletion.mockReturnValue(null);
-    pendingWorkspaceCreationsMock.getByRepo.mockReset();
-    pendingWorkspaceCreationsMock.getByRepo.mockReturnValue([]);
+    pendingWorkspaceCreationsMock.getVisibleByRepo.mockReset();
+    pendingWorkspaceCreationsMock.getVisibleByRepo.mockReturnValue([]);
     todosServiceMock.getTodos.mockClear();
     todosServiceMock.pendingCountsSignal.mockClear();
     todosServiceMock.getPendingCount.mockClear();
@@ -699,7 +699,7 @@ describe('Sidebar', () => {
   });
 
   it('renders a pending workspace row while creation is in progress', () => {
-    pendingWorkspaceCreationsMock.getByRepo.mockImplementation(((repoId: number) => (
+    pendingWorkspaceCreationsMock.getVisibleByRepo.mockImplementation(((repoId: number) => (
       repoId === 1
         ? [{
           jobId: 'job-1',
@@ -717,6 +717,28 @@ describe('Sidebar', () => {
     const el = fixture.nativeElement as HTMLElement;
 
     expect(el.querySelector('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')?.textContent).toContain('Creating');
+  });
+
+  it('renders a finalizing pending workspace row after creation succeeds before tree refresh catches up', () => {
+    pendingWorkspaceCreationsMock.getVisibleByRepo.mockImplementation(((repoId: number) => (
+      repoId === 1
+        ? [{
+          jobId: 'job-1',
+          repoId: 1,
+          name: 'Feature',
+          startPoint: 'feature',
+          worktreePath: '/tmp/repo-one/.worktrees/feature',
+          status: 'succeeded',
+          autoCreateSession: false,
+        }]
+        : []
+    )) as any);
+
+    const fixture = createSidebar();
+    const el = fixture.nativeElement as HTMLElement;
+
+    expect(el.querySelectorAll('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')).toHaveLength(1);
+    expect(el.querySelector('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')?.textContent).toContain('Finalizing');
   });
 
   it('removes the completion dot when live and tree completion state are cleared', () => {
@@ -828,21 +850,16 @@ describe('Sidebar', () => {
       },
     ]);
     expandedKeys.set(new Set(['project-1', 'repo-1', 'workspace-1-2']));
-    pendingWorkspaceCreationsMock.getByRepo.mockReturnValue([{
-      jobId: 'job-1',
-      repoId: 1,
-      name: 'Feature',
-      startPoint: 'feature',
-      worktreePath: '/tmp/repo-one/.worktrees/feature',
-      status: 'running',
-      autoCreateSession: false,
-    }] as any);
+    pendingWorkspaceCreationsMock.getVisibleByRepo.mockReturnValue([]);
 
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
 
     expect(el.querySelectorAll('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')).toHaveLength(0);
     expect(el.textContent).toContain('Feature Session');
+    expect(pendingWorkspaceCreationsMock.getVisibleByRepo).toHaveBeenCalledWith(1, expect.arrayContaining([
+      '/tmp/repo-one/.worktrees/feature',
+    ]));
   });
 
   it('shows an opening state and ignores duplicate worktree sheet opens', () => {

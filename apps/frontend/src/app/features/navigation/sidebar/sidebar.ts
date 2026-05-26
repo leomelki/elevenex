@@ -975,10 +975,12 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   getPendingWorkspaces(repo: NavigationRepo): PendingWorkspaceCreation[] {
-    const existingPaths = new Set(this.filterWorkspaces(repo).map((workspace) => workspace.path));
-    return this.pendingWorkspaceCreations
-      .getByRepo(repo.id)
-      .filter((job) => !existingPaths.has(job.worktreePath));
+    const existingPaths = this.filterWorkspaces(repo).map((workspace) => workspace.path);
+    return this.pendingWorkspaceCreations.getVisibleByRepo(repo.id, existingPaths);
+  }
+
+  getPendingWorkspaceLabel(pendingWorkspace: PendingWorkspaceCreation): string {
+    return pendingWorkspace.status === 'succeeded' ? 'Finalizing...' : 'Creating...';
   }
 
   openBranchSearchForRepo(repo: NavigationRepo) {

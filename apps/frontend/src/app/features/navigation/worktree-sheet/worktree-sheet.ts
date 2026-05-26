@@ -54,14 +54,24 @@ export class WorktreeSheet {
   }
 
   submit() {
-    if (!this.workspaceName().trim() || !this.worktreePath().trim()) {
+    if (this.creating()) {
+      return;
+    }
+
+    const name = this.workspaceName().trim();
+    const worktreePath = this.worktreePath().trim();
+    if (!name || !worktreePath) {
+      return;
+    }
+
+    if (this.pendingWorkspaceCreations.hasPendingForRepoPath(this.repoId(), worktreePath)) {
       return;
     }
 
     this.creating.set(true);
     this.workspacesService.create(this.repoId(), {
-      name: this.workspaceName().trim(),
-      path: this.worktreePath().trim(),
+      name,
+      path: worktreePath,
       startPoint: this.branchName().trim() || 'HEAD',
     }).subscribe({
       next: (job) => {
