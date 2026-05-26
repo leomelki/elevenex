@@ -9,7 +9,6 @@
         [showFiles]="showFilesPanel()"
         [showBrowser]="showBrowserPanel()"
         [showChanges]="showChangesPanel()"
-        [showConflicts]="showConflictsPanel()"
         [showTerminal]="terminalPanelVisible()"
         [showActions]="actionPanelVisible()"
         [showPlannotator]="showPlannotatorPanel()"
@@ -18,7 +17,6 @@
         [planAnnotatorAvailable]="planAnnotatorAvailable()"
         [showClaudeTerminalFallback]="showClaudeTerminalFallback()"
         [runningActionsCount]="runningActionsCount()"
-        [conflictCount]="conflictCount()"
         [pendingTodosCount]="pendingTodosCount()"
         (tabSelect)="onTabSelect($event)"
         (tabClose)="onTabClose($event)"
@@ -34,7 +32,6 @@
         (toggleFiles)="toggleFilesPanel()"
         (toggleBrowser)="toggleBrowserPanel()"
         (toggleChanges)="toggleChangesPanel()"
-        (toggleConflicts)="toggleConflictsPanel()"
         (toggleTerminal)="toggleTerminalPanel()"
         (toggleActions)="toggleActionsPanel()"
         (togglePlannotator)="togglePlannotatorPanel()"
@@ -102,6 +99,7 @@
                   <app-change-review-panel
                     [worktreePath]="worktreePath()!"
                     (mentionSelection)="mentionDiffSelection($event)"
+                    (openConflicts)="openConflictsPanel()"
                     class="h-full"
                   />
                 } @else if (showConflictsPanel()) {

@@ -37,7 +37,6 @@ import { toast } from 'ngx-sonner';
 import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
 import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
-import { GitService } from '@/shared/services/git.service';
 import { Session } from '@/shared/models/session.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
@@ -107,7 +106,6 @@ export class SessionContainer implements OnInit, OnDestroy {
   private browserTabsState = inject(BrowserTabsStateService);
   private browserIsolationService = inject(BrowserIsolationService);
   private claudeStatusService = inject(ClaudeStatusService);
-  private gitService = inject(GitService);
   private sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private modalOverlayState = inject(ModalOverlayStateService);
   private injector = inject(Injector);
@@ -200,11 +198,6 @@ export class SessionContainer implements OnInit, OnDestroy {
     const wt = this.worktreePath();
     if (!wt) return 0;
     return this.actionsState.getRunningCount(wt);
-  });
-
-  conflictCount = computed(() => {
-    const summary = this.gitService.latestSummary(this.worktreePath());
-    return summary?.files.filter((file) => file.status === 'conflicted').length ?? 0;
   });
 
   pendingTodosCount = computed(() => {
@@ -343,10 +336,9 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.saveSidePanelPreference(nextMode);
   }
 
-  toggleConflictsPanel(): void {
-    const nextMode = this.showConflictsPanel() ? 'none' : 'conflicts';
-    this.sidePanelMode.set(nextMode);
-    this.saveSidePanelPreference(nextMode);
+  openConflictsPanel(): void {
+    this.sidePanelMode.set('conflicts');
+    this.saveSidePanelPreference('conflicts');
   }
 
   togglePlannotatorPanel(): void {

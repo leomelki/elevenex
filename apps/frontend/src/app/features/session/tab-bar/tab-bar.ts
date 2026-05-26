@@ -1,7 +1,7 @@
 import { Component, output, input, inject, computed, signal, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideGitMerge, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList } from '@ng-icons/lucide';
+import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList } from '@ng-icons/lucide';
 import { Tab } from '../tab-service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
@@ -35,7 +35,6 @@ import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-pro
       lucideGlobe,
       lucidePlay,
       lucideGitPullRequest,
-      lucideGitMerge,
       lucideCheck,
     }),
   ],
@@ -71,7 +70,6 @@ export class TabBar {
   showFiles = input(false);
   showBrowser = input(false);
   showChanges = input(false);
-  showConflicts = input(false);
   showTerminal = input(false);
   showActions = input(false);
   showPlannotator = input(false);
@@ -80,7 +78,6 @@ export class TabBar {
   planAnnotatorAvailable = input(false);
   showClaudeTerminalFallback = input(false);
   runningActionsCount = input(0);
-  conflictCount = input(0);
   pendingTodosCount = input(0);
 
   tabSelect = output<number>();
@@ -97,7 +94,6 @@ export class TabBar {
   toggleFiles = output<void>();
   toggleBrowser = output<void>();
   toggleChanges = output<void>();
-  toggleConflicts = output<void>();
   toggleTerminal = output<void>();
   toggleActions = output<void>();
   togglePlannotator = output<void>();

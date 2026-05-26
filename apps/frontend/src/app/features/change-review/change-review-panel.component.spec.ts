@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal, WritableSignal } from '@angular/core';
-import { Subject } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -149,6 +149,7 @@ describe('ChangeReviewPanelComponent', () => {
   let latestGitSummary: WritableSignal<GitStatusSummary | null>;
   let gitServiceMock: {
     latestSummary: ReturnType<typeof vi.fn>;
+    getSummary: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -174,6 +175,7 @@ describe('ChangeReviewPanelComponent', () => {
     };
     gitServiceMock = {
       latestSummary: vi.fn(() => latestGitSummary()),
+      getSummary: vi.fn(() => of(latestGitSummary() ?? gitSummary())),
     };
 
     await TestBed.configureTestingModule({
@@ -308,6 +310,33 @@ describe('ChangeReviewPanelComponent', () => {
     latestGitSummary.set(gitSummary({ worktreeFingerprint: 'worktree-b', headSha: 'head123' }));
     fixture.detectChanges();
     expect(fixture.componentInstance.diffsOutdated()).toBe(true);
+  });
+
+  it('shows a merge conflict banner and emits the resolver action only when conflicts exist', async () => {
+    await flushSummary(summary([file('src/a.ts')]));
+    fixture.detectChanges();
+
+    let element = fixture.nativeElement as HTMLElement;
+    expect(element.textContent).not.toContain('merge conflict');
+
+    latestGitSummary.set(gitSummary({
+      files: [{ path: 'src/conflicted.ts', status: 'conflicted', staged: false }],
+      hasChanges: true,
+      total: { files: 1, additions: 0, deletions: 0 },
+    }));
+    fixture.detectChanges();
+
+    const emitted: true[] = [];
+    fixture.componentInstance.openConflicts.subscribe(() => emitted.push(true));
+
+    element = fixture.nativeElement as HTMLElement;
+    expect(element.textContent).toContain('1 file with merge conflicts detected');
+
+    const resolveButton = Array.from(element.querySelectorAll('button'))
+      .find((button) => button.textContent?.includes('Resolve')) as HTMLButtonElement;
+    resolveButton.click();
+
+    expect(emitted).toEqual([true]);
   });
 
   it('uses only HEAD drift for last-commit outdated detection', async () => {

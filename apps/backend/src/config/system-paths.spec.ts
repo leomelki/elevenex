@@ -49,15 +49,33 @@ describe('system-paths per-cwd env cache', () => {
     nowSpy.mockRestore();
   });
 
-  it('returns stale per-cwd cache immediately while a single async refresh runs', async () => {
-    const cwd = '/repo/stale-returns-immediately';
+  it('returns fallback env immediately on per-cwd cold miss while async refresh runs', async () => {
+    const cwd = '/repo/cold-miss-nonblocking';
     const baseEnv = { PATH: '/base/bin' };
-    mockExecSync.mockReturnValue(envOutput('/cached/bin'));
+    const refreshProcess = createShellProcess();
+    mockSpawn.mockReturnValue(refreshProcess as never);
 
     const coldResult = buildAugmentedEnv(baseEnv, cwd);
 
-    expect(coldResult.PATH).toMatch(/^\/cached\/bin:/);
-    expect(mockExecSync).toHaveBeenCalledTimes(1);
+    expect(coldResult.PATH).toMatch(/^\/base\/bin:/);
+    expect(mockExecSync).not.toHaveBeenCalled();
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+
+    await closeShellProcess(refreshProcess, envOutput('/fresh/bin'));
+
+    const refreshedResult = buildAugmentedEnv(baseEnv, cwd);
+
+    expect(refreshedResult.PATH).toMatch(/^\/fresh\/bin:/);
+  });
+
+  it('returns stale per-cwd cache immediately while a single async refresh runs', async () => {
+    const cwd = '/repo/stale-returns-immediately';
+    const baseEnv = { PATH: '/base/bin' };
+    const coldRefreshProcess = createShellProcess();
+    mockSpawn.mockReturnValue(coldRefreshProcess as never);
+
+    buildAugmentedEnv(baseEnv, cwd);
+    await closeShellProcess(coldRefreshProcess, envOutput('/cached/bin'));
 
     const refreshProcess = createShellProcess();
     mockSpawn.mockReturnValue(refreshProcess as never);
@@ -66,15 +84,15 @@ describe('system-paths per-cwd env cache', () => {
     const staleResult = buildAugmentedEnv(baseEnv, cwd);
 
     expect(staleResult.PATH).toMatch(/^\/cached\/bin:/);
-    expect(mockExecSync).toHaveBeenCalledTimes(1);
-    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockExecSync).not.toHaveBeenCalled();
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
 
     nowSpy.mockReturnValue(60_100);
 
     const repeatedStaleResult = buildAugmentedEnv(baseEnv, cwd);
 
     expect(repeatedStaleResult.PATH).toMatch(/^\/cached\/bin:/);
-    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
 
     nowSpy.mockReturnValue(60_200);
     await closeShellProcess(refreshProcess, envOutput('/fresh/bin'));
@@ -87,9 +105,11 @@ describe('system-paths per-cwd env cache', () => {
   it('throttles completed failed async refresh attempts for one minute', async () => {
     const cwd = '/repo/failed-refresh-throttle';
     const baseEnv = { PATH: '/base/bin' };
-    mockExecSync.mockReturnValue(envOutput('/cached/bin'));
+    const coldRefreshProcess = createShellProcess();
+    mockSpawn.mockReturnValue(coldRefreshProcess as never);
 
     buildAugmentedEnv(baseEnv, cwd);
+    await closeShellProcess(coldRefreshProcess, envOutput('/cached/bin'));
 
     const failedRefreshProcess = createShellProcess();
     mockSpawn.mockReturnValue(failedRefreshProcess as never);
@@ -98,7 +118,7 @@ describe('system-paths per-cwd env cache', () => {
     const staleResult = buildAugmentedEnv(baseEnv, cwd);
 
     expect(staleResult.PATH).toMatch(/^\/cached\/bin:/);
-    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
 
     nowSpy.mockReturnValue(60_002);
     await closeShellProcess(failedRefreshProcess, 'not an env line\n');
@@ -106,7 +126,7 @@ describe('system-paths per-cwd env cache', () => {
     const throttledResult = buildAugmentedEnv(baseEnv, cwd);
 
     expect(throttledResult.PATH).toMatch(/^\/cached\/bin:/);
-    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
 
     const nextRefreshProcess = createShellProcess();
     mockSpawn.mockReturnValue(nextRefreshProcess as never);
@@ -114,7 +134,7 @@ describe('system-paths per-cwd env cache', () => {
 
     buildAugmentedEnv(baseEnv, cwd);
 
-    expect(mockSpawn).toHaveBeenCalledTimes(2);
+    expect(mockSpawn).toHaveBeenCalledTimes(3);
 
     await closeShellProcess(nextRefreshProcess, envOutput('/fresh/bin'));
   });

@@ -1,6 +1,6 @@
 import { ScrollingModule } from '@angular/cdk/scrolling';
 import { CommonModule } from '@angular/common';
-import { Component, computed, effect, ElementRef, HostListener, inject, input, OnDestroy, output, signal, viewChild } from '@angular/core';
+import { Component, computed, effect, ElementRef, HostListener, inject, input, OnDestroy, output, signal, untracked, viewChild } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -11,6 +11,7 @@ import {
   lucideExternalLink,
   lucideFileCode,
   lucideGitBranch,
+  lucideGitMerge,
   lucideGitPullRequest,
   lucideLoader,
   lucideMessageSquarePlus,
@@ -150,6 +151,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
       lucideExternalLink,
       lucideFileCode,
       lucideGitBranch,
+      lucideGitMerge,
       lucideGitPullRequest,
       lucideLoader,
       lucideMessageSquarePlus,
@@ -162,6 +164,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
 export class ChangeReviewPanelComponent implements OnDestroy {
   readonly worktreePath = input.required<string>();
   readonly mentionSelection = output<DiffSelectionMention[]>();
+  readonly openConflicts = output<void>();
 
   private readonly changeReview = inject(ChangeReviewService);
   private readonly gitService = inject(GitService);
@@ -206,6 +209,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   readonly totalHeightPx = computed(() => this.layout().totalRows * ROW_HEIGHT_PX);
   readonly latestGitSummary = computed(() => this.gitService.latestSummary(this.worktreePath()));
+  readonly conflictedFiles = computed(() => this.latestGitSummary()?.files.filter((file) => file.status === 'conflicted') ?? []);
+  readonly conflictCount = computed(() => this.conflictedFiles().length);
   readonly diffsOutdated = computed(() => {
     const summary = this.summary();
     const latest = this.latestGitSummary();
@@ -350,6 +355,12 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const url = this.summary()?.pullRequest?.url;
     if (url) {
       window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  }
+
+  openMergeConflicts(): void {
+    if (this.conflictCount() > 0) {
+      this.openConflicts.emit();
     }
   }
 
@@ -577,6 +588,9 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const worktreePath = this.worktreePath();
     const scope = this.scope();
     const requestGeneration = ++this.generation;
+    untracked(() => {
+      void this.refreshGitSummary(worktreePath);
+    });
     this.resetQueues();
     this.loadingSummary.set(true);
     this.error.set(null);
@@ -613,6 +627,14 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       if (requestGeneration === this.generation) {
         this.loadingSummary.set(false);
       }
+    }
+  }
+
+  private async refreshGitSummary(worktreePath: string): Promise<void> {
+    try {
+      await firstValueFrom(this.gitService.getSummary(worktreePath));
+    } catch {
+      // Keep the change-review UI usable if the lightweight git status refresh fails.
     }
   }
 

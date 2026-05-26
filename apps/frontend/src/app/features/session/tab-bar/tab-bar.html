@@ -140,18 +140,6 @@
       </button>
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showConflicts() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Conflicts"
-        aria-label="Toggle merge conflicts panel"
-        (click)="toggleConflicts.emit()"
-      >
-        <ng-icon name="lucideGitMerge" size="16" />
-        @if (conflictCount() > 0) {
-          <span class="absolute -top-1 -right-1 h-4 min-w-4 rounded-full bg-destructive px-1 text-[10px] leading-4 font-bold text-destructive-foreground">{{ conflictCount() }}</span>
-        }
-      </button>
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
         [ngClass]="showFiles() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
         title="Files"
         aria-label="Toggle Files panel"

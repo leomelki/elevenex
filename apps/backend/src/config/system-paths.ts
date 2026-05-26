@@ -347,11 +347,11 @@ function refreshCwdEnvAsync(
   return promise;
 }
 
-// Returns the shell env for `cwd`, populating the cache on first miss. Cold
-// miss is sync so the very first spawn in a worktree gets the right env (e.g.
-// the Node version pinned by `.nvmrc` rather than the global default). Stale
-// entries are returned immediately and a background refresh is kicked off so
-// edits to dotfiles are eventually picked up without stalling the spawn.
+// Returns the shell env for `cwd`, never blocking the event loop. Cold misses
+// use the global shell env immediately and warm the per-cwd cache in the
+// background. This may make the first command in a brand-new worktree use the
+// global PATH, but it prevents one slow rc file from freezing websocket
+// heartbeats and unrelated requests.
 function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
   const existing = _cwdEnvCache.get(cwd);
   const now = Date.now();
@@ -366,14 +366,15 @@ function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
     }
     return existing.env;
   }
-  const env = loadLoginShellEnvSync(cwd);
-  const loadedAt = Date.now();
+
+  const fallbackEnv = getCachedShellEnv();
   touchCwdLru(cwd, {
-    env,
-    lastRefreshAt: loadedAt,
-    lastRefreshAttemptAt: loadedAt,
+    env: fallbackEnv,
+    lastRefreshAt: now,
+    lastRefreshAttemptAt: now,
   });
-  return env;
+  void refreshCwdEnvAsync(cwd, now);
+  return fallbackEnv;
 }
 
 // Asynchronously re-run the login shell and update the cache. Throttled so

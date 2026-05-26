@@ -186,27 +186,6 @@ describe('TabBar', () => {
     expect(el.querySelector('[aria-label="Toggle Plannotator panel"]')).toBeTruthy();
   });
 
-  it('shows merge conflicts button with a conflict count badge', () => {
-    const fixture = TestBed.createComponent(TabBar);
-    fixture.componentRef.setInput('tabs', [{ ...baseTab }]);
-    fixture.componentRef.setInput('activeSessionId', 42);
-    fixture.componentRef.setInput('projectId', 10);
-    fixture.componentRef.setInput('conflictCount', 3);
-    fixture.detectChanges();
-
-    const component = fixture.componentInstance;
-    const toggleSpy = vi.fn();
-    component.toggleConflicts.subscribe(toggleSpy);
-
-    const el = fixture.nativeElement as HTMLElement;
-    const button = el.querySelector('[aria-label="Toggle merge conflicts panel"]') as HTMLButtonElement;
-    expect(button).toBeTruthy();
-    expect(button.textContent).toContain('3');
-
-    button.click();
-    expect(toggleSpy).toHaveBeenCalledOnce();
-  });
-
   it('disables left and other actions appropriately for the first tab', () => {
     const fixture = TestBed.createComponent(TabBar);
     fixture.componentRef.setInput('tabs', [

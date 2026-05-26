@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { execFile, type ExecFileOptions } from 'node:child_process';
+import * as path from 'node:path';
 import { SimpleGit, StatusResult, LogResult } from 'simple-git';
 
 import {
@@ -18,6 +19,8 @@ const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const MAX_COMMIT_MESSAGE_DIFF_CHARS = 24_000;
 const MAX_COMMIT_MESSAGE_LOG_ENTRIES = 8;
 const MAX_COMMIT_MESSAGE_STATUS_FILES = 16;
+const UNTRACKED_STATS_CONCURRENCY = 16;
+const MAX_UNTRACKED_STATS_FILE_BYTES = 1_000_000;
 const CONVENTIONAL_COMMIT_SUBJECT_PATTERN =
   /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._-]*\))?!?: [a-z0-9].*[^.]$/;
 type CommitMessageProvider = 'claude' | 'codex' | 'pi';
@@ -108,7 +111,10 @@ export class GitService {
   async getStatus(worktreePath: string): Promise<FileStatus[]> {
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
     const status: StatusResult = await git.status();
+    return this.toFileStatuses(status);
+  }
 
+  private toFileStatuses(status: StatusResult): FileStatus[] {
     const files: FileStatus[] = [];
     const conflictedPaths = new Set(status.conflicted);
 
@@ -158,14 +164,21 @@ export class GitService {
 
   async getStatusSummary(worktreePath: string): Promise<GitStatusSummary> {
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    const [files, status, stagedStats, unstagedStats, headSha, worktreeFingerprint] = await Promise.all([
-      this.getStatus(worktreePath),
+    const [status, headSha] = await Promise.all([
       git.status(),
-      this.getScopeStats(worktreePath, true),
-      this.getScopeStats(worktreePath, false),
-      git.revparse(['HEAD']).then((value) => value.trim()).catch(() => null),
-      readWorktreeFingerprint(worktreePath, git),
+      git
+        .revparse(['HEAD'])
+        .then((value) => value.trim())
+        .catch(() => null),
     ]);
+    const files = this.toFileStatuses(status);
+    const [stagedStats, unstagedStats, worktreeFingerprint] = await Promise.all(
+      [
+        this.getScopeStats(worktreePath, true, files),
+        this.getScopeStats(worktreePath, false, files),
+        readWorktreeFingerprint(worktreePath, git, status),
+      ],
+    );
 
     const branch = status.current || 'HEAD';
     const upstream = await this.getUpstream(git);
@@ -592,9 +605,10 @@ export class GitService {
   private async getScopeStats(
     worktreePath: string,
     staged: boolean,
+    files?: FileStatus[],
   ): Promise<GitScopeSummary> {
-    const files = await this.getStatus(worktreePath);
-    const scopeFiles = files.filter((file) => file.staged === staged);
+    const allFiles = files ?? (await this.getStatus(worktreePath));
+    const scopeFiles = allFiles.filter((file) => file.staged === staged);
     const diffStats = await this.readNumstat(worktreePath, staged);
 
     let additions = diffStats.additions;
@@ -604,10 +618,10 @@ export class GitService {
       const untrackedFiles = scopeFiles.filter(
         (file) => file.status === 'untracked',
       );
-      const untrackedStats = await Promise.all(
-        untrackedFiles.map((file) =>
-          this.readUntrackedFileStats(worktreePath, file.path),
-        ),
+      const untrackedStats = await mapWithConcurrency(
+        untrackedFiles,
+        UNTRACKED_STATS_CONCURRENCY,
+        (file) => this.readUntrackedFileStats(worktreePath, file.path),
       );
       additions += untrackedStats.reduce(
         (sum, stat) => sum + stat.additions,
@@ -704,7 +718,16 @@ export class GitService {
     relativePath: string,
   ): Promise<{ additions: number; deletions: number }> {
     try {
-      const contents = await readFile(`${worktreePath}/${relativePath}`);
+      const absolutePath = path.join(worktreePath, relativePath);
+      const fileStat = await stat(absolutePath);
+      if (
+        !fileStat.isFile() ||
+        fileStat.size > MAX_UNTRACKED_STATS_FILE_BYTES
+      ) {
+        return { additions: 0, deletions: 0 };
+      }
+
+      const contents = await readFile(absolutePath);
       if (contents.includes(0)) {
         return { additions: 0, deletions: 0 };
       }
@@ -1409,4 +1432,25 @@ export class GitService {
       child.stdin?.end(input);
     });
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(values.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(concurrency, values.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex++;
+        results[index] = await mapper(values[index]);
+      }
+    }),
+  );
+
+  return results;
 }
