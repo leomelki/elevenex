@@ -17,6 +17,7 @@ import { BrowserViewStateService } from '@/features/browser-panel/browser-view-s
 import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-state.service';
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
+import { GitService } from '@/shared/services/git.service';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
 import { Session } from '@/shared/models/session.model';
 
@@ -156,6 +157,10 @@ describe('SessionContainer modal browser gating', () => {
     hasOpenModal: modalActiveSignal.asReadonly(),
   };
 
+  const gitServiceMock = {
+    latestSummary: vi.fn(() => null),
+  };
+
   function makeSession(overrides: Partial<Session> = {}): Session {
     return {
       id: 42,
@@ -255,6 +260,7 @@ describe('SessionContainer modal browser gating', () => {
         { provide: BrowserTabsStateService, useValue: browserTabsStateMock },
         { provide: BrowserIsolationService, useValue: browserIsolationServiceMock },
         { provide: ClaudeStatusService, useValue: claudeStatusServiceMock },
+        { provide: GitService, useValue: gitServiceMock },
         { provide: ModalOverlayStateService, useValue: modalOverlayStateMock },
       ],
     }).compileComponents();
@@ -305,6 +311,19 @@ describe('SessionContainer modal browser gating', () => {
     const element = fixture.nativeElement as HTMLElement;
     expect(element.querySelector('.browser-panel-live')).toBeTruthy();
     expect(element.querySelector('.browser-panel-placeholder')).toBeNull();
+  });
+
+  it('toggles the merge conflicts side panel mode', () => {
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    fixture.componentInstance.toggleConflictsPanel();
+
+    expect(fixture.componentInstance.sidePanelMode()).toBe('conflicts');
+    expect(fixture.componentInstance.showConflictsPanel()).toBe(true);
+
+    fixture.componentInstance.toggleConflictsPanel();
+    expect(fixture.componentInstance.sidePanelMode()).toBe('none');
   });
 
   it('mirrors generated session titles into open tabs', () => {

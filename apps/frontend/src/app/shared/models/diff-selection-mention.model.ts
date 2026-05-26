@@ -1,8 +1,11 @@
 import type {
   ChangeReviewFileStatus,
-  ChangeReviewRowType,
   ChangeReviewScope,
+  ChangeReviewRowType,
 } from './change-review.model';
+
+export type DiffSelectionMentionScope = ChangeReviewScope | 'conflicts';
+export type DiffSelectionMentionStatus = ChangeReviewFileStatus | 'conflicted';
 
 export interface DiffSelectionMentionContextRow {
   type: ChangeReviewRowType;
@@ -14,13 +17,13 @@ export interface DiffSelectionMentionContextRow {
 export interface DiffSelectionMention {
   id: string;
   version: 1;
-  scope: ChangeReviewScope;
+  scope: DiffSelectionMentionScope;
   compareLabel: string | null;
   baseSha: string | null;
   headSha: string | null;
   filePath: string;
   oldPath: string | null;
-  status: ChangeReviewFileStatus;
+  status: DiffSelectionMentionStatus;
   changeHash: string | null;
   oldLineStart: number | null;
   oldLineEnd: number | null;

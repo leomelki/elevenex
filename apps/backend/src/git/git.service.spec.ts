@@ -11,6 +11,29 @@ describe('GitService', () => {
   let tmpDir: string;
   let repoPath: string;
 
+  function createMergeConflict(): void {
+    const baseBranch = execSync('git branch --show-current', {
+      cwd: repoPath,
+      encoding: 'utf8',
+    }).trim();
+
+    execSync('git checkout -b incoming', { cwd: repoPath });
+    fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'incoming content');
+    execSync('git add initial.txt', { cwd: repoPath });
+    execSync('git commit -m "incoming change"', { cwd: repoPath });
+
+    execSync(`git checkout ${baseBranch}`, { cwd: repoPath });
+    fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'current content');
+    execSync('git add initial.txt', { cwd: repoPath });
+    execSync('git commit -m "current change"', { cwd: repoPath });
+
+    try {
+      execSync('git merge incoming', { cwd: repoPath, stdio: 'pipe' });
+    } catch {
+      // Expected: both branches changed initial.txt.
+    }
+  }
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [GitService],
@@ -119,6 +142,20 @@ describe('GitService', () => {
       expect(stagedFile?.status).toBe('modified');
       expect(unstagedFile).toBeDefined();
       expect(unstagedFile?.status).toBe('modified');
+    });
+
+    it('should detect conflicted files', async () => {
+      createMergeConflict();
+
+      const status = await service.getStatus(repoPath);
+
+      expect(status).toEqual([
+        expect.objectContaining({
+          path: 'initial.txt',
+          status: 'conflicted',
+          staged: false,
+        }),
+      ]);
     });
   });
 
@@ -437,6 +474,34 @@ describe('GitService', () => {
       const log = await service.getLog(repoPath, 1);
       expect(log[0].message).toBe('Add notes');
       expect(await service.getStatus(repoPath)).toEqual([]);
+    });
+  });
+
+  describe('merge conflicts', () => {
+    it('should summarize active merge conflicts without failing', async () => {
+      createMergeConflict();
+
+      const summary = await service.getStatusSummary(repoPath);
+
+      expect(summary.hasChanges).toBe(true);
+      expect(summary.files).toEqual([
+        expect.objectContaining({
+          path: 'initial.txt',
+          status: 'conflicted',
+          staged: false,
+        }),
+      ]);
+      expect(summary.total.files).toBe(1);
+    });
+
+    it('should remove conflicted status after staging marker-free content', async () => {
+      createMergeConflict();
+      fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'resolved content\n');
+
+      await service.stageFiles(repoPath, ['initial.txt']);
+
+      const status = await service.getStatus(repoPath);
+      expect(status.some((file) => file.status === 'conflicted')).toBe(false);
     });
   });
 

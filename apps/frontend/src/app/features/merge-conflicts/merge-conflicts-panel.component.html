@@ -1,0 +1,208 @@
+<section class="flex h-full min-h-0 flex-col bg-background text-foreground">
+  <header class="flex min-h-13 items-center gap-3 border-b border-border px-3 py-2">
+    <div class="flex min-w-0 items-center gap-2">
+      <ng-icon name="lucideGitMerge" size="16" />
+      <div class="flex min-w-0 flex-col">
+        <span class="text-[0.82rem] font-bold">Conflicts</span>
+        @if (summary(); as current) {
+          <span class="inline-flex max-w-72 items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.7rem] text-muted-foreground">
+            <ng-icon name="lucideGitBranch" size="12" />
+            {{ current.branch }}
+          </span>
+        }
+      </div>
+    </div>
+
+    <div class="ml-auto flex items-center gap-2 text-[0.7rem] text-muted-foreground">
+      @if (dirtyCount() > 0) {
+        <span class="font-semibold text-warning">{{ dirtyCount() }} unsaved</span>
+      }
+      @if (resolvedLoadedCount() > 0) {
+        <span class="font-semibold text-success">{{ resolvedLoadedCount() }} clean</span>
+      }
+      <button z-button zType="ghost" zSize="sm" class="w-8 p-0" type="button" title="Refresh conflicted files" [zDisabled]="loadingSummary()" (click)="refresh()">
+        <ng-icon name="lucideRefreshCw" size="15" [class.mc-spin]="loadingSummary()" />
+      </button>
+    </div>
+  </header>
+
+  @if (error(); as message) {
+    <div class="flex items-center gap-2 border-b border-[color-mix(in_oklch,var(--warning)_30%,var(--border))] bg-warning/10 px-3 py-2 text-[0.76rem] text-warning">
+      <ng-icon name="lucideTriangleAlert" size="16" />
+      <span>{{ message }}</span>
+    </div>
+  }
+
+  <div class="grid min-h-0 flex-1 grid-cols-[minmax(15rem,28%)_minmax(0,1fr)]">
+    <aside class="flex min-h-0 min-w-0 flex-col border-r border-border">
+      <div class="flex items-center gap-2 border-b border-border p-2">
+        <ng-icon name="lucideSearch" size="14" />
+        <input
+          z-input
+          class="h-8 min-w-0 text-xs"
+          type="search"
+          placeholder="Search conflicted files"
+          [value]="search()"
+          (input)="setSearch($any($event.target).value)"
+        />
+      </div>
+
+      @if (loadingSummary()) {
+        <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+          <ng-icon name="lucideLoader" size="16" class="mc-spin" />
+          Loading conflicts
+        </div>
+      } @else if (conflictedFiles().length === 0) {
+        <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+          <ng-icon name="lucideCheck" size="18" />
+          <span>No merge conflicts</span>
+        </div>
+      } @else {
+        <div class="min-h-0 flex-1 overflow-y-auto">
+          @for (file of conflictedFiles(); track trackFile($index, file)) {
+            @let state = stateFor(file);
+            <button
+              type="button"
+              class="grid h-[58px] w-full grid-cols-[1.35rem_minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-transparent px-2.5 text-left text-foreground transition-colors hover:bg-accent/70"
+              [ngClass]="{
+                'bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))] shadow-[inset_3px_0_0_var(--primary)]': isSelected(file),
+                'opacity-65': state?.blocks?.length === 0 && state?.content !== null && !isSelected(file)
+              }"
+              [title]="file.path"
+              (click)="selectFile(file.path)"
+            >
+              <span
+                class="mc-file-status"
+                [ngClass]="state?.blocks?.length === 0 && state?.content !== null ? 'mc-file-status--clean' : 'mc-file-status--conflict'"
+              >
+                @if (state?.blocks?.length === 0 && state?.content !== null) {
+                  <ng-icon name="lucideCheck" size="11" />
+                } @else {
+                  !
+                }
+              </span>
+              <span class="flex min-w-0 flex-col">
+                <span class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.78rem] font-semibold">
+                  {{ fileBasename(file.path) }}
+                </span>
+                <span class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground">
+                  {{ fileDirname(file.path) }}
+                </span>
+              </span>
+              <span class="inline-flex shrink-0 items-center gap-1 font-mono text-[0.68rem] font-bold text-muted-foreground">
+                @if (state?.loading) {
+                  <ng-icon name="lucideLoader" size="13" class="mc-spin" />
+                } @else if (state?.dirty) {
+                  <span class="text-warning">dirty</span>
+                } @else if (state?.blocks?.length) {
+                  <span class="text-destructive">{{ state?.blocks?.length }}</span>
+                } @else if (state?.content !== null) {
+                  <span class="text-success">ready</span>
+                }
+              </span>
+            </button>
+          }
+        </div>
+      }
+    </aside>
+
+    <main class="flex min-h-0 min-w-0 flex-col">
+      @if (activeState(); as state) {
+        <div class="flex min-h-11 items-center gap-2 border-b border-border px-3 py-2">
+          <span class="mc-path" [title]="state.file.path">
+            @if (fileDirname(state.file.path); as dirname) {
+              <span class="mc-path__dir">{{ dirname }}</span>
+              <span class="mc-path__slash" aria-hidden="true">/</span>
+            }
+            <strong class="mc-path__name">{{ fileBasename(state.file.path) }}</strong>
+          </span>
+          <span class="ml-auto inline-flex shrink-0 items-center gap-2 text-[0.7rem] text-muted-foreground">
+            @if (state.blocks.length > 0) {
+              <span>{{ activeConflictIndex() + 1 }} / {{ state.blocks.length }}</span>
+            } @else if (state.content !== null) {
+              <span class="text-success">no markers</span>
+            }
+            @if (state.dirty) {
+              <span class="text-warning">unsaved</span>
+            }
+          </span>
+          <button z-button zType="ghost" zSize="sm" class="w-8 p-0" type="button" title="Previous conflict" [zDisabled]="state.blocks.length === 0" (click)="previousConflict()">
+            <ng-icon name="lucideChevronUp" size="15" />
+          </button>
+          <button z-button zType="ghost" zSize="sm" class="w-8 p-0" type="button" title="Next conflict" [zDisabled]="state.blocks.length === 0" (click)="nextConflict()">
+            <ng-icon name="lucideChevronDown" size="15" />
+          </button>
+        </div>
+
+        <div class="flex min-h-10 items-center gap-2 overflow-x-auto border-b border-border px-3 py-1.5">
+          <button z-button zType="secondary" zSize="sm" type="button" [zDisabled]="!activeConflict()" (click)="accept('current')">
+            Accept Current
+          </button>
+          <button z-button zType="secondary" zSize="sm" type="button" [zDisabled]="!activeConflict()" (click)="accept('incoming')">
+            Accept Incoming
+          </button>
+          <button z-button zType="secondary" zSize="sm" type="button" [zDisabled]="!activeConflict()" (click)="accept('both')">
+            Accept Both
+          </button>
+
+          <span class="mx-1 h-5 w-px shrink-0 bg-border"></span>
+
+          <button z-button zType="ghost" zSize="sm" type="button" [zDisabled]="!state.dirty || state.saving" (click)="saveActive()">
+            @if (state.saving) {
+              <ng-icon name="lucideLoader" size="14" class="mc-spin" />
+            } @else {
+              <ng-icon name="lucideSave" size="14" />
+            }
+            Save
+          </button>
+          <button z-button zType="ghost" zSize="sm" type="button" [zDisabled]="!state.dirty" (click)="discardActive()">
+            <ng-icon name="lucideRotateCcw" size="14" />
+            Discard
+          </button>
+          <button z-button zType="default" zSize="sm" type="button" [zDisabled]="state.resolving || state.unsupported || state.content === null" (click)="markResolved()">
+            @if (state.resolving) {
+              <ng-icon name="lucideLoader" size="14" class="mc-spin" />
+            } @else {
+              <ng-icon name="lucideCheck" size="14" />
+            }
+            Mark Resolved
+          </button>
+
+          @if (pendingMention(); as pending) {
+            <button z-button zType="ghost" zSize="sm" class="ml-auto" type="button" (click)="mentionCurrentSelection()">
+              <ng-icon name="lucideMessageSquarePlus" size="14" />
+              Mention selection
+            </button>
+          }
+        </div>
+
+        @if (state.error; as message) {
+          <div class="flex items-center gap-2 border-b border-[color-mix(in_oklch,var(--warning)_30%,var(--border))] bg-warning/10 px-3 py-2 text-[0.76rem] text-warning">
+            <ng-icon name="lucideTriangleAlert" size="16" />
+            <span>{{ message }}</span>
+          </div>
+        }
+
+        <div class="relative min-h-0 flex-1 bg-[color-mix(in_oklch,var(--background)_90%,var(--surface-shade))]">
+          @if (state.loading) {
+            <div class="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-background/80 text-xs text-muted-foreground">
+              <ng-icon name="lucideLoader" size="18" class="mc-spin" />
+              Loading file
+            </div>
+          } @else if (state.unsupported) {
+            <div class="flex h-full items-center justify-center gap-2 p-3 text-xs text-muted-foreground">
+              <ng-icon name="lucideFileCode" size="24" />
+              <span>Binary conflicted files cannot be edited here</span>
+            </div>
+          }
+          <div #editorHost class="mc-editor-host" [class.mc-editor-host--hidden]="state.unsupported || state.content === null"></div>
+        </div>
+      } @else {
+        <div class="flex h-full items-center justify-center gap-2 p-3 text-xs text-muted-foreground">
+          <ng-icon name="lucideGitMerge" size="24" />
+          <span>Select a conflicted file</span>
+        </div>
+      }
+    </main>
+  </div>
+</section>

@@ -110,8 +110,14 @@ export class GitService {
     const status: StatusResult = await git.status();
 
     const files: FileStatus[] = [];
+    const conflictedPaths = new Set(status.conflicted);
+
+    status.conflicted.forEach((path) => {
+      files.push({ path, status: 'conflicted', staged: false });
+    });
 
     status.staged.forEach((path) => {
+      if (conflictedPaths.has(path)) return;
       if (status.renamed.some((r) => r.to === path)) return;
       files.push({
         path,
@@ -121,14 +127,17 @@ export class GitService {
     });
 
     status.modified.forEach((path) => {
+      if (conflictedPaths.has(path)) return;
       files.push({ path, status: 'modified', staged: false });
     });
 
     status.not_added.forEach((path) => {
+      if (conflictedPaths.has(path)) return;
       files.push({ path, status: 'untracked', staged: false });
     });
 
     status.deleted.forEach((path) => {
+      if (conflictedPaths.has(path)) return;
       files.push({
         path,
         status: 'deleted',
@@ -137,6 +146,7 @@ export class GitService {
     });
 
     status.renamed.forEach(({ from, to }) => {
+      if (conflictedPaths.has(to)) return;
       files.push({ path: to, status: 'renamed', staged: true, oldPath: from });
     });
 
@@ -663,7 +673,7 @@ export class GitService {
     const args = staged
       ? ['diff', '--cached', '--numstat', '--find-renames']
       : ['diff', '--numstat', '--find-renames'];
-    const output = await git.raw(args);
+    const output = await git.raw(args).catch(() => '');
     const lines = output
       .split('\n')
       .map((line) => line.trim())

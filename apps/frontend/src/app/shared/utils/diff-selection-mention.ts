@@ -1,11 +1,11 @@
 import type {
   DiffSelectionMention,
   DiffSelectionMentionContextRow,
+  DiffSelectionMentionScope,
+  DiffSelectionMentionStatus,
 } from '@/shared/models/diff-selection-mention.model';
 import type {
-  ChangeReviewFileStatus,
   ChangeReviewRowType,
-  ChangeReviewScope,
 } from '@/shared/models/change-review.model';
 
 export const DIFF_SELECTION_MENTION_TAG = 'elevenex_git_diff_selection_mention';
@@ -24,17 +24,19 @@ const ROW_TYPES: ReadonlySet<ChangeReviewRowType> = new Set<ChangeReviewRowType>
   'meta',
 ]);
 
-const SCOPES: ReadonlySet<ChangeReviewScope> = new Set<ChangeReviewScope>([
+const SCOPES: ReadonlySet<DiffSelectionMentionScope> = new Set<DiffSelectionMentionScope>([
   'uncommitted',
   'last-commit',
   'branch',
+  'conflicts',
 ]);
 
-const STATUSES: ReadonlySet<ChangeReviewFileStatus> = new Set<ChangeReviewFileStatus>([
+const STATUSES: ReadonlySet<DiffSelectionMentionStatus> = new Set<DiffSelectionMentionStatus>([
   'added',
   'modified',
   'deleted',
   'renamed',
+  'conflicted',
 ]);
 
 export interface ParsedDiffSelectionMentions {

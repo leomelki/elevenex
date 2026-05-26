@@ -1,0 +1,107 @@
+.mc-file-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 0.3rem;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.mc-file-status--conflict {
+  background: color-mix(in oklch, var(--destructive) 16%, transparent);
+  color: color-mix(in oklch, var(--destructive) 88%, var(--foreground));
+}
+
+.mc-file-status--clean {
+  background: color-mix(in oklch, var(--success) 18%, transparent);
+  color: color-mix(in oklch, var(--success) 86%, var(--foreground));
+}
+
+.mc-path {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.76rem;
+}
+
+.mc-path__dir {
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  unicode-bidi: isolate;
+  color: var(--muted-foreground);
+}
+
+.mc-path__slash {
+  flex: 0 0 auto;
+  padding: 0 0.08rem;
+  color: var(--muted-foreground);
+}
+
+.mc-path__name {
+  max-width: 55%;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 800;
+  color: var(--foreground);
+}
+
+.mc-editor-host {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mc-editor-host--hidden {
+  visibility: hidden;
+}
+
+:host ::ng-deep .mc-editor-line--conflict {
+  background: color-mix(in oklch, var(--warning) 11%, transparent);
+}
+
+:host ::ng-deep .mc-editor-line--active-conflict {
+  background: color-mix(in oklch, var(--warning) 24%, transparent);
+}
+
+:host ::ng-deep .mc-editor-line--ours {
+  background: color-mix(in oklch, var(--primary) 7%, transparent);
+}
+
+:host ::ng-deep .mc-editor-line--base {
+  background: color-mix(in oklch, var(--muted) 46%, transparent);
+}
+
+:host ::ng-deep .mc-editor-line--theirs {
+  background: color-mix(in oklch, var(--success) 10%, transparent);
+}
+
+:host ::ng-deep .mc-editor-glyph--conflict {
+  background: var(--warning);
+  border-radius: 999px;
+  margin-left: 5px;
+  width: 6px !important;
+  height: 6px !important;
+}
+
+.mc-spin {
+  animation: mc-spin 0.8s linear infinite;
+}
+
+@keyframes mc-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
