@@ -7,7 +7,7 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { EventEmitter } from 'events';
 import { promisify } from 'util';
-import { buildAugmentedEnv } from '../config/system-paths.js';
+import { buildAugmentedEnvAsync } from '../config/system-paths.js';
 import type {
   PiAuthStatus,
   PiOAuthProvider,
@@ -724,7 +724,7 @@ export class PiAuthService extends EventEmitter {
     }
     try {
       const { stdout } = await execFile('pi', ['--version'], {
-        env: buildAugmentedEnv(),
+        env: await buildAugmentedEnvAsync(),
         timeout: 5000,
       });
       const value = stdout.trim().split(/\s+/).pop() || stdout.trim() || null;

@@ -68,7 +68,7 @@ import { TerminalService } from '../terminal/terminal.service.js';
 import { execFileAsync } from '../terminal/async-process.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
 import {
   getBackendHelperPath,
   getBackendRuntimeRoot,
@@ -363,6 +363,10 @@ export class ClaudeRuntimeService extends EventEmitter {
   private readonly logger = new Logger('ClaudeRuntimeService');
   private readonly activeRuns = new Map<number, ActiveRunState>();
   private readonly sessionRuntimes = new Map<number, ClaudeSessionRuntime>();
+  private readonly sessionRuntimeCreateInFlight = new Map<
+    number,
+    Promise<ClaudeSessionRuntime>
+  >();
   private readonly prewarmInFlight = new Map<number, Promise<void>>();
   private readonly lastPrewarmAt = new Map<number, number>();
   private readonly runtimeStates = new Map<number, RuntimeState>();
@@ -540,6 +544,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       await runtime.close().catch(() => undefined);
       this.sessionRuntimes.delete(sessionId);
     }
+    this.sessionRuntimeCreateInFlight.delete(sessionId);
     this.activeRuns.delete(sessionId);
     this.runtimeStates.delete(sessionId);
     this.prewarmInFlight.delete(sessionId);
@@ -616,6 +621,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       await existingRuntime.close().catch(() => undefined);
       this.sessionRuntimes.delete(sessionId);
     }
+    this.sessionRuntimeCreateInFlight.delete(sessionId);
 
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
     this.resetEphemeralRuntimeState(state);
@@ -990,7 +996,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       }
 
       const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
-      const runtime = this.ensureSessionRuntime(sessionId, session, state);
+      const runtime = await this.ensureSessionRuntime(
+        sessionId,
+        session,
+        state,
+      );
       await runtime.ensureStarted('prewarm');
       this.lastPrewarmAt.set(sessionId, Date.now());
       this.enforceIdleRuntimeLimit(sessionId);
@@ -1008,11 +1018,37 @@ export class ClaudeRuntimeService extends EventEmitter {
     return promise;
   }
 
-  private ensureSessionRuntime(
+  private async ensureSessionRuntime(
     sessionId: number,
     session: { worktreePath: string; claudeSessionId: string | null },
     state: RuntimeState,
-  ): ClaudeSessionRuntime {
+  ): Promise<ClaudeSessionRuntime> {
+    const existing = this.sessionRuntimes.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+
+    const inFlight = this.sessionRuntimeCreateInFlight.get(sessionId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const promise = this.createSessionRuntime(
+      sessionId,
+      session,
+      state,
+    ).finally(() => {
+      this.sessionRuntimeCreateInFlight.delete(sessionId);
+    });
+    this.sessionRuntimeCreateInFlight.set(sessionId, promise);
+    return promise;
+  }
+
+  private async createSessionRuntime(
+    sessionId: number,
+    session: { worktreePath: string; claudeSessionId: string | null },
+    state: RuntimeState,
+  ): Promise<ClaudeSessionRuntime> {
     const existing = this.sessionRuntimes.get(sessionId);
     if (existing) {
       return existing;
@@ -1020,19 +1056,24 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     const canUseTool = this.createCanUseTool(sessionId, state);
     const onElicitation = this.createOnElicitation(sessionId, state);
+    const options = await this.buildQueryOptions(
+      sessionId,
+      session.worktreePath,
+      session.claudeSessionId,
+      state.selectedModel,
+      state.reasoningEffort,
+      state.fastMode,
+      state.selectedPermissionMode,
+      canUseTool,
+      onElicitation,
+    );
+    if (this.invalidatedSessions.has(sessionId)) {
+      throw new Error(`Session ${sessionId} was invalidated before startup`);
+    }
+
     const runtime = new ClaudeSessionRuntime({
       sessionId,
-      options: this.buildQueryOptions(
-        sessionId,
-        session.worktreePath,
-        session.claudeSessionId,
-        state.selectedModel,
-        state.reasoningEffort,
-        state.fastMode,
-        state.selectedPermissionMode,
-        canUseTool,
-        onElicitation,
-      ),
+      options,
       onMessage: async (message) => {
         await this.handleSdkMessage(sessionId, message);
         if (message.type === 'stream_event') {
@@ -1154,6 +1195,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     this.sessionRuntimes.delete(sessionId);
+    this.sessionRuntimeCreateInFlight.delete(sessionId);
     this.lastPrewarmAt.delete(sessionId);
     void runtime.close().catch((error) => {
       this.logger.debug(
@@ -1258,7 +1300,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       resolveCompletion = resolve;
     });
 
-    const runtime = this.ensureSessionRuntime(sessionId, session, state);
+    const runtime = await this.ensureSessionRuntime(sessionId, session, state);
     const hadStartedRuntime = runtime.startedAtMs != null;
     const queryCreatedAtMs = Date.now();
     const resume =
@@ -1665,7 +1707,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     const abortController = new AbortController();
     const runtimeQuery = query({
       prompt: this.createIdlePrompt(abortController.signal),
-      options: this.buildMcpAuthQueryOptions(
+      options: await this.buildMcpAuthQueryOptions(
         sessionId,
         session.worktreePath,
         serverName,
@@ -3503,7 +3545,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     return null;
   }
 
-  private buildQueryOptions(
+  private async buildQueryOptions(
     sessionId: number,
     worktreePath: string,
     claudeSessionId: string | null,
@@ -3513,7 +3555,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     selectedPermissionMode: ClaudePermissionMode | null,
     canUseTool: CanUseTool,
     onElicitation: (request: ElicitationRequest) => Promise<ElicitationResult>,
-  ): Options {
+  ): Promise<Options> {
     // Use the SDK-managed Claude Code binary by default so the query process
     // and SDK protocol stay in lockstep across prompt turns.
     const pathToClaudeCodeExecutable =
@@ -3555,7 +3597,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       env: buildManagedPlannotatorEnv(
         sessionId,
         this.wrapperScriptPath,
-        buildAugmentedEnv(process.env, worktreePath),
+        await buildAugmentedEnvAsync(process.env, worktreePath),
       ),
     };
     return options;
@@ -3615,7 +3657,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           type: 'preset' as const,
           preset: 'claude_code' as const,
         },
-        env: buildAugmentedEnv(process.env, worktreePath),
+        env: await buildAugmentedEnvAsync(process.env, worktreePath),
       },
     });
 
@@ -3676,12 +3718,12 @@ export class ClaudeRuntimeService extends EventEmitter {
     return typeof name === 'string' && /^Session \d+$/.test(name.trim());
   }
 
-  private buildMcpAuthQueryOptions(
+  private async buildMcpAuthQueryOptions(
     sessionId: number,
     worktreePath: string,
     serverName: string,
     abortController: AbortController,
-  ): Options {
+  ): Promise<Options> {
     const pathToClaudeCodeExecutable =
       this.claudeCliOverride?.path ??
       this.resolveSdkClaudePath() ??
@@ -3718,7 +3760,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       env: buildManagedPlannotatorEnv(
         sessionId,
         this.wrapperScriptPath,
-        buildAugmentedEnv(process.env, worktreePath),
+        await buildAugmentedEnvAsync(process.env, worktreePath),
       ),
     };
   }
@@ -3771,7 +3813,7 @@ export class ClaudeRuntimeService extends EventEmitter {
   ): Promise<string | null> {
     try {
       const { stdout } = await execFileAsync(binaryPath, ['--version'], {
-        env: buildAugmentedEnv(),
+        env: await buildAugmentedEnvAsync(),
         timeout: 5000,
       });
       const output = stdout.trim();
@@ -5269,6 +5311,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       if (this.sessionRuntimes.get(sessionId) === run.query) {
         this.sessionRuntimes.delete(sessionId);
       }
+      this.sessionRuntimeCreateInFlight.delete(sessionId);
     }
   }
 }

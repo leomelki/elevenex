@@ -9,7 +9,7 @@ import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
-  buildAugmentedEnv,
+  buildAugmentedEnvAsync,
   buildTmuxInlineEnvPrefix,
   findBinary,
 } from '../config/system-paths.js';
@@ -71,7 +71,7 @@ export class ActionPtyManager
   private readonly defaultShell = process.env.SHELL || '/bin/zsh';
   private gateway?: ActionGatewayLike;
   private persistence?: ActionPersistence;
-  private readonly tmuxBin: string;
+  private tmuxBin: string;
 
   constructor() {
     this.tmuxBin = this.resolveTmuxPath();
@@ -108,7 +108,7 @@ export class ActionPtyManager
 
     await this.persistence.markRunning(action.id);
 
-    const env = this.buildEnv(action.worktreePath);
+    const env = await this.buildEnv(action.worktreePath);
 
     let ptyProcess: pty.IPty | null = null;
 
@@ -193,7 +193,7 @@ export class ActionPtyManager
     );
 
     const logFilePath = this.getLogFilePath(actionId);
-    const env = this.buildEnv(worktreePath);
+    const env = await this.buildEnv(worktreePath);
 
     try {
       // Read existing log content (pipe-pane has been writing since action started)
@@ -296,6 +296,9 @@ export class ActionPtyManager
   }
 
   private isTmuxAvailable(): boolean {
+    if (this.tmuxBin === '') {
+      this.tmuxBin = this.resolveTmuxPath();
+    }
     return this.tmuxBin !== '';
   }
 
@@ -346,9 +349,9 @@ export class ActionPtyManager
     }
   }
 
-  private buildEnv(worktreePath?: string): NodeJS.ProcessEnv {
+  private async buildEnv(worktreePath?: string): Promise<NodeJS.ProcessEnv> {
     return {
-      ...buildAugmentedEnv(process.env, worktreePath),
+      ...(await buildAugmentedEnvAsync(process.env, worktreePath)),
       ...(worktreePath ? { PWD: worktreePath } : {}),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',

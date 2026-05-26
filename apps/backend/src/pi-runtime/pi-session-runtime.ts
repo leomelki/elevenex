@@ -1,7 +1,7 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { StringDecoder } from 'string_decoder';
-import { buildAugmentedEnv } from '../config/system-paths.js';
+import { buildAugmentedEnvAsync } from '../config/system-paths.js';
 import type {
   PiRpcExtensionUiRequest,
   PiRpcResponse,
@@ -17,6 +17,7 @@ interface PendingRequest {
 
 export class PiSessionRuntime extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
+  private startPromise: Promise<void> | null = null;
   private readonly pending = new Map<string, PendingRequest>();
   private nextRequestId = 0;
   private stderr = '';
@@ -33,17 +34,33 @@ export class PiSessionRuntime extends EventEmitter {
     super();
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.child) return;
+    if (this.startPromise) {
+      await this.startPromise;
+      return;
+    }
+
+    this.startPromise = this.startProcess().finally(() => {
+      this.startPromise = null;
+    });
+    await this.startPromise;
+  }
+
+  private async startProcess(): Promise<void> {
+    if (this.child) return;
+    this.stopped = false;
     this.exited = false;
     const args = ['--mode', 'rpc'];
     if (this.options.sessionPath && this.options.sessionPath !== '-1') {
       args.push('--session', this.options.sessionPath);
     }
+    const env = await buildAugmentedEnvAsync(process.env, this.options.cwd);
+    if (this.stopped || this.child) return;
 
     this.child = spawn('pi', args, {
       cwd: this.options.cwd,
-      env: buildAugmentedEnv(process.env, this.options.cwd),
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -66,7 +83,7 @@ export class PiSessionRuntime extends EventEmitter {
   async send<T = unknown>(
     command: Omit<Record<string, unknown>, 'id'> & { type: string },
   ): Promise<T> {
-    this.start();
+    await this.start();
     const child = this.child;
     if (!child || !child.stdin.writable) {
       throw new Error('Pi RPC process is not writable.');
@@ -84,7 +101,9 @@ export class PiSessionRuntime extends EventEmitter {
     child.stdin.write(`${JSON.stringify(payload)}\n`);
     const response = await promise;
     if (!response.success) {
-      throw new Error(response.error ?? `Pi RPC command failed: ${command.type}`);
+      throw new Error(
+        response.error ?? `Pi RPC command failed: ${command.type}`,
+      );
     }
     return response.data as T;
   }
@@ -105,7 +124,9 @@ export class PiSessionRuntime extends EventEmitter {
       this.pending.delete(id);
     }
     if (!child || child.exitCode !== null || child.killed) return;
-    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    const exited = new Promise<void>((resolve) =>
+      child.once('exit', () => resolve()),
+    );
     try {
       child.kill('SIGTERM');
     } catch {
@@ -118,7 +139,10 @@ export class PiSessionRuntime extends EventEmitter {
         // already exited
       }
     }, 1500);
-    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2500))]);
+    await Promise.race([
+      exited,
+      new Promise((resolve) => setTimeout(resolve, 2500)),
+    ]);
     clearTimeout(killTimer);
   }
 

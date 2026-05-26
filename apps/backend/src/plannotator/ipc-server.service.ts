@@ -27,6 +27,7 @@ export class IpcServerService
   private port: number = 0;
   private readonly logger = new Logger('IpcServer');
   private registeredWorktrees: Set<string> = new Set();
+  private registryUpdateQueue: Promise<void> = Promise.resolve();
 
   async onModuleInit() {
     await this.startServer();
@@ -154,17 +155,25 @@ export class IpcServerService
   registerWorktree(worktreePath: string): void {
     if (!worktreePath) return;
     this.registeredWorktrees.add(worktreePath);
-    void this.updateRegistry();
+    void this.queueRegistryUpdate();
   }
 
   unregisterWorktree(worktreePath: string): void {
     this.registeredWorktrees.delete(worktreePath);
-    void this.updateRegistry();
+    void this.queueRegistryUpdate();
   }
 
   private async unregisterAllWorktrees(): Promise<void> {
     this.registeredWorktrees.clear();
-    await this.updateRegistry();
+    await this.queueRegistryUpdate();
+  }
+
+  private queueRegistryUpdate(): Promise<void> {
+    const next = this.registryUpdateQueue
+      .catch(() => undefined)
+      .then(() => this.updateRegistry());
+    this.registryUpdateQueue = next.catch(() => undefined);
+    return next;
   }
 
   private async updateRegistry(): Promise<void> {

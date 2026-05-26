@@ -13,7 +13,10 @@ import {
   getSubagentMessages,
   query,
 } from '@anthropic-ai/claude-agent-sdk';
-import { ClaudeRuntimeService, loadClaudeSdkPackageMetadata } from './claude-runtime.service.js';
+import {
+  ClaudeRuntimeService,
+  loadClaudeSdkPackageMetadata,
+} from './claude-runtime.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { TerminalService } from '../terminal/terminal.service.js';
@@ -97,11 +100,14 @@ describe('ClaudeRuntimeService', () => {
           onConflictDoUpdate: jest.fn(({ set }) => {
             const existingIndex = interactionRows.findIndex(
               (row) =>
-                row.sessionId === value.sessionId
-                && row.toolUseId === value.toolUseId,
+                row.sessionId === value.sessionId &&
+                row.toolUseId === value.toolUseId,
             );
             const nextRow = {
-              id: existingIndex >= 0 ? interactionRows[existingIndex].id : interactionRows.length + 1,
+              id:
+                existingIndex >= 0
+                  ? interactionRows[existingIndex].id
+                  : interactionRows.length + 1,
               ...value,
               ...set,
             };
@@ -194,9 +200,14 @@ describe('ClaudeRuntimeService', () => {
 
   it('publishes sidebar activity for running, action, resumed, and idle runtime states', () => {
     const state = (service as any).ensureRuntimeState(7);
-    const emittedEvents: Array<{ type: string; payload?: Record<string, unknown> }> = [];
-    service.on('event', (event: { type: string; payload?: Record<string, unknown> }) =>
-      emittedEvents.push(event),
+    const emittedEvents: Array<{
+      type: string;
+      payload?: Record<string, unknown>;
+    }> = [];
+    service.on(
+      'event',
+      (event: { type: string; payload?: Record<string, unknown> }) =>
+        emittedEvents.push(event),
     );
 
     state.runPhase = 'running';
@@ -257,7 +268,9 @@ describe('ClaudeRuntimeService', () => {
       actionLabel: null,
     });
 
-    const runStates = emittedEvents.filter((event) => event.type === 'run_state');
+    const runStates = emittedEvents.filter(
+      (event) => event.type === 'run_state',
+    );
     expect(runStates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -290,7 +303,8 @@ describe('ClaudeRuntimeService', () => {
   it('starts MCP auth through the Claude Code SDK control channel', async () => {
     const close = jest.fn();
     const mcpAuthenticate = jest.fn().mockResolvedValue({
-      authUrl: 'https://auth.example.com/authorize?client_id=claude-code&redirect_uri=http%3A%2F%2Flocalhost%3A49152%2Fcallback&state=abc',
+      authUrl:
+        'https://auth.example.com/authorize?client_id=claude-code&redirect_uri=http%3A%2F%2Flocalhost%3A49152%2Fcallback&state=abc',
       requiresUserAction: true,
     });
     (query as jest.Mock).mockReturnValue({
@@ -304,13 +318,15 @@ describe('ClaudeRuntimeService', () => {
         'https://auth.example.com/authorize?client_id=claude-code&redirect_uri=http%3A%2F%2Flocalhost%3A49152%2Fcallback&state=abc',
       );
 
-      expect(query).toHaveBeenCalledWith(expect.objectContaining({
-        options: expect.objectContaining({
-          cwd: '/tmp/project',
-          persistSession: false,
-          settingSources: ['project', 'user', 'local'],
+      expect(query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: expect.objectContaining({
+            cwd: '/tmp/project',
+            persistSession: false,
+            settingSources: ['project', 'user', 'local'],
+          }),
         }),
-      }));
+      );
       expect(mcpAuthenticate).toHaveBeenCalledWith('linear');
       expect(close).toHaveBeenCalled();
     } finally {
@@ -441,8 +457,9 @@ describe('ClaudeRuntimeService', () => {
       );
     jest
       .spyOn(service as never, 'pathExists' as never)
-      .mockImplementation(async (targetPath: string) =>
-        targetPath === userSkillsDir || targetPath === userCommandsDir,
+      .mockImplementation(
+        async (targetPath: string) =>
+          targetPath === userSkillsDir || targetPath === userCommandsDir,
       );
     jest
       .spyOn(service as never, 'walkDirectory' as never)
@@ -491,7 +508,9 @@ describe('ClaudeRuntimeService', () => {
     };
 
     const items = await service.getAutocompleteItems(7);
-    const labels = items.map((item) => `${item.trigger}:${item.label}:${item.detail ?? ''}`);
+    const labels = items.map(
+      (item) => `${item.trigger}:${item.label}:${item.detail ?? ''}`,
+    );
 
     expect(labels).toContain('/:/runtime-only:Runtime command');
     expect(labels).toContain('/:/runtime-skill:Runtime skill');
@@ -707,9 +726,14 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('emits partial assistant deltas into live runtime state before completion', async () => {
-    const emittedEvents: Array<{ type: string; payload: Record<string, unknown> }> = [];
-    service.on('event', (event: { type: string; payload: Record<string, unknown> }) =>
-      emittedEvents.push(event),
+    const emittedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+    service.on(
+      'event',
+      (event: { type: string; payload: Record<string, unknown> }) =>
+        emittedEvents.push(event),
     );
 
     (service as any).activeRuns.set(7, {
@@ -819,9 +843,14 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('correlates stream deltas using message_start.message.id instead of wrapper event uuid', async () => {
-    const emittedEvents: Array<{ type: string; payload: Record<string, unknown> }> = [];
-    service.on('event', (event: { type: string; payload: Record<string, unknown> }) =>
-      emittedEvents.push(event),
+    const emittedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+    service.on(
+      'event',
+      (event: { type: string; payload: Record<string, unknown> }) =>
+        emittedEvents.push(event),
     );
 
     (service as any).activeRuns.set(7, {
@@ -923,9 +952,14 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('reuses the streamed assistant item when the final assistant message arrives', async () => {
-    const emittedEvents: Array<{ type: string; payload: Record<string, unknown> }> = [];
-    service.on('event', (event: { type: string; payload: Record<string, unknown> }) =>
-      emittedEvents.push(event),
+    const emittedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+    service.on(
+      'event',
+      (event: { type: string; payload: Record<string, unknown> }) =>
+        emittedEvents.push(event),
     );
 
     (service as any).activeRuns.set(7, {
@@ -1012,7 +1046,9 @@ describe('ClaudeRuntimeService', () => {
     });
 
     const state = await service.getRuntimeState(7);
-    const assistantItems = state.liveItems.filter((item) => item.kind === 'assistant');
+    const assistantItems = state.liveItems.filter(
+      (item) => item.kind === 'assistant',
+    );
 
     expect(assistantItems).toHaveLength(1);
     expect(assistantItems[0]).toEqual(
@@ -1021,7 +1057,9 @@ describe('ClaudeRuntimeService', () => {
         content: 'Hello world',
       }),
     );
-    expect((service as any).activeRuns.get(7).partialAssistantItems.size).toBe(0);
+    expect((service as any).activeRuns.get(7).partialAssistantItems.size).toBe(
+      0,
+    );
     expect(emittedEvents.map((event) => event.type)).toEqual([
       'session_created',
       'message_start',
@@ -1134,8 +1172,12 @@ describe('ClaudeRuntimeService', () => {
     });
 
     const state = await service.getRuntimeState(7);
-    const assistantItems = state.liveItems.filter((item) => item.kind === 'assistant');
-    const thinkingItems = state.liveItems.filter((item) => item.kind === 'thinking');
+    const assistantItems = state.liveItems.filter(
+      (item) => item.kind === 'assistant',
+    );
+    const thinkingItems = state.liveItems.filter(
+      (item) => item.kind === 'thinking',
+    );
 
     expect(assistantItems).toHaveLength(1);
     expect(assistantItems[0]).toEqual(
@@ -1153,7 +1195,9 @@ describe('ClaudeRuntimeService', () => {
         sourceMessageId: 'assistant-msg-think-first',
       }),
     );
-    expect((service as any).activeRuns.get(7).partialAssistantItems.size).toBe(0);
+    expect((service as any).activeRuns.get(7).partialAssistantItems.size).toBe(
+      0,
+    );
   });
 
   it('uses the SDK-managed Claude CLI by default when submitting prompts', async () => {
@@ -1192,7 +1236,9 @@ describe('ClaudeRuntimeService', () => {
     const runtimeClose = jest.fn();
     const titleClose = jest.fn();
     (query as jest.Mock).mockImplementation(({ prompt }) => {
-      const isTitleQuery = String(prompt).includes('Name this Claude Code session');
+      const isTitleQuery = String(prompt).includes(
+        'Name this Claude Code session',
+      );
       return {
         supportedModels: jest.fn().mockResolvedValue([]),
         getContextUsage: jest.fn().mockResolvedValue({
@@ -1238,7 +1284,11 @@ describe('ClaudeRuntimeService', () => {
       };
     });
 
-    await service.submitPrompt(7, 'Please implement auto names', 'Please implement auto names');
+    await service.submitPrompt(
+      7,
+      'Please implement auto names',
+      'Please implement auto names',
+    );
     await new Promise((resolve) => setImmediate(resolve));
     await Promise.resolve();
 
@@ -1335,7 +1385,9 @@ describe('ClaudeRuntimeService', () => {
       claudeSessionId: '-1',
     });
     (query as jest.Mock).mockImplementation(({ prompt }) => {
-      const isTitleQuery = String(prompt).includes('Name this Claude Code session');
+      const isTitleQuery = String(prompt).includes(
+        'Name this Claude Code session',
+      );
       return {
         supportedModels: jest.fn().mockResolvedValue([]),
         getContextUsage: jest.fn().mockResolvedValue({
@@ -1384,23 +1436,26 @@ describe('ClaudeRuntimeService', () => {
     });
     let resolveModels: ((value: unknown[]) => void) | null = null;
     let resolveUsage:
-      ((value: {
-        model: string;
-        totalTokens: number;
-        maxTokens: number;
-        percentage: number;
-        apiUsage: undefined;
-        autoCompactThreshold: number;
-        isAutoCompactEnabled: boolean;
-        memoryFiles: never[];
-        mcpTools: never[];
-      }) => void) | null = null;
+      | ((value: {
+          model: string;
+          totalTokens: number;
+          maxTokens: number;
+          percentage: number;
+          apiUsage: undefined;
+          autoCompactThreshold: number;
+          isAutoCompactEnabled: boolean;
+          memoryFiles: never[];
+          mcpTools: never[];
+        }) => void)
+      | null = null;
     let emitted = false;
     let emittedResult = false;
     let releaseIterator: (() => void) | null = null;
 
     const emittedEvents: string[] = [];
-    service.on('event', (event: { type: string }) => emittedEvents.push(event.type));
+    service.on('event', (event: { type: string }) =>
+      emittedEvents.push(event.type),
+    );
 
     (query as jest.Mock).mockReturnValue({
       supportedModels: jest.fn().mockImplementation(
@@ -1473,17 +1528,18 @@ describe('ClaudeRuntimeService', () => {
   it('coalesces repeated metadata refreshes for the same active run', async () => {
     let resolveModels: ((value: unknown[]) => void) | null = null;
     let resolveUsage:
-      ((value: {
-        model: string;
-        totalTokens: number;
-        maxTokens: number;
-        percentage: number;
-        apiUsage: undefined;
-        autoCompactThreshold: number;
-        isAutoCompactEnabled: boolean;
-        memoryFiles: never[];
-        mcpTools: never[];
-      }) => void) | null = null;
+      | ((value: {
+          model: string;
+          totalTokens: number;
+          maxTokens: number;
+          percentage: number;
+          apiUsage: undefined;
+          autoCompactThreshold: number;
+          isAutoCompactEnabled: boolean;
+          memoryFiles: never[];
+          mcpTools: never[];
+        }) => void)
+      | null = null;
 
     const supportedModels = jest.fn().mockImplementation(
       () =>
@@ -1521,8 +1577,12 @@ describe('ClaudeRuntimeService', () => {
       observedPreVisibleMarkers: new Set(),
     });
 
-    const first = (service as any).refreshRuntimeMetadata(7, { reason: 'test' });
-    const second = (service as any).refreshRuntimeMetadata(7, { reason: 'test' });
+    const first = (service as any).refreshRuntimeMetadata(7, {
+      reason: 'test',
+    });
+    const second = (service as any).refreshRuntimeMetadata(7, {
+      reason: 'test',
+    });
 
     expect(supportedModels).toHaveBeenCalledTimes(1);
     expect(getContextUsage).toHaveBeenCalledTimes(1);
@@ -1664,15 +1724,43 @@ describe('ClaudeRuntimeService', () => {
 
     await service.submitPrompt(7, 'Trace this');
 
-    const debugMessages = loggerDebugSpy.mock.calls.map(([message]) => String(message));
-    expect(debugMessages.some((message) => message.includes('stage=submit_start'))).toBe(true);
-    expect(debugMessages.some((message) => message.includes('stage=runtime_query_created'))).toBe(true);
-    expect(debugMessages.some((message) => message.includes('stage=resume_diagnostics'))).toBe(true);
-    expect(debugMessages.some((message) => message.includes('stage=first_sdk_message:system'))).toBe(true);
-    expect(debugMessages.some((message) => message.includes('stage=pre_visible_system:init'))).toBe(true);
-    expect(debugMessages.some((message) => message.includes('stage=first_visible_message_start'))).toBe(true);
-    expect(debugMessages.some((message) => message.includes('preVisibleSummary'))).toBe(true);
-    expect(debugMessages.some((message) => message.includes('stage=run_complete'))).toBe(true);
+    const debugMessages = loggerDebugSpy.mock.calls.map(([message]) =>
+      String(message),
+    );
+    expect(
+      debugMessages.some((message) => message.includes('stage=submit_start')),
+    ).toBe(true);
+    expect(
+      debugMessages.some((message) =>
+        message.includes('stage=runtime_query_created'),
+      ),
+    ).toBe(true);
+    expect(
+      debugMessages.some((message) =>
+        message.includes('stage=resume_diagnostics'),
+      ),
+    ).toBe(true);
+    expect(
+      debugMessages.some((message) =>
+        message.includes('stage=first_sdk_message:system'),
+      ),
+    ).toBe(true);
+    expect(
+      debugMessages.some((message) =>
+        message.includes('stage=pre_visible_system:init'),
+      ),
+    ).toBe(true);
+    expect(
+      debugMessages.some((message) =>
+        message.includes('stage=first_visible_message_start'),
+      ),
+    ).toBe(true);
+    expect(
+      debugMessages.some((message) => message.includes('preVisibleSummary')),
+    ).toBe(true);
+    expect(
+      debugMessages.some((message) => message.includes('stage=run_complete')),
+    ).toBe(true);
   });
 
   it('records history source and count for resumed-session diagnostics', async () => {
@@ -1711,11 +1799,13 @@ describe('ClaudeRuntimeService', () => {
       },
     ) as ClaudeRuntimeService;
 
-    const options = (overrideService as any).buildQueryOptions(
+    const options = await (overrideService as any).buildQueryOptions(
       7,
       '/tmp/project',
       'claude-session-1',
       null,
+      null,
+      false,
       null,
       jest.fn(),
       jest.fn(),
@@ -1763,7 +1853,12 @@ describe('ClaudeRuntimeService', () => {
           content: [
             { type: 'thinking', thinking: 'Checking changes' },
             { type: 'text', text: 'Done.' },
-            { type: 'tool_use', id: 'tool-1', name: 'Read', input: { file: 'README.md' } },
+            {
+              type: 'tool_use',
+              id: 'tool-1',
+              name: 'Read',
+              input: { file: 'README.md' },
+            },
           ],
         },
       },
@@ -1807,7 +1902,9 @@ describe('ClaudeRuntimeService', () => {
     (getSessionMessages as jest.Mock).mockResolvedValue([]);
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
-      .mockResolvedValue('/tmp/.claude/projects/project/claude-session-1.jsonl');
+      .mockResolvedValue(
+        '/tmp/.claude/projects/project/claude-session-1.jsonl',
+      );
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
       .mockResolvedValue([
@@ -1836,7 +1933,9 @@ describe('ClaudeRuntimeService', () => {
     (getSessionMessages as jest.Mock).mockResolvedValue([]);
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
-      .mockResolvedValue('/tmp/.claude/projects/project/claude-session-1.jsonl');
+      .mockResolvedValue(
+        '/tmp/.claude/projects/project/claude-session-1.jsonl',
+      );
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
       .mockResolvedValue([
@@ -1877,10 +1976,14 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('falls back to transcript records when SDK history lookup throws', async () => {
-    (getSessionMessages as jest.Mock).mockRejectedValue(new Error('lookup failed'));
+    (getSessionMessages as jest.Mock).mockRejectedValue(
+      new Error('lookup failed'),
+    );
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
-      .mockResolvedValue('/tmp/.claude/projects/project/claude-session-1.jsonl');
+      .mockResolvedValue(
+        '/tmp/.claude/projects/project/claude-session-1.jsonl',
+      );
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
       .mockResolvedValue([
@@ -1917,7 +2020,12 @@ describe('ClaudeRuntimeService', () => {
       message: {
         content: [
           { type: 'text', text: 'Exploring the codebase' },
-          { type: 'tool_use', id: 'child-tool-1', name: 'Read', input: { file_path: 'README.md' } },
+          {
+            type: 'tool_use',
+            id: 'child-tool-1',
+            name: 'Read',
+            input: { file_path: 'README.md' },
+          },
         ],
       },
     });
@@ -1928,7 +2036,14 @@ describe('ClaudeRuntimeService', () => {
       session_id: 'claude-session-1',
       parent_tool_use_id: 'agent-tool-1',
       message: {
-        content: [{ type: 'tool_result', tool_use_id: 'child-tool-1', content: 'done', is_error: false }],
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'child-tool-1',
+            content: 'done',
+            is_error: false,
+          },
+        ],
       },
     });
 
@@ -1981,7 +2096,12 @@ describe('ClaudeRuntimeService', () => {
         timestamp: '2026-04-24T08:00:07.000Z',
         message: {
           content: [
-            { type: 'tool_use', id: 'tool-1', name: 'Read', input: { file: 'README.md' } },
+            {
+              type: 'tool_use',
+              id: 'tool-1',
+              name: 'Read',
+              input: { file: 'README.md' },
+            },
             { type: 'text', text: 'Done.' },
           ],
         },
@@ -2055,7 +2175,9 @@ describe('ClaudeRuntimeService', () => {
     });
 
     const emittedEvents: string[] = [];
-    service.on('event', (event: { type: string }) => emittedEvents.push(event.type));
+    service.on('event', (event: { type: string }) =>
+      emittedEvents.push(event.type),
+    );
 
     const submitPromise = service.submitPrompt(7, 'Stop now');
     while (!iterationStarted) {
@@ -2087,7 +2209,9 @@ describe('ClaudeRuntimeService', () => {
     const interrupt = jest.fn().mockResolvedValue(undefined);
     const close = jest.fn();
     const emittedEvents: string[] = [];
-    service.on('event', (event: { type: string }) => emittedEvents.push(event.type));
+    service.on('event', (event: { type: string }) =>
+      emittedEvents.push(event.type),
+    );
 
     (service as any).activeRuns.set(7, {
       query: { interrupt, close },
@@ -2097,14 +2221,24 @@ describe('ClaudeRuntimeService', () => {
         [
           'perm-1',
           {
-            request: { requestId: 'perm-1', toolName: 'Edit', input: {}, createdAt: 'now' },
+            request: {
+              requestId: 'perm-1',
+              toolName: 'Edit',
+              input: {},
+              createdAt: 'now',
+            },
             resolve: resolvePermission,
           },
         ],
         [
           'perm-2',
           {
-            request: { requestId: 'perm-2', toolName: 'Bash', input: {}, createdAt: 'later' },
+            request: {
+              requestId: 'perm-2',
+              toolName: 'Bash',
+              input: {},
+              createdAt: 'later',
+            },
             resolve: resolveQueuedPermission,
           },
         ],
@@ -2157,9 +2291,14 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('promotes queued permission requests in order after the current one resolves', async () => {
-    const emittedEvents: Array<{ type: string; payload?: Record<string, unknown> }> = [];
-    service.on('event', (event: { type: string; payload?: Record<string, unknown> }) =>
-      emittedEvents.push(event),
+    const emittedEvents: Array<{
+      type: string;
+      payload?: Record<string, unknown>;
+    }> = [];
+    service.on(
+      'event',
+      (event: { type: string; payload?: Record<string, unknown> }) =>
+        emittedEvents.push(event),
     );
 
     const run = {
@@ -2170,7 +2309,12 @@ describe('ClaudeRuntimeService', () => {
         [
           'perm-1',
           {
-            request: { requestId: 'perm-1', toolName: 'Edit', input: {}, createdAt: 'now' },
+            request: {
+              requestId: 'perm-1',
+              toolName: 'Edit',
+              input: {},
+              createdAt: 'now',
+            },
             resolve: jest.fn(),
           },
         ],
@@ -2227,17 +2371,23 @@ describe('ClaudeRuntimeService', () => {
     expect(
       emittedEvents.some(
         (event) =>
-          event.type === 'permission_request'
-          && event.payload?.['request']
-          && (event.payload['request'] as { requestId?: string }).requestId === 'perm-2',
+          event.type === 'permission_request' &&
+          event.payload?.['request'] &&
+          (event.payload['request'] as { requestId?: string }).requestId ===
+            'perm-2',
       ),
     ).toBe(true);
   });
 
   it('clears stale pending permission when a resolved tool result arrives', () => {
-    const emittedEvents: Array<{ type: string; payload?: Record<string, unknown> }> = [];
-    service.on('event', (event: { type: string; payload?: Record<string, unknown> }) =>
-      emittedEvents.push(event),
+    const emittedEvents: Array<{
+      type: string;
+      payload?: Record<string, unknown>;
+    }> = [];
+    service.on(
+      'event',
+      (event: { type: string; payload?: Record<string, unknown> }) =>
+        emittedEvents.push(event),
     );
 
     const permissionRequests = new Map([
@@ -2293,7 +2443,9 @@ describe('ClaudeRuntimeService', () => {
       type: 'user',
       uuid: 'user-1',
       message: {
-        content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'accepted' }],
+        content: [
+          { type: 'tool_result', tool_use_id: 'tool-1', content: 'accepted' },
+        ],
       },
     });
 
@@ -2306,7 +2458,9 @@ describe('ClaudeRuntimeService', () => {
       type: 'user',
       uuid: 'user-2',
       message: {
-        content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'accepted' }],
+        content: [
+          { type: 'tool_result', tool_use_id: 'tool-1', content: 'accepted' },
+        ],
       },
     });
 
@@ -2338,7 +2492,11 @@ describe('ClaudeRuntimeService', () => {
         [
           'input-1',
           {
-            request: { requestId: 'input-1', message: 'Continue?', createdAt: 'now' },
+            request: {
+              requestId: 'input-1',
+              message: 'Continue?',
+              createdAt: 'now',
+            },
             resolve: resolveUserInput,
           },
         ],
@@ -2457,9 +2615,9 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('rejects subagent history requests for unknown agents', async () => {
-    await expect(service.getSubagentHistory(7, 'missing-agent')).rejects.toThrow(
-      'Subagent not found for this session.',
-    );
+    await expect(
+      service.getSubagentHistory(7, 'missing-agent'),
+    ).rejects.toThrow('Subagent not found for this session.');
   });
 
   it('rewinds conversation history from a selected user message and resets live runtime state', async () => {

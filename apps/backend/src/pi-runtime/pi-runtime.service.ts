@@ -423,7 +423,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       this.handleRuntimeExit(sessionId, details);
     });
 
-    runtime.start();
+    await runtime.start();
     await this.refreshStateFromRpc(sessionId);
     this.enforceIdleRuntimeCap();
     return runtime;

@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as pty from 'node-pty';
 import { ActionPtyManager } from './action-pty-manager.service.js';
 import {
-  buildAugmentedEnv,
+  buildAugmentedEnvAsync,
   buildTmuxInlineEnvPrefix,
   findBinary,
 } from '../config/system-paths.js';
@@ -16,7 +16,7 @@ jest.mock('node-pty', () => ({
 }));
 
 jest.mock('../config/system-paths.js', () => ({
-  buildAugmentedEnv: jest.fn(),
+  buildAugmentedEnvAsync: jest.fn(),
   buildTmuxInlineEnvPrefix: jest.fn(() => "PATH='/repo/bin'"),
   findBinary: jest.fn(),
 }));
@@ -44,7 +44,7 @@ function createMockPty(): MockPty {
 describe('ActionPtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
   const mockExecFileQuiet = jest.mocked(execFileQuiet);
-  const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnv);
+  const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
   const mockBuildTmuxInlineEnvPrefix = jest.mocked(buildTmuxInlineEnvPrefix);
   const mockFindBinary = jest.mocked(findBinary);
 
@@ -55,7 +55,7 @@ describe('ActionPtyManager', () => {
     jest.resetAllMocks();
     manager = null;
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'elevenex-action-test-'));
-    mockBuildAugmentedEnv.mockReturnValue({
+    mockBuildAugmentedEnv.mockResolvedValue({
       PATH: '/repo/bin:/usr/bin',
       SHELL: '/custom/zsh',
       PWD: '/backend/root',

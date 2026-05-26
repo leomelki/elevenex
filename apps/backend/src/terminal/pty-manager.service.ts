@@ -15,7 +15,7 @@ import { TmuxManager } from './tmux-manager.service.js';
 import { PlannotatorRegistryService } from '../plannotator/plannotator-registry.service.js';
 import { getBackendHelperPath } from '../config/runtime-paths.js';
 import {
-  buildAugmentedEnv,
+  buildAugmentedEnvAsync,
   buildTmuxInlineEnvPrefix,
   findBinary,
 } from '../config/system-paths.js';
@@ -109,10 +109,14 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     });
 
     const env = buildManagedPlannotatorEnv(sessionId, this.wrapperScriptPath, {
-      ...buildAugmentedEnv(process.env, worktreePath),
+      ...(await buildAugmentedEnvAsync(process.env, worktreePath)),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     });
+
+    if (this.processes.has(sessionId)) {
+      this.kill(sessionId);
+    }
 
     this.logger.log(`Spawning PTY for session ${sessionId} in ${worktreePath}`);
 

@@ -1,6 +1,13 @@
 import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { execSync, spawn } from 'child_process';
-import { buildAugmentedEnv, buildTmuxInlineEnvPrefix } from './system-paths.js';
+import {
+  buildAugmentedEnv,
+  buildTmuxInlineEnvPrefix,
+  findBinary,
+} from './system-paths.js';
 
 jest.mock('child_process', () => ({
   execSync: jest.fn(),
@@ -137,6 +144,27 @@ describe('system-paths per-cwd env cache', () => {
     expect(mockSpawn).toHaveBeenCalledTimes(3);
 
     await closeShellProcess(nextRefreshProcess, envOutput('/fresh/bin'));
+  });
+
+  it('does not cache failed binary lookups before PATH changes', () => {
+    const originalPath = process.env.PATH;
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'elevenex-bin-'));
+    const binaryName = `elevenex-test-bin-${Date.now()}`;
+    const binaryPath = path.join(tmpDir, binaryName);
+
+    try {
+      process.env.PATH = originalPath ?? '';
+      expect(findBinary(binaryName)).toBeNull();
+
+      fs.writeFileSync(binaryPath, '#!/bin/sh\nexit 0\n');
+      fs.chmodSync(binaryPath, 0o755);
+      process.env.PATH = `${tmpDir}:${originalPath ?? ''}`;
+
+      expect(findBinary(binaryName)).toBe(binaryPath);
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 

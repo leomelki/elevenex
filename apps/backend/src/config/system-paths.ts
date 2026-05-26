@@ -39,7 +39,7 @@ const SHELL_TIMEOUT_MS = 5_000;
 let _shellEnvCache: NodeJS.ProcessEnv | null = null;
 let _lastRefreshAt = 0;
 let _refreshInFlight: Promise<void> | null = null;
-const binaryPathCache = new Map<string, string | null>();
+const binaryPathCache = new Map<string, string>();
 
 // Per-cwd login-shell env cache. Some users wire version managers (nvm/fnm/
 // rbenv/…) into their rc files via `chpwd` hooks that read `.nvmrc`/`.tool-
@@ -354,6 +354,7 @@ export function refreshLoginShellEnv(force = false): Promise<void> {
       _shellEnvCache = parsed;
       _lastRefreshAt = Date.now();
       applyShellEnvToProcess();
+      binaryPathCache.clear();
     }
     // On failure: keep the existing cache rather than wiping it.
     _refreshInFlight = null;
@@ -389,7 +390,6 @@ export function findBinary(name: string): string | null {
     }
   }
 
-  binaryPathCache.set(name, null);
   return null;
 }
 
@@ -546,4 +546,24 @@ export function buildAugmentedEnv(
     ...merged,
     PATH: combinedPath,
   });
+}
+
+export async function buildAugmentedEnvAsync(
+  base: NodeJS.ProcessEnv = process.env,
+  cwd?: string,
+): Promise<NodeJS.ProcessEnv> {
+  if (!_shellEnvCache) {
+    await refreshLoginShellEnv(true).catch(() => undefined);
+  }
+
+  if (cwd) {
+    const cwdRefresh = _cwdRefreshInFlight.get(cwd);
+    if (cwdRefresh) {
+      await cwdRefresh.catch(() => undefined);
+    } else if (!_cwdEnvCache.has(cwd)) {
+      await refreshCwdEnvAsync(cwd).catch(() => undefined);
+    }
+  }
+
+  return buildAugmentedEnv(base, cwd);
 }

@@ -12,7 +12,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { UserTerminalGateway } from './user-terminal.gateway.js';
 import { generateTmuxScrollConfig } from '../terminal/tmux-scroll-config.js';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
 
 const TMUX_SESSION_PREFIX = 'elevenex-uterm';
@@ -44,6 +44,9 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   }
 
   private isTmuxAvailable(): boolean {
+    if (this.tmuxBin === '') {
+      this.tmuxBin = this.resolveTmuxPath();
+    }
     return this.tmuxBin !== '';
   }
 
@@ -79,10 +82,14 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     }
 
     const env: NodeJS.ProcessEnv = {
-      ...buildAugmentedEnv(process.env, worktreePath),
+      ...(await buildAugmentedEnvAsync(process.env, worktreePath)),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     };
+
+    if (this.processes.has(terminalId)) {
+      this.kill(terminalId);
+    }
 
     const tmuxSessionName = this.getTmuxSessionName(terminalId);
 

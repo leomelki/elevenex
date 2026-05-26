@@ -7,7 +7,7 @@ jest.mock('child_process', () => ({
 }));
 
 jest.mock('../config/system-paths.js', () => ({
-  buildAugmentedEnv: jest.fn(() => ({ PATH: '/mock/bin' })),
+  buildAugmentedEnvAsync: jest.fn(async () => ({ PATH: '/mock/bin' })),
 }));
 
 class MockWritable extends EventEmitter {
@@ -53,6 +53,10 @@ function createPiProcess(): MockPiProcess {
   return child;
 }
 
+function flushAsyncStart(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 describe('PiSessionRuntime', () => {
   let child: MockPiProcess;
 
@@ -69,15 +73,14 @@ describe('PiSessionRuntime', () => {
     const resultPromise = runtime.send<{ sessionFile: string }>({
       type: 'get_state',
     });
+    await flushAsyncStart();
 
     expect(mockSpawn).toHaveBeenCalledWith('pi', ['--mode', 'rpc'], {
       cwd: '/repo/worktree',
       env: { PATH: '/mock/bin' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    expect(child.stdin.writes).toEqual([
-      '{"type":"get_state","id":"pi-1"}\n',
-    ]);
+    expect(child.stdin.writes).toEqual(['{"type":"get_state","id":"pi-1"}\n']);
 
     child.stdout.emit(
       'data',
@@ -91,27 +94,32 @@ describe('PiSessionRuntime', () => {
     });
   });
 
-  it('resumes with an existing Pi session file', () => {
+  it('resumes with an existing Pi session file', async () => {
     const runtime = new PiSessionRuntime({
       cwd: '/repo/worktree',
       sessionPath: '/Users/test/.pi/agent/sessions/session.jsonl',
     });
 
-    runtime.start();
+    await runtime.start();
 
     expect(mockSpawn).toHaveBeenCalledWith(
       'pi',
-      ['--mode', 'rpc', '--session', '/Users/test/.pi/agent/sessions/session.jsonl'],
+      [
+        '--mode',
+        'rpc',
+        '--session',
+        '/Users/test/.pi/agent/sessions/session.jsonl',
+      ],
       expect.objectContaining({ cwd: '/repo/worktree' }),
     );
   });
 
-  it('routes extension UI requests and responses without command correlation', () => {
+  it('routes extension UI requests and responses without command correlation', async () => {
     const runtime = new PiSessionRuntime({ cwd: '/repo/worktree' });
     const requests: unknown[] = [];
     runtime.on('extension_ui_request', (request) => requests.push(request));
 
-    runtime.start();
+    await runtime.start();
     child.stdout.emit(
       'data',
       Buffer.from(
@@ -142,8 +150,11 @@ describe('PiSessionRuntime', () => {
     const runtime = new PiSessionRuntime({ cwd: '/repo/worktree' });
 
     const resultPromise = runtime.send({ type: 'prompt', prompt: 'hello' });
+    await flushAsyncStart();
     child.emit('exit', 1, null);
 
-    await expect(resultPromise).rejects.toThrow('Pi RPC process exited with code 1');
+    await expect(resultPromise).rejects.toThrow(
+      'Pi RPC process exited with code 1',
+    );
   });
 });

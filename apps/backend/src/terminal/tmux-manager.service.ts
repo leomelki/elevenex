@@ -38,11 +38,25 @@ export class TmuxManager implements OnModuleDestroy {
     return findBinary('tmux') ?? '';
   }
 
+  private refreshTmuxPath(): void {
+    if (this.tmuxAvailable) return;
+    const resolved = this.resolveTmuxPath();
+    if (!resolved) return;
+
+    this.tmuxBin = resolved;
+    this.tmuxAvailable = true;
+    console.log(
+      `tmux detected at ${this.tmuxBin} - session persistence enabled`,
+    );
+  }
+
   isTmuxAvailable(): boolean {
+    this.refreshTmuxPath();
     return this.tmuxAvailable;
   }
 
   getTmuxBin(): string {
+    this.refreshTmuxPath();
     return this.tmuxBin;
   }
 
