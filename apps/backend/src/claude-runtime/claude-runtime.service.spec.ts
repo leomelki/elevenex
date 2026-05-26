@@ -811,12 +811,11 @@ describe('ClaudeRuntimeService', () => {
         delta: 'Hello ',
       }),
     );
-    expect(loggerDebugSpy).toHaveBeenCalledWith(
-      'Claude stream event session=7 type=content_block_start',
-    );
-    expect(loggerDebugSpy).toHaveBeenCalledWith(
-      'Claude stream event session=7 type=content_block_delta delta=text_delta',
-    );
+    expect(
+      loggerDebugSpy.mock.calls.some(([message]) =>
+        String(message).startsWith('Claude stream event '),
+      ),
+    ).toBe(false);
   });
 
   it('correlates stream deltas using message_start.message.id instead of wrapper event uuid', async () => {

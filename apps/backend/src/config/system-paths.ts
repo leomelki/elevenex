@@ -145,9 +145,6 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
     let settled = false;
     const shell = getUserShell();
     const startedAt = Date.now();
-    logger.debug(
-      `async shell-env load starting (${cwdTag(cwd)} shell=${shell})`,
-    );
     // `-i -l` sources both login files (.zprofile / .profile) AND interactive
     // rc files (.zshrc / .bashrc). Tools like nvm, fnm, rbenv, pyenv typically
     // inject PATH from the rc file, so login-only would miss them.
@@ -256,7 +253,6 @@ function applyShellEnvToProcess(): void {
 function loadLoginShellEnvSync(cwd?: string): NodeJS.ProcessEnv {
   const shell = getUserShell();
   const startedAt = Date.now();
-  logger.debug(`sync shell-env load starting (${cwdTag(cwd)} shell=${shell})`);
   try {
     const raw = execSync(
       `${shell} -i -l -c "printf '%s' '${ENV_BOUNDARY}'; env" < /dev/null`,
@@ -313,9 +309,6 @@ function touchCwdLru(cwd: string, entry: CwdEnvEntry): void {
     }
     if (evictKey === undefined) break;
     _cwdEnvCache.delete(evictKey);
-    logger.debug(
-      `per-cwd LRU evicted ${cwdTag(evictKey)} (size=${_cwdEnvCache.size}/${PER_CWD_CACHE_MAX})`,
-    );
   }
 }
 
@@ -328,7 +321,6 @@ function refreshCwdEnvAsync(
 ): Promise<void> {
   const inFlight = _cwdRefreshInFlight.get(cwd);
   if (inFlight) {
-    logger.debug(`per-cwd refresh deduped (${cwdTag(cwd)})`);
     return inFlight;
   }
 
@@ -337,7 +329,6 @@ function refreshCwdEnvAsync(
     touchCwdLru(cwd, { ...existing, lastRefreshAttemptAt: attemptedAt });
   }
 
-  logger.debug(`per-cwd refresh kicked off (${cwdTag(cwd)})`);
   const promise = runLoginShell(cwd)
     .then((parsed) => {
       if (parsed) {
@@ -369,31 +360,14 @@ function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
     const ageMs = now - existing.lastRefreshAt;
     if (ageMs > REFRESH_THROTTLE_MS) {
       const attemptAgeMs = now - existing.lastRefreshAttemptAt;
-      if (_cwdRefreshInFlight.has(cwd)) {
-        logger.debug(
-          `per-cwd cache hit, stale (${cwdTag(cwd)} age=${ageMs}ms) — refresh already running`,
-        );
-      } else if (attemptAgeMs > REFRESH_THROTTLE_MS) {
-        logger.debug(
-          `per-cwd cache hit, stale (${cwdTag(cwd)} age=${ageMs}ms) — scheduling async refresh`,
-        );
+      if (!_cwdRefreshInFlight.has(cwd) && attemptAgeMs > REFRESH_THROTTLE_MS) {
         void refreshCwdEnvAsync(cwd, now);
-      } else {
-        logger.debug(
-          `per-cwd cache hit, stale (${cwdTag(cwd)} age=${ageMs}ms) — refresh throttled (attemptAge=${attemptAgeMs}ms)`,
-        );
       }
-    } else {
-      logger.debug(`per-cwd cache hit (${cwdTag(cwd)} age=${ageMs}ms)`);
     }
     return existing.env;
   }
-  logger.debug(`per-cwd cache miss (${cwdTag(cwd)}) — sync-loading`);
   const env = loadLoginShellEnvSync(cwd);
   const loadedAt = Date.now();
-  logger.log(
-    `per-cwd cache miss introduced wait (${cwdTag(cwd)} elapsed=${loadedAt - now}ms)`,
-  );
   touchCwdLru(cwd, {
     env,
     lastRefreshAt: loadedAt,
@@ -410,11 +384,9 @@ function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
 export function refreshLoginShellEnv(force = false): Promise<void> {
   const now = Date.now();
   if (!force && now - _lastRefreshAt < REFRESH_THROTTLE_MS) {
-    logger.debug(`global refresh throttled (age=${now - _lastRefreshAt}ms)`);
     return Promise.resolve();
   }
   if (_refreshInFlight) {
-    logger.debug(`global refresh deduped`);
     return _refreshInFlight;
   }
 
@@ -424,7 +396,6 @@ export function refreshLoginShellEnv(force = false): Promise<void> {
   // herd if the shell is slow to start.
   _lastRefreshAt = now;
 
-  logger.debug(`global refresh kicked off (force=${force})`);
   _refreshInFlight = runLoginShell().then((parsed) => {
     if (parsed) {
       _shellEnvCache = parsed;
@@ -580,7 +551,6 @@ export function buildAugmentedEnv(
   base: NodeJS.ProcessEnv = process.env,
   cwd?: string,
 ): NodeJS.ProcessEnv {
-  const startedAt = Date.now();
   // Merge order: login-shell baseline → caller's env (higher priority) → augmented PATH.
   // This ensures user-defined exports (tokens, tool homes, custom vars) are present
   // even when the backend was started without a login shell (Electron / Finder launch).
@@ -609,14 +579,6 @@ export function buildAugmentedEnv(
   const combinedPath = cwd
     ? buildAugmentedPath(shellEnv.PATH || '', base.PATH || '')
     : buildAugmentedPath(base.PATH || '', shellEnv.PATH || '');
-  const elapsed = Date.now() - startedAt;
-  // Most calls hit cache and finish in <1ms — debug-level keeps noise low while
-  // still surfacing the rare cold-miss that synchronously spawns a shell.
-  if (elapsed >= 5) {
-    logger.log(`buildAugmentedEnv (${cwdTag(cwd)} elapsed=${elapsed}ms)`);
-  } else {
-    logger.debug(`buildAugmentedEnv (${cwdTag(cwd)} elapsed=${elapsed}ms)`);
-  }
   return ensureUtf8Locale({
     ...merged,
     PATH: combinedPath,

@@ -3720,19 +3720,6 @@ export class ClaudeRuntimeService extends EventEmitter {
   }
 
   private logSdkMessageDiagnostics(sessionId: number, message: SDKMessage): void {
-    if (message.type === 'stream_event') {
-      const event = message.event as unknown as Record<string, unknown>;
-      const delta = event['delta'] as Record<string, unknown> | undefined;
-      const deltaSuffix =
-        event.type === 'content_block_delta'
-          ? ` delta=${String(delta?.type ?? 'unknown')}`
-          : '';
-      this.logger.debug(
-        `Claude stream event session=${sessionId} type=${String(event.type ?? 'unknown')}${deltaSuffix}`,
-      );
-      return;
-    }
-
     if (message.type === 'assistant') {
       const content = Array.isArray(message.message.content)
         ? message.message.content
