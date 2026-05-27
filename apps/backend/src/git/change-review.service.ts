@@ -586,7 +586,10 @@ export class ChangeReviewService {
       return { guard: null, status: null };
     }
 
-    const status = scope === 'last-commit' ? null : await git.status();
+    const status =
+      scope === 'last-commit'
+        ? null
+        : (await readWorktreeStatusSnapshot(worktreePath, git)).status;
     const worktreeCounts = status
       ? this.countWorktreeChanges(status)
       : {
@@ -689,23 +692,13 @@ export class ChangeReviewService {
     status: StatusResult | null,
   ): Promise<number> {
     const output = await git
-      .raw(
-        this.buildDiffArgs(scope, base, [
-          '--name-status',
-          '-z',
-          '--find-renames',
-        ]),
-      )
+      .raw(this.buildDiffArgs(scope, base, ['--shortstat']))
       .catch(() => '');
-    const paths = new Set(
-      this.parseNameStatus(output).map((file) => file.path),
-    );
-    if (scope !== 'last-commit' && status) {
-      for (const filePath of status.not_added) {
-        paths.add(filePath);
-      }
-    }
-    return paths.size;
+    const match = output.match(/(\d+) files? changed/);
+    const trackedCount = match ? parseInt(match[1], 10) : 0;
+    const untrackedCount =
+      scope !== 'last-commit' && status ? status.not_added.length : 0;
+    return trackedCount + untrackedCount;
   }
 
   private buildGuardedSummary(
