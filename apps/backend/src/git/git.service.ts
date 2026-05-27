@@ -11,7 +11,10 @@ import {
 } from '../config/system-paths.js';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
-import { readWorktreeFingerprint } from './git-worktree-fingerprint.js';
+import {
+  clearWorktreeFingerprintCache,
+  readWorktreeStatusSnapshot,
+} from './git-worktree-fingerprint.js';
 
 const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
 const CLAUDE_BIN = findBinary('claude') ?? 'claude';
@@ -164,21 +167,19 @@ export class GitService {
 
   async getStatusSummary(worktreePath: string): Promise<GitStatusSummary> {
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    const [status, headSha] = await Promise.all([
-      git.status(),
+    const [statusSnapshot, headSha] = await Promise.all([
+      readWorktreeStatusSnapshot(worktreePath, git, { validateCached: true }),
       git
         .revparse(['HEAD'])
         .then((value) => value.trim())
         .catch(() => null),
     ]);
+    const status = statusSnapshot.status;
     const files = this.toFileStatuses(status);
-    const [stagedStats, unstagedStats, worktreeFingerprint] = await Promise.all(
-      [
-        this.getScopeStats(worktreePath, true, files),
-        this.getScopeStats(worktreePath, false, files),
-        readWorktreeFingerprint(worktreePath, git, status),
-      ],
-    );
+    const [stagedStats, unstagedStats] = await Promise.all([
+      this.getScopeStats(worktreePath, true, files),
+      this.getScopeStats(worktreePath, false, files),
+    ]);
 
     const branch = status.current || 'HEAD';
     const upstream = await this.getUpstream(git);
@@ -190,7 +191,7 @@ export class GitService {
       branch,
       upstream,
       headSha,
-      worktreeFingerprint,
+      worktreeFingerprint: statusSnapshot.fingerprint,
       ahead,
       behind,
       hasChanges: files.length > 0,
@@ -206,13 +207,23 @@ export class GitService {
   }
 
   async stageFiles(worktreePath: string, files: string[]): Promise<void> {
+    clearWorktreeFingerprintCache(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    await git.add(files);
+    try {
+      await git.add(files);
+    } finally {
+      clearWorktreeFingerprintCache(worktreePath);
+    }
   }
 
   async unstageFiles(worktreePath: string, files: string[]): Promise<void> {
+    clearWorktreeFingerprintCache(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    await git.raw(['reset', 'HEAD', '--', ...files]);
+    try {
+      await git.raw(['reset', 'HEAD', '--', ...files]);
+    } finally {
+      clearWorktreeFingerprintCache(worktreePath);
+    }
   }
 
   async commit(
@@ -225,6 +236,7 @@ export class GitService {
     } = {},
   ): Promise<CommitResult> {
     const requestId = options.requestId ?? this.createRequestId();
+    clearWorktreeFingerprintCache(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
 
     this.logger.log(
@@ -283,6 +295,7 @@ export class GitService {
 
       this.logger.log(`[commit:${requestId}] running git commit`);
       const result = await git.commit(message);
+      clearWorktreeFingerprintCache(worktreePath);
       this.logger.log(
         `[commit:${requestId}] git commit completed hash=${result.commit || 'unknown'} generatedMessage=${generatedMessage}`,
       );
@@ -296,6 +309,7 @@ export class GitService {
         `[commit:${requestId}] failed ${this.formatGitError(error)}`,
         error?.stack,
       );
+      clearWorktreeFingerprintCache(worktreePath);
       throw error;
     }
   }

@@ -1,6 +1,6 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, shareReplay } from 'rxjs';
+import { finalize, Observable, shareReplay, tap } from 'rxjs';
 import {
   ChangeReviewContextWindow,
   ChangeReviewFileWindow,
@@ -23,13 +23,25 @@ export class ChangeReviewService {
     const cached = this.summaryCache.get(key);
     if (cached) return cached;
 
-    const request = this.http.get<ChangeReviewSummary>('/api/git/change-review/summary', {
-      params: {
-        worktreePath,
-        scope,
-        refreshBase: String(refreshBase),
-      },
-    }).pipe(shareReplay({ bufferSize: 1, refCount: false }));
+    let emitted = false;
+    let request!: Observable<ChangeReviewSummary>;
+    request = this.http
+      .get<ChangeReviewSummary>('/api/git/change-review/summary', {
+        params: {
+          worktreePath,
+          scope,
+          refreshBase: String(refreshBase),
+        },
+      })
+      .pipe(
+        tap({
+          next: () => {
+            emitted = true;
+          },
+        }),
+        finalize(() => this.dropUnresolved(this.summaryCache, key, request, emitted)),
+        shareReplay({ bufferSize: 1, refCount: true }),
+      );
     this.summaryCache.set(key, request);
     return request;
   }
@@ -49,16 +61,28 @@ export class ChangeReviewService {
     const cached = this.fileWindowCache.get(key);
     if (cached) return cached;
 
-    const request = this.http.get<ChangeReviewFileWindow>('/api/git/change-review/window', {
-      params: {
-        worktreePath,
-        scope,
-        path,
-        offset: String(normalized.offset),
-        limit: String(normalized.limit),
-        context: String(normalized.context),
-      },
-    }).pipe(shareReplay({ bufferSize: 1, refCount: false }));
+    let emitted = false;
+    let request!: Observable<ChangeReviewFileWindow>;
+    request = this.http
+      .get<ChangeReviewFileWindow>('/api/git/change-review/window', {
+        params: {
+          worktreePath,
+          scope,
+          path,
+          offset: String(normalized.offset),
+          limit: String(normalized.limit),
+          context: String(normalized.context),
+        },
+      })
+      .pipe(
+        tap({
+          next: () => {
+            emitted = true;
+          },
+        }),
+        finalize(() => this.dropUnresolved(this.fileWindowCache, key, request, emitted)),
+        shareReplay({ bufferSize: 1, refCount: true }),
+      );
     this.fileWindowCache.set(key, request);
     return request;
   }
@@ -79,17 +103,29 @@ export class ChangeReviewService {
     const cached = this.contextWindowCache.get(key);
     if (cached) return cached;
 
-    const request = this.http.get<ChangeReviewContextWindow>('/api/git/change-review/context', {
-      params: {
-        worktreePath,
-        scope,
-        path,
-        oldStart: String(normalized.oldStart),
-        newStart: String(normalized.newStart),
-        count: String(normalized.count),
-        limit: String(normalized.limit),
-      },
-    }).pipe(shareReplay({ bufferSize: 1, refCount: false }));
+    let emitted = false;
+    let request!: Observable<ChangeReviewContextWindow>;
+    request = this.http
+      .get<ChangeReviewContextWindow>('/api/git/change-review/context', {
+        params: {
+          worktreePath,
+          scope,
+          path,
+          oldStart: String(normalized.oldStart),
+          newStart: String(normalized.newStart),
+          count: String(normalized.count),
+          limit: String(normalized.limit),
+        },
+      })
+      .pipe(
+        tap({
+          next: () => {
+            emitted = true;
+          },
+        }),
+        finalize(() => this.dropUnresolved(this.contextWindowCache, key, request, emitted)),
+        shareReplay({ bufferSize: 1, refCount: true }),
+      );
     this.contextWindowCache.set(key, request);
     return request;
   }
@@ -100,11 +136,13 @@ export class ChangeReviewService {
     path: string,
     options: { offset?: number; limit?: number; context?: number } = {},
   ): boolean {
-    return this.fileWindowCache.has(this.fileWindowKey(worktreePath, scope, path, {
-      offset: options.offset ?? 0,
-      limit: options.limit ?? 600,
-      context: options.context ?? 8,
-    }));
+    return this.fileWindowCache.has(
+      this.fileWindowKey(worktreePath, scope, path, {
+        offset: options.offset ?? 0,
+        limit: options.limit ?? 600,
+        context: options.context ?? 8,
+      }),
+    );
   }
 
   clearCache(worktreePath?: string, scope?: ChangeReviewScope): void {
@@ -123,6 +161,17 @@ export class ChangeReviewService {
       if (key.startsWith(prefix)) {
         cache.delete(key);
       }
+    }
+  }
+
+  private dropUnresolved<T>(
+    cache: Map<string, Observable<T>>,
+    key: string,
+    request: Observable<T>,
+    emitted: boolean,
+  ): void {
+    if (!emitted && cache.get(key) === request) {
+      cache.delete(key);
     }
   }
 

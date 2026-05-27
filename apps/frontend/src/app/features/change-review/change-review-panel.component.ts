@@ -1,6 +1,18 @@
 import { ScrollingModule } from '@angular/cdk/scrolling';
 import { CommonModule } from '@angular/common';
-import { Component, computed, effect, ElementRef, HostListener, inject, input, OnDestroy, output, signal, untracked, viewChild } from '@angular/core';
+import {
+  Component,
+  computed,
+  effect,
+  ElementRef,
+  HostListener,
+  inject,
+  input,
+  OnDestroy,
+  output,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -20,7 +32,7 @@ import {
   lucideTriangleAlert,
 } from '@ng-icons/lucide';
 import hljs from 'highlight.js/lib/common';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Subject, takeUntil } from 'rxjs';
 import { toast } from 'ngx-sonner';
 
 import {
@@ -41,7 +53,10 @@ import { ChangeReviewService } from '@/shared/services/change-review.service';
 import { GitService } from '@/shared/services/git.service';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
-import { detectHljsLang, escapeHtml } from '@/features/session/claude-workspace/util/code-highlight';
+import {
+  detectHljsLang,
+  escapeHtml,
+} from '@/features/session/claude-workspace/util/code-highlight';
 import {
   ChangeReviewVirtualAnchor,
   ChangeReviewVirtualLayout,
@@ -129,7 +144,7 @@ const ROW_HEIGHT_PX = 24;
 const WINDOW_LIMIT = 700;
 const CONTEXT_RANGE_LIMIT = 120;
 const VIEW_OVERSCAN_ROWS = 160;
-const WINDOW_LOAD_CONCURRENCY = 3;
+const WINDOW_LOAD_CONCURRENCY = 1;
 const MAX_WINDOW_CACHE_ROWS = 120_000;
 const MAX_WINDOW_CACHE_WINDOWS = 400;
 const MAX_ROW_HTML_CACHE = 8_000;
@@ -176,6 +191,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private readonly windowQueue: WindowRequest[] = [];
   private readonly pendingWindowKeys = new Set<string>();
   private readonly windowCache = new Map<string, WindowCacheEntry>();
+  private readonly requestCancel$ = new Subject<void>();
   private readonly relativeTimeInterval = window.setInterval(() => {
     this.now.set(Date.now());
   }, 30_000);
@@ -183,6 +199,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private windowCacheRows = 0;
   private inFlightWindowLoads = 0;
   private generation = 0;
+  private gitSummaryRefreshTimer: number | null = null;
 
   readonly rowHeightPx = ROW_HEIGHT_PX;
   readonly scopes = SCOPES;
@@ -211,15 +228,17 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const keys = new Set<string>();
     for (const mention of this.highlightedMentions()) {
       for (const row of mention.context.selected) {
-        keys.add(diffMentionRowKey(
-          mention.scope,
-          mention.filePath,
-          mention.changeHash,
-          row.type,
-          row.oldLine,
-          row.newLine,
-          row.content,
-        ));
+        keys.add(
+          diffMentionRowKey(
+            mention.scope,
+            mention.filePath,
+            mention.changeHash,
+            row.type,
+            row.oldLine,
+            row.newLine,
+            row.content,
+          ),
+        );
       }
     }
     return keys;
@@ -227,7 +246,9 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   readonly totalHeightPx = computed(() => this.layout().totalRows * ROW_HEIGHT_PX);
   readonly latestGitSummary = computed(() => this.gitService.latestSummary(this.worktreePath()));
-  readonly conflictedFiles = computed(() => this.latestGitSummary()?.files.filter((file) => file.status === 'conflicted') ?? []);
+  readonly conflictedFiles = computed(
+    () => this.latestGitSummary()?.files.filter((file) => file.status === 'conflicted') ?? [],
+  );
   readonly conflictCount = computed(() => this.conflictedFiles().length);
   readonly diffsOutdated = computed(() => {
     const summary = this.summary();
@@ -241,9 +262,11 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   readonly activeFile = computed(() => {
     const activePath = this.activeFilePath();
     if (!activePath) return null;
-    return this.fileStates().get(activePath)?.file
-      ?? this.filteredFiles().find((file) => file.path === activePath)
-      ?? null;
+    return (
+      this.fileStates().get(activePath)?.file ??
+      this.filteredFiles().find((file) => file.path === activePath) ??
+      null
+    );
   });
 
   readonly filteredFiles = computed(() => {
@@ -254,25 +277,28 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     return summary.files.filter((file) => {
       if (status !== 'all' && file.status !== status) return false;
       if (!query) return true;
-      return file.path.toLowerCase().includes(query)
-        || Boolean(file.oldPath?.toLowerCase().includes(query));
+      return (
+        file.path.toLowerCase().includes(query) ||
+        Boolean(file.oldPath?.toLowerCase().includes(query))
+      );
     });
   });
 
-  readonly statusFilters = computed<Array<{ value: StatusFilter; label: string; count: number }>>(() => {
-    const files = this.summary()?.files ?? [];
-    const count = (status: StatusFilter) => status === 'all'
-      ? files.length
-      : files.filter((file) => file.status === status).length;
-    const filters: Array<{ value: StatusFilter; label: string; count: number }> = [
-      { value: 'all', label: 'All', count: count('all') },
-      { value: 'added', label: 'Added', count: count('added') },
-      { value: 'modified', label: 'Modified', count: count('modified') },
-      { value: 'deleted', label: 'Deleted', count: count('deleted') },
-      { value: 'renamed', label: 'Renamed', count: count('renamed') },
-    ];
-    return filters.filter((filter) => filter.value === 'all' || filter.count > 0);
-  });
+  readonly statusFilters = computed<Array<{ value: StatusFilter; label: string; count: number }>>(
+    () => {
+      const files = this.summary()?.files ?? [];
+      const count = (status: StatusFilter) =>
+        status === 'all' ? files.length : files.filter((file) => file.status === status).length;
+      const filters: Array<{ value: StatusFilter; label: string; count: number }> = [
+        { value: 'all', label: 'All', count: count('all') },
+        { value: 'added', label: 'Added', count: count('added') },
+        { value: 'modified', label: 'Modified', count: count('modified') },
+        { value: 'deleted', label: 'Deleted', count: count('deleted') },
+        { value: 'renamed', label: 'Renamed', count: count('renamed') },
+      ];
+      return filters.filter((filter) => filter.value === 'all' || filter.count > 0);
+    },
+  );
 
   constructor() {
     effect(() => {
@@ -285,7 +311,9 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   ngOnDestroy(): void {
     this.generation += 1;
+    this.cancelActiveRequests();
     window.clearInterval(this.relativeTimeInterval);
+    this.requestCancel$.complete();
   }
 
   async refresh(refreshBase = false): Promise<void> {
@@ -392,7 +420,12 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
     const anchorNode = selection.anchorNode;
     const focusNode = selection.focusNode;
-    if (!anchorNode || !focusNode || !scrollEl.contains(anchorNode) || !scrollEl.contains(focusNode)) {
+    if (
+      !anchorNode ||
+      !focusNode ||
+      !scrollEl.contains(anchorNode) ||
+      !scrollEl.contains(focusNode)
+    ) {
       this.selectionMentionAction.set(null);
       return;
     }
@@ -410,9 +443,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       return;
     }
 
-    const firstRect = typeof range.getBoundingClientRect === 'function'
-      ? range.getBoundingClientRect()
-      : scrollEl.getBoundingClientRect();
+    const firstRect =
+      typeof range.getBoundingClientRect === 'function'
+        ? range.getBoundingClientRect()
+        : scrollEl.getBoundingClientRect();
     const containerRect = scrollEl.getBoundingClientRect();
     this.selectionMentionAction.set({
       top: Math.max(8, firstRect.top - containerRect.top + scrollEl.scrollTop - 38),
@@ -427,9 +461,11 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.mentionSelection.emit(action.mentions);
     this.selectionMentionAction.set(null);
     window.getSelection()?.removeAllRanges();
-    toast.success(action.mentions.length === 1
-      ? 'Added diff selection to chat'
-      : `Added ${action.mentions.length} diff selections to chat`);
+    toast.success(
+      action.mentions.length === 1
+        ? 'Added diff selection to chat'
+        : `Added ${action.mentions.length} diff selections to chat`,
+    );
   }
 
   rowHtml(row: ChangeReviewRow): SafeHtml {
@@ -471,17 +507,16 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.setContextRangeLoading(row.id, true);
     const requestGeneration = this.generation;
     try {
-      const contextWindow = await firstValueFrom(this.changeReview.getContextWindow(
-        this.worktreePath(),
-        this.scope(),
-        file.path,
-        {
-          oldStart: row.oldStart,
-          newStart: row.newStart,
-          count: row.count,
-          limit: CONTEXT_RANGE_LIMIT,
-        },
-      ));
+      const contextWindow = await firstValueFrom(
+        this.changeReview
+          .getContextWindow(this.worktreePath(), this.scope(), file.path, {
+            oldStart: row.oldStart,
+            newStart: row.newStart,
+            count: row.count,
+            limit: CONTEXT_RANGE_LIMIT,
+          })
+          .pipe(takeUntil(this.requestCancel$)),
+      );
       if (requestGeneration !== this.generation) return;
 
       const loaded = contextWindow.rows.length;
@@ -504,9 +539,11 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       this.restoreAnchor(anchor);
       this.refreshRenderedRows();
     } catch (error: any) {
+      if (requestGeneration !== this.generation) return;
       const message = error?.error?.message || 'Could not load context lines.';
       toast.error(message);
     } finally {
+      if (requestGeneration !== this.generation) return;
       this.setContextRangeLoading(row.id, false);
     }
   }
@@ -543,15 +580,17 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   isMentionedDiffRow(renderRow: RenderRow): boolean {
     const row = renderRow.row;
     if (renderRow.kind !== 'diff' || !row) return false;
-    return this.mentionedRowKeys().has(diffMentionRowKey(
-      this.scope(),
-      renderRow.file.path,
-      renderRow.state.changeHash,
-      row.type,
-      row.oldLine,
-      row.newLine,
-      row.content,
-    ));
+    return this.mentionedRowKeys().has(
+      diffMentionRowKey(
+        this.scope(),
+        renderRow.file.path,
+        renderRow.state.changeHash,
+        row.type,
+        row.oldLine,
+        row.newLine,
+        row.content,
+      ),
+    );
   }
 
   fileBasename(filePath: string): string {
@@ -578,10 +617,14 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   statusLabel(status: ChangeReviewFileStatus): string {
     switch (status) {
-      case 'added': return 'A';
-      case 'deleted': return 'D';
-      case 'renamed': return 'R';
-      case 'modified': return 'M';
+      case 'added':
+        return 'A';
+      case 'deleted':
+        return 'D';
+      case 'renamed':
+        return 'R';
+      case 'modified':
+        return 'M';
     }
   }
 
@@ -601,7 +644,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   }
 
   refreshAgeText(summary: ChangeReviewSummary): string {
-    const elapsedSeconds = Math.max(0, Math.floor((this.now() - new Date(summary.generatedAt).getTime()) / 1000));
+    const elapsedSeconds = Math.max(
+      0,
+      Math.floor((this.now() - new Date(summary.generatedAt).getTime()) / 1000),
+    );
     if (elapsedSeconds < 10) return 'just now';
     if (elapsedSeconds < 60) return `${elapsedSeconds}s ago`;
     const elapsedMinutes = Math.floor(elapsedSeconds / 60);
@@ -619,10 +665,9 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private async loadForCurrentScope(refreshBase: boolean): Promise<void> {
     const worktreePath = this.worktreePath();
     const scope = this.scope();
-    const requestGeneration = ++this.generation;
-    untracked(() => {
-      void this.refreshGitSummary(worktreePath);
-    });
+    const requestGeneration = this.generation + 1;
+    this.generation = requestGeneration;
+    this.cancelActiveRequests();
     this.resetQueues();
     this.loadingSummary.set(true);
     this.error.set(null);
@@ -641,15 +686,19 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.now.set(Date.now());
 
     try {
-      const summary = await firstValueFrom(this.changeReview.getSummary(worktreePath, scope, refreshBase));
+      const summary = await firstValueFrom(
+        this.changeReview
+          .getSummary(worktreePath, scope, refreshBase)
+          .pipe(takeUntil(this.requestCancel$)),
+      );
       if (requestGeneration !== this.generation) return;
 
       this.summary.set(summary);
-      this.fileStates.set(new Map(summary.files.map((file) => [
-        file.path,
-        this.createFileState(file),
-      ])));
+      this.fileStates.set(
+        new Map(summary.files.map((file) => [file.path, this.createFileState(file)])),
+      );
       this.applyFilters(true);
+      this.scheduleGitSummaryRefresh(worktreePath, requestGeneration);
     } catch (error: any) {
       if (requestGeneration !== this.generation) return;
       const message = error?.error?.message || 'Could not load changes.';
@@ -662,9 +711,22 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     }
   }
 
-  private async refreshGitSummary(worktreePath: string): Promise<void> {
+  private scheduleGitSummaryRefresh(worktreePath: string, requestGeneration: number): void {
+    if (this.gitSummaryRefreshTimer !== null) {
+      window.clearTimeout(this.gitSummaryRefreshTimer);
+    }
+    this.gitSummaryRefreshTimer = window.setTimeout(() => {
+      this.gitSummaryRefreshTimer = null;
+      void this.refreshGitSummary(worktreePath, requestGeneration);
+    }, 250);
+  }
+
+  private async refreshGitSummary(worktreePath: string, requestGeneration: number): Promise<void> {
+    if (requestGeneration !== this.generation) return;
     try {
-      await firstValueFrom(this.gitService.getSummary(worktreePath));
+      await firstValueFrom(
+        this.gitService.getSummary(worktreePath).pipe(takeUntil(this.requestCancel$)),
+      );
     } catch {
       // Keep the change-review UI usable if the lightweight git status refresh fails.
     }
@@ -707,13 +769,18 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   private rebuildLayout(): void {
     const states = this.fileStates();
-    this.layout.set(new ChangeReviewVirtualLayout(this.filteredFiles().map((file) => ({
-      path: file.path,
-      headerRows: this.isFileCollapsed(file) ? 1 : 2,
-      diffRows: this.isFileCollapsed(file)
-        ? 0
-        : states.get(file.path)?.diffRowCount ?? estimateChangeReviewDiffRows(file, this.context()),
-    }))));
+    this.layout.set(
+      new ChangeReviewVirtualLayout(
+        this.filteredFiles().map((file) => ({
+          path: file.path,
+          headerRows: this.isFileCollapsed(file) ? 1 : 2,
+          diffRows: this.isFileCollapsed(file)
+            ? 0
+            : (states.get(file.path)?.diffRowCount ??
+              estimateChangeReviewDiffRows(file, this.context())),
+        })),
+      ),
+    );
   }
 
   private refreshRenderedRows(): void {
@@ -732,7 +799,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       Math.ceil((scrollEl.scrollTop + scrollEl.clientHeight) / ROW_HEIGHT_PX),
     );
     const renderStart = Math.max(0, visibleStart - VIEW_OVERSCAN_ROWS);
-    const renderEnd = Math.min(layout.totalRows, Math.max(visibleEnd + VIEW_OVERSCAN_ROWS, renderStart + 1));
+    const renderEnd = Math.min(
+      layout.totalRows,
+      Math.max(visibleEnd + VIEW_OVERSCAN_ROWS, renderStart + 1),
+    );
     const topPosition = layout.positionForIndex(visibleStart);
 
     this.renderedOffsetPx.set(renderStart * ROW_HEIGHT_PX);
@@ -806,27 +876,24 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const layout = this.layout();
     if (layout.totalRows === 0) return;
 
-    const viewportRows = scrollEl
-      ? Math.ceil(scrollEl.clientHeight / ROW_HEIGHT_PX)
-      : 40;
-    const visibleStart = scrollEl
-      ? Math.floor(scrollEl.scrollTop / ROW_HEIGHT_PX)
-      : 0;
-    this.ensureRangeLoaded(
-      Math.max(0, visibleStart - VIEW_OVERSCAN_ROWS),
-      Math.min(layout.totalRows, visibleStart + viewportRows + VIEW_OVERSCAN_ROWS),
-    );
+    const viewportRows = scrollEl ? Math.ceil(scrollEl.clientHeight / ROW_HEIGHT_PX) : 40;
+    const visibleStart = scrollEl ? Math.floor(scrollEl.scrollTop / ROW_HEIGHT_PX) : 0;
+    const startIndex = Math.max(0, visibleStart - VIEW_OVERSCAN_ROWS);
+    const endIndex = Math.min(layout.totalRows, visibleStart + viewportRows + VIEW_OVERSCAN_ROWS);
+    this.ensureRangeLoaded(startIndex, endIndex);
+    this.pruneQueuedWindowsForRange(startIndex, endIndex);
   }
 
   private ensureRangeLoaded(startIndex: number, endIndex: number): void {
     const states = this.fileStates();
+    const activePath = this.activeFilePath();
     for (const segment of this.layout().segmentsForRange(startIndex, endIndex)) {
       const state = states.get(segment.path);
       if (!state) continue;
       if (this.collapsedPaths().has(segment.path)) continue;
 
-      if (segment.includesHeader || segment.diffEnd > segment.diffStart) {
-        this.enqueueWindow(segment.path, 0, segment.includesHeader);
+      if (segment.path === activePath || segment.diffEnd > segment.diffStart) {
+        this.enqueueWindow(segment.path, 0, segment.path === activePath);
       }
 
       for (let diffIndex = segment.diffStart; diffIndex < segment.diffEnd; diffIndex += 1) {
@@ -840,16 +907,64 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     }
   }
 
+  private pruneQueuedWindowsForRange(startIndex: number, endIndex: number): void {
+    if (this.windowQueue.length === 0) return;
+
+    const keep = this.windowKeysForRange(startIndex, endIndex);
+    const nextQueue: WindowRequest[] = [];
+    for (const request of this.windowQueue) {
+      if (request.generation === this.generation && keep.has(request.key)) {
+        nextQueue.push(request);
+        continue;
+      }
+      this.pendingWindowKeys.delete(request.key);
+    }
+
+    if (nextQueue.length !== this.windowQueue.length) {
+      this.windowQueue.splice(0, this.windowQueue.length, ...nextQueue);
+      this.updateWindowLoadState();
+    }
+  }
+
+  private windowKeysForRange(startIndex: number, endIndex: number): Set<string> {
+    const keep = new Set<string>();
+    const states = this.fileStates();
+    const activePath = this.activeFilePath();
+    if (activePath && states.has(activePath) && !this.collapsedPaths().has(activePath)) {
+      keep.add(this.windowKey(activePath, 0));
+    }
+
+    for (const segment of this.layout().segmentsForRange(startIndex, endIndex)) {
+      const state = states.get(segment.path);
+      if (!state || this.collapsedPaths().has(segment.path)) continue;
+      if (segment.diffEnd > segment.diffStart) {
+        keep.add(this.windowKey(segment.path, 0));
+      }
+
+      for (let diffIndex = segment.diffStart; diffIndex < segment.diffEnd; diffIndex += 1) {
+        const resolved = this.resolveDiffRow(state, diffIndex);
+        if (resolved.baseIndex === null || resolved.row) continue;
+        if (state.baseRowCount !== null && resolved.baseIndex >= state.baseRowCount) continue;
+        const offset = Math.floor(resolved.baseIndex / WINDOW_LIMIT) * WINDOW_LIMIT;
+        keep.add(this.windowKey(segment.path, offset));
+        diffIndex = Math.min(segment.diffEnd, offset + WINDOW_LIMIT) - 1;
+      }
+    }
+
+    return keep;
+  }
+
   private enqueueWindow(filePath: string, offset: number, priority: boolean): void {
     const state = this.fileStates().get(filePath);
     if (!state) return;
     const safeOffset = Math.max(0, Math.floor(offset / WINDOW_LIMIT) * WINDOW_LIMIT);
-    if (state.baseRowCount !== null && state.baseRowCount <= safeOffset && state.baseRowCount > 0) return;
+    if (state.baseRowCount !== null && state.baseRowCount <= safeOffset && state.baseRowCount > 0)
+      return;
     const key = this.windowKey(filePath, safeOffset);
     if (
-      this.windowCache.has(key)
-      || this.pendingWindowKeys.has(key)
-      || state.loadingOffsets.has(safeOffset)
+      this.windowCache.has(key) ||
+      this.pendingWindowKeys.has(key) ||
+      state.loadingOffsets.has(safeOffset)
     ) {
       return;
     }
@@ -889,16 +1004,15 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       loadingOffsets: new Set(state.loadingOffsets).add(request.offset),
     }));
 
-    void firstValueFrom(this.changeReview.getFileWindow(
-      this.worktreePath(),
-      this.scope(),
-      request.filePath,
-      {
-        offset: request.offset,
-        limit: WINDOW_LIMIT,
-        context: this.context(),
-      },
-    ))
+    void firstValueFrom(
+      this.changeReview
+        .getFileWindow(this.worktreePath(), this.scope(), request.filePath, {
+          offset: request.offset,
+          limit: WINDOW_LIMIT,
+          context: this.context(),
+        })
+        .pipe(takeUntil(this.requestCancel$)),
+    )
       .then((fileWindow) => this.applyFileWindow(fileWindow, request))
       .catch((error: any) => {
         if (request.generation === this.generation) {
@@ -961,7 +1075,11 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   private resolveDiffRow(state: FileRenderState, diffIndex: number): ResolvedDiffRow {
     let shift = 0;
-    for (let replacementIndex = 0; replacementIndex < state.replacements.length; replacementIndex += 1) {
+    for (
+      let replacementIndex = 0;
+      replacementIndex < state.replacements.length;
+      replacementIndex += 1
+    ) {
       const replacement = state.replacements[replacementIndex];
       const virtualStart = replacement.baseIndex + shift;
       const virtualEnd = virtualStart + replacement.rows.length;
@@ -993,7 +1111,11 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     rowId: string,
     replacementRows: ChangeReviewRow[],
   ): FileRenderState {
-    for (let replacementIndex = 0; replacementIndex < state.replacements.length; replacementIndex += 1) {
+    for (
+      let replacementIndex = 0;
+      replacementIndex < state.replacements.length;
+      replacementIndex += 1
+    ) {
       const replacement = state.replacements[replacementIndex];
       const rowIndex = replacement.rows.findIndex((row) => row.id === rowId);
       if (rowIndex === -1) continue;
@@ -1003,9 +1125,9 @@ export class ChangeReviewPanelComponent implements OnDestroy {
         ...replacementRows,
         ...replacement.rows.slice(rowIndex + 1),
       ];
-      const replacements = state.replacements.map((candidate, index) => index === replacementIndex
-        ? { ...candidate, rows: nextRows }
-        : candidate);
+      const replacements = state.replacements.map((candidate, index) =>
+        index === replacementIndex ? { ...candidate, rows: nextRows } : candidate,
+      );
       return {
         ...state,
         replacements,
@@ -1015,10 +1137,9 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
     for (const [baseIndex, row] of state.baseRows.entries()) {
       if (row.id !== rowId) continue;
-      const replacements = [
-        ...state.replacements,
-        { baseIndex, rows: replacementRows },
-      ].sort((left, right) => left.baseIndex - right.baseIndex);
+      const replacements = [...state.replacements, { baseIndex, rows: replacementRows }].sort(
+        (left, right) => left.baseIndex - right.baseIndex,
+      );
       return {
         ...state,
         replacements,
@@ -1067,9 +1188,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       return;
     }
     const currentIndex = files.findIndex((file) => file.path === activePath);
-    const nextIndex = currentIndex === -1
-      ? (delta > 0 ? 0 : files.length - 1)
-      : currentIndex + delta;
+    const nextIndex =
+      currentIndex === -1 ? (delta > 0 ? 0 : files.length - 1) : currentIndex + delta;
     if (nextIndex < 0 || nextIndex >= files.length) return;
     this.scrollToFile(files[nextIndex]);
   }
@@ -1155,8 +1275,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   private pruneWindowCache(): void {
     if (
-      this.windowCache.size <= MAX_WINDOW_CACHE_WINDOWS
-      && this.windowCacheRows <= MAX_WINDOW_CACHE_ROWS
+      this.windowCache.size <= MAX_WINDOW_CACHE_WINDOWS &&
+      this.windowCacheRows <= MAX_WINDOW_CACHE_ROWS
     ) {
       return;
     }
@@ -1164,15 +1284,17 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const protectedKeys = new Set(
       this.visibleRows()
         .filter((row) => row.baseIndex !== null)
-        .map((row) => this.windowKey(
-          row.file.path,
-          Math.floor((row.baseIndex ?? 0) / WINDOW_LIMIT) * WINDOW_LIMIT,
-        )),
+        .map((row) =>
+          this.windowKey(
+            row.file.path,
+            Math.floor((row.baseIndex ?? 0) / WINDOW_LIMIT) * WINDOW_LIMIT,
+          ),
+        ),
     );
 
     while (
-      this.windowCache.size > MAX_WINDOW_CACHE_WINDOWS
-      || this.windowCacheRows > MAX_WINDOW_CACHE_ROWS
+      this.windowCache.size > MAX_WINDOW_CACHE_WINDOWS ||
+      this.windowCacheRows > MAX_WINDOW_CACHE_ROWS
     ) {
       const victimKey = [...this.windowCache.keys()].find((key) => !protectedKeys.has(key));
       if (!victimKey) return;
@@ -1201,6 +1323,14 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private updateWindowLoadState(): void {
     const total = this.windowQueue.length + this.inFlightWindowLoads;
     this.windowLoadState.set({ running: total > 0, total });
+  }
+
+  private cancelActiveRequests(): void {
+    if (this.gitSummaryRefreshTimer !== null) {
+      window.clearTimeout(this.gitSummaryRefreshTimer);
+      this.gitSummaryRefreshTimer = null;
+    }
+    this.requestCancel$.next();
   }
 
   private resetQueues(): void {
@@ -1295,10 +1425,12 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private isEditableTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
     const tagName = target.tagName.toLowerCase();
-    return tagName === 'input'
-      || tagName === 'textarea'
-      || tagName === 'select'
-      || target.isContentEditable;
+    return (
+      tagName === 'input' ||
+      tagName === 'textarea' ||
+      tagName === 'select' ||
+      target.isContentEditable
+    );
   }
 
   private selectedDiffRows(range: Range, scrollEl: HTMLElement): SelectedDiffRow[] {
@@ -1313,7 +1445,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       })
       .map((element): SelectedDiffRow | null => {
         const id = element.dataset['crRowId'];
-        const renderRow = id ? rowsById.get(id) ?? null : null;
+        const renderRow = id ? (rowsById.get(id) ?? null) : null;
         if (!renderRow || renderRow.kind !== 'diff' || !renderRow.row) return null;
         const text = this.selectedTextWithinRow(range, element, renderRow.row.content);
         if (!text.trim()) return null;
@@ -1332,7 +1464,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       const startsInsideContent = contentEl.contains(range.startContainer);
       const endsInsideContent = contentEl.contains(range.endContainer);
 
-      if (startsInsideContent && range.compareBoundaryPoints(Range.START_TO_START, contentRange) > 0) {
+      if (
+        startsInsideContent &&
+        range.compareBoundaryPoints(Range.START_TO_START, contentRange) > 0
+      ) {
         intersection.setStart(range.startContainer, range.startOffset);
       } else {
         intersection.setStart(contentRange.startContainer, contentRange.startOffset);
@@ -1361,7 +1496,9 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     }
 
     if (grouped.size > DIFF_SELECTION_MENTION_MAX_FILES) {
-      toast.message(`Mentioned the first ${DIFF_SELECTION_MENTION_MAX_FILES} files. Narrow the selection to mention more precisely.`);
+      toast.message(
+        `Mentioned the first ${DIFF_SELECTION_MENTION_MAX_FILES} files. Narrow the selection to mention more precisely.`,
+      );
     }
 
     const summary = this.summary();
@@ -1378,7 +1515,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const first = items[0]?.renderRow;
     if (!first) return null;
 
-    const selectedTextRaw = items.map((item) => item.text.trimEnd()).join('\n').trim();
+    const selectedTextRaw = items
+      .map((item) => item.text.trimEnd())
+      .join('\n')
+      .trim();
     if (!selectedTextRaw) return null;
     const selectedText = selectedTextRaw.slice(0, DIFF_SELECTION_MENTION_MAX_TEXT);
     const selectedRenderRows = items.map((item) => item.renderRow);
@@ -1418,7 +1558,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const start = Math.min(...selectedIndexes);
     const end = Math.max(...selectedIndexes);
     const rows = this.visibleRows()
-      .filter((row) => row.kind === 'diff' && row.file.path === filePath && row.row && row.diffIndex !== null)
+      .filter(
+        (row) =>
+          row.kind === 'diff' && row.file.path === filePath && row.row && row.diffIndex !== null,
+      )
       .sort((left, right) => (left.diffIndex ?? 0) - (right.diffIndex ?? 0));
 
     return {

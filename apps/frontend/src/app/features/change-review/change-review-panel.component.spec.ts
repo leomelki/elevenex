@@ -180,7 +180,11 @@ describe('ChangeReviewPanelComponent', () => {
     hasFileWindowCache: ReturnType<typeof vi.fn>;
   };
   let summaryCalls: Array<{ scope: ChangeReviewScope; response: Subject<ChangeReviewSummary> }>;
-  let windowCalls: Array<{ path: string; offset: number; response: Subject<ChangeReviewFileWindow> }>;
+  let windowCalls: Array<{
+    path: string;
+    offset: number;
+    response: Subject<ChangeReviewFileWindow>;
+  }>;
   let latestGitSummary: WritableSignal<GitStatusSummary | null>;
   let gitServiceMock: {
     latestSummary: ReturnType<typeof vi.fn>;
@@ -199,11 +203,18 @@ describe('ChangeReviewPanelComponent', () => {
         summaryCalls.push({ scope, response });
         return response.asObservable();
       }),
-      getFileWindow: vi.fn((_worktreePath: string, _scope: ChangeReviewScope, path: string, options: { offset?: number }) => {
-        const response = new Subject<ChangeReviewFileWindow>();
-        windowCalls.push({ path, offset: options.offset ?? 0, response });
-        return response.asObservable();
-      }),
+      getFileWindow: vi.fn(
+        (
+          _worktreePath: string,
+          _scope: ChangeReviewScope,
+          path: string,
+          options: { offset?: number },
+        ) => {
+          const response = new Subject<ChangeReviewFileWindow>();
+          windowCalls.push({ path, offset: options.offset ?? 0, response });
+          return response.asObservable();
+        },
+      ),
       getContextWindow: vi.fn(),
       clearCache: vi.fn(),
       hasFileWindowCache: vi.fn(() => false),
@@ -243,8 +254,9 @@ describe('ChangeReviewPanelComponent', () => {
   it('renders multiple file headers in one continuous diff surface', async () => {
     await flushSummary(summary([file('src/a.ts'), file('src/b.ts')]));
 
-    const headers = [...fixture.nativeElement.querySelectorAll('.cr-file-header-row--main')]
-      .map((item) => item.textContent);
+    const headers = [...fixture.nativeElement.querySelectorAll('.cr-file-header-row--main')].map(
+      (item) => item.textContent,
+    );
 
     expect(headers.join(' ')).toContain('src/a.ts');
     expect(headers.join(' ')).toContain('src/b.ts');
@@ -269,7 +281,31 @@ describe('ChangeReviewPanelComponent', () => {
     setViewport(viewport, 240, fixture.componentInstance.layout().fileStart('src/next.ts')! * 24);
     fixture.componentInstance.onDiffScroll();
 
+    const activeWindow = windowCalls.find((call) => call.path === 'src/large.ts')!;
+    activeWindow.response.next(fileWindow('src/large.ts'));
+    activeWindow.response.complete();
+    await flush();
+
     expect(windowCalls.some((call) => call.path === 'src/next.ts')).toBe(true);
+  });
+
+  it('does not load header-only overscan files on panel open', async () => {
+    await flushSummary(summary([file('src/first.ts', 113, 0), file('src/second.ts', 2_000, 0)]));
+
+    expect(windowCalls.some((call) => call.path === 'src/first.ts')).toBe(true);
+    expect(windowCalls.some((call) => call.path === 'src/second.ts')).toBe(false);
+  });
+
+  it('loads only one file window at a time', async () => {
+    await flushSummary(summary([file('src/a.ts'), file('src/b.ts')]));
+
+    expect(windowCalls.map((call) => call.path)).toEqual(['src/a.ts']);
+
+    windowCalls[0].response.next(fileWindow('src/a.ts'));
+    windowCalls[0].response.complete();
+    await flush();
+
+    expect(windowCalls.map((call) => call.path)).toEqual(['src/a.ts', 'src/b.ts']);
   });
 
   it('ignores stale file windows after the scope changes', async () => {
@@ -354,11 +390,13 @@ describe('ChangeReviewPanelComponent', () => {
     let element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).not.toContain('merge conflict');
 
-    latestGitSummary.set(gitSummary({
-      files: [{ path: 'src/conflicted.ts', status: 'conflicted', staged: false }],
-      hasChanges: true,
-      total: { files: 1, additions: 0, deletions: 0 },
-    }));
+    latestGitSummary.set(
+      gitSummary({
+        files: [{ path: 'src/conflicted.ts', status: 'conflicted', staged: false }],
+        hasChanges: true,
+        total: { files: 1, additions: 0, deletions: 0 },
+      }),
+    );
     fixture.detectChanges();
 
     const emitted: true[] = [];
@@ -367,8 +405,9 @@ describe('ChangeReviewPanelComponent', () => {
     element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).toContain('1 file with merge conflicts detected');
 
-    const resolveButton = Array.from(element.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('Resolve')) as HTMLButtonElement;
+    const resolveButton = Array.from(element.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Resolve'),
+    ) as HTMLButtonElement;
     resolveButton.click();
 
     expect(emitted).toEqual([true]);
@@ -389,11 +428,13 @@ describe('ChangeReviewPanelComponent', () => {
   it('emits a structured mention for selected diff text', async () => {
     const files = [file('src/a.ts')];
     await flushSummary(summary(files));
-    windowCalls[0].response.next(fileWindow('src/a.ts', 'branch', 0, [
-      row('src/a.ts', 0),
-      addRow('src/a.ts', 1, 'const selected = true;'),
-      row('src/a.ts', 2),
-    ]));
+    windowCalls[0].response.next(
+      fileWindow('src/a.ts', 'branch', 0, [
+        row('src/a.ts', 0),
+        addRow('src/a.ts', 1, 'const selected = true;'),
+        row('src/a.ts', 2),
+      ]),
+    );
     windowCalls[0].response.complete();
     await flush();
     fixture.detectChanges();
@@ -401,8 +442,9 @@ describe('ChangeReviewPanelComponent', () => {
     const emitted: unknown[] = [];
     fixture.componentInstance.mentionSelection.subscribe((mentions) => emitted.push(mentions));
 
-    const code = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('.cr-code'))
-      .find((element) => element.textContent?.includes('const selected = true;')) as HTMLElement;
+    const code = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('.cr-code'),
+    ).find((element) => element.textContent?.includes('const selected = true;')) as HTMLElement;
     const range = document.createRange();
     range.selectNodeContents(code);
     document.getSelection()?.removeAllRanges();
@@ -429,11 +471,9 @@ describe('ChangeReviewPanelComponent', () => {
     const path = 'src/a.ts';
     const selected = addRow(path, 1, 'const selected = true;');
     await flushSummary(summary([file(path)]));
-    windowCalls[0].response.next(fileWindow(path, 'branch', 0, [
-      row(path, 0),
-      selected,
-      row(path, 2),
-    ]));
+    windowCalls[0].response.next(
+      fileWindow(path, 'branch', 0, [row(path, 0), selected, row(path, 2)]),
+    );
     windowCalls[0].response.complete();
     await flush();
 
@@ -443,7 +483,9 @@ describe('ChangeReviewPanelComponent', () => {
     const rows = Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('.cr-diff-row'),
     );
-    const selectedRow = rows.find((element) => element.textContent?.includes('const selected = true;'));
+    const selectedRow = rows.find((element) =>
+      element.textContent?.includes('const selected = true;'),
+    );
     const otherRow = rows.find((element) => element.textContent?.includes('line 1'));
 
     expect(selectedRow?.classList.contains('cr-diff-row--mentioned')).toBe(true);

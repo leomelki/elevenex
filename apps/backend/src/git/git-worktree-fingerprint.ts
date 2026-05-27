@@ -6,6 +6,25 @@ import type { SimpleGit, StatusResult } from 'simple-git';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 
 const STAT_CONCURRENCY = 32;
+const WORKTREE_STATUS_CACHE_TTL_MS = 1_500;
+
+export interface WorktreeStatusFingerprintSnapshot {
+  status: StatusResult;
+  fingerprint: string;
+  statSignature: string;
+  createdAt: number;
+}
+
+const statusSnapshotCache = new Map<
+  string,
+  WorktreeStatusFingerprintSnapshot
+>();
+const statusSnapshotInFlight = new Map<
+  string,
+  Promise<WorktreeStatusFingerprintSnapshot>
+>();
+const statusSnapshotVersions = new Map<string, number>();
+let globalStatusSnapshotVersion = 0;
 
 export async function readWorktreeFingerprint(
   worktreePath: string,
@@ -13,14 +32,77 @@ export async function readWorktreeFingerprint(
   status?: StatusResult,
 ): Promise<string> {
   if (status) {
-    return readStatusWorktreeFingerprint(worktreePath, status);
+    const { fingerprint, statSignature } = await buildStatusWorktreeFingerprint(
+      worktreePath,
+      status,
+    );
+    cacheStatusSnapshot(worktreePath, status, fingerprint, statSignature);
+    return fingerprint;
   }
 
-  const parsedStatus = await git.status().catch(() => null);
-  if (parsedStatus) {
-    return readStatusWorktreeFingerprint(worktreePath, parsedStatus);
+  try {
+    return (await readWorktreeStatusSnapshot(worktreePath, git)).fingerprint;
+  } catch {
+    return readRawWorktreeFingerprint(worktreePath, git);
   }
+}
 
+export async function readWorktreeStatusSnapshot(
+  worktreePath: string,
+  git: SimpleGit = worktreeSimpleGit(worktreePath),
+  options: { validateCached?: boolean } = {},
+): Promise<WorktreeStatusFingerprintSnapshot> {
+  const cached = options.validateCached
+    ? await getValidatedCachedStatusSnapshot(worktreePath)
+    : getCachedStatusSnapshot(worktreePath);
+  if (cached) return cached;
+
+  const inFlight = statusSnapshotInFlight.get(worktreePath);
+  if (inFlight) return inFlight;
+
+  const cacheVersion = getSnapshotVersion(worktreePath);
+  const promise = (async () => {
+    const status = await git.status();
+    const { fingerprint, statSignature } = await buildStatusWorktreeFingerprint(
+      worktreePath,
+      status,
+    );
+    if (getSnapshotVersion(worktreePath) !== cacheVersion) {
+      return { status, fingerprint, statSignature, createdAt: Date.now() };
+    }
+    return cacheStatusSnapshot(
+      worktreePath,
+      status,
+      fingerprint,
+      statSignature,
+    );
+  })().finally(() => {
+    statusSnapshotInFlight.delete(worktreePath);
+  });
+  statusSnapshotInFlight.set(worktreePath, promise);
+  return promise;
+}
+
+export function clearWorktreeFingerprintCache(worktreePath?: string): void {
+  if (!worktreePath) {
+    statusSnapshotCache.clear();
+    statusSnapshotInFlight.clear();
+    statusSnapshotVersions.clear();
+    globalStatusSnapshotVersion += 1;
+    return;
+  }
+  statusSnapshotCache.delete(worktreePath);
+  statusSnapshotInFlight.delete(worktreePath);
+  statusSnapshotVersions.set(
+    worktreePath,
+    getSnapshotVersion(worktreePath) + 1,
+  );
+}
+
+async function readRawWorktreeFingerprint(
+  worktreePath: string,
+  git: SimpleGit,
+): Promise<string> {
   const statusRaw = await git
     .raw(['status', '--porcelain=v2', '-z', '--untracked-files=normal'])
     .catch(() => '');
@@ -41,27 +123,105 @@ export async function readWorktreeFingerprint(
   return hash.digest('hex');
 }
 
+function getCachedStatusSnapshot(
+  worktreePath: string,
+): WorktreeStatusFingerprintSnapshot | null {
+  const cached = statusSnapshotCache.get(worktreePath);
+  if (!cached) return null;
+  if (Date.now() - cached.createdAt > WORKTREE_STATUS_CACHE_TTL_MS) {
+    statusSnapshotCache.delete(worktreePath);
+    return null;
+  }
+  return cached;
+}
+
+async function getValidatedCachedStatusSnapshot(
+  worktreePath: string,
+): Promise<WorktreeStatusFingerprintSnapshot | null> {
+  const cached = getCachedStatusSnapshot(worktreePath);
+  if (!cached) return null;
+
+  const statSignature = await readStatusStatSignature(
+    worktreePath,
+    cached.status,
+  );
+  if (statSignature !== cached.statSignature) {
+    statusSnapshotCache.delete(worktreePath);
+    return null;
+  }
+
+  return cached;
+}
+
+function cacheStatusSnapshot(
+  worktreePath: string,
+  status: StatusResult,
+  fingerprint: string,
+  statSignature: string,
+): WorktreeStatusFingerprintSnapshot {
+  const snapshot = {
+    status,
+    fingerprint,
+    statSignature,
+    createdAt: Date.now(),
+  };
+  statusSnapshotCache.set(worktreePath, snapshot);
+  return snapshot;
+}
+
+function getSnapshotVersion(worktreePath: string): number {
+  return (
+    globalStatusSnapshotVersion +
+    (statusSnapshotVersions.get(worktreePath) ?? 0)
+  );
+}
+
 export async function readStatusWorktreeFingerprint(
   worktreePath: string,
   status: StatusResult,
 ): Promise<string> {
+  return (await buildStatusWorktreeFingerprint(worktreePath, status))
+    .fingerprint;
+}
+
+async function buildStatusWorktreeFingerprint(
+  worktreePath: string,
+  status: StatusResult,
+): Promise<{ fingerprint: string; statSignature: string }> {
   const hash = createHash('sha256');
   for (const row of statusFingerprintRows(status)) {
     hash.update(row);
     hash.update('\n');
   }
 
-  const statRows = await mapWithConcurrency(
-    [...statusFingerprintPaths(status)].sort(),
-    STAT_CONCURRENCY,
-    (filePath) => statFingerprint(worktreePath, filePath),
-  );
+  const statRows = await readStatusStatRows(worktreePath, status);
   for (const row of statRows) {
     hash.update(row);
     hash.update('\n');
   }
 
-  return hash.digest('hex');
+  return {
+    fingerprint: hash.digest('hex'),
+    statSignature: statRows.join('\n'),
+  };
+}
+
+async function readStatusStatSignature(
+  worktreePath: string,
+  status: StatusResult,
+): Promise<string> {
+  return (await readStatusStatRows(worktreePath, status)).join('\n');
+}
+
+async function readStatusStatRows(
+  worktreePath: string,
+  status: StatusResult,
+): Promise<string[]> {
+  return mapWithConcurrency(
+    [...statusFingerprintPaths(status)].sort(),
+    STAT_CONCURRENCY,
+    (filePath) => statFingerprint(worktreePath, filePath),
+  );
 }
 
 function statusFingerprintRows(status: StatusResult): string[] {

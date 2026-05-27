@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { SimpleGit } from 'simple-git';
+import { SimpleGit, StatusResult } from 'simple-git';
 
 import {
   buildAugmentedEnv,
@@ -20,7 +20,10 @@ import {
   ChangeReviewScope,
   ChangeReviewSummary,
 } from './change-review.types.js';
-import { readWorktreeFingerprint } from './git-worktree-fingerprint.js';
+import {
+  clearWorktreeFingerprintCache,
+  readWorktreeStatusSnapshot,
+} from './git-worktree-fingerprint.js';
 
 const LARGE_FILE_BYTES = 1_000_000;
 const LARGE_FILE_LINES = 25_000;
@@ -33,6 +36,7 @@ const MAX_CACHE_ENTRIES = 1_000;
 const STALE_ORIGIN_SECONDS = 24 * 60 * 60;
 const FILE_SUMMARY_CONCURRENCY = 32;
 const UNTRACKED_SUMMARY_CONCURRENCY = 16;
+const LAST_COMMIT_WORKTREE_FINGERPRINT = '0'.repeat(64);
 
 interface ReviewBase {
   repoRoot: string;
@@ -62,7 +66,7 @@ interface CachedRows {
 interface CachedFileSummaries {
   key: string;
   createdAt: number;
-  files: ChangeReviewFileSummary[];
+  summaries: FileSummarySet;
 }
 
 interface CachedBase {
@@ -86,6 +90,21 @@ interface CachedContextWindow {
   window: ChangeReviewContextWindow;
 }
 
+interface WorktreeReviewState {
+  fingerprint: string;
+  status: StatusResult | null;
+}
+
+interface FileSummarySet {
+  files: ChangeReviewFileSummary[];
+  untrackedPaths: ReadonlySet<string>;
+}
+
+interface FileSummaryLookup {
+  summary: ChangeReviewFileSummary;
+  untracked: boolean;
+}
+
 @Injectable()
 export class ChangeReviewService {
   private readonly baseCache = new Map<string, CachedBase>();
@@ -93,6 +112,8 @@ export class ChangeReviewService {
   private readonly rowCache = new Map<string, CachedRows>();
   private readonly fileLinesCache = new Map<string, CachedFileLines>();
   private readonly contextWindowCache = new Map<string, CachedContextWindow>();
+  private readonly summaryBuilds = new Map<string, Promise<FileSummarySet>>();
+  private readonly rowBuilds = new Map<string, Promise<CachedRows>>();
 
   async getSummary(
     worktreePath: string,
@@ -102,20 +123,24 @@ export class ChangeReviewService {
     this.assertScope(scope);
     if (refreshBase) {
       this.clearScopeCache(worktreePath, scope);
+      clearWorktreeFingerprintCache(worktreePath);
     }
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, refreshBase);
-    const worktreeFingerprint = await readWorktreeFingerprint(
-      worktreePath,
+    const worktreeState = await this.readWorktreeReviewState(
       git,
+      worktreePath,
+      scope,
+      true,
     );
-    const files = await this.readFileSummaries(
+    const summaries = await this.readFileSummaries(
       git,
       worktreePath,
       scope,
       base,
-      worktreeFingerprint,
+      worktreeState,
     );
+    const files = summaries.files;
 
     return {
       scope,
@@ -125,7 +150,7 @@ export class ChangeReviewService {
       baseRef: base.baseRef,
       baseSha: base.baseSha,
       headSha: base.headSha,
-      worktreeFingerprint,
+      worktreeFingerprint: worktreeState.fingerprint,
       mergeBaseSha: base.mergeBaseSha,
       compareLabel: base.compareLabel,
       generatedAt: new Date().toISOString(),
@@ -160,43 +185,42 @@ export class ChangeReviewService {
 
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, false);
-    const worktreeFingerprint = await readWorktreeFingerprint(
-      worktreePath,
+    const worktreeState = await this.readWorktreeReviewState(
       git,
+      worktreePath,
+      scope,
     );
-    const summary = await this.readFileSummary(
+    const lookup = await this.readFileSummary(
       git,
       worktreePath,
       scope,
       base,
       filePath,
-      worktreeFingerprint,
+      worktreeState,
     );
+    const summary = lookup.summary;
     const cacheKey = [
       worktreePath,
       scope,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
-      scope === 'last-commit' ? '' : worktreeFingerprint,
+      scope === 'last-commit' ? '' : worktreeState.fingerprint,
       filePath,
       context,
       summary.additions,
       summary.deletions,
       summary.status,
     ].join('\0');
-    const cached = this.getCachedRows(cacheKey);
-    const full =
-      cached ??
-      (await this.buildRows(
-        git,
-        worktreePath,
-        scope,
-        base,
-        summary,
-        context,
-        cacheKey,
-        worktreeFingerprint,
-      ));
+    const full = await this.getOrBuildRows(
+      cacheKey,
+      git,
+      worktreePath,
+      scope,
+      base,
+      lookup,
+      context,
+      worktreeState.fingerprint,
+    );
     const rows = full.rows.slice(offset, offset + limit);
 
     return {
@@ -241,24 +265,25 @@ export class ChangeReviewService {
 
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, false);
-    const worktreeFingerprint = await readWorktreeFingerprint(
-      worktreePath,
+    const worktreeState = await this.readWorktreeReviewState(
       git,
+      worktreePath,
+      scope,
     );
-    const summary = await this.readFileSummary(
+    const { summary } = await this.readFileSummary(
       git,
       worktreePath,
       scope,
       base,
       filePath,
-      worktreeFingerprint,
+      worktreeState,
     );
     const contextCacheKey = [
       worktreePath,
       scope,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
-      scope === 'last-commit' ? '' : worktreeFingerprint,
+      scope === 'last-commit' ? '' : worktreeState.fingerprint,
       filePath,
       oldStart,
       newStart,
@@ -277,7 +302,7 @@ export class ChangeReviewService {
       scope,
       base,
       summary,
-      worktreeFingerprint,
+      worktreeState.fingerprint,
     );
     const rows = this.buildContextRows(
       summary.path,
@@ -383,19 +408,44 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     base: ReviewBase,
-    worktreeFingerprint: string,
-  ): Promise<ChangeReviewFileSummary[]> {
+    worktreeState: WorktreeReviewState,
+  ): Promise<FileSummarySet> {
     const cacheKey = [
       worktreePath,
       scope,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
-      scope === 'last-commit' ? '' : worktreeFingerprint,
+      scope === 'last-commit' ? '' : worktreeState.fingerprint,
       'summary',
     ].join('\0');
     const cached = this.getCachedFileSummaries(cacheKey);
     if (cached) return cached;
 
+    const inFlight = this.summaryBuilds.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    const promise = this.buildFileSummaries(
+      git,
+      worktreePath,
+      scope,
+      base,
+      worktreeState,
+      cacheKey,
+    ).finally(() => {
+      this.summaryBuilds.delete(cacheKey);
+    });
+    this.summaryBuilds.set(cacheKey, promise);
+    return promise;
+  }
+
+  private async buildFileSummaries(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    worktreeState: WorktreeReviewState,
+    cacheKey: string,
+  ): Promise<FileSummarySet> {
     const [statusOutput, numstatOutput] = await Promise.all([
       git.raw(
         this.buildDiffArgs(scope, base, [
@@ -409,6 +459,7 @@ export class ChangeReviewService {
       ),
     ]);
     const stats = this.parseNumstat(numstatOutput);
+    const untrackedPaths = new Set<string>();
     const tracked: ChangeReviewFileSummary[] = await mapWithConcurrency(
       this.parseNameStatus(statusOutput),
       FILE_SUMMARY_CONCURRENCY,
@@ -433,20 +484,24 @@ export class ChangeReviewService {
       },
     );
 
-    if (scope !== 'last-commit') {
-      const untracked = await this.readUntrackedSummaries(git, worktreePath);
+    if (scope !== 'last-commit' && worktreeState.status) {
+      const untracked = await this.readUntrackedSummaries(
+        worktreePath,
+        worktreeState.status.not_added,
+      );
       const seen = new Set(tracked.map((file) => file.path));
       for (const file of untracked) {
         if (!seen.has(file.path)) {
           tracked.push(file);
+          untrackedPaths.add(file.path);
         }
       }
     }
 
-    return this.cachedFileSummaries(
-      cacheKey,
-      tracked.sort((left, right) => left.path.localeCompare(right.path)),
-    );
+    return this.cachedFileSummaries(cacheKey, {
+      files: tracked.sort((left, right) => left.path.localeCompare(right.path)),
+      untrackedPaths,
+    });
   }
 
   private async readFileSummary(
@@ -455,16 +510,16 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     base: ReviewBase,
     filePath: string,
-    worktreeFingerprint: string,
-  ): Promise<ChangeReviewFileSummary> {
+    worktreeState: WorktreeReviewState,
+  ): Promise<FileSummaryLookup> {
     const summaries = await this.readFileSummaries(
       git,
       worktreePath,
       scope,
       base,
-      worktreeFingerprint,
+      worktreeState,
     );
-    const summary = summaries.find(
+    const summary = summaries.files.find(
       (file) => file.path === filePath || file.oldPath === filePath,
     );
     if (!summary) {
@@ -472,7 +527,42 @@ export class ChangeReviewService {
         `File is not changed in this scope: ${filePath}`,
       );
     }
-    return summary;
+    return {
+      summary,
+      untracked: summaries.untrackedPaths.has(summary.path),
+    };
+  }
+
+  private async getOrBuildRows(
+    cacheKey: string,
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    lookup: FileSummaryLookup,
+    context: number,
+    worktreeFingerprint: string,
+  ): Promise<CachedRows> {
+    const cached = this.getCachedRows(cacheKey);
+    if (cached) return cached;
+
+    const inFlight = this.rowBuilds.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    const promise = this.buildRows(
+      git,
+      worktreePath,
+      scope,
+      base,
+      lookup,
+      context,
+      cacheKey,
+      worktreeFingerprint,
+    ).finally(() => {
+      this.rowBuilds.delete(cacheKey);
+    });
+    this.rowBuilds.set(cacheKey, promise);
+    return promise;
   }
 
   private async buildRows(
@@ -480,12 +570,13 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     base: ReviewBase,
-    summary: ChangeReviewFileSummary,
+    lookup: FileSummaryLookup,
     context: number,
     cacheKey: string,
     worktreeFingerprint: string,
   ): Promise<CachedRows> {
     let result: CachedRows;
+    const summary = lookup.summary;
 
     if (summary.binary) {
       result = this.cached(cacheKey, {
@@ -499,10 +590,7 @@ export class ChangeReviewService {
       return result;
     }
 
-    if (
-      summary.status === 'added' &&
-      (await this.isUntracked(git, summary.path))
-    ) {
+    if (summary.status === 'added' && lookup.untracked) {
       result = await this.buildUntrackedRows(worktreePath, summary, cacheKey);
       return result;
     }
@@ -574,6 +662,28 @@ export class ChangeReviewService {
         ? (base.mergeBaseSha ?? base.baseSha ?? 'HEAD')
         : 'HEAD';
     return ['diff', ...flags, ref];
+  }
+
+  private async readWorktreeReviewState(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    validateCached = false,
+  ): Promise<WorktreeReviewState> {
+    if (scope === 'last-commit') {
+      return {
+        fingerprint: LAST_COMMIT_WORKTREE_FINGERPRINT,
+        status: null,
+      };
+    }
+
+    const snapshot = await readWorktreeStatusSnapshot(worktreePath, git, {
+      validateCached,
+    });
+    return {
+      fingerprint: snapshot.fingerprint,
+      status: snapshot.status,
+    };
   }
 
   private parseNameStatus(
@@ -951,12 +1061,11 @@ export class ChangeReviewService {
   }
 
   private async readUntrackedSummaries(
-    git: SimpleGit,
     worktreePath: string,
+    notAddedPaths: readonly string[],
   ): Promise<ChangeReviewFileSummary[]> {
-    const status = await git.status();
     const files = await mapWithConcurrency(
-      status.not_added,
+      notAddedPaths,
       UNTRACKED_SUMMARY_CONCURRENCY,
       async (filePath): Promise<ChangeReviewFileSummary | null> => {
         const absolutePath = path.join(worktreePath, filePath);
@@ -1013,14 +1122,6 @@ export class ChangeReviewService {
       .stat(path.join(worktreePath, relativePath))
       .catch(() => null);
     return stat?.isFile() ? stat.size : null;
-  }
-
-  private async isUntracked(
-    git: SimpleGit,
-    filePath: string,
-  ): Promise<boolean> {
-    const status = await git.status();
-    return status.not_added.includes(filePath);
   }
 
   private async detectBaseRef(
@@ -1218,19 +1319,17 @@ export class ChangeReviewService {
     return base;
   }
 
-  private getCachedFileSummaries(
-    key: string,
-  ): ChangeReviewFileSummary[] | null {
-    return this.getFresh(this.summaryCache, key)?.files ?? null;
+  private getCachedFileSummaries(key: string): FileSummarySet | null {
+    return this.getFresh(this.summaryCache, key)?.summaries ?? null;
   }
 
   private cachedFileSummaries(
     key: string,
-    files: ChangeReviewFileSummary[],
-  ): ChangeReviewFileSummary[] {
-    this.summaryCache.set(key, { key, createdAt: Date.now(), files });
+    summaries: FileSummarySet,
+  ): FileSummarySet {
+    this.summaryCache.set(key, { key, createdAt: Date.now(), summaries });
     this.pruneCache(this.summaryCache);
-    return files;
+    return summaries;
   }
 
   private getCachedFileLines(
@@ -1294,6 +1393,8 @@ export class ChangeReviewService {
     this.clearCacheMap(this.rowCache, prefix);
     this.clearCacheMap(this.fileLinesCache, prefix);
     this.clearCacheMap(this.contextWindowCache, prefix);
+    this.clearCacheMap(this.summaryBuilds, prefix);
+    this.clearCacheMap(this.rowBuilds, prefix);
   }
 
   private clearCacheMap<T>(cache: Map<string, T>, prefix: string): void {
@@ -1312,7 +1413,7 @@ export class ChangeReviewService {
 }
 
 async function mapWithConcurrency<T, R>(
-  values: T[],
+  values: readonly T[],
   concurrency: number,
   mapper: (value: T) => Promise<R>,
 ): Promise<R[]> {
