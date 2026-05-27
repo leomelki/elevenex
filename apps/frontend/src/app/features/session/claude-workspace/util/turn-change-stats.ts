@@ -49,13 +49,7 @@ interface ExtractedEdits {
   edits: EditOp[];
 }
 
-const FILE_WRITING_TOOLS = new Set([
-  'edit',
-  'write',
-  'multiedit',
-  'notebookedit',
-  'filechanges',
-]);
+const FILE_WRITING_TOOLS = new Set(['edit', 'write', 'multiedit', 'notebookedit', 'filechanges']);
 
 function splitLines(text: string | undefined | null): string[] {
   if (!text) return [];
@@ -67,28 +61,10 @@ function lineCount(text: string | undefined | null): number {
   return splitLines(text).length;
 }
 
-function lcsLength(a: string[], b: string[]): number {
-  const m = a.length;
-  const n = b.length;
-  let prev = new Array<number>(n + 1).fill(0);
-  let curr = new Array<number>(n + 1).fill(0);
-  for (let i = 1; i <= m; i++) {
-    curr.fill(0);
-    for (let j = 1; j <= n; j++) {
-      curr[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(curr[j - 1], prev[j]);
-    }
-    [prev, curr] = [curr, prev];
-  }
-  return prev[n];
-}
-
 function countLineDiff(oldStr: string, newStr: string): { additions: number; deletions: number } {
   const oldLines = splitLines(oldStr);
   const newLines = splitLines(newStr);
-  if (!oldLines.length) return { additions: newLines.length, deletions: 0 };
-  if (!newLines.length) return { additions: 0, deletions: oldLines.length };
-  const common = lcsLength(oldLines, newLines);
-  return { additions: newLines.length - common, deletions: oldLines.length - common };
+  return { additions: newLines.length, deletions: oldLines.length };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -109,7 +85,9 @@ function normalizeLineForMatch(line: string): string {
   return line.trim().replace(/\s+/g, ' ');
 }
 
-function numberedResultLines(content: string | undefined): Array<{ lineNumber: number; text: string }> {
+function numberedResultLines(
+  content: string | undefined,
+): Array<{ lineNumber: number; text: string }> {
   if (!content) return [];
   const out: Array<{ lineNumber: number; text: string }> = [];
   for (const rawLine of content.split('\n')) {
@@ -138,10 +116,14 @@ function inferStartLineFromResult(
   const numberedLines = numbered.map((line) => normalizeLineForMatch(line.text));
   for (let i = 0; i < numberedLines.length; i++) {
     if (numberedLines[i] !== referenceLines[0]) continue;
-    const matches = referenceLines.every((reference, offset) => numberedLines[i + offset] === reference);
+    const matches = referenceLines.every(
+      (reference, offset) => numberedLines[i + offset] === reference,
+    );
     if (matches) return numbered[i].lineNumber;
   }
-  const firstLineMatch = numbered.find((line) => normalizeLineForMatch(line.text) === referenceLines[0]);
+  const firstLineMatch = numbered.find(
+    (line) => normalizeLineForMatch(line.text) === referenceLines[0],
+  );
   return firstLineMatch?.lineNumber;
 }
 
@@ -171,11 +153,13 @@ function extractEdits(toolName: string, input: unknown): ExtractedEdits[] {
     const filePath = readPath(record, ['file_path', 'filePath', 'path']);
     if (!filePath) return [];
     const startLine = asNumber(record['__startLine']);
-    return [{
-      filePath,
-      toolName,
-      edits: [{ oldString, newString, startLine }],
-    }];
+    return [
+      {
+        filePath,
+        toolName,
+        edits: [{ oldString, newString, startLine }],
+      },
+    ];
   }
 
   if (normalized === 'multiedit') {
@@ -199,21 +183,25 @@ function extractEdits(toolName: string, input: unknown): ExtractedEdits[] {
   if (normalized === 'write') {
     const filePath = readPath(record, ['file_path', 'filePath', 'path']);
     if (!filePath) return [];
-    return [{
-      filePath,
-      toolName,
-      edits: [{ oldString: '', newString: asString(record['content']) }],
-    }];
+    return [
+      {
+        filePath,
+        toolName,
+        edits: [{ oldString: '', newString: asString(record['content']) }],
+      },
+    ];
   }
 
   if (normalized === 'notebookedit') {
     const filePath = readPath(record, ['notebook_path', 'notebookPath', 'file_path', 'path']);
     if (!filePath) return [];
-    return [{
-      filePath,
-      toolName,
-      edits: [{ oldString: '', newString: asString(record['new_source']) }],
-    }];
+    return [
+      {
+        filePath,
+        toolName,
+        edits: [{ oldString: '', newString: asString(record['new_source']) }],
+      },
+    ];
   }
 
   if (normalized === 'filechanges') {
@@ -224,20 +212,34 @@ function extractEdits(toolName: string, input: unknown): ExtractedEdits[] {
       if (!change) continue;
       const filePath = readPath(change, ['path', 'file_path', 'filePath']);
       if (!filePath) continue;
-      const oldString = readPath(change, ['old_string', 'oldString', 'before', 'oldText', 'previousContent']);
-      const newString = readPath(change, ['new_string', 'newString', 'after', 'newText', 'content']);
+      const oldString = readPath(change, [
+        'old_string',
+        'oldString',
+        'before',
+        'oldText',
+        'previousContent',
+      ]);
+      const newString = readPath(change, [
+        'new_string',
+        'newString',
+        'after',
+        'newText',
+        'content',
+      ]);
       const patch = readPath(change, ['patch', 'diff', 'unifiedDiff']);
       extracted.push({
         filePath,
         toolName,
-        edits: [{
-          oldString,
-          newString,
-          patch,
-          label: changes.length > 1 ? `Change ${index + 1}` : undefined,
-          additions: asNumber(change['additions']),
-          deletions: asNumber(change['deletions']),
-        }],
+        edits: [
+          {
+            oldString,
+            newString,
+            patch,
+            label: changes.length > 1 ? `Change ${index + 1}` : undefined,
+            additions: asNumber(change['additions']),
+            deletions: asNumber(change['deletions']),
+          },
+        ],
       });
     }
     return extracted;
@@ -265,19 +267,38 @@ function parseApplyPatchLikeEdit(oldString: string, newString: string): Extracte
   }
 
   return Array.from(files.entries()).map(([filePath, file]) => {
-    const oldString = file.status === 'Add' ? '' : file.lines.filter((line) => line.startsWith('-')).map((line) => line.slice(1)).join('\n');
-    const newString = file.status === 'Delete' ? '' : file.lines.filter((line) => line.startsWith('+')).map((line) => line.slice(1)).join('\n');
+    const oldString =
+      file.status === 'Add'
+        ? ''
+        : file.lines
+            .filter((line) => line.startsWith('-'))
+            .map((line) => line.slice(1))
+            .join('\n');
+    const newString =
+      file.status === 'Delete'
+        ? ''
+        : file.lines
+            .filter((line) => line.startsWith('+'))
+            .map((line) => line.slice(1))
+            .join('\n');
     return {
       filePath,
       toolName: 'Edit',
-      edits: [{
-        oldString,
-        newString,
-        patch: file.lines.join('\n'),
-        label: file.status === 'Add' ? 'Created file' : file.status === 'Delete' ? 'Deleted file' : 'Patch',
-        additions: lineCount(newString),
-        deletions: lineCount(oldString),
-      }],
+      edits: [
+        {
+          oldString,
+          newString,
+          patch: file.lines.join('\n'),
+          label:
+            file.status === 'Add'
+              ? 'Created file'
+              : file.status === 'Delete'
+                ? 'Deleted file'
+                : 'Patch',
+          additions: lineCount(newString),
+          deletions: lineCount(oldString),
+        },
+      ],
     };
   });
 }
@@ -290,14 +311,14 @@ function isToolUseUnit(
 
 function statusForFile(hunks: TurnChangeHunk[]): TurnChangedFile['status'] {
   if (
-    hunks.length
-    && hunks.every((hunk) => hunk.deletions === 0 && hunk.additions > 0 && !hunk.oldString)
+    hunks.length &&
+    hunks.every((hunk) => hunk.deletions === 0 && hunk.additions > 0 && !hunk.oldString)
   ) {
     return 'created';
   }
   if (
-    hunks.length
-    && hunks.every((hunk) => hunk.additions === 0 && hunk.deletions > 0 && !hunk.newString)
+    hunks.length &&
+    hunks.every((hunk) => hunk.additions === 0 && hunk.deletions > 0 && !hunk.newString)
   ) {
     return 'deleted';
   }
@@ -319,7 +340,8 @@ export function computeTurnChangeDetails(units: PairedTranscriptUnit[]): TurnCha
     const toolName = unit.call.toolName ?? '';
     if (!FILE_WRITING_TOOLS.has(normalizeToolName(toolName))) continue;
     if (unit.result?.isError) continue;
-    const resultContent = typeof unit.result?.content === 'string' ? unit.result.content : undefined;
+    const resultContent =
+      typeof unit.result?.content === 'string' ? unit.result.content : undefined;
 
     for (const extracted of extractEdits(toolName, unit.call.toolInput)) {
       let file = files.get(extracted.filePath);
@@ -389,14 +411,18 @@ export function computeTurnChangeDetails(units: PairedTranscriptUnit[]): TurnCha
 
 export function computeTurnChangeSummary(units: PairedTranscriptUnit[]): TurnChangeSummary | null {
   const details = computeTurnChangeDetails(units);
-  return details ? { files: details.files, additions: details.additions, deletions: details.deletions } : null;
+  return details
+    ? { files: details.files, additions: details.additions, deletions: details.deletions }
+    : null;
 }
 
 export function computeTurnChangeSummaryFromItems(
   items: ClaudeTranscriptItem[],
 ): TurnChangeSummary | null {
   const details = computeTurnChangeDetailsFromItems(items);
-  return details ? { files: details.files, additions: details.additions, deletions: details.deletions } : null;
+  return details
+    ? { files: details.files, additions: details.additions, deletions: details.deletions }
+    : null;
 }
 
 export function computeTurnChangeDetailsFromItems(

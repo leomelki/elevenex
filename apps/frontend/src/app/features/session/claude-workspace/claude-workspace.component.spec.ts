@@ -121,11 +121,7 @@ describe('ClaudeWorkspaceComponent', () => {
     isError?: boolean;
   };
 
-  const editTurnHistory = (
-    suffix: string,
-    start: string,
-    calls: EditCall[],
-  ) => {
+  const editTurnHistory = (suffix: string, start: string, calls: EditCall[]) => {
     const items: Record<string, unknown>[] = [
       {
         id: `user-${suffix}`,
@@ -284,34 +280,38 @@ describe('ClaudeWorkspaceComponent', () => {
       connectionState$: vi.fn(() => new Subject().asObservable()),
     };
     worktreeContextServiceMock = {
-      get: vi.fn(() => of({
-        repoId: 1,
-        worktreePath: '/tmp/project',
-        contextSentence: null,
-        rootRef: null,
-        generationStatus: 'idle',
-        generatedAt: null,
-        lastUsedAt: null,
-        canGenerate: true,
-        hasChanges: false,
-        usingRepoDefaultRootRef: true,
-        errorMessage: null,
-        hasRecord: false,
-      })),
-      generate: vi.fn(() => of({
-        repoId: 1,
-        worktreePath: '/tmp/project',
-        contextSentence: null,
-        rootRef: null,
-        generationStatus: 'idle',
-        generatedAt: null,
-        lastUsedAt: null,
-        canGenerate: true,
-        hasChanges: false,
-        usingRepoDefaultRootRef: true,
-        errorMessage: null,
-        hasRecord: false,
-      })),
+      get: vi.fn(() =>
+        of({
+          repoId: 1,
+          worktreePath: '/tmp/project',
+          contextSentence: null,
+          rootRef: null,
+          generationStatus: 'idle',
+          generatedAt: null,
+          lastUsedAt: null,
+          canGenerate: true,
+          hasChanges: false,
+          usingRepoDefaultRootRef: true,
+          errorMessage: null,
+          hasRecord: false,
+        }),
+      ),
+      generate: vi.fn(() =>
+        of({
+          repoId: 1,
+          worktreePath: '/tmp/project',
+          contextSentence: null,
+          rootRef: null,
+          generationStatus: 'idle',
+          generatedAt: null,
+          lastUsedAt: null,
+          canGenerate: true,
+          hasChanges: false,
+          usingRepoDefaultRootRef: true,
+          errorMessage: null,
+          hasRecord: false,
+        }),
+      ),
       updateRootRef: vi.fn(() => of({})),
       consume: vi.fn(() => of({ shouldInject: false, contextSentence: null })),
     };
@@ -321,7 +321,14 @@ describe('ClaudeWorkspaceComponent', () => {
         { provide: ClaudeRuntimeApiService, useValue: apiMock },
         { provide: ClaudeRuntimeWebsocketService, useValue: wsMock },
         { provide: WorktreeContextService, useValue: worktreeContextServiceMock },
-        { provide: SessionsService, useValue: { updateActiveAgentProvider: vi.fn(() => of({})) } },
+        {
+          provide: SessionsService,
+          useValue: {
+            updateActiveAgentProvider: vi.fn(() => of({})),
+            getForks: vi.fn(() => of([])),
+            createFork: vi.fn(() => of({})),
+          },
+        },
       ],
     }).compileComponents();
   });
@@ -330,8 +337,32 @@ describe('ClaudeWorkspaceComponent', () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
     apiMock.getAutocompleteItems
-      .mockReturnValueOnce(of([{ id: 'builtin:/help', kind: 'command', trigger: '/', label: '/help', insertText: '/help ', description: 'Help', source: 'builtin' }]))
-      .mockReturnValueOnce(of([{ id: 'runtime:/myskill', kind: 'skill', trigger: '/', label: '/myskill', insertText: '/myskill ', description: 'Runtime skill', source: 'runtime' }]));
+      .mockReturnValueOnce(
+        of([
+          {
+            id: 'builtin:/help',
+            kind: 'command',
+            trigger: '/',
+            label: '/help',
+            insertText: '/help ',
+            description: 'Help',
+            source: 'builtin',
+          },
+        ]),
+      )
+      .mockReturnValueOnce(
+        of([
+          {
+            id: 'runtime:/myskill',
+            kind: 'skill',
+            trigger: '/',
+            label: '/myskill',
+            insertText: '/myskill ',
+            description: 'Runtime skill',
+            source: 'runtime',
+          },
+        ]),
+      );
 
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
@@ -433,6 +464,120 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(writeText).toHaveBeenCalledWith('Copy fallback');
   });
 
+  it('creates a conversation fork from a persisted transcript anchor', async () => {
+    const sessions = TestBed.inject(SessionsService) as unknown as {
+      createFork: ReturnType<typeof vi.fn>;
+    };
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    sessions.createFork.mockReturnValueOnce(
+      of({
+        fork: {
+          id: 1,
+          parentSessionId: 7,
+          childSessionId: 8,
+          provider: 'claude',
+          anchorMessageId: 'assistant-wrapper-1',
+          anchorMessageKind: 'assistant',
+          anchorExcerpt: 'Done',
+          draft: null,
+          createdAt: '2026-04-24T08:00:00.000Z',
+          childSession: {
+            id: 8,
+            repoId: 1,
+            projectId: 1,
+            branchName: 'main',
+            worktreePath: '/tmp/project',
+            name: 'Parent (fork)',
+            status: 'created',
+            activeAgentProvider: 'claude',
+            claudeSessionId: 'forked-claude',
+            codexSessionId: '-1',
+            piSessionPath: '-1',
+            hasInjectedWorktreeContext: false,
+            hasUnreviewedCompletion: false,
+            lastCompletionAt: null,
+            lastCompletionKind: null,
+            lastStateChangeAt: null,
+            createdAt: '2026-04-24T08:00:00.000Z',
+            updatedAt: '2026-04-24T08:00:00.000Z',
+          },
+        },
+        session: {
+          id: 8,
+          repoId: 1,
+          projectId: 1,
+          branchName: 'main',
+          worktreePath: '/tmp/project',
+          name: 'Parent (fork)',
+          status: 'created',
+          activeAgentProvider: 'claude',
+          claudeSessionId: 'forked-claude',
+          codexSessionId: '-1',
+          piSessionPath: '-1',
+          hasInjectedWorktreeContext: false,
+          hasUnreviewedCompletion: false,
+          lastCompletionAt: null,
+          lastCompletionKind: null,
+          lastStateChangeAt: null,
+          createdAt: '2026-04-24T08:00:00.000Z',
+          updatedAt: '2026-04-24T08:00:00.000Z',
+        },
+        draft: null,
+      }),
+    );
+    const emitted: unknown[] = [];
+    fixture.componentInstance.conversationForkCreated.subscribe((event) => emitted.push(event));
+
+    await fixture.componentInstance.forkMessage({
+      id: 'assistant-1',
+      kind: 'assistant',
+      content: 'Done',
+      transcriptMessageId: 'assistant-wrapper-1',
+      timestamp: '2026-04-24T08:00:00.000Z',
+    });
+
+    expect(sessions.createFork).toHaveBeenCalledWith(7, {
+      anchorMessageId: 'assistant-wrapper-1',
+      anchorMessageKind: 'assistant',
+      anchorExcerpt: 'Done',
+    });
+    expect(
+      fixture.componentInstance.forksForItem({
+        id: 'assistant-1',
+        kind: 'assistant',
+        content: 'Done',
+        transcriptMessageId: 'assistant-wrapper-1',
+        timestamp: '2026-04-24T08:00:00.000Z',
+      }),
+    ).toHaveLength(1);
+    expect(emitted).toHaveLength(1);
+  });
+
+  it('does not create a fork while the runtime is active', async () => {
+    const sessions = TestBed.inject(SessionsService) as unknown as {
+      createFork: ReturnType<typeof vi.fn>;
+    };
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runPhase.set('running');
+
+    await fixture.componentInstance.forkMessage({
+      id: 'assistant-1',
+      kind: 'assistant',
+      content: 'Done',
+      transcriptMessageId: 'assistant-wrapper-1',
+      timestamp: '2026-04-24T08:00:00.000Z',
+    });
+
+    expect(sessions.createFork).not.toHaveBeenCalled();
+  });
 
   it('shows the waiting caret while Claude is still thinking', async () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
@@ -621,23 +766,25 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.detectChanges();
     fixture.componentInstance.loading.set(false);
     fixture.componentInstance.hydrated.set(true);
-    apiMock.getHistory.mockReturnValueOnce(of([
-      {
-        id: 'user-1',
-        kind: 'user',
-        content: 'Change the stopped prompt',
-        timestamp: '2026-04-24T08:00:00.000Z',
-        authoredAt: '2026-04-24T08:00:00.000Z',
-        sourceMessageId: 'source-user-1',
-      },
-      {
-        id: 'thinking-1',
-        kind: 'thinking',
-        content: 'Internal planning',
-        timestamp: '2026-04-24T08:00:01.000Z',
-        receivedAt: '2026-04-24T08:00:01.000Z',
-      },
-    ]));
+    apiMock.getHistory.mockReturnValueOnce(
+      of([
+        {
+          id: 'user-1',
+          kind: 'user',
+          content: 'Change the stopped prompt',
+          timestamp: '2026-04-24T08:00:00.000Z',
+          authoredAt: '2026-04-24T08:00:00.000Z',
+          sourceMessageId: 'source-user-1',
+        },
+        {
+          id: 'thinking-1',
+          kind: 'thinking',
+          content: 'Internal planning',
+          timestamp: '2026-04-24T08:00:01.000Z',
+          receivedAt: '2026-04-24T08:00:01.000Z',
+        },
+      ]),
+    );
     apiMock.rewindConversation.mockReturnValueOnce(of([]));
 
     fixture.componentInstance.interrupt();
@@ -666,16 +813,18 @@ describe('ClaudeWorkspaceComponent', () => {
       authoredAt: '2026-04-24T08:00:00.000Z',
       sourceMessageId: 'source-user-1',
     };
-    apiMock.getHistory.mockReturnValueOnce(of([
-      userItem,
-      {
-        id: 'assistant-1',
-        kind: 'assistant',
-        content: 'Started answering',
-        timestamp: '2026-04-24T08:00:01.000Z',
-        receivedAt: '2026-04-24T08:00:01.000Z',
-      },
-    ]));
+    apiMock.getHistory.mockReturnValueOnce(
+      of([
+        userItem,
+        {
+          id: 'assistant-1',
+          kind: 'assistant',
+          content: 'Started answering',
+          timestamp: '2026-04-24T08:00:01.000Z',
+          receivedAt: '2026-04-24T08:00:01.000Z',
+        },
+      ]),
+    );
 
     fixture.componentInstance.interrupt();
     (fixture.componentInstance as any).handleRuntimeEvent({
@@ -784,11 +933,15 @@ describe('ClaudeWorkspaceComponent', () => {
   it('renders completed turn change stats from edit tool calls', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
-    apiMock.getHistory.mockReturnValue(of(editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-      { tool: 'Edit', file: 'a.ts', oldString: linesOf(4), newString: linesOf(14) },
-      { tool: 'Edit', file: 'b.ts', oldString: linesOf(4), newString: linesOf(14) },
-      { tool: 'Write', file: 'c.ts', content: linesOf(14) },
-    ])));
+    apiMock.getHistory.mockReturnValue(
+      of(
+        editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
+          { tool: 'Edit', file: 'a.ts', oldString: linesOf(4), newString: linesOf(14) },
+          { tool: 'Edit', file: 'b.ts', oldString: linesOf(4), newString: linesOf(14) },
+          { tool: 'Write', file: 'c.ts', content: linesOf(14) },
+        ]),
+      ),
+    );
 
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
@@ -801,7 +954,9 @@ describe('ClaudeWorkspaceComponent', () => {
     await flushPromises();
     fixture.detectChanges();
 
-    const changes = fixture.nativeElement.querySelector('.cw-turn-gap__changes') as HTMLElement | null;
+    const changes = fixture.nativeElement.querySelector(
+      '.cw-turn-gap__changes',
+    ) as HTMLElement | null;
     expect(changes?.textContent).toContain('3 files');
     expect(changes?.textContent).toContain('+42');
     expect(changes?.textContent).toContain('-8');
@@ -810,17 +965,27 @@ describe('ClaudeWorkspaceComponent', () => {
   it('opens a file-by-file diff view for turn changes', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
-    apiMock.getHistory.mockReturnValue(of(editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-      {
-        tool: 'MultiEdit',
-        file: 'src/app.ts',
-        edits: [
-          { old_string: 'const a = 1;\nconst b = 2;', new_string: 'const a = 1;\nconst b = 3;' },
-          { old_string: 'export const name = "old";', new_string: 'export const name = "new";' },
-        ],
-      },
-      { tool: 'Write', file: 'src/new.ts', content: 'export const created = true;' },
-    ])));
+    apiMock.getHistory.mockReturnValue(
+      of(
+        editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
+          {
+            tool: 'MultiEdit',
+            file: 'src/app.ts',
+            edits: [
+              {
+                old_string: 'const a = 1;\nconst b = 2;',
+                new_string: 'const a = 1;\nconst b = 3;',
+              },
+              {
+                old_string: 'export const name = "old";',
+                new_string: 'export const name = "new";',
+              },
+            ],
+          },
+          { tool: 'Write', file: 'src/new.ts', content: 'export const created = true;' },
+        ]),
+      ),
+    );
 
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
@@ -833,7 +998,9 @@ describe('ClaudeWorkspaceComponent', () => {
     await flushPromises();
     fixture.detectChanges();
 
-    const button = fixture.nativeElement.querySelector('.cw-turn-gap__changes-button') as HTMLButtonElement | null;
+    const button = fixture.nativeElement.querySelector(
+      '.cw-turn-gap__changes-button',
+    ) as HTMLButtonElement | null;
     expect(button?.textContent).toContain('View changes');
     button?.click();
     fixture.detectChanges();
@@ -862,14 +1029,21 @@ describe('ClaudeWorkspaceComponent', () => {
         ...runtimeState(),
         sessionId: 7,
         history: editTurnHistory('yesterday', '2026-04-23T18:00:00.000Z', [
-          { tool: 'Edit', file: 'src/yesterday.ts', oldString: 'export const value = 1;', newString: 'export const value = 2;' },
+          {
+            tool: 'Edit',
+            file: 'src/yesterday.ts',
+            oldString: 'export const value = 1;',
+            newString: 'export const value = 2;',
+          },
         ]),
       },
     });
     await flushPromises();
     fixture.detectChanges();
 
-    const button = fixture.nativeElement.querySelector('.cw-turn-gap__changes-button') as HTMLButtonElement | null;
+    const button = fixture.nativeElement.querySelector(
+      '.cw-turn-gap__changes-button',
+    ) as HTMLButtonElement | null;
     expect(button?.textContent).toContain('View changes');
     button?.click();
     fixture.detectChanges();
@@ -949,10 +1123,14 @@ describe('ClaudeWorkspaceComponent', () => {
     await flushPromises();
     fixture.detectChanges();
 
-    const changes = fixture.nativeElement.querySelector('.cw-turn-gap__changes') as HTMLElement | null;
+    const changes = fixture.nativeElement.querySelector(
+      '.cw-turn-gap__changes',
+    ) as HTMLElement | null;
     expect(changes?.textContent).toContain('1 file');
 
-    const button = fixture.nativeElement.querySelector('.cw-turn-gap__changes-button') as HTMLButtonElement | null;
+    const button = fixture.nativeElement.querySelector(
+      '.cw-turn-gap__changes-button',
+    ) as HTMLButtonElement | null;
     button?.click();
     fixture.detectChanges();
 
@@ -965,11 +1143,15 @@ describe('ClaudeWorkspaceComponent', () => {
     wsMock.connect.mockReturnValue(events$.asObservable());
     // Same Edit retried, plus a second Edit on the same file → file counted once,
     // first edit's lines counted once, second edit adds its own lines.
-    apiMock.getHistory.mockReturnValue(of(editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-      { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(5) },
-      { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(5) },
-      { tool: 'Edit', file: 'a.ts', oldString: linesOf(1), newString: linesOf(3) },
-    ])));
+    apiMock.getHistory.mockReturnValue(
+      of(
+        editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
+          { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(5) },
+          { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(5) },
+          { tool: 'Edit', file: 'a.ts', oldString: linesOf(1), newString: linesOf(3) },
+        ]),
+      ),
+    );
 
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
@@ -982,7 +1164,9 @@ describe('ClaudeWorkspaceComponent', () => {
     await flushPromises();
     fixture.detectChanges();
 
-    const changes = fixture.nativeElement.querySelector('.cw-turn-gap__changes') as HTMLElement | null;
+    const changes = fixture.nativeElement.querySelector(
+      '.cw-turn-gap__changes',
+    ) as HTMLElement | null;
     expect(changes?.textContent).toContain('1 file');
     expect(changes?.textContent).toContain('+8');
     expect(changes?.textContent).toContain('-3');
@@ -1010,9 +1194,19 @@ describe('ClaudeWorkspaceComponent', () => {
   it('skips failed edit tool calls when computing change stats', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
-    apiMock.getHistory.mockReturnValue(of(editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-      { tool: 'Edit', file: 'a.ts', oldString: linesOf(3), newString: linesOf(5), isError: true },
-    ])));
+    apiMock.getHistory.mockReturnValue(
+      of(
+        editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(3),
+            newString: linesOf(5),
+            isError: true,
+          },
+        ]),
+      ),
+    );
 
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
@@ -1032,15 +1226,17 @@ describe('ClaudeWorkspaceComponent', () => {
   it('attaches change stats to every collapsed turn rendered from history', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
-    apiMock.getHistory.mockReturnValue(of([
-      ...editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-        { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(2) },
+    apiMock.getHistory.mockReturnValue(
+      of([
+        ...editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
+          { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(2) },
+        ]),
+        ...editTurnHistory('2', '2026-04-24T08:01:00.000Z', [
+          { tool: 'Edit', file: 'a.ts', oldString: linesOf(1), newString: linesOf(5) },
+          { tool: 'Write', file: 'b.ts', content: linesOf(4) },
+        ]),
       ]),
-      ...editTurnHistory('2', '2026-04-24T08:01:00.000Z', [
-        { tool: 'Edit', file: 'a.ts', oldString: linesOf(1), newString: linesOf(5) },
-        { tool: 'Write', file: 'b.ts', content: linesOf(4) },
-      ]),
-    ]));
+    );
 
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
@@ -1074,10 +1270,12 @@ describe('ClaudeWorkspaceComponent', () => {
     await Promise.resolve();
 
     fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
-    worktreeContextServiceMock.consume.mockReturnValue(of({
-      shouldInject: true,
-      contextSentence: 'This branch updates first-message context handling.',
-    }));
+    worktreeContextServiceMock.consume.mockReturnValue(
+      of({
+        shouldInject: true,
+        contextSentence: 'This branch updates first-message context handling.',
+      }),
+    );
 
     await fixture.componentInstance.submitPrompt('Ship this change');
 
@@ -1256,11 +1454,9 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.detectChanges();
     await Promise.resolve();
 
-    expect(worktreeContextServiceMock.get).toHaveBeenCalledWith(
-      1,
-      '/tmp/project',
-      { cachedOnly: true },
-    );
+    expect(worktreeContextServiceMock.get).toHaveBeenCalledWith(1, '/tmp/project', {
+      cachedOnly: true,
+    });
     expect(worktreeContextServiceMock.generate).not.toHaveBeenCalled();
   });
 
@@ -1457,7 +1653,9 @@ describe('ClaudeWorkspaceComponent', () => {
     });
     fixture.detectChanges();
 
-    const toolUnits = fixture.componentInstance.pairedTranscript().filter((unit) => unit.kind === 'tool');
+    const toolUnits = fixture.componentInstance
+      .pairedTranscript()
+      .filter((unit) => unit.kind === 'tool');
     expect(toolUnits).toHaveLength(1);
     expect(toolUnits[0]).toMatchObject({
       toolUseId: 'toolu_1',

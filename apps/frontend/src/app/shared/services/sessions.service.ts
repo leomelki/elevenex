@@ -1,6 +1,11 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Session } from '../models/session.model';
+import {
+  CreateSessionForkRequest,
+  CreateSessionForkResponse,
+  Session,
+  SessionFork,
+} from '../models/session.model';
 import type { AgentProviderId } from '../models/agent-runtime.model';
 
 @Injectable({ providedIn: 'root' })
@@ -19,7 +24,13 @@ export class SessionsService {
     return this.http.post<Session>(`/api/sessions/${id}/mark-reviewed`, {});
   }
 
-  create(data: { repoId: number; workspaceId?: number; branchName?: string; worktreePath?: string; name?: string }) {
+  create(data: {
+    repoId: number;
+    workspaceId?: number;
+    branchName?: string;
+    worktreePath?: string;
+    name?: string;
+  }) {
     return this.http.post<Session>('/api/sessions', data);
   }
 
@@ -53,6 +64,14 @@ export class SessionsService {
 
   fork(id: number, name?: string) {
     return this.http.post<Session>(`/api/sessions/${id}/fork`, { name });
+  }
+
+  getForks(id: number) {
+    return this.http.get<SessionFork[]>(`/api/sessions/${id}/forks`);
+  }
+
+  createFork(id: number, data: CreateSessionForkRequest) {
+    return this.http.post<CreateSessionForkResponse>(`/api/sessions/${id}/forks`, data);
   }
 
   kill(id: number) {

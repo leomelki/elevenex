@@ -4,11 +4,13 @@ import { EventEmitter } from 'events';
 import { homedir } from 'os';
 import { join } from 'path';
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  forkSession: jest.fn(),
   getSubagentMessages: jest.fn(),
   getSessionMessages: jest.fn(),
   query: jest.fn(),
 }));
 import {
+  forkSession,
   getSessionMessages,
   getSubagentMessages,
   query,
@@ -2741,6 +2743,76 @@ describe('ClaudeRuntimeService', () => {
     await expect(service.rewindConversation(7, 'assistant-1')).rejects.toThrow(
       'Only user messages can be edited.',
     );
+  });
+
+  it('uses the Claude SDK fork API through the selected assistant message', async () => {
+    jest
+      .spyOn(service as any, 'findTranscriptPath')
+      .mockResolvedValue('/tmp/claude-session-1.jsonl');
+    jest.spyOn(service as any, 'loadTranscriptRecords').mockResolvedValue([
+      { type: 'user', uuid: 'user-1', message: { content: 'first' } },
+      {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        message: { content: [{ type: 'text', text: 'answer' }] },
+      },
+      { type: 'user', uuid: 'user-2', message: { content: 'later' } },
+    ]);
+    (forkSession as jest.Mock).mockResolvedValue({ sessionId: 'forked-1' });
+
+    const result = await service.forkConversation({
+      parentSessionId: 7,
+      childSessionId: 8,
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      childSessionName: 'Fork',
+    });
+
+    expect(forkSession).toHaveBeenCalledWith('claude-session-1', {
+      dir: '/tmp/project',
+      upToMessageId: 'assistant-1',
+      title: 'Fork',
+    });
+    expect(result).toEqual({
+      providerSessionId: 'forked-1',
+      draft: null,
+      anchorExcerpt: 'answer',
+    });
+  });
+
+  it('forks Claude before a selected user message and returns that text as a draft', async () => {
+    jest
+      .spyOn(service as any, 'findTranscriptPath')
+      .mockResolvedValue('/tmp/claude-session-1.jsonl');
+    jest.spyOn(service as any, 'loadTranscriptRecords').mockResolvedValue([
+      { type: 'user', uuid: 'user-1', message: { content: 'first' } },
+      {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        message: { content: [{ type: 'text', text: 'answer' }] },
+      },
+      { type: 'user', uuid: 'user-2', message: { content: 'retry this' } },
+    ]);
+    (forkSession as jest.Mock).mockResolvedValue({ sessionId: 'forked-2' });
+
+    const result = await service.forkConversation({
+      parentSessionId: 7,
+      childSessionId: 8,
+      anchorMessageId: 'user-2',
+      anchorMessageKind: 'user',
+      childSessionName: 'Fork',
+    });
+
+    expect(forkSession).toHaveBeenCalledWith('claude-session-1', {
+      dir: '/tmp/project',
+      upToMessageId: 'assistant-1',
+      title: 'Fork',
+    });
+    expect(result).toEqual({
+      providerSessionId: 'forked-2',
+      draft: 'retry this',
+      anchorExcerpt: 'retry this',
+    });
   });
 
   it('persists interaction summaries for approvals and updates the live tool card', async () => {

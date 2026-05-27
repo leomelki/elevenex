@@ -1,18 +1,25 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
-import { basename, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import type { CodexHistorySessionSummary } from './codex-runtime.types.js';
+import type {
+  AgentForkConversationRequest,
+  AgentForkConversationResult,
+} from '../agent-runtime/agent-runtime.types.js';
 
 type JsonRecord = Record<string, unknown>;
 
 @Injectable()
 export class CodexHistoryService {
   private readonly logger = new Logger('CodexHistoryService');
-  private readonly sessionsRoot = join(homedir(), '.codex', 'sessions');
+
+  constructor(
+    private readonly sessionsRoot = join(homedir(), '.codex', 'sessions'),
+  ) {}
 
   async getHistory(
     codexSessionId: string | null,
@@ -26,6 +33,68 @@ export class CodexHistoryService {
     }
     const records = await this.readJsonl(path);
     return this.normalizeRecords(records);
+  }
+
+  async forkHistory(
+    codexSessionId: string | null,
+    request: AgentForkConversationRequest,
+  ): Promise<AgentForkConversationResult> {
+    if (!codexSessionId || codexSessionId === '-1') {
+      throw new NotFoundException('Codex thread not found.');
+    }
+
+    const path = await this.findSessionFile(codexSessionId);
+    if (!path) {
+      throw new NotFoundException('Codex thread file not found.');
+    }
+
+    const records = await this.readJsonl(path);
+    const targetIndex = records.findIndex((record, index) =>
+      this.isForkAnchorRecord(
+        record,
+        index,
+        request.anchorMessageId,
+        request.anchorMessageKind,
+      ),
+    );
+    if (targetIndex === -1) {
+      throw new NotFoundException('Message not found in Codex thread.');
+    }
+
+    const target = records[targetIndex];
+    const draft =
+      request.anchorMessageKind === 'user'
+        ? this.extractUserMessageText(target)
+        : null;
+    const anchorExcerpt =
+      request.anchorMessageKind === 'user'
+        ? draft
+        : this.extractAssistantMessageText(target);
+    const retainedRecords = records.slice(
+      0,
+      request.anchorMessageKind === 'user' ? targetIndex : targetIndex + 1,
+    );
+
+    if (retainedRecords.length === 0) {
+      return {
+        providerSessionId: null,
+        draft,
+        anchorExcerpt,
+      };
+    }
+
+    const newSessionId = randomUUID();
+    const rewritten = retainedRecords.map((record) =>
+      this.rewriteSessionMetadata(record, newSessionId),
+    );
+    const forkPath = this.buildForkPath(path, newSessionId);
+    await this.writeJsonl(forkPath, rewritten);
+
+    return {
+      providerSessionId: newSessionId,
+      draft,
+      anchorExcerpt,
+    };
   }
 
   async listSessions(): Promise<CodexHistorySessionSummary[]> {
@@ -108,6 +177,7 @@ export class CodexHistoryService {
             id: `codex-history:${index}:user`,
             kind: 'user',
             content: this.stripInjectedWorktreeContext(rawContent),
+            transcriptMessageId: this.recordAnchorId(index),
             timestamp,
             authoredAt: timestamp,
           });
@@ -131,6 +201,7 @@ export class CodexHistoryService {
         payloadItem,
         timestamp,
         index,
+        this.recordAnchorId(index),
       );
       if (normalized) {
         items.push(normalized);
@@ -143,6 +214,7 @@ export class CodexHistoryService {
     item: JsonRecord,
     timestamp: string,
     index: number,
+    transcriptMessageId: string = this.recordAnchorId(index),
   ): ClaudeTranscriptItem | null {
     const type = stringValue(item.type);
     const id =
@@ -155,6 +227,7 @@ export class CodexHistoryService {
             kind: 'assistant',
             content,
             sourceMessageId: id,
+            transcriptMessageId,
             timestamp,
             receivedAt: timestamp,
           }
@@ -170,6 +243,7 @@ export class CodexHistoryService {
             contentType: 'plan',
             content,
             sourceMessageId: id,
+            transcriptMessageId,
             timestamp,
             receivedAt: timestamp,
           }
@@ -184,6 +258,7 @@ export class CodexHistoryService {
             kind: 'thinking',
             content,
             sourceMessageId: id,
+            transcriptMessageId,
             timestamp,
             receivedAt: timestamp,
           }
@@ -210,6 +285,7 @@ export class CodexHistoryService {
         toolInput: canonicalTool.toolInput,
         providerToolInput,
         sourceMessageId: id,
+        transcriptMessageId,
         timestamp,
         receivedAt: timestamp,
       };
@@ -223,6 +299,7 @@ export class CodexHistoryService {
           this.contentToText(item.output) || JSON.stringify(item.output ?? ''),
         isError: Boolean(item.error),
         sourceMessageId: id,
+        transcriptMessageId,
         timestamp,
         authoredAt: timestamp,
       };
@@ -240,6 +317,89 @@ export class CodexHistoryService {
       (!payload.kind || payload.kind === 'plain') &&
       Boolean(stringValue(payload.message))
     );
+  }
+
+  private isForkAnchorRecord(
+    record: JsonRecord,
+    index: number,
+    anchorMessageId: string,
+    anchorKind: 'user' | 'assistant',
+  ): boolean {
+    if (this.recordAnchorId(index) !== anchorMessageId) {
+      return false;
+    }
+    if (anchorKind === 'user') {
+      return this.isVisibleUserMessage(record);
+    }
+    return this.isVisibleAssistantMessage(record);
+  }
+
+  private isVisibleAssistantMessage(record: JsonRecord): boolean {
+    if (record.type !== 'response_item') {
+      return false;
+    }
+    const item = this.responsePayloadItem(record);
+    if (!item) return false;
+    const type = stringValue(item?.type);
+    return (
+      (type === 'message' &&
+        item?.role === 'assistant' &&
+        Boolean(this.contentToText(item.content))) ||
+      (type === 'plan' &&
+        Boolean(stringValue(item.text) || this.contentToText(item.content)))
+    );
+  }
+
+  private responsePayloadItem(record: JsonRecord): JsonRecord | null {
+    const payload = asRecord(record.payload);
+    const item =
+      payload?.item ??
+      (payload?.type ? payload : null) ??
+      asRecord(record.item);
+    return asRecord(item);
+  }
+
+  private extractUserMessageText(record: JsonRecord): string {
+    const rawMessage = stringValue(asRecord(record.payload)?.message) ?? '';
+    return this.stripInjectedWorktreeContext(rawMessage);
+  }
+
+  private extractAssistantMessageText(record: JsonRecord): string {
+    const item = this.responsePayloadItem(record);
+    if (!item) return '';
+    return (
+      stringValue(item.text) ||
+      this.contentToText(item.content) ||
+      this.contentToText(item.summary)
+    );
+  }
+
+  private recordAnchorId(index: number): string {
+    return `codex-record:${index}`;
+  }
+
+  private rewriteSessionMetadata(
+    record: JsonRecord,
+    newSessionId: string,
+  ): JsonRecord {
+    const next = cloneJsonRecord(record);
+    if (next.type === 'session_meta') {
+      next.payload = {
+        ...(asRecord(next.payload) ?? {}),
+        id: newSessionId,
+      };
+    }
+    for (const key of ['session_id', 'thread_id', 'conversation_id']) {
+      if (typeof next[key] === 'string') {
+        next[key] = newSessionId;
+      }
+    }
+    return next;
+  }
+
+  private buildForkPath(sourcePath: string, newSessionId: string): string {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    return join(dirname(sourcePath), `fork-${stamp}-${newSessionId}.jsonl`);
   }
 
   private normalizeToolName(name: string): string {
@@ -390,6 +550,13 @@ export class CodexHistoryService {
         }
       });
   }
+
+  private async writeJsonl(path: string, records: JsonRecord[]): Promise<void> {
+    const serialized =
+      records.map((record) => JSON.stringify(record)).join('\n') +
+      (records.length ? '\n' : '');
+    await fs.writeFile(path, serialized, 'utf-8');
+  }
 }
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -398,4 +565,8 @@ function asRecord(value: unknown): JsonRecord | null {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function cloneJsonRecord(record: JsonRecord): JsonRecord {
+  return JSON.parse(JSON.stringify(record)) as JsonRecord;
 }

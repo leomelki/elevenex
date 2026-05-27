@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import type {
   AgentAuthStatus,
+  AgentForkConversationRequest,
   AgentImageInput,
   AgentLoginMode,
   AgentLoginStartResult,
@@ -96,13 +97,22 @@ export class PiAgentRuntimeProvider
     return this.runtimeService.setFastMode(sessionId, enabled);
   }
 
+  forkConversation(request: AgentForkConversationRequest) {
+    return this.runtimeService.forkConversation(request);
+  }
+
   submitPrompt(
     sessionId: number,
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
   ) {
-    return this.runtimeService.submitPrompt(sessionId, prompt, titlePrompt, images);
+    return this.runtimeService.submitPrompt(
+      sessionId,
+      prompt,
+      titlePrompt,
+      images,
+    );
   }
 
   interrupt(sessionId: number) {
@@ -119,7 +129,12 @@ export class PiAgentRuntimeProvider
     action?: 'accept' | 'decline' | 'cancel',
     content?: Record<string, string | number | boolean | string[]>,
   ) {
-    return this.runtimeService.answerUserInput(sessionId, requestId, action, content);
+    return this.runtimeService.answerUserInput(
+      sessionId,
+      requestId,
+      action,
+      content,
+    );
   }
 
   cleanupSession(sessionId: number) {

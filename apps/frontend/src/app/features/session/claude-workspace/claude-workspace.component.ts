@@ -56,6 +56,7 @@ import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { SessionsService } from '@/shared/services/sessions.service';
+import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { ClaudeMessageComponent } from './components/claude-message.component';
@@ -79,10 +80,7 @@ import {
 } from './components/claude-agent-inspector.component';
 import { ClaudeTurnChangesComponent } from './components/claude-turn-changes.component';
 import { PairedTranscriptUnit, pairTranscript } from './util/paired-transcript';
-import {
-  TurnAgentSummary,
-  buildTurnAgentSummary,
-} from './util/agent-deep-dive';
+import { TurnAgentSummary, buildTurnAgentSummary } from './util/agent-deep-dive';
 import { TurnChangeDetails, computeTurnChangeDetails } from './util/turn-change-stats';
 import {
   PlanFeedbackPayload,
@@ -102,6 +100,7 @@ import {
   lucideArchiveRestore,
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '@/shared/components/button/button.component';
+import type { CreateSessionForkResponse, SessionFork } from '@/shared/models/session.model';
 import {
   appendDiffSelectionMentions,
   parseDiffSelectionMentions,
@@ -176,6 +175,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly planReviewClosed = output<PlanReviewRequest>();
   readonly activeAgentProviderChange = output<AgentProviderId>();
   readonly agentRuntimeStarted = output<void>();
+  readonly conversationForkCreated = output<CreateSessionForkResponse>();
+  readonly conversationForkOpened = output<SessionFork>();
   readonly unarchive = output<void>();
 
   private readonly destroyRef = inject(DestroyRef);
@@ -184,6 +185,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly ws = inject(ClaudeRuntimeWebsocketService);
   private readonly providerSelection = inject(AgentRuntimeProviderService);
   private readonly sessionsService = inject(SessionsService);
+  private readonly forkDrafts = inject(ConversationForkDraftService);
   private readonly claudeStatusService = inject(ClaudeStatusService);
   private readonly worktreeContextService = inject(WorktreeContextService);
 
@@ -199,8 +201,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly claudeSessionId = signal<string | null>(null);
   readonly providers = signal<AgentRuntimeProviderInfo[]>([]);
   readonly currentProvider = this.providerSelection.selectedProvider;
-  readonly currentProviderInfo = computed(() =>
-    this.providers().find((provider) => provider.id === this.currentProvider()) ?? null,
+  readonly currentProviderInfo = computed(
+    () => this.providers().find((provider) => provider.id === this.currentProvider()) ?? null,
   );
   readonly currentProviderSupportsImages = computed(
     () => this.currentProviderInfo()?.capabilities.multimodalPrompts ?? false,
@@ -247,6 +249,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly expandedTurnChanges = signal<Record<string, boolean>>({});
   readonly armedEditMessageId = signal<string | null>(null);
   readonly rewindingMessageId = signal<string | null>(null);
+  readonly forks = signal<SessionFork[]>([]);
+  readonly expandedForkAnchors = signal<Record<string, boolean>>({});
+  readonly forkingAnchorId = signal<string | null>(null);
   readonly agentInspectorTurnId = signal<string | null>(null);
   readonly agentInspectorSelectedAgentId = signal<string | null>(null);
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
@@ -283,27 +288,27 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly promptIsCommand = computed(() => this.prompt().trimStart().startsWith('/'));
   readonly canAppendContext = computed(
     () =>
-      this.firstPromptContextEnabled()
-      && !this.hasInjectedContext()
-      && !this.promptIsCommand()
-      && this.worktreeContext()?.generationStatus === 'ready'
-      && !!this.worktreeContext()?.contextSentence,
+      this.firstPromptContextEnabled() &&
+      !this.hasInjectedContext() &&
+      !this.promptIsCommand() &&
+      this.worktreeContext()?.generationStatus === 'ready' &&
+      !!this.worktreeContext()?.contextSentence,
   );
   readonly hasInjectedContext = signal(false);
   readonly contextExpanded = signal(false);
 
-  readonly contextPinState = computed<'idle' | 'loading' | 'generating' | 'ready' | 'failed' | 'empty'>(
-    () => {
-      if (this.worktreeContextLoading()) return 'loading';
-      const ctx = this.worktreeContext();
-      if (!ctx) return 'idle';
-      if (ctx.generationStatus === 'generating') return 'generating';
-      if (ctx.generationStatus === 'failed') return 'failed';
-      if (ctx.contextSentence) return 'ready';
-      if (!ctx.hasChanges) return 'empty';
-      return 'idle';
-    },
-  );
+  readonly contextPinState = computed<
+    'idle' | 'loading' | 'generating' | 'ready' | 'failed' | 'empty'
+  >(() => {
+    if (this.worktreeContextLoading()) return 'loading';
+    const ctx = this.worktreeContext();
+    if (!ctx) return 'idle';
+    if (ctx.generationStatus === 'generating') return 'generating';
+    if (ctx.generationStatus === 'failed') return 'failed';
+    if (ctx.contextSentence) return 'ready';
+    if (!ctx.hasChanges) return 'empty';
+    return 'idle';
+  });
 
   readonly showContextPin = computed(() => {
     if (this.archived) return false;
@@ -321,12 +326,18 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   readonly contextPinLabel = computed(() => {
     switch (this.contextPinState()) {
-      case 'loading': return 'Reading context…';
-      case 'generating': return 'Summarizing…';
-      case 'failed': return 'Context unavailable';
-      case 'empty': return 'No changes';
-      case 'ready': return 'Context';
-      default: return 'Context';
+      case 'loading':
+        return 'Reading context…';
+      case 'generating':
+        return 'Summarizing…';
+      case 'failed':
+        return 'Context unavailable';
+      case 'empty':
+        return 'No changes';
+      case 'ready':
+        return 'Context';
+      default:
+        return 'Context';
     }
   });
 
@@ -339,13 +350,17 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     return '';
   });
 
-  readonly contextPinBadge = computed<{ text: string; variant: 'accent' | 'muted' | 'warn' } | null>(() => {
+  readonly contextPinBadge = computed<{
+    text: string;
+    variant: 'accent' | 'muted' | 'warn';
+  } | null>(() => {
     const ctx = this.worktreeContext();
     if (!ctx) return null;
     if (this.contextPinState() === 'failed') return { text: 'Failed', variant: 'warn' };
     if (this.hasInjectedContext()) return { text: 'Used', variant: 'muted' };
     if (!ctx.contextSentence) return null;
-    if (this.promptIsCommand() && this.firstPromptContextEnabled()) return { text: 'Skip', variant: 'muted' };
+    if (this.promptIsCommand() && this.firstPromptContextEnabled())
+      return { text: 'Skip', variant: 'muted' };
     return this.firstPromptContextEnabled()
       ? { text: 'On', variant: 'accent' }
       : { text: 'Off', variant: 'muted' };
@@ -382,16 +397,43 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.firstPromptContextEnabled.update((v) => !v);
   }
 
-readonly messageActionsDisabled = computed(
+  readonly messageActionsDisabled = computed(
     () =>
-      this.archived
-      || this.loading()
-      || this.submitting()
-      || this.runPhase() !== 'idle'
-      || !!this.pendingPermissionRequest()
-      || !!this.pendingUserInputRequest()
-      || this.rewindingMessageId() !== null,
+      this.archived ||
+      this.loading() ||
+      this.submitting() ||
+      this.runPhase() !== 'idle' ||
+      !!this.pendingPermissionRequest() ||
+      !!this.pendingUserInputRequest() ||
+      this.rewindingMessageId() !== null,
   );
+  readonly forkActionsDisabled = computed(
+    () =>
+      this.loading() ||
+      this.submitting() ||
+      this.runPhase() !== 'idle' ||
+      !!this.pendingPermissionRequest() ||
+      !!this.pendingUserInputRequest() ||
+      this.forkingAnchorId() !== null,
+  );
+  readonly forkDisabledReason = computed(() => {
+    if (this.forkingAnchorId()) return 'A fork is already being created.';
+    if (this.loading()) return 'Transcript is still loading.';
+    if (this.submitting() || this.runPhase() !== 'idle') {
+      return 'Forks are available when the session is idle.';
+    }
+    if (this.pendingPermissionRequest() || this.pendingUserInputRequest()) {
+      return 'Resolve the pending request before forking.';
+    }
+    return '';
+  });
+  readonly forksByAnchor = computed(() => {
+    const grouped: Record<string, SessionFork[]> = {};
+    for (const fork of this.forks()) {
+      grouped[fork.anchorMessageId] = [...(grouped[fork.anchorMessageId] ?? []), fork];
+    }
+    return grouped;
+  });
 
   private bootstrapVersion = 0;
 
@@ -466,9 +508,9 @@ readonly messageActionsDisabled = computed(
       const collapsibleUnits: PairedTranscriptUnit[] = [];
       for (const intermediate of intermediateUnits) {
         if (
-          intermediate.kind === 'thinking'
-          && lastAssistantSourceId
-          && intermediate.item.sourceMessageId === lastAssistantSourceId
+          intermediate.kind === 'thinking' &&
+          lastAssistantSourceId &&
+          intermediate.item.sourceMessageId === lastAssistantSourceId
         ) {
           siblingThinkingUnits.push(intermediate);
           continue;
@@ -548,11 +590,7 @@ readonly messageActionsDisabled = computed(
 
     const items = this.transcriptItems();
     for (let i = items.length - 1; i >= 0; i--) {
-      const review = planReviewFromTranscriptItem(
-        items[i],
-        this.sessionId,
-        this.currentProvider(),
-      );
+      const review = planReviewFromTranscriptItem(items[i], this.sessionId, this.currentProvider());
       if (review) return review;
     }
     return null;
@@ -654,6 +692,7 @@ readonly messageActionsDisabled = computed(
     if (this.isVisible) {
       this.providerSelection.setProvider(this.activeAgentProvider);
       void this.bootstrapForMode();
+      this.applyPendingForkDraft();
     }
   }
 
@@ -665,9 +704,13 @@ readonly messageActionsDisabled = computed(
       if (this.isVisible) {
         this.providerSelection.setProvider(this.activeAgentProvider);
         void this.bootstrapForMode();
+        this.applyPendingForkDraft();
       }
     }
-    if (changes['hasInjectedWorktreeContext'] && !changes['hasInjectedWorktreeContext'].firstChange) {
+    if (
+      changes['hasInjectedWorktreeContext'] &&
+      !changes['hasInjectedWorktreeContext'].firstChange
+    ) {
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
     }
     if (changes['hasStartedAgentRuntime'] && !changes['hasStartedAgentRuntime'].firstChange) {
@@ -679,6 +722,7 @@ readonly messageActionsDisabled = computed(
         this.reset();
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
         void this.bootstrapForMode();
+        this.applyPendingForkDraft();
       } else if (!this.archived) {
         void this.loadWorktreeContext(false);
       }
@@ -688,17 +732,19 @@ readonly messageActionsDisabled = computed(
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       this.providerSelection.setProvider(this.activeAgentProvider);
       void this.bootstrapForMode();
+      this.applyPendingForkDraft();
     }
     if (
-      changes['activeAgentProvider']
-      && this.isVisible
-      && !changes['activeAgentProvider'].firstChange
+      changes['activeAgentProvider'] &&
+      this.isVisible &&
+      !changes['activeAgentProvider'].firstChange
     ) {
       this.providerSelection.setProvider(this.activeAgentProvider);
       if (this.bootstrappedProvider !== this.currentProvider()) {
         this.reset();
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
         void this.bootstrapForMode();
+        this.applyPendingForkDraft();
       }
     }
   }
@@ -723,7 +769,8 @@ readonly messageActionsDisabled = computed(
       typeof payload === 'string' ? { text: payload, images: [], diffMentions: [] } : payload;
     const trimmed = normalized.text.trim();
     const diffMentions = normalized.diffMentions ?? [];
-    const visiblePrompt = trimmed || (diffMentions.length ? 'Review the mentioned diff selection.' : '');
+    const visiblePrompt =
+      trimmed || (diffMentions.length ? 'Review the mentioned diff selection.' : '');
     const promptWithMentions = appendDiffSelectionMentions(visiblePrompt, diffMentions);
     const images = this.currentProviderSupportsImages() ? normalized.images : [];
     if (!promptWithMentions.trim() && !images.length) return;
@@ -734,10 +781,9 @@ readonly messageActionsDisabled = computed(
       this.currentRunHadSubstantiveOutput = false;
       this.interruptedRunShouldRestorePrompt = false;
       this.submitting.set(true);
-      const optimisticContent =
-        images.length
-          ? [promptWithMentions, ...images.map(() => '[image]')].filter(Boolean).join('\n')
-          : promptWithMentions;
+      const optimisticContent = images.length
+        ? [promptWithMentions, ...images.map(() => '[image]')].filter(Boolean).join('\n')
+        : promptWithMentions;
       this.optimisticUserItems.update((items) => [
         ...items,
         {
@@ -757,9 +803,7 @@ readonly messageActionsDisabled = computed(
       type: 'submit_prompt',
       prompt: prepared.prompt,
       titlePrompt: visiblePrompt,
-      ...(images.length
-        ? { images: images.map((i) => this.toRuntimeImage(i)) }
-        : {}),
+      ...(images.length ? { images: images.map((i) => this.toRuntimeImage(i)) } : {}),
     });
     if (prepared.consumedContextSentence) {
       this.markWorktreeContextConsumed(prepared.consumedContextSentence);
@@ -955,7 +999,10 @@ readonly messageActionsDisabled = computed(
     });
   }
 
-  answerUserInput(payload: { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> }): void {
+  answerUserInput(payload: {
+    action: 'accept' | 'decline' | 'cancel';
+    content?: Record<string, unknown>;
+  }): void {
     if (this.archived) return;
     const req = this.pendingUserInputRequest();
     if (!req) return;
@@ -983,7 +1030,10 @@ readonly messageActionsDisabled = computed(
   }
 
   async onPermissionModeChange(mode: ClaudePermissionMode): Promise<void> {
-    if (this.currentProvider() === 'codex' && (mode === ('planBypass' as ClaudePermissionMode) || mode === 'auto')) {
+    if (
+      this.currentProvider() === 'codex' &&
+      (mode === ('planBypass' as ClaudePermissionMode) || mode === 'auto')
+    ) {
       mode = 'default';
     }
     if (mode === ('planBypass' as ClaudePermissionMode)) {
@@ -1018,8 +1068,9 @@ readonly messageActionsDisabled = computed(
     this.providerSelection.setProvider(provider);
     this.activeAgentProvider = provider;
     this.activeAgentProviderChange.emit(provider);
-    void firstValueFrom(this.sessionsService.updateActiveAgentProvider(this.sessionId, provider))
-      .catch(() => undefined);
+    void firstValueFrom(
+      this.sessionsService.updateActiveAgentProvider(this.sessionId, provider),
+    ).catch(() => undefined);
     this.reset();
     this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
     void this.bootstrap();
@@ -1100,7 +1151,9 @@ readonly messageActionsDisabled = computed(
   }
 
   isLiveToolUse(toolUseId: string): boolean {
-    return this.liveItems().some((item) => item.kind === 'tool_use' && item.toolUseId === toolUseId);
+    return this.liveItems().some(
+      (item) => item.kind === 'tool_use' && item.toolUseId === toolUseId,
+    );
   }
 
   toolProgressForToolUse(toolUseId: string): ClaudeToolProgress | null {
@@ -1178,8 +1231,99 @@ readonly messageActionsDisabled = computed(
     void this.ensureAgentHistory(agentId);
   }
 
+  canCopyMessage(item: ClaudeTranscriptItem): boolean {
+    return (item.kind === 'user' || item.kind === 'assistant') && Boolean(item.content?.trim());
+  }
+
+  canEditMessage(item: ClaudeTranscriptItem): boolean {
+    return (
+      !this.archived &&
+      item.kind === 'user' &&
+      !!item.sourceMessageId &&
+      (this.currentProviderInfo()?.capabilities.rewindConversation ?? false)
+    );
+  }
+
   canShowMessageActions(item: ClaudeTranscriptItem): boolean {
     return !this.archived && item.kind === 'user' && !!item.sourceMessageId;
+  }
+
+  canForkMessage(item: ClaudeTranscriptItem): boolean {
+    return (
+      (item.kind === 'user' || item.kind === 'assistant') &&
+      !!this.forkAnchorForItem(item) &&
+      !this.isStreamingMessage(item.id)
+    );
+  }
+
+  forkAnchorForItem(item: ClaudeTranscriptItem): string | null {
+    return item.transcriptMessageId ?? null;
+  }
+
+  forksForItem(item: ClaudeTranscriptItem): SessionFork[] {
+    const anchor = this.forkAnchorForItem(item);
+    return anchor ? (this.forksByAnchor()[anchor] ?? []) : [];
+  }
+
+  isForkingItem(item: ClaudeTranscriptItem): boolean {
+    const anchor = this.forkAnchorForItem(item);
+    return !!anchor && this.forkingAnchorId() === anchor;
+  }
+
+  forksExpandedForItem(item: ClaudeTranscriptItem): boolean {
+    const anchor = this.forkAnchorForItem(item);
+    return !!anchor && !!this.expandedForkAnchors()[anchor];
+  }
+
+  toggleForksForItem(item: ClaudeTranscriptItem): void {
+    const anchor = this.forkAnchorForItem(item);
+    if (!anchor) return;
+    this.expandedForkAnchors.update((state) => ({
+      ...state,
+      [anchor]: !state[anchor],
+    }));
+  }
+
+  async forkMessage(item: ClaudeTranscriptItem): Promise<void> {
+    const anchorMessageId = this.forkAnchorForItem(item);
+    if (
+      !anchorMessageId ||
+      (item.kind !== 'user' && item.kind !== 'assistant') ||
+      this.forkActionsDisabled()
+    ) {
+      return;
+    }
+
+    this.forkingAnchorId.set(anchorMessageId);
+    try {
+      const response = await firstValueFrom(
+        this.sessionsService.createFork(this.sessionId, {
+          anchorMessageId,
+          anchorMessageKind: item.kind,
+          anchorExcerpt: this.forkExcerptForItem(item),
+        }),
+      );
+      this.forks.update((forks) => [...forks, response.fork]);
+      this.expandedForkAnchors.update((state) => ({
+        ...state,
+        [anchorMessageId]: true,
+      }));
+      this.conversationForkCreated.emit(response);
+      toast.success('Conversation fork created');
+    } catch (error) {
+      toast.error(this.getHttpErrorMessage(error, 'Could not create fork.'));
+    } finally {
+      this.forkingAnchorId.set(null);
+    }
+  }
+
+  openFork(fork: SessionFork): void {
+    if (!fork.childSession) return;
+    this.conversationForkOpened.emit(fork);
+  }
+
+  private forkExcerptForItem(item: ClaudeTranscriptItem): string {
+    return parseDiffSelectionMentions(item.content).text.trim().slice(0, 500);
   }
 
   isEditArmed(item: ClaudeTranscriptItem): boolean {
@@ -1190,7 +1334,7 @@ readonly messageActionsDisabled = computed(
     const selectedContent = typeof selectedText === 'string' ? selectedText.trim() : '';
     const itemContent = parseDiffSelectionMentions(item.content).text;
     const content = selectedContent || itemContent;
-    if (!content || this.messageActionsDisabled()) return;
+    if (!content) return;
     if (!navigator.clipboard?.writeText) {
       toast.error('Clipboard is not available.');
       return;
@@ -1220,16 +1364,14 @@ readonly messageActionsDisabled = computed(
       toast.success('Message restored for editing');
     } catch (error) {
       const message =
-        (error as { error?: { message?: string } })?.error?.message
-        || (error instanceof Error ? error.message : null)
-        || 'Could not rewind the conversation.';
+        (error as { error?: { message?: string } })?.error?.message ||
+        (error instanceof Error ? error.message : null) ||
+        'Could not rewind the conversation.';
       toast.error(message);
     }
   }
 
-  private async restorePromptFromMessage(
-    item: ClaudeTranscriptItem,
-  ): Promise<void> {
+  private async restorePromptFromMessage(item: ClaudeTranscriptItem): Promise<void> {
     const messageId = item.sourceMessageId;
     const content = item.content ?? '';
     const restored = parseDiffSelectionMentions(content);
@@ -1242,9 +1384,7 @@ readonly messageActionsDisabled = computed(
         firstValueFrom(this.api.getRuntimeState(this.sessionId)),
       ]);
 
-      this.historyItems.set(
-        [...history].sort((l, r) => l.timestamp.localeCompare(r.timestamp)),
-      );
+      this.historyItems.set([...history].sort((l, r) => l.timestamp.localeCompare(r.timestamp)));
       this.applyRuntimeState(runtimeState);
       this.optimisticUserItems.set([]);
       this.liveItems.set([]);
@@ -1328,6 +1468,7 @@ readonly messageActionsDisabled = computed(
     this.ws.send(this.sessionId, { type: 'hydrate' });
 
     void this.refreshAutocomplete(version).catch(() => undefined);
+    void this.loadForks(version);
     if (version === this.bootstrapVersion) this.loading.set(false);
   }
 
@@ -1339,11 +1480,12 @@ readonly messageActionsDisabled = computed(
     void this.loadProviders();
 
     try {
-      const history = await firstValueFrom(
+      const history = (await firstValueFrom(
         this.agentApi.getHistory(this.sessionId, this.activeAgentProvider),
-      ) as ClaudeTranscriptItem[];
+      )) as ClaudeTranscriptItem[];
       if (version !== this.bootstrapVersion) return;
       this.historyItems.set(history);
+      void this.loadForks(version);
       this.liveItems.set([]);
       this.optimisticUserItems.set([]);
       this.runPhase.set('idle');
@@ -1367,6 +1509,26 @@ readonly messageActionsDisabled = computed(
     return this.archived ? this.bootstrapArchived() : this.bootstrap();
   }
 
+  private applyPendingForkDraft(): void {
+    const draft = this.forkDrafts.consumeDraft(this.sessionId);
+    if (!draft) return;
+    const parsed = parseDiffSelectionMentions(draft);
+    this.prompt.set(parsed.text);
+    this.pendingDiffMentions.set(parsed.mentions);
+    queueMicrotask(() => this.composer?.focusAtEnd());
+  }
+
+  private async loadForks(version: number = this.bootstrapVersion): Promise<void> {
+    try {
+      const forks = await firstValueFrom(this.sessionsService.getForks(this.sessionId));
+      if (version !== this.bootstrapVersion) return;
+      this.forks.set(forks);
+    } catch {
+      if (version !== this.bootstrapVersion) return;
+      this.forks.set([]);
+    }
+  }
+
   onRootRefInput(value: string): void {
     this.draftRootRef.set(value);
   }
@@ -1385,7 +1547,9 @@ readonly messageActionsDisabled = computed(
     const rootRef = this.draftRootRef().trim() || null;
     this.worktreeContextBusy.set(true);
     try {
-      await firstValueFrom(this.worktreeContextService.updateRootRef(this.repoId, this.worktreePath, rootRef));
+      await firstValueFrom(
+        this.worktreeContextService.updateRootRef(this.repoId, this.worktreePath, rootRef),
+      );
       const snapshot = await firstValueFrom(
         this.worktreeContextService.generate(this.repoId, this.worktreePath, {
           force: true,
@@ -1423,12 +1587,8 @@ readonly messageActionsDisabled = computed(
   private async loadWorktreeContext(triggerGenerate = true): Promise<void> {
     this.worktreeContextLoading.set(true);
     const deferGeneration =
-      triggerGenerate
-      && (
-        !this.runtimeStarted()
-        || this.runPhase() !== 'idle'
-        || this.submitting()
-      );
+      triggerGenerate &&
+      (!this.runtimeStarted() || this.runPhase() !== 'idle' || this.submitting());
     try {
       const snapshot = await firstValueFrom(
         this.worktreeContextService.get(this.repoId, this.worktreePath, {
@@ -1439,12 +1599,12 @@ readonly messageActionsDisabled = computed(
       this.draftRootRef.set(snapshot.rootRef ?? '');
 
       const shouldAutoGenerate =
-        triggerGenerate
-        && !deferGeneration
-        && !snapshot.hasRecord
-        && snapshot.canGenerate
-        && snapshot.generationStatus !== 'generating'
-        && !this.worktreeContextBusy();
+        triggerGenerate &&
+        !deferGeneration &&
+        !snapshot.hasRecord &&
+        snapshot.canGenerate &&
+        snapshot.generationStatus !== 'generating' &&
+        !this.worktreeContextBusy();
 
       if (shouldAutoGenerate) {
         console.info(
@@ -1486,13 +1646,13 @@ readonly messageActionsDisabled = computed(
     this.deferredContextGenerationTimer = window.setTimeout(() => {
       this.deferredContextGenerationTimer = null;
       if (
-        !this.runtimeStarted()
-        || this.hasInjectedContext()
-        || this.runPhase() !== 'idle'
-        || this.submitting()
-        || this.worktreeContextBusy()
-        || this.worktreeContextLoading()
-        || this.worktreeContext()?.contextSentence
+        !this.runtimeStarted() ||
+        this.hasInjectedContext() ||
+        this.runPhase() !== 'idle' ||
+        this.submitting() ||
+        this.worktreeContextBusy() ||
+        this.worktreeContextLoading() ||
+        this.worktreeContext()?.contextSentence
       ) {
         this.scheduleDeferredContextGeneration();
         return;
@@ -1502,9 +1662,7 @@ readonly messageActionsDisabled = computed(
   }
 
   private async refreshAutocomplete(version: number = this.bootstrapVersion): Promise<void> {
-    const autocompleteItems = await firstValueFrom(
-      this.api.getAutocompleteItems(this.sessionId),
-    );
+    const autocompleteItems = await firstValueFrom(this.api.getAutocompleteItems(this.sessionId));
     if (version !== this.bootstrapVersion) return;
     this.autocompleteItems.set(autocompleteItems);
   }
@@ -1796,7 +1954,9 @@ readonly messageActionsDisabled = computed(
     this.liveItems.set(preSyncLiveItems.filter((item) => item.kind === 'error'));
   }
 
-  private transcriptContentKey(item: ClaudeTranscriptItem): `${string}:${ClaudeTranscriptItemKind}` | null {
+  private transcriptContentKey(
+    item: ClaudeTranscriptItem,
+  ): `${string}:${ClaudeTranscriptItemKind}` | null {
     if (item.kind !== 'assistant' && item.kind !== 'thinking') {
       return null;
     }
@@ -1931,6 +2091,9 @@ readonly messageActionsDisabled = computed(
     this.expandedTurnChanges.set({});
     this.armedEditMessageId.set(null);
     this.rewindingMessageId.set(null);
+    this.forks.set([]);
+    this.expandedForkAnchors.set({});
+    this.forkingAnchorId.set(null);
     this.interruptedRunShouldRestorePrompt = false;
     this.currentRunHadSubstantiveOutput = false;
     this.closeAgentInspector();
@@ -1969,23 +2132,20 @@ readonly messageActionsDisabled = computed(
     consumedContextSentence: string | null;
   } {
     if (
-      this.hasInjectedContext()
-      || !this.firstPromptContextEnabled()
-      || prompt.trimStart().startsWith('/')
+      this.hasInjectedContext() ||
+      !this.firstPromptContextEnabled() ||
+      prompt.trimStart().startsWith('/')
     ) {
       return { prompt, consumedContextSentence: null };
     }
 
     const localContextSentence = this.worktreeContext()?.contextSentence?.trim();
-    if (
-      this.worktreeContext()?.generationStatus !== 'ready'
-      || !localContextSentence
-    ) {
+    if (this.worktreeContext()?.generationStatus !== 'ready' || !localContextSentence) {
       return { prompt, consumedContextSentence: null };
     }
 
     this.hasInjectedContext.set(true);
-    this.worktreeContext.update(snapshot =>
+    this.worktreeContext.update((snapshot) =>
       snapshot ? { ...snapshot, lastUsedAt: new Date().toISOString() } : snapshot,
     );
     return {
@@ -1998,10 +2158,7 @@ readonly messageActionsDisabled = computed(
     void firstValueFrom(
       this.worktreeContextService.consume(this.sessionId, true, contextSentence),
     ).catch((error) => {
-      console.warn(
-        '[worktree-context] failed to mark first-message context consumed',
-        error,
-      );
+      console.warn('[worktree-context] failed to mark first-message context consumed', error);
     });
   }
 
@@ -2020,9 +2177,7 @@ readonly messageActionsDisabled = computed(
       let result = items;
       for (const { itemId, delta } of deltas) {
         result = result.map((item) =>
-          item.id === itemId
-            ? { ...item, content: `${item.content ?? ''}${delta}` }
-            : item,
+          item.id === itemId ? { ...item, content: `${item.content ?? ''}${delta}` } : item,
         );
       }
       return result;
@@ -2043,9 +2198,7 @@ readonly messageActionsDisabled = computed(
     }));
 
     try {
-      const data = await firstValueFrom(
-        this.api.getSubagentHistory(this.sessionId, agentId),
-      );
+      const data = await firstValueFrom(this.api.getSubagentHistory(this.sessionId, agentId));
       this.agentHistoryById.update((state) => ({
         ...state,
         [agentId]: {
@@ -2056,8 +2209,8 @@ readonly messageActionsDisabled = computed(
       }));
     } catch (error) {
       const message =
-        (error as { error?: { message?: string } })?.error?.message
-        || (error instanceof Error ? error.message : 'Could not load agent history.');
+        (error as { error?: { message?: string } })?.error?.message ||
+        (error instanceof Error ? error.message : 'Could not load agent history.');
       this.agentHistoryById.update((state) => ({
         ...state,
         [agentId]: { loading: false, data: null, error: message },
@@ -2079,12 +2232,11 @@ readonly messageActionsDisabled = computed(
 
   private getHttpErrorMessage(error: unknown, fallback: string): string {
     return (
-      (error as { error?: { message?: string } })?.error?.message
-      || (error instanceof Error ? error.message : null)
-      || fallback
+      (error as { error?: { message?: string } })?.error?.message ||
+      (error instanceof Error ? error.message : null) ||
+      fallback
     );
   }
-
 }
 
 function buildWorktreeContextPrompt(contextSentence: string, prompt: string): string {
@@ -2097,7 +2249,9 @@ function buildWorktreeContextPrompt(contextSentence: string, prompt: string): st
   ].join('\n');
 }
 
-function isUserMessageUnit(unit: PairedTranscriptUnit): unit is Extract<PairedTranscriptUnit, { kind: 'message' }> {
+function isUserMessageUnit(
+  unit: PairedTranscriptUnit,
+): unit is Extract<PairedTranscriptUnit, { kind: 'message' }> {
   return unit.kind === 'message' && unit.item.kind === 'user';
 }
 
@@ -2122,7 +2276,10 @@ function findLastTopLevelUserMessage(items: ClaudeTranscriptItem[]): ClaudeTrans
   return null;
 }
 
-function hasSubstantiveOutputAfterMessage(items: ClaudeTranscriptItem[], messageId: string): boolean {
+function hasSubstantiveOutputAfterMessage(
+  items: ClaudeTranscriptItem[],
+  messageId: string,
+): boolean {
   const index = items.findIndex((item) => item.id === messageId);
   if (index === -1) return true;
 

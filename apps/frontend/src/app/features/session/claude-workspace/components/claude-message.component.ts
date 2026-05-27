@@ -10,16 +10,21 @@ import {
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideChevronDown,
   lucideCheck,
   lucideCopy,
+  lucideExternalLink,
   lucideFileCode,
   lucideFileText,
+  lucideGitFork,
   lucideInfo,
   lucidePencil,
+  lucidePlus,
   lucideTriangleAlert,
   lucideX,
 } from '@ng-icons/lucide';
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
+import type { SessionFork } from '@/shared/models/session.model';
 import { MarkdownPipe } from '../pipes/markdown.pipe';
 import { hasProposedPlan } from '../util/proposed-plan';
 import { PlanReviewRequest } from '@/features/plan-annotator';
@@ -38,12 +43,16 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
+      lucideChevronDown,
       lucideCheck,
       lucideCopy,
+      lucideExternalLink,
       lucideFileCode,
       lucideFileText,
+      lucideGitFork,
       lucideInfo,
       lucidePencil,
+      lucidePlus,
       lucideTriangleAlert,
       lucideX,
     }),
@@ -75,13 +84,17 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
                               <span class="cw-msg__mention-dir">{{ dirname }}</span>
                               <span class="cw-msg__mention-slash" aria-hidden="true">/</span>
                             }
-                            <strong class="cw-msg__mention-name">{{ mentionBasename(mention) }}</strong>
+                            <strong class="cw-msg__mention-name">{{
+                              mentionBasename(mention)
+                            }}</strong>
                           </span>
                           <span class="cw-msg__mention-lines">{{ mentionLineLabel(mention) }}</span>
                         </div>
                         <p class="cw-msg__mention-preview">{{ mentionPreview(mention) }}</p>
                         <span class="cw-msg__mention-meta">
-                          {{ mention.status }} · {{ mention.context.before.length + mention.context.after.length }} context lines{{ mention.truncated ? ' · truncated' : '' }}
+                          {{ mention.status }} ·
+                          {{ mention.context.before.length + mention.context.after.length }} context
+                          lines{{ mention.truncated ? ' · truncated' : '' }}
                         </span>
                       </div>
                     </article>
@@ -89,59 +102,96 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
                 </div>
               }
             </div>
-            @if (timestampLabel() || showActions()) {
+            @if (timestampLabel() || hasInlineAffordances()) {
               <div class="cw-msg__meta-row">
-                @if (showActions()) {
+                @if (showCopy() || showEdit() || showFork()) {
                   <div class="cw-msg__actions">
-                    <button
-                      type="button"
-                      class="cw-msg__action"
-                      data-cw-edit-action
-                      title="Copy message"
-                      aria-label="Copy message"
-                      [disabled]="actionsDisabled()"
-                      (mousedown)="preserveSelection($event)"
-                      (click)="copy.emit(getSelectedText())"
-                    >
-                      <ng-icon name="lucideCopy" size="12" />
-                    </button>
-                    @if (editArmed()) {
+                    @if (showCopy()) {
                       <button
                         type="button"
                         class="cw-msg__action"
                         data-cw-edit-action
-                        title="Confirm edit"
-                        aria-label="Confirm edit"
-                        [disabled]="actionsDisabled()"
-                        (click)="confirmEdit.emit()"
+                        title="Copy message"
+                        aria-label="Copy message"
+                        (mousedown)="preserveSelection($event)"
+                        (click)="copy.emit(getSelectedText())"
                       >
-                        <ng-icon name="lucideCheck" size="12" />
-                      </button>
-                      <button
-                        type="button"
-                        class="cw-msg__action"
-                        data-cw-edit-action
-                        title="Cancel edit"
-                        aria-label="Cancel edit"
-                        [disabled]="actionsDisabled()"
-                        (click)="cancelEdit.emit()"
-                      >
-                        <ng-icon name="lucideX" size="12" />
-                      </button>
-                    } @else {
-                      <button
-                        type="button"
-                        class="cw-msg__action"
-                        data-cw-edit-action
-                        title="Edit message"
-                        aria-label="Edit message"
-                        [disabled]="actionsDisabled()"
-                        (click)="armEdit.emit()"
-                      >
-                        <ng-icon name="lucidePencil" size="12" />
+                        <ng-icon name="lucideCopy" size="12" />
                       </button>
                     }
+                    @if (showFork()) {
+                      <button
+                        type="button"
+                        class="cw-msg__action"
+                        data-cw-edit-action
+                        [title]="forkDisabled() ? forkDisabledReason() : 'Fork from here'"
+                        aria-label="Fork from here"
+                        [disabled]="forkDisabled()"
+                        (click)="fork.emit()"
+                      >
+                        @if (forking()) {
+                          <span class="cw-msg__spinner"></span>
+                        } @else {
+                          <ng-icon name="lucideGitFork" size="12" />
+                        }
+                      </button>
+                    }
+                    @if (showEdit()) {
+                      @if (editArmed()) {
+                        <button
+                          type="button"
+                          class="cw-msg__action"
+                          data-cw-edit-action
+                          title="Confirm edit"
+                          aria-label="Confirm edit"
+                          [disabled]="actionsDisabled()"
+                          (click)="confirmEdit.emit()"
+                        >
+                          <ng-icon name="lucideCheck" size="12" />
+                        </button>
+                        <button
+                          type="button"
+                          class="cw-msg__action"
+                          data-cw-edit-action
+                          title="Cancel edit"
+                          aria-label="Cancel edit"
+                          [disabled]="actionsDisabled()"
+                          (click)="cancelEdit.emit()"
+                        >
+                          <ng-icon name="lucideX" size="12" />
+                        </button>
+                      } @else {
+                        <button
+                          type="button"
+                          class="cw-msg__action"
+                          data-cw-edit-action
+                          title="Edit message"
+                          aria-label="Edit message"
+                          [disabled]="actionsDisabled()"
+                          (click)="armEdit.emit()"
+                        >
+                          <ng-icon name="lucidePencil" size="12" />
+                        </button>
+                      }
+                    }
                   </div>
+                }
+                @if (forks().length) {
+                  <button
+                    type="button"
+                    class="cw-msg__fork-marker"
+                    [attr.aria-expanded]="forksExpanded()"
+                    (click)="toggleForks.emit()"
+                  >
+                    <ng-icon name="lucideGitFork" size="11" />
+                    <span>{{ forkCountLabel() }}</span>
+                    <ng-icon
+                      class="cw-msg__fork-chevron"
+                      [class.cw-msg__fork-chevron--open]="forksExpanded()"
+                      name="lucideChevronDown"
+                      size="11"
+                    />
+                  </button>
                 }
                 @if (timestampLabel(); as label) {
                   <div class="cw-msg__meta" aria-hidden="true">{{ label }}</div>
@@ -149,11 +199,48 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
               </div>
             }
           </div>
+          @if (forksExpanded()) {
+            <div class="cw-msg__fork-panel">
+              @for (fork of forks(); track fork.id) {
+                <div class="cw-msg__fork-row">
+                  <div class="cw-msg__fork-copy">
+                    <span class="cw-msg__fork-name">{{
+                      fork.childSession?.name || 'Session ' + fork.childSessionId
+                    }}</span>
+                    <span class="cw-msg__fork-meta"
+                      >{{ fork.childSession?.status || 'deleted' }} ·
+                      {{ forkTimeLabel(fork) }}</span
+                    >
+                  </div>
+                  <button
+                    type="button"
+                    class="cw-msg__fork-open"
+                    [disabled]="!fork.childSession"
+                    (click)="openFork.emit(fork)"
+                  >
+                    <ng-icon name="lucideExternalLink" size="12" />
+                    Open
+                  </button>
+                </div>
+              }
+              @if (showFork()) {
+                <button
+                  type="button"
+                  class="cw-msg__fork-again"
+                  [disabled]="forkDisabled()"
+                  (click)="forkAgain.emit()"
+                >
+                  <ng-icon name="lucidePlus" size="12" />
+                  Fork again
+                </button>
+              }
+            </div>
+          }
           @if (editArmed()) {
             <div class="cw-msg__confirm" data-cw-edit-confirm-root>
               <p class="cw-msg__confirm-copy">
-                Rewind to this message? This message and everything after it will be removed.
-                The prompt will be restored to the composer.
+                Rewind to this message? This message and everything after it will be removed. The
+                prompt will be restored to the composer.
               </p>
             </div>
           }
@@ -164,7 +251,10 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
           <div class="cw-msg__body">
             @if (item().content) {
               @if (planReview(); as review) {
-                <section class="cw-plan-launcher" [attr.data-disabled]="!planReviewEnabled() || null">
+                <section
+                  class="cw-plan-launcher"
+                  [attr.data-disabled]="!planReviewEnabled() || null"
+                >
                   <div class="cw-plan-launcher__copy">
                     <span class="cw-plan-launcher__icon" aria-hidden="true">
                       <ng-icon name="lucideFileText" size="15" />
@@ -177,7 +267,9 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
                       @if (!planReviewEnabled()) {
                         <span>Review is available when the session is idle.</span>
                       } @else {
-                        <span>Open the annotator to read, comment, approve, or request changes.</span>
+                        <span
+                          >Open the annotator to read, comment, approve, or request changes.</span
+                        >
                       }
                     </div>
                   </div>
@@ -199,8 +291,98 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
             } @else if (streaming()) {
               <span class="cw-caret cw-caret--waiting"></span>
             }
-            @if (timestampLabel(); as label) {
-              <div class="cw-msg__meta" aria-hidden="true">{{ label }}</div>
+            @if (timestampLabel() || hasInlineAffordances()) {
+              <div class="cw-msg__meta-row">
+                @if (showCopy() || showFork()) {
+                  <div class="cw-msg__actions">
+                    @if (showCopy()) {
+                      <button
+                        type="button"
+                        class="cw-msg__action"
+                        title="Copy message"
+                        aria-label="Copy message"
+                        (mousedown)="preserveSelection($event)"
+                        (click)="copy.emit(getSelectedText())"
+                      >
+                        <ng-icon name="lucideCopy" size="12" />
+                      </button>
+                    }
+                    @if (showFork()) {
+                      <button
+                        type="button"
+                        class="cw-msg__action"
+                        [title]="forkDisabled() ? forkDisabledReason() : 'Fork from here'"
+                        aria-label="Fork from here"
+                        [disabled]="forkDisabled()"
+                        (click)="fork.emit()"
+                      >
+                        @if (forking()) {
+                          <span class="cw-msg__spinner"></span>
+                        } @else {
+                          <ng-icon name="lucideGitFork" size="12" />
+                        }
+                      </button>
+                    }
+                  </div>
+                }
+                @if (forks().length) {
+                  <button
+                    type="button"
+                    class="cw-msg__fork-marker"
+                    [attr.aria-expanded]="forksExpanded()"
+                    (click)="toggleForks.emit()"
+                  >
+                    <ng-icon name="lucideGitFork" size="11" />
+                    <span>{{ forkCountLabel() }}</span>
+                    <ng-icon
+                      class="cw-msg__fork-chevron"
+                      [class.cw-msg__fork-chevron--open]="forksExpanded()"
+                      name="lucideChevronDown"
+                      size="11"
+                    />
+                  </button>
+                }
+                @if (timestampLabel(); as label) {
+                  <div class="cw-msg__meta" aria-hidden="true">{{ label }}</div>
+                }
+              </div>
+            }
+            @if (forksExpanded()) {
+              <div class="cw-msg__fork-panel">
+                @for (fork of forks(); track fork.id) {
+                  <div class="cw-msg__fork-row">
+                    <div class="cw-msg__fork-copy">
+                      <span class="cw-msg__fork-name">{{
+                        fork.childSession?.name || 'Session ' + fork.childSessionId
+                      }}</span>
+                      <span class="cw-msg__fork-meta"
+                        >{{ fork.childSession?.status || 'deleted' }} ·
+                        {{ forkTimeLabel(fork) }}</span
+                      >
+                    </div>
+                    <button
+                      type="button"
+                      class="cw-msg__fork-open"
+                      [disabled]="!fork.childSession"
+                      (click)="openFork.emit(fork)"
+                    >
+                      <ng-icon name="lucideExternalLink" size="12" />
+                      Open
+                    </button>
+                  </div>
+                }
+                @if (showFork()) {
+                  <button
+                    type="button"
+                    class="cw-msg__fork-again"
+                    [disabled]="forkDisabled()"
+                    (click)="forkAgain.emit()"
+                  >
+                    <ng-icon name="lucidePlus" size="12" />
+                    Fork again
+                  </button>
+                }
+              </div>
             }
           </div>
         </div>
@@ -431,6 +613,124 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
       .cw-msg__action:disabled {
         opacity: 0.45;
         cursor: not-allowed;
+      }
+      .cw-msg__spinner {
+        width: 0.75rem;
+        height: 0.75rem;
+        border: 1.5px solid color-mix(in oklab, var(--primary) 35%, transparent);
+        border-top-color: var(--primary);
+        border-radius: 999px;
+        animation: cw-spin 650ms linear infinite;
+      }
+      .cw-msg__fork-marker {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        height: 1.55rem;
+        border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
+        border-radius: 999px;
+        background: color-mix(in oklab, var(--background) 78%, transparent);
+        color: color-mix(in oklab, var(--muted-foreground) 92%, transparent);
+        padding: 0 0.5rem;
+        font: inherit;
+        font-size: 0.68rem;
+        font-weight: 650;
+        cursor: pointer;
+        transition:
+          border-color 140ms ease,
+          background-color 140ms ease,
+          color 140ms ease;
+      }
+      .cw-msg__fork-marker:hover,
+      .cw-msg__fork-marker:focus-visible,
+      .cw-msg__fork-marker[aria-expanded='true'] {
+        outline: none;
+        border-color: color-mix(in oklab, var(--primary) 32%, var(--border));
+        background: color-mix(in oklab, var(--primary) 7%, var(--background));
+        color: var(--foreground);
+      }
+      .cw-msg__fork-chevron {
+        transition: transform 140ms ease;
+      }
+      .cw-msg__fork-chevron--open {
+        transform: rotate(180deg);
+      }
+      .cw-msg__fork-panel {
+        display: grid;
+        gap: 0.35rem;
+        width: min(100%, 28rem);
+        margin-top: 0.35rem;
+        padding: 0.45rem;
+        border: 1px solid color-mix(in oklab, var(--primary) 20%, var(--border));
+        border-radius: 0.7rem;
+        background: color-mix(in oklab, var(--card) 92%, var(--background));
+        box-shadow: 0 12px 28px -24px color-mix(in oklab, var(--foreground) 44%, transparent);
+      }
+      .cw-msg--user .cw-msg__fork-panel {
+        align-self: flex-end;
+      }
+      .cw-msg__fork-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+        min-width: 0;
+        border-radius: 0.5rem;
+        padding: 0.38rem 0.45rem;
+        background: color-mix(in oklab, var(--foreground) 3%, transparent);
+      }
+      .cw-msg__fork-copy {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .cw-msg__fork-name {
+        overflow: hidden;
+        color: var(--foreground);
+        font-size: 0.76rem;
+        font-weight: 700;
+        line-height: 1.25;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cw-msg__fork-meta {
+        color: var(--muted-foreground);
+        font-size: 0.66rem;
+        line-height: 1.25;
+      }
+      .cw-msg__fork-open,
+      .cw-msg__fork-again {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.3rem;
+        height: 1.55rem;
+        border: 1px solid var(--border);
+        border-radius: 0.45rem;
+        background: var(--background);
+        color: var(--foreground);
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.7rem;
+        font-weight: 700;
+        padding: 0 0.5rem;
+        white-space: nowrap;
+      }
+      .cw-msg__fork-open:hover:not(:disabled),
+      .cw-msg__fork-open:focus-visible,
+      .cw-msg__fork-again:hover:not(:disabled),
+      .cw-msg__fork-again:focus-visible {
+        outline: none;
+        border-color: color-mix(in oklab, var(--primary) 38%, var(--border));
+        background: color-mix(in oklab, var(--primary) 8%, var(--background));
+      }
+      .cw-msg__fork-open:disabled,
+      .cw-msg__fork-again:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      .cw-msg__fork-again {
+        justify-self: end;
       }
       .cw-msg__confirm {
         display: flex;
@@ -692,6 +992,11 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
           opacity: 0;
         }
       }
+      @keyframes cw-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
     `,
   ],
 })
@@ -701,20 +1006,39 @@ export class ClaudeMessageComponent {
   readonly item = input.required<ClaudeTranscriptItem>();
   readonly streaming = input<boolean>(false);
   readonly showActions = input<boolean>(false);
+  readonly showCopy = input<boolean>(false);
+  readonly showEdit = input<boolean>(false);
+  readonly showFork = input<boolean>(false);
   readonly actionsDisabled = input<boolean>(false);
   readonly editArmed = input<boolean>(false);
+  readonly forkDisabled = input<boolean>(false);
+  readonly forkDisabledReason = input<string>('');
+  readonly forking = input<boolean>(false);
+  readonly forks = input<SessionFork[]>([]);
+  readonly forksExpanded = input<boolean>(false);
   readonly planReviewEnabled = input<boolean>(false);
   readonly planReview = input<PlanReviewRequest | null>(null);
 
   readonly copy = output<string | null>();
+  readonly fork = output<void>();
   readonly armEdit = output<void>();
   readonly confirmEdit = output<void>();
   readonly cancelEdit = output<void>();
+  readonly toggleForks = output<void>();
+  readonly openFork = output<SessionFork>();
+  readonly forkAgain = output<void>();
   readonly approvePlan = output<void>();
   readonly planFeedback = output<string>();
   readonly openPlanReview = output<PlanReviewRequest>();
 
   readonly isEmpty = computed(() => !this.item().content);
+  readonly hasInlineAffordances = computed(
+    () => this.showCopy() || this.showEdit() || this.showFork() || this.forks().length > 0,
+  );
+  readonly forkCountLabel = computed(() => {
+    const count = this.forks().length;
+    return `${count} fork${count === 1 ? '' : 's'}`;
+  });
   readonly timestampLabel = computed(() => buildTimestampLabel(this.item(), this.streaming()));
   readonly timestampTitle = computed(() => this.timestampLabel());
   readonly isProposedPlan = computed(() => hasProposedPlan(this.item().content));
@@ -748,6 +1072,10 @@ export class ClaudeMessageComponent {
 
   mentionPreview(mention: DiffSelectionMention): string {
     return diffSelectionMentionPreview(mention);
+  }
+
+  forkTimeLabel(fork: SessionFork): string {
+    return formatTimestamp(fork.createdAt);
   }
 
   preserveSelection(event: MouseEvent): void {
@@ -787,9 +1115,9 @@ function formatTimestamp(value: string): string {
 
   const now = new Date();
   const isSameDay =
-    now.getFullYear() === date.getFullYear()
-    && now.getMonth() === date.getMonth()
-    && now.getDate() === date.getDate();
+    now.getFullYear() === date.getFullYear() &&
+    now.getMonth() === date.getMonth() &&
+    now.getDate() === date.getDate();
 
   const timeLabel = new Intl.DateTimeFormat(undefined, {
     hour: 'numeric',
@@ -804,9 +1132,7 @@ function formatTimestamp(value: string): string {
   const day = String(date.getDate()).padStart(2, '0');
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const sameYear = now.getFullYear() === date.getFullYear();
-  const dateLabel = sameYear
-    ? `${day}/${month}`
-    : `${day}/${month}/${date.getFullYear()}`;
+  const dateLabel = sameYear ? `${day}/${month}` : `${day}/${month}/${date.getFullYear()}`;
 
   return `${dateLabel} ${timeLabel}`;
 }

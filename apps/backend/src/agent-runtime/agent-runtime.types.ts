@@ -2,7 +2,13 @@ import { EventEmitter } from 'events';
 
 export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
 export type AgentPermissionMode = string;
-export type AgentReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | string;
+export type AgentReasoningEffort =
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | string;
 export type AgentImageMediaType =
   | 'image/png'
   | 'image/jpeg'
@@ -169,6 +175,9 @@ export interface AgentRuntimeProviderFeatures {
   ): Promise<AgentRuntimeStatePayload>;
 
   openTerminalFallback(sessionId: number): Promise<unknown>;
+  forkConversation(
+    request: AgentForkConversationRequest,
+  ): Promise<AgentForkConversationResult>;
   rewindConversation(
     sessionId: number,
     messageId: string,
@@ -199,4 +208,18 @@ export type AgentRuntimeProvider = AgentRuntimeProviderBase &
 
 export interface AgentRuntimeCleanup {
   cleanupSession(sessionId: number): Promise<void>;
+}
+
+export interface AgentForkConversationRequest {
+  parentSessionId: number;
+  childSessionId: number;
+  anchorMessageId: string;
+  anchorMessageKind: 'user' | 'assistant';
+  childSessionName: string;
+}
+
+export interface AgentForkConversationResult {
+  providerSessionId: string | null;
+  draft?: string | null;
+  anchorExcerpt?: string | null;
 }

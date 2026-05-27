@@ -8,11 +8,16 @@ import {
   Post,
 } from '@nestjs/common';
 import { SessionsService } from './sessions.service.js';
+import { SessionForksService } from './session-forks.service.js';
+import type { CreateSessionForkDto } from './session-forks.service.js';
 import { CreateSessionDto } from './dto/create-session.dto.js';
 
 @Controller('sessions')
 export class SessionsController {
-  constructor(private readonly sessionsService: SessionsService) {}
+  constructor(
+    private readonly sessionsService: SessionsService,
+    private readonly sessionForksService: SessionForksService,
+  ) {}
 
   @Post()
   create(@Body() dto: CreateSessionDto) {
@@ -39,24 +44,13 @@ export class SessionsController {
     return this.sessionsService.findByRepoAndBranch(+repoId, branchName);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.sessionsService.findOne(+id);
-  }
-
   @Patch(':id')
-  update(
-    @Param('id') id: string,
-    @Body() body: { name?: string },
-  ) {
+  update(@Param('id') id: string, @Body() body: { name?: string }) {
     return this.sessionsService.update(+id, body);
   }
 
   @Patch(':id/status')
-  updateStatus(
-    @Param('id') id: string,
-    @Body() body: { status: string },
-  ) {
+  updateStatus(@Param('id') id: string, @Body() body: { status: string }) {
     return this.sessionsService.updateStatus(+id, body.status);
   }
 
@@ -94,11 +88,23 @@ export class SessionsController {
   }
 
   @Post(':id/fork')
-  async fork(
-    @Param('id') id: string,
-    @Body() body: { name?: string },
-  ) {
+  async fork(@Param('id') id: string, @Body() body: { name?: string }) {
     return this.sessionsService.fork(Number(id), body.name);
+  }
+
+  @Get(':id/forks')
+  findForks(@Param('id') id: string) {
+    return this.sessionForksService.findByParent(Number(id));
+  }
+
+  @Post(':id/forks')
+  createFork(@Param('id') id: string, @Body() body: CreateSessionForkDto) {
+    return this.sessionForksService.create(Number(id), body);
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.sessionsService.findOne(+id);
   }
 
   @Post(':id/kill')

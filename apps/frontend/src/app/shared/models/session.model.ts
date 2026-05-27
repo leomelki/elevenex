@@ -35,3 +35,29 @@ export interface SessionInTree {
   lastCompletionKind: 'completed' | null;
   lastStateChangeAt: string | null;
 }
+
+export interface SessionFork {
+  id: number;
+  parentSessionId: number;
+  childSessionId: number;
+  provider: string;
+  anchorMessageId: string;
+  anchorMessageKind: 'user' | 'assistant';
+  anchorExcerpt: string | null;
+  draft: string | null;
+  createdAt: string;
+  childSession: Session | null;
+}
+
+export interface CreateSessionForkRequest {
+  anchorMessageId: string;
+  anchorMessageKind: 'user' | 'assistant';
+  anchorExcerpt?: string;
+  name?: string;
+}
+
+export interface CreateSessionForkResponse {
+  fork: SessionFork;
+  session: Session;
+  draft: string | null;
+}

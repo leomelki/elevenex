@@ -34,7 +34,7 @@ describe('ClaudeMessageComponent', () => {
     document.getSelection()?.removeAllRanges();
   });
 
-  it('renders copy and edit actions only for user messages', async () => {
+  it('renders configured copy, edit, and fork actions', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeMessageComponent],
     }).compileComponents();
@@ -48,11 +48,14 @@ describe('ClaudeMessageComponent', () => {
       authoredAt: '2026-04-24T08:00:00.000Z',
       sourceMessageId: 'source-user-1',
     });
-    fixture.componentRef.setInput('showActions', true);
+    fixture.componentRef.setInput('showCopy', true);
+    fixture.componentRef.setInput('showEdit', true);
+    fixture.componentRef.setInput('showFork', true);
     fixture.detectChanges();
 
     let element = fixture.nativeElement as HTMLElement;
     expect(element.querySelector('[aria-label="Copy message"]')).not.toBeNull();
+    expect(element.querySelector('[aria-label="Fork from here"]')).not.toBeNull();
     expect(element.querySelector('[aria-label="Edit message"]')).not.toBeNull();
 
     fixture.componentRef.setInput('item', {
@@ -63,11 +66,14 @@ describe('ClaudeMessageComponent', () => {
       receivedAt: '2026-04-24T08:00:01.000Z',
       sourceMessageId: 'source-assistant-1',
     });
-    fixture.componentRef.setInput('showActions', false);
+    fixture.componentRef.setInput('showCopy', true);
+    fixture.componentRef.setInput('showEdit', false);
+    fixture.componentRef.setInput('showFork', true);
     fixture.detectChanges();
 
     element = fixture.nativeElement as HTMLElement;
-    expect(element.querySelector('[aria-label="Copy message"]')).toBeNull();
+    expect(element.querySelector('[aria-label="Copy message"]')).not.toBeNull();
+    expect(element.querySelector('[aria-label="Fork from here"]')).not.toBeNull();
     expect(element.querySelector('[aria-label="Edit message"]')).toBeNull();
   });
 
@@ -85,7 +91,7 @@ describe('ClaudeMessageComponent', () => {
       authoredAt: '2026-04-24T08:00:00.000Z',
       sourceMessageId: 'source-user-1',
     });
-    fixture.componentRef.setInput('showActions', true);
+    fixture.componentRef.setInput('showEdit', true);
 
     const armSpy = vi.fn();
     const confirmSpy = vi.fn();
@@ -125,7 +131,7 @@ describe('ClaudeMessageComponent', () => {
       authoredAt: '2026-04-24T08:00:00.000Z',
       sourceMessageId: 'source-user-1',
     });
-    fixture.componentRef.setInput('showActions', true);
+    fixture.componentRef.setInput('showCopy', true);
 
     const copySpy = vi.fn();
     fixture.componentInstance.copy.subscribe(copySpy);
@@ -145,6 +151,72 @@ describe('ClaudeMessageComponent', () => {
     copyButton.click();
 
     expect(copySpy).toHaveBeenCalledWith('only this');
+  });
+
+  it('renders fork markers and emits fork panel actions', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeMessageComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeMessageComponent);
+    const fork = {
+      id: 1,
+      parentSessionId: 7,
+      childSessionId: 8,
+      provider: 'claude',
+      anchorMessageId: 'assistant-wrapper-1',
+      anchorMessageKind: 'assistant' as const,
+      anchorExcerpt: 'Done',
+      draft: null,
+      createdAt: '2026-04-24T08:00:00.000Z',
+      childSession: {
+        id: 8,
+        repoId: 1,
+        projectId: 1,
+        branchName: 'main',
+        worktreePath: '/tmp/project',
+        name: 'Parent (fork)',
+        status: 'created',
+        activeAgentProvider: 'claude',
+        claudeSessionId: 'forked-claude',
+        codexSessionId: '-1',
+        piSessionPath: '-1',
+        hasInjectedWorktreeContext: false,
+        hasUnreviewedCompletion: false,
+        lastCompletionAt: null,
+        lastCompletionKind: null,
+        lastStateChangeAt: null,
+        createdAt: '2026-04-24T08:00:00.000Z',
+        updatedAt: '2026-04-24T08:00:00.000Z',
+      },
+    };
+    fixture.componentRef.setInput('item', {
+      id: 'assistant-1',
+      kind: 'assistant',
+      content: 'Done',
+      timestamp: '2026-04-24T08:00:01.000Z',
+      receivedAt: '2026-04-24T08:00:01.000Z',
+      sourceMessageId: 'source-assistant-1',
+    });
+    fixture.componentRef.setInput('showFork', true);
+    fixture.componentRef.setInput('forks', [fork]);
+    fixture.componentRef.setInput('forksExpanded', true);
+
+    const openSpy = vi.fn();
+    const forkAgainSpy = vi.fn();
+    fixture.componentInstance.openFork.subscribe(openSpy);
+    fixture.componentInstance.forkAgain.subscribe(forkAgainSpy);
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('.cw-msg__fork-marker')?.textContent).toContain('1 fork');
+    expect(element.querySelector('.cw-msg__fork-name')?.textContent).toContain('Parent (fork)');
+
+    (element.querySelector('.cw-msg__fork-open') as HTMLButtonElement).click();
+    (element.querySelector('.cw-msg__fork-again') as HTMLButtonElement).click();
+
+    expect(openSpy).toHaveBeenCalledWith(fork);
+    expect(forkAgainSpy).toHaveBeenCalledTimes(1);
   });
 
   it('renders markdown while assistant text is streaming', async () => {
@@ -190,7 +262,9 @@ describe('ClaudeMessageComponent', () => {
 
     const element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).toContain('Please review this');
-    expect(element.querySelector('.cw-msg__mention-dir')?.textContent).toBe('src/main/java/package/folder');
+    expect(element.querySelector('.cw-msg__mention-dir')?.textContent).toBe(
+      'src/main/java/package/folder',
+    );
     expect(element.querySelector('.cw-msg__mention-name')?.textContent).toBe('Test.java');
     expect(element.querySelector('.cw-msg__mention-name')?.tagName.toLowerCase()).toBe('strong');
     expect(element.textContent).toContain('return next;');

@@ -1,43 +1,43 @@
 <div class="session-container h-full flex flex-col">
   @if (hasTabs()) {
     <!-- Tab Bar -->
-      <app-tab-bar
-        [tabs]="tabs()"
-        [activeSessionId]="activeSessionId()"
-        [projectId]="projectId()"
-        [worktreePath]="worktreePath()"
-        [showFiles]="showFilesPanel()"
-        [showBrowser]="showBrowserPanel()"
-        [showChanges]="showChangesPanel()"
-        [showTerminal]="terminalPanelVisible()"
-        [showActions]="actionPanelVisible()"
-        [showPlannotator]="showPlannotatorPanel()"
-        [plannotatorAvailable]="plannotatorAvailable()"
-        [showPlanAnnotator]="showPlanAnnotatorPanel()"
-        [planAnnotatorAvailable]="planAnnotatorAvailable()"
-        [showClaudeTerminalFallback]="showClaudeTerminalFallback()"
-        [runningActionsCount]="runningActionsCount()"
-        [pendingTodosCount]="pendingTodosCount()"
-        (tabSelect)="onTabSelect($event)"
-        (tabClose)="onTabClose($event)"
-        (tabDelete)="onTabDeleteRequest($event)"
-        (tabArchive)="onTabArchiveRequest($event)"
-        (tabUnarchive)="onTabUnarchiveRequest($event)"
-        (closeAllTabs)="onCloseAllTabs()"
-        (closeOtherTabs)="onCloseOtherTabs($event)"
-        (closeTabsToRight)="onCloseTabsToRight($event)"
-        (closeTabsToLeft)="onCloseTabsToLeft($event)"
-        (toggleScratchpad)="toggleScratchpad()"
-        (toggleTodos)="toggleTodos()"
-        (toggleFiles)="toggleFilesPanel()"
-        (toggleBrowser)="toggleBrowserPanel()"
-        (toggleChanges)="toggleChangesPanel()"
-        (toggleTerminal)="toggleTerminalPanel()"
-        (toggleActions)="toggleActionsPanel()"
-        (togglePlannotator)="togglePlannotatorPanel()"
-        (togglePlanAnnotator)="togglePlanAnnotatorPanel()"
-        (toggleClaudeTerminalFallback)="toggleClaudeTerminalFallback()"
-      />
+    <app-tab-bar
+      [tabs]="tabs()"
+      [activeSessionId]="activeSessionId()"
+      [projectId]="projectId()"
+      [worktreePath]="worktreePath()"
+      [showFiles]="showFilesPanel()"
+      [showBrowser]="showBrowserPanel()"
+      [showChanges]="showChangesPanel()"
+      [showTerminal]="terminalPanelVisible()"
+      [showActions]="actionPanelVisible()"
+      [showPlannotator]="showPlannotatorPanel()"
+      [plannotatorAvailable]="plannotatorAvailable()"
+      [showPlanAnnotator]="showPlanAnnotatorPanel()"
+      [planAnnotatorAvailable]="planAnnotatorAvailable()"
+      [showClaudeTerminalFallback]="showClaudeTerminalFallback()"
+      [runningActionsCount]="runningActionsCount()"
+      [pendingTodosCount]="pendingTodosCount()"
+      (tabSelect)="onTabSelect($event)"
+      (tabClose)="onTabClose($event)"
+      (tabDelete)="onTabDeleteRequest($event)"
+      (tabArchive)="onTabArchiveRequest($event)"
+      (tabUnarchive)="onTabUnarchiveRequest($event)"
+      (closeAllTabs)="onCloseAllTabs()"
+      (closeOtherTabs)="onCloseOtherTabs($event)"
+      (closeTabsToRight)="onCloseTabsToRight($event)"
+      (closeTabsToLeft)="onCloseTabsToLeft($event)"
+      (toggleScratchpad)="toggleScratchpad()"
+      (toggleTodos)="toggleTodos()"
+      (toggleFiles)="toggleFilesPanel()"
+      (toggleBrowser)="toggleBrowserPanel()"
+      (toggleChanges)="toggleChangesPanel()"
+      (toggleTerminal)="toggleTerminalPanel()"
+      (toggleActions)="toggleActionsPanel()"
+      (togglePlannotator)="togglePlannotatorPanel()"
+      (togglePlanAnnotator)="togglePlanAnnotatorPanel()"
+      (toggleClaudeTerminalFallback)="toggleClaudeTerminalFallback()"
+    />
 
     <!-- Main Content with Vertical + Horizontal Resizable Split -->
     <div class="flex-1 min-h-0 relative">
@@ -46,7 +46,11 @@
         <z-resizable-panel [zDefaultSize]="bottomPanelVisible() ? 70 : 100" [zMin]="30">
           <z-resizable zLayout="horizontal" class="h-full" (zResizeEnd)="onResizeEnd($event)">
             <!-- Claude Terminal Panel (Primary) - Always visible -->
-            <z-resizable-panel [zDefaultSize]="sidePanelVisible() ? 55 : 100" [zMin]="30" [zMax]="sidePanelVisible() ? 70 : 100">
+            <z-resizable-panel
+              [zDefaultSize]="sidePanelVisible() ? 55 : 100"
+              [zMin]="30"
+              [zMax]="sidePanelVisible() ? 70 : 100"
+            >
               <div class="claude-terminal-area h-full">
                 @if (activeTab(); as tab) {
                   <div class="claude-terminal-wrapper h-full">
@@ -74,6 +78,8 @@
                         (planReviewClosed)="onPlanReviewClosed($event)"
                         (activeAgentProviderChange)="onSessionProviderChange(tab.sessionId, $event)"
                         (agentRuntimeStarted)="onSessionRuntimeStarted(tab.sessionId)"
+                        (conversationForkCreated)="onConversationForkCreated($event)"
+                        (conversationForkOpened)="onConversationForkOpened($event)"
                         (unarchive)="onTabUnarchiveRequest(tab.sessionId)"
                         class="h-full block"
                       />
@@ -139,28 +145,53 @@
                   />
                 } @else if (shouldShowBrowserPlaceholder()) {
                   <div class="relative h-full overflow-hidden bg-background">
-                    <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,color-mix(in_oklch,var(--primary)_16%,transparent),transparent_40%),linear-gradient(180deg,color-mix(in_oklch,var(--background)_92%,var(--surface-tint)),var(--background))]"></div>
-                    <div class="absolute -right-20 top-12 h-56 w-56 rounded-full bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] blur-3xl"></div>
-                    <div class="absolute bottom-0 left-0 h-40 w-40 rounded-full bg-[color-mix(in_oklch,var(--foreground)_6%,transparent)] blur-3xl"></div>
+                    <div
+                      class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,color-mix(in_oklch,var(--primary)_16%,transparent),transparent_40%),linear-gradient(180deg,color-mix(in_oklch,var(--background)_92%,var(--surface-tint)),var(--background))]"
+                    ></div>
+                    <div
+                      class="absolute -right-20 top-12 h-56 w-56 rounded-full bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] blur-3xl"
+                    ></div>
+                    <div
+                      class="absolute bottom-0 left-0 h-40 w-40 rounded-full bg-[color-mix(in_oklch,var(--foreground)_6%,transparent)] blur-3xl"
+                    ></div>
 
                     <div class="relative flex h-full items-center justify-center p-8">
-                      <div class="w-full max-w-lg rounded-[28px] border border-[color-mix(in_oklch,var(--border)_86%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_78%,var(--surface-tint))] px-8 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.14)] backdrop-blur-xl">
-                        <div class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[color-mix(in_oklch,var(--border)_60%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_58%,var(--surface-tint))] shadow-[0_10px_30px_color-mix(in_oklch,var(--surface-tint)_20%,transparent)]">
-                          <div class="h-6 w-6 rounded-full bg-[linear-gradient(135deg,color-mix(in_oklch,var(--primary)_72%,var(--surface-tint)),color-mix(in_oklch,var(--foreground)_16%,var(--surface-tint)))]"></div>
+                      <div
+                        class="w-full max-w-lg rounded-[28px] border border-[color-mix(in_oklch,var(--border)_86%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_78%,var(--surface-tint))] px-8 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.14)] backdrop-blur-xl"
+                      >
+                        <div
+                          class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[color-mix(in_oklch,var(--border)_60%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_58%,var(--surface-tint))] shadow-[0_10px_30px_color-mix(in_oklch,var(--surface-tint)_20%,transparent)]"
+                        >
+                          <div
+                            class="h-6 w-6 rounded-full bg-[linear-gradient(135deg,color-mix(in_oklch,var(--primary)_72%,var(--surface-tint)),color-mix(in_oklch,var(--foreground)_16%,var(--surface-tint)))]"
+                          ></div>
                         </div>
 
                         <div class="space-y-3">
-                          <p class="text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground/80">Focus Mode</p>
-                          <h3 class="text-2xl font-semibold tracking-tight text-foreground">A quieter view for what’s open now</h3>
+                          <p
+                            class="text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground/80"
+                          >
+                            Focus Mode
+                          </p>
+                          <h3 class="text-2xl font-semibold tracking-tight text-foreground">
+                            A quieter view for what’s open now
+                          </h3>
                           <p class="mx-auto max-w-md text-sm leading-6 text-muted-foreground">
-                            This area steps back while your side panel is open, then returns smoothly as soon as you close it.
+                            This area steps back while your side panel is open, then returns
+                            smoothly as soon as you close it.
                           </p>
                         </div>
 
                         <div class="mt-8 flex items-center justify-center gap-2">
-                          <span class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--primary)_70%,var(--surface-tint))]"></span>
-                          <span class="h-2 w-10 rounded-full bg-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint))]"></span>
-                          <span class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--foreground)_18%,var(--surface-tint))]"></span>
+                          <span
+                            class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--primary)_70%,var(--surface-tint))]"
+                          ></span>
+                          <span
+                            class="h-2 w-10 rounded-full bg-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint))]"
+                          ></span>
+                          <span
+                            class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--foreground)_18%,var(--surface-tint))]"
+                          ></span>
                         </div>
                       </div>
                     </div>
@@ -182,10 +213,7 @@
                 (close)="closeTerminalPanel()"
               />
             } @else if (actionPanelVisible()) {
-              <app-actions-panel
-                [worktreePath]="worktreePath()!"
-                (close)="closeActionsPanel()"
-              />
+              <app-actions-panel [worktreePath]="worktreePath()!" (close)="closeActionsPanel()" />
             }
           </z-resizable-panel>
         }
@@ -200,15 +228,9 @@
         />
       }
       @if (showTodos() && projectId()) {
-        <app-todo-panel
-          [projectId]="projectId()!"
-          [isOpen]="true"
-          (close)="toggleTodos()"
-        />
+        <app-todo-panel [projectId]="projectId()!" [isOpen]="true" (close)="toggleTodos()" />
       }
-
     </div>
-
   } @else {
     <!-- Empty state - navigate to projects or show message -->
     <div class="flex-1 flex items-center justify-center">
@@ -218,10 +240,15 @@
 
   <!-- Delete session confirmation dialog -->
   @if (showDeleteDialog()) {
-    <dialog trackNativeModal open class="fixed inset-0 m-auto bg-background border border-border rounded-lg p-6 max-w-md shadow-xl z-50">
+    <dialog
+      trackNativeModal
+      open
+      class="fixed inset-0 m-auto bg-background border border-border rounded-lg p-6 max-w-md shadow-xl z-50"
+    >
       <h2 class="text-lg font-semibold mb-2">Delete session</h2>
       <p class="text-sm text-muted-foreground mb-4">
-        This will permanently delete this session. The terminal process will be terminated and the session will be removed.
+        This will permanently delete this session. The terminal process will be terminated and the
+        session will be removed.
       </p>
       <div class="flex justify-end gap-2">
         <button

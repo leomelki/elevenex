@@ -1,5 +1,8 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
+import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { PiRuntimeService } from './pi-runtime.service.js';
 import { buildAugmentedEnvAsync } from '../config/system-paths.js';
 
@@ -135,14 +138,18 @@ function createPiProcess(sessionFile: string): MockPiProcess {
   return child;
 }
 
-function createService(options?: { idleMs?: string; idleCap?: string }) {
+function createService(options?: {
+  idleMs?: string;
+  idleCap?: string;
+  piSessionPath?: string;
+}) {
   if (options?.idleMs) process.env.PI_RUNTIME_IDLE_MS = options.idleMs;
   if (options?.idleCap) process.env.PI_RUNTIME_IDLE_CAP = options.idleCap;
   const sessions = {
     findOne: jest.fn(async (sessionId: number) => ({
       id: sessionId,
       worktreePath: `/repo/session-${sessionId}`,
-      piSessionPath: '-1',
+      piSessionPath: options?.piSessionPath ?? '-1',
     })),
     updateStatus: jest.fn(async () => undefined),
     updatePiSessionPath: jest.fn(async () => undefined),
@@ -184,6 +191,110 @@ describe('PiRuntimeService lifecycle', () => {
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
     delete process.env.PI_RUNTIME_IDLE_MS;
     delete process.env.PI_RUNTIME_IDLE_CAP;
+  });
+
+  it('clones and slices Pi JSONL history for assistant anchors', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-fork-'));
+    try {
+      const sessionPath = join(root, 'session.jsonl');
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            id: 'user-entry',
+            type: 'message',
+            message: {
+              role: 'user',
+              timestamp: Date.parse('2026-05-22T10:00:00.000Z'),
+              content: [{ type: 'text', text: 'hello' }],
+            },
+          }),
+          JSON.stringify({
+            id: 'assistant-entry',
+            type: 'message',
+            message: {
+              role: 'assistant',
+              timestamp: Date.parse('2026-05-22T10:01:00.000Z'),
+              content: [{ type: 'text', text: 'hi' }],
+            },
+          }),
+          JSON.stringify({
+            id: 'later-entry',
+            type: 'message',
+            message: {
+              role: 'user',
+              timestamp: Date.parse('2026-05-22T10:02:00.000Z'),
+              content: [{ type: 'text', text: 'later' }],
+            },
+          }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+      const { service } = createService({ piSessionPath: sessionPath });
+
+      const result = await service.forkConversation({
+        parentSessionId: 1,
+        childSessionId: 2,
+        anchorMessageId: 'assistant-entry',
+        anchorMessageKind: 'assistant',
+        childSessionName: 'Fork',
+      });
+
+      expect(result.providerSessionId).toEqual(expect.any(String));
+      expect(result.anchorExcerpt).toBe('hi');
+      const raw = await readFile(result.providerSessionId!, 'utf8');
+      expect(raw).toContain('assistant-entry');
+      expect(raw).not.toContain('later-entry');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns Pi user fork draft without copying the selected user message', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-fork-'));
+    try {
+      const sessionPath = join(root, 'session.jsonl');
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            id: 'assistant-entry',
+            type: 'message',
+            message: {
+              role: 'assistant',
+              timestamp: Date.parse('2026-05-22T10:01:00.000Z'),
+              content: [{ type: 'text', text: 'ready' }],
+            },
+          }),
+          JSON.stringify({
+            id: 'user-entry',
+            type: 'message',
+            message: {
+              role: 'user',
+              timestamp: Date.parse('2026-05-22T10:02:00.000Z'),
+              content: [{ type: 'text', text: 'retry this' }],
+            },
+          }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+      const { service } = createService({ piSessionPath: sessionPath });
+
+      const result = await service.forkConversation({
+        parentSessionId: 1,
+        childSessionId: 2,
+        anchorMessageId: 'user-entry',
+        anchorMessageKind: 'user',
+        childSessionName: 'Fork',
+      });
+
+      expect(result.draft).toBe('retry this');
+      const raw = await readFile(result.providerSessionId!, 'utf8');
+      expect(raw).toContain('assistant-entry');
+      expect(raw).not.toContain('retry this');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   afterEach(() => {

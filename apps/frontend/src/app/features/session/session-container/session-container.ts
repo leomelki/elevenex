@@ -1,4 +1,18 @@
-import { Component, inject, Injector, OnInit, OnDestroy, afterNextRender, effect, signal, computed, viewChild, viewChildren, untracked, HostListener } from '@angular/core';
+import {
+  Component,
+  inject,
+  Injector,
+  OnInit,
+  OnDestroy,
+  afterNextRender,
+  effect,
+  signal,
+  computed,
+  viewChild,
+  viewChildren,
+  untracked,
+  HostListener,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, NavigationEnd } from '@angular/router';
 import { filter, takeUntil, switchMap, catchError } from 'rxjs/operators';
@@ -6,6 +20,7 @@ import { Subject, interval, from, forkJoin, of } from 'rxjs';
 import { TabBar } from '../tab-bar/tab-bar';
 import { Tab, TabCloseResult, TabService } from '../tab-service';
 import { SessionsService } from '../../../shared/services/sessions.service';
+import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { NavigationService } from '../../../shared/services/navigation.service';
 import { ClaudeTerminalComponent } from '../terminal';
@@ -16,8 +31,18 @@ import { ScratchpadPanelComponent } from '@/features/productivity/scratchpad-pan
 import { TodoPanelComponent } from '@/features/productivity/todo-panel/todo-panel';
 import { TodosService } from '@/features/productivity/todos.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
-import { ZardResizableComponent, ZardResizablePanelComponent, ZardResizableHandleComponent, ZardResizeEvent } from '@/shared/components/resizable';
-import { PlannotatorEvent, PlannotatorPanelComponent, PlannotatorService, PlannotatorStateService } from '@/features/plannotator';
+import {
+  ZardResizableComponent,
+  ZardResizablePanelComponent,
+  ZardResizableHandleComponent,
+  ZardResizeEvent,
+} from '@/shared/components/resizable';
+import {
+  PlannotatorEvent,
+  PlannotatorPanelComponent,
+  PlannotatorService,
+  PlannotatorStateService,
+} from '@/features/plannotator';
 import {
   PlanAnnotatorPanelComponent,
   PlanAnnotatorStateService,
@@ -27,8 +52,14 @@ import {
 import { getBackendOrigin } from '@/shared/runtime/runtime-config';
 import { ActionsPanelComponent, ActionsStateService } from '@/features/actions';
 import { UserTerminalPanelComponent, UserTerminalStateService } from '@/features/user-terminal';
-import { VSCodeWebStateService, buildVSCodeIframeKey } from '@/features/vscode-web/vscode-web-state.service';
-import { BrowserViewStateService, buildBrowserViewProjectPrefix } from '@/features/browser-panel/browser-view-state.service';
+import {
+  VSCodeWebStateService,
+  buildVSCodeIframeKey,
+} from '@/features/vscode-web/vscode-web-state.service';
+import {
+  BrowserViewStateService,
+  buildBrowserViewProjectPrefix,
+} from '@/features/browser-panel/browser-view-state.service';
 import { getElectronAuthWindowApi } from '@/shared/runtime/electron-auth-window';
 import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-state.service';
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
@@ -37,7 +68,7 @@ import { toast } from 'ngx-sonner';
 import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
 import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
-import { Session } from '@/shared/models/session.model';
+import { CreateSessionForkResponse, Session, SessionFork } from '@/shared/models/session.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
 import { shouldAutoReviewSessionCompletion } from '../session-completion-review.util';
@@ -47,7 +78,11 @@ import { SshRuntimeRecoveryService } from '@/shared/services/ssh-runtime-recover
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { buildMcpAuthPopupUrl } from './mcp-auth-url';
 
-type CompletionMarkerSource = Pick<Session, 'hasUnreviewedCompletion' | 'lastCompletionAt' | 'lastCompletionKind' | 'lastStateChangeAt'>
+type CompletionMarkerSource =
+  | Pick<
+      Session,
+      'hasUnreviewedCompletion' | 'lastCompletionAt' | 'lastCompletionKind' | 'lastStateChangeAt'
+    >
   | Pick<Tab, 'hasUnreviewedCompletion' | 'lastCompletionAt' | 'lastCompletionKind'>;
 
 interface CompletionMarkerState {
@@ -57,7 +92,14 @@ interface CompletionMarkerState {
   lastStateChangeAt: string | null;
 }
 
-type SidePanelMode = 'none' | 'files' | 'browser' | 'changes' | 'conflicts' | 'plannotator' | 'planAnnotator';
+type SidePanelMode =
+  | 'none'
+  | 'files'
+  | 'browser'
+  | 'changes'
+  | 'conflicts'
+  | 'plannotator'
+  | 'planAnnotator';
 
 @Component({
   selector: 'app-session-container',
@@ -92,6 +134,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private router = inject(Router);
   private tabService = inject(TabService);
   private sessionsService = inject(SessionsService);
+  private forkDrafts = inject(ConversationForkDraftService);
   private providerSelection = inject(AgentRuntimeProviderService);
   private navService = inject(NavigationService);
   private productivityState = inject(ProductivityStateService);
@@ -130,13 +173,17 @@ export class SessionContainer implements OnInit, OnDestroy {
   activePendingDiffMentions = computed<DiffSelectionMention[]>(() => {
     const sessionId = this.activeSessionId();
     if (!sessionId) return [];
-    return this.claudeWorkspaces().find((workspace) => workspace.sessionId === sessionId)?.pendingDiffMentions() ?? [];
+    return (
+      this.claudeWorkspaces()
+        .find((workspace) => workspace.sessionId === sessionId)
+        ?.pendingDiffMentions() ?? []
+    );
   });
 
   // Computed worktreePath from active session
   worktreePath = computed(() => {
     const activeId = this.activeSessionId();
-    const tab = this.tabs().find(t => t.sessionId === activeId);
+    const tab = this.tabs().find((t) => t.sessionId === activeId);
     return tab?.worktreePath ?? null;
   });
 
@@ -168,13 +215,18 @@ export class SessionContainer implements OnInit, OnDestroy {
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
   showChangesPanel = computed(() => this.sidePanelMode() === 'changes');
   showConflictsPanel = computed(() => this.sidePanelMode() === 'conflicts');
-  showPlannotatorPanel = computed(() => this.sidePanelMode() === 'plannotator' && this.plannotatorAvailable());
-  showPlanAnnotatorPanel = computed(() => this.sidePanelMode() === 'planAnnotator' && this.planAnnotatorAvailable());
-  sidePanelVisible = computed(() =>
-    !this.activeSessionArchived()
-    && this.sidePanelMode() !== 'none'
-    && (this.sidePanelMode() !== 'plannotator' || this.plannotatorAvailable())
-    && (this.sidePanelMode() !== 'planAnnotator' || this.planAnnotatorAvailable()),
+  showPlannotatorPanel = computed(
+    () => this.sidePanelMode() === 'plannotator' && this.plannotatorAvailable(),
+  );
+  showPlanAnnotatorPanel = computed(
+    () => this.sidePanelMode() === 'planAnnotator' && this.planAnnotatorAvailable(),
+  );
+  sidePanelVisible = computed(
+    () =>
+      !this.activeSessionArchived() &&
+      this.sidePanelMode() !== 'none' &&
+      (this.sidePanelMode() !== 'plannotator' || this.plannotatorAvailable()) &&
+      (this.sidePanelMode() !== 'planAnnotator' || this.planAnnotatorAvailable()),
   );
   showClaudeTerminalFallback = computed(() => {
     const id = this.activeSessionId();
@@ -194,9 +246,9 @@ export class SessionContainer implements OnInit, OnDestroy {
     return this.actionsState.isPanelOpen(wt);
   });
 
-  bottomPanelVisible = computed(() =>
-    !this.activeSessionArchived()
-    && (this.terminalPanelVisible() || this.actionPanelVisible()),
+  bottomPanelVisible = computed(
+    () =>
+      !this.activeSessionArchived() && (this.terminalPanelVisible() || this.actionPanelVisible()),
   );
 
   runningActionsCount = computed(() => {
@@ -239,17 +291,15 @@ export class SessionContainer implements OnInit, OnDestroy {
   });
 
   readonly hasBlockingOverlayPanel = computed(() => {
-    return this.showScratchpad()
-      || this.showTodos()
-      || this.modalOverlayState.hasOpenModal();
+    return this.showScratchpad() || this.showTodos() || this.modalOverlayState.hasOpenModal();
   });
 
-  readonly shouldShowBrowserPlaceholder = computed(() =>
-    this.showBrowserPanel() && this.hasBlockingOverlayPanel(),
+  readonly shouldShowBrowserPlaceholder = computed(
+    () => this.showBrowserPanel() && this.hasBlockingOverlayPanel(),
   );
 
-  readonly shouldRenderBrowserPanel = computed(() =>
-    this.showBrowserPanel() && !this.hasBlockingOverlayPanel() && this.browserPanelMounted(),
+  readonly shouldRenderBrowserPanel = computed(
+    () => this.showBrowserPanel() && !this.hasBlockingOverlayPanel() && this.browserPanelMounted(),
   );
 
   private getSidePanelPreference(): SidePanelMode {
@@ -257,10 +307,18 @@ export class SessionContainer implements OnInit, OnDestroy {
       const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
       if (stored) {
         const prefs = JSON.parse(stored);
-        if (prefs.sidePanelMode === 'github' || prefs.sidePanelMode === 'changes' || prefs.sidePanelMode === 'conflicts') {
+        if (
+          prefs.sidePanelMode === 'github' ||
+          prefs.sidePanelMode === 'changes' ||
+          prefs.sidePanelMode === 'conflicts'
+        ) {
           return 'none';
         }
-        if (prefs.sidePanelMode === 'files' || prefs.sidePanelMode === 'browser' || prefs.sidePanelMode === 'none') {
+        if (
+          prefs.sidePanelMode === 'files' ||
+          prefs.sidePanelMode === 'browser' ||
+          prefs.sidePanelMode === 'none'
+        ) {
           return prefs.sidePanelMode;
         }
 
@@ -278,12 +336,21 @@ export class SessionContainer implements OnInit, OnDestroy {
     try {
       const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
       const current = stored ? JSON.parse(stored) : {};
-      const persistedMode = mode === 'changes' || mode === 'conflicts' || mode === 'plannotator' || mode === 'planAnnotator' ? 'none' : mode;
-      localStorage.setItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY, JSON.stringify({
-        ...current,
-        filesPanelVisible: persistedMode === 'files',
-        sidePanelMode: persistedMode,
-      }));
+      const persistedMode =
+        mode === 'changes' ||
+        mode === 'conflicts' ||
+        mode === 'plannotator' ||
+        mode === 'planAnnotator'
+          ? 'none'
+          : mode;
+      localStorage.setItem(
+        SessionContainer.SIDEBAR_MODE_STORAGE_KEY,
+        JSON.stringify({
+          ...current,
+          filesPanelVisible: persistedMode === 'files',
+          sidePanelMode: persistedMode,
+        }),
+      );
     } catch {
       // Ignore storage errors
     }
@@ -482,11 +549,16 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.browserIsolationConfig.set(config);
   }
 
-  private saveLayoutPreference(prefs: Partial<{ terminalSize: number; editorSize: number; userTerminalSize: number }>): void {
+  private saveLayoutPreference(
+    prefs: Partial<{ terminalSize: number; editorSize: number; userTerminalSize: number }>,
+  ): void {
     try {
       const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
       const current = stored ? JSON.parse(stored) : {};
-      localStorage.setItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY, JSON.stringify({ ...current, ...prefs }));
+      localStorage.setItem(
+        SessionContainer.SIDEBAR_MODE_STORAGE_KEY,
+        JSON.stringify({ ...current, ...prefs }),
+      );
     } catch {
       // Ignore storage errors
     }
@@ -511,7 +583,7 @@ export class SessionContainer implements OnInit, OnDestroy {
       const activeId = this.activeSessionId();
       if (activeId && this.showClaudeTerminalFallback()) {
         setTimeout(() => {
-          const terminal = this.claudeTerminals().find(t => t.sessionId === activeId);
+          const terminal = this.claudeTerminals().find((t) => t.sessionId === activeId);
           terminal?.fit();
           terminal?.focus();
         }, 0);
@@ -559,7 +631,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     });
 
     effect(() => {
-      const openIds = new Set(this.tabs().map(tab => tab.sessionId));
+      const openIds = new Set(this.tabs().map((tab) => tab.sessionId));
       untracked(() => {
         const current = this.claudeSurfaceModes();
         let changed = false;
@@ -608,8 +680,14 @@ export class SessionContainer implements OnInit, OnDestroy {
       const sessionCompletions = this.claudeStatusService.sessionCompletions();
       untracked(() => {
         for (const [sessionId, completion] of sessionCompletions) {
-          if (shouldAutoReviewSessionCompletion(this.activeSessionId(), sessionId, completion.hasUnreviewedCompletion)) {
-            const tab = this.tabs().find(currentTab => currentTab.sessionId === sessionId);
+          if (
+            shouldAutoReviewSessionCompletion(
+              this.activeSessionId(),
+              sessionId,
+              completion.hasUnreviewedCompletion,
+            )
+          ) {
+            const tab = this.tabs().find((currentTab) => currentTab.sessionId === sessionId);
             if (tab) {
               this.clearCompletionMarkerFromTab({
                 ...tab,
@@ -642,7 +720,6 @@ export class SessionContainer implements OnInit, OnDestroy {
         });
       }
     });
-
   }
 
   ngOnInit(): void {
@@ -658,28 +735,30 @@ export class SessionContainer implements OnInit, OnDestroy {
     });
 
     // Listen for navigation to new sessions
-    this.router.events.pipe(
-      filter(e => e instanceof NavigationEnd),
-      takeUntil(this.destroy$)
-    ).subscribe(() => {
-      const newSessionId = this.getSessionIdFromUrl();
-      if (newSessionId) {
-        if (!this.tabService.getOpenSessionIds().includes(newSessionId)) {
-          // Session not open yet - load from backend
-          this.loadAndOpenSession(newSessionId);
-        } else {
-          // Session already open - just select it
-          this.tabService.selectTab(newSessionId);
-          const existingTab = this.tabs().find(tab => tab.sessionId === newSessionId);
-          if (existingTab) {
-            this.switchToSessionProvider(existingTab.activeAgentProvider);
-            if (existingTab.status !== 'archived') {
-              this.clearCompletionMarkerFromTab(existingTab);
+    this.router.events
+      .pipe(
+        filter((e) => e instanceof NavigationEnd),
+        takeUntil(this.destroy$),
+      )
+      .subscribe(() => {
+        const newSessionId = this.getSessionIdFromUrl();
+        if (newSessionId) {
+          if (!this.tabService.getOpenSessionIds().includes(newSessionId)) {
+            // Session not open yet - load from backend
+            this.loadAndOpenSession(newSessionId);
+          } else {
+            // Session already open - just select it
+            this.tabService.selectTab(newSessionId);
+            const existingTab = this.tabs().find((tab) => tab.sessionId === newSessionId);
+            if (existingTab) {
+              this.switchToSessionProvider(existingTab.activeAgentProvider);
+              if (existingTab.status !== 'archived') {
+                this.clearCompletionMarkerFromTab(existingTab);
+              }
             }
           }
         }
-      }
-    });
+      });
 
     // Start status polling for open tabs
     this.startStatusPolling();
@@ -687,12 +766,17 @@ export class SessionContainer implements OnInit, OnDestroy {
     // Subscribe to plannotator events
     this.plannotatorService.events$
       .pipe(takeUntil(this.destroy$))
-      .subscribe(event => this.handlePlannotatorEvent(event));
+      .subscribe((event) => this.handlePlannotatorEvent(event));
   }
 
   private registerOpenWorktrees(): void {
     const tabsList = this.tabs();
-    console.log('[SessionContainer] registerOpenWorktrees: tabs count=', tabsList.length, 'tabs=', tabsList.map(t => ({ id: t.sessionId, wt: t.worktreePath })));
+    console.log(
+      '[SessionContainer] registerOpenWorktrees: tabs count=',
+      tabsList.length,
+      'tabs=',
+      tabsList.map((t) => ({ id: t.sessionId, wt: t.worktreePath })),
+    );
     for (const tab of tabsList) {
       if (tab.worktreePath && tab.status !== 'archived') {
         this.plannotatorService.registerWorktree(tab.worktreePath, tab.sessionId);
@@ -701,15 +785,15 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   private getWorktreePathForSession(sessionId: number): string | null {
-    return this.tabs().find(tab => tab.sessionId === sessionId)?.worktreePath ?? null;
+    return this.tabs().find((tab) => tab.sessionId === sessionId)?.worktreePath ?? null;
   }
 
   private getProjectIdForSession(sessionId: number): number | null {
-    return this.tabs().find(tab => tab.sessionId === sessionId)?.projectId ?? null;
+    return this.tabs().find((tab) => tab.sessionId === sessionId)?.projectId ?? null;
   }
 
   private getIframeKeyForSession(sessionId: number): string | null {
-    const tab = this.tabs().find(currentTab => currentTab.sessionId === sessionId);
+    const tab = this.tabs().find((currentTab) => currentTab.sessionId === sessionId);
     if (!tab) {
       return null;
     }
@@ -717,19 +801,25 @@ export class SessionContainer implements OnInit, OnDestroy {
     return buildVSCodeIframeKey(tab.projectId, tab.worktreePath);
   }
 
-  private maybeDestroyWorktreeIframe(iframeKey: string | null, worktreePath: string | null, projectId: number | null): void {
+  private maybeDestroyWorktreeIframe(
+    iframeKey: string | null,
+    worktreePath: string | null,
+    projectId: number | null,
+  ): void {
     if (!iframeKey || !worktreePath || projectId === null) {
       return;
     }
 
-    const hasRemainingTabs = this.tabs().some(tab => tab.worktreePath === worktreePath && tab.projectId === projectId);
+    const hasRemainingTabs = this.tabs().some(
+      (tab) => tab.worktreePath === worktreePath && tab.projectId === projectId,
+    );
     if (!hasRemainingTabs) {
       this.vscodeWebState.destroyIframe(iframeKey);
     }
   }
 
   private getBrowserKeyForSession(sessionId: number): string | null {
-    const tab = this.tabs().find(currentTab => currentTab.sessionId === sessionId);
+    const tab = this.tabs().find((currentTab) => currentTab.sessionId === sessionId);
     if (!tab) {
       return null;
     }
@@ -742,9 +832,11 @@ export class SessionContainer implements OnInit, OnDestroy {
       return;
     }
 
-    const hasRemainingTabs = this.tabs().some(tab => tab.projectId === projectId);
+    const hasRemainingTabs = this.tabs().some((tab) => tab.projectId === projectId);
     if (!hasRemainingTabs) {
-      const browserKeys = Array.from(this.browserViewState.states().keys()).filter(key => key.startsWith(browserKey));
+      const browserKeys = Array.from(this.browserViewState.states().keys()).filter((key) =>
+        key.startsWith(browserKey),
+      );
       this.browserTabsState.removeProject(projectId);
       this.browserViewState.removeStatesByPrefix(browserKey);
       const browserApi = window.__ELEVENEX_ELECTRON__?.browser;
@@ -798,13 +890,16 @@ export class SessionContainer implements OnInit, OnDestroy {
       return;
     }
 
-    const ref = effect(() => {
-      if (this.sshRuntimeRecovery.remoteConnecting()) {
-        return;
-      }
-      ref.destroy();
-      action();
-    }, { injector: this.injector });
+    const ref = effect(
+      () => {
+        if (this.sshRuntimeRecovery.remoteConnecting()) {
+          return;
+        }
+        ref.destroy();
+        action();
+      },
+      { injector: this.injector },
+    );
   }
 
   private getSessionIdFromUrl(): number | null {
@@ -820,10 +915,10 @@ export class SessionContainer implements OnInit, OnDestroy {
     urlSessionId: number | null,
   ): void {
     forkJoin(
-      saved.sessionIds.map(id =>
-        this.sessionsService.getOne(id).pipe(catchError(() => of(null)))
-      )
-    ).subscribe(sessions => {
+      saved.sessionIds.map((id) =>
+        this.sessionsService.getOne(id).pipe(catchError(() => of(null))),
+      ),
+    ).subscribe((sessions) => {
       for (const session of sessions) {
         if (session) {
           this.tabService.openTab(session);
@@ -835,11 +930,15 @@ export class SessionContainer implements OnInit, OnDestroy {
       const openIds = this.tabService.getOpenSessionIds();
 
       if (activeId && openIds.includes(activeId)) {
-        this.switchToSessionProvider(this.tabs().find(tab => tab.sessionId === activeId)?.activeAgentProvider);
+        this.switchToSessionProvider(
+          this.tabs().find((tab) => tab.sessionId === activeId)?.activeAgentProvider,
+        );
         this.tabService.selectTab(activeId);
         this.router.navigate(['/sessions', activeId], { replaceUrl: true });
       } else if (openIds.length > 0) {
-        this.switchToSessionProvider(this.tabs().find(tab => tab.sessionId === openIds[0])?.activeAgentProvider);
+        this.switchToSessionProvider(
+          this.tabs().find((tab) => tab.sessionId === openIds[0])?.activeAgentProvider,
+        );
         this.tabService.selectTab(openIds[0]);
         this.router.navigate(['/sessions', openIds[0]], { replaceUrl: true });
       }
@@ -879,7 +978,10 @@ export class SessionContainer implements OnInit, OnDestroy {
     });
   }
 
-  private clearCompletionMarkerForOpenSession(sessionId: number, source?: CompletionMarkerSource): void {
+  private clearCompletionMarkerForOpenSession(
+    sessionId: number,
+    source?: CompletionMarkerSource,
+  ): void {
     const previous = this.getCompletionMarkerState(sessionId, source);
     if (!previous.hasUnreviewedCompletion) {
       return;
@@ -904,28 +1006,32 @@ export class SessionContainer implements OnInit, OnDestroy {
     });
   }
 
-  private getCompletionMarkerState(sessionId: number, source?: CompletionMarkerSource): CompletionMarkerState {
+  private getCompletionMarkerState(
+    sessionId: number,
+    source?: CompletionMarkerSource,
+  ): CompletionMarkerState {
     const live = this.claudeStatusService.getSessionCompletion(sessionId);
-    const tab = this.tabs().find(currentTab => currentTab.sessionId === sessionId);
+    const tab = this.tabs().find((currentTab) => currentTab.sessionId === sessionId);
     const sourceState = source ?? null;
-    const sourceLastStateChangeAt = sourceState && 'lastStateChangeAt' in sourceState && typeof sourceState.lastStateChangeAt === 'string'
-      ? sourceState.lastStateChangeAt
-      : null;
+    const sourceLastStateChangeAt =
+      sourceState &&
+      'lastStateChangeAt' in sourceState &&
+      typeof sourceState.lastStateChangeAt === 'string'
+        ? sourceState.lastStateChangeAt
+        : null;
 
     return {
       hasUnreviewedCompletion: Boolean(
-        live?.hasUnreviewedCompletion
-          || sourceState?.hasUnreviewedCompletion
-          || tab?.hasUnreviewedCompletion,
+        live?.hasUnreviewedCompletion ||
+        sourceState?.hasUnreviewedCompletion ||
+        tab?.hasUnreviewedCompletion,
       ),
-      lastCompletionAt: live?.lastCompletionAt
-        ?? sourceState?.lastCompletionAt
-        ?? tab?.lastCompletionAt
-        ?? null,
-      lastCompletionKind: (live?.lastCompletionKind
-        ?? sourceState?.lastCompletionKind
-        ?? tab?.lastCompletionKind
-        ?? null) as Session['lastCompletionKind'],
+      lastCompletionAt:
+        live?.lastCompletionAt ?? sourceState?.lastCompletionAt ?? tab?.lastCompletionAt ?? null,
+      lastCompletionKind: (live?.lastCompletionKind ??
+        sourceState?.lastCompletionKind ??
+        tab?.lastCompletionKind ??
+        null) as Session['lastCompletionKind'],
       lastStateChangeAt: live?.lastStateChangeAt ?? sourceLastStateChangeAt,
     };
   }
@@ -969,7 +1075,7 @@ export class SessionContainer implements OnInit, OnDestroy {
           }
           // Fetch status for all open sessions in parallel
           return from(this.pollSessionStatuses(openIds));
-        })
+        }),
       )
       .subscribe();
   }
@@ -980,7 +1086,7 @@ export class SessionContainer implements OnInit, OnDestroy {
    */
   private async pollSessionStatuses(openIds: number[]): Promise<void> {
     const results = await Promise.allSettled(
-      openIds.map(id => this.sessionsService.getOne(id).toPromise())
+      openIds.map((id) => this.sessionsService.getOne(id).toPromise()),
     );
 
     results.forEach((result, index) => {
@@ -1010,7 +1116,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   onTabSelect(sessionId: number): void {
-    const tab = this.tabs().find(currentTab => currentTab.sessionId === sessionId);
+    const tab = this.tabs().find((currentTab) => currentTab.sessionId === sessionId);
     this.switchToSessionProvider(tab?.activeAgentProvider);
     this.tabService.selectTab(sessionId);
     if (tab?.status !== 'archived') {
@@ -1031,6 +1137,28 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.tabService.markTabRuntimeStarted(sessionId);
   }
 
+  onConversationForkCreated(response: CreateSessionForkResponse): void {
+    this.forkDrafts.setDraft(response.session.id, response.draft);
+    this.switchToSessionProvider(response.session.activeAgentProvider);
+    this.tabService.openTab(response.session);
+    if (response.session.worktreePath) {
+      this.plannotatorService.registerWorktree(response.session.worktreePath, response.session.id);
+    }
+    this.navService.refreshTree();
+    this.router.navigate(['/sessions', response.session.id], { replaceUrl: true });
+  }
+
+  onConversationForkOpened(fork: SessionFork): void {
+    const session = fork.childSession;
+    if (!session) {
+      toast.error('This forked session no longer exists.');
+      return;
+    }
+    this.switchToSessionProvider(session.activeAgentProvider);
+    this.tabService.openTab(session);
+    this.router.navigate(['/sessions', session.id], { replaceUrl: true });
+  }
+
   onTabClose(sessionId: number): void {
     const worktreePath = this.getWorktreePathForSession(sessionId);
     const iframeKey = this.getIframeKeyForSession(sessionId);
@@ -1045,7 +1173,9 @@ export class SessionContainer implements OnInit, OnDestroy {
     if (!newActiveId) {
       this.router.navigate(['/projects']);
     } else {
-      this.switchToSessionProvider(this.tabs().find(tab => tab.sessionId === newActiveId)?.activeAgentProvider);
+      this.switchToSessionProvider(
+        this.tabs().find((tab) => tab.sessionId === newActiveId)?.activeAgentProvider,
+      );
       // Switch to new active tab
       this.router.navigate(['/sessions', newActiveId], { replaceUrl: true });
     }
@@ -1189,8 +1319,20 @@ export class SessionContainer implements OnInit, OnDestroy {
     if (plannotatorEvent.type === 'url-received') {
       const { proxyUrl, sessionId, upstreamPort } = plannotatorEvent;
 
-      console.log('[SessionContainer] url-received: proxyUrl=', proxyUrl, 'sessionId=', sessionId, 'upstreamPort=', upstreamPort);
-      console.log('[SessionContainer] activeSessionId=', this.activeSessionId(), 'tabs=', this.tabs().map(t => ({ id: t.sessionId, wt: t.worktreePath })));
+      console.log(
+        '[SessionContainer] url-received: proxyUrl=',
+        proxyUrl,
+        'sessionId=',
+        sessionId,
+        'upstreamPort=',
+        upstreamPort,
+      );
+      console.log(
+        '[SessionContainer] activeSessionId=',
+        this.activeSessionId(),
+        'tabs=',
+        this.tabs().map((t) => ({ id: t.sessionId, wt: t.worktreePath })),
+      );
 
       const targetSessionId = sessionId;
 
@@ -1200,10 +1342,10 @@ export class SessionContainer implements OnInit, OnDestroy {
           const parsed = new URL(proxyUrl, getBackendOrigin());
           const queryMode = parsed.searchParams.get('mode');
           if (
-            queryMode === 'plan'
-            || queryMode === 'review'
-            || queryMode === 'annotate'
-            || queryMode === 'archive'
+            queryMode === 'plan' ||
+            queryMode === 'review' ||
+            queryMode === 'annotate' ||
+            queryMode === 'archive'
           ) {
             mode = queryMode;
           } else if (parsed.pathname.includes('/review')) {
@@ -1218,23 +1360,43 @@ export class SessionContainer implements OnInit, OnDestroy {
         }
 
         // Prepend backend origin so the iframe targets the backend proxy, not the frontend
-        const absoluteProxyUrl = proxyUrl.startsWith('/') ? `${getBackendOrigin()}${proxyUrl}` : proxyUrl;
+        const absoluteProxyUrl = proxyUrl.startsWith('/')
+          ? `${getBackendOrigin()}${proxyUrl}`
+          : proxyUrl;
 
-        console.log('[SessionContainer] Opening panel: targetSessionId=', targetSessionId, 'mode=', mode);
+        console.log(
+          '[SessionContainer] Opening panel: targetSessionId=',
+          targetSessionId,
+          'mode=',
+          mode,
+        );
         this.plannotatorState.openPanel(targetSessionId, absoluteProxyUrl, upstreamPort, mode);
         if (targetSessionId === this.activeSessionId()) {
           this.sidePanelMode.set('plannotator');
           this.saveSidePanelPreference('plannotator');
         }
 
-        console.log('[SessionContainer] Panel opened. showPlannotatorPanel=', this.showPlannotatorPanel(), 'activePlannotatorPanel=', JSON.stringify(this.activePlannotatorPanel()));
+        console.log(
+          '[SessionContainer] Panel opened. showPlannotatorPanel=',
+          this.showPlannotatorPanel(),
+          'activePlannotatorPanel=',
+          JSON.stringify(this.activePlannotatorPanel()),
+        );
       } else {
-        console.log('[SessionContainer] NOT opening panel: targetSessionId=', targetSessionId, 'proxyUrl=', proxyUrl);
+        console.log(
+          '[SessionContainer] NOT opening panel: targetSessionId=',
+          targetSessionId,
+          'proxyUrl=',
+          proxyUrl,
+        );
       }
     } else if (plannotatorEvent.type === 'close') {
       if (plannotatorEvent.sessionId) {
         this.plannotatorState.closePanel(plannotatorEvent.sessionId);
-        if (plannotatorEvent.sessionId === this.activeSessionId() && this.sidePanelMode() === 'plannotator') {
+        if (
+          plannotatorEvent.sessionId === this.activeSessionId() &&
+          this.sidePanelMode() === 'plannotator'
+        ) {
           this.sidePanelMode.set('none');
           this.saveSidePanelPreference('none');
         }
@@ -1273,7 +1435,9 @@ export class SessionContainer implements OnInit, OnDestroy {
       return;
     }
 
-    this.switchToSessionProvider(this.tabs().find(tab => tab.sessionId === result.activeSessionId)?.activeAgentProvider);
+    this.switchToSessionProvider(
+      this.tabs().find((tab) => tab.sessionId === result.activeSessionId)?.activeAgentProvider,
+    );
     this.router.navigate(['/sessions', result.activeSessionId], { replaceUrl: true });
   }
 

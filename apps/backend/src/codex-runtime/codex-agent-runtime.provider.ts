@@ -11,6 +11,7 @@ import type {
 import type {
   AgentPermissionMode,
   AgentImageInput,
+  AgentForkConversationRequest,
   AgentRuntimeEvent,
   AgentRuntimeProvider,
   AgentRuntimeProviderInfo,
@@ -121,13 +122,22 @@ export class CodexAgentRuntimeProvider
     return this.runtimeService.setFastMode(sessionId, enabled);
   }
 
+  forkConversation(request: AgentForkConversationRequest) {
+    return this.runtimeService.forkConversation(request);
+  }
+
   submitPrompt(
     sessionId: number,
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
   ) {
-    return this.runtimeService.submitPrompt(sessionId, prompt, titlePrompt, images);
+    return this.runtimeService.submitPrompt(
+      sessionId,
+      prompt,
+      titlePrompt,
+      images,
+    );
   }
 
   interrupt(sessionId: number) {

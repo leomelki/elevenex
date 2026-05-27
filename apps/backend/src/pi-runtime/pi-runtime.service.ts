@@ -1,9 +1,20 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
+import { basename, dirname, extname, join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
-import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import type {
+  AgentForkConversationRequest,
+  AgentForkConversationResult,
+  AgentImageInput,
+} from '../agent-runtime/agent-runtime.types.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import {
   ClaudeHooksService,
@@ -141,6 +152,69 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       );
       return [];
     }
+  }
+
+  async forkConversation(
+    request: AgentForkConversationRequest,
+  ): Promise<AgentForkConversationResult> {
+    if (
+      this.activeRuns.has(request.parentSessionId) ||
+      this.initializingRuns.has(request.parentSessionId)
+    ) {
+      throw new ConflictException('Cannot fork while Pi is actively running.');
+    }
+
+    const session = await this.sessionsService.findOne(request.parentSessionId);
+    const sessionPath = session.piSessionPath;
+    if (!sessionPath || sessionPath === '-1') {
+      throw new NotFoundException('Pi session file not found.');
+    }
+
+    const records = await this.readPiSessionRecords(sessionPath);
+    const targetIndex = records.findIndex((entry, index) =>
+      this.isForkAnchorEntry(
+        entry,
+        index,
+        request.anchorMessageId,
+        request.anchorMessageKind,
+      ),
+    );
+    if (targetIndex === -1) {
+      throw new NotFoundException('Message not found in Pi session.');
+    }
+
+    const target = records[targetIndex];
+    const draft =
+      request.anchorMessageKind === 'user'
+        ? this.stripInjectedWorktreeContext(
+            this.contentToText(asRecord(target.message)?.content),
+          )
+        : null;
+    const anchorExcerpt =
+      request.anchorMessageKind === 'user'
+        ? draft
+        : this.contentToText(asRecord(target.message)?.content);
+    const retainedRecords = records.slice(
+      0,
+      request.anchorMessageKind === 'user' ? targetIndex : targetIndex + 1,
+    );
+
+    if (retainedRecords.length === 0) {
+      return {
+        providerSessionId: null,
+        draft,
+        anchorExcerpt,
+      };
+    }
+
+    const forkPath = this.buildForkSessionPath(sessionPath);
+    await this.writePiSessionRecords(forkPath, retainedRecords);
+
+    return {
+      providerSessionId: forkPath,
+      draft,
+      anchorExcerpt,
+    };
   }
 
   async setSelectedModel(
@@ -1067,33 +1141,74 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
   ): Promise<ClaudeTranscriptItem[]> {
     if (!path || path === '-1') return [];
     const result: ClaudeTranscriptItem[] = [];
-    let lines: string[];
     try {
-      lines = (await fs.readFile(path, 'utf8')).split(/\r?\n/).filter(Boolean);
+      const entries = await this.readPiSessionRecords(path);
+      for (const [index, entry] of entries.entries()) {
+        if (entry.type !== 'message') continue;
+        const message = asRecord(entry.message);
+        if (!message) continue;
+        const entryId = this.piEntryAnchorId(entry, index);
+        result.push(
+          ...this.messageToTranscriptItems(message, entryId, entryId),
+        );
+      }
     } catch {
       return [];
     }
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line) as Record<string, unknown>;
-        if (entry.type !== 'message') continue;
-        const message = entry.message as Record<string, unknown>;
-        result.push(
-          ...this.messageToTranscriptItems(
-            message,
-            String(entry.id ?? randomUUID()),
-          ),
-        );
-      } catch {
-        // Ignore malformed history entries.
-      }
-    }
     return result.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  }
+
+  private async readPiSessionRecords(
+    path: string,
+  ): Promise<Record<string, unknown>[]> {
+    const content = await fs.readFile(path, 'utf8');
+    return content
+      .split(/\r?\n/)
+      .filter((line) => line.trim())
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  private async writePiSessionRecords(
+    path: string,
+    records: Record<string, unknown>[],
+  ): Promise<void> {
+    const serialized =
+      records.map((record) => JSON.stringify(record)).join('\n') +
+      (records.length ? '\n' : '');
+    await fs.writeFile(path, serialized, 'utf8');
+  }
+
+  private isForkAnchorEntry(
+    entry: Record<string, unknown>,
+    index: number,
+    anchorMessageId: string,
+    anchorKind: 'user' | 'assistant',
+  ): boolean {
+    if (entry.type !== 'message') return false;
+    if (this.piEntryAnchorId(entry, index) !== anchorMessageId) return false;
+    const role = asRecord(entry.message)?.role;
+    return role === anchorKind;
+  }
+
+  private piEntryAnchorId(
+    entry: Record<string, unknown>,
+    index: number,
+  ): string {
+    return typeof entry.id === 'string' && entry.id
+      ? entry.id
+      : `pi-entry:${index}`;
+  }
+
+  private buildForkSessionPath(sourcePath: string): string {
+    const ext = extname(sourcePath) || '.jsonl';
+    const base = basename(sourcePath, ext);
+    return join(dirname(sourcePath), `${base}-fork-${randomUUID()}${ext}`);
   }
 
   private messageToTranscriptItems(
     message: Record<string, unknown>,
     fallbackId: string,
+    transcriptMessageId?: string,
   ): ClaudeTranscriptItem[] {
     const id = this.messageId(message, fallbackId);
     const timestamp = this.timestampFromMessage(message);
@@ -1106,6 +1221,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
             this.contentToText(message.content),
           ),
           sourceMessageId: id,
+          transcriptMessageId,
           timestamp,
           authoredAt: timestamp,
         },
@@ -1123,6 +1239,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
             kind: 'assistant',
             content: typeof block.text === 'string' ? block.text : '',
             sourceMessageId: id,
+            transcriptMessageId,
             timestamp,
             receivedAt: timestamp,
           });
@@ -1132,6 +1249,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
             kind: 'thinking',
             content: typeof block.thinking === 'string' ? block.thinking : '',
             sourceMessageId: id,
+            transcriptMessageId,
             timestamp,
             receivedAt: timestamp,
           });
@@ -1157,6 +1275,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
             toolInput: canonicalTool.toolInput,
             providerToolInput,
             sourceMessageId: id,
+            transcriptMessageId,
             timestamp,
             receivedAt: timestamp,
           });
@@ -1176,6 +1295,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
           content: this.contentToText(message.content),
           isError: Boolean(message.isError),
           sourceMessageId: id,
+          transcriptMessageId,
           timestamp,
           authoredAt: timestamp,
         },
@@ -1452,4 +1572,10 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       ? { type: 'extension_ui_response', id, cancelled: true }
       : { type: 'extension_ui_response', id, value };
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null;
 }

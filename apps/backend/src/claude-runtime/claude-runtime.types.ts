@@ -95,6 +95,7 @@ export interface ClaudeTranscriptItem {
   interaction?: ClaudeToolInteractionSummary;
   isError?: boolean;
   sourceMessageId?: string;
+  transcriptMessageId?: string;
   timestamp: string;
   authoredAt?: string;
   receivedAt?: string;

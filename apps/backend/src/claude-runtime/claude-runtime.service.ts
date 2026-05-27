@@ -17,6 +17,7 @@ import { eq } from 'drizzle-orm';
 import {
   getSubagentMessages,
   getSessionMessages,
+  forkSession,
   query,
   type ModelInfo,
   type SDKControlGetContextUsageResponse,
@@ -122,6 +123,10 @@ import {
   ClaudeToolInteractionSummary,
 } from './claude-runtime.types.js';
 import { ClaudeSessionRuntime } from './claude-session-runtime.js';
+import type {
+  AgentForkConversationRequest,
+  AgentForkConversationResult,
+} from '../agent-runtime/agent-runtime.types.js';
 
 type PermissionDecision =
   | { behavior: 'allow'; remember: boolean; content?: Record<string, unknown> }
@@ -632,6 +637,92 @@ export class ClaudeRuntimeService extends EventEmitter {
     });
 
     return this.getHistory(sessionId);
+  }
+
+  async forkConversation(
+    request: AgentForkConversationRequest,
+  ): Promise<AgentForkConversationResult> {
+    const anchorMessageId = request.anchorMessageId.trim();
+    if (!anchorMessageId) {
+      throw new BadRequestException('A messageId is required.');
+    }
+
+    if (
+      this.activeRuns.has(request.parentSessionId) ||
+      this.initializingRuns.has(request.parentSessionId)
+    ) {
+      throw new ConflictException(
+        'Cannot fork while Claude is actively running.',
+      );
+    }
+
+    const session = await this.sessionsService.findOne(request.parentSessionId);
+    if (!session.claudeSessionId || session.claudeSessionId === '-1') {
+      throw new NotFoundException('Claude session not found.');
+    }
+
+    const transcriptPath = await this.findTranscriptPath(
+      session.worktreePath,
+      session.claudeSessionId,
+    );
+    if (!transcriptPath) {
+      throw new NotFoundException('Claude transcript not found.');
+    }
+
+    const records = await this.loadTranscriptRecords(transcriptPath);
+    const targetIndex = records.findIndex(
+      (record) =>
+        record.type === request.anchorMessageKind &&
+        typeof record.uuid === 'string' &&
+        record.uuid === anchorMessageId,
+    );
+
+    if (targetIndex === -1) {
+      const hasMessage = records.some(
+        (record) =>
+          typeof record.uuid === 'string' && record.uuid === anchorMessageId,
+      );
+      if (hasMessage) {
+        throw new BadRequestException(
+          'Fork anchor kind does not match the transcript message.',
+        );
+      }
+      throw new NotFoundException('Message not found in Claude transcript.');
+    }
+
+    const target = records[targetIndex];
+    const anchorExcerpt =
+      request.anchorMessageKind === 'user'
+        ? this.extractUserTextFromTranscriptRecord(target)
+        : this.extractAssistantTextFromTranscriptRecord(target);
+    const draft =
+      request.anchorMessageKind === 'user'
+        ? this.extractUserTextFromTranscriptRecord(target)
+        : null;
+    const upToMessageId =
+      request.anchorMessageKind === 'assistant'
+        ? anchorMessageId
+        : this.findPreviousTranscriptMessageId(records, targetIndex);
+
+    if (!upToMessageId) {
+      return {
+        providerSessionId: null,
+        draft,
+        anchorExcerpt,
+      };
+    }
+
+    const result = await forkSession(session.claudeSessionId, {
+      dir: session.worktreePath,
+      upToMessageId,
+      title: request.childSessionName,
+    });
+
+    return {
+      providerSessionId: result.sessionId,
+      draft,
+      anchorExcerpt,
+    };
   }
 
   async setSelectedModel(
@@ -1909,6 +2000,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           kind: 'assistant',
           content: '',
           sourceMessageId: streamMessageId,
+          transcriptMessageId: message.uuid,
           timestamp: receivedAt,
           receivedAt,
         };
@@ -1920,6 +2012,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           kind: 'thinking',
           content: '',
           sourceMessageId: streamMessageId,
+          transcriptMessageId: message.uuid,
           timestamp: receivedAt,
           receivedAt,
         };
@@ -2019,6 +2112,7 @@ export class ClaudeRuntimeService extends EventEmitter {
             content: part.text,
             parentToolUseId: message.parent_tool_use_id ?? undefined,
             sourceMessageId: streamMessageId,
+            transcriptMessageId: message.uuid,
             timestamp: receivedAt,
             receivedAt,
           };
@@ -2063,6 +2157,7 @@ export class ClaudeRuntimeService extends EventEmitter {
             content: part.thinking,
             parentToolUseId: message.parent_tool_use_id ?? undefined,
             sourceMessageId: streamMessageId,
+            transcriptMessageId: message.uuid,
             timestamp: receivedAt,
             receivedAt,
           };
@@ -2095,6 +2190,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           toolInput: canonicalTool.toolInput,
           providerToolInput,
           sourceMessageId: streamMessageId,
+          transcriptMessageId: message.uuid,
           timestamp: receivedAt,
           receivedAt,
         };
@@ -2197,6 +2293,7 @@ export class ClaudeRuntimeService extends EventEmitter {
           parentToolUseId: message.parent_tool_use_id ?? undefined,
           content: serializeToolResultContent(part.content),
           isError: Boolean(part.is_error),
+          transcriptMessageId: message.uuid,
           timestamp: authoredAt,
           authoredAt,
         };
@@ -4234,6 +4331,7 @@ export class ClaudeRuntimeService extends EventEmitter {
               content: this.stripInjectedWorktreeContext(part.text),
               parentToolUseId,
               sourceMessageId: message.uuid,
+              transcriptMessageId: message.uuid,
               timestamp,
               authoredAt: timestamp,
             });
@@ -4244,6 +4342,7 @@ export class ClaudeRuntimeService extends EventEmitter {
               toolUseId: part.tool_use_id,
               parentToolUseId,
               sourceMessageId: message.uuid,
+              transcriptMessageId: message.uuid,
               content:
                 typeof part.content === 'string'
                   ? part.content
@@ -4276,6 +4375,7 @@ export class ClaudeRuntimeService extends EventEmitter {
               content: part.text,
               parentToolUseId,
               sourceMessageId: apiMessageId,
+              transcriptMessageId: message.uuid,
               timestamp,
               receivedAt: timestamp,
             });
@@ -4289,6 +4389,7 @@ export class ClaudeRuntimeService extends EventEmitter {
               content: part.thinking,
               parentToolUseId,
               sourceMessageId: apiMessageId,
+              transcriptMessageId: message.uuid,
               timestamp,
               receivedAt: timestamp,
             });
@@ -4310,6 +4411,7 @@ export class ClaudeRuntimeService extends EventEmitter {
                   ? interactionsByToolUseId.get(part.id)
                   : undefined,
               sourceMessageId: apiMessageId,
+              transcriptMessageId: message.uuid,
               timestamp,
               receivedAt: timestamp,
             });
@@ -4671,6 +4773,75 @@ export class ClaudeRuntimeService extends EventEmitter {
       closingIndex + WORKTREE_CONTEXT_CLOSE.length,
     );
     return afterClose.replace(/^\s+/, '');
+  }
+
+  private findPreviousTranscriptMessageId(
+    records: ClaudeTranscriptRecord[],
+    beforeIndex: number,
+  ): string | null {
+    for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+      const record = records[index];
+      if (
+        (record.type === 'user' || record.type === 'assistant') &&
+        typeof record.uuid === 'string' &&
+        record.uuid
+      ) {
+        return record.uuid;
+      }
+    }
+    return null;
+  }
+
+  private extractUserTextFromTranscriptRecord(
+    record: ClaudeTranscriptRecord,
+  ): string {
+    const message = asRecord(record.message);
+    const content = message?.['content'];
+    const rawText =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content
+              .map((part) => {
+                const partRecord = asRecord(part);
+                return partRecord?.['type'] === 'text' &&
+                  typeof partRecord['text'] === 'string'
+                  ? partRecord['text']
+                  : '';
+              })
+              .filter(Boolean)
+              .join('\n')
+          : '';
+    return this.stripInjectedWorktreeContext(rawText);
+  }
+
+  private extractAssistantTextFromTranscriptRecord(
+    record: ClaudeTranscriptRecord,
+  ): string {
+    const message = asRecord(record.message);
+    const content = message?.['content'];
+    if (!Array.isArray(content)) {
+      return typeof content === 'string' ? content : '';
+    }
+    return content
+      .map((part) => {
+        const partRecord = asRecord(part);
+        if (
+          partRecord?.['type'] === 'text' &&
+          typeof partRecord['text'] === 'string'
+        ) {
+          return partRecord['text'];
+        }
+        if (
+          partRecord?.['type'] === 'thinking' &&
+          typeof partRecord['thinking'] === 'string'
+        ) {
+          return partRecord['thinking'];
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
   }
 
   private resolveMessageTimestamp(message: unknown): string {
@@ -5400,6 +5571,12 @@ function serializeToolResultContent(content: unknown): string {
   } catch {
     return String(content);
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function hashString(str: string): number {

@@ -5,6 +5,7 @@ import { ClaudeRuntimeService } from '../claude-runtime/claude-runtime.service.j
 import type { ClaudePermissionMode } from '../claude-runtime/claude-runtime.types.js';
 import type {
   AgentImageInput,
+  AgentForkConversationRequest,
   AgentPermissionMode,
   AgentRuntimeEvent,
   AgentRuntimeProvider,
@@ -104,6 +105,10 @@ export class ClaudeAgentRuntimeProvider
 
   openTerminalFallback(sessionId: number) {
     return this.runtimeService.openTerminalFallback(sessionId);
+  }
+
+  forkConversation(request: AgentForkConversationRequest) {
+    return this.runtimeService.forkConversation(request);
   }
 
   rewindConversation(sessionId: number, messageId: string) {

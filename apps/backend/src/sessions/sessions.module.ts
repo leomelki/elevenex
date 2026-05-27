@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { SessionsController } from './sessions.controller.js';
+import { SessionForksService } from './session-forks.service.js';
 import { SessionsService } from './sessions.service.js';
 import { TerminalModule } from '../terminal/terminal.module.js';
 import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module.js';
@@ -10,7 +11,7 @@ import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module.js';
     forwardRef(() => TerminalModule),
   ],
   controllers: [SessionsController],
-  providers: [SessionsService],
-  exports: [SessionsService],
+  providers: [SessionsService, SessionForksService],
+  exports: [SessionsService, SessionForksService],
 })
 export class SessionsModule {}
