@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
@@ -13,13 +19,20 @@ import type {
 
 type JsonRecord = Record<string, unknown>;
 
+export const CODEX_HISTORY_SESSIONS_ROOT = Symbol('CODEX_HISTORY_SESSIONS_ROOT');
+
 @Injectable()
 export class CodexHistoryService {
   private readonly logger = new Logger('CodexHistoryService');
+  private readonly sessionsRoot: string;
 
   constructor(
-    private readonly sessionsRoot = join(homedir(), '.codex', 'sessions'),
-  ) {}
+    @Optional()
+    @Inject(CODEX_HISTORY_SESSIONS_ROOT)
+    sessionsRoot?: string,
+  ) {
+    this.sessionsRoot = sessionsRoot ?? join(homedir(), '.codex', 'sessions');
+  }
 
   async getHistory(
     codexSessionId: string | null,
