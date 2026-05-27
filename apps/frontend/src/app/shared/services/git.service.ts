@@ -22,14 +22,20 @@ export class GitService {
     });
   }
 
-  getSummary(worktreePath: string) {
-    return this.http.get<GitStatusSummary>('/api/git/summary', {
-      params: { worktreePath },
-    }).pipe(tap((summary) => this.rememberSummary(worktreePath, summary)));
+  getSummary(worktreePath: string, options: { conflictsOnly?: boolean } = {}) {
+    const request = this.http.get<GitStatusSummary>('/api/git/summary', {
+      params: {
+        worktreePath,
+        conflictsOnly: String(Boolean(options.conflictsOnly)),
+      },
+    });
+    return options.conflictsOnly
+      ? request
+      : request.pipe(tap((summary) => this.rememberSummary(worktreePath, summary)));
   }
 
   latestSummary(worktreePath: string | null): GitStatusSummary | null {
-    return worktreePath ? this.latestSummaries().get(worktreePath) ?? null : null;
+    return worktreePath ? (this.latestSummaries().get(worktreePath) ?? null) : null;
   }
 
   stageFiles(worktreePath: string, files: string[]) {

@@ -38,6 +38,7 @@ const file = (
 const summary = (
   files: ChangeReviewFileSummary[],
   scope: ChangeReviewScope = 'branch',
+  overrides: Partial<ChangeReviewSummary> = {},
 ): ChangeReviewSummary => ({
   scope,
   worktreePath: '/tmp/repo',
@@ -59,6 +60,8 @@ const summary = (
     deletions: files.reduce((sum, item) => sum + item.deletions, 0),
   },
   files,
+  loadGuard: null,
+  ...overrides,
 });
 
 const row = (path: string, index: number) => ({
@@ -179,7 +182,11 @@ describe('ChangeReviewPanelComponent', () => {
     clearCache: ReturnType<typeof vi.fn>;
     hasFileWindowCache: ReturnType<typeof vi.fn>;
   };
-  let summaryCalls: Array<{ scope: ChangeReviewScope; response: Subject<ChangeReviewSummary> }>;
+  let summaryCalls: Array<{
+    scope: ChangeReviewScope;
+    forceLoad: boolean;
+    response: Subject<ChangeReviewSummary>;
+  }>;
   let windowCalls: Array<{
     path: string;
     offset: number;
@@ -198,11 +205,18 @@ describe('ChangeReviewPanelComponent', () => {
     latestGitSummary = signal<GitStatusSummary | null>(null);
     localStorage.clear();
     serviceMock = {
-      getSummary: vi.fn((_worktreePath: string, scope: ChangeReviewScope) => {
-        const response = new Subject<ChangeReviewSummary>();
-        summaryCalls.push({ scope, response });
-        return response.asObservable();
-      }),
+      getSummary: vi.fn(
+        (
+          _worktreePath: string,
+          scope: ChangeReviewScope,
+          _refreshBase = false,
+          forceLoad = false,
+        ) => {
+          const response = new Subject<ChangeReviewSummary>();
+          summaryCalls.push({ scope, forceLoad, response });
+          return response.asObservable();
+        },
+      ),
       getFileWindow: vi.fn(
         (
           _worktreePath: string,
@@ -244,11 +258,13 @@ describe('ChangeReviewPanelComponent', () => {
     fixture.detectChanges();
     await flush();
     fixture.detectChanges();
-    const viewport = fixture.nativeElement.querySelector('.cr-diff-viewport') as HTMLElement;
-    setViewport(viewport);
-    fixture.componentInstance.onDiffScroll();
+    const viewport = fixture.nativeElement.querySelector('.cr-diff-viewport') as HTMLElement | null;
+    if (viewport) {
+      setViewport(viewport);
+      fixture.componentInstance.onDiffScroll();
+    }
     fixture.detectChanges();
-    return viewport;
+    return viewport as HTMLElement;
   }
 
   it('renders multiple file headers in one continuous diff surface', async () => {
@@ -411,6 +427,41 @@ describe('ChangeReviewPanelComponent', () => {
     resolveButton.click();
 
     expect(emitted).toEqual([true]);
+  });
+
+  it('pauses diff loading for guarded large change sets until explicitly loaded', async () => {
+    await flushSummary(
+      summary([], 'branch', {
+        totals: { files: 2_001, additions: 0, deletions: 0 },
+        loadGuard: {
+          blocked: true,
+          threshold: 2_000,
+          totalFiles: 2_001,
+          stagedFiles: 4,
+          unstagedFiles: 1_997,
+          conflictedFiles: 1,
+          reason: 'worktree',
+        },
+      }),
+    );
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.textContent).toContain('Diff loading paused');
+    expect(element.textContent).toContain('2,001');
+    expect(windowCalls).toHaveLength(0);
+    expect(gitServiceMock.getSummary).not.toHaveBeenCalled();
+
+    const loadButton = Array.from(element.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Load all diffs'),
+    ) as HTMLButtonElement;
+    loadButton.click();
+    fixture.detectChanges();
+
+    expect(summaryCalls[summaryCalls.length - 1]).toMatchObject({
+      scope: 'branch',
+      forceLoad: true,
+    });
   });
 
   it('uses only HEAD drift for last-commit outdated detection', async () => {

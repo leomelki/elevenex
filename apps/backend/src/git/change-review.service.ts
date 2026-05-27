@@ -15,6 +15,7 @@ import {
   ChangeReviewFileStatus,
   ChangeReviewFileSummary,
   ChangeReviewFileWindow,
+  ChangeReviewLoadGuard,
   ChangeReviewPullRequestInfo,
   ChangeReviewRow,
   ChangeReviewScope,
@@ -22,9 +23,11 @@ import {
 } from './change-review.types.js';
 import {
   clearWorktreeFingerprintCache,
+  readWorktreeFingerprint,
   readWorktreeStatusSnapshot,
 } from './git-worktree-fingerprint.js';
 
+const DEFAULT_CHANGE_REVIEW_FILE_LIMIT = 2_000;
 const LARGE_FILE_BYTES = 1_000_000;
 const LARGE_FILE_LINES = 25_000;
 const DEFAULT_CONTEXT = 8;
@@ -95,6 +98,18 @@ interface WorktreeReviewState {
   status: StatusResult | null;
 }
 
+interface ChangeReviewLoadCheck {
+  guard: ChangeReviewLoadGuard | null;
+  status: StatusResult | null;
+}
+
+interface WorktreeChangeCounts {
+  totalFiles: number;
+  stagedFiles: number;
+  unstagedFiles: number;
+  conflictedFiles: number;
+}
+
 interface FileSummarySet {
   files: ChangeReviewFileSummary[];
   untrackedPaths: ReadonlySet<string>;
@@ -119,6 +134,7 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     refreshBase = false,
+    forceLoad = false,
   ): Promise<ChangeReviewSummary> {
     this.assertScope(scope);
     if (refreshBase) {
@@ -127,11 +143,28 @@ export class ChangeReviewService {
     }
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, refreshBase);
+    const loadCheck = await this.readLoadCheck(
+      git,
+      worktreePath,
+      scope,
+      base,
+      forceLoad,
+    );
+    if (loadCheck.guard?.blocked) {
+      return this.buildGuardedSummary(
+        worktreePath,
+        scope,
+        base,
+        loadCheck.guard,
+      );
+    }
+
     const worktreeState = await this.readWorktreeReviewState(
       git,
       worktreePath,
       scope,
       true,
+      loadCheck.status,
     );
     const summaries = await this.readFileSummaries(
       git,
@@ -163,6 +196,7 @@ export class ChangeReviewService {
         deletions: files.reduce((sum, file) => sum + file.deletions, 0),
       },
       files,
+      loadGuard: loadCheck.guard,
     };
   }
 
@@ -170,7 +204,12 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     filePath: string,
-    options: { offset?: number; limit?: number; context?: number } = {},
+    options: {
+      offset?: number;
+      limit?: number;
+      context?: number;
+      forceLoad?: boolean;
+    } = {},
   ): Promise<ChangeReviewFileWindow> {
     this.assertScope(scope);
     const offset = Math.max(0, Number(options.offset) || 0);
@@ -185,10 +224,23 @@ export class ChangeReviewService {
 
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, false);
+    const loadCheck = await this.readLoadCheck(
+      git,
+      worktreePath,
+      scope,
+      base,
+      Boolean(options.forceLoad),
+    );
+    if (loadCheck.guard?.blocked) {
+      throw new BadRequestException(this.loadGuardMessage(loadCheck.guard));
+    }
+
     const worktreeState = await this.readWorktreeReviewState(
       git,
       worktreePath,
       scope,
+      false,
+      loadCheck.status,
     );
     const lookup = await this.readFileSummary(
       git,
@@ -252,6 +304,7 @@ export class ChangeReviewService {
       newStart: number;
       count: number;
       limit?: number;
+      forceLoad?: boolean;
     },
   ): Promise<ChangeReviewContextWindow> {
     this.assertScope(scope);
@@ -265,10 +318,23 @@ export class ChangeReviewService {
 
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, false);
+    const loadCheck = await this.readLoadCheck(
+      git,
+      worktreePath,
+      scope,
+      base,
+      Boolean(range.forceLoad),
+    );
+    if (loadCheck.guard?.blocked) {
+      throw new BadRequestException(this.loadGuardMessage(loadCheck.guard));
+    }
+
     const worktreeState = await this.readWorktreeReviewState(
       git,
       worktreePath,
       scope,
+      false,
+      loadCheck.status,
     );
     const { summary } = await this.readFileSummary(
       git,
@@ -504,6 +570,177 @@ export class ChangeReviewService {
     });
   }
 
+  private async readLoadCheck(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    forceLoad: boolean,
+  ): Promise<ChangeReviewLoadCheck> {
+    if (forceLoad) {
+      return { guard: null, status: null };
+    }
+
+    const status = scope === 'last-commit' ? null : await git.status();
+    const worktreeCounts = status
+      ? this.countWorktreeChanges(status)
+      : {
+          totalFiles: 0,
+          stagedFiles: 0,
+          unstagedFiles: 0,
+          conflictedFiles: 0,
+        };
+
+    if (worktreeCounts.totalFiles > DEFAULT_CHANGE_REVIEW_FILE_LIMIT) {
+      return {
+        status,
+        guard: {
+          blocked: true,
+          threshold: DEFAULT_CHANGE_REVIEW_FILE_LIMIT,
+          totalFiles: worktreeCounts.totalFiles,
+          stagedFiles: worktreeCounts.stagedFiles,
+          unstagedFiles: worktreeCounts.unstagedFiles,
+          conflictedFiles: worktreeCounts.conflictedFiles,
+          reason: 'worktree',
+        },
+      };
+    }
+
+    const scopedFiles =
+      scope === 'uncommitted'
+        ? worktreeCounts.totalFiles
+        : await this.countScopedFiles(git, scope, base, status);
+    if (scopedFiles > DEFAULT_CHANGE_REVIEW_FILE_LIMIT) {
+      return {
+        status,
+        guard: {
+          blocked: true,
+          threshold: DEFAULT_CHANGE_REVIEW_FILE_LIMIT,
+          totalFiles: scopedFiles,
+          stagedFiles: worktreeCounts.stagedFiles,
+          unstagedFiles: worktreeCounts.unstagedFiles,
+          conflictedFiles: worktreeCounts.conflictedFiles,
+          reason: 'scope',
+        },
+      };
+    }
+
+    return { guard: null, status };
+  }
+
+  private countWorktreeChanges(status: StatusResult): WorktreeChangeCounts {
+    const conflictedPaths = new Set(status.conflicted);
+    const stagedPaths = new Set<string>();
+    const unstagedPaths = new Set<string>();
+    const allPaths = new Set<string>(status.conflicted);
+
+    for (const file of status.files) {
+      const filePath = file.path;
+      allPaths.add(filePath);
+      if (conflictedPaths.has(filePath)) continue;
+      if (file.index && file.index !== ' ' && file.index !== '?') {
+        stagedPaths.add(filePath);
+      }
+      if (file.working_dir && file.working_dir !== ' ') {
+        unstagedPaths.add(filePath);
+      }
+    }
+
+    for (const file of status.renamed) {
+      allPaths.add(file.to);
+      if (!conflictedPaths.has(file.to)) {
+        stagedPaths.add(file.to);
+      }
+    }
+    for (const filePath of status.staged) {
+      allPaths.add(filePath);
+      if (!conflictedPaths.has(filePath)) {
+        stagedPaths.add(filePath);
+      }
+    }
+    for (const filePath of [
+      ...status.modified,
+      ...status.deleted,
+      ...status.not_added,
+    ]) {
+      allPaths.add(filePath);
+      if (!conflictedPaths.has(filePath)) {
+        unstagedPaths.add(filePath);
+      }
+    }
+
+    return {
+      totalFiles: allPaths.size,
+      stagedFiles: stagedPaths.size,
+      unstagedFiles: unstagedPaths.size,
+      conflictedFiles: conflictedPaths.size,
+    };
+  }
+
+  private async countScopedFiles(
+    git: SimpleGit,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    status: StatusResult | null,
+  ): Promise<number> {
+    const output = await git
+      .raw(
+        this.buildDiffArgs(scope, base, [
+          '--name-status',
+          '-z',
+          '--find-renames',
+        ]),
+      )
+      .catch(() => '');
+    const paths = new Set(
+      this.parseNameStatus(output).map((file) => file.path),
+    );
+    if (scope !== 'last-commit' && status) {
+      for (const filePath of status.not_added) {
+        paths.add(filePath);
+      }
+    }
+    return paths.size;
+  }
+
+  private buildGuardedSummary(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    guard: ChangeReviewLoadGuard,
+  ): ChangeReviewSummary {
+    return {
+      scope,
+      worktreePath,
+      repoRoot: base.repoRoot,
+      branch: base.branch,
+      baseRef: base.baseRef,
+      baseSha: base.baseSha,
+      headSha: base.headSha,
+      worktreeFingerprint:
+        scope === 'last-commit'
+          ? LAST_COMMIT_WORKTREE_FINGERPRINT
+          : 'large-change-set',
+      mergeBaseSha: base.mergeBaseSha,
+      compareLabel: base.compareLabel,
+      generatedAt: new Date().toISOString(),
+      staleBase: base.staleBase,
+      originRefAgeSeconds: base.originRefAgeSeconds,
+      pullRequest: base.pullRequest,
+      totals: {
+        files: guard.totalFiles,
+        additions: 0,
+        deletions: 0,
+      },
+      files: [],
+      loadGuard: guard,
+    };
+  }
+
+  private loadGuardMessage(guard: ChangeReviewLoadGuard): string {
+    return `Diff loading is paused because this scope has ${guard.totalFiles} changed files. Load the summary with forceLoad=true to continue.`;
+  }
+
   private async readFileSummary(
     git: SimpleGit,
     worktreePath: string,
@@ -669,11 +906,23 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     validateCached = false,
+    knownStatus: StatusResult | null = null,
   ): Promise<WorktreeReviewState> {
     if (scope === 'last-commit') {
       return {
         fingerprint: LAST_COMMIT_WORKTREE_FINGERPRINT,
         status: null,
+      };
+    }
+
+    if (knownStatus) {
+      return {
+        fingerprint: await readWorktreeFingerprint(
+          worktreePath,
+          git,
+          knownStatus,
+        ),
+        status: knownStatus,
       };
     }
 

@@ -51,9 +51,36 @@ describe('ChangeReviewService', () => {
     expect(summary.compareLabel).toBe('Uncommitted changes');
     expect(summary.headSha).toMatch(/^[a-f0-9]{40}$/);
     expect(summary.worktreeFingerprint).toMatch(/^[a-f0-9]{64}$/);
-    expect(summary.files.map((file) => file.path)).toEqual(['README.md', 'src/new.ts']);
+    expect(summary.files.map((file) => file.path)).toEqual([
+      'README.md',
+      'src/new.ts',
+    ]);
     expect(summary.totals.files).toBe(2);
     expect(summary.totals.additions).toBeGreaterThanOrEqual(2);
+  });
+
+  it('pauses large uncommitted change sets before loading file summaries or rows', async () => {
+    for (let index = 0; index < 2_001; index += 1) {
+      write(`bulk/file-${index}.txt`, '');
+    }
+
+    const summary = await service.getSummary(repoPath, 'uncommitted');
+
+    expect(summary.loadGuard).toMatchObject({
+      blocked: true,
+      threshold: 2_000,
+      totalFiles: 2_001,
+      reason: 'worktree',
+    });
+    expect(summary.files).toEqual([]);
+    expect(summary.totals).toEqual({
+      files: 2_001,
+      additions: 0,
+      deletions: 0,
+    });
+    await expect(
+      service.getFileWindow(repoPath, 'uncommitted', 'bulk/file-0.txt'),
+    ).rejects.toThrow(/Diff loading is paused/);
   });
 
   it('updates the summary fingerprint when working tree content changes', async () => {
@@ -69,18 +96,31 @@ describe('ChangeReviewService', () => {
   });
 
   it('loads a windowed textual diff for a changed file', async () => {
-    write('README.md', Array.from({ length: 40 }, (_, index) => `line ${index}`).join('\n'));
+    write(
+      'README.md',
+      Array.from({ length: 40 }, (_, index) => `line ${index}`).join('\n'),
+    );
 
-    const first = await service.getFileWindow(repoPath, 'uncommitted', 'README.md', {
-      offset: 0,
-      limit: 5,
-      context: 2,
-    });
-    const second = await service.getFileWindow(repoPath, 'uncommitted', 'README.md', {
-      offset: 5,
-      limit: 5,
-      context: 2,
-    });
+    const first = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      {
+        offset: 0,
+        limit: 5,
+        context: 2,
+      },
+    );
+    const second = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      {
+        offset: 5,
+        limit: 5,
+        context: 2,
+      },
+    );
 
     expect(first.totalRows).toBeGreaterThan(5);
     expect(first.rows).toHaveLength(5);
@@ -88,30 +128,46 @@ describe('ChangeReviewService', () => {
   });
 
   it('exposes expandable unchanged ranges before and after hunks without reloading the file window', async () => {
-    write('README.md', Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join('\n'));
+    write(
+      'README.md',
+      Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join('\n'),
+    );
     git('add README.md');
     git('commit -m "long readme"');
-    write('README.md', Array.from({ length: 60 }, (_, index) => (
-      index === 29 ? 'line 30 changed' : `line ${index + 1}`
-    )).join('\n'));
+    write(
+      'README.md',
+      Array.from({ length: 60 }, (_, index) =>
+        index === 29 ? 'line 30 changed' : `line ${index + 1}`,
+      ).join('\n'),
+    );
 
-    const fileWindow = await service.getFileWindow(repoPath, 'uncommitted', 'README.md', {
-      offset: 0,
-      limit: 200,
-      context: 2,
-    });
+    const fileWindow = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      {
+        offset: 0,
+        limit: 200,
+        context: 2,
+      },
+    );
     const expandRows = fileWindow.rows.filter((row) => row.type === 'expand');
 
     expect(expandRows.length).toBeGreaterThanOrEqual(2);
     expect(expandRows[0].oldStart).toBe(1);
     expect(expandRows[0].newStart).toBe(1);
 
-    const contextWindow = await service.getContextWindow(repoPath, 'uncommitted', 'README.md', {
-      oldStart: expandRows[0].oldStart!,
-      newStart: expandRows[0].newStart!,
-      count: expandRows[0].count!,
-      limit: 5,
-    });
+    const contextWindow = await service.getContextWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      {
+        oldStart: expandRows[0].oldStart!,
+        newStart: expandRows[0].newStart!,
+        count: expandRows[0].count!,
+        limit: 5,
+      },
+    );
 
     expect(contextWindow.rows).toHaveLength(5);
     expect(contextWindow.rows[0]).toMatchObject({
@@ -151,6 +207,9 @@ describe('ChangeReviewService', () => {
 
     expect(summary.baseRef).toBe('origin/main');
     expect(summary.mergeBaseSha).toBeTruthy();
-    expect(summary.files.map((file) => file.path).sort()).toEqual(['README.md', 'feature.txt']);
+    expect(summary.files.map((file) => file.path).sort()).toEqual([
+      'README.md',
+      'feature.txt',
+    ]);
   });
 });

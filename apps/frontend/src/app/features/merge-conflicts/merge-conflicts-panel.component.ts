@@ -131,13 +131,20 @@ export class MergeConflictsPanelComponent implements OnDestroy {
 
   readonly activeState = computed(() => {
     const activePath = this.activeFilePath();
-    return activePath ? this.fileStates().get(activePath) ?? null : null;
+    return activePath ? (this.fileStates().get(activePath) ?? null) : null;
   });
 
   readonly activeBlocks = computed(() => this.activeState()?.blocks ?? []);
   readonly activeConflict = computed(() => this.activeBlocks()[this.activeConflictIndex()] ?? null);
-  readonly dirtyCount = computed(() => [...this.fileStates().values()].filter((state) => state.dirty).length);
-  readonly resolvedLoadedCount = computed(() => [...this.fileStates().values()].filter((state) => state.content !== null && state.blocks.length === 0).length);
+  readonly dirtyCount = computed(
+    () => [...this.fileStates().values()].filter((state) => state.dirty).length,
+  );
+  readonly resolvedLoadedCount = computed(
+    () =>
+      [...this.fileStates().values()].filter(
+        (state) => state.content !== null && state.blocks.length === 0,
+      ).length,
+  );
 
   constructor() {
     this.themeObserver.observe(document.documentElement, {
@@ -249,7 +256,9 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     this.setEditorValue(next);
     this.updateContentFromEditor(state.file.path, next);
     const blocks = this.activeBlocks();
-    this.activeConflictIndex.set(Math.min(this.activeConflictIndex(), Math.max(0, blocks.length - 1)));
+    this.activeConflictIndex.set(
+      Math.min(this.activeConflictIndex(), Math.max(0, blocks.length - 1)),
+    );
     window.setTimeout(() => {
       editor.revealLineInCenter(Math.min(revealLine, Math.max(1, next.split(/\r?\n/).length)));
       editor.focus();
@@ -304,7 +313,7 @@ export class MergeConflictsPanelComponent implements OnDestroy {
 
   async loadFile(path: string, force: boolean): Promise<void> {
     const state = this.fileStates().get(path);
-    if (!state || state.loading || state.unsupported && !force) return;
+    if (!state || state.loading || (state.unsupported && !force)) return;
     if (!force && state.content !== null) {
       await this.ensureEditorForActive();
       return;
@@ -352,20 +361,27 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     }
 
     try {
-      const summary = await firstValueFrom(this.gitService.getSummary(worktreePath));
+      const summary = await firstValueFrom(
+        this.gitService.getSummary(worktreePath, { conflictsOnly: true }),
+      );
       if (generation !== this.requestGeneration) return;
       const conflictFiles = summary.files.filter((file) => file.status === 'conflicted');
       const previous = clearDrafts ? new Map<string, ConflictFileState>() : this.fileStates();
       this.summary.set(summary);
-      this.fileStates.set(new Map(conflictFiles.map((file) => [
-        file.path,
-        this.mergeFileState(file, previous.get(file.path) ?? null, clearDrafts),
-      ])));
+      this.fileStates.set(
+        new Map(
+          conflictFiles.map((file) => [
+            file.path,
+            this.mergeFileState(file, previous.get(file.path) ?? null, clearDrafts),
+          ]),
+        ),
+      );
 
       const activePath = this.activeFilePath();
-      const nextActive = activePath && conflictFiles.some((file) => file.path === activePath)
-        ? activePath
-        : conflictFiles[0]?.path ?? null;
+      const nextActive =
+        activePath && conflictFiles.some((file) => file.path === activePath)
+          ? activePath
+          : (conflictFiles[0]?.path ?? null);
       this.selectFile(nextActive);
     } catch (error: any) {
       if (generation !== this.requestGeneration) return;
@@ -406,7 +422,8 @@ export class MergeConflictsPanelComponent implements OnDestroy {
   private async saveFile(path: string): Promise<boolean> {
     const state = this.fileStates().get(path);
     if (!state || state.content === null || state.unsupported) return false;
-    const content = this.activeFilePath() === path ? this.currentEditorContent(state) : state.content;
+    const content =
+      this.activeFilePath() === path ? this.currentEditorContent(state) : state.content;
 
     this.updateFileState(path, (current) => ({ ...current, saving: true, error: null }));
     try {
@@ -450,8 +467,11 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     this.monaco = monaco;
     this.syncEditorTheme();
 
-    const uri = monaco.Uri.parse(`inmemory://merge-conflicts/${encodeURIComponent(this.worktreePath())}/${encodeURIComponent(state.file.path)}`);
-    const model = monaco.editor.getModel(uri) ?? monaco.editor.createModel(state.content, state.language, uri);
+    const uri = monaco.Uri.parse(
+      `inmemory://merge-conflicts/${encodeURIComponent(this.worktreePath())}/${encodeURIComponent(state.file.path)}`,
+    );
+    const model =
+      monaco.editor.getModel(uri) ?? monaco.editor.createModel(state.content, state.language, uri);
     if (model.getValue() !== state.content) {
       model.setValue(state.content);
     }
@@ -508,7 +528,7 @@ export class MergeConflictsPanelComponent implements OnDestroy {
   private currentEditorContent(state: ConflictFileState): string {
     return this.activeFilePath() === state.file.path && this.editor
       ? this.editor.getValue()
-      : state.content ?? '';
+      : (state.content ?? '');
   }
 
   private updateContentFromEditor(path: string, content: string): void {
@@ -569,7 +589,11 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     this.pendingMention.set({ mention });
   }
 
-  private contextForSelection(content: string, startLine: number, endLine: number): DiffSelectionMention['context'] {
+  private contextForSelection(
+    content: string,
+    startLine: number,
+    endLine: number,
+  ): DiffSelectionMention['context'] {
     const lines = splitLines(content);
     const row = (line: string, index: number) => ({
       type: 'context' as const,
@@ -579,7 +603,9 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     });
     return {
       before: lines.slice(Math.max(0, startLine - 4), startLine - 1).map(row),
-      selected: lines.slice(startLine - 1, endLine).map((line, index) => row(line, startLine - 1 + index)),
+      selected: lines
+        .slice(startLine - 1, endLine)
+        .map((line, index) => row(line, startLine - 1 + index)),
       after: lines.slice(endLine, endLine + 3).map(row),
     };
   }
@@ -590,10 +616,16 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     const decorations = this.activeBlocks().flatMap((block) => {
       const isActive = active?.id === block.id;
       const className = isActive ? 'mc-editor-line--active-conflict' : 'mc-editor-line--conflict';
-      const items: unknown[] = [{
-        range: new this.monaco!.Range(block.startLine, 1, block.endLine, 1),
-        options: { isWholeLine: true, className, glyphMarginClassName: 'mc-editor-glyph--conflict' },
-      }];
+      const items: unknown[] = [
+        {
+          range: new this.monaco!.Range(block.startLine, 1, block.endLine, 1),
+          options: {
+            isWholeLine: true,
+            className,
+            glyphMarginClassName: 'mc-editor-glyph--conflict',
+          },
+        },
+      ];
       if (block.ours.content.length) {
         items.push({
           range: new this.monaco!.Range(block.ours.startLine, 1, block.ours.endLine, 1),
@@ -626,7 +658,9 @@ export class MergeConflictsPanelComponent implements OnDestroy {
 
   private syncEditorTheme(): void {
     if (!this.monaco) return;
-    this.monaco.editor.setTheme(document.documentElement.classList.contains('dark') ? 'vs-dark' : 'vs');
+    this.monaco.editor.setTheme(
+      document.documentElement.classList.contains('dark') ? 'vs-dark' : 'vs',
+    );
   }
 
   private updateFileState(
@@ -664,8 +698,10 @@ export class MergeConflictsPanelComponent implements OnDestroy {
 }
 
 function isSelectionEmpty(selection: MonacoSelection): boolean {
-  return selection.startLineNumber === selection.endLineNumber
-    && selection.startColumn === selection.endColumn;
+  return (
+    selection.startLineNumber === selection.endLineNumber &&
+    selection.startColumn === selection.endColumn
+  );
 }
 
 function splitLines(content: string): string[] {

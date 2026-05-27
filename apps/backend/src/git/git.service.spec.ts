@@ -157,6 +157,25 @@ describe('GitService', () => {
         }),
       ]);
     });
+
+    it('should return only conflicted files for conflict-only summaries', async () => {
+      createMergeConflict();
+      fs.writeFileSync(path.join(repoPath, 'unrelated.txt'), 'unrelated');
+
+      const summary = await service.getStatusSummary(repoPath, {
+        conflictsOnly: true,
+      });
+
+      expect(summary.files).toEqual([
+        expect.objectContaining({
+          path: 'initial.txt',
+          status: 'conflicted',
+          staged: false,
+        }),
+      ]);
+      expect(summary.total.files).toBe(1);
+      expect(summary.unstaged.files).toBe(1);
+    });
   });
 
   describe('stageFiles', () => {
@@ -496,7 +515,10 @@ describe('GitService', () => {
 
     it('should remove conflicted status after staging marker-free content', async () => {
       createMergeConflict();
-      fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'resolved content\n');
+      fs.writeFileSync(
+        path.join(repoPath, 'initial.txt'),
+        'resolved content\n',
+      );
 
       await service.stageFiles(repoPath, ['initial.txt']);
 

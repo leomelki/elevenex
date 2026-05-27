@@ -1,10 +1,6 @@
 export type ChangeReviewScope = 'uncommitted' | 'last-commit' | 'branch';
 
-export type ChangeReviewFileStatus =
-  | 'added'
-  | 'modified'
-  | 'deleted'
-  | 'renamed';
+export type ChangeReviewFileStatus = 'added' | 'modified' | 'deleted' | 'renamed';
 
 export interface ChangeReviewPullRequestInfo {
   number: number;
@@ -24,6 +20,16 @@ export interface ChangeReviewFileSummary {
   binary: boolean;
   large: boolean;
   size: number | null;
+}
+
+export interface ChangeReviewLoadGuard {
+  blocked: boolean;
+  threshold: number;
+  totalFiles: number;
+  stagedFiles: number;
+  unstagedFiles: number;
+  conflictedFiles: number;
+  reason: 'worktree' | 'scope';
 }
 
 export interface ChangeReviewSummary {
@@ -47,15 +53,10 @@ export interface ChangeReviewSummary {
     deletions: number;
   };
   files: ChangeReviewFileSummary[];
+  loadGuard: ChangeReviewLoadGuard | null;
 }
 
-export type ChangeReviewRowType =
-  | 'hunk'
-  | 'context'
-  | 'add'
-  | 'delete'
-  | 'expand'
-  | 'meta';
+export type ChangeReviewRowType = 'hunk' | 'context' | 'add' | 'delete' | 'expand' | 'meta';
 
 export interface ChangeReviewRow {
   id: string;

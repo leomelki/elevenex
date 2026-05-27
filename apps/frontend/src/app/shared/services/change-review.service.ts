@@ -15,11 +15,16 @@ export class ChangeReviewService {
   private readonly fileWindowCache = new Map<string, Observable<ChangeReviewFileWindow>>();
   private readonly contextWindowCache = new Map<string, Observable<ChangeReviewContextWindow>>();
 
-  getSummary(worktreePath: string, scope: ChangeReviewScope, refreshBase = false) {
+  getSummary(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    refreshBase = false,
+    forceLoad = false,
+  ) {
     if (refreshBase) {
       this.clearCache(worktreePath, scope);
     }
-    const key = this.summaryKey(worktreePath, scope);
+    const key = this.summaryKey(worktreePath, scope, forceLoad);
     const cached = this.summaryCache.get(key);
     if (cached) return cached;
 
@@ -31,6 +36,7 @@ export class ChangeReviewService {
           worktreePath,
           scope,
           refreshBase: String(refreshBase),
+          forceLoad: String(forceLoad),
         },
       })
       .pipe(
@@ -51,13 +57,14 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     path: string,
     options: { offset?: number; limit?: number; context?: number } = {},
+    forceLoad = false,
   ) {
     const normalized = {
       offset: options.offset ?? 0,
       limit: options.limit ?? 600,
       context: options.context ?? 8,
     };
-    const key = this.fileWindowKey(worktreePath, scope, path, normalized);
+    const key = this.fileWindowKey(worktreePath, scope, path, normalized, forceLoad);
     const cached = this.fileWindowCache.get(key);
     if (cached) return cached;
 
@@ -72,6 +79,7 @@ export class ChangeReviewService {
           offset: String(normalized.offset),
           limit: String(normalized.limit),
           context: String(normalized.context),
+          forceLoad: String(forceLoad),
         },
       })
       .pipe(
@@ -92,6 +100,7 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     path: string,
     range: { oldStart: number; newStart: number; count: number; limit?: number },
+    forceLoad = false,
   ) {
     const normalized = {
       oldStart: range.oldStart,
@@ -99,7 +108,7 @@ export class ChangeReviewService {
       count: range.count,
       limit: range.limit ?? 120,
     };
-    const key = this.contextWindowKey(worktreePath, scope, path, normalized);
+    const key = this.contextWindowKey(worktreePath, scope, path, normalized, forceLoad);
     const cached = this.contextWindowCache.get(key);
     if (cached) return cached;
 
@@ -115,6 +124,7 @@ export class ChangeReviewService {
           newStart: String(normalized.newStart),
           count: String(normalized.count),
           limit: String(normalized.limit),
+          forceLoad: String(forceLoad),
         },
       })
       .pipe(
@@ -135,13 +145,20 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     path: string,
     options: { offset?: number; limit?: number; context?: number } = {},
+    forceLoad = false,
   ): boolean {
     return this.fileWindowCache.has(
-      this.fileWindowKey(worktreePath, scope, path, {
-        offset: options.offset ?? 0,
-        limit: options.limit ?? 600,
-        context: options.context ?? 8,
-      }),
+      this.fileWindowKey(
+        worktreePath,
+        scope,
+        path,
+        {
+          offset: options.offset ?? 0,
+          limit: options.limit ?? 600,
+          context: options.context ?? 8,
+        },
+        forceLoad,
+      ),
     );
   }
 
@@ -175,8 +192,8 @@ export class ChangeReviewService {
     }
   }
 
-  private summaryKey(worktreePath: string, scope: ChangeReviewScope): string {
-    return `${this.scopePrefix(worktreePath, scope)}\0summary`;
+  private summaryKey(worktreePath: string, scope: ChangeReviewScope, forceLoad: boolean): string {
+    return `${this.scopePrefix(worktreePath, scope)}\0summary\0${forceLoad ? 'force' : 'guarded'}`;
   }
 
   private fileWindowKey(
@@ -184,6 +201,7 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     path: string,
     options: { offset: number; limit: number; context: number },
+    forceLoad: boolean,
   ): string {
     return [
       this.scopePrefix(worktreePath, scope),
@@ -192,6 +210,7 @@ export class ChangeReviewService {
       options.offset,
       options.limit,
       options.context,
+      forceLoad ? 'force' : 'guarded',
     ].join('\0');
   }
 
@@ -200,6 +219,7 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     path: string,
     range: { oldStart: number; newStart: number; count: number; limit: number },
+    forceLoad: boolean,
   ): string {
     return [
       this.scopePrefix(worktreePath, scope),
@@ -209,6 +229,7 @@ export class ChangeReviewService {
       range.newStart,
       range.count,
       range.limit,
+      forceLoad ? 'force' : 'guarded',
     ].join('\0');
   }
 

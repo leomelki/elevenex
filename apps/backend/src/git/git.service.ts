@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { execFile, type ExecFileOptions } from 'node:child_process';
 import * as path from 'node:path';
@@ -165,8 +166,15 @@ export class GitService {
     });
   }
 
-  async getStatusSummary(worktreePath: string): Promise<GitStatusSummary> {
+  async getStatusSummary(
+    worktreePath: string,
+    options: { conflictsOnly?: boolean } = {},
+  ): Promise<GitStatusSummary> {
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
+    if (options.conflictsOnly) {
+      return this.getConflictsOnlySummary(git, worktreePath);
+    }
+
     const [statusSnapshot, headSha] = await Promise.all([
       readWorktreeStatusSnapshot(worktreePath, git, { validateCached: true }),
       git
@@ -203,6 +211,48 @@ export class GitService {
         additions: stagedStats.additions + unstagedStats.additions,
         deletions: stagedStats.deletions + unstagedStats.deletions,
       },
+    };
+  }
+
+  private async getConflictsOnlySummary(
+    git: SimpleGit,
+    worktreePath: string,
+  ): Promise<GitStatusSummary> {
+    const [rawConflicts, branchSummary, headSha] = await Promise.all([
+      git.raw(['diff', '--name-only', '--diff-filter=U', '-z']).catch(() => ''),
+      git.branchLocal().catch(() => ({ current: 'HEAD' })),
+      git
+        .revparse(['HEAD'])
+        .then((value) => value.trim())
+        .catch(() => null),
+    ]);
+    const files: FileStatus[] = rawConflicts
+      .split('\0')
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right))
+      .map((path) => ({
+        path,
+        status: 'conflicted' as const,
+        staged: false,
+      }));
+    const fingerprint = createHash('sha256')
+      .update(headSha ?? '')
+      .update('\0')
+      .update(files.map((file) => file.path).join('\0'))
+      .digest('hex');
+
+    return {
+      branch: branchSummary.current || 'HEAD',
+      upstream: null,
+      headSha,
+      worktreeFingerprint: fingerprint,
+      ahead: 0,
+      behind: 0,
+      hasChanges: files.length > 0,
+      files,
+      staged: { files: 0, additions: 0, deletions: 0 },
+      unstaged: { files: files.length, additions: 0, deletions: 0 },
+      total: { files: files.length, additions: 0, deletions: 0 },
     };
   }
 

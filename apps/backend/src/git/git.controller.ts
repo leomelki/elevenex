@@ -36,8 +36,11 @@ export class GitController {
   @Get('summary')
   async getSummary(
     @Query('worktreePath') worktreePath: string,
+    @Query('conflictsOnly') conflictsOnly?: string,
   ): Promise<GitStatusSummary> {
-    return this.gitService.getStatusSummary(decodeURIComponent(worktreePath));
+    return this.gitService.getStatusSummary(decodeURIComponent(worktreePath), {
+      conflictsOnly: conflictsOnly === 'true',
+    });
   }
 
   @Get('change-review/summary')
@@ -45,11 +48,13 @@ export class GitController {
     @Query('worktreePath') worktreePath: string,
     @Query('scope') scope: ChangeReviewScope = 'branch',
     @Query('refreshBase') refreshBase?: string,
+    @Query('forceLoad') forceLoad?: string,
   ): Promise<ChangeReviewSummary> {
     return this.changeReviewService.getSummary(
       decodeURIComponent(worktreePath),
       scope,
       refreshBase === 'true',
+      forceLoad === 'true',
     );
   }
 
@@ -61,6 +66,7 @@ export class GitController {
     @Query('offset') offset?: string,
     @Query('limit') limit?: string,
     @Query('context') context?: string,
+    @Query('forceLoad') forceLoad?: string,
   ): Promise<ChangeReviewFileWindow> {
     return this.changeReviewService.getFileWindow(
       decodeURIComponent(worktreePath),
@@ -70,6 +76,7 @@ export class GitController {
         offset: offset ? Number.parseInt(offset, 10) : undefined,
         limit: limit ? Number.parseInt(limit, 10) : undefined,
         context: context ? Number.parseInt(context, 10) : undefined,
+        forceLoad: forceLoad === 'true',
       },
     );
   }
@@ -82,6 +89,7 @@ export class GitController {
     @Query('offset') offset?: string,
     @Query('limit') limit?: string,
     @Query('context') context?: string,
+    @Query('forceLoad') forceLoad?: string,
   ): Promise<ChangeReviewFileWindow> {
     return this.getChangeReviewFile(
       worktreePath,
@@ -90,6 +98,7 @@ export class GitController {
       offset,
       limit,
       context,
+      forceLoad,
     );
   }
 
@@ -102,6 +111,7 @@ export class GitController {
     @Query('newStart') newStart: string,
     @Query('count') count: string,
     @Query('limit') limit?: string,
+    @Query('forceLoad') forceLoad?: string,
   ): Promise<ChangeReviewContextWindow> {
     return this.changeReviewService.getContextWindow(
       decodeURIComponent(worktreePath),
@@ -112,6 +122,7 @@ export class GitController {
         newStart: Number.parseInt(newStart, 10),
         count: Number.parseInt(count, 10),
         limit: limit ? Number.parseInt(limit, 10) : undefined,
+        forceLoad: forceLoad === 'true',
       },
     );
   }

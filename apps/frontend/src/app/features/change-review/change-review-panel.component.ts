@@ -39,6 +39,7 @@ import {
   ChangeReviewFileSummary,
   ChangeReviewFileStatus,
   ChangeReviewFileWindow,
+  ChangeReviewLoadGuard,
   ChangeReviewRow,
   ChangeReviewScope,
   ChangeReviewSummary,
@@ -200,6 +201,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private inFlightWindowLoads = 0;
   private generation = 0;
   private gitSummaryRefreshTimer: number | null = null;
+  private readonly countFormatter = new Intl.NumberFormat();
 
   readonly rowHeightPx = ROW_HEIGHT_PX;
   readonly scopes = SCOPES;
@@ -208,6 +210,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   readonly search = signal('');
   readonly context = signal(8);
   readonly summary = signal<ChangeReviewSummary | null>(null);
+  readonly forceLoadLargeChangeSet = signal(false);
   readonly loadingSummary = signal(false);
   readonly error = signal<string | null>(null);
   readonly now = signal(Date.now());
@@ -249,11 +252,18 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   readonly conflictedFiles = computed(
     () => this.latestGitSummary()?.files.filter((file) => file.status === 'conflicted') ?? [],
   );
-  readonly conflictCount = computed(() => this.conflictedFiles().length);
+  readonly largeChangeGuard = computed<ChangeReviewLoadGuard | null>(() => {
+    const guard = this.summary()?.loadGuard;
+    return guard?.blocked ? guard : null;
+  });
+  readonly conflictCount = computed(
+    () => this.largeChangeGuard()?.conflictedFiles ?? this.conflictedFiles().length,
+  );
   readonly diffsOutdated = computed(() => {
     const summary = this.summary();
     const latest = this.latestGitSummary();
     if (!summary || !latest) return false;
+    if (summary.loadGuard?.blocked) return false;
     if (summary.headSha !== latest.headSha) return true;
     if (summary.scope === 'last-commit') return false;
     return summary.worktreeFingerprint !== latest.worktreeFingerprint;
@@ -330,7 +340,14 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   setScope(scope: ChangeReviewScope): void {
     if (scope === this.scope()) return;
+    this.forceLoadLargeChangeSet.set(false);
     this.scope.set(scope);
+  }
+
+  async loadLargeChangeSet(): Promise<void> {
+    this.forceLoadLargeChangeSet.set(true);
+    this.changeReview.clearCache(this.worktreePath(), this.scope());
+    await this.loadForCurrentScope(false);
   }
 
   setStatusFilter(filter: StatusFilter): void {
@@ -509,12 +526,18 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     try {
       const contextWindow = await firstValueFrom(
         this.changeReview
-          .getContextWindow(this.worktreePath(), this.scope(), file.path, {
-            oldStart: row.oldStart,
-            newStart: row.newStart,
-            count: row.count,
-            limit: CONTEXT_RANGE_LIMIT,
-          })
+          .getContextWindow(
+            this.worktreePath(),
+            this.scope(),
+            file.path,
+            {
+              oldStart: row.oldStart,
+              newStart: row.newStart,
+              count: row.count,
+              limit: CONTEXT_RANGE_LIMIT,
+            },
+            this.forceLoadLargeChangeSet(),
+          )
           .pipe(takeUntil(this.requestCancel$)),
       );
       if (requestGeneration !== this.generation) return;
@@ -662,6 +685,14 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     return `loading ${state.total} diff window${state.total === 1 ? '' : 's'}`;
   }
 
+  formatCount(value: number): string {
+    return this.countFormatter.format(value);
+  }
+
+  guardedReasonText(guard: ChangeReviewLoadGuard): string {
+    return guard.reason === 'worktree' ? 'pending or staged files' : 'files in this scope';
+  }
+
   private async loadForCurrentScope(refreshBase: boolean): Promise<void> {
     const worktreePath = this.worktreePath();
     const scope = this.scope();
@@ -688,17 +719,24 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     try {
       const summary = await firstValueFrom(
         this.changeReview
-          .getSummary(worktreePath, scope, refreshBase)
+          .getSummary(worktreePath, scope, refreshBase, this.forceLoadLargeChangeSet())
           .pipe(takeUntil(this.requestCancel$)),
       );
       if (requestGeneration !== this.generation) return;
 
       this.summary.set(summary);
       this.fileStates.set(
-        new Map(summary.files.map((file) => [file.path, this.createFileState(file)])),
+        new Map(
+          (summary.loadGuard?.blocked ? [] : summary.files).map((file) => [
+            file.path,
+            this.createFileState(file),
+          ]),
+        ),
       );
       this.applyFilters(true);
-      this.scheduleGitSummaryRefresh(worktreePath, requestGeneration);
+      if (!summary.loadGuard?.blocked) {
+        this.scheduleGitSummaryRefresh(worktreePath, requestGeneration);
+      }
     } catch (error: any) {
       if (requestGeneration !== this.generation) return;
       const message = error?.error?.message || 'Could not load changes.';
@@ -1006,11 +1044,17 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
     void firstValueFrom(
       this.changeReview
-        .getFileWindow(this.worktreePath(), this.scope(), request.filePath, {
-          offset: request.offset,
-          limit: WINDOW_LIMIT,
-          context: this.context(),
-        })
+        .getFileWindow(
+          this.worktreePath(),
+          this.scope(),
+          request.filePath,
+          {
+            offset: request.offset,
+            limit: WINDOW_LIMIT,
+            context: this.context(),
+          },
+          this.forceLoadLargeChangeSet(),
+        )
         .pipe(takeUntil(this.requestCancel$)),
     )
       .then((fileWindow) => this.applyFileWindow(fileWindow, request))
