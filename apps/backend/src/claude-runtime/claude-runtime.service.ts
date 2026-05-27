@@ -194,6 +194,8 @@ type McpAuthControlQuery = Query & {
 export interface ClaudeTranscriptRecord {
   type?: unknown;
   uuid?: unknown;
+  parentUuid?: unknown;
+  isSidechain?: unknown;
   messageId?: unknown;
   sessionId?: unknown;
   timestamp?: unknown;
@@ -4472,7 +4474,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       ClaudeToolInteractionSummary
     > = new Map(),
   ): ClaudeTranscriptItem[] {
-    const messages = records
+    const messages = this.selectActiveTranscriptRecords(records)
       .filter((record): record is SessionMessage & ClaudeTranscriptRecord => {
         return (
           (record.type === 'user' || record.type === 'assistant') &&
@@ -4491,6 +4493,87 @@ export class ClaudeRuntimeService extends EventEmitter {
       }));
 
     return this.normalizeHistory(messages, interactionsByToolUseId);
+  }
+
+  private selectActiveTranscriptRecords(
+    records: ClaudeTranscriptRecord[],
+  ): ClaudeTranscriptRecord[] {
+    const renderableRecords = records.filter((record) =>
+      this.isRenderableTranscriptRecord(record),
+    );
+    if (
+      renderableRecords.length === 0 ||
+      !renderableRecords.some((record) => this.hasTranscriptParentUuid(record))
+    ) {
+      return renderableRecords;
+    }
+
+    const recordsByUuid = new Map<string, ClaudeTranscriptRecord>();
+    for (const record of records) {
+      if (typeof record.uuid === 'string') {
+        recordsByUuid.set(record.uuid, record);
+      }
+    }
+
+    const leafRecord = [...renderableRecords]
+      .reverse()
+      .find((record) => record.isSidechain !== true);
+    if (
+      !leafRecord ||
+      typeof leafRecord.uuid !== 'string' ||
+      !this.hasTranscriptParentUuid(leafRecord)
+    ) {
+      return renderableRecords;
+    }
+
+    const activeUuids = new Set<string>();
+    const visitedUuids = new Set<string>();
+    let cursorUuid: string | null = leafRecord.uuid;
+
+    while (cursorUuid && !visitedUuids.has(cursorUuid)) {
+      visitedUuids.add(cursorUuid);
+      const record = recordsByUuid.get(cursorUuid);
+      if (!record) break;
+
+      if (
+        this.isRenderableTranscriptRecord(record) &&
+        record.isSidechain !== true
+      ) {
+        activeUuids.add(cursorUuid);
+      }
+      cursorUuid = this.getTranscriptParentUuid(record);
+    }
+
+    if (activeUuids.size === 0) {
+      return renderableRecords;
+    }
+
+    return renderableRecords.filter(
+      (record) =>
+        typeof record.uuid === 'string' && activeUuids.has(record.uuid),
+    );
+  }
+
+  private isRenderableTranscriptRecord(
+    record: ClaudeTranscriptRecord,
+  ): boolean {
+    return (
+      (record.type === 'user' || record.type === 'assistant') &&
+      typeof record.uuid === 'string' &&
+      !!record.message
+    );
+  }
+
+  private hasTranscriptParentUuid(record: ClaudeTranscriptRecord): boolean {
+    return Object.prototype.hasOwnProperty.call(record, 'parentUuid');
+  }
+
+  private getTranscriptParentUuid(
+    record: ClaudeTranscriptRecord,
+  ): string | null {
+    return typeof record.parentUuid === 'string' && record.parentUuid
+      ? record.parentUuid
+      : null;
   }
 
   private recordHistorySnapshot(

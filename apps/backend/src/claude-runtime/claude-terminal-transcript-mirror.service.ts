@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import chokidar, { FSWatcher } from 'chokidar';
 import { open as openFile, readFile, stat } from 'fs/promises';
-import type { ClaudeRuntimeService, ClaudeTranscriptRecord } from './claude-runtime.service.js';
+import type { Stats } from 'fs';
+import type {
+  ClaudeRuntimeService,
+  ClaudeTranscriptRecord,
+} from './claude-runtime.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { CLAUDE_RUNTIME_SERVICE } from './claude-runtime.tokens.js';
 import type {
@@ -30,7 +34,13 @@ interface MirrorState {
   transcriptPath: string | null;
   history: ClaudeTranscriptItem[];
   fileOffset: number;
+  fileDev: number | null;
+  fileIno: number | null;
+  fileMtimeMs: number | null;
+  tailSignature: string | null;
   partialLine: string;
+  activeLeafUuid: string | null;
+  usesParentLinks: boolean;
   watcher: FSWatcher | null;
   readInFlight: Promise<void> | null;
   readAgain: boolean;
@@ -53,12 +63,15 @@ interface StatusChangedPayload {
 }
 
 const READ_DEBOUNCE_MS = 80;
+const TAIL_SIGNATURE_BYTES = 4096;
 
 @Injectable()
 export class ClaudeTerminalTranscriptMirrorService
   implements OnModuleInit, OnModuleDestroy
 {
-  private readonly logger = new Logger(ClaudeTerminalTranscriptMirrorService.name);
+  private readonly logger = new Logger(
+    ClaudeTerminalTranscriptMirrorService.name,
+  );
   private readonly states = new Map<number, MirrorState>();
 
   private readonly hookEventListener = (data: {
@@ -170,7 +183,10 @@ export class ClaudeTerminalTranscriptMirrorService
     state.debounceTimer.unref?.();
   }
 
-  private async readLatest(sessionId: number, state: MirrorState): Promise<void> {
+  private async readLatest(
+    sessionId: number,
+    state: MirrorState,
+  ): Promise<void> {
     if (state.readInFlight) {
       state.readAgain = true;
       return state.readInFlight;
@@ -203,7 +219,9 @@ export class ClaudeTerminalTranscriptMirrorService
     if (!transcriptPath) return;
 
     const stats = await stat(transcriptPath);
-    if (stats.size < state.fileOffset) {
+    if (
+      await this.shouldReloadBeforeIncrementalRead(transcriptPath, state, stats)
+    ) {
       await this.reloadTranscript(sessionId, state);
       this.emitSnapshot(sessionId, state);
       return;
@@ -227,7 +245,14 @@ export class ClaudeTerminalTranscriptMirrorService
         buffer.subarray(0, bytesRead).toString('utf8'),
         state,
       );
+      await this.updateFileTracking(state, transcriptPath, state.fileOffset);
       if (records.length === 0) return;
+
+      if (this.recordsStartNewBranch(records, state)) {
+        await this.reloadTranscript(sessionId, state);
+        this.emitSnapshot(sessionId, state);
+        return;
+      }
 
       const nextItems =
         await this.claudeRuntime.normalizeTranscriptRecordsForSession(
@@ -237,6 +262,7 @@ export class ClaudeTerminalTranscriptMirrorService
       if (nextItems.length === 0) return;
 
       state.history = this.mergeTranscriptItems(state.history, nextItems);
+      this.advanceBranchTracking(records, state);
       state.lastError = null;
       this.emitHistory(sessionId, state.history);
     } finally {
@@ -257,14 +283,12 @@ export class ClaudeTerminalTranscriptMirrorService
     if (ref.transcriptPath !== state.transcriptPath) {
       await this.closeWatcher(state);
       state.transcriptPath = ref.transcriptPath;
-      state.fileOffset = 0;
-      state.partialLine = '';
+      this.resetFileTracking(state);
     }
 
     if (!state.transcriptPath) {
       state.history = [];
-      state.fileOffset = 0;
-      state.partialLine = '';
+      this.resetFileTracking(state);
       return;
     }
 
@@ -272,10 +296,20 @@ export class ClaudeTerminalTranscriptMirrorService
     state.fileOffset = Buffer.byteLength(raw, 'utf8');
     state.partialLine = '';
     const records = this.parseJsonlText(raw, state);
-    state.history = await this.claudeRuntime.normalizeTranscriptRecordsForSession(
-      sessionId,
-      records,
+    state.activeLeafUuid = this.findActiveLeafUuid(records);
+    state.usesParentLinks = records.some((record) =>
+      this.hasParentUuidField(record),
     );
+    await this.updateFileTracking(
+      state,
+      state.transcriptPath,
+      state.fileOffset,
+    );
+    state.history =
+      await this.claudeRuntime.normalizeTranscriptRecordsForSession(
+        sessionId,
+        records,
+      );
     state.lastError = null;
     this.ensureWatcher(sessionId, state);
   }
@@ -300,8 +334,7 @@ export class ClaudeTerminalTranscriptMirrorService
     });
     watcher.on('unlink', () => {
       state.history = [];
-      state.fileOffset = 0;
-      state.partialLine = '';
+      this.resetFileTracking(state);
       this.emitHistory(sessionId, state.history);
     });
     watcher.on('error', (error) => {
@@ -344,6 +377,143 @@ export class ClaudeTerminalTranscriptMirrorService
       state.partialLine = tail;
     }
     return records;
+  }
+
+  private async shouldReloadBeforeIncrementalRead(
+    transcriptPath: string,
+    state: MirrorState,
+    stats: Stats,
+  ): Promise<boolean> {
+    if (stats.size < state.fileOffset) {
+      return true;
+    }
+
+    if (
+      state.fileDev !== null &&
+      state.fileIno !== null &&
+      (stats.dev !== state.fileDev || stats.ino !== state.fileIno)
+    ) {
+      return true;
+    }
+
+    if (stats.size === state.fileOffset) {
+      return state.fileMtimeMs !== null && stats.mtimeMs !== state.fileMtimeMs;
+    }
+
+    if (!state.tailSignature) {
+      return false;
+    }
+
+    const currentTail = await this.readFileTailSignature(
+      transcriptPath,
+      state.fileOffset,
+    );
+    return currentTail !== state.tailSignature;
+  }
+
+  private async updateFileTracking(
+    state: MirrorState,
+    transcriptPath: string,
+    endOffset: number,
+  ): Promise<void> {
+    const stats = await stat(transcriptPath);
+    state.fileDev = stats.dev;
+    state.fileIno = stats.ino;
+    state.fileMtimeMs = stats.mtimeMs;
+    state.tailSignature = await this.readFileTailSignature(
+      transcriptPath,
+      Math.min(endOffset, stats.size),
+    );
+  }
+
+  private async readFileTailSignature(
+    transcriptPath: string,
+    endOffset: number,
+  ): Promise<string> {
+    if (endOffset <= 0) return '';
+
+    const length = Math.min(TAIL_SIGNATURE_BYTES, endOffset);
+    const start = endOffset - length;
+    const buffer = Buffer.alloc(length);
+    const handle = await openFile(transcriptPath, 'r');
+    try {
+      const { bytesRead } = await handle.read(buffer, 0, length, start);
+      return buffer.subarray(0, bytesRead).toString('base64');
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private recordsStartNewBranch(
+    records: ClaudeTranscriptRecord[],
+    state: MirrorState,
+  ): boolean {
+    if (
+      !state.usesParentLinks &&
+      !records.some((record) => this.hasParentUuidField(record))
+    ) {
+      return false;
+    }
+
+    let expectedParentUuid = state.activeLeafUuid;
+    for (const record of records) {
+      if (!this.isMainTranscriptMessageRecord(record)) continue;
+
+      const parentUuid = this.getParentUuid(record);
+      if (expectedParentUuid && parentUuid !== expectedParentUuid) {
+        return true;
+      }
+
+      if (!expectedParentUuid && state.usesParentLinks && parentUuid) {
+        return true;
+      }
+
+      expectedParentUuid = record.uuid as string;
+    }
+    return false;
+  }
+
+  private advanceBranchTracking(
+    records: ClaudeTranscriptRecord[],
+    state: MirrorState,
+  ): void {
+    for (const record of records) {
+      if (!this.isMainTranscriptMessageRecord(record)) continue;
+      state.activeLeafUuid = record.uuid as string;
+      state.usesParentLinks =
+        state.usesParentLinks || this.hasParentUuidField(record);
+    }
+  }
+
+  private findActiveLeafUuid(records: ClaudeTranscriptRecord[]): string | null {
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      const record = records[index];
+      if (this.isMainTranscriptMessageRecord(record)) {
+        return record.uuid as string;
+      }
+    }
+    return null;
+  }
+
+  private isMainTranscriptMessageRecord(
+    record: ClaudeTranscriptRecord,
+  ): boolean {
+    return (
+      (record.type === 'user' || record.type === 'assistant') &&
+      typeof record.uuid === 'string' &&
+      !!record.message &&
+      record.isSidechain !== true
+    );
+  }
+
+  private hasParentUuidField(record: ClaudeTranscriptRecord): boolean {
+    return Object.prototype.hasOwnProperty.call(record, 'parentUuid');
+  }
+
+  private getParentUuid(record: ClaudeTranscriptRecord): string | null {
+    return typeof record.parentUuid === 'string' && record.parentUuid
+      ? record.parentUuid
+      : null;
   }
 
   private mergeTranscriptItems(
@@ -422,7 +592,11 @@ export class ClaudeTerminalTranscriptMirrorService
     this.broadcast(sessionId, event);
   }
 
-  private emitError(sessionId: number, message: string, target?: MirrorSend): void {
+  private emitError(
+    sessionId: number,
+    message: string,
+    target?: MirrorSend,
+  ): void {
     const event: ClaudeRuntimeEvent = {
       type: 'error',
       payload: { sessionId, message },
@@ -507,7 +681,13 @@ export class ClaudeTerminalTranscriptMirrorService
       transcriptPath: null,
       history: [],
       fileOffset: 0,
+      fileDev: null,
+      fileIno: null,
+      fileMtimeMs: null,
+      tailSignature: null,
       partialLine: '',
+      activeLeafUuid: null,
+      usesParentLinks: false,
       watcher: null,
       readInFlight: null,
       readAgain: false,
@@ -518,6 +698,17 @@ export class ClaudeTerminalTranscriptMirrorService
     };
     this.states.set(sessionId, state);
     return state;
+  }
+
+  private resetFileTracking(state: MirrorState): void {
+    state.fileOffset = 0;
+    state.fileDev = null;
+    state.fileIno = null;
+    state.fileMtimeMs = null;
+    state.tailSignature = null;
+    state.partialLine = '';
+    state.activeLeafUuid = null;
+    state.usesParentLinks = false;
   }
 
   private broadcast(sessionId: number, event: ClaudeRuntimeEvent): void {
@@ -532,7 +723,9 @@ export class ClaudeTerminalTranscriptMirrorService
     try {
       send(event);
     } catch (error) {
-      this.logger.debug(`Failed to send transcript mirror event: ${String(error)}`);
+      this.logger.debug(
+        `Failed to send transcript mirror event: ${String(error)}`,
+      );
     }
   }
 

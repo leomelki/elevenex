@@ -17,9 +17,11 @@ export function generateTmuxScrollConfig(): string {
     'bind-key -T copy-mode-vi WheelDownPane select-pane \\; send-keys -X -N 1 scroll-down',
   );
 
-  // Root table: enter copy-mode on scroll up with 1-line scroll
+  // Root table: enter copy-mode on scroll up with 1-line scroll.
+  // Full-screen TUIs repaint the alternate screen frequently; entering tmux
+  // copy-mode there can leave tmux and the TUI fighting over the visible frame.
   lines.push(
-    `bind-key -T root WheelUpPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{pane_in_mode}' 'send-keys -X -N 1 scroll-up' 'copy-mode -e ; send-keys -X -N 1 scroll-up'"`,
+    `bind-key -T root WheelUpPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{pane_in_mode}' 'send-keys -X -N 1 scroll-up' 'if-shell -Ft= \\"#{alternate_on}\\" \\"\\" \\"copy-mode -e ; send-keys -X -N 1 scroll-up\\"'"`,
     `bind-key -T root WheelDownPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{pane_in_mode}' 'send-keys -X -N 1 scroll-down' ''"`,
   );
 

@@ -2011,6 +2011,70 @@ describe('ClaudeRuntimeService', () => {
     ]);
   });
 
+  it('normalizes transcript fallback history from the active parentUuid branch', async () => {
+    (getSessionMessages as jest.Mock).mockResolvedValue([]);
+    jest
+      .spyOn(service as never, 'findTranscriptPath' as never)
+      .mockResolvedValue(
+        '/tmp/.claude/projects/project/claude-session-1.jsonl',
+      );
+    jest
+      .spyOn(service as never, 'loadTranscriptRecords' as never)
+      .mockResolvedValue([
+        {
+          type: 'user',
+          uuid: 'user-1',
+          parentUuid: null,
+          timestamp: '2026-04-24T09:00:00.000Z',
+          message: { content: [{ type: 'text', text: 'First prompt' }] },
+        },
+        {
+          type: 'assistant',
+          uuid: 'assistant-1',
+          parentUuid: 'user-1',
+          timestamp: '2026-04-24T09:00:01.000Z',
+          message: { content: [{ type: 'text', text: 'First answer' }] },
+        },
+        {
+          type: 'user',
+          uuid: 'user-2',
+          parentUuid: 'assistant-1',
+          timestamp: '2026-04-24T09:00:02.000Z',
+          message: { content: [{ type: 'text', text: 'Stale prompt' }] },
+        },
+        {
+          type: 'assistant',
+          uuid: 'assistant-2',
+          parentUuid: 'user-2',
+          timestamp: '2026-04-24T09:00:03.000Z',
+          message: { content: [{ type: 'text', text: 'Stale answer' }] },
+        },
+        {
+          type: 'user',
+          uuid: 'user-3',
+          parentUuid: 'assistant-1',
+          timestamp: '2026-04-24T09:00:04.000Z',
+          message: { content: [{ type: 'text', text: 'Restored prompt' }] },
+        },
+        {
+          type: 'assistant',
+          uuid: 'assistant-3',
+          parentUuid: 'user-3',
+          timestamp: '2026-04-24T09:00:05.000Z',
+          message: { content: [{ type: 'text', text: 'Restored answer' }] },
+        },
+      ]);
+
+    const history = await service.getHistory(7);
+
+    expect(history.map((item) => item.content)).toEqual([
+      'First prompt',
+      'First answer',
+      'Restored prompt',
+      'Restored answer',
+    ]);
+  });
+
   it('falls back to transcript records when SDK history lookup throws', async () => {
     (getSessionMessages as jest.Mock).mockRejectedValue(
       new Error('lookup failed'),

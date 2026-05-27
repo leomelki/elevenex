@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { appendFile, mkdtemp, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import chokidar, { FSWatcher } from 'chokidar';
@@ -43,6 +43,74 @@ function recordToItem(record: ClaudeTranscriptRecord) {
         ? record.timestamp
         : '2026-01-01T00:00:00.000Z',
   };
+}
+
+function userRecord(
+  uuid: string,
+  text: string,
+  timestamp: string,
+  parentUuid?: string | null,
+): ClaudeTranscriptRecord {
+  return {
+    type: 'user',
+    uuid,
+    parentUuid,
+    timestamp,
+    message: { content: [{ type: 'text', text }] },
+  };
+}
+
+function assistantRecord(
+  uuid: string,
+  text: string,
+  timestamp: string,
+  parentUuid?: string | null,
+): ClaudeTranscriptRecord {
+  return {
+    type: 'assistant',
+    uuid,
+    parentUuid,
+    timestamp,
+    message: { content: [{ type: 'text', text }] },
+  };
+}
+
+function serializeRecords(records: ClaudeTranscriptRecord[]): string {
+  return records.map((record) => JSON.stringify(record)).join('\n') + '\n';
+}
+
+function activeBranch(
+  records: ClaudeTranscriptRecord[],
+): ClaudeTranscriptRecord[] {
+  const byUuid = new Map(
+    records
+      .filter((record) => typeof record.uuid === 'string')
+      .map((record) => [record.uuid as string, record]),
+  );
+  const leaf = [...records]
+    .reverse()
+    .find(
+      (record) =>
+        (record.type === 'user' || record.type === 'assistant') &&
+        typeof record.uuid === 'string' &&
+        record.isSidechain !== true,
+    );
+  if (!leaf || typeof leaf.uuid !== 'string') return records;
+
+  const activeUuids = new Set<string>();
+  let cursor: string | null = leaf.uuid;
+  while (cursor && !activeUuids.has(cursor)) {
+    const record = byUuid.get(cursor);
+    if (!record) break;
+    activeUuids.add(cursor);
+    cursor =
+      typeof record.parentUuid === 'string' && record.parentUuid
+        ? record.parentUuid
+        : null;
+  }
+  return records.filter(
+    (record) => typeof record.uuid === 'string' && activeUuids.has(record.uuid),
+  );
 }
 
 describe('ClaudeTerminalTranscriptMirrorService', () => {
@@ -143,7 +211,9 @@ describe('ClaudeTerminalTranscriptMirrorService', () => {
     );
     const events: any[] = [];
     service.attachClient(7, (event) => events.push(event));
-    await waitFor(() => events.some((event) => event.type === 'history_snapshot'));
+    await waitFor(() =>
+      events.some((event) => event.type === 'history_snapshot'),
+    );
     runtime.resolveTranscriptFile.mockResolvedValue({
       sessionId: 7,
       worktreePath: '/tmp/project',
@@ -153,15 +223,17 @@ describe('ClaudeTerminalTranscriptMirrorService', () => {
 
     hooks.emit('hook-event', {
       sessionId: 7,
-      payload: { hook_event_name: 'SessionStart', session_id: 'claude-session-2' },
+      payload: {
+        hook_event_name: 'SessionStart',
+        session_id: 'claude-session-2',
+      },
     });
-    await waitFor(
-      () =>
-        events.some(
-          (event) =>
-            event.type === 'history_snapshot' &&
-            event.payload.history?.[0]?.content === 'Resumed',
-        ),
+    await waitFor(() =>
+      events.some(
+        (event) =>
+          event.type === 'history_snapshot' &&
+          event.payload.history?.[0]?.content === 'Resumed',
+      ),
     );
 
     expect(events.some((event) => event.type === 'session_created')).toBe(true);
@@ -189,7 +261,9 @@ describe('ClaudeTerminalTranscriptMirrorService', () => {
     );
     const events: any[] = [];
     service.attachClient(7, (event) => events.push(event));
-    await waitFor(() => events.some((event) => event.type === 'history_snapshot'));
+    await waitFor(() =>
+      events.some((event) => event.type === 'history_snapshot'),
+    );
 
     await writeFile(
       transcriptPath,
@@ -202,7 +276,9 @@ describe('ClaudeTerminalTranscriptMirrorService', () => {
     );
     watcher.emit('change');
     await waitForDebounce();
-    expect(events[events.length - 1].payload.history).toMatchObject([{ content: 'First' }]);
+    expect(events[events.length - 1].payload.history).toMatchObject([
+      { content: 'First' },
+    ]);
 
     await writeFile(
       transcriptPath,
@@ -236,11 +312,126 @@ describe('ClaudeTerminalTranscriptMirrorService', () => {
     ]);
   });
 
+  it('reloads the full transcript when a new branch is appended from an earlier parent', async () => {
+    runtime.normalizeTranscriptRecordsForSession.mockImplementation(
+      async (_sessionId: number, records: ClaudeTranscriptRecord[]) =>
+        activeBranch(records).map(recordToItem),
+    );
+    const originalRecords = [
+      userRecord('user-1', 'First', '2026-01-01T00:00:00.000Z', null),
+      assistantRecord(
+        'assistant-1',
+        'Original answer',
+        '2026-01-01T00:00:01.000Z',
+        'user-1',
+      ),
+      userRecord(
+        'user-2',
+        'Stale prompt',
+        '2026-01-01T00:00:02.000Z',
+        'assistant-1',
+      ),
+      assistantRecord(
+        'assistant-2',
+        'Stale answer',
+        '2026-01-01T00:00:03.000Z',
+        'user-2',
+      ),
+    ];
+    await writeFile(transcriptPath, serializeRecords(originalRecords));
+    const events: any[] = [];
+    service.attachClient(7, (event) => events.push(event));
+    await waitFor(() =>
+      events.some((event) => event.type === 'history_snapshot'),
+    );
+
+    await appendFile(
+      transcriptPath,
+      serializeRecords([
+        userRecord(
+          'user-3',
+          'Restored prompt',
+          '2026-01-01T00:00:04.000Z',
+          'assistant-1',
+        ),
+      ]),
+    );
+    watcher.emit('change');
+
+    await waitFor(() => {
+      const last = events[events.length - 1];
+      const history = last?.payload?.history;
+      return (
+        Array.isArray(history) &&
+        history.some((item) => item.content === 'Restored prompt') &&
+        !history.some((item) => item.content === 'Stale prompt')
+      );
+    });
+    const lastHistory = events[events.length - 1].payload.history;
+    expect(lastHistory).toMatchObject([
+      { content: 'First' },
+      { content: 'Original answer' },
+      { content: 'Restored prompt' },
+    ]);
+    expect(
+      runtime.normalizeTranscriptRecordsForSession,
+    ).toHaveBeenLastCalledWith(7, [
+      ...originalRecords,
+      expect.objectContaining({ uuid: 'user-3' }),
+    ]);
+  });
+
+  it('full reloads when the transcript is rewritten without shrinking', async () => {
+    await writeFile(
+      transcriptPath,
+      serializeRecords([
+        userRecord('user-1', 'First', '2026-01-01T00:00:00.000Z'),
+        userRecord('user-2', 'Stale', '2026-01-01T00:00:01.000Z'),
+      ]),
+    );
+    const events: any[] = [];
+    service.attachClient(7, (event) => events.push(event));
+    await waitFor(() =>
+      events.some((event) => event.type === 'history_snapshot'),
+    );
+
+    await writeFile(
+      transcriptPath,
+      serializeRecords([
+        userRecord('user-1', 'First', '2026-01-01T00:00:00.000Z'),
+        userRecord('user-3', 'Restored', '2026-01-01T00:00:01.000Z'),
+        userRecord(
+          'user-4',
+          'Continued with a longer replacement',
+          '2026-01-01T00:00:02.000Z',
+        ),
+      ]),
+    );
+    watcher.emit('change');
+
+    await waitFor(() => {
+      const last = events[events.length - 1];
+      const history = last?.payload?.history;
+      return (
+        Array.isArray(history) &&
+        history.some((item) => item.content === 'Restored') &&
+        !history.some((item) => item.content === 'Stale')
+      );
+    });
+    expect(events[events.length - 1].payload.history).toMatchObject([
+      { content: 'First' },
+      { content: 'Restored' },
+      { content: 'Continued with a longer replacement' },
+    ]);
+  });
+
   it('derives runtime state from hook activity changes', async () => {
     await writeFile(transcriptPath, '');
     const events: any[] = [];
     service.attachClient(7, (event) => events.push(event));
-    await waitFor(() => events.some((event) => event.type === 'history_snapshot'));
+    await waitFor(() =>
+      events.some((event) => event.type === 'history_snapshot'),
+    );
 
     hooks.emit('status-changed', {
       sessionId: 7,

@@ -478,6 +478,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
         env,
       },
     );
+    await this.setTmuxWindowSizeModeLatest(tmuxSessionName);
   }
 
   private async resizeTmuxWindow(
@@ -485,6 +486,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     cols: number,
     rows: number,
   ): Promise<void> {
+    await this.setTmuxWindowSizeModeLatest(tmuxSessionName);
     await execFileQuiet(this.tmuxBin, [
       'set-option',
       '-t',
@@ -492,13 +494,23 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       'default-size',
       `${cols}x${rows}`,
     ]);
-    await execFileQuiet(this.tmuxBin, [
-      'resize-window',
-      '-t',
-      tmuxSessionName,
-      String(cols),
-      String(rows),
-    ]);
+  }
+
+  private async setTmuxWindowSizeModeLatest(
+    tmuxSessionName: string,
+  ): Promise<void> {
+    try {
+      await execFileQuiet(this.tmuxBin, [
+        'set-option',
+        '-t',
+        tmuxSessionName,
+        'window-size',
+        'latest',
+      ]);
+    } catch {
+      // Older tmux versions or dead sessions may reject this; pty.resize still
+      // carries the live client size.
+    }
   }
 
   private queueTmuxResize(
