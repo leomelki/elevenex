@@ -191,7 +191,7 @@ type McpAuthControlQuery = Query & {
   }>;
 };
 
-interface ClaudeTranscriptRecord {
+export interface ClaudeTranscriptRecord {
   type?: unknown;
   uuid?: unknown;
   messageId?: unknown;
@@ -199,6 +199,13 @@ interface ClaudeTranscriptRecord {
   timestamp?: unknown;
   message?: unknown;
   [key: string]: unknown;
+}
+
+export interface ClaudeTranscriptFileRef {
+  sessionId: number;
+  worktreePath: string;
+  claudeSessionId: string | null;
+  transcriptPath: string | null;
 }
 
 interface RuntimeState {
@@ -527,6 +534,41 @@ export class ClaudeRuntimeService extends EventEmitter {
       ...runtimeState,
       history,
     };
+  }
+
+  async resolveTranscriptFile(
+    sessionId: number,
+    claudeSessionIdOverride?: string | null,
+  ): Promise<ClaudeTranscriptFileRef> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const storedClaudeSessionId =
+      session.claudeSessionId && session.claudeSessionId !== '-1'
+        ? session.claudeSessionId
+        : null;
+    const override =
+      typeof claudeSessionIdOverride === 'string'
+        ? claudeSessionIdOverride.trim()
+        : null;
+    const claudeSessionId =
+      override && override !== '-1' ? override : storedClaudeSessionId;
+
+    return {
+      sessionId,
+      worktreePath: session.worktreePath,
+      claudeSessionId,
+      transcriptPath: claudeSessionId
+        ? await this.findTranscriptPath(session.worktreePath, claudeSessionId)
+        : null,
+    };
+  }
+
+  async normalizeTranscriptRecordsForSession(
+    sessionId: number,
+    records: ClaudeTranscriptRecord[],
+  ): Promise<ClaudeTranscriptItem[]> {
+    const interactionsByToolUseId =
+      await this.getInteractionSummaryMap(sessionId);
+    return this.normalizeTranscriptRecords(records, interactionsByToolUseId);
   }
 
   async openTerminalFallback(sessionId: number) {

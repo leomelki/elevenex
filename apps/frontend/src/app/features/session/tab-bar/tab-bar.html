@@ -107,6 +107,17 @@
         >
           <ng-icon name="lucideSquareTerminal" size="16" />
         </button>
+        @if (showClaudeTerminalFallback()) {
+          <button
+            class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+            [ngClass]="showClaudeTerminalMirror() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+            [title]="showClaudeTerminalMirror() ? 'Hide terminal transcript mirror' : 'Show terminal transcript mirror'"
+            aria-label="Toggle terminal transcript mirror"
+            (click)="toggleClaudeTerminalMirror.emit()"
+          >
+            <ng-icon name="lucidePanelRight" size="16" />
+          </button>
+        }
       }
       <button
         class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"

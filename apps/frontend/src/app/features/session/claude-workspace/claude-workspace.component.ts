@@ -53,6 +53,7 @@ import {
 } from '@/shared/models/agent-runtime.model';
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
+import { ClaudeTerminalTranscriptWebsocketService } from '@/shared/services/claude-terminal-transcript-websocket.service';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { SessionsService } from '@/shared/services/sessions.service';
@@ -164,6 +165,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   @Input() hasStartedAgentRuntime = false;
   @Input() isVisible = true;
   @Input() archived = false;
+  @Input() readOnlyTranscript = false;
+  @Input() terminalTranscriptMirror = false;
   @Input() sessionName: string | null = null;
   @Input() unarchiveBusy = false;
   @ViewChild('transcriptContainer') private transcriptContainer?: ElementRef<HTMLDivElement>;
@@ -183,6 +186,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly api = inject(ClaudeRuntimeApiService);
   private readonly agentApi = inject(AgentRuntimeApiService);
   private readonly ws = inject(ClaudeRuntimeWebsocketService);
+  private readonly terminalTranscriptWs = inject(ClaudeTerminalTranscriptWebsocketService);
   private readonly providerSelection = inject(AgentRuntimeProviderService);
   private readonly sessionsService = inject(SessionsService);
   private readonly forkDrafts = inject(ConversationForkDraftService);
@@ -262,7 +266,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly wsConnected = signal(false);
   private wsAutoReconnecting = false;
   private wsStateSub: Subscription | null = null;
+  readonly isTranscriptReadOnly = computed(() => this.archived || this.readOnlyTranscript);
   readonly showCodexLogin = computed(() => {
+    if (this.readOnlyTranscript) return false;
     if (this.archived) return false;
     if (this.currentProvider() !== 'codex') return false;
     const status = this.codexAuthStatus();
@@ -270,6 +276,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     return status.authenticated !== true;
   });
   readonly showPiLogin = computed(() => {
+    if (this.readOnlyTranscript) return false;
     if (this.archived) return false;
     if (this.currentProvider() !== 'pi') return false;
     const status = this.piAuthStatus();
@@ -311,6 +318,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
 
   readonly showContextPin = computed(() => {
+    if (this.readOnlyTranscript) return false;
     if (this.archived) return false;
     const hasTranscript = this.transcriptItems().length > 0 || this.submitting();
     if (hasTranscript) return false;
@@ -399,6 +407,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   readonly messageActionsDisabled = computed(
     () =>
+      this.readOnlyTranscript ||
       this.archived ||
       this.loading() ||
       this.submitting() ||
@@ -409,6 +418,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   );
   readonly forkActionsDisabled = computed(
     () =>
+      this.readOnlyTranscript ||
       this.loading() ||
       this.submitting() ||
       this.runPhase() !== 'idle' ||
@@ -417,6 +427,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.forkingAnchorId() !== null,
   );
   readonly forkDisabledReason = computed(() => {
+    if (this.readOnlyTranscript) return 'Forks are not available in terminal mirror mode.';
     if (this.forkingAnchorId()) return 'A fork is already being created.';
     if (this.loading()) return 'Transcript is still loading.';
     if (this.submitting() || this.runPhase() !== 'idle') {
@@ -572,6 +583,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       const item = live[i];
       if (item.kind === 'assistant' || item.kind === 'thinking') return item.id;
     }
+    if (this.terminalTranscriptMirror && this.runPhase() === 'running') {
+      const transcript = this.transcriptItems();
+      for (let i = transcript.length - 1; i >= 0; i--) {
+        const item = transcript[i];
+        if (item.kind === 'assistant' || item.kind === 'thinking') return item.id;
+      }
+    }
     return null;
   });
 
@@ -580,6 +598,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     for (let i = live.length - 1; i >= 0; i--) {
       const item = live[i];
       if (item.kind === 'assistant') return item.id;
+    }
+    if (this.terminalTranscriptMirror && this.runPhase() === 'running') {
+      const transcript = this.transcriptItems();
+      for (let i = transcript.length - 1; i >= 0; i--) {
+        const item = transcript[i];
+        if (item.kind === 'assistant') return item.id;
+      }
     }
     return null;
   });
@@ -682,7 +707,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       if (this.deferredContextGenerationTimer !== null) {
         window.clearTimeout(this.deferredContextGenerationTimer);
       }
-      this.ws.disconnect(this.sessionId);
+      this.disconnectTranscriptSocket(this.sessionId);
     });
   }
 
@@ -698,7 +723,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['sessionId'] && !changes['sessionId'].firstChange) {
-      this.ws.disconnect(changes['sessionId'].previousValue as number);
+      this.disconnectTranscriptSocket(changes['sessionId'].previousValue as number);
       this.reset();
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       if (this.isVisible) {
@@ -723,7 +748,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
         void this.bootstrapForMode();
         this.applyPendingForkDraft();
-      } else if (!this.archived) {
+      } else if (!this.archived && !this.readOnlyTranscript) {
         void this.loadWorktreeContext(false);
       }
     }
@@ -733,6 +758,16 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.providerSelection.setProvider(this.activeAgentProvider);
       void this.bootstrapForMode();
       this.applyPendingForkDraft();
+    }
+    const transcriptModeChanged =
+      (changes['readOnlyTranscript'] && !changes['readOnlyTranscript'].firstChange) ||
+      (changes['terminalTranscriptMirror'] &&
+        !changes['terminalTranscriptMirror'].firstChange);
+    if (transcriptModeChanged && this.isVisible) {
+      this.disconnectTranscriptSocket(this.sessionId);
+      this.reset();
+      this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
+      void this.bootstrapForMode();
     }
     if (
       changes['activeAgentProvider'] &&
@@ -754,7 +789,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   addDiffMentions(mentions: readonly DiffSelectionMention[]): void {
-    if (this.archived || !mentions.length) return;
+    if (this.isTranscriptReadOnly() || !mentions.length) return;
     this.pendingDiffMentions.update((items) => [...items, ...mentions]);
     queueMicrotask(() => this.composer?.focusAtEnd());
   }
@@ -764,7 +799,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   async submitPrompt(payload: ComposerSendPayload | string): Promise<void> {
-    if (this.archived) return;
+    if (this.isTranscriptReadOnly()) return;
     const normalized: ComposerSendPayload =
       typeof payload === 'string' ? { text: payload, images: [], diffMentions: [] } : payload;
     const trimmed = normalized.text.trim();
@@ -811,7 +846,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   canReviewPlan(item: ClaudeTranscriptItem): boolean {
-    if (this.archived) return false;
+    if (this.isTranscriptReadOnly()) return false;
     const review = this.planReviewForMessage(item);
     if (!review) return false;
     if (this.runPhase() !== 'idle' || this.submitting()) return false;
@@ -844,7 +879,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   async approvePlanReview(review: PlanReviewRequest): Promise<void> {
-    if (this.archived || review.sessionId !== this.sessionId || review.readonly) return;
+    if (this.isTranscriptReadOnly() || review.sessionId !== this.sessionId || review.readonly) return;
     if (review.source === 'exit-plan-permission') {
       this.approvePlanPermissionReview(review);
       return;
@@ -865,7 +900,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   async sendPlanReviewFeedback(payload: PlanFeedbackPayload): Promise<void> {
     const message = payload.message.trim();
     const review = payload.review;
-    if (!message || this.archived || review.sessionId !== this.sessionId || review.readonly) return;
+    if (!message || this.isTranscriptReadOnly() || review.sessionId !== this.sessionId || review.readonly) return;
 
     if (review.source === 'exit-plan-permission') {
       this.denyPlanPermissionReview(review, message);
@@ -880,7 +915,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   async rejectPlanReview(payload: PlanFeedbackPayload): Promise<void> {
     const review = payload.review;
-    if (this.archived || review.sessionId !== this.sessionId || review.readonly) return;
+    if (this.isTranscriptReadOnly() || review.sessionId !== this.sessionId || review.readonly) return;
 
     if (review.source === 'exit-plan-permission') {
       this.denyPlanPermissionReview(review, payload.message);
@@ -924,7 +959,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   cancelPendingPrompt(id: string): void {
-    if (this.archived) return;
+    if (this.isTranscriptReadOnly()) return;
     this.cancelledPendingPromptIds.add(id);
     this.sendRuntimeAction({ type: 'cancel_pending_prompt', id });
   }
@@ -961,7 +996,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   interrupt(): void {
-    if (this.archived) return;
+    if (this.isTranscriptReadOnly()) return;
     this.interruptedRunShouldRestorePrompt = true;
     this.sendRuntimeAction({ type: 'interrupt' });
   }
@@ -977,7 +1012,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   approvePermission(approval: ClaudePermissionApproval): void {
-    if (this.archived) return;
+    if (this.isTranscriptReadOnly()) return;
     const req = this.pendingPermissionRequest();
     if (!req) return;
     this.sendRuntimeAction({
@@ -989,7 +1024,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   denyPermission(message?: string): void {
-    if (this.archived) return;
+    if (this.isTranscriptReadOnly()) return;
     const req = this.pendingPermissionRequest();
     if (!req) return;
     this.sendRuntimeAction({
@@ -1003,7 +1038,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     action: 'accept' | 'decline' | 'cancel';
     content?: Record<string, unknown>;
   }): void {
-    if (this.archived) return;
+    if (this.isTranscriptReadOnly()) return;
     const req = this.pendingUserInputRequest();
     if (!req) return;
     this.sendRuntimeAction({
@@ -1015,21 +1050,25 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   async onModelChange(model: string): Promise<void> {
+    if (this.readOnlyTranscript) return;
     const next = await firstValueFrom(this.api.setSelectedModel(this.sessionId, model || null));
     this.applyRuntimeState(next);
   }
 
   async onReasoningEffortChange(effort: ClaudeReasoningEffort | null): Promise<void> {
+    if (this.readOnlyTranscript) return;
     const next = await firstValueFrom(this.api.setReasoningEffort(this.sessionId, effort));
     this.applyRuntimeState(next);
   }
 
   async onFastModeChange(enabled: boolean): Promise<void> {
+    if (this.readOnlyTranscript) return;
     const next = await firstValueFrom(this.api.setFastMode(this.sessionId, enabled));
     this.applyRuntimeState(next);
   }
 
   async onPermissionModeChange(mode: ClaudePermissionMode): Promise<void> {
+    if (this.readOnlyTranscript) return;
     if (
       this.currentProvider() === 'codex' &&
       (mode === ('planBypass' as ClaudePermissionMode) || mode === 'auto')
@@ -1048,7 +1087,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   openTerminal(): void {
-    if (this.archived) return;
+    if (this.isTranscriptReadOnly()) return;
     if (this.currentProvider() !== 'claude') {
       toast.message('Raw terminal fallback is only available for Claude Code.');
       return;
@@ -1059,12 +1098,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   onProviderChange(provider: AgentProviderId): void {
+    if (this.readOnlyTranscript) return;
     if (provider === this.currentProvider()) return;
     if (this.runtimeStarted()) {
       toast.message('Provider can only be changed before the session is started.');
       return;
     }
-    this.ws.disconnect(this.sessionId);
+    this.disconnectTranscriptSocket(this.sessionId);
     this.providerSelection.setProvider(provider);
     this.activeAgentProvider = provider;
     this.activeAgentProviderChange.emit(provider);
@@ -1237,7 +1277,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   canEditMessage(item: ClaudeTranscriptItem): boolean {
     return (
-      !this.archived &&
+      !this.isTranscriptReadOnly() &&
       item.kind === 'user' &&
       !!item.sourceMessageId &&
       (this.currentProviderInfo()?.capabilities.rewindConversation ?? false)
@@ -1245,11 +1285,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   canShowMessageActions(item: ClaudeTranscriptItem): boolean {
-    return !this.archived && item.kind === 'user' && !!item.sourceMessageId;
+    return !this.isTranscriptReadOnly() && item.kind === 'user' && !!item.sourceMessageId;
   }
 
   canForkMessage(item: ClaudeTranscriptItem): boolean {
     return (
+      !this.readOnlyTranscript &&
       (item.kind === 'user' || item.kind === 'assistant') &&
       !!this.forkAnchorForItem(item) &&
       !this.isStreamingMessage(item.id)
@@ -1416,25 +1457,38 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.cancelArmedEdit();
   }
 
+  private activeTranscriptSocket():
+    | ClaudeRuntimeWebsocketService
+    | ClaudeTerminalTranscriptWebsocketService {
+    return this.terminalTranscriptMirror ? this.terminalTranscriptWs : this.ws;
+  }
+
+  private disconnectTranscriptSocket(sessionId: number): void {
+    this.ws.disconnect(sessionId);
+    this.terminalTranscriptWs.disconnect(sessionId);
+  }
+
   private rehydrate(): void {
-    this.ws.disconnect(this.sessionId);
-    this.ws
+    this.disconnectTranscriptSocket(this.sessionId);
+    this.activeTranscriptSocket()
       .connect(this.sessionId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => this.handleRuntimeEvent(event));
-    this.ws.send(this.sessionId, { type: 'hydrate' });
+    this.activeTranscriptSocket().send(this.sessionId, { type: 'hydrate' });
   }
 
   private sendRuntimeAction(message: Record<string, unknown>): void {
-    if (!this.ws.isConnected(this.sessionId)) {
+    if (this.readOnlyTranscript) return;
+    const socket = this.activeTranscriptSocket();
+    if (!socket.isConnected(this.sessionId)) {
       this.rehydrate();
     }
-    this.ws.send(this.sessionId, message);
+    this.activeTranscriptSocket().send(this.sessionId, message);
   }
 
   private subscribeConnectionState(): void {
     this.wsStateSub?.unsubscribe();
-    this.wsStateSub = this.ws
+    this.wsStateSub = this.activeTranscriptSocket()
       .connectionState$(this.sessionId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((phase) => {
@@ -1455,20 +1509,24 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     const version = ++this.bootstrapVersion;
     this.bootstrappedProvider = this.currentProvider();
     this.loading.set(true);
-    void this.loadWorktreeContext(false);
-    void this.loadProviders();
+    if (!this.readOnlyTranscript) {
+      void this.loadWorktreeContext(false);
+      void this.loadProviders();
+    }
 
-    this.ws
+    this.activeTranscriptSocket()
       .connect(this.sessionId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => this.handleRuntimeEvent(event));
 
     this.subscribeConnectionState();
 
-    this.ws.send(this.sessionId, { type: 'hydrate' });
+    this.activeTranscriptSocket().send(this.sessionId, { type: 'hydrate' });
 
-    void this.refreshAutocomplete(version).catch(() => undefined);
-    void this.loadForks(version);
+    if (!this.readOnlyTranscript) {
+      void this.refreshAutocomplete(version).catch(() => undefined);
+      void this.loadForks(version);
+    }
     if (version === this.bootstrapVersion) this.loading.set(false);
   }
 
@@ -1637,6 +1695,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private scheduleDeferredContextGeneration(): void {
+    if (this.readOnlyTranscript) return;
     if (!this.runtimeStarted()) return;
     if (this.hasInjectedContext()) return;
     const context = this.worktreeContext();
@@ -2036,7 +2095,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.flushScheduled = false;
       this.pendingDeltas.length = 0;
     }
-    this.ws.disconnect(this.sessionId);
+    this.disconnectTranscriptSocket(this.sessionId);
     this.autoApprovedPermissionRequestIds.clear();
     this.loading.set(true);
     this.hydrated.set(false);

@@ -6,6 +6,7 @@ import { toast } from 'ngx-sonner';
 import { ClaudeWorkspaceComponent } from './claude-workspace.component';
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
+import { ClaudeTerminalTranscriptWebsocketService } from '@/shared/services/claude-terminal-transcript-websocket.service';
 import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { SessionsService } from '@/shared/services/sessions.service';
@@ -84,6 +85,7 @@ describe('ClaudeWorkspaceComponent', () => {
     disconnect: ReturnType<typeof vi.fn>;
     connectionState$: ReturnType<typeof vi.fn>;
   };
+  let terminalTranscriptWsMock: typeof wsMock;
   let worktreeContextServiceMock: {
     get: ReturnType<typeof vi.fn>;
     generate: ReturnType<typeof vi.fn>;
@@ -279,6 +281,13 @@ describe('ClaudeWorkspaceComponent', () => {
       disconnect: vi.fn(),
       connectionState$: vi.fn(() => new Subject().asObservable()),
     };
+    terminalTranscriptWsMock = {
+      connect: vi.fn(() => new Subject().asObservable()),
+      send: vi.fn(),
+      isConnected: vi.fn(() => true),
+      disconnect: vi.fn(),
+      connectionState$: vi.fn(() => new Subject().asObservable()),
+    };
     worktreeContextServiceMock = {
       get: vi.fn(() =>
         of({
@@ -320,6 +329,7 @@ describe('ClaudeWorkspaceComponent', () => {
       providers: [
         { provide: ClaudeRuntimeApiService, useValue: apiMock },
         { provide: ClaudeRuntimeWebsocketService, useValue: wsMock },
+        { provide: ClaudeTerminalTranscriptWebsocketService, useValue: terminalTranscriptWsMock },
         { provide: WorktreeContextService, useValue: worktreeContextServiceMock },
         {
           provide: SessionsService,
@@ -396,6 +406,55 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(fixture.componentInstance.autocompleteItems()).toEqual([
       expect.objectContaining({ label: '/myskill', source: 'runtime' }),
     ]);
+  });
+
+  it('renders terminal mirror transcripts without input or mutating actions', async () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    terminalTranscriptWsMock.connect.mockReturnValue(events$.asObservable());
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.readOnlyTranscript = true;
+    fixture.componentInstance.terminalTranscriptMirror = true;
+    fixture.detectChanges();
+
+    events$.next({ type: 'runtime_snapshot', payload: runtimeState() });
+    events$.next({
+      type: 'history_snapshot',
+      payload: {
+        sessionId: 7,
+        history: [
+          {
+            id: 'user-1',
+            kind: 'user',
+            content: 'Terminal prompt',
+            timestamp: '2026-04-24T08:00:00.000Z',
+            sourceMessageId: 'source-user-1',
+            transcriptMessageId: 'source-user-1',
+          },
+          {
+            id: 'assistant-1',
+            kind: 'assistant',
+            content: 'Terminal response',
+            timestamp: '2026-04-24T08:00:01.000Z',
+            sourceMessageId: 'assistant-source-1',
+            transcriptMessageId: 'assistant-source-1',
+          },
+        ],
+      },
+    });
+    fixture.detectChanges();
+    await flushPromises();
+
+    const el = fixture.nativeElement as HTMLElement;
+    expect(terminalTranscriptWsMock.send).toHaveBeenCalledWith(7, { type: 'hydrate' });
+    expect(wsMock.send).not.toHaveBeenCalled();
+    expect(el.querySelector('cw-composer')).toBeNull();
+    expect(el.querySelector('cw-status-bar')).toBeNull();
+    expect(fixture.componentInstance.canEditMessage(fixture.componentInstance.historyItems()[0])).toBe(false);
+    expect(fixture.componentInstance.canForkMessage(fixture.componentInstance.historyItems()[1])).toBe(false);
+
+    await fixture.componentInstance.submitPrompt('should not send');
+    expect(terminalTranscriptWsMock.send).toHaveBeenCalledTimes(1);
   });
 
   it('copies message content to the clipboard', async () => {

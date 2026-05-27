@@ -16,6 +16,7 @@
       [showPlanAnnotator]="showPlanAnnotatorPanel()"
       [planAnnotatorAvailable]="planAnnotatorAvailable()"
       [showClaudeTerminalFallback]="showClaudeTerminalFallback()"
+      [showClaudeTerminalMirror]="showClaudeTerminalTranscriptMirror()"
       [runningActionsCount]="runningActionsCount()"
       [pendingTodosCount]="pendingTodosCount()"
       (tabSelect)="onTabSelect($event)"
@@ -37,6 +38,7 @@
       (togglePlannotator)="togglePlannotatorPanel()"
       (togglePlanAnnotator)="togglePlanAnnotatorPanel()"
       (toggleClaudeTerminalFallback)="toggleClaudeTerminalFallback()"
+      (toggleClaudeTerminalMirror)="toggleClaudeTerminalTranscriptMirror()"
     />
 
     <!-- Main Content with Vertical + Horizontal Resizable Split -->
@@ -55,11 +57,41 @@
                 @if (activeTab(); as tab) {
                   <div class="claude-terminal-wrapper h-full">
                     @if (tab.status !== 'archived' && showClaudeTerminalFallback()) {
-                      <app-claude-terminal
-                        [sessionId]="tab.sessionId"
-                        [isVisible]="true"
-                        class="h-full block"
-                      />
+                      <z-resizable zLayout="horizontal" class="h-full">
+                        <z-resizable-panel
+                          [zDefaultSize]="showClaudeTerminalTranscriptMirror() ? 54 : 100"
+                          [zMin]="32"
+                          [zMax]="showClaudeTerminalTranscriptMirror() ? 78 : 100"
+                        >
+                          <app-claude-terminal
+                            [sessionId]="tab.sessionId"
+                            [isVisible]="true"
+                            class="h-full block"
+                          />
+                        </z-resizable-panel>
+
+                        @if (showClaudeTerminalTranscriptMirror()) {
+                          <z-resizable-handle />
+                          <z-resizable-panel [zDefaultSize]="46" [zMin]="28" [zMax]="68">
+                            <app-claude-workspace
+                              [sessionId]="tab.sessionId"
+                              [repoId]="tab.repoId"
+                              [worktreePath]="tab.worktreePath"
+                              [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
+                              [activeAgentProvider]="tab.activeAgentProvider"
+                              [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
+                              [isVisible]="true"
+                              [readOnlyTranscript]="true"
+                              [terminalTranscriptMirror]="true"
+                              [sessionName]="tab.sessionName"
+                              (openInBrowser)="onOpenInBrowser($event)"
+                              (planReviewRequested)="openPlanAnnotator($event)"
+                              (planReviewClosed)="onPlanReviewClosed($event)"
+                              class="h-full block border-l border-border/60"
+                            />
+                          </z-resizable-panel>
+                        }
+                      </z-resizable>
                     } @else {
                       <app-claude-workspace
                         [sessionId]="tab.sessionId"

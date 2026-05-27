@@ -17,6 +17,7 @@ import { ActionsGateway } from './actions/actions.gateway.js';
 import { FileChangeGateway } from './file-watcher/file-change.gateway.js';
 import { ClaudeHooksGateway } from './claude-hooks/claude-hooks.gateway.js';
 import { ClaudeRuntimeGateway } from './claude-runtime/claude-runtime.gateway.js';
+import { ClaudeTerminalTranscriptMirrorGateway } from './claude-runtime/claude-terminal-transcript-mirror.gateway.js';
 import { AgentRuntimeGateway } from './agent-runtime/agent-runtime.gateway.js';
 import { BackendLogsGateway } from './backend-logs/backend-logs.gateway.js';
 import { ServerConnectionGateway } from './server-connection/server-connection.gateway.js';
@@ -223,6 +224,11 @@ async function bootstrap() {
 
   const claudeRuntimeGateway = app.get(ClaudeRuntimeGateway);
   claudeRuntimeGateway.attachToServer(httpServer);
+
+  const claudeTerminalTranscriptMirrorGateway = app.get(
+    ClaudeTerminalTranscriptMirrorGateway,
+  );
+  claudeTerminalTranscriptMirrorGateway.attachToServer(httpServer);
 
   const agentRuntimeGateway = app.get(AgentRuntimeGateway);
   agentRuntimeGateway.attachToServer(httpServer);

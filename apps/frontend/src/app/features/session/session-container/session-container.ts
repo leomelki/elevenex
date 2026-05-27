@@ -210,6 +210,7 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   sidePanelMode = signal<SidePanelMode>(this.getSidePanelPreference());
   private claudeSurfaceModes = signal<ReadonlyMap<number, 'workspace' | 'terminal'>>(new Map());
+  private claudeTerminalMirrorModes = signal<ReadonlyMap<number, boolean>>(new Map());
   activeSessionArchived = computed(() => this.activeTab()?.status === 'archived');
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
@@ -231,6 +232,11 @@ export class SessionContainer implements OnInit, OnDestroy {
   showClaudeTerminalFallback = computed(() => {
     const id = this.activeSessionId();
     return id !== null && this.claudeSurfaceModes().get(id) === 'terminal';
+  });
+  showClaudeTerminalTranscriptMirror = computed(() => {
+    const id = this.activeSessionId();
+    if (id === null || !this.showClaudeTerminalFallback()) return false;
+    return this.claudeTerminalMirrorModes().get(id) !== false;
   });
 
   // User terminal panel visibility
@@ -527,8 +533,17 @@ export class SessionContainer implements OnInit, OnDestroy {
       next.delete(sessionId);
     } else {
       next.set(sessionId, mode);
+      this.ensureClaudeTerminalMirrorDefault(sessionId);
     }
     this.claudeSurfaceModes.set(next);
+  }
+
+  private ensureClaudeTerminalMirrorDefault(sessionId: number): void {
+    const current = this.claudeTerminalMirrorModes();
+    if (current.has(sessionId)) return;
+    const next = new Map(current);
+    next.set(sessionId, true);
+    this.claudeTerminalMirrorModes.set(next);
   }
 
   toggleClaudeTerminalFallback(): void {
@@ -536,6 +551,14 @@ export class SessionContainer implements OnInit, OnDestroy {
     if (id === null) return;
     if (this.claudeSurfaceModes().get(id) === 'terminal') return;
     this.setClaudeSurfaceMode(id, 'terminal');
+  }
+
+  toggleClaudeTerminalTranscriptMirror(): void {
+    const id = this.activeSessionId();
+    if (id === null || !this.showClaudeTerminalFallback()) return;
+    const next = new Map(this.claudeTerminalMirrorModes());
+    next.set(id, !this.showClaudeTerminalTranscriptMirror());
+    this.claudeTerminalMirrorModes.set(next);
   }
 
   showClaudeTerminal(): void {
@@ -644,6 +667,19 @@ export class SessionContainer implements OnInit, OnDestroy {
         }
         if (changed) {
           this.claudeSurfaceModes.set(next);
+        }
+
+        const mirrorCurrent = this.claudeTerminalMirrorModes();
+        let mirrorChanged = false;
+        const mirrorNext = new Map(mirrorCurrent);
+        for (const id of mirrorNext.keys()) {
+          if (!openIds.has(id)) {
+            mirrorNext.delete(id);
+            mirrorChanged = true;
+          }
+        }
+        if (mirrorChanged) {
+          this.claudeTerminalMirrorModes.set(mirrorNext);
         }
       });
     });

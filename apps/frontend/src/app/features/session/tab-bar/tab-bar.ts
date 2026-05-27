@@ -1,7 +1,7 @@
 import { Component, output, input, inject, computed, signal, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList } from '@ng-icons/lucide';
+import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList, lucidePanelRight } from '@ng-icons/lucide';
 import { Tab } from '../tab-service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
@@ -30,6 +30,7 @@ import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-pro
       lucideArchive,
       lucideArchiveRestore,
       lucideClipboardList,
+      lucidePanelRight,
       lucideMessageSquare,
       lucideNotebookPen,
       lucideGlobe,
@@ -77,6 +78,7 @@ export class TabBar {
   showPlanAnnotator = input(false);
   planAnnotatorAvailable = input(false);
   showClaudeTerminalFallback = input(false);
+  showClaudeTerminalMirror = input(false);
   runningActionsCount = input(0);
   pendingTodosCount = input(0);
 
@@ -99,6 +101,7 @@ export class TabBar {
   togglePlannotator = output<void>();
   togglePlanAnnotator = output<void>();
   toggleClaudeTerminalFallback = output<void>();
+  toggleClaudeTerminalMirror = output<void>();
 
   // Context menu state
   contextMenuOpen = signal(false);

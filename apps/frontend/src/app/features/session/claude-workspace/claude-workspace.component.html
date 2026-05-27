@@ -90,9 +90,9 @@
           class="h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground text-sm"
         >
           <div class="text-[0.9375rem] text-foreground font-medium">
-            {{ archived ? 'No transcript available.' : 'Start with a prompt.' }}
+            {{ isTranscriptReadOnly() ? 'No transcript available.' : 'Start with a prompt.' }}
           </div>
-          @if (!archived) {
+          @if (!isTranscriptReadOnly()) {
             <div>
               Type
               <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded">/</code>
@@ -665,7 +665,7 @@
         </div>
       }
 
-      @if (!archived) {
+      @if (!isTranscriptReadOnly()) {
         @if (pendingUserInputRequest(); as req) {
           <cw-user-input
             class="block max-w-[52rem] w-full mx-auto"
@@ -675,7 +675,7 @@
         }
       }
 
-      @if (!archived) {
+      @if (!isTranscriptReadOnly()) {
         <div class="max-w-[52rem] w-full mx-auto flex flex-col">
           @if (pendingPermissionRequest(); as req) {
             <cw-permission-inline
@@ -738,7 +738,7 @@
     </div>
   }
 
-  @if (!archived) {
+  @if (!isTranscriptReadOnly()) {
     <cw-tasks-drawer
       [open]="tasksDrawerOpen()"
       [tasks]="tasks()"

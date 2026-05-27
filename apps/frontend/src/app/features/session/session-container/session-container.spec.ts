@@ -317,6 +317,23 @@ describe('SessionContainer modal browser gating', () => {
     expect(fixture.componentInstance.showConflictsPanel()).toBe(true);
   });
 
+  it('opens the terminal transcript mirror by default and toggles it independently', () => {
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    fixture.componentInstance.toggleClaudeTerminalFallback();
+
+    expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(true);
+    expect(fixture.componentInstance.showClaudeTerminalTranscriptMirror()).toBe(true);
+
+    fixture.componentInstance.toggleClaudeTerminalTranscriptMirror();
+    expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(true);
+    expect(fixture.componentInstance.showClaudeTerminalTranscriptMirror()).toBe(false);
+
+    fixture.componentInstance.toggleClaudeTerminalTranscriptMirror();
+    expect(fixture.componentInstance.showClaudeTerminalTranscriptMirror()).toBe(true);
+  });
+
   it('mirrors generated session titles into open tabs', () => {
     const fixture = TestBed.createComponent(SessionContainer);
     fixture.detectChanges();

@@ -186,6 +186,34 @@ describe('TabBar', () => {
     expect(el.querySelector('[aria-label="Toggle Plannotator panel"]')).toBeTruthy();
   });
 
+  it('shows and toggles the terminal transcript mirror button only in raw terminal mode', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [{ ...baseTab }]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.componentRef.setInput('projectId', 10);
+    fixture.componentRef.setInput('showClaudeTerminalFallback', false);
+    fixture.detectChanges();
+
+    let el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[aria-label="Toggle terminal transcript mirror"]')).toBeNull();
+
+    const mirrorSpy = vi.fn();
+    fixture.componentInstance.toggleClaudeTerminalMirror.subscribe(mirrorSpy);
+    fixture.componentRef.setInput('showClaudeTerminalFallback', true);
+    fixture.componentRef.setInput('showClaudeTerminalMirror', true);
+    fixture.detectChanges();
+
+    el = fixture.nativeElement as HTMLElement;
+    const button = el.querySelector(
+      '[aria-label="Toggle terminal transcript mirror"]',
+    ) as HTMLButtonElement;
+    expect(button).toBeTruthy();
+    expect(button.className).toContain('!bg-primary');
+
+    button.click();
+    expect(mirrorSpy).toHaveBeenCalledOnce();
+  });
+
   it('disables left and other actions appropriately for the first tab', () => {
     const fixture = TestBed.createComponent(TabBar);
     fixture.componentRef.setInput('tabs', [
