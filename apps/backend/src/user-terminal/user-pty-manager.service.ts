@@ -22,6 +22,16 @@ interface UserPtySession {
   terminalId: number;
   tmuxSessionName: string;
   pid: number;
+  useTmux: boolean;
+}
+
+interface TmuxResizeState {
+  desired: {
+    tmuxSessionName: string;
+    cols: number;
+    rows: number;
+  };
+  running: boolean;
 }
 
 @Injectable()
@@ -29,6 +39,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private processes = new Map<number, UserPtySession>();
   private readonly spawnInFlight = new Map<number, Promise<pty.IPty | null>>();
   private readonly cancelledSpawns = new Set<number>();
+  private readonly tmuxResizeState = new Map<number, TmuxResizeState>();
   private pendingKills = new Set<number>();
   private readonly logger = new Logger('UserPtyManager');
   private tmuxBin: string;
@@ -243,6 +254,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       terminalId,
       tmuxSessionName,
       pid,
+      useTmux: true,
     });
 
     ptyProcess.onData((data) => {
@@ -288,6 +300,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       terminalId,
       tmuxSessionName,
       pid,
+      useTmux: false,
     });
 
     ptyProcess.onData((data) => {
@@ -323,12 +336,12 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
     session.pty.resize(cols, rows);
 
-    // Also resize tmux window
-    if (this.isTmuxAvailable()) {
-      void this.resizeTmuxWindow(session.tmuxSessionName, cols, rows).catch(
-        () => {
-          // Ignore resize errors
-        },
+    if (session.useTmux) {
+      this.queueTmuxResize(
+        terminalId,
+        session.tmuxSessionName,
+        cols,
+        rows,
       );
     }
   }
@@ -381,6 +394,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   /** Kill both PTY and tmux session — used when deleting a terminal */
   async destroy(terminalId: number): Promise<boolean> {
     this.kill(terminalId);
+    this.tmuxResizeState.delete(terminalId);
 
     if (this.isTmuxAvailable()) {
       const tmuxSessionName = this.getTmuxSessionName(terminalId);
@@ -485,5 +499,60 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       String(cols),
       String(rows),
     ]);
+  }
+
+  private queueTmuxResize(
+    terminalId: number,
+    tmuxSessionName: string,
+    cols: number,
+    rows: number,
+  ): void {
+    const existing = this.tmuxResizeState.get(terminalId);
+    const state =
+      existing ??
+      ({
+        desired: { tmuxSessionName, cols, rows },
+        running: false,
+      } satisfies TmuxResizeState);
+
+    state.desired = { tmuxSessionName, cols, rows };
+    this.tmuxResizeState.set(terminalId, state);
+
+    if (state.running) {
+      return;
+    }
+
+    state.running = true;
+    void this.flushQueuedTmuxResize(terminalId, state);
+  }
+
+  private async flushQueuedTmuxResize(
+    terminalId: number,
+    state: TmuxResizeState,
+  ): Promise<void> {
+    try {
+      while (this.tmuxResizeState.get(terminalId) === state) {
+        const { tmuxSessionName, cols, rows } = state.desired;
+
+        try {
+          await this.resizeTmuxWindow(tmuxSessionName, cols, rows);
+        } catch {
+          // Ignore resize errors.
+        }
+
+        const desired = state.desired;
+        if (
+          desired.tmuxSessionName === tmuxSessionName &&
+          desired.cols === cols &&
+          desired.rows === rows
+        ) {
+          break;
+        }
+      }
+    } finally {
+      if (this.tmuxResizeState.get(terminalId) === state) {
+        this.tmuxResizeState.delete(terminalId);
+      }
+    }
   }
 }

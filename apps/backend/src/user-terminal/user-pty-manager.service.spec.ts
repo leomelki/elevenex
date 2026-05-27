@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
 import * as pty from 'node-pty';
 import { UserPtyManager } from './user-pty-manager.service.js';
-import { buildAugmentedEnvAsync } from '../config/system-paths.js';
+import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
+import { execFileQuiet } from '../terminal/async-process.js';
 
 jest.mock('node-pty', () => ({
   spawn: jest.fn(),
@@ -10,6 +11,10 @@ jest.mock('node-pty', () => ({
 jest.mock('../config/system-paths.js', () => ({
   buildAugmentedEnvAsync: jest.fn(),
   findBinary: jest.fn(() => null),
+}));
+
+jest.mock('../terminal/async-process.js', () => ({
+  execFileQuiet: jest.fn(),
 }));
 
 type MockPty = EventEmitter & {
@@ -45,12 +50,16 @@ function createDeferred<T>() {
 describe('UserPtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
   const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
+  const mockFindBinary = jest.mocked(findBinary);
+  const mockExecFileQuiet = jest.mocked(execFileQuiet);
 
   let manager: UserPtyManager;
 
   beforeEach(() => {
     jest.resetAllMocks();
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
+    mockFindBinary.mockReturnValue(null);
+    mockExecFileQuiet.mockResolvedValue(undefined);
     mockSpawn.mockReturnValue(createMockPty() as never);
     manager = new UserPtyManager({
       sendToTerminal: jest.fn(),
@@ -126,5 +135,72 @@ describe('UserPtyManager', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('serializes tmux resizes so the latest frontend size wins', async () => {
+    mockFindBinary.mockReturnValue('/usr/bin/tmux');
+    manager = new UserPtyManager({
+      sendToTerminal: jest.fn(),
+    } as never);
+
+    const firstResize = createDeferred<void>();
+    mockExecFileQuiet.mockImplementation((_file, args) => {
+      if (args.includes('100x20')) {
+        return firstResize.promise;
+      }
+      return Promise.resolve();
+    });
+
+    const process = createMockPty();
+    (
+      manager as unknown as {
+        processes: Map<
+          number,
+          {
+            pty: MockPty;
+            terminalId: number;
+            tmuxSessionName: string;
+            pid: number;
+            useTmux: boolean;
+          }
+        >;
+      }
+    ).processes.set(3, {
+      pty: process,
+      terminalId: 3,
+      tmuxSessionName: 'elevenex-uterm-3',
+      pid: process.pid,
+      useTmux: true,
+    });
+
+    manager.resize(3, 100, 20);
+    manager.resize(3, 120, 30);
+
+    expect(process.resize).toHaveBeenNthCalledWith(1, 100, 20);
+    expect(process.resize).toHaveBeenNthCalledWith(2, 120, 30);
+    expect(mockExecFileQuiet).toHaveBeenCalledTimes(1);
+
+    firstResize.resolve();
+    await firstResize.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(mockExecFileQuiet.mock.calls.map((call) => call[1])).toEqual([
+      [
+        'set-option',
+        '-t',
+        'elevenex-uterm-3',
+        'default-size',
+        '100x20',
+      ],
+      ['resize-window', '-t', 'elevenex-uterm-3', '100', '20'],
+      [
+        'set-option',
+        '-t',
+        'elevenex-uterm-3',
+        'default-size',
+        '120x30',
+      ],
+      ['resize-window', '-t', 'elevenex-uterm-3', '120', '30'],
+    ]);
   });
 });

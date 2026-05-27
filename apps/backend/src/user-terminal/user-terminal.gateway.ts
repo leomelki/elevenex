@@ -11,7 +11,18 @@ import { UserTerminalService } from './user-terminal.service.js';
 
 interface TerminalConnection {
   ws: WebSocket;
+  startupReady: boolean;
+  queuedResize: TerminalResizeMessage | null;
+  queuedInput: string[];
+  queuedInputBytes: number;
 }
+
+interface TerminalResizeMessage {
+  cols: number;
+  rows: number;
+}
+
+const MAX_STARTUP_INPUT_QUEUE_BYTES = 256 * 1024;
 
 @Injectable()
 export class UserTerminalGateway implements OnModuleDestroy {
@@ -58,7 +69,15 @@ export class UserTerminalGateway implements OnModuleDestroy {
       existing.ws.close(1000, 'New connection established');
     }
 
-    this.connections.set(terminalId, { ws });
+    const connection: TerminalConnection = {
+      ws,
+      startupReady: false,
+      queuedResize: null,
+      queuedInput: [],
+      queuedInputBytes: 0,
+    };
+
+    this.connections.set(terminalId, connection);
     const isCurrentConnection = () =>
       this.connections.get(terminalId)?.ws === ws;
 
@@ -80,7 +99,11 @@ export class UserTerminalGateway implements OnModuleDestroy {
           if (isCurrentConnection()) {
             this.connections.delete(terminalId);
           }
+          return;
         }
+
+        connection.startupReady = true;
+        this.flushStartupQueue(terminalId, connection);
       })
       .catch((error) => {
         if (!isCurrentConnection()) {
@@ -105,15 +128,16 @@ export class UserTerminalGateway implements OnModuleDestroy {
       try {
         const message = data.toString();
 
-        // Check if it's a resize message
-        try {
-          const parsed = JSON.parse(message);
-          if (parsed.type === 'resize' && parsed.cols && parsed.rows) {
-            this.ptyManager.resize(terminalId, parsed.cols, parsed.rows);
-            return;
-          }
-        } catch {
-          // Not JSON, treat as terminal input
+        const resize = this.parseResizeMessage(message);
+
+        if (!connection.startupReady) {
+          this.queueStartupMessage(connection, message, resize);
+          return;
+        }
+
+        if (resize) {
+          this.ptyManager.resize(terminalId, resize.cols, resize.rows);
+          return;
         }
 
         this.ptyManager.write(terminalId, message);
@@ -150,6 +174,71 @@ export class UserTerminalGateway implements OnModuleDestroy {
     if (conn?.ws?.readyState === WebSocket.OPEN) {
       conn.ws.send(data);
     }
+  }
+
+  private parseResizeMessage(message: string): TerminalResizeMessage | null {
+    try {
+      const parsed = JSON.parse(message) as {
+        type?: unknown;
+        cols?: unknown;
+        rows?: unknown;
+      };
+      const cols = Number(parsed.cols);
+      const rows = Number(parsed.rows);
+      if (
+        parsed.type === 'resize' &&
+        Number.isFinite(cols) &&
+        Number.isFinite(rows)
+      ) {
+        return { cols, rows };
+      }
+    } catch {
+      // Not JSON, treat as terminal input.
+    }
+
+    return null;
+  }
+
+  private queueStartupMessage(
+    connection: TerminalConnection,
+    message: string,
+    resize: TerminalResizeMessage | null,
+  ): void {
+    if (resize) {
+      connection.queuedResize = resize;
+      return;
+    }
+
+    connection.queuedInput.push(message);
+    connection.queuedInputBytes += Buffer.byteLength(message);
+
+    while (
+      connection.queuedInputBytes > MAX_STARTUP_INPUT_QUEUE_BYTES &&
+      connection.queuedInput.length > 0
+    ) {
+      const dropped = connection.queuedInput.shift();
+      connection.queuedInputBytes -= Buffer.byteLength(dropped ?? '');
+    }
+  }
+
+  private flushStartupQueue(
+    terminalId: number,
+    connection: TerminalConnection,
+  ): void {
+    if (connection.queuedResize) {
+      this.ptyManager.resize(
+        terminalId,
+        connection.queuedResize.cols,
+        connection.queuedResize.rows,
+      );
+      connection.queuedResize = null;
+    }
+
+    for (const input of connection.queuedInput) {
+      this.ptyManager.write(terminalId, input);
+    }
+    connection.queuedInput = [];
+    connection.queuedInputBytes = 0;
   }
 
   onModuleDestroy(): void {
