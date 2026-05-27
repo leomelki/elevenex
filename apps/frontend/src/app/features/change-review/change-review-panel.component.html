@@ -497,6 +497,31 @@
                     fileMetaText(renderRow)
                   }}</span>
                 </div>
+              } @else if (renderRow.kind === 'largeDiffGate') {
+                <div
+                  class="cr-large-diff-gate"
+                  [style.transform]="headerTranslateX()"
+                  [style.width.px]="diffViewportWidthPx()"
+                >
+                  <span class="cr-large-diff-gate__icon">
+                    <ng-icon name="lucideTriangleAlert" size="13" />
+                  </span>
+                  <span class="cr-large-diff-gate__text">
+                    <strong>Large diff hidden by default.</strong>
+                    <span>{{ largeFileDiffText(renderRow.file) }}.</span>
+                  </span>
+                  <button
+                    z-button
+                    zType="ghost"
+                    zSize="sm"
+                    type="button"
+                    class="cr-large-diff-gate__button"
+                    (click)="loadLargeFileDiff(renderRow.file)"
+                  >
+                    <ng-icon name="lucideFileCode" size="13" />
+                    Load diff
+                  </button>
+                </div>
               } @else {
                 <div
                   class="cr-diff-row"

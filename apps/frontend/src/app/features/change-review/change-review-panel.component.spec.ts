@@ -190,6 +190,7 @@ describe('ChangeReviewPanelComponent', () => {
   let windowCalls: Array<{
     path: string;
     offset: number;
+    forceFileLoad: boolean;
     response: Subject<ChangeReviewFileWindow>;
   }>;
   let latestGitSummary: WritableSignal<GitStatusSummary | null>;
@@ -222,10 +223,15 @@ describe('ChangeReviewPanelComponent', () => {
           _worktreePath: string,
           _scope: ChangeReviewScope,
           path: string,
-          options: { offset?: number },
+          options: { offset?: number; forceFileLoad?: boolean },
         ) => {
           const response = new Subject<ChangeReviewFileWindow>();
-          windowCalls.push({ path, offset: options.offset ?? 0, response });
+          windowCalls.push({
+            path,
+            offset: options.offset ?? 0,
+            forceFileLoad: Boolean(options.forceFileLoad),
+            response,
+          });
           return response.asObservable();
         },
       ),
@@ -290,7 +296,7 @@ describe('ChangeReviewPanelComponent', () => {
   });
 
   it('loads the next file when scrolling near its virtual range', async () => {
-    const files = [file('src/large.ts', 2_000, 0), file('src/next.ts', 2, 0)];
+    const files = [file('src/large.ts', 600, 0), file('src/next.ts', 2, 0)];
     const viewport = await flushSummary(summary(files));
     expect(windowCalls.some((call) => call.path === 'src/next.ts')).toBe(false);
 
@@ -310,6 +316,29 @@ describe('ChangeReviewPanelComponent', () => {
 
     expect(windowCalls.some((call) => call.path === 'src/first.ts')).toBe(true);
     expect(windowCalls.some((call) => call.path === 'src/second.ts')).toBe(false);
+  });
+
+  it('hides large file diffs by default and loads them only after confirmation', async () => {
+    await flushSummary(summary([file('src/large.ts', 701, 0)]));
+    fixture.detectChanges();
+
+    expect(windowCalls).toHaveLength(0);
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain(
+      'Large diff hidden by default',
+    );
+
+    const loadButton = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ).find((button) => button.textContent?.includes('Load diff')) as HTMLButtonElement;
+    loadButton.click();
+    fixture.detectChanges();
+
+    expect(windowCalls).toHaveLength(1);
+    expect(windowCalls[0]).toMatchObject({
+      path: 'src/large.ts',
+      offset: 0,
+      forceFileLoad: true,
+    });
   });
 
   it('loads only one file window at a time', async () => {

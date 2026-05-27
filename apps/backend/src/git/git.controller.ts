@@ -67,6 +67,7 @@ export class GitController {
     @Query('limit') limit?: string,
     @Query('context') context?: string,
     @Query('forceLoad') forceLoad?: string,
+    @Query('forceFileLoad') forceFileLoad?: string,
   ): Promise<ChangeReviewFileWindow> {
     return this.changeReviewService.getFileWindow(
       decodeURIComponent(worktreePath),
@@ -77,6 +78,7 @@ export class GitController {
         limit: limit ? Number.parseInt(limit, 10) : undefined,
         context: context ? Number.parseInt(context, 10) : undefined,
         forceLoad: forceLoad === 'true',
+        forceFileLoad: forceFileLoad === 'true',
       },
     );
   }
@@ -90,6 +92,7 @@ export class GitController {
     @Query('limit') limit?: string,
     @Query('context') context?: string,
     @Query('forceLoad') forceLoad?: string,
+    @Query('forceFileLoad') forceFileLoad?: string,
   ): Promise<ChangeReviewFileWindow> {
     return this.getChangeReviewFile(
       worktreePath,
@@ -99,6 +102,7 @@ export class GitController {
       limit,
       context,
       forceLoad,
+      forceFileLoad,
     );
   }
 
@@ -112,6 +116,7 @@ export class GitController {
     @Query('count') count: string,
     @Query('limit') limit?: string,
     @Query('forceLoad') forceLoad?: string,
+    @Query('forceFileLoad') forceFileLoad?: string,
   ): Promise<ChangeReviewContextWindow> {
     return this.changeReviewService.getContextWindow(
       decodeURIComponent(worktreePath),
@@ -123,6 +128,7 @@ export class GitController {
         count: Number.parseInt(count, 10),
         limit: limit ? Number.parseInt(limit, 10) : undefined,
         forceLoad: forceLoad === 'true',
+        forceFileLoad: forceFileLoad === 'true',
       },
     );
   }

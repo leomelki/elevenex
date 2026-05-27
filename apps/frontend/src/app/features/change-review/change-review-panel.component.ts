@@ -65,7 +65,7 @@ import {
 } from './change-review-virtual-layout';
 
 type StatusFilter = 'all' | ChangeReviewFileStatus;
-type RenderRowKind = 'fileHeader' | 'fileMeta' | 'diff';
+type RenderRowKind = 'fileHeader' | 'fileMeta' | 'largeDiffGate' | 'diff';
 
 interface ScopeOption {
   value: ChangeReviewScope;
@@ -142,6 +142,7 @@ const SCOPES: ScopeOption[] = [
 ];
 
 const ROW_HEIGHT_PX = 24;
+const FILE_DIFF_AUTO_LOAD_CHANGE_LIMIT = 700;
 const WINDOW_LIMIT = 700;
 const CONTEXT_RANGE_LIMIT = 120;
 const VIEW_OVERSCAN_ROWS = 160;
@@ -193,6 +194,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private readonly pendingWindowKeys = new Set<string>();
   private readonly windowCache = new Map<string, WindowCacheEntry>();
   private readonly requestCancel$ = new Subject<void>();
+  private readonly forceLoadedFileDiffs = signal<ReadonlySet<string>>(new Set());
   private readonly relativeTimeInterval = window.setInterval(() => {
     this.now.set(Date.now());
   }, 30_000);
@@ -348,6 +350,20 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.forceLoadLargeChangeSet.set(true);
     this.changeReview.clearCache(this.worktreePath(), this.scope());
     await this.loadForCurrentScope(false);
+  }
+
+  loadLargeFileDiff(file: ChangeReviewFileSummary): void {
+    if (!this.shouldGateFileDiff(file)) return;
+    const anchor = this.captureAnchor();
+    this.forceLoadedFileDiffs.update((current) => new Set(current).add(file.path));
+    this.setFileState(file.path, (state) => ({
+      ...state,
+      message: 'Loading large diff',
+    }));
+    this.rebuildLayout();
+    this.restoreAnchor(anchor);
+    this.refreshRenderedRows();
+    this.enqueueWindow(file.path, 0, true);
   }
 
   setStatusFilter(filter: StatusFilter): void {
@@ -535,6 +551,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
               newStart: row.newStart,
               count: row.count,
               limit: CONTEXT_RANGE_LIMIT,
+              forceFileLoad: this.isFileDiffForceLoaded(file),
             },
             this.forceLoadLargeChangeSet(),
           )
@@ -631,6 +648,9 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   }
 
   fileMetaText(row: RenderRow): string {
+    if (this.shouldGateFileDiff(row.file)) {
+      return `${this.largeFileDiffText(row.file)} hidden by default`;
+    }
     if (row.state.message) return row.state.message;
     if (row.file.oldPath) return `renamed from ${row.file.oldPath}`;
     if (row.state.loadingOffsets.size > 0) return 'Loading diff window';
@@ -693,6 +713,22 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     return guard.reason === 'worktree' ? 'pending or staged files' : 'files in this scope';
   }
 
+  changedLineCount(file: ChangeReviewFileSummary): number {
+    return file.additions + file.deletions;
+  }
+
+  shouldGateFileDiff(file: ChangeReviewFileSummary): boolean {
+    return (
+      !file.binary &&
+      this.changedLineCount(file) > FILE_DIFF_AUTO_LOAD_CHANGE_LIMIT &&
+      !this.isFileDiffForceLoaded(file)
+    );
+  }
+
+  largeFileDiffText(file: ChangeReviewFileSummary): string {
+    return `${this.formatCount(this.changedLineCount(file))} changed lines`;
+  }
+
   private async loadForCurrentScope(refreshBase: boolean): Promise<void> {
     const worktreePath = this.worktreePath();
     const scope = this.scope();
@@ -713,6 +749,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.diffViewportWidthPx.set(null);
     this.loadingContextRanges.set(new Set());
     this.selectionMentionAction.set(null);
+    this.forceLoadedFileDiffs.set(new Set());
     this.rowHtmlCache.clear();
     this.now.set(Date.now());
 
@@ -773,7 +810,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private createFileState(file: ChangeReviewFileSummary): FileRenderState {
     return {
       file,
-      diffRowCount: estimateChangeReviewDiffRows(file, this.context()),
+      diffRowCount: this.initialDiffRowCount(file),
       baseRowCount: null,
       baseRows: new Map(),
       loadingOffsets: new Set(),
@@ -784,6 +821,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       truncated: false,
       changeHash: null,
     };
+  }
+
+  private initialDiffRowCount(file: ChangeReviewFileSummary): number {
+    return this.shouldGateFileDiff(file) ? 1 : estimateChangeReviewDiffRows(file, this.context());
   }
 
   private applyFilters(scrollToTop: boolean): void {
@@ -814,8 +855,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
           headerRows: this.isFileCollapsed(file) ? 1 : 2,
           diffRows: this.isFileCollapsed(file)
             ? 0
-            : (states.get(file.path)?.diffRowCount ??
-              estimateChangeReviewDiffRows(file, this.context())),
+            : (states.get(file.path)?.diffRowCount ?? this.initialDiffRowCount(file)),
         })),
       ),
     );
@@ -888,6 +928,19 @@ export class ChangeReviewPanelComponent implements OnDestroy {
         continue;
       }
 
+      if (position.diffIndex === 0 && this.shouldGateFileDiff(state.file)) {
+        rows.push({
+          id: `${position.path}:large-diff-gate`,
+          kind: 'largeDiffGate',
+          file: state.file,
+          state,
+          row: null,
+          diffIndex: 0,
+          baseIndex: null,
+        });
+        continue;
+      }
+
       const diffIndex = position.diffIndex ?? 0;
       const resolved = this.resolveDiffRow(state, diffIndex);
       if (resolved.baseIndex !== null && resolved.row) {
@@ -929,6 +982,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       const state = states.get(segment.path);
       if (!state) continue;
       if (this.collapsedPaths().has(segment.path)) continue;
+      if (this.shouldGateFileDiff(state.file)) continue;
 
       if (segment.path === activePath || segment.diffEnd > segment.diffStart) {
         this.enqueueWindow(segment.path, 0, segment.path === activePath);
@@ -969,12 +1023,16 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const states = this.fileStates();
     const activePath = this.activeFilePath();
     if (activePath && states.has(activePath) && !this.collapsedPaths().has(activePath)) {
-      keep.add(this.windowKey(activePath, 0));
+      const state = states.get(activePath);
+      if (state && !this.shouldGateFileDiff(state.file)) {
+        keep.add(this.windowKey(activePath, 0));
+      }
     }
 
     for (const segment of this.layout().segmentsForRange(startIndex, endIndex)) {
       const state = states.get(segment.path);
       if (!state || this.collapsedPaths().has(segment.path)) continue;
+      if (this.shouldGateFileDiff(state.file)) continue;
       if (segment.diffEnd > segment.diffStart) {
         keep.add(this.windowKey(segment.path, 0));
       }
@@ -995,6 +1053,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private enqueueWindow(filePath: string, offset: number, priority: boolean): void {
     const state = this.fileStates().get(filePath);
     if (!state) return;
+    if (this.shouldGateFileDiff(state.file)) return;
     const safeOffset = Math.max(0, Math.floor(offset / WINDOW_LIMIT) * WINDOW_LIMIT);
     if (state.baseRowCount !== null && state.baseRowCount <= safeOffset && state.baseRowCount > 0)
       return;
@@ -1052,6 +1111,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
             offset: request.offset,
             limit: WINDOW_LIMIT,
             context: this.context(),
+            forceFileLoad: this.isFileDiffForceLoadedPath(request.filePath),
           },
           this.forceLoadLargeChangeSet(),
         )
@@ -1397,6 +1457,14 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     if (viewedHash && viewedHash !== changeHash) {
       this.unmarkViewed(filePath);
     }
+  }
+
+  private isFileDiffForceLoaded(file: ChangeReviewFileSummary): boolean {
+    return this.isFileDiffForceLoadedPath(file.path);
+  }
+
+  private isFileDiffForceLoadedPath(filePath: string): boolean {
+    return this.forceLoadedFileDiffs().has(filePath);
   }
 
   private markViewed(filePath: string, changeHash: string): void {

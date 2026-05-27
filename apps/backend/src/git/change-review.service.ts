@@ -209,6 +209,7 @@ export class ChangeReviewService {
       limit?: number;
       context?: number;
       forceLoad?: boolean;
+      forceFileLoad?: boolean;
     } = {},
   ): Promise<ChangeReviewFileWindow> {
     this.assertScope(scope);
@@ -259,6 +260,7 @@ export class ChangeReviewService {
       scope === 'last-commit' ? '' : worktreeState.fingerprint,
       filePath,
       context,
+      options.forceFileLoad ? 'force-file' : 'guarded-file',
       summary.additions,
       summary.deletions,
       summary.status,
@@ -272,6 +274,7 @@ export class ChangeReviewService {
       lookup,
       context,
       worktreeState.fingerprint,
+      Boolean(options.forceFileLoad),
     );
     const rows = full.rows.slice(offset, offset + limit);
 
@@ -305,6 +308,7 @@ export class ChangeReviewService {
       count: number;
       limit?: number;
       forceLoad?: boolean;
+      forceFileLoad?: boolean;
     },
   ): Promise<ChangeReviewContextWindow> {
     this.assertScope(scope);
@@ -355,6 +359,7 @@ export class ChangeReviewService {
       newStart,
       count,
       limit,
+      range.forceFileLoad ? 'force-file' : 'guarded-file',
       summary.additions,
       summary.deletions,
       summary.status,
@@ -779,6 +784,7 @@ export class ChangeReviewService {
     lookup: FileSummaryLookup,
     context: number,
     worktreeFingerprint: string,
+    forceFileLoad: boolean,
   ): Promise<CachedRows> {
     const cached = this.getCachedRows(cacheKey);
     if (cached) return cached;
@@ -795,6 +801,7 @@ export class ChangeReviewService {
       context,
       cacheKey,
       worktreeFingerprint,
+      forceFileLoad,
     ).finally(() => {
       this.rowBuilds.delete(cacheKey);
     });
@@ -811,6 +818,7 @@ export class ChangeReviewService {
     context: number,
     cacheKey: string,
     worktreeFingerprint: string,
+    forceFileLoad: boolean,
   ): Promise<CachedRows> {
     let result: CachedRows;
     const summary = lookup.summary;
@@ -827,18 +835,10 @@ export class ChangeReviewService {
       return result;
     }
 
-    if (summary.status === 'added' && lookup.untracked) {
-      result = await this.buildUntrackedRows(worktreePath, summary, cacheKey);
-      return result;
-    }
-
-    if (summary.large) {
+    if (summary.large && !forceFileLoad) {
       result = this.cached(cacheKey, {
         rows: [
-          this.metaRow(
-            summary.path,
-            'Large file diff is windowed. Select a narrower scope or load targeted ranges.',
-          ),
+          this.metaRow(summary.path, 'Large file diff is hidden by default.'),
         ],
         contextRanges: [],
         message: 'Large file diff omitted from automatic rendering.',
@@ -846,6 +846,16 @@ export class ChangeReviewService {
         large: true,
         truncated: true,
       });
+      return result;
+    }
+
+    if (summary.status === 'added' && lookup.untracked) {
+      result = await this.buildUntrackedRows(
+        worktreePath,
+        summary,
+        cacheKey,
+        forceFileLoad,
+      );
       return result;
     }
 
@@ -1248,10 +1258,11 @@ export class ChangeReviewService {
     worktreePath: string,
     summary: ChangeReviewFileSummary,
     cacheKey: string,
+    forceFileLoad: boolean,
   ): Promise<CachedRows> {
     const absolutePath = path.join(worktreePath, summary.path);
     const stat = await fs.stat(absolutePath);
-    if (stat.size > LARGE_FILE_BYTES) {
+    if (stat.size > LARGE_FILE_BYTES && !forceFileLoad) {
       return this.cached(cacheKey, {
         rows: [
           this.metaRow(

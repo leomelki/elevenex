@@ -56,13 +56,19 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     path: string,
-    options: { offset?: number; limit?: number; context?: number } = {},
+    options: {
+      offset?: number;
+      limit?: number;
+      context?: number;
+      forceFileLoad?: boolean;
+    } = {},
     forceLoad = false,
   ) {
     const normalized = {
       offset: options.offset ?? 0,
       limit: options.limit ?? 600,
       context: options.context ?? 8,
+      forceFileLoad: Boolean(options.forceFileLoad),
     };
     const key = this.fileWindowKey(worktreePath, scope, path, normalized, forceLoad);
     const cached = this.fileWindowCache.get(key);
@@ -80,6 +86,7 @@ export class ChangeReviewService {
           limit: String(normalized.limit),
           context: String(normalized.context),
           forceLoad: String(forceLoad),
+          forceFileLoad: String(normalized.forceFileLoad),
         },
       })
       .pipe(
@@ -99,7 +106,13 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     path: string,
-    range: { oldStart: number; newStart: number; count: number; limit?: number },
+    range: {
+      oldStart: number;
+      newStart: number;
+      count: number;
+      limit?: number;
+      forceFileLoad?: boolean;
+    },
     forceLoad = false,
   ) {
     const normalized = {
@@ -107,6 +120,7 @@ export class ChangeReviewService {
       newStart: range.newStart,
       count: range.count,
       limit: range.limit ?? 120,
+      forceFileLoad: Boolean(range.forceFileLoad),
     };
     const key = this.contextWindowKey(worktreePath, scope, path, normalized, forceLoad);
     const cached = this.contextWindowCache.get(key);
@@ -125,6 +139,7 @@ export class ChangeReviewService {
           count: String(normalized.count),
           limit: String(normalized.limit),
           forceLoad: String(forceLoad),
+          forceFileLoad: String(normalized.forceFileLoad),
         },
       })
       .pipe(
@@ -144,7 +159,12 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     path: string,
-    options: { offset?: number; limit?: number; context?: number } = {},
+    options: {
+      offset?: number;
+      limit?: number;
+      context?: number;
+      forceFileLoad?: boolean;
+    } = {},
     forceLoad = false,
   ): boolean {
     return this.fileWindowCache.has(
@@ -156,6 +176,7 @@ export class ChangeReviewService {
           offset: options.offset ?? 0,
           limit: options.limit ?? 600,
           context: options.context ?? 8,
+          forceFileLoad: Boolean(options.forceFileLoad),
         },
         forceLoad,
       ),
@@ -200,7 +221,12 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     path: string,
-    options: { offset: number; limit: number; context: number },
+    options: {
+      offset: number;
+      limit: number;
+      context: number;
+      forceFileLoad: boolean;
+    },
     forceLoad: boolean,
   ): string {
     return [
@@ -210,6 +236,7 @@ export class ChangeReviewService {
       options.offset,
       options.limit,
       options.context,
+      options.forceFileLoad ? 'force-file' : 'guarded-file',
       forceLoad ? 'force' : 'guarded',
     ].join('\0');
   }
@@ -218,7 +245,13 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     path: string,
-    range: { oldStart: number; newStart: number; count: number; limit: number },
+    range: {
+      oldStart: number;
+      newStart: number;
+      count: number;
+      limit: number;
+      forceFileLoad: boolean;
+    },
     forceLoad: boolean,
   ): string {
     return [
@@ -229,6 +262,7 @@ export class ChangeReviewService {
       range.newStart,
       range.count,
       range.limit,
+      range.forceFileLoad ? 'force-file' : 'guarded-file',
       forceLoad ? 'force' : 'guarded',
     ].join('\0');
   }

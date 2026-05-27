@@ -127,6 +127,47 @@ describe('ChangeReviewService', () => {
     expect(second.rows[0].id).not.toBe(first.rows[0].id);
   });
 
+  it('omits very large file diffs by default and loads them when forced', async () => {
+    write(
+      'README.md',
+      Array.from({ length: 25_005 }, (_, index) => `line ${index}`).join('\n'),
+    );
+
+    const guarded = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      {
+        offset: 0,
+        limit: 5,
+        context: 0,
+      },
+    );
+
+    expect(guarded.large).toBe(true);
+    expect(guarded.rows).toEqual([
+      expect.objectContaining({
+        type: 'meta',
+        content: 'Large file diff is hidden by default.',
+      }),
+    ]);
+
+    const forced = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      {
+        offset: 0,
+        limit: 5,
+        context: 0,
+        forceFileLoad: true,
+      },
+    );
+
+    expect(forced.rows.some((row) => row.type === 'add')).toBe(true);
+    expect(forced.message).toBeNull();
+  });
+
   it('exposes expandable unchanged ranges before and after hunks without reloading the file window', async () => {
     write(
       'README.md',
