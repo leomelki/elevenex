@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Subject, of } from 'rxjs';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
-import { GitStatusSummary } from '@/shared/models/git.model';
+import { GitStatusSummary, PushResult } from '@/shared/models/git.model';
 import { GitService } from '@/shared/services/git.service';
 import { CommitButtonComponent } from './commit-button.component';
 
@@ -64,6 +64,22 @@ const cleanSummary: GitStatusSummary = {
   },
 };
 
+const pushableSummary: GitStatusSummary = {
+  ...cleanSummary,
+  ahead: 1,
+};
+
+const pushedResult: PushResult = {
+  pushed: true,
+  remote: 'origin',
+  branch: 'main',
+  upstream: 'origin/main',
+  createdUpstream: false,
+  nonFastForward: false,
+  rejected: false,
+  message: 'Pushed',
+};
+
 const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('CommitButtonComponent', () => {
@@ -82,18 +98,7 @@ describe('CommitButtonComponent', () => {
         generatedMessage: false,
       }),
     ),
-    push: vi.fn(() =>
-      of({
-        pushed: true,
-        remote: 'origin',
-        branch: 'main',
-        upstream: 'origin/main',
-        createdUpstream: false,
-        nonFastForward: false,
-        rejected: false,
-        message: 'Pushed',
-      }),
-    ),
+    push: vi.fn(() => of(pushedResult)),
   };
 
   beforeEach(async () => {
@@ -157,5 +162,45 @@ describe('CommitButtonComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('.cx-trigger')).toBeNull();
+  });
+
+  it('does not show another worktree as pushing while a push is still in flight', async () => {
+    fixture.componentRef.setInput('worktreePath', '/tmp/repo-a');
+    fixture.componentRef.setInput('contextKey', 'session-1:repo-a');
+    fixture.detectChanges();
+
+    getSummaryCalls[0].next(pushableSummary);
+    getSummaryCalls[0].complete();
+    await flushPromises();
+    fixture.detectChanges();
+
+    const pushResponse = new Subject<PushResult>();
+    gitServiceMock.push.mockReturnValueOnce(pushResponse.asObservable());
+
+    const pushPromise = fixture.componentInstance.push();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Pushing');
+
+    fixture.componentRef.setInput('worktreePath', '/tmp/repo-b');
+    fixture.componentRef.setInput('contextKey', 'session-2:repo-b');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Checking');
+    expect(fixture.nativeElement.textContent).not.toContain('Pushing');
+    expect(getSummaryCalls).toHaveLength(2);
+
+    getSummaryCalls[1].next(cleanSummary);
+    getSummaryCalls[1].complete();
+    await flushPromises();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.cx-trigger')).toBeNull();
+
+    pushResponse.next(pushedResult);
+    pushResponse.complete();
+    await pushPromise;
+
+    expect(getSummaryCalls).toHaveLength(2);
   });
 });

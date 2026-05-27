@@ -66,12 +66,12 @@ export class CommitButtonComponent {
   readonly refreshing = signal(false);
   readonly open = signal(false);
   readonly submitting = signal(false);
-  readonly pushing = signal(false);
   readonly includeUnstaged = signal(false);
   readonly commitMessage = signal('');
 
   private refreshInFlightKey: string | null = null;
   private refreshRequestId = 0;
+  private readonly pushingWorktreePaths = signal<ReadonlySet<string>>(new Set());
 
   readonly hasChanges = computed(() => this.summary()?.hasChanges ?? false);
   readonly hasPushableCommits = computed(() => {
@@ -88,6 +88,10 @@ export class CommitButtonComponent {
         this.open() ||
         this.isBusy()),
   );
+  readonly pushing = computed(() => {
+    const worktreePath = this.worktreePath();
+    return Boolean(worktreePath && this.pushingWorktreePaths().has(worktreePath));
+  });
   readonly isBusy = computed(() => this.submitting() || this.pushing());
   readonly triggerLabel = computed(() => {
     if (this.submitting()) return 'Committing…';
@@ -231,9 +235,15 @@ export class CommitButtonComponent {
 
   async push(): Promise<void> {
     const worktreePath = this.worktreePath();
-    if (!worktreePath || !this.hasPushableCommits() || this.pushing()) return;
+    if (
+      !worktreePath ||
+      !this.hasPushableCommits() ||
+      this.pushingWorktreePaths().has(worktreePath)
+    ) {
+      return;
+    }
 
-    this.pushing.set(true);
+    this.setPushingWorktree(worktreePath, true);
     try {
       const result = await firstValueFrom(this.gitService.push(worktreePath));
       if (result.pushed) {
@@ -243,11 +253,13 @@ export class CommitButtonComponent {
       } else {
         toast.error(result.message || 'Push failed.');
       }
-      await this.refreshSummary({ force: true });
+      if (this.worktreePath() === worktreePath) {
+        await this.refreshSummary({ force: true });
+      }
     } catch (error: any) {
       toast.error(error?.error?.message || 'Could not push.');
     } finally {
-      this.pushing.set(false);
+      this.setPushingWorktree(worktreePath, false);
     }
   }
 
@@ -324,6 +336,18 @@ export class CommitButtonComponent {
       this.activeContextKey() === contextKey &&
       this.refreshRequestId === requestId
     );
+  }
+
+  private setPushingWorktree(worktreePath: string, pushing: boolean): void {
+    this.pushingWorktreePaths.update((current) => {
+      const next = new Set(current);
+      if (pushing) {
+        next.add(worktreePath);
+      } else {
+        next.delete(worktreePath);
+      }
+      return next;
+    });
   }
 
   @HostListener('document:click', ['$event'])
