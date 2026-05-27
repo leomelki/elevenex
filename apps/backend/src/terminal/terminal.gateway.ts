@@ -14,7 +14,18 @@ import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 interface TerminalSession {
   ws: WebSocket;
   ptyPid?: number;
+  startupReady: boolean;
+  queuedResize: TerminalResizeMessage | null;
+  queuedInput: string[];
+  queuedInputBytes: number;
 }
+
+interface TerminalResizeMessage {
+  cols: number;
+  rows: number;
+}
+
+const MAX_STARTUP_INPUT_QUEUE_BYTES = 256 * 1024;
 
 @Injectable()
 export class TerminalGateway implements OnModuleDestroy {
@@ -64,7 +75,15 @@ export class TerminalGateway implements OnModuleDestroy {
       existing.ws.close(1000, 'New connection established');
     }
 
-    this.sessions.set(sessionId, { ws });
+    const session: TerminalSession = {
+      ws,
+      startupReady: false,
+      queuedResize: null,
+      queuedInput: [],
+      queuedInputBytes: 0,
+    };
+
+    this.sessions.set(sessionId, session);
     const isCurrentConnection = () => this.sessions.get(sessionId)?.ws === ws;
 
     // Start the PTY process when WebSocket connects
@@ -87,7 +106,11 @@ export class TerminalGateway implements OnModuleDestroy {
             this.sessions.delete(sessionId);
             this.lastRestartTime.delete(sessionId);
           }
+          return;
         }
+
+        session.startupReady = true;
+        this.flushStartupQueue(sessionId, session);
       })
       .catch((error) => {
         if (!isCurrentConnection()) {
@@ -115,30 +138,19 @@ export class TerminalGateway implements OnModuleDestroy {
       try {
         const message = data.toString();
 
-        // Check if it's a resize message
-        try {
-          const parsed = JSON.parse(message);
-          if (parsed.type === 'resize' && parsed.cols && parsed.rows) {
-            this.ptyManager.resize(sessionId, parsed.cols, parsed.rows);
-            return;
-          }
-        } catch {
-          // Not JSON, treat as terminal input
+        const resize = this.parseResizeMessage(message);
+
+        if (!session.startupReady) {
+          this.queueStartupMessage(session, message, resize);
+          return;
         }
 
-        if (message.includes('\x03')) {
-          void this.claudeHooksService
-            .handleInterrupt(sessionId)
-            .catch((error) => {
-              console.error(
-                `Failed to update Claude status after Ctrl-C for session ${sessionId}:`,
-                error,
-              );
-            });
+        if (resize) {
+          this.ptyManager.resize(sessionId, resize.cols, resize.rows);
+          return;
         }
 
-        // Terminal input
-        this.ptyManager.write(sessionId, message);
+        this.handleTerminalInput(sessionId, message);
       } catch (error) {
         console.error(
           `Error handling message for session ${sessionId}:`,
@@ -225,6 +237,81 @@ export class TerminalGateway implements OnModuleDestroy {
     if (session?.ws?.readyState === WebSocket.OPEN) {
       session.ws.send(data);
     }
+  }
+
+  private parseResizeMessage(message: string): TerminalResizeMessage | null {
+    try {
+      const parsed = JSON.parse(message) as {
+        type?: unknown;
+        cols?: unknown;
+        rows?: unknown;
+      };
+      const cols = Number(parsed.cols);
+      const rows = Number(parsed.rows);
+      if (
+        parsed.type === 'resize' &&
+        Number.isFinite(cols) &&
+        Number.isFinite(rows)
+      ) {
+        return { cols, rows };
+      }
+    } catch {
+      // Not JSON, treat as terminal input.
+    }
+
+    return null;
+  }
+
+  private queueStartupMessage(
+    session: TerminalSession,
+    message: string,
+    resize: TerminalResizeMessage | null,
+  ): void {
+    if (resize) {
+      session.queuedResize = resize;
+      return;
+    }
+
+    session.queuedInput.push(message);
+    session.queuedInputBytes += Buffer.byteLength(message);
+
+    while (
+      session.queuedInputBytes > MAX_STARTUP_INPUT_QUEUE_BYTES &&
+      session.queuedInput.length > 0
+    ) {
+      const dropped = session.queuedInput.shift();
+      session.queuedInputBytes -= Buffer.byteLength(dropped ?? '');
+    }
+  }
+
+  private flushStartupQueue(sessionId: number, session: TerminalSession): void {
+    if (session.queuedResize) {
+      this.ptyManager.resize(
+        sessionId,
+        session.queuedResize.cols,
+        session.queuedResize.rows,
+      );
+      session.queuedResize = null;
+    }
+
+    for (const input of session.queuedInput) {
+      this.handleTerminalInput(sessionId, input);
+    }
+    session.queuedInput = [];
+    session.queuedInputBytes = 0;
+  }
+
+  private handleTerminalInput(sessionId: number, message: string): void {
+    if (message.includes('\x03')) {
+      void this.claudeHooksService.handleInterrupt(sessionId).catch((error) => {
+        console.error(
+          `Failed to update Claude status after Ctrl-C for session ${sessionId}:`,
+          error,
+        );
+      });
+    }
+
+    this.ptyManager.write(sessionId, message);
   }
 
   onModuleDestroy(): void {

@@ -30,6 +30,16 @@ interface PtySession {
   useTmux: boolean;
 }
 
+interface TmuxResizeState {
+  desired: {
+    tmuxBin: string;
+    sessionName: string;
+    cols: number;
+    rows: number;
+  };
+  running: boolean;
+}
+
 const CLAUDE_BIN = findBinary('claude') ?? 'claude';
 const HOOK_EVENTS = [
   'PreToolUse',
@@ -70,6 +80,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private processes = new Map<number, PtySession>();
   private readonly spawnInFlight = new Map<number, Promise<pty.IPty | null>>();
   private readonly cancelledSpawns = new Set<number>();
+  private readonly tmuxResizeState = new Map<number, TmuxResizeState>();
   private pendingKills = new Map<number, pty.IPty>();
   private readonly logger = new Logger('PtyManager');
 
@@ -414,9 +425,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     if (session.useTmux) {
       const sessionName = `elevenex-${sessionId}`;
       const tmuxBin = this.tmuxManager.getTmuxBin();
-      void this.resizeTmuxWindow(tmuxBin, sessionName, cols, rows).catch(() => {
-        // Ignore resize errors
-      });
+      this.queueTmuxResize(sessionId, tmuxBin, sessionName, cols, rows);
     }
   }
 
@@ -489,6 +498,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
   async killTmuxSession(sessionId: number): Promise<void> {
     this.plannotatorRegistry.markLaunchInactive(sessionId);
+    this.tmuxResizeState.delete(sessionId);
     if (this.tmuxManager.isTmuxAvailable()) {
       await this.tmuxManager.killSession(sessionId);
     }
@@ -618,5 +628,62 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       String(cols),
       String(rows),
     ]);
+  }
+
+  private queueTmuxResize(
+    sessionId: number,
+    tmuxBin: string,
+    sessionName: string,
+    cols: number,
+    rows: number,
+  ): void {
+    const existing = this.tmuxResizeState.get(sessionId);
+    const state =
+      existing ??
+      ({
+        desired: { tmuxBin, sessionName, cols, rows },
+        running: false,
+      } satisfies TmuxResizeState);
+
+    state.desired = { tmuxBin, sessionName, cols, rows };
+    this.tmuxResizeState.set(sessionId, state);
+
+    if (state.running) {
+      return;
+    }
+
+    state.running = true;
+    void this.flushQueuedTmuxResize(sessionId, state);
+  }
+
+  private async flushQueuedTmuxResize(
+    sessionId: number,
+    state: TmuxResizeState,
+  ): Promise<void> {
+    try {
+      while (this.tmuxResizeState.get(sessionId) === state) {
+        const { tmuxBin, sessionName, cols, rows } = state.desired;
+
+        try {
+          await this.resizeTmuxWindow(tmuxBin, sessionName, cols, rows);
+        } catch {
+          // Ignore resize errors.
+        }
+
+        const desired = state.desired;
+        if (
+          desired.tmuxBin === tmuxBin &&
+          desired.sessionName === sessionName &&
+          desired.cols === cols &&
+          desired.rows === rows
+        ) {
+          break;
+        }
+      }
+    } finally {
+      if (this.tmuxResizeState.get(sessionId) === state) {
+        this.tmuxResizeState.delete(sessionId);
+      }
+    }
   }
 }

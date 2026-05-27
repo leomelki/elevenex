@@ -8,6 +8,16 @@ import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 
 jest.mock('ws');
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('TerminalGateway', () => {
   let gateway: TerminalGateway;
   let mockWss: jest.Mocked<WebSocketServer>;
@@ -228,5 +238,58 @@ describe('TerminalGateway', () => {
         gateway as unknown as { sessions: Map<number, { ws: WebSocket }> }
       ).sessions.get(101)?.ws,
     ).toBe(secondWs);
+  });
+
+  it('queues resize and input until the Claude terminal finishes starting', async () => {
+    gateway.attachToServer(mockServer);
+    const start = createDeferred<{
+      success: boolean;
+      resumed: boolean;
+      error?: string;
+    }>();
+    mockTerminalService.startSession.mockReturnValue(start.promise);
+
+    const connectionHandler = mockWss.on.mock.calls.find(
+      (call) => call[0] === 'connection',
+    )?.[1] as (
+      ws: WebSocket,
+      request: { url: string; headers: { host: string } },
+    ) => void;
+
+    const handlers = new Map<string, (data: Buffer) => void>();
+    const mockWs = {
+      on: jest.fn((event: string, handler: (data: Buffer) => void) => {
+        handlers.set(event, handler);
+        return mockWs;
+      }),
+      close: jest.fn(),
+      send: jest.fn(),
+      readyState: WebSocket.OPEN,
+    } as unknown as jest.Mocked<WebSocket>;
+
+    connectionHandler(mockWs, {
+      url: '/terminal?sessionId=102',
+      headers: { host: 'localhost:3000' },
+    });
+
+    handlers
+      .get('message')
+      ?.(Buffer.from(JSON.stringify({ type: 'resize', cols: 90, rows: 24 })));
+    handlers.get('message')?.(Buffer.from('queued input\r'));
+    handlers
+      .get('message')
+      ?.(Buffer.from(JSON.stringify({ type: 'resize', cols: 140, rows: 42 })));
+
+    expect(mockPtyManager.resize).not.toHaveBeenCalled();
+    expect(mockPtyManager.write).not.toHaveBeenCalled();
+
+    start.resolve({ success: true, resumed: false });
+    await start.promise;
+    await Promise.resolve();
+
+    expect(mockPtyManager.resize).toHaveBeenCalledTimes(1);
+    expect(mockPtyManager.resize).toHaveBeenCalledWith(102, 140, 42);
+    expect(mockPtyManager.write).toHaveBeenCalledTimes(1);
+    expect(mockPtyManager.write).toHaveBeenCalledWith(102, 'queued input\r');
   });
 });

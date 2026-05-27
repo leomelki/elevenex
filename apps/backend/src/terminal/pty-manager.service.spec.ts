@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import * as pty from 'node-pty';
 import { PtyManager } from './pty-manager.service.js';
 import { buildAugmentedEnvAsync } from '../config/system-paths.js';
+import { execFileQuiet } from './async-process.js';
 
 jest.mock('node-pty', () => ({
   spawn: jest.fn(),
@@ -15,6 +16,10 @@ jest.mock('../config/system-paths.js', () => ({
 
 jest.mock('../config/runtime-paths.js', () => ({
   getBackendHelperPath: jest.fn(() => '/tmp/plannotator-wrapper.sh'),
+}));
+
+jest.mock('./async-process.js', () => ({
+  execFileQuiet: jest.fn(),
 }));
 
 type MockPty = EventEmitter & {
@@ -50,6 +55,7 @@ function createDeferred<T>() {
 describe('PtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
   const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
+  const mockExecFileQuiet = jest.mocked(execFileQuiet);
 
   let manager: PtyManager;
   let gateway: {
@@ -71,6 +77,7 @@ describe('PtyManager', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
+    mockExecFileQuiet.mockResolvedValue(undefined);
     mockSpawn.mockReturnValue(createMockPty() as never);
     tmuxManager = {
       isTmuxAvailable: jest.fn(() => false),
@@ -164,5 +171,55 @@ describe('PtyManager', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('serializes tmux resizes so the latest Claude terminal size wins', async () => {
+    const firstResize = createDeferred<void>();
+    mockExecFileQuiet.mockImplementation((_file, args) => {
+      if (args.includes('100x20')) {
+        return firstResize.promise;
+      }
+      return Promise.resolve();
+    });
+
+    const process = createMockPty();
+    (
+      manager as unknown as {
+        processes: Map<
+          number,
+          {
+            pty: MockPty;
+            sessionId: number;
+            worktreePath: string;
+            pid: number;
+            useTmux: boolean;
+          }
+        >;
+      }
+    ).processes.set(7, {
+      pty: process,
+      sessionId: 7,
+      worktreePath: '/repo/worktree',
+      pid: process.pid,
+      useTmux: true,
+    });
+
+    manager.resize(7, 100, 20);
+    manager.resize(7, 120, 30);
+
+    expect(process.resize).toHaveBeenNthCalledWith(1, 100, 20);
+    expect(process.resize).toHaveBeenNthCalledWith(2, 120, 30);
+    expect(mockExecFileQuiet).toHaveBeenCalledTimes(1);
+
+    firstResize.resolve();
+    await firstResize.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(mockExecFileQuiet.mock.calls.map((call) => call[1])).toEqual([
+      ['set-option', '-t', 'elevenex-7', 'default-size', '100x20'],
+      ['resize-window', '-t', 'elevenex-7', '100', '20'],
+      ['set-option', '-t', 'elevenex-7', 'default-size', '120x30'],
+      ['resize-window', '-t', 'elevenex-7', '120', '30'],
+    ]);
   });
 });
