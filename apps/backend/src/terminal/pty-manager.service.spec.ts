@@ -206,20 +206,21 @@ describe('PtyManager', () => {
 
     manager.resize(7, 100, 20);
     manager.resize(7, 120, 30);
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(process.resize).toHaveBeenNthCalledWith(1, 100, 20);
     expect(process.resize).toHaveBeenNthCalledWith(2, 120, 30);
-    expect(mockExecFileQuiet).toHaveBeenCalledTimes(1);
+    expect(mockExecFileQuiet).toHaveBeenCalledTimes(2);
 
     firstResize.resolve();
     await firstResize.promise;
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(mockExecFileQuiet.mock.calls.map((call) => call[1])).toEqual([
+      ['set-option', '-t', 'elevenex-7', 'window-size', 'latest'],
       ['set-option', '-t', 'elevenex-7', 'default-size', '100x20'],
-      ['resize-window', '-t', 'elevenex-7', '100', '20'],
+      ['set-option', '-t', 'elevenex-7', 'window-size', 'latest'],
       ['set-option', '-t', 'elevenex-7', 'default-size', '120x30'],
-      ['resize-window', '-t', 'elevenex-7', '120', '30'],
     ]);
   });
 });
