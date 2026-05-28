@@ -114,6 +114,13 @@ export class AgentRuntimeApiService {
     );
   }
 
+  setPlanMode(sessionId: number, enabled: boolean, provider = this.currentProvider()) {
+    return this.http.post<AgentRuntimeState>(
+      `${this.basePath(sessionId, provider)}/plan-mode`,
+      { enabled },
+    );
+  }
+
   setReasoningEffort(sessionId: number, effort: string | null, provider = this.currentProvider()) {
     return this.http.post<AgentRuntimeState>(
       `${this.basePath(sessionId, provider)}/reasoning-effort`,

@@ -165,6 +165,10 @@ export interface AgentRuntimeProviderFeatures {
     sessionId: number,
     mode: AgentPermissionMode | null,
   ): Promise<AgentRuntimeStatePayload>;
+  setPlanMode(
+    sessionId: number,
+    enabled: boolean,
+  ): Promise<AgentRuntimeStatePayload>;
   setReasoningEffort(
     sessionId: number,
     effort: AgentReasoningEffort | null,

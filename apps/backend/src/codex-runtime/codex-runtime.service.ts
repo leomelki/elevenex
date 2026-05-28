@@ -238,7 +238,14 @@ export class CodexRuntimeService extends EventEmitter {
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
-    state.selectedPermissionMode = mode ?? 'default';
+    const normalized = this.normalizePermissionModeSelection(
+      mode,
+      state.selectedPermissionMode,
+    );
+    state.selectedPermissionMode = normalized.permissionMode;
+    if (normalized.planMode !== undefined) {
+      state.planMode = normalized.planMode;
+    }
     if (state.sessionMetadata) {
       state.sessionMetadata = {
         ...state.sessionMetadata,
@@ -247,6 +254,41 @@ export class CodexRuntimeService extends EventEmitter {
     }
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  async setPlanMode(
+    sessionId: number,
+    enabled: boolean,
+  ): Promise<CodexRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    state.planMode = enabled;
+    this.emitRunState(sessionId);
+    return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  private normalizePermissionModeSelection(
+    mode: CodexPermissionMode | null,
+    current: CodexPermissionMode | null,
+  ): { permissionMode: CodexPermissionMode; planMode?: boolean } {
+    if (mode === 'plan') {
+      return {
+        permissionMode: this.normalizeStoredPermissionMode(current),
+        planMode: true,
+      };
+    }
+    if (mode === 'planBypass') {
+      return { permissionMode: 'bypassPermissions', planMode: true };
+    }
+    return { permissionMode: mode ?? 'default' };
+  }
+
+  private normalizeStoredPermissionMode(
+    mode: CodexPermissionMode | null,
+  ): CodexPermissionMode {
+    return mode && mode !== 'plan' && mode !== 'planBypass'
+      ? mode
+      : 'default';
   }
 
   async setReasoningEffort(
@@ -952,6 +994,7 @@ export class CodexRuntimeService extends EventEmitter {
       reasoningEffort: null,
       fastMode: false,
       selectedPermissionMode: 'default',
+      planMode: false,
       availableModels: [...this.codexModels],
       contextUsage: null,
       sessionMetadata: null,
@@ -979,6 +1022,7 @@ export class CodexRuntimeService extends EventEmitter {
         reasoningEffort: state.reasoningEffort,
         fastMode: state.fastMode,
         permissionMode: state.selectedPermissionMode,
+        planMode: state.planMode,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
         pendingPermissionRequest: state.pendingPermissionRequest,
@@ -1232,6 +1276,7 @@ export class CodexRuntimeService extends EventEmitter {
       reasoningEffort: state.reasoningEffort,
       fastMode: state.fastMode,
       permissionMode: state.selectedPermissionMode,
+      planMode: state.planMode,
       availableModels: state.availableModels,
       contextUsage: state.contextUsage,
       sessionMetadata: state.sessionMetadata,
@@ -1538,9 +1583,9 @@ export class CodexRuntimeService extends EventEmitter {
 
     try {
       await this.appServer.ensureReady();
-      const permissionOptions = this.mapPermissionMode(
-        state.selectedPermissionMode,
-      );
+      const permissionOptions = state.planMode
+        ? { sandboxMode: 'read-only' as const, approvalPolicy: 'never' as const }
+        : this.mapPermissionMode(state.selectedPermissionMode);
       const sandboxMap: Record<SandboxMode, string> = {
         'read-only': 'read-only',
         'workspace-write': 'workspace-write',
@@ -2129,9 +2174,6 @@ export class CodexRuntimeService extends EventEmitter {
     if (mode === 'acceptEdits') {
       return { sandboxMode: 'workspace-write', approvalPolicy: 'never' };
     }
-    if (mode === 'plan') {
-      return { sandboxMode: 'read-only', approvalPolicy: 'never' };
-    }
     if (mode === 'auto') {
       return {
         sandboxMode: 'workspace-write',
@@ -2150,7 +2192,7 @@ export class CodexRuntimeService extends EventEmitter {
   private buildCollaborationModeParams(
     state: CodexRuntimeState,
   ): Record<string, unknown> {
-    if (state.selectedPermissionMode !== 'plan') {
+    if (!state.planMode) {
       return {};
     }
     return {

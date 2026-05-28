@@ -260,6 +260,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly agentInspectorSelectedAgentId = signal<string | null>(null);
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
   readonly _permissionMode = signal<ClaudePermissionMode | null>(null);
+  readonly _planMode = signal(false);
   readonly codexAuthStatus = signal<AgentAuthStatus | null>(null);
   readonly piAuthStatus = signal<AgentAuthStatus | null>(null);
   readonly runtimeStarted = signal(false);
@@ -285,12 +286,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
   private shouldAutoScrollTranscript = true;
   private readonly transcriptBottomThresholdPx = 48;
-  private readonly planBypassActive = signal(false);
   readonly permissionMode = computed<ClaudePermissionMode>(() => {
-    const server = this._permissionMode() ?? this.sessionMetadata()?.permissionMode ?? 'auto';
-    if (this.planBypassActive() && server === 'plan') return 'planBypass' as ClaudePermissionMode;
-    return server;
+    return this._permissionMode() ?? 'auto';
   });
+  readonly planMode = computed(() => this._planMode());
   readonly showLoading = computed(() => this.loading() || !this.hydrated());
   readonly promptIsCommand = computed(() => this.prompt().trimStart().startsWith('/'));
   readonly canAppendContext = computed(
@@ -851,8 +850,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (!review) return false;
     if (this.runPhase() !== 'idle' || this.submitting()) return false;
     if (review.provider === 'codex') {
-      const mode = this.permissionMode();
-      return mode === 'plan' || mode === ('planBypass' as ClaudePermissionMode);
+      return this.planMode();
     }
     return !review.readonly;
   }
@@ -887,8 +885,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (review.provider !== 'codex' || this.runPhase() !== 'idle' || this.submitting()) return;
 
     try {
-      this.planBypassActive.set(false);
-      const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, 'default'));
+      const next = await firstValueFrom(this.api.setPlanMode(this.sessionId, false));
       this.applyRuntimeState(next);
       await this.submitPrompt({ text: 'implement plan', images: [] });
       this.planReviewClosed.emit(review);
@@ -1069,21 +1066,18 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   async onPermissionModeChange(mode: ClaudePermissionMode): Promise<void> {
     if (this.readOnlyTranscript) return;
-    if (
-      this.currentProvider() === 'codex' &&
-      (mode === ('planBypass' as ClaudePermissionMode) || mode === 'auto')
-    ) {
-      mode = 'default';
-    }
-    if (mode === ('planBypass' as ClaudePermissionMode)) {
-      this.planBypassActive.set(true);
-      const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, 'plan'));
-      this.applyRuntimeState(next);
-    } else {
-      this.planBypassActive.set(false);
-      const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, mode || null));
-      this.applyRuntimeState(next);
-    }
+    const next = await firstValueFrom(
+      this.api.setPermissionMode(this.sessionId, mode || null),
+    );
+    this.applyRuntimeState(next);
+  }
+
+  async onPlanModeChange(enabled: boolean): Promise<void> {
+    if (this.readOnlyTranscript) return;
+    const next = await firstValueFrom(
+      this.api.setPlanMode(this.sessionId, enabled),
+    );
+    this.applyRuntimeState(next);
   }
 
   openTerminal(): void {
@@ -1801,9 +1795,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.fastMode.set(event.payload.fastMode ?? false);
         this.availableModels.set(event.payload.availableModels);
         this.contextUsage.set(event.payload.contextUsage);
-        if (event.payload.permissionMode != null) {
-          this._permissionMode.set(event.payload.permissionMode);
-        }
+        this._permissionMode.set(event.payload.permissionMode);
+        this._planMode.set(event.payload.planMode ?? false);
         this.applyPendingPermissionFromRuntime(event.payload.pendingPermissionRequest);
         this.pendingUserInputRequest.set(event.payload.pendingUserInputRequest);
         this.updatePendingPrompts(event.payload.pendingPrompts ?? []);
@@ -2058,6 +2051,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.availableModels.set(state.availableModels);
     this.contextUsage.set(state.contextUsage);
     this._permissionMode.set(state.permissionMode);
+    this._planMode.set(state.planMode ?? false);
     this.applyPendingPermissionFromRuntime(state.pendingPermissionRequest);
     this.pendingUserInputRequest.set(state.pendingUserInputRequest);
     this.updatePendingPrompts(state.pendingPrompts ?? []);
@@ -2099,7 +2093,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private shouldAutoApprovePermission(req: ClaudePermissionRequest): boolean {
-    if (!this.planBypassActive()) return false;
+    if (this.currentProvider() !== 'claude') return false;
+    if (!this.planMode() || this.permissionMode() !== 'bypassPermissions') {
+      return false;
+    }
     const toolName = (req.toolName ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const noAutoApprove = new Set(['exitplanmode', 'askuserquestion']);
     return !noAutoApprove.has(toolName);
@@ -2143,7 +2140,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.availableModels.set([]);
     this.contextUsage.set(null);
     this._permissionMode.set(null);
-    this.planBypassActive.set(false);
+    this._planMode.set(false);
     this.historyItems.set([]);
     this.liveItems.set([]);
     this.optimisticUserItems.set([]);

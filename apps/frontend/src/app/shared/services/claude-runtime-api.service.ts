@@ -91,6 +91,14 @@ export class ClaudeRuntimeApiService {
     ) as Observable<ClaudeRuntimeState>;
   }
 
+  setPlanMode(sessionId: number, enabled: boolean) {
+    return this.agentRuntimeApi.setPlanMode(
+      sessionId,
+      enabled,
+      this.provider(),
+    ) as Observable<ClaudeRuntimeState>;
+  }
+
   setReasoningEffort(sessionId: number, effort: string | null) {
     return this.agentRuntimeApi.setReasoningEffort(
       sessionId,

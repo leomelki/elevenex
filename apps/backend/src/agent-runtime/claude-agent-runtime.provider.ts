@@ -95,6 +95,10 @@ export class ClaudeAgentRuntimeProvider
     );
   }
 
+  setPlanMode(sessionId: number, enabled: boolean) {
+    return this.runtimeService.setPlanMode(sessionId, enabled);
+  }
+
   setReasoningEffort(sessionId: number, effort: string | null) {
     return this.runtimeService.setReasoningEffort(sessionId, effort);
   }

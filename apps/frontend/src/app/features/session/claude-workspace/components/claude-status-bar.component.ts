@@ -48,8 +48,6 @@ interface PermissionModeOption {
 const PERMISSION_MODES: PermissionModeOption[] = [
   { id: 'auto', label: 'Auto mode', hint: 'Continuous, autonomous execution' },
   { id: 'default', label: 'Default', hint: 'Prompt for risky tools' },
-  { id: 'plan', label: 'Plan mode', hint: 'Read-only — draft a plan before editing' },
-  { id: 'planBypass', label: 'Plan + bypass', hint: 'Auto-approve during planning, then review plan' },
   { id: 'acceptEdits', label: 'Accept edits', hint: 'Auto-allow file edits' },
   { id: 'bypassPermissions', label: 'Bypass permissions', hint: 'Skip all prompts — danger' },
 ];
@@ -76,7 +74,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
   host: {
     '(document:mousedown)': 'onDocumentMousedown($event)',
     '(document:keydown.escape)': 'closeAllMenus()',
-    '(document:keydown.shift.tab)': 'cyclePermissionMode($event)',
+    '(document:keydown.shift.tab)': 'togglePlanModeFromShortcut($event)',
   },
   viewProviders: [
     provideIcons({
@@ -150,16 +148,10 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
           <button
             type="button"
             class="cw-sb__link cw-sb__mode"
-            [class.cw-sb__mode--plan]="isPlanMode()"
-            [class.cw-sb__mode--plan-bypass]="isPlanBypassMode()"
             (click)="toggleMenu('permission')"
             [title]="'Permission mode'"
           >
-            @if (isPlanMode()) {
-              <ng-icon name="lucideMap" size="11" />
-            } @else {
-              <ng-icon name="lucideShield" size="11" />
-            }
+            <ng-icon name="lucideShield" size="11" />
             {{ activePermissionLabel() }}
             <ng-icon name="lucideChevronDown" size="11" />
           </button>
@@ -179,6 +171,19 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
             </div>
           }
         </div>
+
+        <span class="cw-sb__sep">·</span>
+
+        <button
+          type="button"
+          class="cw-sb__link cw-sb__plan"
+          [class.cw-sb__link--active]="planMode()"
+          (click)="togglePlanMode()"
+          title="Toggle plan mode (Shift+Tab)"
+        >
+          <ng-icon name="lucideMap" size="11" />
+          Plan {{ planMode() ? 'on' : 'off' }}
+        </button>
       }
 
       <span class="cw-sb__sep">·</span>
@@ -435,14 +440,6 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
       .cw-sb__menu-item--selected {
         background: color-mix(in oklab, var(--primary) 14%, transparent);
       }
-      .cw-sb__mode--plan {
-        color: color-mix(in oklab, var(--primary) 90%, var(--foreground));
-        font-weight: 600;
-      }
-      .cw-sb__mode--plan-bypass {
-        color: color-mix(in oklab, oklch(0.62 0.19 145) 90%, var(--foreground));
-        font-weight: 600;
-      }
       .cw-sb__link--mcp-warn {
         color: oklch(0.62 0.16 65);
       }
@@ -477,6 +474,7 @@ export class ClaudeStatusBarComponent {
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
   readonly tasks = input<ClaudeTaskState[]>([]);
   readonly permissionMode = input<ClaudePermissionMode>('default');
+  readonly planMode = input(false);
   readonly mcpSnapshot = input<ClaudeMcpSnapshot | null>(null);
 
   readonly modelChange = output<string>();
@@ -484,6 +482,7 @@ export class ClaudeStatusBarComponent {
   readonly fastModeChange = output<boolean>();
   readonly providerChange = output<AgentProviderId>();
   readonly permissionModeChange = output<ClaudePermissionMode>();
+  readonly planModeChange = output<boolean>();
   readonly openTerminal = output<void>();
   readonly openTasks = output<void>();
   readonly openMcp = output<void>();
@@ -534,7 +533,7 @@ export class ClaudeStatusBarComponent {
   readonly permissionOptions = computed(() => {
     if (this.currentProvider() === 'codex') {
       return PERMISSION_MODES.filter((opt) =>
-        ['auto', 'default', 'plan', 'acceptEdits', 'bypassPermissions'].includes(opt.id),
+        ['auto', 'default', 'acceptEdits', 'bypassPermissions'].includes(opt.id),
       ).map((opt) => ({
         ...opt,
         hint: CODEX_PERMISSION_MODE_HINTS[opt.id] ?? opt.hint,
@@ -551,8 +550,6 @@ export class ClaudeStatusBarComponent {
     const mode = this.permissionMode();
     return PERMISSION_MODES.find((m) => m.id === mode)?.label ?? mode;
   });
-  readonly isPlanMode = computed(() => this.permissionMode() === 'plan' || this.permissionMode() === 'planBypass');
-  readonly isPlanBypassMode = computed(() => this.permissionMode() === 'planBypass');
 
   readonly phaseLabel = computed(() => {
     const p = this.phase();
@@ -643,13 +640,14 @@ export class ClaudeStatusBarComponent {
     this.permissionModeChange.emit(mode);
   }
 
-  cyclePermissionMode(event: Event): void {
+  togglePlanMode(): void {
+    if (!this.currentProviderCapabilities()?.permissions) return;
+    this.planModeChange.emit(!this.planMode());
+  }
+
+  togglePlanModeFromShortcut(event: Event): void {
     if (!this.currentProviderCapabilities()?.permissions) return;
     event.preventDefault();
-    const opts = this.permissionOptions();
-    const current = this.permissionMode();
-    const idx = opts.findIndex((o) => o.id === current);
-    const next = opts[(idx + 1) % opts.length];
-    this.permissionModeChange.emit(next.id as ClaudePermissionMode);
+    this.togglePlanMode();
   }
 }

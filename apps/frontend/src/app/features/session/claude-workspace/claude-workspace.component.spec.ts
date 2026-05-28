@@ -41,6 +41,7 @@ describe('ClaudeWorkspaceComponent', () => {
     reasoningEffort: null,
     fastMode: false,
     permissionMode: null,
+    planMode: false,
     availableModels: [],
     contextUsage: null,
     sessionMetadata: null,
@@ -75,6 +76,7 @@ describe('ClaudeWorkspaceComponent', () => {
     getRuntimeState: ReturnType<typeof vi.fn>;
     setSelectedModel: ReturnType<typeof vi.fn>;
     setPermissionMode: ReturnType<typeof vi.fn>;
+    setPlanMode: ReturnType<typeof vi.fn>;
     openTerminalFallback: ReturnType<typeof vi.fn>;
     getHistory: ReturnType<typeof vi.fn>;
   };
@@ -271,6 +273,7 @@ describe('ClaudeWorkspaceComponent', () => {
       getRuntimeState: vi.fn(() => of(runtimeState())),
       setSelectedModel: vi.fn(() => of(runtimeState())),
       setPermissionMode: vi.fn(() => of(runtimeState())),
+      setPlanMode: vi.fn(() => of(runtimeState())),
       openTerminalFallback: vi.fn(() => of({})),
       getHistory: vi.fn(() => of([])),
     };
@@ -1541,6 +1544,45 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(worktreeContextServiceMock.generate).not.toHaveBeenCalled();
   });
 
+  it('approves a Codex plan by disabling plan mode while preserving permission style', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.repoId = 1;
+    fixture.componentInstance.worktreePath = '/tmp/project';
+    fixture.componentInstance.activeAgentProvider = 'codex';
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    fixture.componentInstance._planMode.set(true);
+    fixture.componentInstance._permissionMode.set('bypassPermissions');
+    apiMock.setPlanMode.mockReturnValueOnce(
+      of({
+        ...runtimeState(),
+        permissionMode: 'bypassPermissions',
+        planMode: false,
+      }),
+    );
+
+    await fixture.componentInstance.approvePlanReview({
+      provider: 'codex',
+      source: 'transcript-plan',
+      sessionId: 7,
+      reviewId: 'review-1',
+      planMarkdown: 'Plan',
+      createdAt: '2026-04-24T08:00:00.000Z',
+    });
+
+    expect(apiMock.setPlanMode).toHaveBeenCalledWith(7, false);
+    expect(apiMock.setPermissionMode).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.permissionMode()).toBe('bypassPermissions');
+    expect(fixture.componentInstance.planMode()).toBe(false);
+    expect(wsMock.send).toHaveBeenCalledWith(7, {
+      type: 'submit_prompt',
+      prompt: 'implement plan',
+      titlePrompt: 'implement plan',
+    });
+  });
+
   it('updates the live tool card when permission resolution arrives', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
@@ -1660,6 +1702,7 @@ describe('ClaudeWorkspaceComponent', () => {
         reasoningEffort: null,
         fastMode: false,
         permissionMode: null,
+        planMode: false,
         availableModels: [],
         contextUsage: null,
         pendingPermissionRequest: null,

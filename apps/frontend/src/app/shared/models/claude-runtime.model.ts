@@ -564,6 +564,7 @@ export interface ClaudeRuntimeState {
   reasoningEffort: ClaudeReasoningEffort | null;
   fastMode: boolean;
   permissionMode: ClaudePermissionMode | null;
+  planMode: boolean;
   availableModels: ClaudeModelOption[];
   contextUsage: ClaudeContextUsage | null;
   sessionMetadata: ClaudeRuntimeSessionMetadata | null;
@@ -620,6 +621,7 @@ export type ClaudeRuntimeEvent =
         reasoningEffort: ClaudeReasoningEffort | null;
         fastMode: boolean;
         permissionMode: ClaudePermissionMode | null;
+        planMode: boolean;
         availableModels: ClaudeModelOption[];
         contextUsage: ClaudeContextUsage | null;
         pendingPermissionRequest: ClaudePermissionRequest | null;

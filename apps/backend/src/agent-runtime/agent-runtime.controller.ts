@@ -154,6 +154,18 @@ export class AgentRuntimeController {
       );
   }
 
+  @Post('sessions/:sessionId/agents/:provider/plan-mode')
+  async setPlanMode(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Body() body: { enabled?: boolean },
+  ) {
+    await this.assertSessionMutable(sessionId);
+    return this.registry
+      .getProviderFeature(provider, 'setPlanMode')
+      .setPlanMode(sessionId, body.enabled === true);
+  }
+
   @Post('sessions/:sessionId/agents/:provider/reasoning-effort')
   async setReasoningEffort(
     @Param('sessionId', ParseIntPipe) sessionId: number,

@@ -200,6 +200,69 @@ describe('ClaudeRuntimeService', () => {
     expect(service.getPendingMcpAuthUrl(7, 'other')).toBeNull();
   });
 
+  it('uses effective Claude plan permission mode while preserving the base style', async () => {
+    const options = await (service as any).buildQueryOptions(
+      7,
+      '/tmp/project',
+      'claude-session-1',
+      null,
+      null,
+      false,
+      'acceptEdits',
+      true,
+      jest.fn(),
+      jest.fn(),
+    );
+    const baseOptions = await (service as any).buildQueryOptions(
+      7,
+      '/tmp/project',
+      'claude-session-1',
+      null,
+      null,
+      false,
+      'acceptEdits',
+      false,
+      jest.fn(),
+      jest.fn(),
+    );
+
+    expect(options.permissionMode).toBe('plan');
+    expect(baseOptions.permissionMode).toBe('acceptEdits');
+  });
+
+  it('updates active Claude runtime when plan mode is toggled', async () => {
+    const setPermissionMode = jest.fn().mockResolvedValue(undefined);
+    const state = (service as any).ensureRuntimeState(7);
+    state.selectedPermissionMode = 'acceptEdits';
+    (service as any).sessionRuntimes.set(7, { setPermissionMode });
+
+    const enabled = await service.setPlanMode(7, true);
+    const disabled = await service.setPlanMode(7, false);
+
+    expect(setPermissionMode).toHaveBeenNthCalledWith(1, 'plan');
+    expect(setPermissionMode).toHaveBeenNthCalledWith(2, 'acceptEdits');
+    expect(enabled).toMatchObject({
+      permissionMode: 'acceptEdits',
+      planMode: true,
+    });
+    expect(disabled).toMatchObject({
+      permissionMode: 'acceptEdits',
+      planMode: false,
+    });
+  });
+
+  it('normalizes legacy Claude plan permission mode into separate plan mode', async () => {
+    const state = (service as any).ensureRuntimeState(7);
+    state.selectedPermissionMode = 'acceptEdits';
+
+    const next = await service.setPermissionMode(7, 'plan');
+
+    expect(next).toMatchObject({
+      permissionMode: 'acceptEdits',
+      planMode: true,
+    });
+  });
+
   it('publishes sidebar activity for running, action, resumed, and idle runtime states', () => {
     const state = (service as any).ensureRuntimeState(7);
     const emittedEvents: Array<{

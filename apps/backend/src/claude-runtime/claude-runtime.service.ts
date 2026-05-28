@@ -224,6 +224,7 @@ interface RuntimeState {
   reasoningEffort: ClaudeReasoningEffort | null;
   fastMode: boolean;
   selectedPermissionMode: ClaudePermissionMode | null;
+  planMode: boolean;
   availableModels: ClaudeModelOption[];
   contextUsage: ClaudeContextUsage | null;
   sessionMetadata: ClaudeRuntimeSessionMetadata | null;
@@ -793,22 +794,78 @@ export class ClaudeRuntimeService extends EventEmitter {
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
-    state.selectedPermissionMode = mode;
+    const normalized = this.normalizePermissionModeSelection(
+      mode,
+      state.selectedPermissionMode,
+    );
+    state.selectedPermissionMode = normalized.permissionMode;
+    if (normalized.planMode !== undefined) {
+      state.planMode = normalized.planMode;
+    }
 
-    if (state.sessionMetadata && mode) {
+    if (state.sessionMetadata && state.selectedPermissionMode) {
       state.sessionMetadata = {
         ...state.sessionMetadata,
-        permissionMode: mode,
+        permissionMode: state.selectedPermissionMode,
       };
     }
 
     const runtime = this.sessionRuntimes.get(sessionId);
-    if (runtime && mode) {
-      await runtime.setPermissionMode(mode as PermissionMode);
+    if (runtime) {
+      await runtime.setPermissionMode(
+        this.effectivePermissionMode(state) as PermissionMode,
+      );
       this.emitRunState(sessionId);
     }
 
     return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  async setPlanMode(
+    sessionId: number,
+    enabled: boolean,
+  ): Promise<ClaudeRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    state.planMode = enabled;
+
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (runtime) {
+      await runtime.setPermissionMode(
+        this.effectivePermissionMode(state) as PermissionMode,
+      );
+    }
+
+    this.emitRunState(sessionId);
+    return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  private normalizePermissionModeSelection(
+    mode: ClaudePermissionMode | null,
+    current: ClaudePermissionMode | null,
+  ): { permissionMode: ClaudePermissionMode | null; planMode?: boolean } {
+    if (mode === 'plan') {
+      return {
+        permissionMode: this.normalizeStoredPermissionMode(current),
+        planMode: true,
+      };
+    }
+    if (mode === 'planBypass') {
+      return { permissionMode: 'bypassPermissions', planMode: true };
+    }
+    return { permissionMode: mode };
+  }
+
+  private normalizeStoredPermissionMode(
+    mode: ClaudePermissionMode | null,
+  ): ClaudePermissionMode {
+    return mode && mode !== 'plan' && mode !== 'planBypass' ? mode : 'auto';
+  }
+
+  private effectivePermissionMode(state: RuntimeState): ClaudePermissionMode {
+    return state.planMode
+      ? 'plan'
+      : this.normalizeStoredPermissionMode(state.selectedPermissionMode);
   }
 
   async setReasoningEffort(
@@ -1199,6 +1256,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       state.reasoningEffort,
       state.fastMode,
       state.selectedPermissionMode,
+      state.planMode,
       canUseTool,
       onElicitation,
     );
@@ -1772,6 +1830,16 @@ export class ClaudeRuntimeService extends EventEmitter {
     const request = run?.permissionRequests.get(requestId);
     if (!request) {
       return;
+    }
+
+    const state = this.ensureRuntimeState(sessionId);
+    const kind = this.getInteractionKind(request.request.toolName);
+    if (kind === 'plan_mode') {
+      state.planMode = true;
+      this.emitRunState(sessionId);
+    } else if (kind === 'exit_plan_mode') {
+      state.planMode = false;
+      this.emitRunState(sessionId);
     }
 
     request.resolve({ behavior: 'allow', remember, content });
@@ -2516,6 +2584,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     };
 
     state.sessionMetadata = metadata;
+    if (message.permissionMode === 'plan') {
+      state.planMode = true;
+    }
     state.selectedModel = metadata.model || state.selectedModel;
     this.emitEvent({
       type: 'session_metadata',
@@ -2537,6 +2608,9 @@ export class ClaudeRuntimeService extends EventEmitter {
     };
 
     state.runtimeStatus = runtimeStatus;
+    if (message.permissionMode === 'plan') {
+      state.planMode = true;
+    }
     if (message.permissionMode && state.sessionMetadata) {
       state.sessionMetadata = {
         ...state.sessionMetadata,
@@ -3307,6 +3381,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       reasoningEffort: null,
       fastMode: false,
       selectedPermissionMode: 'auto',
+      planMode: false,
       availableModels: [...FALLBACK_MODELS],
       contextUsage: null,
       sessionMetadata: null,
@@ -3365,10 +3440,8 @@ export class ClaudeRuntimeService extends EventEmitter {
         selectedModel: state.selectedModel,
         reasoningEffort: state.reasoningEffort,
         fastMode: state.fastMode,
-        permissionMode:
-          state.sessionMetadata?.permissionMode ??
-          state.selectedPermissionMode ??
-          null,
+        permissionMode: state.selectedPermissionMode ?? null,
+        planMode: state.planMode,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
         pendingPermissionRequest: state.pendingPermissionRequest,
@@ -3774,6 +3847,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     reasoningEffort: ClaudeReasoningEffort | null,
     fastMode: boolean,
     selectedPermissionMode: ClaudePermissionMode | null,
+    planMode: boolean,
     canUseTool: CanUseTool,
     onElicitation: (request: ElicitationRequest) => Promise<ElicitationResult>,
   ): Promise<Options> {
@@ -3794,7 +3868,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       fastMode,
       fastModePerSessionOptIn: true,
       permissionMode:
-        (selectedPermissionMode as PermissionMode | undefined) ?? undefined,
+        (planMode
+          ? 'plan'
+          : this.normalizeStoredPermissionMode(selectedPermissionMode)) as
+          | PermissionMode
+          | undefined,
       resume:
         claudeSessionId && claudeSessionId !== '-1'
           ? claudeSessionId
@@ -4114,10 +4192,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       selectedModel: state.selectedModel,
       reasoningEffort: state.reasoningEffort,
       fastMode: state.fastMode,
-      permissionMode:
-        state.sessionMetadata?.permissionMode ??
-        state.selectedPermissionMode ??
-        null,
+      permissionMode: state.selectedPermissionMode ?? null,
+      planMode: state.planMode,
       availableModels: state.availableModels,
       contextUsage: state.contextUsage,
       sessionMetadata: state.sessionMetadata,

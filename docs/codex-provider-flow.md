@@ -29,20 +29,21 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
 
 ## Permission Mapping And Requests
 
-Elevenex maps the UI permission mode into Codex app-server sandbox settings:
+Elevenex maps the UI permission style into Codex app-server sandbox settings
+when Plan Mode is off:
 
 | UI mode             | Codex sandbox        | Codex approval policy |
 | ------------------- | -------------------- | --------------------- |
-| `default` / `auto`  | `workspace-write`    | `untrusted`           |
-| `plan`              | `read-only`          | `never`               |
+| `default`           | `workspace-write`    | `on-request`          |
+| `auto`              | `workspace-write`    | `on-request` + auto-review |
 | `acceptEdits`       | `workspace-write`    | `never`               |
 | `bypassPermissions` | `danger-full-access` | `never`               |
 
-Codex plan mode additionally sends Codex app-server's native
+Plan Mode is tracked separately from the permission style. When Plan Mode is
+on, Codex uses a read-only sandbox with `approvalPolicy: "never"` and sends
+Codex app-server's native
 `collaborationMode: { mode: "plan" }` turn option so Codex applies its built-in
-planning instructions and emits structured plan items. Plan-bypass remains
-Claude-specific because Codex does not expose Claude's interactive plan
-approval callback.
+planning instructions and emits structured plan items.
 
 When Codex app-server emits server-to-client JSON-RPC requests for command
 execution, file changes, permission-profile grants, `request_user_input`, or

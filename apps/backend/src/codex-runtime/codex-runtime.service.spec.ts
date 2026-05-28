@@ -126,9 +126,11 @@ describe('CodexRuntimeService', () => {
   async function startAppServerTurn(
     service: CodexRuntimeService,
     selectedPermissionMode: string,
+    planMode = false,
   ) {
     const state = (service as any).ensureRuntimeState(7);
     state.selectedPermissionMode = selectedPermissionMode;
+    state.planMode = planMode;
     state.selectedModel = 'gpt-test';
     const iterator = (service as any).runTurnOnAppServer(
       7,
@@ -245,7 +247,15 @@ describe('CodexRuntimeService', () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);
 
-    const iterator = await startAppServerTurn(service, 'plan');
+    const iterator = await startAppServerTurn(service, 'default', true);
+
+    expect(appServer.request).toHaveBeenCalledWith(
+      'thread/start',
+      expect.objectContaining({
+        sandbox: 'read-only',
+        approvalPolicy: 'never',
+      }),
+    );
 
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
@@ -324,10 +334,19 @@ describe('CodexRuntimeService', () => {
     await iterator.next();
   });
 
+  it('normalizes legacy Codex plan permission mode into separate plan mode', async () => {
+    const { service } = createService();
+
+    const state = await service.setPermissionMode(7, 'plan');
+
+    expect(state.permissionMode).toBe('default');
+    expect(state.planMode).toBe(true);
+  });
+
   it('normalizes streamed Codex plan deltas and completed plan items', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);
-    const iterator = await startAppServerTurn(service, 'plan');
+    const iterator = await startAppServerTurn(service, 'default', true);
 
     wire.notificationHandler({
       method: 'item/plan/delta',

@@ -122,6 +122,7 @@ export interface CodexRuntimeState {
   reasoningEffort: string | null;
   fastMode: boolean;
   selectedPermissionMode: CodexPermissionMode | null;
+  planMode: boolean;
   availableModels: ClaudeModelOption[];
   contextUsage: ClaudeContextUsage | null;
   sessionMetadata: CodexRuntimeSessionMetadata | null;
