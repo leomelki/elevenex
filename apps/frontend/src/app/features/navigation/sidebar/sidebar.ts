@@ -22,6 +22,7 @@ import {
   lucideSettings,
   lucideMoon,
   lucideSun,
+  lucideSparkles,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { NavigationService } from '../../../shared/services/navigation.service';
@@ -53,6 +54,7 @@ import { TrackNativeModalDirective } from '@/shared/core/directives/track-native
 import { EnvironmentSwitcherComponent } from '../environment-switcher/environment-switcher.component';
 import { ThemeService } from '@/shared/services/theme.service';
 import { PendingWorkspaceCreation, PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
+import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 @Component({
   selector: 'app-sidebar',
@@ -81,6 +83,7 @@ import { PendingWorkspaceCreation, PendingWorkspaceCreationsService } from '@/sh
       lucideSettings,
       lucideMoon,
       lucideSun,
+      lucideSparkles,
     }),
   ],
 })
@@ -108,6 +111,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private todosService = inject(TodosService);
   private pendingWorkspaceCreations = inject(PendingWorkspaceCreationsService);
+  private agentControl = inject(AgentControlStateService);
   readonly theme = inject(ThemeService);
   private windowControls = getElectronWindowControlsApi();
   private host = inject(ElementRef<HTMLElement>);
@@ -265,6 +269,10 @@ export class Sidebar implements OnInit, OnDestroy {
 
   closeCreateProjectWizard() {
     this.showCreateWizard.set(false);
+  }
+
+  openAgentDrawer() {
+    this.agentControl.openGlobal();
   }
 
   handleProjectCreated(project: Project) {

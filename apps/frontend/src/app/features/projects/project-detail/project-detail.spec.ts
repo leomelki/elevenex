@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, convertToParamMap, Router } from '@angular/router';
 import { BehaviorSubject, of } from 'rxjs';
-import { describe, beforeEach, expect, it, vi } from 'vitest';
+import { describe, beforeEach, afterEach, expect, it, vi } from 'vitest';
 
 import { ProjectDetail } from './project-detail';
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
@@ -16,6 +16,7 @@ import { ReposService } from '@/shared/services/repos.service';
 import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
 import { Repo } from '@/shared/models/repo.model';
 import { SshForward } from '@/shared/models/ssh-forward.model';
+import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -68,6 +69,8 @@ const forwards: SshForward[] = [
 ];
 
 describe('ProjectDetail', () => {
+  let originalLocalStorage: Storage | undefined;
+
   const paramMap = new BehaviorSubject(convertToParamMap({ id: '1' }));
   const fragment = new BehaviorSubject<string | null>(null);
   const navigate = vi.fn(() => Promise.resolve(true));
@@ -106,6 +109,18 @@ describe('ProjectDetail', () => {
     paramMap.next(convertToParamMap({ id: '1' }));
     fragment.next(null);
     vi.clearAllMocks();
+
+    originalLocalStorage = globalThis.localStorage;
+    const localValues = new Map<string, string>();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => localValues.get(key) ?? null),
+        setItem: vi.fn((key: string, value: string) => localValues.set(key, value)),
+        removeItem: vi.fn((key: string) => localValues.delete(key)),
+        clear: vi.fn(() => localValues.clear()),
+      },
+    });
 
     Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
       configurable: true,
@@ -172,6 +187,13 @@ describe('ProjectDetail', () => {
     }).compileComponents();
   });
 
+  afterEach(() => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: originalLocalStorage,
+    });
+  });
+
   async function render() {
     const fixture = TestBed.createComponent(ProjectDetail);
     fixture.detectChanges();
@@ -198,6 +220,23 @@ describe('ProjectDetail', () => {
     expect(fixture.nativeElement.textContent).toContain('SSH Port Forwarding');
     expect(fixture.nativeElement.textContent).toContain('App');
     expect(fixture.nativeElement.textContent).toContain('Live');
+  });
+
+  it('opens the app-wide agent drawer with the current project context', async () => {
+    const fixture = await render();
+
+    const button = fixture.nativeElement.querySelector(
+      '[aria-label="Open agent drawer"]',
+    ) as HTMLButtonElement;
+    button.click();
+
+    const agentControl = TestBed.inject(AgentControlStateService);
+    expect(agentControl.isOpen()).toBe(true);
+    expect(agentControl.context()).toMatchObject({
+      kind: 'project',
+      projectId: 1,
+      projectName: 'Platform',
+    });
   });
 
   it('updates the fragment when switching sections', async () => {

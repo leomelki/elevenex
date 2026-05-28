@@ -1,0 +1,236 @@
+import { CommonModule } from '@angular/common';
+import { Component, computed, inject, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import {
+  lucideCheck,
+  lucideChevronRight,
+  lucideCircleDashed,
+  lucideClipboardList,
+  lucideFileText,
+  lucideFolder,
+  lucideGitBranch,
+  lucidePlay,
+  lucideSparkles,
+  lucideX,
+} from '@ng-icons/lucide';
+
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
+import {
+  ZardResizableComponent,
+  ZardResizableHandleComponent,
+  ZardResizablePanelComponent,
+} from '@/shared/components/resizable';
+import { AgentControlStateService } from './agent-control-state.service';
+import {
+  AgentControlContext,
+  AgentMission,
+  AgentMissionStatus,
+  AgentMissionStep,
+  AgentMissionTemplate,
+} from './agent-control.model';
+
+type MissionFilter = 'all' | 'active' | 'complete';
+
+@Component({
+  selector: 'app-agent-control-drawer',
+  standalone: true,
+  imports: [
+    CommonModule,
+    RouterLink,
+    NgIcon,
+    ZardButtonComponent,
+    ZardInputDirective,
+    ZardResizableComponent,
+    ZardResizableHandleComponent,
+    ZardResizablePanelComponent,
+  ],
+  templateUrl: './agent-control-drawer.component.html',
+  styleUrl: './agent-control-drawer.component.scss',
+  viewProviders: [
+    provideIcons({
+      lucideCheck,
+      lucideChevronRight,
+      lucideCircleDashed,
+      lucideClipboardList,
+      lucideFileText,
+      lucideFolder,
+      lucideGitBranch,
+      lucidePlay,
+      lucideSparkles,
+      lucideX,
+    }),
+  ],
+})
+export class AgentControlDrawerComponent {
+  readonly state = inject(AgentControlStateService);
+
+  readonly promptDraft = signal('');
+  readonly filter = signal<MissionFilter>('all');
+  readonly filters: Array<{ value: MissionFilter; label: string }> = [
+    { value: 'all', label: 'All' },
+    { value: 'active', label: 'Active' },
+    { value: 'complete', label: 'Complete' },
+  ];
+
+  readonly filteredMissions = computed(() => {
+    const filter = this.filter();
+    const missions = this.state.missions();
+    if (filter === 'active') {
+      return missions.filter(mission =>
+        mission.status !== 'complete' && mission.status !== 'blocked',
+      );
+    }
+    if (filter === 'complete') {
+      return missions.filter(mission => mission.status === 'complete');
+    }
+    return missions;
+  });
+
+  readonly contextParts = computed(() => this.partsForContext(this.state.context()));
+
+  close(): void {
+    this.state.close();
+  }
+
+  selectMission(id: string): void {
+    this.state.selectMission(id);
+  }
+
+  createMissionFromPrompt(): void {
+    const mission = this.state.createMission(this.promptDraft());
+    if (mission) {
+      this.promptDraft.set('');
+    }
+  }
+
+  createMissionFromTemplate(templateId: AgentMissionTemplate['id']): void {
+    this.state.createMissionFromTemplate(templateId);
+  }
+
+  resetMissions(): void {
+    this.state.reset();
+  }
+
+  onComposerKeydown(event: KeyboardEvent): void {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault();
+      this.createMissionFromPrompt();
+    }
+  }
+
+  nextActionLabel(mission: AgentMission): string | null {
+    switch (mission.status) {
+      case 'waiting_approval':
+        return 'Approve preview';
+      case 'planned':
+        return 'Run preview';
+      case 'running':
+        return 'Review preview';
+      case 'review':
+        return 'Complete preview';
+      default:
+        return null;
+    }
+  }
+
+  advanceMission(mission: AgentMission): void {
+    switch (mission.status) {
+      case 'waiting_approval':
+        this.state.approveMission(mission.id);
+        return;
+      case 'planned':
+        this.state.runMission(mission.id);
+        return;
+      case 'running':
+        this.state.reviewMission(mission.id);
+        return;
+      case 'review':
+        this.state.completeMission(mission.id);
+        return;
+      default:
+        return;
+    }
+  }
+
+  statusLabel(status: AgentMissionStatus): string {
+    switch (status) {
+      case 'waiting_approval':
+        return 'Waiting approval';
+      case 'planned':
+        return 'Planned';
+      case 'running':
+        return 'Running';
+      case 'review':
+        return 'Review';
+      case 'complete':
+        return 'Complete';
+      case 'blocked':
+        return 'Blocked';
+      case 'draft':
+        return 'Draft';
+    }
+  }
+
+  stepIcon(step: AgentMissionStep): string {
+    if (step.status === 'complete') {
+      return 'lucideCheck';
+    }
+    if (step.status === 'active') {
+      return 'lucidePlay';
+    }
+    if (step.kind === 'project') {
+      return 'lucideFolder';
+    }
+    if (step.kind === 'repo' || step.kind === 'worktree') {
+      return 'lucideGitBranch';
+    }
+    if (step.kind === 'review') {
+      return 'lucideClipboardList';
+    }
+    if (step.kind === 'agent') {
+      return 'lucideSparkles';
+    }
+    return 'lucideCircleDashed';
+  }
+
+  projectLink(context: AgentControlContext): Array<string | number> | null {
+    return context.projectId ? ['/projects', context.projectId] : null;
+  }
+
+  sessionLink(context: AgentControlContext): Array<string | number> | null {
+    return context.sessionId ? ['/sessions', context.sessionId] : null;
+  }
+
+  formatDate(value: string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return 'Unknown';
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  }
+
+  private partsForContext(context: AgentControlContext): string[] {
+    const parts = ['Elevenex'];
+    if (context.projectName || context.kind === 'project') {
+      parts.push(context.projectName ?? context.label);
+    }
+    if (context.repoName) {
+      parts.push(context.repoName);
+    }
+    if (context.workspaceName || context.branchName) {
+      parts.push(context.workspaceName ?? context.branchName ?? '');
+    }
+    if (context.kind === 'session') {
+      parts.push(context.sessionName ?? context.label);
+    }
+    return parts.filter(Boolean);
+  }
+}

@@ -1,0 +1,252 @@
+@if (state.isOpen()) {
+  <div class="agent-control-backdrop" aria-hidden="true" (click)="close()"></div>
+
+  <aside class="agent-control-drawer" role="dialog" aria-modal="true" aria-label="Elevenex agent preview">
+    <header class="agent-control-header">
+      <div class="agent-control-header__identity">
+        <span class="agent-control-header__icon">
+          <ng-icon name="lucideSparkles" size="18" />
+        </span>
+        <div class="agent-control-header__copy">
+          <div class="agent-control-header__eyebrow">
+            @for (part of contextParts(); track part; let last = $last) {
+              <span>{{ part }}</span>
+              @if (!last) {
+                <ng-icon name="lucideChevronRight" size="12" />
+              }
+            }
+          </div>
+          <h2>Elevenex agent</h2>
+        </div>
+      </div>
+
+      <div class="agent-control-header__meta">
+        <span class="agent-control-badge agent-control-badge--preview">Preview mode</span>
+        <button type="button" class="agent-control-provider" disabled>
+          <span>Provider</span>
+          <strong>Agent preview</strong>
+        </button>
+        <button z-button zType="ghost" zSize="icon-sm" type="button" aria-label="Close agent drawer" (click)="close()">
+          <ng-icon name="lucideX" size="16" />
+        </button>
+      </div>
+    </header>
+
+    <z-resizable zLayout="horizontal" class="agent-control-body">
+      <z-resizable-panel [zDefaultSize]="23" [zMin]="18" [zMax]="34">
+        <section class="agent-control-rail" aria-label="Agent missions">
+          <div class="agent-control-rail__toolbar">
+            <span>Missions</span>
+            @if (state.missions().length > 0) {
+              <button type="button" class="agent-control-link-button" (click)="resetMissions()">Reset</button>
+            }
+          </div>
+
+          <div class="agent-control-filter" aria-label="Mission filter">
+            @for (item of filters; track item.value) {
+              <button
+                type="button"
+                [class.is-active]="filter() === item.value"
+                (click)="filter.set(item.value)"
+              >
+                {{ item.label }}
+              </button>
+            }
+          </div>
+
+          <div class="agent-control-template-list" aria-label="Mission templates">
+            @for (template of state.templates; track template.id) {
+              <button type="button" class="agent-control-template" (click)="createMissionFromTemplate(template.id)">
+                <span class="agent-control-template__icon">
+                  <ng-icon [name]="template.icon" size="15" />
+                </span>
+                <span class="agent-control-template__copy">
+                  <span>{{ template.label }}</span>
+                  <small>{{ template.description }}</small>
+                </span>
+                <span class="agent-control-template__badge">Preview</span>
+              </button>
+            }
+          </div>
+
+          <div class="agent-control-mission-list" aria-label="Mission list">
+            @for (mission of filteredMissions(); track mission.id) {
+              <button
+                type="button"
+                class="agent-control-mission"
+                [class.is-selected]="state.selectedMissionId() === mission.id"
+                (click)="selectMission(mission.id)"
+              >
+                <span class="agent-control-mission__top">
+                  <span class="agent-control-mission__title">{{ mission.title }}</span>
+                  <span class="agent-control-status" [attr.data-status]="mission.status">
+                    {{ statusLabel(mission.status) }}
+                  </span>
+                </span>
+                <span class="agent-control-mission__meta">
+                  {{ mission.context.label }} · {{ formatDate(mission.updatedAt) }}
+                </span>
+              </button>
+            } @empty {
+              <div class="agent-control-empty agent-control-empty--compact">
+                <ng-icon name="lucideCircleDashed" size="18" />
+                <span>No preview missions</span>
+              </div>
+            }
+          </div>
+        </section>
+      </z-resizable-panel>
+
+      <z-resizable-handle />
+
+      <z-resizable-panel [zDefaultSize]="49" [zMin]="34">
+        <main class="agent-control-main">
+          @if (state.selectedMission(); as mission) {
+            <section class="agent-control-mission-head">
+              <div class="agent-control-mission-head__copy">
+                <span class="agent-control-status" [attr.data-status]="mission.status">
+                  {{ statusLabel(mission.status) }}
+                </span>
+                <h3>{{ mission.title }}</h3>
+                <p>{{ mission.prompt }}</p>
+              </div>
+              @if (nextActionLabel(mission); as actionLabel) {
+                <button z-button type="button" (click)="advanceMission(mission)">
+                  <ng-icon name="lucidePlay" size="14" />
+                  {{ actionLabel }}
+                </button>
+              }
+            </section>
+
+            @if (mission.approvals[0]; as approval) {
+              @if (mission.status !== 'complete') {
+                <section class="agent-control-approval" aria-label="Preview approvals">
+                  <div>
+                    <span>Preview-only approval</span>
+                    <strong>{{ approval.label }}</strong>
+                    <p>{{ approval.summary }}</p>
+                  </div>
+                  <span class="agent-control-approval__state" [attr.data-state]="approval.status">
+                    {{ approval.status }}
+                  </span>
+                </section>
+              }
+            }
+
+            <section class="agent-control-plan" aria-label="Mission plan">
+              @for (step of mission.steps; track step.id) {
+                <article class="agent-control-step" [attr.data-status]="step.status">
+                  <span class="agent-control-step__icon">
+                    <ng-icon [name]="stepIcon(step)" size="15" />
+                  </span>
+                  <div class="agent-control-step__copy">
+                    <span>{{ step.label }}</span>
+                    <small>{{ step.targetSummary }}</small>
+                  </div>
+                  <span class="agent-control-step__status">{{ step.status }}</span>
+                </article>
+              }
+            </section>
+
+            <section class="agent-control-transcript" aria-label="Agent transcript preview">
+              @for (message of mission.messages; track message.id) {
+                <article class="agent-control-message" [attr.data-role]="message.role">
+                  <div class="agent-control-message__meta">
+                    <span>{{ message.role }}</span>
+                    <span>{{ formatDate(message.createdAt) }}</span>
+                  </div>
+                  <p>{{ message.content }}</p>
+                </article>
+              }
+            </section>
+          } @else {
+            <section class="agent-control-empty">
+              <span class="agent-control-empty__icon">
+                <ng-icon name="lucideSparkles" size="22" />
+              </span>
+              <h3>No mission selected</h3>
+              <p>No real actions run from this panel.</p>
+            </section>
+          }
+
+          <form class="agent-control-composer" (submit)="$event.preventDefault(); createMissionFromPrompt()">
+            <textarea
+              z-input
+              rows="3"
+              placeholder="Ask the Elevenex agent to plan work..."
+              [value]="promptDraft()"
+              (input)="promptDraft.set($any($event.target).value)"
+              (keydown)="onComposerKeydown($event)"
+            ></textarea>
+            <div class="agent-control-composer__actions">
+              <span>Preview-only local mission</span>
+              <button z-button type="submit" [disabled]="!promptDraft().trim()">
+                <ng-icon name="lucideSparkles" size="14" />
+                Generate preview
+              </button>
+            </div>
+          </form>
+        </main>
+      </z-resizable-panel>
+
+      <z-resizable-handle />
+
+      <z-resizable-panel [zDefaultSize]="28" [zMin]="22" [zMax]="38">
+        <aside class="agent-control-inspector" aria-label="Mission inspector">
+          @if (state.selectedMission(); as mission) {
+            <section class="agent-control-inspector__section">
+              <span class="agent-control-inspector__label">Context</span>
+              <h3>{{ mission.context.label }}</h3>
+              <dl>
+                <div>
+                  <dt>Scope</dt>
+                  <dd>{{ mission.context.kind }}</dd>
+                </div>
+                @if (mission.context.branchName) {
+                  <div>
+                    <dt>Branch</dt>
+                    <dd>{{ mission.context.branchName }}</dd>
+                  </div>
+                }
+                @if (mission.context.worktreePath) {
+                  <div>
+                    <dt>Worktree</dt>
+                    <dd>{{ mission.context.worktreePath }}</dd>
+                  </div>
+                }
+              </dl>
+
+              <div class="agent-control-inspector__links">
+                @if (projectLink(mission.context); as link) {
+                  <a [routerLink]="link" (click)="close()">Open project</a>
+                }
+                @if (sessionLink(mission.context); as link) {
+                  <a [routerLink]="link" (click)="close()">Open session</a>
+                }
+              </div>
+            </section>
+
+            <section class="agent-control-inspector__section">
+              <span class="agent-control-inspector__label">Artifacts</span>
+              @for (artifact of mission.artifacts; track artifact.id) {
+                <article class="agent-control-artifact">
+                  <div>
+                    <strong>{{ artifact.label }}</strong>
+                    <span>{{ artifact.kind }}</span>
+                  </div>
+                  <p>{{ artifact.summary }}</p>
+                  <small>Preview-only</small>
+                </article>
+              }
+            </section>
+          } @else {
+            <section class="agent-control-empty agent-control-empty--compact">
+              <ng-icon name="lucideFileText" size="18" />
+              <span>No inspector data</span>
+            </section>
+          }
+        </aside>
+      </z-resizable-panel>
+    </z-resizable>
+  </aside>
+}

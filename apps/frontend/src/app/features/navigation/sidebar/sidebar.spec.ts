@@ -34,6 +34,7 @@ import { BranchInfo } from '../../../shared/models/branch.model';
 import { Project } from '@/shared/models/project.model';
 import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 import { ReposService } from '@/shared/services/repos.service';
+import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 @Directive({
   selector: 'dialog[trackNativeModal]',
@@ -407,6 +408,19 @@ describe('Sidebar', () => {
   function getWorkspaceRow(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
     return container.querySelector(`[data-workspace-row="${worktreePath}"]`);
   }
+
+  it('opens the app-wide agent drawer from the sidebar header', () => {
+    const fixture = createSidebar();
+
+    const button = (fixture.nativeElement as HTMLElement).querySelector(
+      '[aria-label="Open agent drawer"]',
+    ) as HTMLButtonElement;
+    button.click();
+
+    const agentControl = TestBed.inject(AgentControlStateService);
+    expect(agentControl.isOpen()).toBe(true);
+    expect(agentControl.context().kind).toBe('global');
+  });
 
   it('arms inline confirmation on the first click instead of deleting immediately', () => {
     const fixture = createSidebar();

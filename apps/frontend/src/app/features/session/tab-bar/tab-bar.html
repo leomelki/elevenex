@@ -74,6 +74,14 @@
       @if (worktreePath()) {
         <app-commit-button [worktreePath]="worktreePath()" [contextKey]="commitContextKey()" />
       }
+      <button
+        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+        title="Agent"
+        aria-label="Open agent drawer"
+        (click)="openAgentDrawer()"
+      >
+        <ng-icon name="lucideSparkles" size="16" />
+      </button>
       @if (plannotatorAvailable()) {
         <button
           class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"

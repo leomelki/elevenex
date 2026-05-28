@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { TabBar } from './tab-bar';
 import { ClaudeStatusService } from '../../../shared/services/claude-status.service';
@@ -7,8 +7,11 @@ import { PlannotatorStateService } from '../../plannotator';
 import { Tab } from '../tab-service';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { signal } from '@angular/core';
+import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 describe('TabBar', () => {
+  let originalLocalStorage: Storage | undefined;
+
   const claudeStatusMock = {
     getStatus: vi.fn(() => 'idle'),
     getSessionCompletion: vi.fn(() => null),
@@ -44,6 +47,18 @@ describe('TabBar', () => {
   };
 
   beforeEach(async () => {
+    originalLocalStorage = globalThis.localStorage;
+    const localValues = new Map<string, string>();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => localValues.get(key) ?? null),
+        setItem: vi.fn((key: string, value: string) => localValues.set(key, value)),
+        removeItem: vi.fn((key: string) => localValues.delete(key)),
+        clear: vi.fn(() => localValues.clear()),
+      },
+    });
+
     claudeStatusMock.getStatus.mockReturnValue('idle');
     claudeStatusMock.getSessionCompletion.mockReturnValue(null);
     plannotatorStateMock.isPanelVisible.mockReturnValue(false);
@@ -57,6 +72,37 @@ describe('TabBar', () => {
         { provide: AgentRuntimeProviderService, useValue: providerSelectionMock },
       ],
     }).compileComponents();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: originalLocalStorage,
+    });
+  });
+
+  it('opens the app-wide agent drawer from the active session toolbar', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [{ ...baseTab, workspaceName: 'Main workspace' }]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.componentRef.setInput('projectId', 10);
+    fixture.detectChanges();
+
+    const button = (fixture.nativeElement as HTMLElement).querySelector(
+      '[aria-label="Open agent drawer"]',
+    ) as HTMLButtonElement;
+    button.click();
+
+    const agentControl = TestBed.inject(AgentControlStateService);
+    expect(agentControl.isOpen()).toBe(true);
+    expect(agentControl.context()).toMatchObject({
+      kind: 'session',
+      projectId: 10,
+      repoId: 1,
+      sessionId: 42,
+      worktreePath: '/tmp/main',
+      workspaceName: 'Main workspace',
+    });
   });
 
   it('shows the completion badge when a tab has unreviewed completion', () => {

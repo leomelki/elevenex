@@ -32,6 +32,7 @@ import { PlannotatorInstallPromptService } from './features/plannotator/plannota
 import { PlannotatorInstallPromptComponent } from './features/plannotator/plannotator-install-prompt.component';
 import { ThemeService } from './shared/services/theme.service';
 import { ServerConnectionService } from './shared/services/server-connection.service';
+import { AgentControlDrawerComponent } from './features/agent-control/agent-control-drawer.component';
 
 const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 420;
@@ -48,7 +49,7 @@ function readSidebarWidth(): number {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, PlannotatorInstallPromptComponent, EnvironmentSwitcherComponent],
+  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, PlannotatorInstallPromptComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   viewProviders: [

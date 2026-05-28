@@ -21,6 +21,13 @@
       <div class="flex items-center gap-1">
         <button
           class="sidebar-brand__action"
+          aria-label="Open agent drawer"
+          title="Agent"
+          (click)="openAgentDrawer()">
+          <ng-icon name="lucideSparkles" class="!w-4 !h-4" />
+        </button>
+        <button
+          class="sidebar-brand__action"
           aria-label="Create project"
           title="Create project"
           (click)="openCreateProjectWizard()">

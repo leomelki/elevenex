@@ -1,7 +1,7 @@
 import { Component, inject, OnInit, OnDestroy, signal, viewChild, computed } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideServer, lucideShield, lucideSquare, lucideTrash2, lucideX } from '@ng-icons/lucide';
+import { lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { Subscription, firstValueFrom } from 'rxjs';
 
@@ -25,6 +25,7 @@ import { getElectronBrowserApi } from '@/shared/runtime/electron-browser';
 import { ScratchpadPanelComponent } from '@/features/productivity/scratchpad-panel/scratchpad-panel';
 import { TodoPanelComponent } from '@/features/productivity/todo-panel/todo-panel';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
+import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 type ProjectDetailSection = 'repos' | 'ssh' | 'browser';
 
@@ -43,7 +44,7 @@ type ProjectDetailSection = 'repos' | 'ssh' | 'browser';
   templateUrl: './project-detail.html',
   styleUrl: './project-detail.scss',
   host: { class: 'block flex-1 overflow-y-auto bg-background' },
-  viewProviders: [provideIcons({ lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideServer, lucideShield, lucideSquare, lucideTrash2, lucideX })],
+  viewProviders: [provideIcons({ lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX })],
 })
 export class ProjectDetail implements OnInit, OnDestroy {
   private projectsService = inject(ProjectsService);
@@ -55,6 +56,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   private productivityState = inject(ProductivityStateService);
   private browserIsolationService = inject(BrowserIsolationService);
   private onboardingState = inject(OnboardingStateService);
+  private agentControl = inject(AgentControlStateService);
 
   activeSection = signal<ProjectDetailSection>('repos');
   project = signal<Project | null>(null);
@@ -159,6 +161,14 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
   goBack() {
     this.router.navigate(['/projects']);
+  }
+
+  openAgentDrawer() {
+    const project = this.project();
+    if (!project) {
+      return;
+    }
+    this.agentControl.openProject(project);
   }
 
   selectSection(section: ProjectDetailSection) {

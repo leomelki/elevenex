@@ -1,7 +1,7 @@
 import { Component, output, input, inject, computed, signal, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList, lucidePanelRight } from '@ng-icons/lucide';
+import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList, lucidePanelRight, lucideSparkles } from '@ng-icons/lucide';
 import { Tab } from '../tab-service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
@@ -10,6 +10,7 @@ import { PlanAnnotatorStateService } from '@/features/plan-annotator';
 import { ClaudeStatusService, ClaudeActivityStatus } from '@/shared/services/claude-status.service';
 import { CommitButtonComponent } from '@/features/git/commit-button.component';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
+import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 @Component({
   selector: 'app-tab-bar',
@@ -31,6 +32,7 @@ import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-pro
       lucideArchiveRestore,
       lucideClipboardList,
       lucidePanelRight,
+      lucideSparkles,
       lucideMessageSquare,
       lucideNotebookPen,
       lucideGlobe,
@@ -47,6 +49,7 @@ export class TabBar {
   private planAnnotatorState = inject(PlanAnnotatorStateService);
   private claudeStatusService = inject(ClaudeStatusService);
   private providerSelection = inject(AgentRuntimeProviderService);
+  private agentControl = inject(AgentControlStateService);
 
   isClaudeProvider = computed(() => this.providerSelection.selectedProvider() === 'claude');
 
@@ -184,6 +187,24 @@ export class TabBar {
     return this.showClaudeTerminalFallback()
       ? 'Return to workspace UI'
       : 'Switch to Claude raw terminal fallback';
+  }
+
+  openAgentDrawer(): void {
+    const activeId = this.activeSessionId();
+    const tab = this.tabs().find(candidate => candidate.sessionId === activeId);
+    if (!tab) {
+      return;
+    }
+
+    this.agentControl.openSession({
+      projectId: tab.projectId,
+      repoId: tab.repoId,
+      sessionId: tab.sessionId,
+      sessionName: tab.sessionName,
+      worktreePath: tab.worktreePath,
+      workspaceName: tab.workspaceName,
+      branchName: tab.branchName,
+    });
   }
 
   /**
