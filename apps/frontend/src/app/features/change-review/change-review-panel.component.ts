@@ -339,8 +339,11 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   }
 
   async refreshOutdatedDiffs(): Promise<void> {
+    const summary = this.summary();
+    const latest = this.latestGitSummary();
+    const needsBaseRefresh = Boolean(summary && latest && summary.headSha !== latest.headSha);
     this.changeReview.clearCache(this.worktreePath(), this.scope());
-    await this.loadForCurrentScope(false);
+    await this.loadForCurrentScope(needsBaseRefresh);
   }
 
   setScope(scope: ChangeReviewScope): void {
