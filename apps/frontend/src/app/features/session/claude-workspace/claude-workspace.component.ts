@@ -2019,7 +2019,18 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       [...history, ...liveToMerge].sort((l, r) => l.timestamp.localeCompare(r.timestamp)),
     );
     this.optimisticUserItems.set(optimisticToKeep);
-    this.liveItems.set(preSyncLiveItems.filter((item) => item.kind === 'error'));
+    // Preserve items that arrived in liveItems during the async getHistory call (e.g. a
+    // second message that started streaming while the fetch was in flight). Without this,
+    // those items get wiped and their subsequent deltas find no target, leaving only the
+    // first word that the RAF had already flushed before the fetch resolved.
+    const postSyncLiveItems = this.liveItems();
+    const newItemsDuringSync = postSyncLiveItems.filter(
+      (item) => !preSyncLiveItems.some((pre) => pre.id === item.id),
+    );
+    this.liveItems.set([
+      ...preSyncLiveItems.filter((item) => item.kind === 'error'),
+      ...newItemsDuringSync,
+    ]);
   }
 
   private transcriptContentKey(
