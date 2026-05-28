@@ -1,48 +1,114 @@
-<!-- Header row -->
-<div class="flex items-center justify-between mb-8">
-  <h1 class="text-[28px] font-semibold leading-[1.2]">Projects</h1>
-  <button z-button (click)="openCreateWizard()">Create Project</button>
-</div>
+<section class="flex min-h-full flex-col">
+  <header class="sticky top-0 z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur md:px-5">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="flex size-8 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">
+            <ng-icon name="lucideFolder" size="16" />
+          </span>
+          <div class="min-w-0">
+            <h1 class="truncate text-base font-semibold leading-tight text-foreground">Projects</h1>
+            <p class="text-xs text-muted-foreground">{{ projects().length }} configured workspace{{ projects().length === 1 ? '' : 's' }}</p>
+          </div>
+        </div>
+      </div>
 
-<!-- Loading state: 3 skeleton cards -->
-@if (loading()) {
-  @for (i of [1,2,3]; track i) {
-    <div class="h-12 mb-2"><z-skeleton class="h-full w-full" /></div>
-  }
-}
+      <button z-button type="button" (click)="openCreateWizard()">
+        <ng-icon name="lucidePlus" size="15" />
+        Create project
+      </button>
+    </div>
 
-<!-- Empty state (when loaded and no projects) -->
-@if (!loading() && projects().length === 0) {
-  <div class="flex flex-col items-center justify-center py-24">
-    <ng-icon name="lucideFolderOpen" size="48" class="text-muted-foreground" />
-    <h2 class="mt-4 text-base font-semibold">No projects yet</h2>
-    <p class="mt-2 text-sm text-muted-foreground">Create your first project to start managing Claude Code sessions across repos and branches.</p>
-    <button z-button class="mt-6" (click)="openCreateWizard()">Create Project</button>
-  </div>
-}
+    <div class="mt-3 flex items-center gap-2">
+      <div class="relative max-w-md flex-1">
+        <ng-icon name="lucideSearch" size="15" class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <input
+          z-input
+          class="h-8 pl-8"
+          type="search"
+          placeholder="Search projects"
+          [value]="searchTerm()"
+          (input)="updateSearch($any($event.target).value)"
+        />
+      </div>
+      @if (searchTerm()) {
+        <button z-button zType="ghost" zSize="sm" type="button" (click)="clearSearch()">Clear</button>
+      }
+    </div>
+  </header>
 
-<!-- Project list rows -->
-@if (!loading() && projects().length > 0) {
-  <div class="flex flex-col gap-2">
-    @for (project of projects(); track project.id) {
-      <div
-        class="flex items-center justify-between h-12 px-4 border border-border rounded-lg cursor-pointer hover:bg-muted transition-colors"
-        (click)="navigateToProject(project.id)"
-      >
-        <span class="text-sm font-semibold">{{ project.name }}</span>
-        <ng-icon name="lucideChevronRight" size="16" class="text-muted-foreground" />
+  <div class="flex-1 px-4 py-4 md:px-5">
+    @if (loading()) {
+      <div class="space-y-2">
+        @for (i of [1,2,3,4]; track i) {
+          <div class="h-14 rounded-md border border-border bg-card p-3">
+            <z-skeleton class="h-full w-full" />
+          </div>
+        }
+      </div>
+    }
+
+    @if (!loading() && projects().length === 0) {
+      <div class="flex min-h-[18rem] flex-col items-center justify-center rounded-md border border-dashed border-border bg-card/65 px-4 py-10 text-center">
+        <span class="flex size-10 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">
+          <ng-icon name="lucideFolderOpen" size="20" />
+        </span>
+        <h2 class="mt-3 text-sm font-semibold text-foreground">No projects yet</h2>
+        <p class="mt-1 max-w-md text-sm text-muted-foreground">Create a project, attach repositories, and configure setup defaults from one place.</p>
+        <button z-button class="mt-4" type="button" (click)="openCreateWizard()">
+          <ng-icon name="lucidePlus" size="15" />
+          Create project
+        </button>
+      </div>
+    }
+
+    @if (hasNoSearchResults()) {
+      <div class="flex min-h-[14rem] flex-col items-center justify-center rounded-md border border-dashed border-border bg-card/65 px-4 py-8 text-center">
+        <ng-icon name="lucideSearch" size="24" class="text-muted-foreground" />
+        <h2 class="mt-3 text-sm font-semibold text-foreground">No matching projects</h2>
+        <p class="mt-1 text-sm text-muted-foreground">Try a different project name.</p>
+        <button z-button zType="outline" zSize="sm" class="mt-4" type="button" (click)="clearSearch()">Clear search</button>
+      </div>
+    }
+
+    @if (!loading() && filteredProjects().length > 0) {
+      <div class="overflow-hidden rounded-md border border-border bg-card">
+        @for (project of filteredProjects(); track project.id) {
+          <button
+            type="button"
+            class="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-muted/65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            (click)="navigateToProject(project.id)"
+          >
+            <span class="flex min-w-0 items-center gap-3">
+              <span class="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground transition-colors group-hover:text-foreground">
+                <ng-icon name="lucideFolder" size="15" />
+              </span>
+              <span class="min-w-0">
+                <span class="block truncate text-sm font-semibold text-foreground">{{ project.name }}</span>
+                <span class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                  <span class="inline-flex items-center gap-1">
+                    <ng-icon name="lucideCalendarClock" size="12" />
+                    Updated {{ formatProjectDate(project.updatedAt) }}
+                  </span>
+                  <span>Created {{ formatProjectDate(project.createdAt) }}</span>
+                </span>
+              </span>
+            </span>
+            <ng-icon name="lucideChevronRight" size="16" class="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+          </button>
+        }
       </div>
     }
   </div>
-}
+</section>
 
 @if (showCreateWizard()) {
   <app-project-onboarding-wizard
     heading="Create a project"
     [showPortForwardStep]="showPortForwardStep()"
     [subheading]="showPortForwardStep()
-      ? 'Start with the repos you need and any optional port forwards.'
-      : 'Start with the repos you need.'"
+      ? 'Attach repositories and optional SSH forwards before opening the project.'
+      : 'Attach repositories before opening the project.'"
     ctaLabel="Create project"
     (cancelled)="closeCreateWizard()"
     (completed)="handleWizardCompleted($event)"

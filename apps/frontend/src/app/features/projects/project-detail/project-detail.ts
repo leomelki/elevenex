@@ -1,7 +1,7 @@
-import { Component, inject, OnInit, OnDestroy, signal, viewChild, ElementRef, computed } from '@angular/core';
+import { Component, inject, OnInit, OnDestroy, signal, viewChild, computed } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideArrowLeft, lucideTrash2, lucideGitBranch, lucideFileText, lucideCheckSquare, lucidePlay, lucideSquare, lucidePlus, lucideServer, lucideGlobe, lucideShield, lucideX } from '@ng-icons/lucide';
+import { lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideServer, lucideShield, lucideSquare, lucideTrash2, lucideX } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { Subscription, firstValueFrom } from 'rxjs';
 
@@ -24,9 +24,9 @@ import { BrowserIsolationConfig } from '@/shared/models/browser-isolation.model'
 import { getElectronBrowserApi } from '@/shared/runtime/electron-browser';
 import { ScratchpadPanelComponent } from '@/features/productivity/scratchpad-panel/scratchpad-panel';
 import { TodoPanelComponent } from '@/features/productivity/todo-panel/todo-panel';
-import { GithubService } from '@/shared/services/github.service';
-import { GitHubCapabilities } from '@/shared/models/github.model';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
+
+type ProjectDetailSection = 'repos' | 'ssh' | 'browser';
 
 @Component({
   selector: 'app-project-detail',
@@ -42,8 +42,8 @@ import { TrackNativeModalDirective } from '@/shared/core/directives/track-native
   ],
   templateUrl: './project-detail.html',
   styleUrl: './project-detail.scss',
-  host: { class: 'block flex-1 overflow-y-auto p-8' },
-  viewProviders: [provideIcons({ lucideArrowLeft, lucideTrash2, lucideGitBranch, lucideFileText, lucideCheckSquare, lucidePlay, lucideSquare, lucidePlus, lucideServer, lucideGlobe, lucideShield, lucideX })],
+  host: { class: 'block flex-1 overflow-y-auto bg-background' },
+  viewProviders: [provideIcons({ lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideServer, lucideShield, lucideSquare, lucideTrash2, lucideX })],
 })
 export class ProjectDetail implements OnInit, OnDestroy {
   private projectsService = inject(ProjectsService);
@@ -54,9 +54,9 @@ export class ProjectDetail implements OnInit, OnDestroy {
   private router = inject(Router);
   private productivityState = inject(ProductivityStateService);
   private browserIsolationService = inject(BrowserIsolationService);
-  private githubService = inject(GithubService);
   private onboardingState = inject(OnboardingStateService);
 
+  activeSection = signal<ProjectDetailSection>('repos');
   project = signal<Project | null>(null);
   repos = signal<Repo[]>([]);
   sshForwards = signal<SshForward[]>([]);
@@ -87,8 +87,6 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
   browserIsolationConfig = signal<BrowserIsolationConfig | null>(null);
   browserIsolationLoading = signal(true);
-  githubCapabilities = signal<GitHubCapabilities | null>(null);
-  githubDiagnosticsLoading = signal(true);
   newGlobInput = signal('');
   savingBrowserIsolation = signal(false);
 
@@ -121,6 +119,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   private removeSshForwardDialogRef = viewChild<TrackNativeModalDirective>('removeSshForwardDialog');
   private sshRefreshTimer: number | null = null;
   private routeSubscription: Subscription | null = null;
+  private fragmentSubscription: Subscription | null = null;
 
   activeForwardCount = computed(() =>
     this.sshForwards().filter(forward => forward.status === 'active').length,
@@ -128,6 +127,9 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
   forwardIssuesCount = computed(() =>
     this.sshForwards().filter(forward => forward.status === 'error').length,
+  );
+  browserModeLabel = computed(() =>
+    this.browserIsolationConfig()?.mode === 'isolated' ? 'Isolated' : 'Shared',
   );
 
   ngOnInit() {
@@ -141,10 +143,15 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
       this.loadProject(id);
     });
+
+    this.fragmentSubscription = this.route.fragment.subscribe((fragment) => {
+      this.activeSection.set(this.sectionFromFragment(fragment));
+    });
   }
 
   ngOnDestroy() {
     this.routeSubscription?.unsubscribe();
+    this.fragmentSubscription?.unsubscribe();
     if (this.sshRefreshTimer !== null) {
       window.clearInterval(this.sshRefreshTimer);
     }
@@ -152,6 +159,16 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
   goBack() {
     this.router.navigate(['/projects']);
+  }
+
+  selectSection(section: ProjectDetailSection) {
+    this.activeSection.set(section);
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      fragment: this.fragmentForSection(section),
+      queryParamsHandling: 'preserve',
+      replaceUrl: true,
+    });
   }
 
   // Add repo dialog
@@ -491,8 +508,21 @@ export class ProjectDetail implements OnInit, OnDestroy {
     }
   }
 
-  statusClass(status: SshForward['status']) {
-    return `status-${status}`;
+  formatDate(value: string | null | undefined) {
+    if (!value) {
+      return 'Unknown';
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return 'Unknown';
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+    }).format(date);
   }
 
   asText(value: string | number) {
@@ -613,11 +643,9 @@ export class ProjectDetail implements OnInit, OnDestroy {
         this.repoContextRootDrafts.set(
           Object.fromEntries(repos.map(repo => [repo.id, repo.preferredContextRootRef ?? ''])),
         );
-        void this.loadGithubDiagnostics(repos[0]?.path ?? null);
         this.loading.set(false);
       },
       error: () => {
-        this.githubDiagnosticsLoading.set(false);
         this.loading.set(false);
       },
     });
@@ -640,8 +668,6 @@ export class ProjectDetail implements OnInit, OnDestroy {
     this.showRemoveSshForwardDialog.set(null);
     this.browserIsolationConfig.set(null);
     this.browserIsolationLoading.set(true);
-    this.githubCapabilities.set(null);
-    this.githubDiagnosticsLoading.set(true);
     this.newGlobInput.set('');
 
     if (this.sshRefreshTimer !== null) {
@@ -686,23 +712,6 @@ export class ProjectDetail implements OnInit, OnDestroy {
     });
   }
 
-  private async loadGithubDiagnostics(worktreePath: string | null) {
-    if (!worktreePath) {
-      this.githubCapabilities.set(null);
-      this.githubDiagnosticsLoading.set(false);
-      return;
-    }
-
-    try {
-      const capabilities = await firstValueFrom(this.githubService.getCapabilities(worktreePath, true));
-      this.githubCapabilities.set(capabilities);
-    } catch {
-      this.githubCapabilities.set(null);
-    } finally {
-      this.githubDiagnosticsLoading.set(false);
-    }
-  }
-
   private getErrorMessage(err: unknown, fallback: string) {
     if (err instanceof HttpErrorResponse) {
       return err.error?.message || fallback;
@@ -726,5 +735,28 @@ export class ProjectDetail implements OnInit, OnDestroy {
       localPort: port,
       remotePort: this.showAdvancedSshSettings() ? base.remotePort : port,
     };
+  }
+
+  private sectionFromFragment(fragment: string | null): ProjectDetailSection {
+    if (fragment === 'ssh-forwarding') {
+      return 'ssh';
+    }
+
+    if (fragment === 'browser-settings') {
+      return 'browser';
+    }
+
+    return 'repos';
+  }
+
+  private fragmentForSection(section: ProjectDetailSection): string | undefined {
+    switch (section) {
+      case 'ssh':
+        return 'ssh-forwarding';
+      case 'browser':
+        return 'browser-settings';
+      default:
+        return undefined;
+    }
   }
 }

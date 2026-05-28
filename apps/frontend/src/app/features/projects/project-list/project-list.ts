@@ -1,9 +1,10 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronRight, lucideFolderOpen } from '@ng-icons/lucide';
+import { lucideCalendarClock, lucideChevronRight, lucideFolder, lucideFolderOpen, lucidePlus, lucideSearch } from '@ng-icons/lucide';
 
 import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
 import { ZardSkeletonComponent } from '@/shared/components/skeleton';
 import { Project } from '@/shared/models/project.model';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
@@ -15,12 +16,13 @@ import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-
   imports: [
     NgIcon,
     ZardButtonComponent,
+    ZardInputDirective,
     ZardSkeletonComponent,
     ProjectOnboardingWizard,
   ],
   templateUrl: './project-list.html',
-  host: { class: 'block flex-1 overflow-y-auto p-8' },
-  viewProviders: [provideIcons({ lucideChevronRight, lucideFolderOpen })],
+  host: { class: 'block flex-1 overflow-y-auto bg-background' },
+  viewProviders: [provideIcons({ lucideCalendarClock, lucideChevronRight, lucideFolder, lucideFolderOpen, lucidePlus, lucideSearch })],
 })
 export class ProjectList implements OnInit {
   private projectsService = inject(ProjectsService);
@@ -31,7 +33,21 @@ export class ProjectList implements OnInit {
   projects = signal<Project[]>([]);
   loading = signal(true);
   showCreateWizard = signal(false);
+  searchTerm = signal('');
   showPortForwardStep = computed(() => this.onboardingState.snapshotState().mode !== 'local');
+  filteredProjects = computed(() => {
+    const query = this.searchTerm().trim().toLocaleLowerCase();
+    if (!query) {
+      return this.projects();
+    }
+
+    return this.projects().filter(project => project.name.toLocaleLowerCase().includes(query));
+  });
+  hasNoSearchResults = computed(() =>
+    !this.loading()
+    && this.projects().length > 0
+    && this.filteredProjects().length === 0,
+  );
 
   ngOnInit() {
     this.route.queryParamMap.subscribe((params) => {
@@ -55,6 +71,14 @@ export class ProjectList implements OnInit {
     this.showCreateWizard.set(true);
   }
 
+  updateSearch(value: string) {
+    this.searchTerm.set(value);
+  }
+
+  clearSearch() {
+    this.searchTerm.set('');
+  }
+
   closeCreateWizard() {
     this.showCreateWizard.set(false);
     void this.router.navigate([], {
@@ -73,5 +97,18 @@ export class ProjectList implements OnInit {
 
   navigateToProject(id: number) {
     this.router.navigate(['/projects', id]);
+  }
+
+  formatProjectDate(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return 'Unknown';
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+    }).format(date);
   }
 }
