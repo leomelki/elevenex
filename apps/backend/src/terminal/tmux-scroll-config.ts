@@ -5,6 +5,7 @@
  */
 export function generateTmuxScrollConfig(): string {
   const lines: string[] = [];
+  const managedClaudeSessionFormat = '#{m/r:^elevenex-[0-9]+$,#{session_name}}';
   const shellCommands = [
     'sh',
     'bash',
@@ -20,7 +21,9 @@ export function generateTmuxScrollConfig(): string {
     'powershell',
   ].join('|');
   const paneAtShellPromptFormat = `#{m/r:^(${shellCommands})$,#{pane_current_command}}`;
-  const safeToEnterCopyModeFormat = `#{&&:#{!=:#{alternate_on},1},${paneAtShellPromptFormat}}`;
+  const safeToEnterCopyModeFormat =
+    `#{&&:#{!=:#{alternate_on},1},` +
+    `#{||:#{!=:${managedClaudeSessionFormat},1},${paneAtShellPromptFormat}}}`;
 
   // --- Enable OSC 52 clipboard: tmux sends copied text to the parent terminal ---
   lines.push('set -s set-clipboard on');
@@ -33,10 +36,10 @@ export function generateTmuxScrollConfig(): string {
     'bind-key -T copy-mode-vi WheelDownPane select-pane \\; send-keys -X -N 1 scroll-down',
   );
 
-  // Root table: enter copy-mode on scroll up with 1-line scroll only while an
-  // idle shell owns the pane. Some CLIs repaint in the normal screen buffer
-  // without setting alternate_on; opening copy-mode there exposes transient
-  // carriage-return frames as scrollback and corrupts the visible TUI.
+  // Root table: enter copy-mode on scroll up with 1-line scroll. Managed Claude
+  // Code sessions use Claude's fullscreen renderer for in-app scrolling, so
+  // only enter copy-mode there after Claude exits and an idle shell owns the
+  // pane. User terminals keep normal tmux copy-mode scroll behavior.
   lines.push(
     `bind-key -T root WheelUpPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{pane_in_mode}' 'send-keys -X -N 1 scroll-up' 'if-shell -Ft= \\"${safeToEnterCopyModeFormat}\\" \\"copy-mode -e ; send-keys -X -N 1 scroll-up\\" \\"\\"'"`,
     `bind-key -T root WheelDownPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{pane_in_mode}' 'send-keys -X -N 1 scroll-down' ''"`,

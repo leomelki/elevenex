@@ -156,6 +156,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       ...(await buildAugmentedEnvAsync(process.env, worktreePath)),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
+      CLAUDE_CODE_NO_FLICKER: '1',
     });
     if (this.cancelledSpawns.has(sessionId)) {
       this.cancelledSpawns.delete(sessionId);
@@ -212,6 +213,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
           'PLANNOTATOR_REMOTE',
           'ELEVENEX_SESSION_ID',
           'ELEVENEX_PORT',
+          'CLAUDE_CODE_NO_FLICKER',
         ];
         for (const key of plannotatorEnvVars) {
           if (env[key]) {
@@ -261,6 +263,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
         'ELEVENEX_PORT',
         'PLANNOTATOR_REMOTE',
         'PLANNOTATOR_BROWSER',
+        'CLAUDE_CODE_NO_FLICKER',
       ]);
 
       const claudeArgv = [CLAUDE_BIN, ...args]

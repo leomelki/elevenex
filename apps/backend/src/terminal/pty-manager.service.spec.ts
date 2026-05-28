@@ -2,7 +2,10 @@ import { EventEmitter } from 'node:events';
 import { readFile, rm } from 'node:fs/promises';
 import * as pty from 'node-pty';
 import { PtyManager } from './pty-manager.service.js';
-import { buildAugmentedEnvAsync } from '../config/system-paths.js';
+import {
+  buildAugmentedEnvAsync,
+  buildTmuxInlineEnvPrefix,
+} from '../config/system-paths.js';
 import { execFileQuiet } from './async-process.js';
 
 jest.mock('node-pty', () => ({
@@ -56,6 +59,7 @@ function createDeferred<T>() {
 describe('PtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
   const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
+  const mockBuildTmuxInlineEnvPrefix = jest.mocked(buildTmuxInlineEnvPrefix);
   const mockExecFileQuiet = jest.mocked(execFileQuiet);
 
   let manager: PtyManager;
@@ -78,6 +82,7 @@ describe('PtyManager', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
+    mockBuildTmuxInlineEnvPrefix.mockReturnValue("PATH='/mock/bin'");
     mockExecFileQuiet.mockResolvedValue(undefined);
     mockSpawn.mockReturnValue(createMockPty() as never);
     tmuxManager = {
@@ -118,6 +123,15 @@ describe('PtyManager', () => {
     await Promise.all([firstSpawn, secondSpawn]);
 
     expect(mockSpawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('launches Claude Code with fullscreen rendering enabled in direct PTYs', async () => {
+    await manager.spawn(7, '/repo/worktree');
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockSpawn.mock.calls[0][2]?.env).toMatchObject({
+      CLAUDE_CODE_NO_FLICKER: '1',
+    });
   });
 
   it('cancels an in-flight spawn before any PTY process starts', async () => {
@@ -233,19 +247,18 @@ describe('PtyManager', () => {
 
     try {
       const settings = JSON.parse(await readFile(settingsPath, 'utf8'));
-      const userPromptHook =
-        settings.hooks.UserPromptSubmit[0].hooks[0] as Record<string, unknown>;
-      const stopHook = settings.hooks.Stop[0].hooks[0] as Record<string, unknown>;
+      const userPromptHook = settings.hooks.UserPromptSubmit[0]
+        .hooks[0] as Record<string, unknown>;
+      const stopHook = settings.hooks.Stop[0].hooks[0] as Record<
+        string,
+        unknown
+      >;
 
       expect(userPromptHook.timeout).toBe(30);
       expect(userPromptHook.command).toContain('curl -sf');
       expect(userPromptHook.command).toContain('/api/claude-hooks/event');
-      expect(userPromptHook.command).toContain(
-        'X-Elevenex-Hook-Origin: tui',
-      );
-      expect(userPromptHook.command).toContain(
-        `printf '{"continue":true}'`,
-      );
+      expect(userPromptHook.command).toContain('X-Elevenex-Hook-Origin: tui');
+      expect(userPromptHook.command).toContain(`printf '{"continue":true}'`);
       expect(userPromptHook.command).not.toContain('> /dev/null');
 
       expect(stopHook.timeout).toBe(3);
@@ -254,5 +267,28 @@ describe('PtyManager', () => {
     } finally {
       await rm(settingsPath, { force: true });
     }
+  });
+
+  it('passes fullscreen rendering env through tmux-launched Claude sessions', async () => {
+    tmuxManager.isTmuxAvailable.mockReturnValue(true);
+    tmuxManager.sessionExists.mockResolvedValue(false);
+
+    await manager.spawn(7, '/repo/worktree');
+
+    expect(mockBuildTmuxInlineEnvPrefix).toHaveBeenCalledWith(
+      expect.objectContaining({
+        CLAUDE_CODE_NO_FLICKER: '1',
+      }),
+      expect.arrayContaining(['CLAUDE_CODE_NO_FLICKER']),
+    );
+    expect(mockExecFileQuiet).toHaveBeenCalledWith(
+      '/usr/bin/tmux',
+      expect.arrayContaining([
+        expect.stringContaining(
+          "PATH='/mock/bin' 'claude' '--enable-auto-mode'",
+        ),
+      ]),
+      expect.any(Object),
+    );
   });
 });
