@@ -79,6 +79,7 @@ export class TabBar {
   planAnnotatorAvailable = input(false);
   showClaudeTerminalFallback = input(false);
   showClaudeTerminalMirror = input(false);
+  claudeTerminalReturnDisabled = input(false);
   runningActionsCount = input(0);
   pendingTodosCount = input(0);
 
@@ -167,6 +168,22 @@ export class TabBar {
   hasUnreviewedCompletion(tab: Tab): boolean {
     const liveState = this.claudeStatusService.getSessionCompletion(tab.sessionId);
     return liveState?.hasUnreviewedCompletion ?? tab.hasUnreviewedCompletion;
+  }
+
+  getClaudeTerminalFallbackTitle(): string {
+    if (!this.showClaudeTerminalFallback()) {
+      return 'Switch to Claude raw terminal';
+    }
+    if (this.claudeTerminalReturnDisabled()) {
+      return 'Return to workspace UI is available when the session is idle.';
+    }
+    return 'Return to workspace UI';
+  }
+
+  getClaudeTerminalFallbackAriaLabel(): string {
+    return this.showClaudeTerminalFallback()
+      ? 'Return to workspace UI'
+      : 'Switch to Claude raw terminal fallback';
   }
 
   /**

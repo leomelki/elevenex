@@ -19,6 +19,7 @@ import { BrowserIsolationService } from '@/shared/services/browser-isolation.ser
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
 import { Session } from '@/shared/models/session.model';
+import { toast } from 'ngx-sonner';
 
 @Component({
   standalone: true,
@@ -35,7 +36,9 @@ describe('SessionContainer modal browser gating', () => {
   const claudeCompletionsSignal = signal(new Map<number, any>());
   const claudeTitlesSignal = signal(new Map<number, string>());
   const claudeWorktreeContextsSignal = signal(new Map<number, boolean>());
+  const claudeActivitiesSignal = signal(new Map<number, any>());
   const reconnectSignal = signal(0);
+  const localStorageStore = new Map<string, string>();
 
   const tabServiceMock = {
     tabs: tabsSignal.asReadonly(),
@@ -151,6 +154,13 @@ describe('SessionContainer modal browser gating', () => {
     sessionTitles: claudeTitlesSignal.asReadonly(),
     sessionWorktreeContexts: claudeWorktreeContextsSignal.asReadonly(),
     onReconnect: reconnectSignal.asReadonly(),
+    getActivity: vi.fn((sessionId: number) =>
+      claudeActivitiesSignal().get(sessionId) ?? {
+        activityStatus: 'idle',
+        actionKind: null,
+        actionLabel: null,
+      },
+    ),
     getSessionCompletion: vi.fn((sessionId: number) => claudeCompletionsSignal().get(sessionId) ?? null),
     setSessionCompletion: vi.fn(),
   };
@@ -209,9 +219,25 @@ describe('SessionContainer modal browser gating', () => {
     claudeCompletionsSignal.set(new Map());
     claudeTitlesSignal.set(new Map());
     claudeWorktreeContextsSignal.set(new Map());
+    claudeActivitiesSignal.set(new Map());
     reconnectSignal.set(0);
+    localStorageStore.clear();
+    localStorageStore.set(
+      'elevenex-layout-preferences',
+      JSON.stringify({ sidePanelMode: 'browser' }),
+    );
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    claudeStatusServiceMock.getActivity.mockImplementation((sessionId: number) =>
+      claudeActivitiesSignal().get(sessionId) ?? {
+        activityStatus: 'idle',
+        actionKind: null,
+        actionLabel: null,
+      },
+    );
+    claudeStatusServiceMock.getSessionCompletion.mockImplementation(
+      (sessionId: number) => claudeCompletionsSignal().get(sessionId) ?? null,
+    );
     plannotatorStateMock.hasPanel.mockReturnValue(false);
     plannotatorStateMock.isPanelVisible.mockReturnValue(false);
     plannotatorStateMock.getPanel.mockImplementation(() => plannotatorPanelSignal());
@@ -222,8 +248,16 @@ describe('SessionContainer modal browser gating', () => {
 
     Object.defineProperty(globalThis, 'localStorage', {
       value: {
-        getItem: () => JSON.stringify({ sidePanelMode: 'browser' }),
-        setItem: vi.fn(),
+        getItem: vi.fn((key: string) => localStorageStore.get(key) ?? null),
+        setItem: vi.fn((key: string, value: string) => {
+          localStorageStore.set(key, String(value));
+        }),
+        removeItem: vi.fn((key: string) => {
+          localStorageStore.delete(key);
+        }),
+        clear: vi.fn(() => {
+          localStorageStore.clear();
+        }),
       },
       configurable: true,
     });
@@ -336,6 +370,93 @@ describe('SessionContainer modal browser gating', () => {
 
     fixture.componentInstance.toggleClaudeTerminalTranscriptMirror();
     expect(fixture.componentInstance.showClaudeTerminalTranscriptMirror()).toBe(true);
+  });
+
+  it('allows returning from terminal mode when the session is idle', () => {
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    fixture.componentInstance.toggleClaudeTerminalFallback();
+    expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(true);
+
+    fixture.componentInstance.toggleClaudeTerminalFallback();
+
+    expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(false);
+    expect(localStorageStore.get('elevenex-claude-surface-modes')).toBe('[]');
+  });
+
+  it('blocks returning from terminal mode while the session is running', () => {
+    const toastSpy = vi.spyOn(toast, 'message').mockReturnValue('toast-id' as any);
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    fixture.componentInstance.toggleClaudeTerminalFallback();
+    claudeActivitiesSignal.set(
+      new Map([
+        [
+          42,
+          {
+            activityStatus: 'running',
+            actionKind: null,
+            actionLabel: null,
+          },
+        ],
+      ]),
+    );
+    fixture.detectChanges();
+
+    fixture.componentInstance.toggleClaudeTerminalFallback();
+
+    expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(true);
+    expect(toastSpy).toHaveBeenCalledWith(
+      'Return to workspace UI is available when the session is idle.',
+    );
+  });
+
+  it('blocks returning from terminal mode while waiting for permission or user input', () => {
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    for (const actionKind of ['permission', 'user_input'] as const) {
+      fixture.componentInstance.toggleClaudeTerminalFallback();
+      expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(true);
+
+      claudeActivitiesSignal.set(
+        new Map([
+          [
+            42,
+            {
+              activityStatus: 'waiting',
+              actionKind,
+              actionLabel: actionKind === 'permission' ? 'Permission needed' : 'Input needed',
+            },
+          ],
+        ]),
+      );
+      fixture.detectChanges();
+
+      fixture.componentInstance.toggleClaudeTerminalFallback();
+      expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(true);
+
+      claudeActivitiesSignal.set(new Map());
+      fixture.componentInstance.toggleClaudeTerminalFallback();
+      expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(false);
+    }
+  });
+
+  it('restores terminal mode from persisted surface state after component recreation', () => {
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    fixture.componentInstance.toggleClaudeTerminalFallback();
+    expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(true);
+
+    fixture.destroy();
+
+    const recreated = TestBed.createComponent(SessionContainer);
+    recreated.detectChanges();
+
+    expect(recreated.componentInstance.showClaudeTerminalFallback()).toBe(true);
   });
 
   it('mirrors generated session titles into open tabs', () => {

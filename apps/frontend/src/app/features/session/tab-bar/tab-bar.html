@@ -100,9 +100,9 @@
         <button
           class="relative flex size-8 items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-100 enabled:cursor-pointer enabled:hover:bg-muted enabled:hover:text-foreground"
           [ngClass]="showClaudeTerminalFallback() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-          [disabled]="showClaudeTerminalFallback()"
-          [title]="showClaudeTerminalFallback() ? 'Already in raw terminal mode (one-way switch for this session)' : 'Switch to Claude raw terminal (one-way — cannot switch back without reopening the tab)'"
-          aria-label="Switch to Claude raw terminal fallback"
+          [disabled]="showClaudeTerminalFallback() && claudeTerminalReturnDisabled()"
+          [title]="getClaudeTerminalFallbackTitle()"
+          [attr.aria-label]="getClaudeTerminalFallbackAriaLabel()"
           (click)="toggleClaudeTerminalFallback.emit()"
         >
           <ng-icon name="lucideSquareTerminal" size="16" />

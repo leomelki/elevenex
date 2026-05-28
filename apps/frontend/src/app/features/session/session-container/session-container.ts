@@ -67,7 +67,10 @@ import { BrowserIsolationConfig } from '@/shared/models/browser-isolation.model'
 import { toast } from 'ngx-sonner';
 import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
 import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
-import { ClaudeStatusService } from '@/shared/services/claude-status.service';
+import {
+  ClaudeStatusService,
+  type ClaudeActivityStatus,
+} from '@/shared/services/claude-status.service';
 import { CreateSessionForkResponse, Session, SessionFork } from '@/shared/models/session.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
@@ -101,6 +104,8 @@ type SidePanelMode =
   | 'plannotator'
   | 'planAnnotator';
 
+type ClaudeSurfaceMode = 'workspace' | 'terminal';
+
 @Component({
   selector: 'app-session-container',
   standalone: true,
@@ -129,6 +134,7 @@ type SidePanelMode =
 })
 export class SessionContainer implements OnInit, OnDestroy {
   private static readonly SIDEBAR_MODE_STORAGE_KEY = 'elevenex-layout-preferences';
+  private static readonly CLAUDE_SURFACE_MODE_STORAGE_KEY = 'elevenex-claude-surface-modes';
 
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -209,7 +215,9 @@ export class SessionContainer implements OnInit, OnDestroy {
   });
 
   sidePanelMode = signal<SidePanelMode>(this.getSidePanelPreference());
-  private claudeSurfaceModes = signal<ReadonlyMap<number, 'workspace' | 'terminal'>>(new Map());
+  private claudeSurfaceModes = signal<ReadonlyMap<number, ClaudeSurfaceMode>>(
+    this.getClaudeSurfaceModePreference(),
+  );
   private claudeTerminalMirrorModes = signal<ReadonlyMap<number, boolean>>(new Map());
   activeSessionArchived = computed(() => this.activeTab()?.status === 'archived');
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
@@ -237,6 +245,11 @@ export class SessionContainer implements OnInit, OnDestroy {
     const id = this.activeSessionId();
     if (id === null || !this.showClaudeTerminalFallback()) return false;
     return this.claudeTerminalMirrorModes().get(id) !== false;
+  });
+  claudeTerminalReturnDisabled = computed(() => {
+    const id = this.activeSessionId();
+    if (id === null || this.claudeSurfaceModes().get(id) !== 'terminal') return false;
+    return this.getClaudeActivityStatus(id) !== 'idle';
   });
 
   // User terminal panel visibility
@@ -356,6 +369,44 @@ export class SessionContainer implements OnInit, OnDestroy {
           filesPanelVisible: persistedMode === 'files',
           sidePanelMode: persistedMode,
         }),
+      );
+    } catch {
+      // Ignore storage errors
+    }
+  }
+
+  private getClaudeSurfaceModePreference(): ReadonlyMap<number, ClaudeSurfaceMode> {
+    const modes = new Map<number, ClaudeSurfaceMode>();
+    try {
+      const stored = localStorage.getItem(SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY);
+      if (!stored) return modes;
+      const parsed = JSON.parse(stored);
+      const terminalSessionIds = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.terminalSessionIds)
+          ? parsed.terminalSessionIds
+          : [];
+
+      for (const value of terminalSessionIds) {
+        const sessionId = Number(value);
+        if (Number.isInteger(sessionId) && sessionId > 0) {
+          modes.set(sessionId, 'terminal');
+        }
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return modes;
+  }
+
+  private saveClaudeSurfaceModePreference(modes: ReadonlyMap<number, ClaudeSurfaceMode>): void {
+    try {
+      const terminalSessionIds = [...modes.entries()]
+        .filter(([, mode]) => mode === 'terminal')
+        .map(([sessionId]) => sessionId);
+      localStorage.setItem(
+        SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY,
+        JSON.stringify(terminalSessionIds),
       );
     } catch {
       // Ignore storage errors
@@ -527,7 +578,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     return this.claudeWorkspaces().find((workspace) => workspace.sessionId === sessionId) ?? null;
   }
 
-  private setClaudeSurfaceMode(sessionId: number, mode: 'workspace' | 'terminal'): void {
+  private setClaudeSurfaceMode(sessionId: number, mode: ClaudeSurfaceMode): void {
     const next = new Map(this.claudeSurfaceModes());
     if (mode === 'workspace') {
       next.delete(sessionId);
@@ -536,6 +587,11 @@ export class SessionContainer implements OnInit, OnDestroy {
       this.ensureClaudeTerminalMirrorDefault(sessionId);
     }
     this.claudeSurfaceModes.set(next);
+    this.saveClaudeSurfaceModePreference(next);
+  }
+
+  private clearClaudeSurfaceMode(sessionId: number): void {
+    this.setClaudeSurfaceMode(sessionId, 'workspace');
   }
 
   private ensureClaudeTerminalMirrorDefault(sessionId: number): void {
@@ -549,7 +605,14 @@ export class SessionContainer implements OnInit, OnDestroy {
   toggleClaudeTerminalFallback(): void {
     const id = this.activeSessionId();
     if (id === null) return;
-    if (this.claudeSurfaceModes().get(id) === 'terminal') return;
+    if (this.claudeSurfaceModes().get(id) === 'terminal') {
+      if (this.getClaudeActivityStatus(id) !== 'idle') {
+        toast.message('Return to workspace UI is available when the session is idle.');
+        return;
+      }
+      this.setClaudeSurfaceMode(id, 'workspace');
+      return;
+    }
     this.setClaudeSurfaceMode(id, 'terminal');
   }
 
@@ -565,6 +628,10 @@ export class SessionContainer implements OnInit, OnDestroy {
     const id = this.activeSessionId();
     if (id === null) return;
     this.setClaudeSurfaceMode(id, 'terminal');
+  }
+
+  private getClaudeActivityStatus(sessionId: number): ClaudeActivityStatus {
+    return this.claudeStatusService.getActivity(sessionId).activityStatus;
   }
 
   onIsolationConfigChanged(config: BrowserIsolationConfig): void {
@@ -656,19 +723,6 @@ export class SessionContainer implements OnInit, OnDestroy {
     effect(() => {
       const openIds = new Set(this.tabs().map((tab) => tab.sessionId));
       untracked(() => {
-        const current = this.claudeSurfaceModes();
-        let changed = false;
-        const next = new Map(current);
-        for (const id of next.keys()) {
-          if (!openIds.has(id)) {
-            next.delete(id);
-            changed = true;
-          }
-        }
-        if (changed) {
-          this.claudeSurfaceModes.set(next);
-        }
-
         const mirrorCurrent = this.claudeTerminalMirrorModes();
         let mirrorChanged = false;
         const mirrorNext = new Map(mirrorCurrent);
@@ -1147,6 +1201,7 @@ export class SessionContainer implements OnInit, OnDestroy {
           const browserKey = this.getBrowserKeyForSession(sessionId);
           const projectId = this.getProjectIdForSession(sessionId);
           this.tabService.closeTab(sessionId);
+          this.clearClaudeSurfaceMode(sessionId);
           this.maybeDestroyWorktreeIframe(iframeKey, worktreePath, projectId);
           this.maybeDestroyProjectBrowser(browserKey, projectId);
           toast.error(`Session ${sessionId} no longer exists`);
@@ -1267,6 +1322,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.sessionsService.archive(sessionId).subscribe({
       next: (session) => {
         this.tabService.updateTabStatus(sessionId, session.status);
+        this.clearClaudeSurfaceMode(sessionId);
         this.navService.refreshTree();
         if (this.activeSessionId() === sessionId) {
           this.sidePanelMode.set('none');
@@ -1313,6 +1369,7 @@ export class SessionContainer implements OnInit, OnDestroy {
         this.showDeleteDialog.set(false);
         this.deleteTargetSessionId.set(null);
         const newActiveId = this.tabService.closeTab(sessionId);
+        this.clearClaudeSurfaceMode(sessionId);
         this.maybeDestroyWorktreeIframe(iframeKey, worktreePath, projectId);
         this.maybeDestroyProjectBrowser(browserKey, projectId);
         if (!newActiveId) {

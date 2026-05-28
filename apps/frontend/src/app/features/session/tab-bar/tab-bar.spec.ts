@@ -214,6 +214,65 @@ describe('TabBar', () => {
     expect(mirrorSpy).toHaveBeenCalledOnce();
   });
 
+  it('disables returning from raw terminal mode while the active session is running', () => {
+    claudeStatusMock.getStatus.mockReturnValue('running');
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [{ ...baseTab }]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.componentRef.setInput('projectId', 10);
+    fixture.componentRef.setInput('showClaudeTerminalFallback', true);
+    fixture.componentRef.setInput('claudeTerminalReturnDisabled', true);
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    const button = el.querySelector('[aria-label="Return to workspace UI"]') as HTMLButtonElement;
+
+    expect(button).toBeTruthy();
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe('Return to workspace UI is available when the session is idle.');
+  });
+
+  it('disables returning from raw terminal mode while the active session is waiting', () => {
+    claudeStatusMock.getStatus.mockReturnValue('waiting');
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [{ ...baseTab }]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.componentRef.setInput('projectId', 10);
+    fixture.componentRef.setInput('showClaudeTerminalFallback', true);
+    fixture.componentRef.setInput('claudeTerminalReturnDisabled', true);
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    const button = el.querySelector('[aria-label="Return to workspace UI"]') as HTMLButtonElement;
+
+    expect(button).toBeTruthy();
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe('Return to workspace UI is available when the session is idle.');
+  });
+
+  it('enables returning from raw terminal mode when the active session is idle', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [{ ...baseTab }]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.componentRef.setInput('projectId', 10);
+    fixture.componentRef.setInput('showClaudeTerminalFallback', true);
+    fixture.componentRef.setInput('claudeTerminalReturnDisabled', false);
+    fixture.detectChanges();
+
+    const toggleSpy = vi.fn();
+    fixture.componentInstance.toggleClaudeTerminalFallback.subscribe(toggleSpy);
+
+    const el = fixture.nativeElement as HTMLElement;
+    const button = el.querySelector('[aria-label="Return to workspace UI"]') as HTMLButtonElement;
+
+    expect(button).toBeTruthy();
+    expect(button.disabled).toBe(false);
+    expect(button.title).toBe('Return to workspace UI');
+
+    button.click();
+    expect(toggleSpy).toHaveBeenCalledOnce();
+  });
+
   it('disables left and other actions appropriately for the first tab', () => {
     const fixture = TestBed.createComponent(TabBar);
     fixture.componentRef.setInput('tabs', [
