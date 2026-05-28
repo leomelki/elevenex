@@ -547,20 +547,36 @@
                       }
                     </span>
                     @if (row.type === 'expand') {
-                      <button
-                        class="cr-expand-row"
-                        type="button"
-                        [disabled]="isContextRangeLoading(row)"
-                        (click)="expandContext(renderRow)"
-                      >
+                      <div class="cr-expand-row">
                         @if (isContextRangeLoading(row)) {
                           <ng-icon name="lucideLoader" size="13" class="cr-spin" />
                           Loading context
                         } @else {
-                          <ng-icon name="lucideChevronDown" size="13" />
-                          {{ row.content }}
+                          <span class="cr-expand-row__label">{{ row.content }}</span>
+                          <span class="cr-expand-row__actions">
+                            <button
+                              class="cr-expand-row__button"
+                              type="button"
+                              title="Load context from top"
+                              [attr.aria-label]="'Load context from top: ' + row.content"
+                              (click)="expandContext(renderRow, 'down')"
+                            >
+                              <ng-icon name="lucideChevronDown" size="12" />
+                              <span>Top</span>
+                            </button>
+                            <button
+                              class="cr-expand-row__button"
+                              type="button"
+                              title="Load context from bottom"
+                              [attr.aria-label]="'Load context from bottom: ' + row.content"
+                              (click)="expandContext(renderRow, 'up')"
+                            >
+                              <ng-icon name="lucideChevronUp" size="12" />
+                              <span>Bottom</span>
+                            </button>
+                          </span>
                         }
-                      </button>
+                      </div>
                     } @else {
                       <code class="cr-code" [innerHTML]="rowHtml(row)"></code>
                     }

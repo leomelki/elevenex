@@ -19,6 +19,7 @@ import {
   lucideBinary,
   lucideChevronDown,
   lucideChevronRight,
+  lucideChevronUp,
   lucideCheck,
   lucideExternalLink,
   lucideFileCode,
@@ -66,6 +67,7 @@ import {
 
 type StatusFilter = 'all' | ChangeReviewFileStatus;
 type RenderRowKind = 'fileHeader' | 'fileMeta' | 'largeDiffGate' | 'diff';
+type ContextExpansionDirection = 'down' | 'up';
 
 interface ScopeOption {
   value: ChangeReviewScope;
@@ -164,6 +166,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
       lucideBinary,
       lucideChevronDown,
       lucideChevronRight,
+      lucideChevronUp,
       lucideCheck,
       lucideExternalLink,
       lucideFileCode,
@@ -531,12 +534,20 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     return safe;
   }
 
-  async expandContext(renderRow: RenderRow): Promise<void> {
+  async expandContext(
+    renderRow: RenderRow,
+    direction: ContextExpansionDirection = 'down',
+  ): Promise<void> {
     const row = renderRow.row;
     const file = renderRow.file;
     if (!row || row.type !== 'expand' || !row.oldStart || !row.newStart || !row.count) return;
     if (this.loadingContextRanges().has(row.id)) return;
 
+    const loadCount = Math.min(row.count, CONTEXT_RANGE_LIMIT);
+    const oldStart =
+      direction === 'up' ? row.oldStart + Math.max(0, row.count - loadCount) : row.oldStart;
+    const newStart =
+      direction === 'up' ? row.newStart + Math.max(0, row.count - loadCount) : row.newStart;
     this.setContextRangeLoading(row.id, true);
     const requestGeneration = this.generation;
     try {
@@ -547,9 +558,9 @@ export class ChangeReviewPanelComponent implements OnDestroy {
             this.scope(),
             file.path,
             {
-              oldStart: row.oldStart,
-              newStart: row.newStart,
-              count: row.count,
+              oldStart,
+              newStart,
+              count: loadCount,
               limit: CONTEXT_RANGE_LIMIT,
               forceFileLoad: this.isFileDiffForceLoaded(file),
             },
@@ -560,18 +571,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       if (requestGeneration !== this.generation) return;
 
       const loaded = contextWindow.rows.length;
-      const replacement: ChangeReviewRow[] = [...contextWindow.rows];
-      const remaining = Math.max(0, row.count - loaded);
-      if (remaining > 0) {
-        replacement.push({
-          ...row,
-          id: `${row.path}:expand:${row.oldStart + loaded}:${row.newStart + loaded}:${remaining}`,
-          oldStart: row.oldStart + loaded,
-          newStart: row.newStart + loaded,
-          count: remaining,
-          content: `${remaining} unchanged line${remaining === 1 ? '' : 's'}`,
-        });
-      }
+      if (loaded <= 0) return;
+      const replacement = this.contextReplacementRows(row, contextWindow.rows, direction);
 
       const anchor = this.captureAnchor();
       this.setFileState(file.path, (state) => this.replaceDiffRow(state, row.id, replacement));
@@ -1207,6 +1208,48 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     return {
       row: state.baseRows.get(baseIndex) ?? null,
       baseIndex,
+    };
+  }
+
+  private contextReplacementRows(
+    row: ChangeReviewRow,
+    loadedRows: ChangeReviewRow[],
+    direction: ContextExpansionDirection,
+  ): ChangeReviewRow[] {
+    const remaining = Math.max(0, (row.count ?? 0) - loadedRows.length);
+    if (remaining === 0) return loadedRows;
+
+    if (direction === 'up') {
+      return [
+        this.expandPlaceholderRow(row, row.oldStart ?? 1, row.newStart ?? 1, remaining),
+        ...loadedRows,
+      ];
+    }
+
+    return [
+      ...loadedRows,
+      this.expandPlaceholderRow(
+        row,
+        (row.oldStart ?? 1) + loadedRows.length,
+        (row.newStart ?? 1) + loadedRows.length,
+        remaining,
+      ),
+    ];
+  }
+
+  private expandPlaceholderRow(
+    source: ChangeReviewRow,
+    oldStart: number,
+    newStart: number,
+    count: number,
+  ): ChangeReviewRow {
+    return {
+      ...source,
+      id: `${source.path}:expand:${oldStart}:${newStart}:${count}`,
+      oldStart,
+      newStart,
+      count,
+      content: `${count} unchanged line${count === 1 ? '' : 's'}`,
     };
   }
 

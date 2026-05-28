@@ -4,6 +4,7 @@ import { of, Subject } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  ChangeReviewContextWindow,
   ChangeReviewFileSummary,
   ChangeReviewFileWindow,
   ChangeReviewRow,
@@ -82,6 +83,23 @@ const addRow = (path: string, index: number, content = `added ${index + 1}`) => 
   path,
 });
 
+const expandRow = (
+  path: string,
+  oldStart: number,
+  newStart: number,
+  count: number,
+): ChangeReviewRow => ({
+  id: `${path}:expand:${oldStart}:${newStart}:${count}`,
+  type: 'expand',
+  oldLine: null,
+  newLine: null,
+  content: `${count} unchanged lines`,
+  path,
+  oldStart,
+  newStart,
+  count,
+});
+
 const fileWindow = (
   path: string,
   scope: ChangeReviewScope = 'branch',
@@ -104,6 +122,21 @@ const fileWindow = (
   changeHash: `${path}:hash`,
   rows,
   contextRanges: [],
+});
+
+const contextWindow = (
+  path: string,
+  oldStart: number,
+  newStart: number,
+  count: number,
+): ChangeReviewContextWindow => ({
+  scope: 'branch',
+  path,
+  oldStart,
+  newStart,
+  count,
+  limit: count,
+  rows: Array.from({ length: count }, (_, index) => row(path, oldStart + index - 1)),
 });
 
 const diffMention = (
@@ -193,6 +226,14 @@ describe('ChangeReviewPanelComponent', () => {
     forceFileLoad: boolean;
     response: Subject<ChangeReviewFileWindow>;
   }>;
+  let contextCalls: Array<{
+    path: string;
+    oldStart: number;
+    newStart: number;
+    count: number;
+    limit: number | undefined;
+    response: Subject<ChangeReviewContextWindow>;
+  }>;
   let latestGitSummary: WritableSignal<GitStatusSummary | null>;
   let gitServiceMock: {
     latestSummary: ReturnType<typeof vi.fn>;
@@ -203,6 +244,7 @@ describe('ChangeReviewPanelComponent', () => {
     installStorageStub();
     summaryCalls = [];
     windowCalls = [];
+    contextCalls = [];
     latestGitSummary = signal<GitStatusSummary | null>(null);
     localStorage.clear();
     serviceMock = {
@@ -235,7 +277,25 @@ describe('ChangeReviewPanelComponent', () => {
           return response.asObservable();
         },
       ),
-      getContextWindow: vi.fn(),
+      getContextWindow: vi.fn(
+        (
+          _worktreePath: string,
+          _scope: ChangeReviewScope,
+          path: string,
+          range: { oldStart: number; newStart: number; count: number; limit?: number },
+        ) => {
+          const response = new Subject<ChangeReviewContextWindow>();
+          contextCalls.push({
+            path,
+            oldStart: range.oldStart,
+            newStart: range.newStart,
+            count: range.count,
+            limit: range.limit,
+            response,
+          });
+          return response.asObservable();
+        },
+      ),
       clearCache: vi.fn(),
       hasFileWindowCache: vi.fn(() => false),
     };
@@ -338,6 +398,53 @@ describe('ChangeReviewPanelComponent', () => {
       path: 'src/large.ts',
       offset: 0,
       forceFileLoad: true,
+    });
+  });
+
+  it('loads collapsed context from the bottom edge of an unchanged range', async () => {
+    const path = 'src/a.ts';
+    await flushSummary(summary([file(path)]));
+    windowCalls[0].response.next(fileWindow(path, 'branch', 0, [expandRow(path, 11, 11, 250)]));
+    windowCalls[0].response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    const buttons = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>(
+        '.cr-expand-row__button',
+      ),
+    );
+    const bottomButton = buttons.find((button) => button.textContent?.includes('Bottom'))!;
+    bottomButton.click();
+    fixture.detectChanges();
+
+    expect(contextCalls).toHaveLength(1);
+    expect(contextCalls[0]).toMatchObject({
+      path,
+      oldStart: 141,
+      newStart: 141,
+      count: 120,
+      limit: 120,
+    });
+
+    contextCalls[0].response.next(contextWindow(path, 141, 141, 120));
+    contextCalls[0].response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    const state = fixture.componentInstance.fileStates().get(path)! as any;
+    const replacementRows = state.replacements[0].rows as ChangeReviewRow[];
+    expect(replacementRows[0]).toMatchObject({
+      type: 'expand',
+      oldStart: 11,
+      newStart: 11,
+      count: 130,
+    });
+    expect(replacementRows[1]).toMatchObject({
+      type: 'context',
+      oldLine: 141,
+      newLine: 141,
+      content: 'line 141',
     });
   });
 
