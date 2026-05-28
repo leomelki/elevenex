@@ -1941,6 +1941,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private async syncHistoryAfterCompletion(): Promise<void> {
+    // Flush pending deltas synchronously before snapshotting liveItems. The RAF-based
+    // flush hasn't run yet when 'complete' fires, so without this the last streamed
+    // assistant message would have empty content in the snapshot and be dropped by
+    // pairTranscript (which skips assistant items with no content).
+    if (this.flushRafId !== null) {
+      cancelAnimationFrame(this.flushRafId);
+    }
+    this.flushDeltas();
+
     const preSyncLiveItems = this.liveItems();
     const preSyncOptimisticUserItems = this.optimisticUserItems();
     const history = await firstValueFrom(this.api.getHistory(this.sessionId));
