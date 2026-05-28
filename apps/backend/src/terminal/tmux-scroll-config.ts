@@ -5,6 +5,22 @@
  */
 export function generateTmuxScrollConfig(): string {
   const lines: string[] = [];
+  const shellCommands = [
+    'sh',
+    'bash',
+    'zsh',
+    'fish',
+    'dash',
+    'ksh',
+    'mksh',
+    'csh',
+    'tcsh',
+    'nu',
+    'pwsh',
+    'powershell',
+  ].join('|');
+  const paneAtShellPromptFormat = `#{m/r:^(${shellCommands})$,#{pane_current_command}}`;
+  const safeToEnterCopyModeFormat = `#{&&:#{!=:#{alternate_on},1},${paneAtShellPromptFormat}}`;
 
   // --- Enable OSC 52 clipboard: tmux sends copied text to the parent terminal ---
   lines.push('set -s set-clipboard on');
@@ -17,11 +33,12 @@ export function generateTmuxScrollConfig(): string {
     'bind-key -T copy-mode-vi WheelDownPane select-pane \\; send-keys -X -N 1 scroll-down',
   );
 
-  // Root table: enter copy-mode on scroll up with 1-line scroll.
-  // Full-screen TUIs repaint the alternate screen frequently; entering tmux
-  // copy-mode there can leave tmux and the TUI fighting over the visible frame.
+  // Root table: enter copy-mode on scroll up with 1-line scroll only while an
+  // idle shell owns the pane. Some CLIs repaint in the normal screen buffer
+  // without setting alternate_on; opening copy-mode there exposes transient
+  // carriage-return frames as scrollback and corrupts the visible TUI.
   lines.push(
-    `bind-key -T root WheelUpPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{pane_in_mode}' 'send-keys -X -N 1 scroll-up' 'if-shell -Ft= \\"#{alternate_on}\\" \\"\\" \\"copy-mode -e ; send-keys -X -N 1 scroll-up\\"'"`,
+    `bind-key -T root WheelUpPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{pane_in_mode}' 'send-keys -X -N 1 scroll-up' 'if-shell -Ft= \\"${safeToEnterCopyModeFormat}\\" \\"copy-mode -e ; send-keys -X -N 1 scroll-up\\" \\"\\"'"`,
     `bind-key -T root WheelDownPane if-shell -Ft= "#{mouse_any_flag}" "send-keys -M" "if-shell -Ft= '#{pane_in_mode}' 'send-keys -X -N 1 scroll-down' ''"`,
   );
 
@@ -30,8 +47,12 @@ export function generateTmuxScrollConfig(): string {
   // This hides the fact that tmux copy-mode is being used.
 
   const addCancel = (keyName: string, forward: string) => {
-    lines.push(`bind-key -T copy-mode ${keyName} send-keys -X cancel \\; ${forward}`);
-    lines.push(`bind-key -T copy-mode-vi ${keyName} send-keys -X cancel \\; ${forward}`);
+    lines.push(
+      `bind-key -T copy-mode ${keyName} send-keys -X cancel \\; ${forward}`,
+    );
+    lines.push(
+      `bind-key -T copy-mode-vi ${keyName} send-keys -X cancel \\; ${forward}`,
+    );
   };
 
   const addCancelOnly = (keyName: string) => {
@@ -53,7 +74,31 @@ export function generateTmuxScrollConfig(): string {
   }
 
   // Safe symbols (key name = literal character)
-  const safeSymbols = ['-', '_', '=', '+', ',', '.', '/', ':', '@', '!', '%', '^', '&', '*', '(', ')', '[', ']', '|', '`', '<', '>', '?'];
+  const safeSymbols = [
+    '-',
+    '_',
+    '=',
+    '+',
+    ',',
+    '.',
+    '/',
+    ':',
+    '@',
+    '!',
+    '%',
+    '^',
+    '&',
+    '*',
+    '(',
+    ')',
+    '[',
+    ']',
+    '|',
+    '`',
+    '<',
+    '>',
+    '?',
+  ];
   for (const sym of safeSymbols) {
     addCancel(sym, `send-keys -l '${sym}'`);
   }
