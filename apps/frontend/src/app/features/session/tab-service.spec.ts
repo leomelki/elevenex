@@ -98,6 +98,16 @@ describe('TabService', () => {
     });
   });
 
+  describe('updateTabWorktreeContext', () => {
+    it('updates an open tab when TUI consumes the worktree context', () => {
+      service.openTab(mockSession(1, 'Session 1'));
+
+      service.updateTabWorktreeContext(1, true);
+
+      expect(service.tabs()[0].hasInjectedWorktreeContext).toBe(true);
+    });
+  });
+
   describe('closeTab', () => {
     it('should close a tab and remove from list', () => {
       service.openTab(mockSession(1));

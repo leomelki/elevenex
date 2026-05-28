@@ -34,6 +34,7 @@ describe('SessionContainer modal browser gating', () => {
   const claudeStatusesSignal = signal(new Map<number, string>());
   const claudeCompletionsSignal = signal(new Map<number, any>());
   const claudeTitlesSignal = signal(new Map<number, string>());
+  const claudeWorktreeContextsSignal = signal(new Map<number, boolean>());
   const reconnectSignal = signal(0);
 
   const tabServiceMock = {
@@ -69,6 +70,7 @@ describe('SessionContainer modal browser gating', () => {
     updateTabName: vi.fn(),
     updateTabProvider: vi.fn(),
     markTabRuntimeStarted: vi.fn(),
+    updateTabWorktreeContext: vi.fn(),
     getOpenSessionIds: vi.fn(() => tabsSignal().map(tab => tab.sessionId)),
     getSavedState: vi.fn(() => null),
     selectTab: vi.fn((sessionId: number) => activeSessionIdSignal.set(sessionId)),
@@ -147,6 +149,7 @@ describe('SessionContainer modal browser gating', () => {
     sessionStatuses: claudeStatusesSignal.asReadonly(),
     sessionCompletions: claudeCompletionsSignal.asReadonly(),
     sessionTitles: claudeTitlesSignal.asReadonly(),
+    sessionWorktreeContexts: claudeWorktreeContextsSignal.asReadonly(),
     onReconnect: reconnectSignal.asReadonly(),
     getSessionCompletion: vi.fn((sessionId: number) => claudeCompletionsSignal().get(sessionId) ?? null),
     setSessionCompletion: vi.fn(),
@@ -205,6 +208,7 @@ describe('SessionContainer modal browser gating', () => {
     claudeStatusesSignal.set(new Map());
     claudeCompletionsSignal.set(new Map());
     claudeTitlesSignal.set(new Map());
+    claudeWorktreeContextsSignal.set(new Map());
     reconnectSignal.set(0);
     vi.restoreAllMocks();
     vi.clearAllMocks();
@@ -342,6 +346,16 @@ describe('SessionContainer modal browser gating', () => {
     fixture.detectChanges();
 
     expect(tabServiceMock.updateTabName).toHaveBeenCalledWith(42, 'Implement Auto Names');
+  });
+
+  it('mirrors TUI worktree-context consumption into open tabs', () => {
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    claudeWorktreeContextsSignal.set(new Map([[42, true]]));
+    fixture.detectChanges();
+
+    expect(tabServiceMock.updateTabWorktreeContext).toHaveBeenCalledWith(42, true);
   });
 
   it('clears an unreviewed completion when opening a session from the route loader', () => {

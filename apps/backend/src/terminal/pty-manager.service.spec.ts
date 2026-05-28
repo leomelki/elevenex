@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { readFile, rm } from 'node:fs/promises';
 import * as pty from 'node-pty';
 import { PtyManager } from './pty-manager.service.js';
 import { buildAugmentedEnvAsync } from '../config/system-paths.js';
@@ -222,5 +223,32 @@ describe('PtyManager', () => {
       ['set-option', '-t', 'elevenex-7', 'window-size', 'latest'],
       ['set-option', '-t', 'elevenex-7', 'default-size', '120x30'],
     ]);
+  });
+
+  it('prints hook JSON for UserPromptSubmit but suppresses telemetry hook output', async () => {
+    const args = await (
+      manager as unknown as { buildHooksSettingsArgs: () => Promise<string[]> }
+    ).buildHooksSettingsArgs();
+    const settingsPath = args[1];
+
+    try {
+      const settings = JSON.parse(await readFile(settingsPath, 'utf8'));
+      const userPromptHook =
+        settings.hooks.UserPromptSubmit[0].hooks[0] as Record<string, unknown>;
+      const stopHook = settings.hooks.Stop[0].hooks[0] as Record<string, unknown>;
+
+      expect(userPromptHook.timeout).toBe(30);
+      expect(userPromptHook.command).toContain('curl -sf');
+      expect(userPromptHook.command).toContain('/api/claude-hooks/event');
+      expect(userPromptHook.command).toContain(
+        `printf '{"continue":true}'`,
+      );
+      expect(userPromptHook.command).not.toContain('> /dev/null');
+
+      expect(stopHook.timeout).toBe(3);
+      expect(stopHook.command).toContain('> /dev/null 2>&1');
+    } finally {
+      await rm(settingsPath, { force: true });
+    }
   });
 });

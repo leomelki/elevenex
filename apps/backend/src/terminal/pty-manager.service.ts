@@ -543,8 +543,10 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
    * (especially inside tmux commands). The temp file persists for the session lifetime.
    */
   private async buildHooksSettingsArgs(): Promise<string[]> {
-    const curlCmd = () =>
+    const telemetryCurlCmd = () =>
       `body=$(cat); curl -s -X POST -H 'Content-Type: application/json' -H "X-Elevenex-Session-Id: $ELEVENEX_SESSION_ID" --data-binary "$body" http://localhost:$ELEVENEX_PORT/api/claude-hooks/event > /dev/null 2>&1 || true`;
+    const responseCurlCmd = () =>
+      `body=$(cat); curl -sf -X POST -H 'Content-Type: application/json' -H "X-Elevenex-Session-Id: $ELEVENEX_SESSION_ID" --data-binary "$body" http://localhost:$ELEVENEX_PORT/api/claude-hooks/event 2>/dev/null || printf '{"continue":true}'`;
 
     const hooksConfig = {
       hooks: Object.fromEntries(
@@ -553,7 +555,16 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
           [
             {
               matcher: '',
-              hooks: [{ type: 'command', command: curlCmd(), timeout: 3 }],
+              hooks: [
+                {
+                  type: 'command',
+                  command:
+                    eventName === 'UserPromptSubmit'
+                      ? responseCurlCmd()
+                      : telemetryCurlCmd(),
+                  timeout: eventName === 'UserPromptSubmit' ? 30 : 3,
+                },
+              ],
             },
           ],
         ]),

@@ -713,6 +713,15 @@ export class SessionContainer implements OnInit, OnDestroy {
     });
 
     effect(() => {
+      const worktreeContexts = this.claudeStatusService.sessionWorktreeContexts();
+      untracked(() => {
+        for (const [sessionId, hasInjected] of worktreeContexts) {
+          this.tabService.updateTabWorktreeContext(sessionId, hasInjected);
+        }
+      });
+    });
+
+    effect(() => {
       const sessionCompletions = this.claudeStatusService.sessionCompletions();
       untracked(() => {
         for (const [sessionId, completion] of sessionCompletions) {

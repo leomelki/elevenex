@@ -61,6 +61,13 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
         this.broadcast({ type: 'session-title-changed', ...data });
       },
     );
+
+    this.sessionsService.on(
+      'session-worktree-context-changed',
+      (data: { sessionId: number; hasInjectedWorktreeContext: boolean }) => {
+        this.broadcast({ type: 'session-worktree-context-changed', ...data });
+      },
+    );
   }
 
   attachToServer(server: HttpServer): void {
@@ -91,6 +98,7 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
         lastCompletionKind: string | null;
         lastStateChangeAt: string | null;
       }> = {};
+      const worktreeContexts: Record<number, boolean> = {};
       for (const session of sessions) {
         completions[session.id] = {
           hasUnreviewedCompletion: session.hasUnreviewedCompletion,
@@ -98,8 +106,15 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
           lastCompletionKind: session.lastCompletionKind,
           lastStateChangeAt: session.lastStateChangeAt,
         };
+        worktreeContexts[session.id] = session.hasInjectedWorktreeContext;
       }
-      ws.send(JSON.stringify({ type: 'init', statuses, activities, completions }));
+      ws.send(JSON.stringify({
+        type: 'init',
+        statuses,
+        activities,
+        completions,
+        worktreeContexts,
+      }));
 
       ws.on('close', () => {
         this.clients.delete(ws);

@@ -351,6 +351,17 @@ export class TabService {
     this.persistState();
   }
 
+  updateTabWorktreeContext(sessionId: number, hasInjectedWorktreeContext: boolean): void {
+    const current = this._tabs().find(t => t.sessionId === sessionId);
+    if (!current || current.hasInjectedWorktreeContext === hasInjectedWorktreeContext) return;
+    this._tabs.update(tabs =>
+      tabs.map(t =>
+        t.sessionId === sessionId ? { ...t, hasInjectedWorktreeContext } : t
+      )
+    );
+    this.persistState();
+  }
+
   /**
    * Get all open session IDs.
    */

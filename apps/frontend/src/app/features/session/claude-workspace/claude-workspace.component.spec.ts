@@ -1357,6 +1357,28 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(fixture.componentInstance.hasInjectedContext()).toBe(true);
   });
 
+  it('does not offer first-prompt context after TUI already consumed it', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.hasInjectedWorktreeContext = true;
+    fixture.detectChanges();
+    await Promise.resolve();
+
+    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
+    fixture.componentInstance.prompt.set('Ship this change');
+
+    expect(fixture.componentInstance.hasInjectedContext()).toBe(true);
+    expect(fixture.componentInstance.canAppendContext()).toBe(false);
+    await fixture.componentInstance.submitPrompt('Ship this change');
+
+    expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
+    expect(wsMock.send).toHaveBeenLastCalledWith(7, {
+      type: 'submit_prompt',
+      prompt: 'Ship this change',
+      titlePrompt: 'Ship this change',
+    });
+  });
+
   it('does not call consume when local context is not ready', async () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;

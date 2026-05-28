@@ -1,5 +1,8 @@
 import { Body, Controller, Headers, Post } from '@nestjs/common';
-import { ClaudeHooksService } from './claude-hooks.service.js';
+import {
+  type ClaudeHookResponse,
+  ClaudeHooksService,
+} from './claude-hooks.service.js';
 
 @Controller('claude-hooks')
 export class ClaudeHooksController {
@@ -19,13 +22,12 @@ export class ClaudeHooksController {
       agent_id?: string;
       agent_type?: string;
     },
-  ): Promise<{ continue: boolean }> {
+  ): Promise<ClaudeHookResponse> {
     const sessionId = parseInt(sessionIdHeader, 10);
     if (!sessionId || isNaN(sessionId)) {
       return { continue: true };
     }
 
-    await this.hooksService.handleHookEvent(sessionId, body);
-    return { continue: true };
+    return this.hooksService.handleHookEvent(sessionId, body);
   }
 }

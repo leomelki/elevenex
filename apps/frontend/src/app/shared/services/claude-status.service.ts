@@ -38,6 +38,9 @@ export class ClaudeStatusService implements OnDestroy {
   private _sessionTitles = signal(new Map<number, string>());
   readonly sessionTitles = this._sessionTitles.asReadonly();
 
+  private _sessionWorktreeContexts = signal(new Map<number, boolean>());
+  readonly sessionWorktreeContexts = this._sessionWorktreeContexts.asReadonly();
+
   private _onReconnect = signal(0);
   readonly onReconnect = this._onReconnect.asReadonly();
 
@@ -79,6 +82,12 @@ export class ClaudeStatusService implements OnDestroy {
     const map = new Map(this._sessionTitles());
     map.set(sessionId, name);
     this._sessionTitles.set(map);
+  }
+
+  private setSessionWorktreeContext(sessionId: number, hasInjected: boolean): void {
+    const map = new Map(this._sessionWorktreeContexts());
+    map.set(sessionId, hasInjected);
+    this._sessionWorktreeContexts.set(map);
   }
 
   private setActivity(sessionId: number, activity: ClaudeSessionActivity): void {
@@ -130,6 +139,11 @@ export class ClaudeStatusService implements OnDestroy {
               completionMap.set(Number(id), completion as SessionCompletionState);
             }
             this._sessionCompletions.set(completionMap);
+            const worktreeContextMap = new Map<number, boolean>();
+            for (const [id, hasInjected] of Object.entries(data.worktreeContexts ?? {})) {
+              worktreeContextMap.set(Number(id), Boolean(hasInjected));
+            }
+            this._sessionWorktreeContexts.set(worktreeContextMap);
           } else if (data.type === 'status-changed') {
             this.setActivity(data.sessionId, this.normalizeActivity(data, data.status as ClaudeActivityStatus));
           } else if (data.type === 'session-status-changed') {
@@ -158,6 +172,11 @@ export class ClaudeStatusService implements OnDestroy {
             if (typeof data.name === 'string' && data.name.trim()) {
               this.setSessionTitle(data.sessionId, data.name);
             }
+          } else if (data.type === 'session-worktree-context-changed') {
+            this.setSessionWorktreeContext(
+              data.sessionId,
+              Boolean(data.hasInjectedWorktreeContext),
+            );
           }
         } catch {
           // Ignore malformed messages

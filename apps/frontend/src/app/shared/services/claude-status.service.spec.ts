@@ -45,6 +45,53 @@ describe('ClaudeStatusService', () => {
     service.ngOnDestroy();
   });
 
+  it('stores worktree context consumption updates from the status websocket', () => {
+    globalThis.WebSocket = vi.fn(function (this: unknown, url: string) {
+      socket = new FakeWebSocket(url);
+      return socket;
+    }) as unknown as typeof WebSocket;
+
+    const service = new ClaudeStatusService({
+      run: (fn: () => void) => fn(),
+    } as NgZone);
+
+    socket?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session-worktree-context-changed',
+        sessionId: 7,
+        hasInjectedWorktreeContext: true,
+      }),
+    });
+
+    expect(service.sessionWorktreeContexts().get(7)).toBe(true);
+    service.ngOnDestroy();
+  });
+
+  it('hydrates worktree context consumption state from init', () => {
+    globalThis.WebSocket = vi.fn(function (this: unknown, url: string) {
+      socket = new FakeWebSocket(url);
+      return socket;
+    }) as unknown as typeof WebSocket;
+
+    const service = new ClaudeStatusService({
+      run: (fn: () => void) => fn(),
+    } as NgZone);
+
+    socket?.onmessage?.({
+      data: JSON.stringify({
+        type: 'init',
+        statuses: {},
+        activities: {},
+        completions: {},
+        worktreeContexts: { 7: true, 8: false },
+      }),
+    });
+
+    expect(service.sessionWorktreeContexts().get(7)).toBe(true);
+    expect(service.sessionWorktreeContexts().get(8)).toBe(false);
+    service.ngOnDestroy();
+  });
+
   it('hydrates rich activity state from init while preserving getStatus', () => {
     globalThis.WebSocket = vi.fn(function (this: unknown, url: string) {
       socket = new FakeWebSocket(url);

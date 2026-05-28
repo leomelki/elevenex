@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createRequire } from 'module';
-import { query, type SDKAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
 import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
 
 const MAX_PROMPT_CHARS = 4000;
+type SDKAssistantMessage =
+  import('@anthropic-ai/claude-agent-sdk').SDKAssistantMessage;
 
 @Injectable()
 export class SessionTitleService {
@@ -14,10 +15,14 @@ export class SessionTitleService {
   }
 
   async generate(worktreePath: string, prompt: string): Promise<string | null> {
+    const sdk = await this.loadClaudeSdk();
+    if (!sdk) {
+      return null;
+    }
     const pathToClaudeCodeExecutable =
       this.resolveSdkClaudePath() ?? findBinary('claude') ?? undefined;
 
-    const runtimeQuery = query({
+    const runtimeQuery = sdk.query({
       prompt: [
         'Name this session based on the user\'s first message.',
         'Respond promptly with a broad short title. Do not investigate, browse, inspect files, or dig into details.',
@@ -88,6 +93,16 @@ export class SessionTitleService {
     if (!cleaned) return null;
     const title = cleaned.split(' ').filter(Boolean).slice(0, 5).join(' ').trim();
     return title || null;
+  }
+
+  private async loadClaudeSdk(): Promise<{
+    query: (typeof import('@anthropic-ai/claude-agent-sdk'))['query'];
+  } | null> {
+    try {
+      return await import('@anthropic-ai/claude-agent-sdk');
+    } catch {
+      return null;
+    }
   }
 
   private resolveSdkClaudePath(): string | null {

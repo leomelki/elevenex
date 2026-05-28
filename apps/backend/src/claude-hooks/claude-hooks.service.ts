@@ -1,6 +1,8 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { SessionsService } from '../sessions/sessions.service.js';
+import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
+import { SessionTitleService } from '../session-title/session-title.service.js';
 
 export type ClaudeActivityStatus = 'running' | 'idle' | 'waiting';
 export type ClaudeActivityActionKind = 'permission' | 'user_input' | null;
@@ -32,16 +34,31 @@ interface ClaudeHookPayload {
   [key: string]: unknown;
 }
 
+export interface ClaudeHookResponse {
+  continue: boolean;
+  hookSpecificOutput?: {
+    hookEventName: 'UserPromptSubmit';
+    additionalContext?: string;
+    sessionTitle?: string;
+  };
+}
+
 @Injectable()
 export class ClaudeHooksService extends EventEmitter {
   private readonly logger = new Logger('ClaudeHooksService');
   private statuses = new Map<number, StatusEntry>();
   private runtimeActivities = new Map<number, ClaudeSessionActivity>();
   private readonly invalidatedSessions = new Set<number>();
+  private readonly userPromptSubmitInFlight = new Map<
+    number,
+    Promise<ClaudeHookResponse>
+  >();
 
   constructor(
     @Inject(forwardRef(() => SessionsService))
     private readonly sessionsService: SessionsService,
+    private readonly worktreeContextService: WorktreeContextService,
+    private readonly sessionTitleService: SessionTitleService,
   ) {
     super();
   }
@@ -142,9 +159,9 @@ export class ClaudeHooksService extends EventEmitter {
   async handleHookEvent(
     sessionId: number,
     payload: ClaudeHookPayload,
-  ): Promise<void> {
+  ): Promise<ClaudeHookResponse> {
     if (this.invalidatedSessions.has(sessionId)) {
-      return;
+      return this.emptyHookResponse();
     }
 
     const startedAtMs = Date.now();
@@ -175,7 +192,7 @@ export class ClaudeHooksService extends EventEmitter {
         this.logger.warn(
           `Failed to persist Claude session id for session ${sessionId}: ${String(error)}`,
         );
-        return;
+        return this.emptyHookResponse();
       }
     }
 
@@ -207,9 +224,15 @@ export class ClaudeHooksService extends EventEmitter {
       await this.updateStatus(sessionId, status);
     }
 
+    let response = this.emptyHookResponse();
+    if (event === 'UserPromptSubmit') {
+      response = await this.handleUserPromptSubmit(sessionId, payload);
+    }
+
     this.logger.debug(
       `Hook bridge processed session=${sessionId} event=${payload.hook_event_name ?? 'unknown'} elapsedMs=${Date.now() - startedAtMs} status=${status ?? 'unchanged'}`,
     );
+    return response;
   }
 
   async handleInterrupt(sessionId: number): Promise<void> {
@@ -254,6 +277,169 @@ export class ClaudeHooksService extends EventEmitter {
       status: activity.activityStatus,
       ...activity,
     });
+  }
+
+  private handleUserPromptSubmit(
+    sessionId: number,
+    payload: ClaudeHookPayload,
+  ): Promise<ClaudeHookResponse> {
+    const existing = this.userPromptSubmitInFlight.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+
+    const promise = this.handleUserPromptSubmitInternal(sessionId, payload)
+      .catch((error) => {
+        this.logger.warn(
+          `Failed to prepare TUI prompt hook response for session ${sessionId}: ${String(error)}`,
+        );
+        return this.emptyHookResponse();
+      })
+      .finally(() => {
+        if (this.userPromptSubmitInFlight.get(sessionId) === promise) {
+          this.userPromptSubmitInFlight.delete(sessionId);
+        }
+      });
+
+    this.userPromptSubmitInFlight.set(sessionId, promise);
+    return promise;
+  }
+
+  private async handleUserPromptSubmitInternal(
+    sessionId: number,
+    payload: ClaudeHookPayload,
+  ): Promise<ClaudeHookResponse> {
+    const prompt = this.extractUserPrompt(payload);
+    if (!prompt.trim()) {
+      return this.emptyHookResponse();
+    }
+
+    const session = await this.sessionsService.findOne(sessionId);
+    const [contextSentence, sessionTitle] = await Promise.all([
+      this.prepareWorktreeContext(sessionId, session, prompt),
+      this.prepareSessionTitle(sessionId, session, prompt),
+    ]);
+
+    const hookSpecificOutput: ClaudeHookResponse['hookSpecificOutput'] = {
+      hookEventName: 'UserPromptSubmit',
+    };
+    if (contextSentence) {
+      hookSpecificOutput.additionalContext =
+        this.buildAdditionalContext(contextSentence);
+    }
+    if (sessionTitle) {
+      hookSpecificOutput.sessionTitle = sessionTitle;
+    }
+
+    const hasHookOutput = Boolean(
+      hookSpecificOutput.additionalContext || hookSpecificOutput.sessionTitle,
+    );
+    return hasHookOutput
+      ? { continue: true, hookSpecificOutput }
+      : this.emptyHookResponse();
+  }
+
+  private async prepareWorktreeContext(
+    sessionId: number,
+    session: {
+      repoId: number;
+      worktreePath: string;
+      hasInjectedWorktreeContext: boolean;
+    },
+    prompt: string,
+  ): Promise<string | null> {
+    if (
+      session.hasInjectedWorktreeContext ||
+      prompt.trimStart().startsWith('/')
+    ) {
+      return null;
+    }
+
+    try {
+      let snapshot = await this.worktreeContextService.getCachedSnapshot(
+        session.repoId,
+        session.worktreePath,
+      );
+      if (snapshot.generationStatus !== 'ready' || !snapshot.contextSentence) {
+        snapshot = await this.worktreeContextService.generate(
+          session.repoId,
+          session.worktreePath,
+          { provider: 'claude' },
+        );
+      }
+
+      const sentence = snapshot.contextSentence?.trim();
+      if (snapshot.generationStatus !== 'ready' || !sentence) {
+        return null;
+      }
+
+      const consumed = await this.worktreeContextService.consumeForSession(
+        sessionId,
+        true,
+        sentence,
+      );
+      return consumed.shouldInject
+        ? (consumed.contextSentence ?? sentence).trim()
+        : null;
+    } catch (error) {
+      this.logger.warn(
+        `Failed to prepare TUI worktree context for session ${sessionId}: ${String(error)}`,
+      );
+      return null;
+    }
+  }
+
+  private async prepareSessionTitle(
+    sessionId: number,
+    session: { name: string | null; worktreePath: string },
+    prompt: string,
+  ): Promise<string | null> {
+    if (!this.sessionTitleService.isAutoGeneratedName(session.name)) {
+      return null;
+    }
+
+    try {
+      const title = await this.sessionTitleService.generate(
+        session.worktreePath,
+        prompt,
+      );
+      if (!title) {
+        return null;
+      }
+
+      const updated = await this.sessionsService.renameFromGeneratedTitle(
+        sessionId,
+        title,
+      );
+      return updated.name === title ? title : null;
+    } catch (error) {
+      this.logger.warn(
+        `Failed to prepare TUI session title for session ${sessionId}: ${String(error)}`,
+      );
+      return null;
+    }
+  }
+
+  private extractUserPrompt(payload: ClaudeHookPayload): string {
+    for (const key of ['prompt', 'user_prompt', 'message']) {
+      const value = payload[key];
+      if (typeof value === 'string') {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  private buildAdditionalContext(contextSentence: string): string {
+    return [
+      '<elevenex-worktree-context>',
+      `Context for this session: ${contextSentence}`,
+      '</elevenex-worktree-context>',
+    ].join('\n');
+  }
+
+  private emptyHookResponse(): ClaudeHookResponse {
+    return { continue: true };
   }
 
   private summarizeHookPayload(payload: ClaudeHookPayload): Record<string, unknown> {

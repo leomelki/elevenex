@@ -143,6 +143,7 @@ export class SessionsService extends EventEmitter {
         lastCompletionAt: schema.sessions.lastCompletionAt,
         lastCompletionKind: schema.sessions.lastCompletionKind,
         lastStateChangeAt: schema.sessions.lastStateChangeAt,
+        hasInjectedWorktreeContext: schema.sessions.hasInjectedWorktreeContext,
       })
       .from(schema.sessions);
   }
@@ -440,7 +441,12 @@ export class SessionsService extends EventEmitter {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
 
-    return this.withInferredActiveAgentProvider(rows[0]);
+    const session = rows[0];
+    this.emit('session-worktree-context-changed', {
+      sessionId: id,
+      hasInjectedWorktreeContext: session.hasInjectedWorktreeContext,
+    });
+    return this.withInferredActiveAgentProvider(session);
   }
 
   async updateStatus(id: number, status: string) {
