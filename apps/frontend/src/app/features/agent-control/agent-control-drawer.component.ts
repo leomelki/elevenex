@@ -1,6 +1,5 @@
 import { CommonModule } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
@@ -17,11 +16,6 @@ import {
 
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
-import {
-  ZardResizableComponent,
-  ZardResizableHandleComponent,
-  ZardResizablePanelComponent,
-} from '@/shared/components/resizable';
 import { AgentControlStateService } from './agent-control-state.service';
 import {
   AgentControlContext,
@@ -31,21 +25,10 @@ import {
   AgentMissionTemplate,
 } from './agent-control.model';
 
-type MissionFilter = 'all' | 'active' | 'complete';
-
 @Component({
   selector: 'app-agent-control-drawer',
   standalone: true,
-  imports: [
-    CommonModule,
-    RouterLink,
-    NgIcon,
-    ZardButtonComponent,
-    ZardInputDirective,
-    ZardResizableComponent,
-    ZardResizableHandleComponent,
-    ZardResizablePanelComponent,
-  ],
+  imports: [CommonModule, NgIcon, ZardButtonComponent, ZardInputDirective],
   templateUrl: './agent-control-drawer.component.html',
   styleUrl: './agent-control-drawer.component.scss',
   viewProviders: [
@@ -67,27 +50,7 @@ export class AgentControlDrawerComponent {
   readonly state = inject(AgentControlStateService);
 
   readonly promptDraft = signal('');
-  readonly filter = signal<MissionFilter>('all');
-  readonly filters: Array<{ value: MissionFilter; label: string }> = [
-    { value: 'all', label: 'All' },
-    { value: 'active', label: 'Active' },
-    { value: 'complete', label: 'Complete' },
-  ];
-
-  readonly filteredMissions = computed(() => {
-    const filter = this.filter();
-    const missions = this.state.missions();
-    if (filter === 'active') {
-      return missions.filter(mission =>
-        mission.status !== 'complete' && mission.status !== 'blocked',
-      );
-    }
-    if (filter === 'complete') {
-      return missions.filter(mission => mission.status === 'complete');
-    }
-    return missions;
-  });
-
+  readonly recentMissions = computed(() => this.state.missions().slice(0, 5));
   readonly contextParts = computed(() => this.partsForContext(this.state.context()));
 
   close(): void {
@@ -193,14 +156,6 @@ export class AgentControlDrawerComponent {
       return 'lucideSparkles';
     }
     return 'lucideCircleDashed';
-  }
-
-  projectLink(context: AgentControlContext): Array<string | number> | null {
-    return context.projectId ? ['/projects', context.projectId] : null;
-  }
-
-  sessionLink(context: AgentControlContext): Array<string | number> | null {
-    return context.sessionId ? ['/sessions', context.sessionId] : null;
   }
 
   formatDate(value: string): string {
