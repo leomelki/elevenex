@@ -11,6 +11,7 @@ export class ClaudeHooksController {
   @Post('event')
   async handleEvent(
     @Headers('x-elevenex-session-id') sessionIdHeader: string,
+    @Headers('x-elevenex-hook-origin') hookOriginHeader: string | undefined,
     @Body()
     body: Record<string, unknown> & {
       hook_event_name?: string;
@@ -28,6 +29,8 @@ export class ClaudeHooksController {
       return { continue: true };
     }
 
-    return this.hooksService.handleHookEvent(sessionId, body);
+    return this.hooksService.handleHookEvent(sessionId, body, {
+      origin: hookOriginHeader === 'tui' ? 'tui' : 'unknown',
+    });
   }
 }

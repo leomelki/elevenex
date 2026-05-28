@@ -241,11 +241,15 @@ describe('PtyManager', () => {
       expect(userPromptHook.command).toContain('curl -sf');
       expect(userPromptHook.command).toContain('/api/claude-hooks/event');
       expect(userPromptHook.command).toContain(
+        'X-Elevenex-Hook-Origin: tui',
+      );
+      expect(userPromptHook.command).toContain(
         `printf '{"continue":true}'`,
       );
       expect(userPromptHook.command).not.toContain('> /dev/null');
 
       expect(stopHook.timeout).toBe(3);
+      expect(stopHook.command).toContain('X-Elevenex-Hook-Origin: tui');
       expect(stopHook.command).toContain('> /dev/null 2>&1');
     } finally {
       await rm(settingsPath, { force: true });

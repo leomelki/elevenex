@@ -263,6 +263,18 @@ describe('ClaudeHooksService', () => {
     expect(sessionsService.markLastStateChange).not.toHaveBeenCalled();
   });
 
+  it('does not generate hook output for non-TUI UserPromptSubmit events', async () => {
+    const response = await service.handleHookEvent(7, {
+      hook_event_name: 'UserPromptSubmit',
+      prompt: 'Please ship this change',
+    });
+
+    expect(response).toEqual({ continue: true });
+    expect(sessionsService.findOne).not.toHaveBeenCalled();
+    expect(worktreeContextService.generate).not.toHaveBeenCalled();
+    expect(sessionTitleService.generate).not.toHaveBeenCalled();
+  });
+
   it('returns worktree context and a session title for the first TUI prompt', async () => {
     sessionsService.findOne.mockResolvedValue({
       id: 7,
@@ -288,11 +300,15 @@ describe('ClaudeHooksService', () => {
       name: 'TUI Session Summaries',
     });
 
-    const response = await service.handleHookEvent(7, {
-      hook_event_name: 'UserPromptSubmit',
-      session_id: 'claude-session-7',
-      prompt: 'Please ship this change',
-    });
+    const response = await service.handleHookEvent(
+      7,
+      {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: 'claude-session-7',
+        prompt: 'Please ship this change',
+      },
+      { origin: 'tui' },
+    );
 
     expect(response).toEqual({
       continue: true,
@@ -335,10 +351,14 @@ describe('ClaudeHooksService', () => {
       name: 'TUI Session Summaries',
     });
 
-    const response = await service.handleHookEvent(7, {
-      hook_event_name: 'UserPromptSubmit',
-      prompt: 'Please ship this change',
-    });
+    const response = await service.handleHookEvent(
+      7,
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Please ship this change',
+      },
+      { origin: 'tui' },
+    );
 
     expect(worktreeContextService.getCachedSnapshot).not.toHaveBeenCalled();
     expect(worktreeContextService.generate).not.toHaveBeenCalled();
@@ -364,10 +384,14 @@ describe('ClaudeHooksService', () => {
       name: 'Claude Status Check',
     });
 
-    const response = await service.handleHookEvent(7, {
-      hook_event_name: 'UserPromptSubmit',
-      prompt: '/status',
-    });
+    const response = await service.handleHookEvent(
+      7,
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: '/status',
+      },
+      { origin: 'tui' },
+    );
 
     expect(worktreeContextService.getCachedSnapshot).not.toHaveBeenCalled();
     expect(worktreeContextService.generate).not.toHaveBeenCalled();
@@ -406,14 +430,22 @@ describe('ClaudeHooksService', () => {
       name: 'TUI Session Summaries',
     });
 
-    const first = service.handleHookEvent(7, {
-      hook_event_name: 'UserPromptSubmit',
-      prompt: 'Please ship this change',
-    });
-    const second = service.handleHookEvent(7, {
-      hook_event_name: 'UserPromptSubmit',
-      prompt: 'Please ship this change',
-    });
+    const first = service.handleHookEvent(
+      7,
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Please ship this change',
+      },
+      { origin: 'tui' },
+    );
+    const second = service.handleHookEvent(
+      7,
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Please ship this change',
+      },
+      { origin: 'tui' },
+    );
     await new Promise((resolve) => setImmediate(resolve));
     resolveCached({ generationStatus: 'idle', contextSentence: null });
 
@@ -438,10 +470,14 @@ describe('ClaudeHooksService', () => {
     sessionTitleService.generate.mockRejectedValue(new Error('title failed'));
 
     await expect(
-      service.handleHookEvent(7, {
-        hook_event_name: 'UserPromptSubmit',
-        prompt: 'Please ship this change',
-      }),
+      service.handleHookEvent(
+        7,
+        {
+          hook_event_name: 'UserPromptSubmit',
+          prompt: 'Please ship this change',
+        },
+        { origin: 'tui' },
+      ),
     ).resolves.toEqual({ continue: true });
   });
 });

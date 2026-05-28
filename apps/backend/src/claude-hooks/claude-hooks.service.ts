@@ -43,6 +43,10 @@ export interface ClaudeHookResponse {
   };
 }
 
+interface HandleHookEventOptions {
+  origin?: 'tui' | 'unknown';
+}
+
 @Injectable()
 export class ClaudeHooksService extends EventEmitter {
   private readonly logger = new Logger('ClaudeHooksService');
@@ -159,6 +163,7 @@ export class ClaudeHooksService extends EventEmitter {
   async handleHookEvent(
     sessionId: number,
     payload: ClaudeHookPayload,
+    options: HandleHookEventOptions = {},
   ): Promise<ClaudeHookResponse> {
     if (this.invalidatedSessions.has(sessionId)) {
       return this.emptyHookResponse();
@@ -225,7 +230,7 @@ export class ClaudeHooksService extends EventEmitter {
     }
 
     let response = this.emptyHookResponse();
-    if (event === 'UserPromptSubmit') {
+    if (event === 'UserPromptSubmit' && options.origin === 'tui') {
       response = await this.handleUserPromptSubmit(sessionId, payload);
     }
 
