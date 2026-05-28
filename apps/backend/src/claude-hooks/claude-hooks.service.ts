@@ -158,8 +158,13 @@ export class ClaudeHooksService extends EventEmitter {
       timestamp: new Date().toISOString(),
     });
 
+    // Only persist the session ID on SessionStart — it is the canonical event
+    // that identifies which session the PTY is actually running.  Other events
+    // (e.g. InstructionsLoaded) can carry a different session ID when Claude
+    // Code branches on resume, which would overwrite the correct ID in the DB
+    // and break the transcript view.
     const claudeSessionId = payload.session_id?.trim();
-    if (claudeSessionId) {
+    if (claudeSessionId && payload.hook_event_name === 'SessionStart') {
       try {
         await this.sessionsService.updateClaudeSessionId(
           sessionId,
