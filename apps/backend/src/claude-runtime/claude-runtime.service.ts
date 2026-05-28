@@ -2397,19 +2397,12 @@ export class ClaudeRuntimeService extends EventEmitter {
         ('errors' in message ? message.errors.join('\n') : '') ||
         'Claude run failed';
       state.lastError = errorMessage;
-      // If the error indicates that the local Claude session file no longer
-      // exists (e.g. corrupted by an earlier aborted write), reset the stored
-      // session ID so the next run starts a fresh session instead of hitting
-      // the same error repeatedly.
+      // If the error indicates that the stored session no longer exists
+      // (e.g. corrupted file or Claude Code pruned the conversation), reset
+      // the session ID so the next run starts a fresh session instead of
+      // hitting the same error repeatedly.
       if (state.claudeSessionId && this.isStaleSessionIdError(errorMessage)) {
-        state.claudeSessionId = null;
-        void this.sessionsService
-          .updateClaudeSessionId(sessionId, '-1')
-          .catch((err) => {
-            this.logger.warn(
-              `Failed to reset stale claudeSessionId for session ${sessionId}: ${String(err)}`,
-            );
-          });
+        this.resetStaleClaudeSessionId(sessionId, state);
       }
       this.emitEvent({
         type: 'error',
@@ -3122,6 +3115,32 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const state = this.ensureRuntimeState(sessionId);
+
+    // Guard: the runtime reported a session ID that differs from the one we
+    // asked it to resume.  This means Claude Code silently started a fresh
+    // session instead of resuming the existing one (e.g. because a PTY
+    // already held the session open when the SDK process started).  The
+    // orphan session must not be persisted — doing so would break the
+    // session for the user by pointing the DB at a session with no
+    // transcript.
+    //
+    // • No active run (prewarm): close the mismatched runtime immediately so
+    //   it cannot be picked up by a subsequent user turn.
+    // • Active run: the turn is already in flight so we cannot interrupt it,
+    //   but we still refuse to overwrite the stored session ID.
+    if (state.claudeSessionId && state.claudeSessionId !== claudeSessionId) {
+      this.logger.warn(
+        `Claude started session ${claudeSessionId} instead of resuming ${state.claudeSessionId} for session ${sessionId} — discarding mismatched runtime`,
+      );
+      if (!this.activeRuns.has(sessionId)) {
+        const runtime = this.sessionRuntimes.get(sessionId);
+        if (runtime) {
+          void runtime.close().catch(() => {});
+        }
+      }
+      return;
+    }
+
     if (!this.activeRuns.has(sessionId)) {
       return;
     }
@@ -3231,17 +3250,33 @@ export class ClaudeRuntimeService extends EventEmitter {
     );
   }
 
-  // Returns true when a result-error message indicates that the stored Claude
-  // session ID no longer refers to a valid session file on disk (e.g. the file
-  // was corrupted or deleted by an earlier aborted write).  Detecting this lets
-  // us reset the stored ID so the next run starts a fresh session.
+  private resetStaleClaudeSessionId(
+    sessionId: number,
+    state: RuntimeState,
+  ): void {
+    state.claudeSessionId = null;
+    void this.sessionsService
+      .updateClaudeSessionId(sessionId, '-1')
+      .catch((err) => {
+        this.logger.warn(
+          `Failed to reset stale claudeSessionId for session ${sessionId}: ${String(err)}`,
+        );
+      });
+  }
+
+  // Returns true when an error message indicates that the stored Claude session
+  // ID no longer refers to a valid conversation (e.g. the file was deleted, the
+  // session was pruned by Claude Code, or a resume was attempted against a
+  // session that never existed).  Detecting this lets us reset the stored ID so
+  // the next run starts a fresh session instead of failing repeatedly.
   private isStaleSessionIdError(errorMessage: string): boolean {
     const normalized = errorMessage.toLowerCase();
     return (
       normalized.includes('does not exist') ||
       normalized.includes('session not found') ||
       normalized.includes('no such session') ||
-      normalized.includes('could not be found')
+      normalized.includes('could not be found') ||
+      normalized.includes('no conversation found')
     );
   }
 
