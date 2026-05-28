@@ -360,7 +360,10 @@ export class GitService {
         error?.stack,
       );
       clearWorktreeFingerprintCache(worktreePath);
-      throw error;
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw this.toGitCommandException(error, 'Git commit failed.');
     }
   }
 
@@ -656,6 +659,34 @@ export class GitService {
     }
 
     return details.join(' ');
+  }
+
+  private toGitCommandException(
+    error: any,
+    fallback: string,
+  ): BadRequestException {
+    return new BadRequestException(
+      this.extractGitErrorMessage(error) || fallback,
+    );
+  }
+
+  private extractGitErrorMessage(error: any): string | null {
+    const candidates = [
+      error?.git?.stdErr,
+      error?.stderr,
+      error?.message,
+      typeof error === 'string' ? error : null,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue;
+      const normalized = candidate.replace(/\r\n/g, '\n').trim();
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    return null;
   }
 
   private getUniqueStagedFiles(status: StatusResult): string[] {

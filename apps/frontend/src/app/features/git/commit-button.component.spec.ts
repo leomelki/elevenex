@@ -1,10 +1,18 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { Subject, of } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { toast } from 'ngx-sonner';
 
 import { GitStatusSummary, PushResult } from '@/shared/models/git.model';
 import { GitService } from '@/shared/services/git.service';
 import { CommitButtonComponent } from './commit-button.component';
+
+vi.mock('ngx-sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}));
 
 const changedSummary: GitStatusSummary = {
   branch: 'main',
@@ -106,6 +114,8 @@ describe('CommitButtonComponent', () => {
     gitServiceMock.getSummary.mockClear();
     gitServiceMock.commit.mockClear();
     gitServiceMock.push.mockClear();
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
 
     await TestBed.configureTestingModule({
       imports: [CommitButtonComponent],
@@ -202,5 +212,36 @@ describe('CommitButtonComponent', () => {
     await pushPromise;
 
     expect(getSummaryCalls).toHaveLength(2);
+  });
+
+  it('shows git commit errors in a long-lived readable toast', async () => {
+    fixture.componentRef.setInput('worktreePath', '/tmp/repo');
+    fixture.componentRef.setInput('contextKey', 'session-1:main');
+    fixture.detectChanges();
+
+    const gitMessage =
+      'Author identity unknown\nRun git config --global user.email you@example.com';
+    fixture.componentInstance.summary.set(changedSummary);
+    gitServiceMock.commit.mockReturnValueOnce(
+      throwError(() => ({
+        error: {
+          message: gitMessage,
+        },
+      })),
+    );
+
+    await fixture.componentInstance.submitCommit();
+
+    expect(toast.error).toHaveBeenCalledWith(
+      gitMessage,
+      expect.objectContaining({
+        duration: 15000,
+        closeButton: true,
+        class: 'max-w-[min(520px,calc(100vw-32px))]',
+        classes: {
+          title: 'whitespace-pre-wrap',
+        },
+      }),
+    );
   });
 });

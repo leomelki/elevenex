@@ -34,6 +34,14 @@ describe('GitService', () => {
     }
   }
 
+  function getBadRequestMessage(error: unknown): unknown {
+    expect(error).toBeInstanceOf(BadRequestException);
+    const response = (error as BadRequestException).getResponse();
+    return typeof response === 'string'
+      ? response
+      : (response as { message?: unknown }).message;
+  }
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [GitService],
@@ -270,6 +278,49 @@ describe('GitService', () => {
 
       const log = await service.getLog(repoPath, 1);
       expect(log[0].message).toBe('Add new file');
+    });
+
+    it('should preserve no staged changes validation message', async () => {
+      let caught: unknown;
+
+      try {
+        await service.commit(repoPath, {
+          message: 'Noop',
+          provider: 'claude',
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(getBadRequestMessage(caught)).toBe(
+        'No staged changes are available to commit.',
+      );
+    });
+
+    it('should expose the git commit error when git rejects the commit', async () => {
+      fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
+      await service.stageFiles(repoPath, ['new-file.txt']);
+      const hookPath = path.join(repoPath, '.git', 'hooks', 'pre-commit');
+      fs.writeFileSync(
+        hookPath,
+        '#!/bin/sh\necho "pre-commit rejected commit" >&2\nexit 1\n',
+      );
+      fs.chmodSync(hookPath, 0o755);
+
+      let caught: unknown;
+
+      try {
+        await service.commit(repoPath, {
+          message: 'Add new file',
+          provider: 'claude',
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      const message = String(getBadRequestMessage(caught));
+      expect(message).toContain('pre-commit rejected commit');
+      expect(message).not.toBe('Internal server error');
     });
   });
 

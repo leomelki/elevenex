@@ -28,6 +28,14 @@ import { GitService } from '@/shared/services/git.service';
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_VISIBLE_FILES = 10;
+const GIT_ERROR_TOAST_OPTIONS = {
+  duration: 15000,
+  closeButton: true,
+  class: 'max-w-[min(520px,calc(100vw-32px))]',
+  classes: {
+    title: 'whitespace-pre-wrap',
+  },
+} as const;
 
 interface CommitFileRow extends FileStatus {
   basename: string;
@@ -227,7 +235,7 @@ export class CommitButtonComponent {
       this.open.set(false);
       await this.refreshSummary({ force: true });
     } catch (error: any) {
-      toast.error(error?.error?.message || 'Could not create commit.');
+      this.showGitError(error, 'Could not create commit.');
     } finally {
       this.submitting.set(false);
     }
@@ -249,15 +257,15 @@ export class CommitButtonComponent {
       if (result.pushed) {
         toast.success(result.message);
       } else if (result.nonFastForward) {
-        toast.error('Push rejected - branch is behind upstream.');
+        this.showGitError('Push rejected - branch is behind upstream.', 'Push failed.');
       } else {
-        toast.error(result.message || 'Push failed.');
+        this.showGitError(result.message, 'Push failed.');
       }
       if (this.worktreePath() === worktreePath) {
         await this.refreshSummary({ force: true });
       }
     } catch (error: any) {
-      toast.error(error?.error?.message || 'Could not push.');
+      this.showGitError(error, 'Could not push.');
     } finally {
       this.setPushingWorktree(worktreePath, false);
     }
@@ -270,6 +278,34 @@ export class CommitButtonComponent {
   statusLabel(file: FileStatus): string {
     if (file.status === 'untracked') return 'new';
     return file.status;
+  }
+
+  private showGitError(error: unknown, fallback: string): void {
+    toast.error(
+      this.getGitErrorMessage(error, fallback),
+      GIT_ERROR_TOAST_OPTIONS,
+    );
+  }
+
+  private getGitErrorMessage(error: unknown, fallback: string): string {
+    if (typeof error === 'string') {
+      return error.trim() || fallback;
+    }
+
+    const responseMessage = (error as { error?: { message?: unknown } })?.error
+      ?.message;
+    if (typeof responseMessage === 'string' && responseMessage.trim()) {
+      return responseMessage.trim();
+    }
+    if (Array.isArray(responseMessage) && responseMessage.length > 0) {
+      return responseMessage.map(String).join('\n');
+    }
+
+    if (error instanceof Error && error.message.trim()) {
+      return error.message.trim();
+    }
+
+    return fallback;
   }
 
   private async refreshSummary(
