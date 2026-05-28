@@ -971,12 +971,13 @@ describe('Sidebar', () => {
     expect(component.showCreateWizard()).toBe(true);
   });
 
-  it('renders an info link to the app info page', () => {
+  it('renders a settings link and removes the standalone info action', () => {
     const fixture = createSidebar();
     const element = fixture.nativeElement as HTMLElement;
-    const infoLink = element.querySelector('[aria-label="Open app info"]');
+    const settingsLink = element.querySelector('[aria-label="Open settings"]');
 
-    expect(infoLink?.getAttribute('routerLink')).toBe('/info');
+    expect(settingsLink).toBeTruthy();
+    expect(element.querySelector('[aria-label="Open app info"]')).toBeNull();
   });
 
   it('renders the running activity indicator for a working Claude session', () => {

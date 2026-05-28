@@ -18,6 +18,8 @@ import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-s
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
+import { AppSettingsService } from '@/shared/services/app-settings.service';
+import type { AppSettings } from '@/shared/models/app-settings.model';
 import { Session } from '@/shared/models/session.model';
 import { toast } from 'ngx-sonner';
 
@@ -38,6 +40,11 @@ describe('SessionContainer modal browser gating', () => {
   const claudeWorktreeContextsSignal = signal(new Map<number, boolean>());
   const claudeActivitiesSignal = signal(new Map<number, any>());
   const reconnectSignal = signal(0);
+  const appSettingsSignal = signal<AppSettings>({
+    defaultClaudeSessionSurface: 'claude-ui',
+    createdAt: null,
+    updatedAt: null,
+  });
   const localStorageStore = new Map<string, string>();
 
   const tabServiceMock = {
@@ -148,6 +155,11 @@ describe('SessionContainer modal browser gating', () => {
     get: vi.fn(() => of({ projectId: 10, mode: 'shared', sharedGlobs: [] })),
   };
 
+  const appSettingsServiceMock = {
+    settings: appSettingsSignal.asReadonly(),
+    load: vi.fn(() => Promise.resolve(appSettingsSignal())),
+  };
+
   const claudeStatusServiceMock = {
     sessionStatuses: claudeStatusesSignal.asReadonly(),
     sessionCompletions: claudeCompletionsSignal.asReadonly(),
@@ -221,6 +233,11 @@ describe('SessionContainer modal browser gating', () => {
     claudeWorktreeContextsSignal.set(new Map());
     claudeActivitiesSignal.set(new Map());
     reconnectSignal.set(0);
+    appSettingsSignal.set({
+      defaultClaudeSessionSurface: 'claude-ui',
+      createdAt: null,
+      updatedAt: null,
+    });
     localStorageStore.clear();
     localStorageStore.set(
       'elevenex-layout-preferences',
@@ -244,6 +261,8 @@ describe('SessionContainer modal browser gating', () => {
     sessionsServiceMock.getOne.mockReturnValue(of(null));
     sessionsServiceMock.markReviewed.mockReturnValue(of(makeSession()) as any);
     tabServiceMock.getSavedState.mockReturnValue(null);
+    appSettingsServiceMock.load.mockClear();
+    appSettingsServiceMock.load.mockImplementation(() => Promise.resolve(appSettingsSignal()));
     window.__ELEVENEX_ELECTRON__ = undefined;
 
     Object.defineProperty(globalThis, 'localStorage', {
@@ -292,6 +311,7 @@ describe('SessionContainer modal browser gating', () => {
         { provide: BrowserViewStateService, useValue: browserViewStateMock },
         { provide: BrowserTabsStateService, useValue: browserTabsStateMock },
         { provide: BrowserIsolationService, useValue: browserIsolationServiceMock },
+        { provide: AppSettingsService, useValue: appSettingsServiceMock },
         { provide: ClaudeStatusService, useValue: claudeStatusServiceMock },
         { provide: ModalOverlayStateService, useValue: modalOverlayStateMock },
       ],
@@ -459,6 +479,57 @@ describe('SessionContainer modal browser gating', () => {
     expect(recreated.componentInstance.showClaudeTerminalFallback()).toBe(true);
   });
 
+  it('opens a new Claude tab in terminal mode when the backend default is TUI', () => {
+    appSettingsSignal.set({
+      defaultClaudeSessionSurface: 'tui',
+      createdAt: null,
+      updatedAt: null,
+    });
+    tabsSignal.set([]);
+    activeSessionIdSignal.set(null);
+    sessionsServiceMock.getOne.mockReturnValue(of(makeSession()) as any);
+
+    const fixture = TestBed.createComponent(SessionContainer);
+
+    (fixture.componentInstance as any).loadAndOpenSession(42);
+
+    expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(true);
+    expect(localStorageStore.get('elevenex-claude-surface-modes')).toBe('[42]');
+  });
+
+  it('keeps a new Claude tab in workspace mode when the backend default is Claude UI', () => {
+    appSettingsSignal.set({
+      defaultClaudeSessionSurface: 'claude-ui',
+      createdAt: null,
+      updatedAt: null,
+    });
+    tabsSignal.set([]);
+    activeSessionIdSignal.set(null);
+    sessionsServiceMock.getOne.mockReturnValue(of(makeSession()) as any);
+
+    const fixture = TestBed.createComponent(SessionContainer);
+
+    (fixture.componentInstance as any).loadAndOpenSession(42);
+
+    expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(false);
+    expect(localStorageStore.get('elevenex-claude-surface-modes')).toBeUndefined();
+  });
+
+  it('does not move an already-open tab when the backend default is TUI', () => {
+    appSettingsSignal.set({
+      defaultClaudeSessionSurface: 'tui',
+      createdAt: null,
+      updatedAt: null,
+    });
+    sessionsServiceMock.getOne.mockReturnValue(of(makeSession()) as any);
+
+    const fixture = TestBed.createComponent(SessionContainer);
+
+    (fixture.componentInstance as any).loadAndOpenSession(42);
+
+    expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(false);
+  });
+
   it('mirrors generated session titles into open tabs', () => {
     const fixture = TestBed.createComponent(SessionContainer);
     fixture.detectChanges();
@@ -546,7 +617,7 @@ describe('SessionContainer modal browser gating', () => {
     });
   });
 
-  it('clears an unreviewed completion after restoring saved tabs', () => {
+  it('clears an unreviewed completion after restoring saved tabs', async () => {
     const completedSession = makeSession({
       hasUnreviewedCompletion: true,
       lastCompletionAt: '2026-01-01T00:00:00.000Z',
@@ -559,6 +630,9 @@ describe('SessionContainer modal browser gating', () => {
     activeSessionIdSignal.set(null);
     const fixture = TestBed.createComponent(SessionContainer);
 
+    fixture.detectChanges();
+    await Promise.resolve();
+    await Promise.resolve();
     fixture.detectChanges();
 
     expect(tabServiceMock.openTab).toHaveBeenCalledWith(completedSession);

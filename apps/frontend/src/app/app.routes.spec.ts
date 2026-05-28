@@ -103,10 +103,17 @@ describe('getDefaultRedirectPath', () => {
     expect(TestBed.runInInjectionContext(() => canAccessAppRoute())).toBe('/onboarding');
   });
 
-  it('should register the info route behind the app access guard', () => {
+  it('should register the settings route behind the app access guard', () => {
+    const settingsRoute = routes.find(route => route.path === 'settings');
+
+    expect(settingsRoute).toBeTruthy();
+    expect(settingsRoute?.canActivate).toEqual([canAccessAppRoute]);
+  });
+
+  it('should redirect the legacy info route to settings', () => {
     const infoRoute = routes.find(route => route.path === 'info');
 
     expect(infoRoute).toBeTruthy();
-    expect(infoRoute?.canActivate).toEqual([canAccessAppRoute]);
+    expect(infoRoute?.redirectTo).toBe('settings');
   });
 });

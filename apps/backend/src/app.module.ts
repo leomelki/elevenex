@@ -27,6 +27,7 @@ import { AgentRuntimeModule } from './agent-runtime/agent-runtime.module.js';
 import { WorktreeContextModule } from './worktree-context/worktree-context.module.js';
 import { BackendLogsModule } from './backend-logs/backend-logs.module.js';
 import { ServerConnectionModule } from './server-connection/server-connection.module.js';
+import { SettingsModule } from './settings/settings.module.js';
 import { ShellEnvService } from './config/shell-env.service.js';
 
 @Module({
@@ -57,6 +58,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     WorktreeContextModule,
     BackendLogsModule,
     ServerConnectionModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [AppService, ShellEnvService],

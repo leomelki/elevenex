@@ -46,9 +46,14 @@ export const routes: Routes = [
   },
   {
     path: 'info',
+    redirectTo: 'settings',
+    pathMatch: 'full',
+  },
+  {
+    path: 'settings',
     canActivate: [canAccessAppRoute],
     loadComponent: () =>
-      import('./features/info/info').then(m => m.Info),
+      import('./features/settings/settings').then(m => m.Settings),
   },
   {
     path: 'projects',

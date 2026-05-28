@@ -1,0 +1,119 @@
+<div class="min-h-full bg-background text-foreground">
+  <div class="mx-auto flex w-full max-w-4xl flex-col gap-8 px-8 py-8 max-sm:px-4">
+    <header class="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
+      <div class="min-w-0">
+        <div class="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <ng-icon name="lucideSettings" size="16" />
+          Settings
+        </div>
+        <h1 class="text-2xl font-semibold tracking-normal text-foreground">Workspace Preferences</h1>
+      </div>
+    </header>
+
+    <section class="rounded-lg border border-border bg-card">
+      <div class="border-b border-border px-5 py-4">
+        <h2 class="text-sm font-semibold text-foreground">Claude Code</h2>
+      </div>
+
+      <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-foreground">Default session surface</div>
+          <div class="mt-1 text-sm text-muted-foreground">Used when Claude sessions are opened.</div>
+          @if (appSettings.error()) {
+            <div class="mt-2 text-sm text-destructive" role="alert">{{ appSettings.error() }}</div>
+          }
+        </div>
+
+        <div class="inline-grid grid-cols-2 rounded-lg border border-border bg-muted p-1">
+          <button
+            type="button"
+            class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            [class.bg-background]="appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'"
+            [class.text-foreground]="appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'"
+            [class.shadow-sm]="appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'"
+            [disabled]="appSettings.saving()"
+            [attr.aria-pressed]="appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'"
+            (click)="selectSurface('claude-ui')"
+          >
+            <ng-icon name="lucideMonitor" size="15" />
+            <span>Claude UI</span>
+          </button>
+          <button
+            type="button"
+            class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            [class.bg-background]="appSettings.settings().defaultClaudeSessionSurface === 'tui'"
+            [class.text-foreground]="appSettings.settings().defaultClaudeSessionSurface === 'tui'"
+            [class.shadow-sm]="appSettings.settings().defaultClaudeSessionSurface === 'tui'"
+            [disabled]="appSettings.saving()"
+            [attr.aria-pressed]="appSettings.settings().defaultClaudeSessionSurface === 'tui'"
+            (click)="selectSurface('tui')"
+          >
+            <ng-icon name="lucideSquareTerminal" size="15" />
+            <span>TUI</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-lg border border-border bg-card">
+      <div class="border-b border-border px-5 py-4">
+        <h2 class="text-sm font-semibold text-foreground">About</h2>
+      </div>
+
+      <div class="grid gap-6 p-5 md:grid-cols-[auto_minmax(0,1fr)]">
+        <img
+          class="size-16 rounded-lg border border-border bg-background object-contain p-1"
+          src="11x.png"
+          alt="Elevenex logo"
+          width="64"
+          height="64"
+        />
+
+        <div class="min-w-0">
+          <div class="text-xl font-semibold text-foreground">Elevenex</div>
+          <div class="mt-1 text-sm text-muted-foreground">
+            Workspace hub for projects, repositories, branches, and coding sessions.
+          </div>
+
+          <div class="mt-5 divide-y divide-border rounded-lg border border-border">
+            <div class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-2">
+              <span class="text-sm text-muted-foreground">Developer</span>
+              <a
+                z-button
+                zType="ghost"
+                zSize="sm"
+                href="https://x.com/leomelki"
+                rel="noreferrer"
+                (click)="openExternal('https://x.com/leomelki', $event)"
+              >
+                &#64;leomelki
+              </a>
+            </div>
+            <div class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-2">
+              <span class="text-sm text-muted-foreground">Project</span>
+              <a
+                z-button
+                zType="ghost"
+                zSize="sm"
+                href="https://github.com/leomelki/elevenex"
+                rel="noreferrer"
+                (click)="openExternal('https://github.com/leomelki/elevenex', $event)"
+              >
+                <span>GitHub repository</span>
+                <ng-icon name="lucideArrowUpRight" size="14" />
+              </a>
+            </div>
+            <div class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-1">
+              <span class="text-sm text-muted-foreground">Frontend commit</span>
+              <code class="font-mono text-sm font-semibold text-foreground">{{ frontendSha }}</code>
+            </div>
+            <div class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-1">
+              <span class="text-sm text-muted-foreground">Backend commit</span>
+              <code class="font-mono text-sm font-semibold text-foreground">{{ backendSha() }}</code>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>

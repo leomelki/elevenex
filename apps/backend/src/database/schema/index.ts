@@ -11,3 +11,4 @@ export * from './browser-isolation.schema.js';
 export * from './actions.schema.js';
 export * from './claude-tool-interactions.schema.js';
 export * from './worktree-context.schema.js';
+export * from './app-settings.schema.js';

@@ -19,7 +19,7 @@ import {
   lucideServer,
   lucideSquareArrowOutUpRight,
   lucideCheckSquare,
-  lucideInfo,
+  lucideSettings,
   lucideMoon,
   lucideSun,
 } from '@ng-icons/lucide';
@@ -78,7 +78,7 @@ import { PendingWorkspaceCreation, PendingWorkspaceCreationsService } from '@/sh
       lucideServer,
       lucideSquareArrowOutUpRight,
       lucideCheckSquare,
-      lucideInfo,
+      lucideSettings,
       lucideMoon,
       lucideSun,
     }),

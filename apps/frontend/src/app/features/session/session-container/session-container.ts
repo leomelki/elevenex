@@ -64,6 +64,7 @@ import { getElectronAuthWindowApi } from '@/shared/runtime/electron-auth-window'
 import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-state.service';
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
 import { BrowserIsolationConfig } from '@/shared/models/browser-isolation.model';
+import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { toast } from 'ngx-sonner';
 import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
 import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
@@ -154,6 +155,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private browserViewState = inject(BrowserViewStateService);
   private browserTabsState = inject(BrowserTabsStateService);
   private browserIsolationService = inject(BrowserIsolationService);
+  private appSettings = inject(AppSettingsService);
   private claudeStatusService = inject(ClaudeStatusService);
   private sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private modalOverlayState = inject(ModalOverlayStateService);
@@ -823,14 +825,18 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.runWhenConnected(() => {
-      const urlSessionId = this.getSessionIdFromUrl();
-      const saved = this.tabService.getSavedState();
+      void this.appSettings.load()
+        .catch(() => undefined)
+        .finally(() => {
+          const urlSessionId = this.getSessionIdFromUrl();
+          const saved = this.tabService.getSavedState();
 
-      if (saved && saved.sessionIds.length > 0) {
-        this.restoreSavedTabs(saved, urlSessionId);
-      } else if (urlSessionId) {
-        this.loadAndOpenSession(urlSessionId);
-      }
+          if (saved && saved.sessionIds.length > 0) {
+            this.restoreSavedTabs(saved, urlSessionId);
+          } else if (urlSessionId) {
+            this.loadAndOpenSession(urlSessionId);
+          }
+        });
     });
 
     // Listen for navigation to new sessions
@@ -1020,7 +1026,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     ).subscribe((sessions) => {
       for (const session of sessions) {
         if (session) {
-          this.tabService.openTab(session);
+          this.openTabWithDefaultClaudeSurface(session);
         }
       }
 
@@ -1057,7 +1063,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.sessionsService.getOne(id).subscribe({
       next: (session) => {
         this.switchToSessionProvider(session.activeAgentProvider);
-        this.tabService.openTab(session);
+        this.openTabWithDefaultClaudeSurface(session);
         if (session.status !== 'archived') {
           this.clearCompletionMarkerForOpenSession(session.id, session);
         }
@@ -1075,6 +1081,30 @@ export class SessionContainer implements OnInit, OnDestroy {
         }
       },
     });
+  }
+
+  private openTabWithDefaultClaudeSurface(session: Session): void {
+    const wasOpen = this.tabService.getOpenSessionIds().includes(session.id);
+    this.tabService.openTab(session);
+
+    if (!wasOpen) {
+      this.applyDefaultClaudeSurface(session.id);
+    }
+  }
+
+  private applyDefaultClaudeSurface(sessionId: number): void {
+    const tab = this.tabs().find((currentTab) => currentTab.sessionId === sessionId);
+    if (!tab || tab.activeAgentProvider !== 'claude') {
+      return;
+    }
+
+    if (this.claudeSurfaceModes().has(sessionId)) {
+      return;
+    }
+
+    if (this.appSettings.settings().defaultClaudeSessionSurface === 'tui') {
+      this.setClaudeSurfaceMode(sessionId, 'terminal');
+    }
   }
 
   private clearCompletionMarkerForOpenSession(
@@ -1240,7 +1270,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   onConversationForkCreated(response: CreateSessionForkResponse): void {
     this.forkDrafts.setDraft(response.session.id, response.draft);
     this.switchToSessionProvider(response.session.activeAgentProvider);
-    this.tabService.openTab(response.session);
+    this.openTabWithDefaultClaudeSurface(response.session);
     if (response.session.worktreePath) {
       this.plannotatorService.registerWorktree(response.session.worktreePath, response.session.id);
     }
@@ -1255,7 +1285,7 @@ export class SessionContainer implements OnInit, OnDestroy {
       return;
     }
     this.switchToSessionProvider(session.activeAgentProvider);
-    this.tabService.openTab(session);
+    this.openTabWithDefaultClaudeSurface(session);
     this.router.navigate(['/sessions', session.id], { replaceUrl: true });
   }
 
