@@ -87,6 +87,16 @@ function getDirectorySize(rootDir) {
   return total;
 }
 
+function countChildDirectories(rootDir) {
+  if (!existsSync(rootDir)) {
+    return 0;
+  }
+
+  return readdirSync(rootDir).filter((entry) =>
+    statSync(path.join(rootDir, entry)).isDirectory(),
+  ).length;
+}
+
 function formatSize(bytes) {
   if (bytes < 1024) {
     return `${bytes} B`;
@@ -136,21 +146,13 @@ function assembleRuntime() {
     );
   }
 
-  const stagedExtensionsRoot = path.join(stagedVSCodeRoot, 'extensions');
-  ensureDir(stagedExtensionsRoot);
-  for (const extensionName of runtimeConfig.builtinExtensions) {
-    copyRequiredPath(
-      path.join(sourceVSCodeRoot, 'extensions', extensionName),
-      path.join(stagedExtensionsRoot, extensionName),
-    );
-  }
-
   writeFileSync(path.join(stagedVSCodeRoot, 'index.html'), buildIndexHtml());
 
   removeSourceMaps(stagedVSCodeRoot);
   removeGitArtifacts(stagedVSCodeRoot);
 
-  const extensionCount = runtimeConfig.builtinExtensions.length;
+  const stagedExtensionsRoot = path.join(stagedVSCodeRoot, 'extensions');
+  const extensionCount = countChildDirectories(stagedExtensionsRoot);
   const totalSize = getDirectorySize(stagedVSCodeRoot);
   console.log(
     `Prepared staged VS Code runtime at ${stagedVSCodeRoot} (${extensionCount} built-in extensions, ${formatSize(totalSize)})`,
@@ -169,6 +171,7 @@ if (require.main === module) {
 module.exports = {
   assembleRuntime,
   formatSize,
+  countChildDirectories,
   getDirectorySize,
   removeGitArtifacts,
   stagedVSCodeRoot,
