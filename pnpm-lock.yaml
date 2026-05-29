@@ -46,6 +46,9 @@ importers:
       drizzle-orm:
         specifier: ^0.45.1
         version: 0.45.1(@types/better-sqlite3@7.6.13)(better-sqlite3@12.8.0)
+      hash-wasm:
+        specifier: ^4.12.0
+        version: 4.12.0
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
@@ -8341,6 +8344,10 @@ packages:
     dependencies:
       has-symbols: 1.1.0
     dev: true
+
+  /hash-wasm@4.12.0:
+    resolution: {integrity: sha512-+/2B2rYLb48I/evdOIhP+K/DD2ca2fgBjp6O+GBEnCDk2e4rpeXIK8GvIyRPjTezgmWn9gmKwkQjjx6BtqDHVQ==}
+    dev: false
 
   /hasown@2.0.2:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}

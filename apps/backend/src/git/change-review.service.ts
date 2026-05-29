@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import { createXXHash3, xxhash3 } from 'hash-wasm/dist/xxhash3.umd.min.js';
 import { SimpleGit, StatusResult } from 'simple-git';
 
 import {
@@ -12,6 +14,8 @@ import {
 import {
   ChangeReviewContextWindow,
   ChangeReviewContextRange,
+  ChangeReviewFileFingerprint,
+  ChangeReviewFileFingerprintsResponse,
   ChangeReviewFileStatus,
   ChangeReviewFileSummary,
   ChangeReviewFileWindow,
@@ -39,7 +43,10 @@ const MAX_CACHE_ENTRIES = 1_000;
 const STALE_ORIGIN_SECONDS = 24 * 60 * 60;
 const FILE_SUMMARY_CONCURRENCY = 32;
 const UNTRACKED_SUMMARY_CONCURRENCY = 16;
+const FILE_FINGERPRINT_CONCURRENCY = 16;
+const FINGERPRINT_STREAM_THRESHOLD_BYTES = 1_000_000;
 const LAST_COMMIT_WORKTREE_FINGERPRINT = '0'.repeat(64);
+const VIEWED_FINGERPRINT_VERSION = 'cr-viewed-fp-v1';
 
 interface ReviewBase {
   repoRoot: string;
@@ -295,6 +302,75 @@ export class ChangeReviewService {
       changeHash: full.changeHash,
       rows,
       contextRanges: full.contextRanges,
+    };
+  }
+
+  async getFileFingerprints(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    paths: readonly string[],
+    forceLoad = false,
+  ): Promise<ChangeReviewFileFingerprintsResponse> {
+    this.assertScope(scope);
+    const requestedPaths = [
+      ...new Set(paths.map((value) => value.trim()).filter(Boolean)),
+    ];
+    if (requestedPaths.length === 0) {
+      return {
+        scope,
+        worktreePath,
+        fingerprints: [],
+      };
+    }
+
+    const git = worktreeSimpleGit(worktreePath);
+    const base = await this.resolveBase(git, worktreePath, scope, false);
+    const loadCheck = await this.readLoadCheck(
+      git,
+      worktreePath,
+      scope,
+      base,
+      forceLoad,
+    );
+    if (loadCheck.guard?.blocked) {
+      throw new BadRequestException(this.loadGuardMessage(loadCheck.guard));
+    }
+
+    const worktreeState = await this.readWorktreeReviewState(
+      git,
+      worktreePath,
+      scope,
+      false,
+      loadCheck.status,
+    );
+    const summaries = await this.readFileSummaries(
+      git,
+      worktreePath,
+      scope,
+      base,
+      worktreeState,
+    );
+    const summariesByPath = this.indexSummariesByPath(summaries.files);
+    const lookups = requestedPaths.map((filePath) => {
+      const summary = summariesByPath.get(filePath);
+      if (!summary) {
+        throw new BadRequestException(
+          `File is not changed in this scope: ${filePath}`,
+        );
+      }
+      return summary;
+    });
+    const fingerprints = await mapWithConcurrency(
+      lookups,
+      FILE_FINGERPRINT_CONCURRENCY,
+      async (summary) =>
+        this.buildFileFingerprint(git, worktreePath, scope, base, summary),
+    );
+
+    return {
+      scope,
+      worktreePath,
+      fingerprints,
     };
   }
 
@@ -766,6 +842,121 @@ export class ChangeReviewService {
       summary,
       untracked: summaries.untrackedPaths.has(summary.path),
     };
+  }
+
+  private indexSummariesByPath(
+    summaries: readonly ChangeReviewFileSummary[],
+  ): Map<string, ChangeReviewFileSummary> {
+    const byPath = new Map<string, ChangeReviewFileSummary>();
+    for (const summary of summaries) {
+      byPath.set(summary.path, summary);
+      if (summary.oldPath) {
+        byPath.set(summary.oldPath, summary);
+      }
+    }
+    return byPath;
+  }
+
+  private async buildFileFingerprint(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    summary: ChangeReviewFileSummary,
+  ): Promise<ChangeReviewFileFingerprint> {
+    const contentIdentity = await this.readViewedContentIdentity(
+      git,
+      worktreePath,
+      scope,
+      base,
+      summary,
+    );
+    return {
+      path: summary.path,
+      oldPath: summary.oldPath,
+      status: summary.status,
+      fingerprint: [
+        VIEWED_FINGERPRINT_VERSION,
+        summary.status,
+        encodeURIComponent(summary.oldPath ?? ''),
+        contentIdentity,
+      ].join(':'),
+    };
+  }
+
+  private async readViewedContentIdentity(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    summary: ChangeReviewFileSummary,
+  ): Promise<string> {
+    if (scope === 'last-commit') {
+      const ref =
+        summary.status === 'deleted'
+          ? (base.baseSha ?? 'HEAD^')
+          : (base.headSha ?? 'HEAD');
+      return this.readGitBlobIdentity(
+        git,
+        ref,
+        summary.oldPath ?? summary.path,
+      );
+    }
+
+    if (summary.status === 'deleted') {
+      const oldRef =
+        scope === 'branch'
+          ? (base.mergeBaseSha ?? base.baseSha ?? 'HEAD')
+          : 'HEAD';
+      return this.readGitBlobIdentity(
+        git,
+        oldRef,
+        summary.oldPath ?? summary.path,
+      );
+    }
+
+    return this.readWorktreeContentIdentity(worktreePath, summary.path);
+  }
+
+  private async readGitBlobIdentity(
+    git: SimpleGit,
+    ref: string,
+    filePath: string,
+  ): Promise<string> {
+    const output = await git
+      .raw(['ls-tree', '-z', ref, '--', filePath])
+      .catch(() => '');
+    const match = output.match(/^[0-7]{6} blob ([a-f0-9]{40,64})\t/);
+    return match?.[1] ? `git-blob:${match[1]}` : 'missing';
+  }
+
+  private async readWorktreeContentIdentity(
+    worktreePath: string,
+    filePath: string,
+  ): Promise<string> {
+    const absolutePath = path.join(worktreePath, filePath);
+    const stat = await fs.stat(absolutePath).catch(() => null);
+    if (!stat?.isFile()) {
+      return 'missing';
+    }
+    const digest = await this.hashWorktreeFile(absolutePath, stat.size);
+    return `xxh3-64:${digest}`;
+  }
+
+  private async hashWorktreeFile(
+    absolutePath: string,
+    size: number,
+  ): Promise<string> {
+    if (size <= FINGERPRINT_STREAM_THRESHOLD_BYTES) {
+      return xxhash3(await fs.readFile(absolutePath));
+    }
+
+    const hasher = await createXXHash3();
+    hasher.init();
+    for await (const chunk of createReadStream(absolutePath)) {
+      hasher.update(chunk as Buffer);
+    }
+    return hasher.digest('hex');
   }
 
   private async getOrBuildRows(

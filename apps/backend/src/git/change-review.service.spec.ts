@@ -95,6 +95,86 @@ describe('ChangeReviewService', () => {
     expect(after.totals.additions).toBeGreaterThan(before.totals.additions);
   });
 
+  it('updates viewed fingerprints when worktree file content changes without loading diff rows', async () => {
+    write('README.md', 'one\ntwo\n');
+    const before = await service.getFileFingerprints(repoPath, 'uncommitted', [
+      'README.md',
+    ]);
+
+    write('README.md', 'one\ntwo\nthree\n');
+    const after = await service.getFileFingerprints(repoPath, 'uncommitted', [
+      'README.md',
+    ]);
+
+    expect(before.fingerprints[0].fingerprint).toMatch(/^cr-viewed-fp-v1:/);
+    expect(before.fingerprints[0].fingerprint).not.toBe(
+      after.fingerprints[0].fingerprint,
+    );
+  });
+
+  it('returns stable viewed fingerprints for untracked, binary, renamed, and deleted files', async () => {
+    write('delete-me.txt', 'delete me\n');
+    git('add .');
+    git('commit -m "add delete target"');
+    git('mv README.md RENAMED.md');
+    fs.unlinkSync(path.join(repoPath, 'delete-me.txt'));
+    fs.writeFileSync(path.join(repoPath, 'binary.dat'), Buffer.from([0, 1, 2]));
+
+    const first = await service.getFileFingerprints(repoPath, 'uncommitted', [
+      'RENAMED.md',
+      'delete-me.txt',
+      'binary.dat',
+    ]);
+    const second = await service.getFileFingerprints(repoPath, 'uncommitted', [
+      'RENAMED.md',
+      'delete-me.txt',
+      'binary.dat',
+    ]);
+
+    expect(first.fingerprints).toEqual(second.fingerprints);
+    expect(first.fingerprints).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'RENAMED.md',
+          oldPath: 'README.md',
+          status: 'renamed',
+          fingerprint: expect.stringMatching(/^cr-viewed-fp-v1:renamed:/),
+        }),
+        expect.objectContaining({
+          path: 'delete-me.txt',
+          status: 'deleted',
+          fingerprint: expect.stringContaining('git-blob:'),
+        }),
+        expect.objectContaining({
+          path: 'binary.dat',
+          status: 'added',
+          fingerprint: expect.stringContaining('xxh3-64:'),
+        }),
+      ]),
+    );
+  });
+
+  it('rejects viewed fingerprints for paths outside the requested scope', async () => {
+    await expect(
+      service.getFileFingerprints(repoPath, 'uncommitted', ['missing.ts']),
+    ).rejects.toThrow(/File is not changed in this scope/);
+  });
+
+  it('fingerprints large files without loading their diff rows', async () => {
+    write('README.md', 'x'.repeat(1_000_001));
+
+    const response = await service.getFileFingerprints(
+      repoPath,
+      'uncommitted',
+      ['README.md'],
+    );
+
+    expect(response.fingerprints[0]).toMatchObject({
+      path: 'README.md',
+      fingerprint: expect.stringContaining('xxh3-64:'),
+    });
+  });
+
   it('loads a windowed textual diff for a changed file', async () => {
     write(
       'README.md',

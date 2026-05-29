@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { finalize, Observable, shareReplay, tap } from 'rxjs';
 import {
   ChangeReviewContextWindow,
+  ChangeReviewFileFingerprintsResponse,
   ChangeReviewFileWindow,
   ChangeReviewScope,
   ChangeReviewSummary,
@@ -153,6 +154,23 @@ export class ChangeReviewService {
       );
     this.contextWindowCache.set(key, request);
     return request;
+  }
+
+  getFileFingerprints(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    paths: readonly string[],
+    forceLoad = false,
+  ) {
+    return this.http.post<ChangeReviewFileFingerprintsResponse>(
+      '/api/git/change-review/fingerprints',
+      {
+        worktreePath,
+        scope,
+        paths,
+        forceLoad,
+      },
+    );
   }
 
   hasFileWindowCache(

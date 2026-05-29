@@ -3,6 +3,7 @@ import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import { ChangeReviewService } from './change-review.service.js';
 import type {
   ChangeReviewContextWindow,
+  ChangeReviewFileFingerprintsResponse,
   ChangeReviewFileWindow,
   ChangeReviewScope,
   ChangeReviewSummary,
@@ -103,6 +104,24 @@ export class GitController {
       context,
       forceLoad,
       forceFileLoad,
+    );
+  }
+
+  @Post('change-review/fingerprints')
+  async getChangeReviewFingerprints(
+    @Body()
+    body: {
+      worktreePath: string;
+      scope?: ChangeReviewScope;
+      paths?: string[];
+      forceLoad?: boolean;
+    },
+  ): Promise<ChangeReviewFileFingerprintsResponse> {
+    return this.changeReviewService.getFileFingerprints(
+      decodeURIComponent(body.worktreePath),
+      body.scope ?? 'branch',
+      body.paths ?? [],
+      Boolean(body.forceLoad),
     );
   }
 

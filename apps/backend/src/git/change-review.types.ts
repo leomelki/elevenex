@@ -106,6 +106,19 @@ export interface ChangeReviewFileWindow {
   contextRanges: ChangeReviewContextRange[];
 }
 
+export interface ChangeReviewFileFingerprint {
+  path: string;
+  oldPath: string | null;
+  status: ChangeReviewFileStatus;
+  fingerprint: string;
+}
+
+export interface ChangeReviewFileFingerprintsResponse {
+  scope: ChangeReviewScope;
+  worktreePath: string;
+  fingerprints: ChangeReviewFileFingerprint[];
+}
+
 export interface ChangeReviewContextWindow {
   scope: ChangeReviewScope;
   path: string;

@@ -143,6 +143,7 @@ interface ScopeViewSnapshot {
   summary: ChangeReviewSummary;
   fileStates: ReadonlyMap<string, FileRenderState>;
   fileChangeHashes: ReadonlyMap<string, string>;
+  fileFingerprints: ReadonlyMap<string, string>;
   activeFilePath: string | null;
   collapsedPaths: ReadonlySet<string>;
   forceLoadedFileDiffs: ReadonlySet<string>;
@@ -168,7 +169,7 @@ const WINDOW_LOAD_CONCURRENCY = 1;
 const MAX_WINDOW_CACHE_ROWS = 120_000;
 const MAX_WINDOW_CACHE_WINDOWS = 400;
 const MAX_ROW_HTML_CACHE = 8_000;
-const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
+const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-file-fingerprints-v1';
 
 @Component({
   selector: 'app-change-review-panel',
@@ -213,6 +214,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   private readonly windowQueue: WindowRequest[] = [];
   private readonly pendingWindowKeys = new Set<string>();
   private readonly windowCache = new Map<string, WindowCacheEntry>();
+  private readonly fingerprintCache = new Map<string, string>();
   private readonly scopeSnapshots = new Map<string, ScopeViewSnapshot>();
   private readonly requestCancel$ = new Subject<void>();
   private readonly forceLoadedFileDiffs = signal<ReadonlySet<string>>(new Set());
@@ -247,7 +249,9 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly renderedOffsetPx = signal(0);
   readonly loadingContextRanges = signal<ReadonlySet<string>>(new Set());
   readonly fileChangeHashes = signal<ReadonlyMap<string, string>>(new Map());
-  readonly viewedHashes = signal<Record<string, string>>(this.readViewedHashes());
+  readonly fileFingerprints = signal<ReadonlyMap<string, string>>(new Map());
+  readonly viewedFingerprints = signal<Record<string, string>>(this.readViewedFingerprints());
+  readonly loadingFileFingerprints = signal<ReadonlySet<string>>(new Set());
   readonly collapsedPaths = signal<ReadonlySet<string>>(new Set());
   readonly windowLoadState = signal<WindowLoadState>({ running: false, total: 0 });
   readonly selectionMentionAction = signal<DiffSelectionMentionAction | null>(null);
@@ -456,13 +460,21 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   toggleFileViewed(file: ChangeReviewFileSummary): void {
-    const hash = this.fileChangeHashes().get(file.path);
-    if (!hash) return;
-    if (this.isViewedHash(file.path, hash)) {
+    void this.toggleFileViewedAsync(file);
+  }
+
+  private async toggleFileViewedAsync(file: ChangeReviewFileSummary): Promise<void> {
+    if (this.loadingFileFingerprints().has(file.path)) return;
+    if (this.isFileViewed(file)) {
       this.unmarkViewed(file.path);
       return;
     }
-    this.markViewed(file.path, hash);
+
+    const requestGeneration = this.generation;
+    const fingerprint = await this.ensureFileFingerprint(file.path, requestGeneration, true);
+    if (requestGeneration !== this.generation || !fingerprint) return;
+
+    this.markViewed(file.path, fingerprint);
     this.setFileCollapsed(file.path, true, false);
     this.scrollToNextUnviewedFile(file.path);
   }
@@ -628,12 +640,18 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   isFileViewed(file: ChangeReviewFileSummary): boolean {
-    const hash = this.fileChangeHashes().get(file.path);
-    return Boolean(hash) && this.isViewedHash(file.path, hash!);
+    const viewedFingerprint = this.viewedFingerprints()[this.viewedKey(file.path)];
+    if (!viewedFingerprint) return false;
+    const loadedFingerprint = this.fileFingerprints().get(file.path);
+    return !loadedFingerprint || loadedFingerprint === viewedFingerprint;
   }
 
   isFileLoaded(file: ChangeReviewFileSummary): boolean {
     return Boolean(this.fileChangeHashes().get(file.path));
+  }
+
+  isFileFingerprintLoading(file: ChangeReviewFileSummary): boolean {
+    return this.loadingFileFingerprints().has(file.path);
   }
 
   isFileCollapsed(file: ChangeReviewFileSummary): boolean {
@@ -793,6 +811,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       summary,
       fileStates: this.snapshotFileStates(),
       fileChangeHashes: new Map(this.fileChangeHashes()),
+      fileFingerprints: new Map(this.fileFingerprints()),
       activeFilePath: this.activeFilePath(),
       collapsedPaths: new Set(this.collapsedPaths()),
       forceLoadedFileDiffs: new Set(this.forceLoadedFileDiffs()),
@@ -828,10 +847,12 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     this.summary.set(snapshot.summary);
     this.fileStates.set(snapshot.fileStates);
     this.fileChangeHashes.set(snapshot.fileChangeHashes);
+    this.fileFingerprints.set(snapshot.fileFingerprints);
     this.collapsedPaths.set(snapshot.collapsedPaths);
     this.forceLoadedFileDiffs.set(snapshot.forceLoadedFileDiffs);
     this.forceLoadLargeChangeSet.set(snapshot.forceLoadLargeChangeSet);
     this.loadingContextRanges.set(new Set());
+    this.loadingFileFingerprints.set(new Set());
     this.selectionMentionAction.set(null);
     this.now.set(Date.now());
 
@@ -897,6 +918,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     this.summary.set(null);
     this.fileStates.set(new Map());
     this.fileChangeHashes.set(new Map());
+    this.fileFingerprints.set(new Map());
     this.activeFilePath.set(null);
     this.layout.set(new ChangeReviewVirtualLayout([]));
     this.visibleRows.set([]);
@@ -904,6 +926,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     this.diffScrollLeftPx.set(0);
     this.diffViewportWidthPx.set(null);
     this.loadingContextRanges.set(new Set());
+    this.loadingFileFingerprints.set(new Set());
     this.selectionMentionAction.set(null);
     this.forceLoadedFileDiffs.set(new Set());
     this.rowHtmlCache.clear();
@@ -928,6 +951,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       );
       this.applyFilters(true);
       if (!summary.loadGuard?.blocked) {
+        this.validateSavedViewedFingerprints(summary, requestGeneration);
         this.scheduleGitSummaryRefresh(worktreePath, requestGeneration);
       }
     } catch (error: any) {
@@ -1298,7 +1322,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   private applyFileWindow(fileWindow: ChangeReviewFileWindow, request: WindowRequest): void {
     if (request.generation !== this.generation) return;
     const anchor = this.captureAnchor();
-    this.rememberFileHash(fileWindow.path, fileWindow.changeHash);
+    this.rememberFileChangeHash(fileWindow.path, fileWindow.changeHash);
     this.setFileState(fileWindow.path, (state) => {
       const baseRows = new Map(state.baseRows);
       fileWindow.rows.forEach((row, index) => {
@@ -1680,17 +1704,161 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     this.windowLoadState.set({ running: false, total: 0 });
   }
 
-  private rememberFileHash(filePath: string, changeHash: string): void {
+  private validateSavedViewedFingerprints(
+    summary: ChangeReviewSummary,
+    requestGeneration: number,
+  ): void {
+    this.pruneViewedFingerprintsForSummary(summary);
+    const paths = summary.files
+      .map((file) => file.path)
+      .filter((filePath) => Boolean(this.viewedFingerprints()[this.viewedKey(filePath)]));
+    if (paths.length === 0) return;
+
+    void this.fetchFileFingerprints(paths, requestGeneration).catch(() => {
+      // Keep optimistic viewed state if the lightweight validation request fails.
+    });
+  }
+
+  private pruneViewedFingerprintsForSummary(summary: ChangeReviewSummary): void {
+    const prefix = `${encodeURIComponent(summary.worktreePath)}|${summary.scope}|`;
+    const currentPaths = new Set(summary.files.map((file) => file.path));
+    this.viewedFingerprints.update((current) => {
+      let next: Record<string, string> | null = null;
+      for (const key of Object.keys(current)) {
+        if (!key.startsWith(prefix)) continue;
+        const encodedPath = key.slice(prefix.length);
+        const filePath = this.safeDecodeViewedPath(encodedPath);
+        if (filePath && currentPaths.has(filePath)) continue;
+        next ??= { ...current };
+        delete next[key];
+      }
+      if (!next) return current;
+      this.writeViewedFingerprints(next);
+      return next;
+    });
+  }
+
+  private safeDecodeViewedPath(encodedPath: string): string | null {
+    try {
+      return decodeURIComponent(encodedPath);
+    } catch {
+      return null;
+    }
+  }
+
+  private async ensureFileFingerprint(
+    filePath: string,
+    requestGeneration: number,
+    showError: boolean,
+  ): Promise<string | null> {
+    const existing = this.fileFingerprints().get(filePath);
+    if (existing) return existing;
+
+    try {
+      const fingerprints = await this.fetchFileFingerprints([filePath], requestGeneration);
+      return fingerprints.get(filePath) ?? null;
+    } catch (error: any) {
+      if (showError && requestGeneration === this.generation) {
+        const message = error?.error?.message || 'Could not identify the file content.';
+        toast.error(message);
+      }
+      return null;
+    }
+  }
+
+  private async fetchFileFingerprints(
+    paths: readonly string[],
+    requestGeneration: number,
+  ): Promise<Map<string, string>> {
+    const summary = this.summary();
+    if (!summary || requestGeneration !== this.generation) return new Map();
+
+    const result = new Map<string, string>();
+    const missingPaths: string[] = [];
+    for (const filePath of [...new Set(paths)]) {
+      const cached = this.fingerprintCache.get(this.fileFingerprintCacheKey(summary, filePath));
+      if (cached) {
+        result.set(filePath, cached);
+        this.rememberFileFingerprint(filePath, cached);
+      } else {
+        missingPaths.push(filePath);
+      }
+    }
+
+    if (missingPaths.length === 0) return result;
+
+    this.setFileFingerprintLoading(missingPaths, true);
+    try {
+      const response = await firstValueFrom(
+        this.changeReview
+          .getFileFingerprints(
+            summary.worktreePath,
+            summary.scope,
+            missingPaths,
+            this.forceLoadLargeChangeSet(),
+          )
+          .pipe(takeUntil(this.requestCancel$)),
+      );
+      if (requestGeneration !== this.generation) return result;
+
+      for (const item of response.fingerprints) {
+        this.fingerprintCache.set(
+          this.fileFingerprintCacheKey(summary, item.path),
+          item.fingerprint,
+        );
+        result.set(item.path, item.fingerprint);
+        this.rememberFileFingerprint(item.path, item.fingerprint);
+      }
+      return result;
+    } finally {
+      if (requestGeneration === this.generation) {
+        this.setFileFingerprintLoading(missingPaths, false);
+      }
+    }
+  }
+
+  private fileFingerprintCacheKey(summary: ChangeReviewSummary, filePath: string): string {
+    return [
+      summary.worktreePath,
+      summary.scope,
+      summary.headSha ?? '',
+      summary.worktreeFingerprint,
+      encodeURIComponent(filePath),
+    ].join('\0');
+  }
+
+  private rememberFileFingerprint(filePath: string, fingerprint: string): void {
+    this.fileFingerprints.update((current) => {
+      const next = new Map(current);
+      next.set(filePath, fingerprint);
+      return next;
+    });
+    const viewedFingerprint = this.viewedFingerprints()[this.viewedKey(filePath)];
+    if (viewedFingerprint && viewedFingerprint !== fingerprint) {
+      this.unmarkViewed(filePath);
+    }
+  }
+
+  private setFileFingerprintLoading(paths: readonly string[], loading: boolean): void {
+    this.loadingFileFingerprints.update((current) => {
+      const next = new Set(current);
+      for (const filePath of paths) {
+        if (loading) {
+          next.add(filePath);
+        } else {
+          next.delete(filePath);
+        }
+      }
+      return next;
+    });
+  }
+
+  private rememberFileChangeHash(filePath: string, changeHash: string): void {
     this.fileChangeHashes.update((current) => {
       const next = new Map(current);
       next.set(filePath, changeHash);
       return next;
     });
-    const key = this.viewedKey(filePath);
-    const viewedHash = this.viewedHashes()[key];
-    if (viewedHash && viewedHash !== changeHash) {
-      this.unmarkViewed(filePath);
-    }
   }
 
   private isFileDiffForceLoaded(file: ChangeReviewFileSummary): boolean {
@@ -1701,27 +1869,23 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     return this.forceLoadedFileDiffs().has(filePath);
   }
 
-  private markViewed(filePath: string, changeHash: string): void {
-    this.viewedHashes.update((current) => {
-      const next = { ...current, [this.viewedKey(filePath)]: changeHash };
-      this.writeViewedHashes(next);
+  private markViewed(filePath: string, fingerprint: string): void {
+    this.viewedFingerprints.update((current) => {
+      const next = { ...current, [this.viewedKey(filePath)]: fingerprint };
+      this.writeViewedFingerprints(next);
       return next;
     });
   }
 
   private unmarkViewed(filePath: string): void {
-    this.viewedHashes.update((current) => {
+    this.viewedFingerprints.update((current) => {
       const key = this.viewedKey(filePath);
       if (!(key in current)) return current;
       const next = { ...current };
       delete next[key];
-      this.writeViewedHashes(next);
+      this.writeViewedFingerprints(next);
       return next;
     });
-  }
-
-  private isViewedHash(filePath: string, changeHash: string): boolean {
-    return this.viewedHashes()[this.viewedKey(filePath)] === changeHash;
   }
 
   private viewedKey(filePath: string): string {
@@ -1732,7 +1896,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     ].join('|');
   }
 
-  private readViewedHashes(): Record<string, string> {
+  private readViewedFingerprints(): Record<string, string> {
     try {
       const raw = localStorage.getItem(VIEWED_STORAGE_KEY);
       if (!raw) return {};
@@ -1743,7 +1907,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private writeViewedHashes(value: Record<string, string>): void {
+  private writeViewedFingerprints(value: Record<string, string>): void {
     try {
       localStorage.setItem(VIEWED_STORAGE_KEY, JSON.stringify(value));
     } catch {

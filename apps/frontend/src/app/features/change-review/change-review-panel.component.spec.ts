@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ChangeReviewContextWindow,
+  ChangeReviewFileFingerprintsResponse,
   ChangeReviewFileSummary,
   ChangeReviewFileWindow,
   ChangeReviewRow,
@@ -18,6 +19,8 @@ import { GitService } from '@/shared/services/git.service';
 import { ChangeReviewPanelComponent } from './change-review-panel.component';
 
 const flush = () => new Promise((resolve) => window.setTimeout(resolve, 0));
+const viewedKey = (path: string, scope: ChangeReviewScope = 'branch') =>
+  `${encodeURIComponent('/tmp/repo')}|${scope}|${encodeURIComponent(path)}`;
 
 const file = (
   path: string,
@@ -124,6 +127,21 @@ const fileWindow = (
   contextRanges: [],
 });
 
+const fileFingerprints = (
+  paths: readonly string[],
+  scope: ChangeReviewScope = 'branch',
+  suffix = 'fingerprint',
+): ChangeReviewFileFingerprintsResponse => ({
+  scope,
+  worktreePath: '/tmp/repo',
+  fingerprints: paths.map((path) => ({
+    path,
+    oldPath: null,
+    status: 'modified',
+    fingerprint: `${path}:${suffix}`,
+  })),
+});
+
 const contextWindow = (
   path: string,
   oldStart: number,
@@ -212,6 +230,7 @@ describe('ChangeReviewPanelComponent', () => {
     getSummary: ReturnType<typeof vi.fn>;
     getFileWindow: ReturnType<typeof vi.fn>;
     getContextWindow: ReturnType<typeof vi.fn>;
+    getFileFingerprints: ReturnType<typeof vi.fn>;
     clearCache: ReturnType<typeof vi.fn>;
     hasFileWindowCache: ReturnType<typeof vi.fn>;
   };
@@ -225,6 +244,10 @@ describe('ChangeReviewPanelComponent', () => {
     offset: number;
     forceFileLoad: boolean;
     response: Subject<ChangeReviewFileWindow>;
+  }>;
+  let fingerprintCalls: Array<{
+    paths: readonly string[];
+    response: Subject<ChangeReviewFileFingerprintsResponse>;
   }>;
   let contextCalls: Array<{
     path: string;
@@ -247,6 +270,7 @@ describe('ChangeReviewPanelComponent', () => {
     installStorageStub();
     summaryCalls = [];
     windowCalls = [];
+    fingerprintCalls = [];
     contextCalls = [];
     resizeCallbacks = [];
     resizeObservedTargets = [];
@@ -275,8 +299,7 @@ describe('ChangeReviewPanelComponent', () => {
 
     Object.defineProperty(window, 'requestAnimationFrame', {
       configurable: true,
-      value: (callback: FrameRequestCallback) =>
-        window.setTimeout(() => callback(Date.now()), 0),
+      value: (callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0),
     });
     Object.defineProperty(window, 'cancelAnimationFrame', {
       configurable: true,
@@ -329,6 +352,13 @@ describe('ChangeReviewPanelComponent', () => {
             limit: range.limit,
             response,
           });
+          return response.asObservable();
+        },
+      ),
+      getFileFingerprints: vi.fn(
+        (_worktreePath: string, _scope: ChangeReviewScope, paths: readonly string[]) => {
+          const response = new Subject<ChangeReviewFileFingerprintsResponse>();
+          fingerprintCalls.push({ paths, response });
           return response.asObservable();
         },
       ),
@@ -575,21 +605,65 @@ describe('ChangeReviewPanelComponent', () => {
     expect((fixture.nativeElement as HTMLElement).textContent).toContain('Outdated');
   });
 
-  it('enables viewed state after a file hash loads', async () => {
+  it('marks viewed after loading a file fingerprint without waiting for diff rows', async () => {
     const files = [file('src/a.ts')];
     await flushSummary(summary(files));
 
     fixture.componentInstance.toggleFileViewed(files[0]);
+    expect(fingerprintCalls).toHaveLength(1);
+    expect(fingerprintCalls[0].paths).toEqual(['src/a.ts']);
     expect(fixture.componentInstance.isFileViewed(files[0])).toBe(false);
 
-    windowCalls[0].response.next(fileWindow('src/a.ts'));
-    windowCalls[0].response.complete();
+    fingerprintCalls[0].response.next(fileFingerprints(['src/a.ts']));
+    fingerprintCalls[0].response.complete();
     await flush();
     fixture.detectChanges();
 
-    fixture.componentInstance.toggleFileViewed(files[0]);
     expect(fixture.componentInstance.isFileViewed(files[0])).toBe(true);
     expect(fixture.componentInstance.isFileCollapsed(files[0])).toBe(true);
+  });
+
+  it('validates only saved viewed files in the background and removes mismatches', async () => {
+    const files = [file('src/a.ts'), file('src/b.ts')];
+    fixture.componentInstance.viewedFingerprints.set({
+      [viewedKey('src/a.ts')]: 'src/a.ts:old',
+    });
+
+    await flushSummary(summary(files));
+
+    expect(fingerprintCalls).toHaveLength(1);
+    expect(fingerprintCalls[0].paths).toEqual(['src/a.ts']);
+    expect(fixture.componentInstance.isFileViewed(files[0])).toBe(true);
+
+    fingerprintCalls[0].response.next(fileFingerprints(['src/a.ts'], 'branch', 'new'));
+    fingerprintCalls[0].response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.isFileViewed(files[0])).toBe(false);
+    expect(fingerprintCalls[0].paths).not.toContain('src/b.ts');
+  });
+
+  it('ignores stale viewed fingerprint responses after the scope changes', async () => {
+    const files = [file('src/a.ts')];
+    fixture.componentInstance.viewedFingerprints.set({
+      [viewedKey('src/a.ts')]: 'src/a.ts:old',
+    });
+    await flushSummary(summary(files, 'branch'));
+    const staleCall = fingerprintCalls[0];
+
+    fixture.componentInstance.setScope('uncommitted');
+    fixture.detectChanges();
+    await flushSummary(summary([file('src/worktree.ts')], 'uncommitted'));
+
+    staleCall.response.next(fileFingerprints(['src/a.ts'], 'branch', 'new'));
+    staleCall.response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.viewedFingerprints()[viewedKey('src/a.ts')]).toBe(
+      'src/a.ts:old',
+    );
   });
 
   it('shows the next file as unchecked immediately after marking the active file viewed', async () => {
@@ -618,6 +692,12 @@ describe('ChangeReviewPanelComponent', () => {
 
     expect(stickyInput()?.checked).toBe(false);
     stickyInput()!.click();
+    fixture.detectChanges();
+
+    expect(fingerprintCalls).toHaveLength(1);
+    fingerprintCalls[0].response.next(fileFingerprints(['src/a.ts']));
+    fingerprintCalls[0].response.complete();
+    await flush();
     fixture.detectChanges();
 
     const input = stickyInput();

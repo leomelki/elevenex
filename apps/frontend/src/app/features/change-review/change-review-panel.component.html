@@ -409,13 +409,13 @@
               <label
                 class="cr-viewed-control"
                 [class.cr-viewed-control--checked]="isFileViewed(file)"
-                [class.cr-viewed-control--disabled]="!isFileLoaded(file)"
+                [class.cr-viewed-control--disabled]="isFileFingerprintLoading(file)"
               >
                 <input
                   type="checkbox"
                   class="size-3.5 accent-[var(--success)]"
                   [checked]="isFileViewed(file)"
-                  [disabled]="!isFileLoaded(file)"
+                  [disabled]="isFileFingerprintLoading(file)"
                   (change)="toggleFileViewed(file)"
                 />
                 Viewed
@@ -475,13 +475,13 @@
                   <label
                     class="cr-viewed-control"
                     [class.cr-viewed-control--checked]="isFileViewed(renderRow.file)"
-                    [class.cr-viewed-control--disabled]="!isFileLoaded(renderRow.file)"
+                    [class.cr-viewed-control--disabled]="isFileFingerprintLoading(renderRow.file)"
                   >
                     <input
                       type="checkbox"
                       class="size-3.5 accent-[var(--success)]"
                       [checked]="isFileViewed(renderRow.file)"
-                      [disabled]="!isFileLoaded(renderRow.file)"
+                      [disabled]="isFileFingerprintLoading(renderRow.file)"
                       (change)="toggleFileViewed(renderRow.file)"
                     />
                     Viewed
