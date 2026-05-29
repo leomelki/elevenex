@@ -321,6 +321,7 @@ export class MergeConflictsPanelComponent implements OnDestroy {
 
     const generation = this.requestGeneration;
     this.updateFileState(path, (current) => ({ ...current, loading: true, error: null }));
+    let fileLoaded = false;
     try {
       const file = await firstValueFrom(this.filesService.readFile(this.worktreePath(), path));
       if (generation !== this.requestGeneration) return;
@@ -336,15 +337,19 @@ export class MergeConflictsPanelComponent implements OnDestroy {
         error: unsupported ? 'Binary conflicted files cannot be edited here.' : null,
         blocks: unsupported ? [] : parseConflictBlocks(file.content),
       }));
+      fileLoaded = true;
       if (this.activeFilePath() === path) {
         await this.ensureEditorForActive();
       }
     } catch (error: any) {
       if (generation !== this.requestGeneration) return;
+      const message = fileLoaded
+        ? (error?.message || 'Could not initialize editor.')
+        : (error?.error?.message || 'Could not load file.');
       this.updateFileState(path, (current) => ({
         ...current,
         loading: false,
-        error: error?.error?.message || 'Could not load file.',
+        error: message,
       }));
     }
   }

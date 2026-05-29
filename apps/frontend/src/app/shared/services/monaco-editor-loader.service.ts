@@ -1,4 +1,5 @@
 import { Injectable } from '@angular/core';
+import { getBackendOrigin } from '../runtime/runtime-config';
 
 type MonacoRequire = {
   config: (options: { paths: { vs: string } }) => void;
@@ -71,13 +72,22 @@ export class MonacoEditorLoaderService {
     }
 
     this.ensureStylesheet();
-    this.loadPromise ??= this.loadMonaco();
+    if (!this.loadPromise) {
+      const attempt = this.loadMonaco();
+      this.loadPromise = attempt;
+      attempt.catch(() => {
+        if (this.loadPromise === attempt) {
+          this.loadPromise = null;
+        }
+      });
+    }
     return this.loadPromise;
   }
 
   private async loadMonaco(): Promise<MonacoApi> {
+    const vsBase = `${getBackendOrigin()}/vs`;
     if (!window.require) {
-      await this.loadScript('/vs/loader.js');
+      await this.loadScript(`${vsBase}/loader.js`);
     }
 
     return new Promise<MonacoApi>((resolve, reject) => {
@@ -87,7 +97,7 @@ export class MonacoEditorLoaderService {
         return;
       }
 
-      require.config({ paths: { vs: '/vs' } });
+      require.config({ paths: { vs: vsBase } });
       require(
         ['vs/editor/editor.main'],
         () => {
@@ -106,6 +116,14 @@ export class MonacoEditorLoaderService {
     return new Promise((resolve, reject) => {
       const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
       if (existing) {
+        if (existing.dataset['loaded']) {
+          resolve();
+          return;
+        }
+        if (existing.dataset['error']) {
+          reject(new Error(`Could not load ${src}`));
+          return;
+        }
         existing.addEventListener('load', () => resolve(), { once: true });
         existing.addEventListener('error', () => reject(new Error(`Could not load ${src}`)), { once: true });
         return;
@@ -114,14 +132,20 @@ export class MonacoEditorLoaderService {
       const script = document.createElement('script');
       script.src = src;
       script.async = true;
-      script.addEventListener('load', () => resolve(), { once: true });
-      script.addEventListener('error', () => reject(new Error(`Could not load ${src}`)), { once: true });
+      script.addEventListener('load', () => {
+        script.dataset['loaded'] = 'true';
+        resolve();
+      }, { once: true });
+      script.addEventListener('error', () => {
+        script.dataset['error'] = 'true';
+        reject(new Error(`Could not load ${src}`));
+      }, { once: true });
       document.head.appendChild(script);
     });
   }
 
   private ensureStylesheet(): void {
-    const href = '/vs/editor/editor.main.css';
+    const href = `${getBackendOrigin()}/vs/editor/editor.main.css`;
     if (document.querySelector(`link[href="${href}"]`)) return;
     const link = document.createElement('link');
     link.rel = 'stylesheet';

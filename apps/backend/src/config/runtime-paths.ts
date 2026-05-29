@@ -132,3 +132,19 @@ export function getBackendVSCodeWorkbenchPath(): string {
 export function getBackendHelperPath(...segments: string[]): string {
   return join(getBackendRuntimeRoot(), ...segments);
 }
+
+export function getMonacoStaticPath(): string | null {
+  const runtimeRoot = getBackendRuntimeRoot();
+  const candidates = [
+    join(runtimeRoot, 'apps', 'frontend', 'public', 'vs'),
+    join(runtimeRoot, 'apps', 'frontend', 'dist', 'frontend', 'browser', 'vs'),
+    join(runtimeRoot, 'frontend', 'dist', 'frontend', 'browser', 'vs'),
+    join(runtimeRoot, 'vs'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, 'loader.js'))) {
+      return candidate;
+    }
+  }
+  return null;
+}

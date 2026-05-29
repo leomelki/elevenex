@@ -4,6 +4,11 @@
     "secure": false,
     "changeOrigin": true
   },
+  "/vs": {
+    "target": "http://127.0.0.1:11111",
+    "secure": false,
+    "changeOrigin": true
+  },
   "/vscode-static": {
     "target": "http://127.0.0.1:11111",
     "secure": false,
