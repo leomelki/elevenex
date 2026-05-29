@@ -60,6 +60,7 @@ import { ZardInputDirective } from '@/shared/components/input';
 import {
   detectHljsLang,
   escapeHtml,
+  inlineChangeHtml,
 } from '@/features/session/claude-workspace/util/code-highlight';
 import {
   ChangeReviewVirtualAnchor,
@@ -551,7 +552,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   rowHtml(row: ChangeReviewRow): SafeHtml {
-    const key = `${row.path}:${row.type}:${row.content}`;
+    const key = `${row.path}:${row.type}:${row.oldContent ?? ''}:${row.content}`;
     const cached = this.rowHtmlCache.get(key);
     if (cached) {
       this.rowHtmlCache.delete(key);
@@ -560,8 +561,15 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     }
 
     const lang = detectHljsLang(row.path);
-    let html = escapeHtml(row.content || ' ');
-    if (row.type !== 'hunk' && row.type !== 'expand' && row.type !== 'meta') {
+    let html = row.type === 'change' && row.oldContent !== undefined
+      ? inlineChangeHtml(row.oldContent, row.content)
+      : escapeHtml(row.content || ' ');
+    if (
+      row.type !== 'hunk' &&
+      row.type !== 'expand' &&
+      row.type !== 'meta' &&
+      row.type !== 'change'
+    ) {
       try {
         html = lang
           ? hljs.highlight(row.content || ' ', { language: lang, ignoreIllegals: true }).value
@@ -2093,6 +2101,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       oldLine: row.row?.oldLine ?? null,
       newLine: row.row?.newLine ?? null,
       content: row.row?.content ?? '',
+      oldContent: row.row?.oldContent,
     };
   }
 }

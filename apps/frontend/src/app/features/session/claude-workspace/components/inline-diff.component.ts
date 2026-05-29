@@ -139,6 +139,28 @@ import { SafeHtml } from '@angular/platform-browser';
       color: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
     }
 
+    :host ::ng-deep .cw-diff-change {
+      background: color-mix(in oklab, var(--success) 8%, transparent);
+    }
+
+    :host ::ng-deep .cw-diff-change .cw-diff-marker {
+      color: color-mix(in oklab, var(--success) 78%, var(--foreground));
+    }
+
+    :host ::ng-deep .diff-inline-del {
+      border-radius: 0.18rem;
+      background: color-mix(in oklab, var(--destructive) 16%, transparent);
+      color: color-mix(in oklab, var(--destructive) 88%, var(--foreground));
+      text-decoration-line: line-through;
+      text-decoration-thickness: 0.08em;
+    }
+
+    :host ::ng-deep .diff-inline-add {
+      border-radius: 0.18rem;
+      background: color-mix(in oklab, var(--success) 20%, transparent);
+      color: color-mix(in oklab, var(--success) 88%, var(--foreground));
+    }
+
     :host ::ng-deep .cw-diff-hunk {
       color: color-mix(in oklab, var(--primary) 78%, var(--foreground));
       background: color-mix(in oklab, var(--primary) 8%, transparent);

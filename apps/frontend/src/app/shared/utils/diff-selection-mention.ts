@@ -27,6 +27,7 @@ const ROW_TYPES: ReadonlySet<ChangeReviewRowType> = new Set<ChangeReviewRowType>
   'context',
   'add',
   'delete',
+  'change',
   'expand',
   'meta',
 ]);
@@ -234,6 +235,7 @@ function normalizeRow(value: unknown): DiffSelectionMentionContextRow | null {
     oldLine: nullableNumber(record['oldLine']),
     newLine: nullableNumber(record['newLine']),
     content,
+    oldContent: stringValue(record['oldContent']) ?? undefined,
   };
 }
 
@@ -258,6 +260,7 @@ function formatContextRow(row: DiffSelectionMentionContextRow): string {
   if (row.type === 'hunk') return `@@: ${content}`;
   if (row.type === 'add') return `+${row.newLine ?? '?'}: ${content}`;
   if (row.type === 'delete') return `-${row.oldLine ?? '?'}: ${content}`;
+  if (row.type === 'change') return `~${row.newLine ?? row.oldLine ?? '?'}: ${content}`;
   const line = row.newLine ?? row.oldLine;
   return line === null ? content : `${line}: ${content}`;
 }
@@ -315,6 +318,17 @@ function parseContextRow(line: string): DiffSelectionMentionContextRow {
       oldLine: null,
       newLine: null,
       content: hunk[1] ?? '',
+    };
+  }
+
+  const change = trimmed.match(/^~(\d+|\?):\s?(.*)$/);
+  if (change) {
+    const lineNumber = change[1] === '?' ? null : Number(change[1]);
+    return {
+      type: 'change',
+      oldLine: lineNumber,
+      newLine: lineNumber,
+      content: change[2] ?? '',
     };
   }
 

@@ -230,6 +230,10 @@
   background: color-mix(in oklch, oklch(0.76 0.15 35) 24%, var(--background));
 }
 
+.cr-diff-row--change {
+  background: color-mix(in oklch, var(--success) 8%, var(--background));
+}
+
 .cr-diff-row--hunk,
 .cr-diff-row--expand {
   color: color-mix(in oklch, var(--primary) 82%, var(--foreground));
@@ -255,6 +259,20 @@
 .cr-diff-row--mentioned .cr-marker {
   background: color-mix(in oklch, var(--warning) 16%, var(--background));
   color: color-mix(in oklch, var(--warning) 78%, var(--foreground));
+}
+
+.diff-inline-del {
+  border-radius: 0.18rem;
+  background: color-mix(in oklch, var(--destructive) 16%, transparent);
+  color: color-mix(in oklch, var(--destructive) 88%, var(--foreground));
+  text-decoration-line: line-through;
+  text-decoration-thickness: 0.08em;
+}
+
+.diff-inline-add {
+  border-radius: 0.18rem;
+  background: color-mix(in oklch, var(--success) 20%, transparent);
+  color: color-mix(in oklch, var(--success) 88%, var(--foreground));
 }
 
 .cr-large-diff-gate {

@@ -12,6 +12,7 @@ export interface DiffSelectionMentionContextRow {
   oldLine: number | null;
   newLine: number | null;
   content: string;
+  oldContent?: string;
 }
 
 export interface DiffSelectionMention {

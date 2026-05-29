@@ -86,6 +86,21 @@ const addRow = (path: string, index: number, content = `added ${index + 1}`) => 
   path,
 });
 
+const changeRow = (
+  path: string,
+  index: number,
+  oldContent = `old ${index + 1}`,
+  content = `new ${index + 1}`,
+): ChangeReviewRow => ({
+  id: `${path}:change:${index}`,
+  type: 'change',
+  oldLine: index + 1,
+  newLine: index + 1,
+  oldContent,
+  content,
+  path,
+});
+
 const expandRow = (
   path: string,
   oldStart: number,
@@ -891,5 +906,26 @@ describe('ChangeReviewPanelComponent', () => {
 
     expect(selectedRow?.classList.contains('cr-diff-row--mentioned')).toBe(true);
     expect(otherRow?.classList.contains('cr-diff-row--mentioned')).toBe(false);
+  });
+
+  it('renders modified rows as one inline change row', async () => {
+    const path = 'src/a.ts';
+    const changed = changeRow(path, 0, 'const total = previous + 1;', 'const total = next + 1;');
+    await flushSummary(summary([file(path)]));
+    windowCalls[0].response.next(fileWindow(path, 'branch', 0, [changed]));
+    windowCalls[0].response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    const changedRow = (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>(
+      '.cr-diff-row--change',
+    );
+
+    expect(changedRow).not.toBeNull();
+    expect(changedRow?.querySelector('.cr-line--old')?.textContent).toContain('1');
+    expect(changedRow?.querySelector('.cr-line--new')?.textContent).toContain('1');
+    expect(changedRow?.querySelector('.cr-marker')?.textContent).toContain('~');
+    expect(changedRow?.querySelector('.diff-inline-del')?.textContent).toContain('previous');
+    expect(changedRow?.querySelector('.diff-inline-add')?.textContent).toContain('next');
   });
 });

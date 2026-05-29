@@ -56,7 +56,14 @@ export interface ChangeReviewSummary {
   loadGuard: ChangeReviewLoadGuard | null;
 }
 
-export type ChangeReviewRowType = 'hunk' | 'context' | 'add' | 'delete' | 'expand' | 'meta';
+export type ChangeReviewRowType =
+  | 'hunk'
+  | 'context'
+  | 'add'
+  | 'delete'
+  | 'change'
+  | 'expand'
+  | 'meta';
 
 export interface ChangeReviewRow {
   id: string;
@@ -64,6 +71,7 @@ export interface ChangeReviewRow {
   oldLine: number | null;
   newLine: number | null;
   content: string;
+  oldContent?: string;
   path: string;
   oldStart?: number;
   newStart?: number;

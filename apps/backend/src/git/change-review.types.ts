@@ -65,6 +65,7 @@ export type ChangeReviewRowType =
   | 'context'
   | 'add'
   | 'delete'
+  | 'change'
   | 'expand'
   | 'meta';
 
@@ -74,6 +75,7 @@ export interface ChangeReviewRow {
   oldLine: number | null;
   newLine: number | null;
   content: string;
+  oldContent?: string;
   path: string;
   oldStart?: number;
   newStart?: number;

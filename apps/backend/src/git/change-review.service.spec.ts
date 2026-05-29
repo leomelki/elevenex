@@ -207,6 +207,57 @@ describe('ChangeReviewService', () => {
     expect(second.rows[0].id).not.toBe(first.rows[0].id);
   });
 
+  it('collapses similar delete/add pairs into modified rows', async () => {
+    write('src/app.ts', 'const value = 1;\n');
+    git('add .');
+    git('commit -m "add app"');
+    write('src/app.ts', 'const value = 2;\n');
+
+    const fileWindow = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'src/app.ts',
+      {
+        offset: 0,
+        limit: 20,
+        context: 0,
+      },
+    );
+
+    const changed = fileWindow.rows.find((row) => row.type === 'change');
+    expect(changed).toMatchObject({
+      oldLine: 1,
+      newLine: 1,
+      oldContent: 'const value = 1;',
+      content: 'const value = 2;',
+    });
+    expect(fileWindow.rows.some((row) => row.type === 'delete')).toBe(false);
+    expect(fileWindow.rows.some((row) => row.type === 'add')).toBe(false);
+  });
+
+  it('keeps unrelated delete/add pairs split', async () => {
+    write('README.md', 'zzzzzzzzzzzzzzzz\n');
+
+    const fileWindow = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      {
+        offset: 0,
+        limit: 20,
+        context: 0,
+      },
+    );
+
+    expect(fileWindow.rows.some((row) => row.type === 'change')).toBe(false);
+    expect(fileWindow.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'delete', content: 'one' }),
+        expect.objectContaining({ type: 'add', content: 'zzzzzzzzzzzzzzzz' }),
+      ]),
+    );
+  });
+
   it('omits very large file diffs by default and loads them when forced', async () => {
     write(
       'README.md',

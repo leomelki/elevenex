@@ -528,6 +528,7 @@
                   [attr.data-cr-row-id]="renderRow.id"
                   [class.cr-diff-row--add]="renderRow.row?.type === 'add'"
                   [class.cr-diff-row--delete]="renderRow.row?.type === 'delete'"
+                  [class.cr-diff-row--change]="renderRow.row?.type === 'change'"
                   [class.cr-diff-row--hunk]="renderRow.row?.type === 'hunk'"
                   [class.cr-diff-row--expand]="renderRow.row?.type === 'expand'"
                   [class.cr-diff-row--meta]="renderRow.row?.type === 'meta'"
@@ -542,6 +543,8 @@
                         +
                       } @else if (row.type === 'delete') {
                         -
+                      } @else if (row.type === 'change') {
+                        ~
                       } @else {
                         &nbsp;
                       }

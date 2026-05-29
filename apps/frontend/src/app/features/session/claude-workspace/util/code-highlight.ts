@@ -1,4 +1,5 @@
 import hljs from 'highlight.js/lib/common';
+import { diffChars, diffWordsWithSpace, type Change } from 'diff';
 
 const EXTENSION_TO_LANG: Record<string, string> = {
   ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
@@ -16,6 +17,10 @@ const EXTENSION_TO_LANG: Record<string, string> = {
   sql: 'sql', dockerfile: 'dockerfile',
   vue: 'xml', svelte: 'xml',
 };
+
+const INLINE_CHANGE_SIMILARITY_THRESHOLD = 0.55;
+const INLINE_CHANGE_MAX_LINE_LENGTH = 2_000;
+const INLINE_CHANGE_MAX_EDIT_LENGTH = 512;
 
 export function detectHljsLang(filePath: string): string | null {
   if (!filePath) return null;
@@ -126,7 +131,8 @@ export function highlightedDiffHtml(
 type LineDiff =
   | { type: 'context'; oldLine: number; newLine: number; oldIndex: number; newIndex: number }
   | { type: 'del'; oldLine: number; oldIndex: number }
-  | { type: 'add'; newLine: number; newIndex: number };
+  | { type: 'add'; newLine: number; newIndex: number }
+  | { type: 'change'; oldLine: number; newLine: number; oldIndex: number; newIndex: number };
 
 function splitDiffLines(text: string): string[] {
   if (!text) return [];
@@ -143,8 +149,16 @@ function buildLineDiff(
   const cells = oldLines.length * newLines.length;
   if (cells > 200_000) {
     return [
-      ...oldLines.map((_, index) => ({ type: 'del' as const, oldLine: oldStartLine + index, oldIndex: index })),
-      ...newLines.map((_, index) => ({ type: 'add' as const, newLine: newStartLine + index, newIndex: index })),
+      ...oldLines.map((_, index) => ({
+        type: 'del' as const,
+        oldLine: oldStartLine + index,
+        oldIndex: index,
+      })),
+      ...newLines.map((_, index) => ({
+        type: 'add' as const,
+        newLine: newStartLine + index,
+        newIndex: index,
+      })),
     ];
   }
 
@@ -175,7 +189,7 @@ function buildLineDiff(
       j++;
       continue;
     }
-    if (j < newLines.length && (i === oldLines.length || dp[i][j + 1] >= dp[i + 1][j])) {
+    if (j < newLines.length && (i === oldLines.length || dp[i][j + 1] > dp[i + 1][j])) {
       out.push({ type: 'add', newLine: newStartLine + j, newIndex: j });
       j++;
       continue;
@@ -188,13 +202,156 @@ function buildLineDiff(
   return out;
 }
 
+function collapseModifiedLineDiffs(
+  diff: LineDiff[],
+  oldLines: string[],
+  newLines: string[],
+): LineDiff[] {
+  const collapsed: LineDiff[] = [];
+  let index = 0;
+  while (index < diff.length) {
+    if (diff[index]?.type !== 'del') {
+      collapsed.push(diff[index]);
+      index++;
+      continue;
+    }
+
+    const deleteStart = index;
+    while (diff[index]?.type === 'del') index++;
+    const addStart = index;
+    while (diff[index]?.type === 'add') index++;
+
+    const deleted = diff.slice(deleteStart, addStart) as Extract<
+      LineDiff,
+      { type: 'del' }
+    >[];
+    const added = diff.slice(addStart, index) as Extract<LineDiff, { type: 'add' }>[];
+    const canCollapse =
+      deleted.length > 0 &&
+      deleted.length === added.length &&
+      deleted.every((line, lineIndex) =>
+        shouldCollapseInlineChange(
+          oldLines[line.oldIndex] ?? '',
+          newLines[added[lineIndex]?.newIndex ?? -1] ?? '',
+        ),
+      );
+
+    if (!canCollapse) {
+      collapsed.push(...deleted, ...added);
+      continue;
+    }
+
+    for (let lineIndex = 0; lineIndex < deleted.length; lineIndex++) {
+      const oldLine = deleted[lineIndex];
+      const newLine = added[lineIndex];
+      collapsed.push({
+        type: 'change',
+        oldLine: oldLine.oldLine,
+        newLine: newLine.newLine,
+        oldIndex: oldLine.oldIndex,
+        newIndex: newLine.newIndex,
+      });
+    }
+  }
+  return collapsed;
+}
+
+function shouldCollapseInlineChange(oldContent: string, newContent: string): boolean {
+  if (!oldContent || !newContent || oldContent === newContent) return false;
+  if (!oldContent.trim() || !newContent.trim()) return false;
+  if (
+    oldContent.length > INLINE_CHANGE_MAX_LINE_LENGTH ||
+    newContent.length > INLINE_CHANGE_MAX_LINE_LENGTH
+  ) {
+    return false;
+  }
+
+  const wordSimilarity = diffSimilarity(
+    diffWordsWithSpace(oldContent, newContent, {
+      maxEditLength: INLINE_CHANGE_MAX_EDIT_LENGTH,
+    }),
+  );
+  if (wordSimilarity >= INLINE_CHANGE_SIMILARITY_THRESHOLD) return true;
+
+  return (
+    diffSimilarity(
+      diffChars(oldContent, newContent, {
+        maxEditLength: INLINE_CHANGE_MAX_EDIT_LENGTH,
+      }),
+    ) >= INLINE_CHANGE_SIMILARITY_THRESHOLD
+  );
+}
+
+function diffSimilarity(changes: Change[] | undefined): number {
+  if (!changes?.length) return 0;
+  const equal = changes.reduce(
+    (sum, change) =>
+      change.added || change.removed ? sum : sum + change.value.length,
+    0,
+  );
+  const removed = changes.reduce(
+    (sum, change) => (change.added ? sum : sum + change.value.length),
+    0,
+  );
+  const added = changes.reduce(
+    (sum, change) => (change.removed ? sum : sum + change.value.length),
+    0,
+  );
+  return equal / Math.max(removed, added, 1);
+}
+
+function inlineChangeParts(oldContent: string, newContent: string): Change[] | null {
+  if (
+    oldContent.length > INLINE_CHANGE_MAX_LINE_LENGTH ||
+    newContent.length > INLINE_CHANGE_MAX_LINE_LENGTH
+  ) {
+    return null;
+  }
+
+  const wordChanges = diffWordsWithSpace(oldContent, newContent, {
+    maxEditLength: INLINE_CHANGE_MAX_EDIT_LENGTH,
+  });
+  if (!wordChanges) return null;
+
+  const singleTokenChange =
+    /^\S+$/.test(oldContent.trim()) &&
+    /^\S+$/.test(newContent.trim()) &&
+    wordChanges.some((change) => change.removed) &&
+    wordChanges.some((change) => change.added);
+  if (!singleTokenChange) return wordChanges;
+
+  return diffChars(oldContent, newContent, {
+    maxEditLength: INLINE_CHANGE_MAX_EDIT_LENGTH,
+  }) ?? wordChanges;
+}
+
+export function inlineChangeHtml(oldContent: string, newContent: string): string {
+  const changes = inlineChangeParts(oldContent, newContent);
+  if (!changes?.length) {
+    return [
+      `<span class="diff-inline-del">${escapeHtml(oldContent || ' ')}</span>`,
+      `<span class="diff-inline-add">${escapeHtml(newContent || ' ')}</span>`,
+    ].join('');
+  }
+
+  return changes
+    .map((change) => {
+      const value = escapeHtml(change.value || ' ');
+      if (change.removed) return `<span class="diff-inline-del">${value}</span>`;
+      if (change.added) return `<span class="diff-inline-add">${value}</span>`;
+      return value;
+    })
+    .join('');
+}
+
 function renderUnifiedDiffLine(
-  type: 'add' | 'del' | 'context',
+  type: 'add' | 'del' | 'context' | 'change',
   oldLine: number | null,
   newLine: number | null,
   content: string,
 ): string {
-  const marker = type === 'add' ? '+' : type === 'del' ? '-' : ' ';
+  const marker =
+    type === 'add' ? '+' : type === 'del' ? '-' : type === 'change' ? '~' : ' ';
   const oldText = oldLine === null ? '' : String(oldLine);
   const newText = newLine === null ? '' : String(newLine);
   return [
@@ -220,16 +377,33 @@ export function highlightedUnifiedDiffHtml(
   const newHl = highlightLines(newLines.join('\n'), lang);
   const oldStartLine = typeof options === 'number' ? options : options.oldStartLine ?? 1;
   const newStartLine = typeof options === 'number' ? options : options.newStartLine ?? 1;
-  const diff = buildLineDiff(
+  const diff = collapseModifiedLineDiffs(
+    buildLineDiff(
+      oldLines,
+      newLines,
+      oldStartLine,
+      newStartLine,
+    ),
     oldLines,
     newLines,
-    oldStartLine,
-    newStartLine,
   );
 
   return diff.map((line) => {
     if (line.type === 'context') {
-      return renderUnifiedDiffLine('context', line.oldLine, line.newLine, newHl[line.newIndex] ?? '');
+      return renderUnifiedDiffLine(
+        'context',
+        line.oldLine,
+        line.newLine,
+        newHl[line.newIndex] ?? '',
+      );
+    }
+    if (line.type === 'change') {
+      return renderUnifiedDiffLine(
+        'change',
+        line.oldLine,
+        line.newLine,
+        inlineChangeHtml(oldLines[line.oldIndex] ?? '', newLines[line.newIndex] ?? ''),
+      );
     }
     if (line.type === 'add') {
       return renderUnifiedDiffLine('add', null, line.newLine, newHl[line.newIndex] ?? '');
@@ -254,28 +428,107 @@ export function highlightedPatchHtml(patch: string, filePath = ''): string {
   let oldLine: number | null = null;
   let newLine: number | null = null;
 
-  return lines.map((line, i) => {
+  type PatchRenderLine =
+    | { type: 'hunk'; content: string }
+    | { type: 'context'; oldLine: number | null; newLine: number | null; html: string }
+    | { type: 'add'; newLine: number | null; content: string; html: string }
+    | { type: 'del'; oldLine: number | null; content: string; html: string }
+    | {
+      type: 'change';
+      oldLine: number | null;
+      newLine: number | null;
+      oldContent: string;
+      newContent: string;
+    };
+
+  const rows: PatchRenderLine[] = [];
+  lines.forEach((line, i) => {
     if (line.startsWith('@@')) {
       const m = line.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
       oldLine = m ? Number(m[1]) : null;
       newLine = m ? Number(m[2]) : null;
-      return `<span class="cw-diff-line cw-diff-hunk"><span class="cw-diff-ln cw-diff-ln--old"></span><span class="cw-diff-ln cw-diff-ln--new"></span><span class="cw-diff-marker"> </span><span class="cw-diff-code">${escapeHtml(line)}</span></span>`;
+      rows.push({ type: 'hunk', content: line });
+      return;
     }
-    if (line.startsWith('\\')) return '';
+    if (line.startsWith('\\')) return;
     const hl = highlighted[i] ?? '';
     if (line.startsWith('+')) {
-      const html = renderUnifiedDiffLine('add', null, newLine, hl);
+      rows.push({ type: 'add', newLine, content: line.slice(1), html: hl });
       if (newLine !== null) newLine++;
-      return html;
+      return;
     }
     if (line.startsWith('-')) {
-      const html = renderUnifiedDiffLine('del', oldLine, null, hl);
+      rows.push({ type: 'del', oldLine, content: line.slice(1), html: hl });
       if (oldLine !== null) oldLine++;
-      return html;
+      return;
     }
-    const html = renderUnifiedDiffLine('context', oldLine, newLine, hl);
+    rows.push({ type: 'context', oldLine, newLine, html: hl });
     if (oldLine !== null) oldLine++;
     if (newLine !== null) newLine++;
-    return html;
-  }).filter(Boolean).join('');
+  });
+
+  const collapsedRows: PatchRenderLine[] = [];
+  let index = 0;
+  while (index < rows.length) {
+    if (rows[index]?.type !== 'del') {
+      collapsedRows.push(rows[index]);
+      index++;
+      continue;
+    }
+
+    const deleteStart = index;
+    while (rows[index]?.type === 'del') index++;
+    const addStart = index;
+    while (rows[index]?.type === 'add') index++;
+    const deleted = rows.slice(deleteStart, addStart) as Extract<
+      PatchRenderLine,
+      { type: 'del' }
+    >[];
+    const added = rows.slice(addStart, index) as Extract<
+      PatchRenderLine,
+      { type: 'add' }
+    >[];
+    const canCollapse =
+      deleted.length > 0 &&
+      deleted.length === added.length &&
+      deleted.every((row, rowIndex) =>
+        shouldCollapseInlineChange(row.content, added[rowIndex]?.content ?? ''),
+      );
+    if (!canCollapse) {
+      collapsedRows.push(...deleted, ...added);
+      continue;
+    }
+    for (let rowIndex = 0; rowIndex < deleted.length; rowIndex++) {
+      collapsedRows.push({
+        type: 'change',
+        oldLine: deleted[rowIndex].oldLine,
+        newLine: added[rowIndex].newLine,
+        oldContent: deleted[rowIndex].content,
+        newContent: added[rowIndex].content,
+      });
+    }
+  }
+
+  return collapsedRows
+    .map((row) => {
+      if (row.type === 'hunk') {
+        return `<span class="cw-diff-line cw-diff-hunk"><span class="cw-diff-ln cw-diff-ln--old"></span><span class="cw-diff-ln cw-diff-ln--new"></span><span class="cw-diff-marker"> </span><span class="cw-diff-code">${escapeHtml(row.content)}</span></span>`;
+      }
+      if (row.type === 'context') {
+        return renderUnifiedDiffLine('context', row.oldLine, row.newLine, row.html);
+      }
+      if (row.type === 'change') {
+        return renderUnifiedDiffLine(
+          'change',
+          row.oldLine,
+          row.newLine,
+          inlineChangeHtml(row.oldContent, row.newContent),
+        );
+      }
+      if (row.type === 'add') {
+        return renderUnifiedDiffLine('add', null, row.newLine, row.html);
+      }
+      return renderUnifiedDiffLine('del', row.oldLine, null, row.html);
+    })
+    .join('');
 }

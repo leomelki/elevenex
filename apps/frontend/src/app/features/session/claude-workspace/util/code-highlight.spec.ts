@@ -17,6 +17,28 @@ describe('code-highlight diff line numbers', () => {
     expect(html).toContain('cw-diff-ln--new">42<');
   });
 
+  it('renders similar edit lines as one inline change row', () => {
+    const html = highlightedUnifiedDiffHtml(
+      'const total = previous + 1;',
+      'const total = next + 1;',
+      'src/app.ts',
+    );
+
+    expect(html).toContain('cw-diff-change');
+    expect(html).toContain('diff-inline-del');
+    expect(html).toContain('diff-inline-add');
+    expect(html).not.toContain('cw-diff-del');
+    expect(html).not.toContain('cw-diff-add');
+  });
+
+  it('keeps unrelated edit lines split', () => {
+    const html = highlightedUnifiedDiffHtml('one', 'zzzzzzzzzzzzzzzz', 'README.md');
+
+    expect(html).not.toContain('cw-diff-change');
+    expect(html).toContain('cw-diff-del');
+    expect(html).toContain('cw-diff-add');
+  });
+
   it('uses unified patch hunk headers for line numbers', () => {
     const html = highlightedPatchHtml([
       '@@ -12,2 +12,2 @@',
@@ -29,5 +51,8 @@ describe('code-highlight diff line numbers', () => {
     expect(html).toContain('cw-diff-ln--new">12<');
     expect(html).toContain('cw-diff-ln--old">13<');
     expect(html).toContain('cw-diff-ln--new">13<');
+    expect(html).toContain('cw-diff-change');
+    expect(html).toContain('diff-inline-del');
+    expect(html).toContain('diff-inline-add');
   });
 });

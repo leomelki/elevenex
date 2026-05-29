@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createXXHash3, xxhash3 } from 'hash-wasm/dist/xxhash3.umd.min.js';
+import { diffChars, diffWordsWithSpace, type Change } from 'diff';
 import { SimpleGit, StatusResult } from 'simple-git';
 
 import {
@@ -47,6 +48,9 @@ const FILE_FINGERPRINT_CONCURRENCY = 16;
 const FINGERPRINT_STREAM_THRESHOLD_BYTES = 1_000_000;
 const LAST_COMMIT_WORKTREE_FINGERPRINT = '0'.repeat(64);
 const VIEWED_FINGERPRINT_VERSION = 'cr-viewed-fp-v1';
+const INLINE_CHANGE_SIMILARITY_THRESHOLD = 0.55;
+const INLINE_CHANGE_MAX_LINE_LENGTH = 2_000;
+const INLINE_CHANGE_MAX_EDIT_LENGTH = 512;
 
 interface ReviewBase {
   repoRoot: string;
@@ -1045,6 +1049,7 @@ export class ChangeReviewService {
 
     const patch = await git.raw([
       ...this.buildDiffArgs(scope, base, [
+        '--diff-algorithm=histogram',
         `--unified=${context}`,
         '--find-renames',
       ]),
@@ -1332,7 +1337,105 @@ export class ChangeReviewService {
       });
     }
 
-    return { rows, contextRanges };
+    return { rows: this.collapseModifiedRows(rows), contextRanges };
+  }
+
+  private collapseModifiedRows(rows: ChangeReviewRow[]): ChangeReviewRow[] {
+    const collapsed: ChangeReviewRow[] = [];
+    let index = 0;
+
+    while (index < rows.length) {
+      if (rows[index]?.type !== 'delete') {
+        collapsed.push(rows[index]);
+        index += 1;
+        continue;
+      }
+
+      const deleteStart = index;
+      while (rows[index]?.type === 'delete') index += 1;
+      const addStart = index;
+      while (rows[index]?.type === 'add') index += 1;
+
+      const deletedRows = rows.slice(deleteStart, addStart);
+      const addedRows = rows.slice(addStart, index);
+      const canCollapse =
+        deletedRows.length > 0 &&
+        deletedRows.length === addedRows.length &&
+        deletedRows.every((row, rowIndex) =>
+          this.shouldCollapseModifiedLine(
+            row.content,
+            addedRows[rowIndex]?.content ?? '',
+          ),
+        );
+
+      if (!canCollapse) {
+        collapsed.push(...deletedRows, ...addedRows);
+        continue;
+      }
+
+      for (let rowIndex = 0; rowIndex < deletedRows.length; rowIndex += 1) {
+        const deleted = deletedRows[rowIndex];
+        const added = addedRows[rowIndex];
+        collapsed.push({
+          ...added,
+          id: `${deleted.id}:change:${added.id}`,
+          type: 'change',
+          oldLine: deleted.oldLine,
+          newLine: added.newLine,
+          oldContent: deleted.content,
+          content: added.content,
+        });
+      }
+    }
+
+    return collapsed;
+  }
+
+  private shouldCollapseModifiedLine(
+    oldContent: string,
+    newContent: string,
+  ): boolean {
+    if (!oldContent || !newContent || oldContent === newContent) return false;
+    if (!oldContent.trim() || !newContent.trim()) return false;
+    if (
+      oldContent.length > INLINE_CHANGE_MAX_LINE_LENGTH ||
+      newContent.length > INLINE_CHANGE_MAX_LINE_LENGTH
+    ) {
+      return false;
+    }
+
+    const wordSimilarity = this.diffSimilarity(
+      diffWordsWithSpace(oldContent, newContent, {
+        maxEditLength: INLINE_CHANGE_MAX_EDIT_LENGTH,
+      }),
+    );
+    if (wordSimilarity >= INLINE_CHANGE_SIMILARITY_THRESHOLD) return true;
+
+    return (
+      this.diffSimilarity(
+        diffChars(oldContent, newContent, {
+          maxEditLength: INLINE_CHANGE_MAX_EDIT_LENGTH,
+        }),
+      ) >= INLINE_CHANGE_SIMILARITY_THRESHOLD
+    );
+  }
+
+  private diffSimilarity(changes: Change[] | undefined): number {
+    if (!changes?.length) return 0;
+    const equal = changes.reduce(
+      (sum, change) =>
+        change.added || change.removed ? sum : sum + change.value.length,
+      0,
+    );
+    const removed = changes.reduce(
+      (sum, change) => (change.added ? sum : sum + change.value.length),
+      0,
+    );
+    const added = changes.reduce(
+      (sum, change) => (change.removed ? sum : sum + change.value.length),
+      0,
+    );
+    return equal / Math.max(removed, added, 1);
   }
 
   private buildContextRows(
@@ -1746,6 +1849,8 @@ export class ChangeReviewService {
       hash.update(String(row.newLine ?? ''));
       hash.update('\0');
       hash.update(row.content);
+      hash.update('\0');
+      hash.update(row.oldContent ?? '');
       hash.update('\0');
       hash.update(row.path);
       hash.update('\n');
