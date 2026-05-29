@@ -4,6 +4,9 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
 import { SessionTitleService } from '../session-title/session-title.service.js';
 
+const flushImmediate = () =>
+  new Promise<void>((resolve) => setImmediate(resolve));
+
 describe('ClaudeHooksService', () => {
   let service: ClaudeHooksService;
   let sessionsService: {
@@ -275,7 +278,7 @@ describe('ClaudeHooksService', () => {
     expect(sessionTitleService.generate).not.toHaveBeenCalled();
   });
 
-  it('returns worktree context and a session title for the first TUI prompt', async () => {
+  it('returns worktree context and schedules a session title for the first TUI prompt', async () => {
     sessionsService.findOne.mockResolvedValue({
       id: 7,
       repoId: 1,
@@ -319,7 +322,6 @@ describe('ClaudeHooksService', () => {
           'Context for this session: This branch updates TUI session summaries.',
           '</elevenex-worktree-context>',
         ].join('\n'),
-        sessionTitle: 'TUI Session Summaries',
       },
     });
     expect(worktreeContextService.generate).toHaveBeenCalledWith(
@@ -332,6 +334,8 @@ describe('ClaudeHooksService', () => {
       true,
       'This branch updates TUI session summaries.',
     );
+    expect(sessionsService.renameFromGeneratedTitle).not.toHaveBeenCalled();
+    await flushImmediate();
     expect(sessionsService.renameFromGeneratedTitle).toHaveBeenCalledWith(
       7,
       'TUI Session Summaries',
@@ -346,7 +350,12 @@ describe('ClaudeHooksService', () => {
       name: 'Session 1',
       hasInjectedWorktreeContext: true,
     });
-    sessionTitleService.generate.mockResolvedValue('TUI Session Summaries');
+    let resolveTitle!: (title: string) => void;
+    sessionTitleService.generate.mockReturnValue(
+      new Promise((resolve) => {
+        resolveTitle = resolve;
+      }),
+    );
     sessionsService.renameFromGeneratedTitle.mockResolvedValue({
       name: 'TUI Session Summaries',
     });
@@ -362,13 +371,20 @@ describe('ClaudeHooksService', () => {
 
     expect(worktreeContextService.getCachedSnapshot).not.toHaveBeenCalled();
     expect(worktreeContextService.generate).not.toHaveBeenCalled();
-    expect(response).toEqual({
-      continue: true,
-      hookSpecificOutput: {
-        hookEventName: 'UserPromptSubmit',
-        sessionTitle: 'TUI Session Summaries',
-      },
-    });
+    expect(response).toEqual({ continue: true });
+    await flushImmediate();
+    expect(sessionTitleService.generate).toHaveBeenCalledWith(
+      '/tmp/project',
+      'Please ship this change',
+    );
+    expect(sessionsService.renameFromGeneratedTitle).not.toHaveBeenCalled();
+
+    resolveTitle('TUI Session Summaries');
+    await flushImmediate();
+    expect(sessionsService.renameFromGeneratedTitle).toHaveBeenCalledWith(
+      7,
+      'TUI Session Summaries',
+    );
   });
 
   it('skips worktree context for slash commands while still generating a title', async () => {
@@ -395,11 +411,14 @@ describe('ClaudeHooksService', () => {
 
     expect(worktreeContextService.getCachedSnapshot).not.toHaveBeenCalled();
     expect(worktreeContextService.generate).not.toHaveBeenCalled();
+    expect(response).toEqual({ continue: true });
+    await flushImmediate();
     expect(sessionTitleService.generate).toHaveBeenCalledWith(
       '/tmp/project',
       '/status',
     );
-    expect(response.hookSpecificOutput?.sessionTitle).toBe(
+    expect(sessionsService.renameFromGeneratedTitle).toHaveBeenCalledWith(
+      7,
       'Claude Status Check',
     );
   });
@@ -453,6 +472,7 @@ describe('ClaudeHooksService', () => {
 
     expect(left).toEqual(right);
     expect(worktreeContextService.getCachedSnapshot).toHaveBeenCalledTimes(1);
+    await flushImmediate();
     expect(sessionTitleService.generate).toHaveBeenCalledTimes(1);
   });
 
@@ -479,5 +499,6 @@ describe('ClaudeHooksService', () => {
         { origin: 'tui' },
       ),
     ).resolves.toEqual({ continue: true });
+    await flushImmediate();
   });
 });
