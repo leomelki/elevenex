@@ -11,6 +11,7 @@ import {
   OnDestroy,
   output,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
@@ -137,6 +138,20 @@ interface WindowCacheEntry {
   length: number;
 }
 
+interface ScopeViewSnapshot {
+  summary: ChangeReviewSummary;
+  fileStates: ReadonlyMap<string, FileRenderState>;
+  fileChangeHashes: ReadonlyMap<string, string>;
+  activeFilePath: string | null;
+  collapsedPaths: ReadonlySet<string>;
+  forceLoadedFileDiffs: ReadonlySet<string>;
+  forceLoadLargeChangeSet: boolean;
+  windowCache: ReadonlyMap<string, WindowCacheEntry>;
+  windowCacheRows: number;
+  scrollTop: number;
+  scrollLeft: number;
+}
+
 const SCOPES: ScopeOption[] = [
   { value: 'uncommitted', label: 'Uncommitted' },
   { value: 'last-commit', label: 'Last commit' },
@@ -196,6 +211,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private readonly windowQueue: WindowRequest[] = [];
   private readonly pendingWindowKeys = new Set<string>();
   private readonly windowCache = new Map<string, WindowCacheEntry>();
+  private readonly scopeSnapshots = new Map<string, ScopeViewSnapshot>();
   private readonly requestCancel$ = new Subject<void>();
   private readonly forceLoadedFileDiffs = signal<ReadonlySet<string>>(new Set());
   private readonly relativeTimeInterval = window.setInterval(() => {
@@ -205,6 +221,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private windowCacheRows = 0;
   private inFlightWindowLoads = 0;
   private generation = 0;
+  private activeScopeKey: string | null = null;
   private gitSummaryRefreshTimer: number | null = null;
   private readonly countFormatter = new Intl.NumberFormat();
 
@@ -324,7 +341,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       const worktreePath = this.worktreePath();
       const scope = this.scope();
       if (!worktreePath || !scope) return;
-      void this.loadForCurrentScope(false);
+      untracked(() => this.activateScope(worktreePath, scope));
     });
   }
 
@@ -339,6 +356,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     if (refreshBase) {
       this.changeReview.clearCache(this.worktreePath(), this.scope());
     }
+    this.clearCurrentScopeSnapshot();
     await this.loadForCurrentScope(refreshBase);
   }
 
@@ -347,18 +365,19 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     const latest = this.latestGitSummary();
     const needsBaseRefresh = Boolean(summary && latest && summary.headSha !== latest.headSha);
     this.changeReview.clearCache(this.worktreePath(), this.scope());
+    this.clearCurrentScopeSnapshot();
     await this.loadForCurrentScope(needsBaseRefresh);
   }
 
   setScope(scope: ChangeReviewScope): void {
     if (scope === this.scope()) return;
-    this.forceLoadLargeChangeSet.set(false);
     this.scope.set(scope);
   }
 
   async loadLargeChangeSet(): Promise<void> {
     this.forceLoadLargeChangeSet.set(true);
     this.changeReview.clearCache(this.worktreePath(), this.scope());
+    this.clearCurrentScopeSnapshot();
     await this.loadForCurrentScope(false);
   }
 
@@ -735,6 +754,127 @@ export class ChangeReviewPanelComponent implements OnDestroy {
 
   largeFileDiffText(file: ChangeReviewFileSummary): string {
     return `${this.formatCount(this.changedLineCount(file))} changed lines`;
+  }
+
+  private activateScope(worktreePath: string, scope: ChangeReviewScope): void {
+    const nextKey = this.scopeSnapshotKey(worktreePath, scope);
+    if (this.activeScopeKey === nextKey) return;
+
+    this.saveActiveScopeSnapshot();
+    this.activeScopeKey = nextKey;
+
+    const snapshot = this.scopeSnapshots.get(nextKey);
+    if (snapshot) {
+      this.restoreScopeSnapshot(snapshot, worktreePath);
+      return;
+    }
+
+    this.forceLoadLargeChangeSet.set(false);
+    void this.loadForCurrentScope(false);
+  }
+
+  private saveActiveScopeSnapshot(): void {
+    const key = this.activeScopeKey;
+    const summary = this.summary();
+    if (!key || !summary || this.scopeSnapshotKey(summary.worktreePath, summary.scope) !== key) {
+      return;
+    }
+
+    const scrollEl = this.diffScroll()?.nativeElement;
+    this.scopeSnapshots.set(key, {
+      summary,
+      fileStates: this.snapshotFileStates(),
+      fileChangeHashes: new Map(this.fileChangeHashes()),
+      activeFilePath: this.activeFilePath(),
+      collapsedPaths: new Set(this.collapsedPaths()),
+      forceLoadedFileDiffs: new Set(this.forceLoadedFileDiffs()),
+      forceLoadLargeChangeSet: this.forceLoadLargeChangeSet(),
+      windowCache: new Map(this.windowCache),
+      windowCacheRows: this.windowCacheRows,
+      scrollTop: scrollEl?.scrollTop ?? 0,
+      scrollLeft: scrollEl?.scrollLeft ?? this.diffScrollLeftPx(),
+    });
+  }
+
+  private snapshotFileStates(): ReadonlyMap<string, FileRenderState> {
+    return new Map(
+      Array.from(this.fileStates()).map(([path, state]) => [
+        path,
+        {
+          ...state,
+          loadingOffsets: new Set<number>(),
+        },
+      ]),
+    );
+  }
+
+  private restoreScopeSnapshot(snapshot: ScopeViewSnapshot, worktreePath: string): void {
+    const requestGeneration = this.generation + 1;
+    this.generation = requestGeneration;
+    this.cancelActiveRequests();
+    this.resetQueues();
+    this.restoreWindowCache(snapshot);
+
+    this.loadingSummary.set(false);
+    this.error.set(null);
+    this.summary.set(snapshot.summary);
+    this.fileStates.set(snapshot.fileStates);
+    this.fileChangeHashes.set(snapshot.fileChangeHashes);
+    this.collapsedPaths.set(snapshot.collapsedPaths);
+    this.forceLoadedFileDiffs.set(snapshot.forceLoadedFileDiffs);
+    this.forceLoadLargeChangeSet.set(snapshot.forceLoadLargeChangeSet);
+    this.loadingContextRanges.set(new Set());
+    this.selectionMentionAction.set(null);
+    this.now.set(Date.now());
+
+    this.rebuildLayout();
+    const files = this.filteredFiles();
+    this.activeFilePath.set(
+      snapshot.activeFilePath && files.some((file) => file.path === snapshot.activeFilePath)
+        ? snapshot.activeFilePath
+        : (files[0]?.path ?? null),
+    );
+    this.visibleRows.set([]);
+    this.renderedOffsetPx.set(0);
+    this.restoreScrollPosition(snapshot.scrollTop, snapshot.scrollLeft);
+    if (!snapshot.summary.loadGuard?.blocked) {
+      this.scheduleGitSummaryRefresh(worktreePath, requestGeneration);
+    }
+  }
+
+  private restoreWindowCache(snapshot: ScopeViewSnapshot): void {
+    this.windowCache.clear();
+    for (const [key, entry] of snapshot.windowCache) {
+      this.windowCache.set(key, { ...entry });
+    }
+    this.windowCacheRows = snapshot.windowCacheRows;
+  }
+
+  private restoreScrollPosition(scrollTop: number, scrollLeft: number): void {
+    const applyScroll = () => {
+      const scrollEl = this.diffScroll()?.nativeElement;
+      if (!scrollEl) {
+        this.visibleRows.set([]);
+        this.renderedOffsetPx.set(0);
+        return;
+      }
+      scrollEl.scrollTop = scrollTop;
+      scrollEl.scrollLeft = scrollLeft;
+      this.updateDiffViewportMetrics();
+      this.refreshRenderedRows();
+      this.ensureVisibleRangeLoaded();
+    };
+
+    applyScroll();
+    window.setTimeout(applyScroll, 0);
+  }
+
+  private clearCurrentScopeSnapshot(): void {
+    this.scopeSnapshots.delete(this.scopeSnapshotKey(this.worktreePath(), this.scope()));
+  }
+
+  private scopeSnapshotKey(worktreePath: string, scope: ChangeReviewScope): string {
+    return `${worktreePath}\0${scope}`;
   }
 
   private async loadForCurrentScope(refreshBase: boolean): Promise<void> {

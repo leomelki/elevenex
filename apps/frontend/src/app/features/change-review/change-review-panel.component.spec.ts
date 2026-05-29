@@ -476,6 +476,42 @@ describe('ChangeReviewPanelComponent', () => {
     expect(fixture.componentInstance.fileChangeHashes().has('src/old.ts')).toBe(false);
   });
 
+  it('restores loaded scope state without reloading summary or diff windows', async () => {
+    await flushSummary(summary([file('src/branch.ts')], 'branch'));
+    windowCalls[0].response.next(
+      fileWindow('src/branch.ts', 'branch', 0, [addRow('src/branch.ts', 0)]),
+    );
+    windowCalls[0].response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.fileChangeHashes().get('src/branch.ts')).toBe(
+      'src/branch.ts:hash',
+    );
+    expect(summaryCalls).toHaveLength(1);
+    expect(windowCalls.filter((call) => call.path === 'src/branch.ts')).toHaveLength(1);
+
+    fixture.componentInstance.setScope('uncommitted');
+    fixture.detectChanges();
+    expect(summaryCalls[summaryCalls.length - 1].scope).toBe('uncommitted');
+    await flushSummary(summary([file('src/worktree.ts')], 'uncommitted'));
+
+    latestGitSummary.set(gitSummary({ worktreeFingerprint: 'worktree-b', headSha: 'head123' }));
+    fixture.componentInstance.setScope('branch');
+    fixture.detectChanges();
+    await flush();
+    fixture.detectChanges();
+
+    expect(summaryCalls).toHaveLength(2);
+    expect(windowCalls.filter((call) => call.path === 'src/branch.ts')).toHaveLength(1);
+    expect(fixture.componentInstance.summary()?.scope).toBe('branch');
+    expect(fixture.componentInstance.fileChangeHashes().get('src/branch.ts')).toBe(
+      'src/branch.ts:hash',
+    );
+    expect(fixture.componentInstance.diffsOutdated()).toBe(true);
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Outdated');
+  });
+
   it('enables viewed state after a file hash loads', async () => {
     const files = [file('src/a.ts')];
     await flushSummary(summary(files));
