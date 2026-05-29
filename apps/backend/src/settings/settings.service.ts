@@ -5,7 +5,11 @@ import * as schema from '../database/schema/index.js';
 import {
   AppSettings,
   CLAUDE_SESSION_SURFACES,
+  CompleteOnboardingInput,
+  DEFAULT_AGENT_PROVIDER,
+  DEFAULT_AGENT_PROVIDERS,
   DEFAULT_CLAUDE_SESSION_SURFACE,
+  DefaultAgentProvider,
   DefaultClaudeSessionSurface,
   SessionToolbarButtonSetting,
   UpdateAppSettingsInput,
@@ -28,7 +32,9 @@ export class SettingsService {
     if (!row) {
       return {
         defaultClaudeSessionSurface: DEFAULT_CLAUDE_SESSION_SURFACE,
+        defaultAgentProvider: DEFAULT_AGENT_PROVIDER,
         sessionToolbarButtons: null,
+        onboardingCompletedAt: null,
         createdAt: null,
         updatedAt: null,
       };
@@ -42,6 +48,9 @@ export class SettingsService {
     const defaultClaudeSessionSurface =
       input.defaultClaudeSessionSurface ?? current.defaultClaudeSessionSurface;
     this.assertDefaultClaudeSessionSurface(defaultClaudeSessionSurface);
+    const defaultAgentProvider =
+      input.defaultAgentProvider ?? current.defaultAgentProvider;
+    this.assertDefaultAgentProvider(defaultAgentProvider);
 
     const hasToolbarButtons = Object.prototype.hasOwnProperty.call(
       input,
@@ -58,9 +67,11 @@ export class SettingsService {
       .values({
         id: SINGLETON_SETTINGS_ID,
         defaultClaudeSessionSurface,
+        defaultAgentProvider,
         sessionToolbarButtons: this.serializeSessionToolbarButtons(
           sessionToolbarButtons,
         ),
+        onboardingCompletedAt: current.onboardingCompletedAt,
         createdAt: timestamp,
         updatedAt: timestamp,
       })
@@ -68,9 +79,55 @@ export class SettingsService {
         target: [schema.appSettings.id],
         set: {
           defaultClaudeSessionSurface,
+          defaultAgentProvider,
           sessionToolbarButtons: this.serializeSessionToolbarButtons(
             sessionToolbarButtons,
           ),
+          onboardingCompletedAt: current.onboardingCompletedAt,
+          updatedAt: timestamp,
+        },
+      });
+
+    return this.findOne();
+  }
+
+  async completeOnboarding(
+    input: CompleteOnboardingInput,
+  ): Promise<AppSettings> {
+    const current = await this.findOne();
+    this.assertDefaultAgentProvider(input.defaultAgentProvider);
+
+    const defaultClaudeSessionSurface =
+      input.defaultAgentProvider === 'claude'
+        ? (input.defaultClaudeSessionSurface
+          ?? current.defaultClaudeSessionSurface)
+        : current.defaultClaudeSessionSurface;
+    this.assertDefaultClaudeSessionSurface(defaultClaudeSessionSurface);
+
+    const timestamp = new Date().toISOString();
+
+    await this.db
+      .insert(schema.appSettings)
+      .values({
+        id: SINGLETON_SETTINGS_ID,
+        defaultClaudeSessionSurface,
+        defaultAgentProvider: input.defaultAgentProvider,
+        sessionToolbarButtons: this.serializeSessionToolbarButtons(
+          current.sessionToolbarButtons,
+        ),
+        onboardingCompletedAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .onConflictDoUpdate({
+        target: [schema.appSettings.id],
+        set: {
+          defaultClaudeSessionSurface,
+          defaultAgentProvider: input.defaultAgentProvider,
+          sessionToolbarButtons: this.serializeSessionToolbarButtons(
+            current.sessionToolbarButtons,
+          ),
+          onboardingCompletedAt: timestamp,
           updatedAt: timestamp,
         },
       });
@@ -84,12 +141,19 @@ export class SettingsService {
     )
       ? (row.defaultClaudeSessionSurface as DefaultClaudeSessionSurface)
       : DEFAULT_CLAUDE_SESSION_SURFACE;
+    const defaultAgentProvider = DEFAULT_AGENT_PROVIDERS.includes(
+      row.defaultAgentProvider as DefaultAgentProvider,
+    )
+      ? (row.defaultAgentProvider as DefaultAgentProvider)
+      : DEFAULT_AGENT_PROVIDER;
 
     return {
       defaultClaudeSessionSurface,
+      defaultAgentProvider,
       sessionToolbarButtons: this.parseSessionToolbarButtons(
         row.sessionToolbarButtons,
       ),
+      onboardingCompletedAt: row.onboardingCompletedAt ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -100,6 +164,14 @@ export class SettingsService {
   ): void {
     if (!CLAUDE_SESSION_SURFACES.includes(defaultClaudeSessionSurface)) {
       throw new BadRequestException('Unsupported Claude session surface.');
+    }
+  }
+
+  private assertDefaultAgentProvider(
+    defaultAgentProvider: DefaultAgentProvider,
+  ): void {
+    if (!DEFAULT_AGENT_PROVIDERS.includes(defaultAgentProvider)) {
+      throw new BadRequestException('Unsupported default agent provider.');
     }
   }
 

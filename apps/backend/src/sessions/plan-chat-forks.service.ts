@@ -121,6 +121,7 @@ export class PlanChatForksService {
         worktreePath: parent.worktreePath,
         name: childName,
         surface: 'embedded_plan_chat',
+        activeAgentProvider: provider,
       });
 
       const providerResult = await runtime.forkConversation({

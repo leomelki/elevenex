@@ -1,5 +1,8 @@
-import { Body, Controller, Get, Patch } from '@nestjs/common';
-import { UpdateAppSettingsDto } from './dto/update-app-settings.dto.js';
+import { Body, Controller, Get, Patch, Post } from '@nestjs/common';
+import {
+  CompleteOnboardingDto,
+  UpdateAppSettingsDto,
+} from './dto/update-app-settings.dto.js';
 import { SettingsService } from './settings.service.js';
 
 @Controller('settings')
@@ -14,5 +17,10 @@ export class SettingsController {
   @Patch()
   update(@Body() dto: UpdateAppSettingsDto) {
     return this.settingsService.update(dto);
+  }
+
+  @Post('onboarding/complete')
+  completeOnboarding(@Body() dto: CompleteOnboardingDto) {
+    return this.settingsService.completeOnboarding(dto);
   }
 }

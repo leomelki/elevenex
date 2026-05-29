@@ -1,17 +1,24 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
 import { Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideArrowLeft,
   lucideArrowRight,
+  lucideBot,
   lucideCheck,
   lucideChevronsRight,
+  lucideCircleDot,
+  lucideCode2,
+  lucideCpu,
   lucideHardDrive,
   lucideKeyRound,
   lucideLock,
+  lucideMonitor,
   lucideRefreshCw,
   lucideServer,
   lucideShieldCheck,
+  lucideSparkles,
+  lucideSquareTerminal,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 
@@ -19,46 +26,56 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
 import { ELEVENEX_REMOTE_PORT } from '@/shared/constants/elevenex';
+import { DefaultAgentProvider, DefaultClaudeSessionSurface } from '@/shared/models/app-settings.model';
 import { SavedServer, ServerAuthMode } from '@/shared/models/onboarding.model';
-import { Project } from '@/shared/models/project.model';
-import { ProjectsService } from '@/shared/services/projects.service';
+import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { OnboardingConnectionService } from '@/shared/services/onboarding-connection.service';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
-import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-wizard/project-onboarding-wizard';
+
+type OnboardingStep = 'connection' | 'ssh' | 'install' | 'agent' | 'claude-surface' | 'reminder';
 
 @Component({
   selector: 'app-onboarding',
-  imports: [NgIcon, ZardButtonComponent, ZardInputDirective, PathAutocompleteInputComponent, ProjectOnboardingWizard],
+  imports: [NgIcon, ZardButtonComponent, ZardInputDirective, PathAutocompleteInputComponent],
   templateUrl: './onboarding.html',
   host: { class: 'block flex-1 overflow-y-auto' },
   viewProviders: [
     provideIcons({
+      lucideArrowLeft,
       lucideArrowRight,
+      lucideBot,
       lucideCheck,
       lucideChevronsRight,
+      lucideCircleDot,
+      lucideCode2,
+      lucideCpu,
       lucideHardDrive,
       lucideKeyRound,
       lucideLock,
+      lucideMonitor,
       lucideRefreshCw,
       lucideServer,
       lucideShieldCheck,
+      lucideSparkles,
+      lucideSquareTerminal,
     }),
   ],
 })
 export class Onboarding implements OnInit {
   private readonly router = inject(Router);
-  private readonly projectsService = inject(ProjectsService);
   private readonly onboardingState = inject(OnboardingStateService);
   private readonly connectionService = inject(OnboardingConnectionService);
+  readonly appSettings = inject(AppSettingsService);
 
   loading = signal(true);
   connecting = signal(false);
   sshSupported = signal(false);
   selectedMode = signal<'local' | 'ssh' | null>(null);
-  activeStep = signal<'choice' | 'ssh' | 'install' | 'project'>('choice');
+  activeStep = signal<OnboardingStep>('connection');
   connectionError = signal('');
   installMessage = signal('');
-  existingProjectsCount = signal(0);
+  selectedAgent = signal<DefaultAgentProvider>('claude');
+  selectedSurface = signal<DefaultClaudeSessionSurface>('claude-ui');
 
   serverName = signal('');
   sshHost = signal('');
@@ -82,15 +99,21 @@ export class Onboarding implements OnInit {
     const snapshot = this.onboardingState.readSnapshot();
     return this.onboardingState.getActiveServer(snapshot);
   });
-  readonly shouldShowPortForwardStep = computed(() => this.selectedMode() === 'ssh');
-  readonly projectStepDescription = computed(() => this.selectedMode() === 'ssh'
-    ? 'Create the project, add the repositories you want immediately, and optionally save any forwarded ports before you enter the app.'
-    : 'Create the project and add the repositories you want immediately before you enter the app.');
+
+  readonly stepLabel = computed(() => {
+    const step = this.activeStep();
+    if (step === 'connection' || step === 'ssh' || step === 'install') {
+      return 'Backend';
+    }
+    if (step === 'agent') {
+      return 'Agent';
+    }
+    return this.selectedAgent() === 'claude' ? 'Claude surface' : 'Reminder';
+  });
 
   async ngOnInit() {
     const snapshot = this.onboardingState.readSnapshot();
     this.selectedMode.set(snapshot.mode);
-    this.activeStep.set(snapshot.currentStep);
 
     if (snapshot.lastSshDefaults) {
       this.serverName.set(snapshot.lastSshDefaults.name);
@@ -102,31 +125,14 @@ export class Onboarding implements OnInit {
     }
 
     this.sshSupported.set(await this.connectionService.isSupported());
-
-    this.projectsService.getAll().subscribe({
-      next: (projects) => {
-        this.existingProjectsCount.set(projects.length);
-        this.resolveInitialStep();
-        this.loading.set(false);
-      },
-      error: () => {
-        this.resolveInitialStep();
-        this.loading.set(false);
-      },
-    });
+    await this.resolveInitialStep();
+    this.loading.set(false);
   }
 
-  chooseLocalMode() {
+  async chooseLocalMode() {
     this.selectedMode.set('local');
     this.onboardingState.setMode('local');
-    if (this.existingProjectsCount() > 0) {
-      this.onboardingState.markProjectHandoffAcknowledged();
-      this.router.navigate(['/projects']);
-      return;
-    }
-
-    this.activeStep.set('project');
-    this.onboardingState.setCurrentStep('project');
+    await this.loadBackendOnboarding();
   }
 
   chooseSshMode() {
@@ -135,6 +141,18 @@ export class Onboarding implements OnInit {
     this.connectionError.set('');
     this.installMessage.set('');
     this.onboardingState.setMode('ssh');
+  }
+
+  selectAgent(agent: DefaultAgentProvider) {
+    this.selectedAgent.set(agent);
+  }
+
+  continueFromAgent() {
+    this.activeStep.set(this.selectedAgent() === 'claude' ? 'claude-surface' : 'reminder');
+  }
+
+  selectSurface(surface: DefaultClaudeSessionSurface) {
+    this.selectedSurface.set(surface);
   }
 
   async pickIdentityFile() {
@@ -187,16 +205,7 @@ export class Onboarding implements OnInit {
       this.onboardingState.saveServer(server);
       this.password.set('');
       this.passphrase.set('');
-
-      const projects = await firstValueFrom(this.projectsService.getAll()).catch(() => []);
-      this.existingProjectsCount.set(projects.length);
-
-      if (projects.length > 0) {
-        this.onboardingState.markProjectHandoffAcknowledged();
-        await this.router.navigate(['/projects']);
-      } else {
-        this.activeStep.set('project');
-      }
+      await this.loadBackendOnboarding();
       return;
     }
 
@@ -217,40 +226,38 @@ export class Onboarding implements OnInit {
     this.onboardingState.setCurrentStep('ssh');
   }
 
-  async handleProjectCreated(project: Project) {
-    this.onboardingState.markProjectHandoffAcknowledged();
-    await this.router.navigate(['/projects', project.id]);
+  async finishOnboarding() {
+    try {
+      await this.appSettings.completeOnboarding({
+        defaultAgentProvider: this.selectedAgent(),
+        defaultClaudeSessionSurface:
+          this.selectedAgent() === 'claude' ? this.selectedSurface() : undefined,
+      });
+      await this.router.navigate(['/projects']);
+    } catch {
+      toast.error('Could not finish onboarding.');
+    }
   }
 
-  private resolveInitialStep() {
+  private async resolveInitialStep() {
     const snapshot = this.onboardingState.readSnapshot();
     const activeServer = this.onboardingState.getActiveServer(snapshot);
 
     if (snapshot.mode === 'local') {
       this.selectedMode.set('local');
-      if (this.existingProjectsCount() > 0) {
-        this.onboardingState.markProjectHandoffAcknowledged();
-        this.router.navigate(['/projects']);
-        return;
-      }
-      this.activeStep.set('project');
+      await this.loadBackendOnboarding();
       return;
     }
 
     if (snapshot.mode === 'ssh') {
       this.selectedMode.set('ssh');
       if (activeServer) {
-        if (this.existingProjectsCount() > 0) {
-          this.onboardingState.markProjectHandoffAcknowledged();
-          this.router.navigate(['/projects']);
+        if (snapshot.currentStep === 'install') {
+          this.activeStep.set('install');
+          this.installMessage.set('The remote server is not reachable. Retry the connection.');
           return;
         }
-        this.activeStep.set(snapshot.currentStep === 'install' ? 'install' : 'project');
-        this.installMessage.set(
-          snapshot.currentStep === 'install'
-            ? 'The remote server is not reachable. Retry the connection.'
-            : '',
-        );
+        await this.loadBackendOnboarding();
         return;
       }
 
@@ -258,14 +265,23 @@ export class Onboarding implements OnInit {
       return;
     }
 
-    if (this.existingProjectsCount() > 0) {
-      this.onboardingState.setMode('local');
-      this.onboardingState.markProjectHandoffAcknowledged();
-      this.router.navigate(['/projects']);
-      return;
-    }
+    this.activeStep.set('connection');
+  }
 
-    this.activeStep.set('choice');
+  private async loadBackendOnboarding() {
+    try {
+      const settings = await this.appSettings.load();
+      this.selectedAgent.set(settings.defaultAgentProvider);
+      this.selectedSurface.set(settings.defaultClaudeSessionSurface);
+      if (settings.onboardingCompletedAt) {
+        await this.router.navigate(['/projects']);
+        return;
+      }
+      this.activeStep.set('agent');
+    } catch {
+      this.activeStep.set('connection');
+      toast.error('Could not load backend onboarding settings.');
+    }
   }
 
   private normalizedServerName() {

@@ -37,7 +37,9 @@ describe('Settings', () => {
 
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: null,
       updatedAt: null,
     });
@@ -47,6 +49,9 @@ describe('Settings', () => {
 
     const element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).toContain('Workspace Preferences');
+    expect(element.textContent).toContain('Default agent');
+    expect(element.textContent).toContain('Codex');
+    expect(element.textContent).toContain('Pi');
     expect(element.textContent).toContain('Claude UI');
     expect(element.textContent).toContain('TUI');
     expect(element.textContent).toContain('Session toolbar');
@@ -64,7 +69,9 @@ describe('Settings', () => {
 
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: null,
       updatedAt: null,
     });
@@ -99,7 +106,9 @@ describe('Settings', () => {
 
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: null,
       updatedAt: null,
     });
@@ -117,7 +126,9 @@ describe('Settings', () => {
     ).toEqual({ id: 'terminal', visible: false });
     saveRequest.flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: saveRequest.request.body.sessionToolbarButtons,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: null,
       updatedAt: '2026-01-01T00:00:00.000Z',
     });
@@ -128,7 +139,9 @@ describe('Settings', () => {
     expect(resetRequest.request.body.sessionToolbarButtons).toBeNull();
     resetRequest.flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: null,
       updatedAt: '2026-01-01T00:00:01.000Z',
     });

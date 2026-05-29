@@ -6,11 +6,9 @@ import {
   readOnboardingStateSnapshot,
 } from './shared/services/onboarding-state.service';
 import { OnboardingStateSnapshot } from './shared/models/onboarding.model';
+import { AppSettingsService } from './shared/services/app-settings.service';
 
-function hasFunctionalOnboarding(snapshot: OnboardingStateSnapshot): boolean {
-  if (!snapshot.projectHandoffAcknowledged) {
-    return false;
-  }
+function hasBackendConnection(snapshot: OnboardingStateSnapshot): boolean {
   if (snapshot.mode === 'local') {
     return true;
   }
@@ -20,7 +18,7 @@ function hasFunctionalOnboarding(snapshot: OnboardingStateSnapshot): boolean {
 }
 
 export function getDefaultRedirectPath(): string {
-  if (!hasFunctionalOnboarding(readOnboardingStateSnapshot())) {
+  if (!hasBackendConnection(readOnboardingStateSnapshot())) {
     return '/onboarding';
   }
 
@@ -28,13 +26,21 @@ export function getDefaultRedirectPath(): string {
   return sessionId ? `/sessions/${sessionId}` : '/projects';
 }
 
-export function canAccessAppRoute(): boolean | UrlTree {
-  if (hasFunctionalOnboarding(readOnboardingStateSnapshot())) {
-    return true;
+export async function canAccessAppRoute(): Promise<boolean | UrlTree> {
+  const router = inject(Router);
+  if (!hasBackendConnection(readOnboardingStateSnapshot())) {
+    return router.createUrlTree(['/onboarding']);
   }
 
-  const router = inject(Router);
-  return router.createUrlTree(['/onboarding']);
+  const appSettings = inject(AppSettingsService);
+  try {
+    const settings = await appSettings.load();
+    return settings.onboardingCompletedAt
+      ? true
+      : router.createUrlTree(['/onboarding']);
+  } catch {
+    return router.createUrlTree(['/onboarding']);
+  }
 }
 
 export const routes: Routes = [

@@ -30,7 +30,7 @@ import {
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
-import { DefaultClaudeSessionSurface } from '@/shared/models/app-settings.model';
+import { DefaultAgentProvider, DefaultClaudeSessionSurface } from '@/shared/models/app-settings.model';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardCheckboxComponent } from '@/shared/components/checkbox';
 import { getElectronExternalLinksApi } from '@/shared/runtime/electron-external-links';
@@ -105,6 +105,19 @@ export class Settings {
 
     void this.appSettings
       .saveDefaultClaudeSessionSurface(surface)
+      .catch(() => toast.error('Could not save settings.'));
+  }
+
+  selectAgent(provider: DefaultAgentProvider): void {
+    if (
+      this.appSettings.saving() ||
+      this.appSettings.settings().defaultAgentProvider === provider
+    ) {
+      return;
+    }
+
+    void this.appSettings
+      .saveDefaultAgentProvider(provider)
       .catch(() => toast.error('Could not save settings.'));
   }
 

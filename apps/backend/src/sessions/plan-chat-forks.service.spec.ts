@@ -10,6 +10,7 @@ import { PtyManager } from '../terminal/pty-manager.service.js';
 import { TmuxManager } from '../terminal/tmux-manager.service.js';
 import { PlanChatForksService } from './plan-chat-forks.service.js';
 import { SessionsService } from './sessions.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 function createTestDb() {
   const sqlite = new Database(':memory:');
@@ -94,6 +95,7 @@ describe('PlanChatForksService', () => {
     submitPrompt: jest.Mock;
   };
   let agentRuntimeCleanup: { cleanupSession: jest.Mock };
+  let settingsService: { findOne: jest.Mock };
 
   beforeEach(async () => {
     const testDb = createTestDb();
@@ -121,6 +123,16 @@ describe('PlanChatForksService', () => {
     };
     agentRuntimeCleanup = {
       cleanupSession: jest.fn().mockResolvedValue(undefined),
+    };
+    settingsService = {
+      findOne: jest.fn().mockResolvedValue({
+        defaultClaudeSessionSurface: 'claude-ui',
+        defaultAgentProvider: 'claude',
+        sessionToolbarButtons: null,
+        onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
+        createdAt: null,
+        updatedAt: null,
+      }),
     };
 
     const registry = {
@@ -157,6 +169,7 @@ describe('PlanChatForksService', () => {
           provide: AGENT_RUNTIME_CLEANUP_SERVICE,
           useValue: agentRuntimeCleanup,
         },
+        { provide: SettingsService, useValue: settingsService },
         { provide: ModuleRef, useValue: moduleRef },
       ],
     }).compile();

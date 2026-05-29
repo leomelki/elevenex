@@ -83,6 +83,7 @@ export class SessionForksService {
         branchName: parent.branchName,
         worktreePath: parent.worktreePath,
         name: childName,
+        activeAgentProvider: provider,
       });
 
       const providerResult = await runtime.forkConversation({

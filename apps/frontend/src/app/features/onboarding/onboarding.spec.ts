@@ -1,17 +1,28 @@
-import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { signal } from '@angular/core';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Router } from '@angular/router';
 
 import { Onboarding } from './onboarding';
-import { ProjectsService } from '@/shared/services/projects.service';
+import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { OnboardingConnectionService } from '@/shared/services/onboarding-connection.service';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
-import { Project } from '@/shared/models/project.model';
 
 describe('Onboarding', () => {
-  const projectsServiceMock = {
-    getAll: vi.fn(() => of([])),
+  const snapshot: any = {
+    mode: 'local',
+    currentStep: 'project' as const,
+    activeServerId: null,
+    remoteConnectionReady: true,
+    projectHandoffAcknowledged: false,
+    servers: [],
+    lastSshDefaults: null,
+  };
+
+  const appSettingsMock = {
+    load: vi.fn(),
+    completeOnboarding: vi.fn(),
+    saving: signal(false),
   };
 
   const onboardingConnectionMock = {
@@ -25,21 +36,11 @@ describe('Onboarding', () => {
     })),
   };
 
-  const snapshot: any = {
-    mode: null,
-    currentStep: 'choice' as const,
-    activeServerId: null,
-    projectHandoffAcknowledged: false,
-    servers: [],
-    lastSshDefaults: null,
-  };
-
   const onboardingStateMock = {
     readSnapshot: vi.fn(() => snapshot),
     getActiveServer: vi.fn(() => null),
     setMode: vi.fn(),
     setCurrentStep: vi.fn(),
-    markProjectHandoffAcknowledged: vi.fn(),
     saveServer: vi.fn(),
   };
 
@@ -49,10 +50,29 @@ describe('Onboarding', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    appSettingsMock.saving.set(false);
+    appSettingsMock.load.mockResolvedValue({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    appSettingsMock.completeOnboarding.mockResolvedValue({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
+      createdAt: null,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    onboardingStateMock.readSnapshot.mockReturnValue(snapshot);
+
     await TestBed.configureTestingModule({
       imports: [Onboarding],
       providers: [
-        { provide: ProjectsService, useValue: projectsServiceMock },
+        { provide: AppSettingsService, useValue: appSettingsMock },
         { provide: OnboardingConnectionService, useValue: onboardingConnectionMock },
         { provide: OnboardingStateService, useValue: onboardingStateMock },
         { provide: Router, useValue: routerMock },
@@ -60,78 +80,82 @@ describe('Onboarding', () => {
     }).compileComponents();
   });
 
-  it('should expose only the minimal ssh form before auth mode details are selected', async () => {
-    onboardingStateMock.readSnapshot.mockReturnValue({
-      ...snapshot,
-      mode: 'ssh',
-      currentStep: 'ssh',
-    });
+  async function settleOnboarding(fixture: ComponentFixture<Onboarding>) {
+    await fixture.whenStable();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    fixture.detectChanges();
+  }
 
+  it('shows the backend-scoped default agent step after a backend is connected', async () => {
     const fixture = TestBed.createComponent(Onboarding);
     fixture.detectChanges();
-    await fixture.whenStable();
+    await settleOnboarding(fixture);
+
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('Choose the agent for new sessions.');
+    expect(text).toContain('Claude');
+    expect(text).toContain('Codex');
+    expect(text).toContain('Pi');
+  });
+
+  it('asks for Claude UI versus TUI only after Claude is selected', async () => {
+    const fixture = TestBed.createComponent(Onboarding);
+    fixture.detectChanges();
+    await settleOnboarding(fixture);
+
+    fixture.componentInstance.continueFromAgent();
     fixture.detectChanges();
 
     const text = fixture.nativeElement.textContent;
-    expect(text).toContain('SSH config / agent');
-    expect(text).not.toContain('Passphrase');
-
-    onboardingStateMock.readSnapshot.mockReturnValue(snapshot);
+    expect(text).toContain('Choose how Claude opens.');
+    expect(text).toContain('Claude UI uses API pricing');
+    expect(text).toContain('Claude TUI uses your plan quota');
   });
 
-  it('should show the missing install step when the forwarded backend is not reachable', async () => {
-    onboardingConnectionMock.connect.mockResolvedValueOnce({
-      kind: 'missing-install',
-      message: 'Install Elevenex remotely first.',
-    } as any);
-
+  it('skips the Claude surface choice and shows the quota reminder for Codex', async () => {
     const fixture = TestBed.createComponent(Onboarding);
-    const component = fixture.componentInstance;
-    component.selectedMode.set('ssh');
-    component.activeStep.set('ssh');
-    component.sshHost.set('server.example.com');
     fixture.detectChanges();
-    await fixture.whenStable();
+    await settleOnboarding(fixture);
 
-    await component.connectToServer();
+    fixture.componentInstance.selectAgent('codex');
+    fixture.componentInstance.continueFromAgent();
+    fixture.detectChanges();
 
-    expect(component.activeStep()).toBe('install');
-    expect(component.installMessage()).toContain('Install Elevenex remotely first.');
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('Your default agent is Codex.');
+    expect(text).toContain('Codex and Pi do not have a separate UI/TUI setting');
+    expect(text).toContain('Claude TUI uses your plan quota');
+    expect(text).not.toContain('Choose how Claude opens.');
   });
 
-  it('should render the first-project wizard on the project step', async () => {
-    onboardingStateMock.readSnapshot.mockReturnValue({
-      ...snapshot,
-      mode: 'local',
-      currentStep: 'project',
-      projectHandoffAcknowledged: false,
+  it('finishes onboarding with the selected Claude surface', async () => {
+    const fixture = TestBed.createComponent(Onboarding);
+    fixture.detectChanges();
+    await settleOnboarding(fixture);
+
+    fixture.componentInstance.selectSurface('tui');
+    await fixture.componentInstance.finishOnboarding();
+
+    expect(appSettingsMock.completeOnboarding).toHaveBeenCalledWith({
+      defaultAgentProvider: 'claude',
+      defaultClaudeSessionSurface: 'tui',
     });
-
-    const fixture = TestBed.createComponent(Onboarding);
-    fixture.detectChanges();
-    await fixture.whenStable();
-    fixture.detectChanges();
-
-    expect(fixture.nativeElement.textContent).toContain('Create your first project');
-    expect(fixture.nativeElement.textContent).not.toContain('Port forwards');
-    expect(fixture.nativeElement.textContent).not.toContain('optional save any forwarded ports');
-
-    onboardingStateMock.readSnapshot.mockReturnValue(snapshot);
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/projects']);
   });
 
-  it('should mark onboarding complete after the first project is created', async () => {
+  it('finishes onboarding for non-Claude agents without a Claude surface payload', async () => {
     const fixture = TestBed.createComponent(Onboarding);
-    const component = fixture.componentInstance;
-    const project: Project = {
-      id: 7,
-      name: 'Alpha',
-      createdAt: '2024-01-01',
-      updatedAt: '2024-01-01',
-    };
+    fixture.detectChanges();
+    await settleOnboarding(fixture);
 
-    await component.handleProjectCreated(project);
+    fixture.componentInstance.selectAgent('pi');
+    await fixture.componentInstance.finishOnboarding();
 
-    expect(onboardingStateMock.markProjectHandoffAcknowledged).toHaveBeenCalled();
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/projects', 7]);
+    expect(appSettingsMock.completeOnboarding).toHaveBeenCalledWith({
+      defaultAgentProvider: 'pi',
+      defaultClaudeSessionSurface: undefined,
+    });
   });
 });

@@ -11,6 +11,7 @@ import * as schema from '../database/schema/index.js';
 import { PtyManager } from '../terminal/pty-manager.service.js';
 import { TmuxManager } from '../terminal/tmux-manager.service.js';
 import { AGENT_RUNTIME_CLEANUP_SERVICE } from '../agent-runtime/agent-runtime.tokens.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 function createTestDb() {
   const sqlite = new Database(':memory:');
@@ -93,6 +94,7 @@ describe('SessionsService', () => {
   let otherRepoId: number;
   let ptyManagerMock: { kill: jest.Mock; isAlive: jest.Mock; killTmuxSession: jest.Mock };
   let agentRuntimeCleanupMock: { cleanupSession: jest.Mock };
+  let settingsServiceMock: { findOne: jest.Mock };
 
   beforeEach(async () => {
     const testDb = createTestDb();
@@ -127,6 +129,16 @@ describe('SessionsService', () => {
     agentRuntimeCleanupMock = {
       cleanupSession: jest.fn().mockResolvedValue(undefined),
     };
+    settingsServiceMock = {
+      findOne: jest.fn().mockResolvedValue({
+        defaultClaudeSessionSurface: 'claude-ui',
+        defaultAgentProvider: 'claude',
+        sessionToolbarButtons: null,
+        onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
+        createdAt: null,
+        updatedAt: null,
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -135,6 +147,7 @@ describe('SessionsService', () => {
         { provide: PtyManager, useValue: ptyManagerMock },
         { provide: TmuxManager, useValue: { isTmuxAvailable: jest.fn(() => false), sessionExists: jest.fn(), killSession: jest.fn() } },
         { provide: AGENT_RUNTIME_CLEANUP_SERVICE, useValue: agentRuntimeCleanupMock },
+        { provide: SettingsService, useValue: settingsServiceMock },
       ],
     }).compile();
 
@@ -168,6 +181,25 @@ describe('SessionsService', () => {
       expect(result.lastCompletionAt).toBeNull();
       expect(result.lastCompletionKind).toBeNull();
       expect(result.lastStateChangeAt).toBeNull();
+    });
+
+    it('should use the configured default agent provider for new sessions', async () => {
+      settingsServiceMock.findOne.mockResolvedValueOnce({
+        defaultClaudeSessionSurface: 'claude-ui',
+        defaultAgentProvider: 'codex',
+        sessionToolbarButtons: null,
+        onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
+        createdAt: null,
+        updatedAt: null,
+      });
+
+      const result = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/codex-worktree',
+      });
+
+      expect(result.activeAgentProvider).toBe('codex');
     });
 
     it('should auto-generate name as "Session N" when not provided', async () => {

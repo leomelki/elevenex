@@ -16,6 +16,7 @@ import { AGENT_RUNTIME_CLEANUP_SERVICE } from '../agent-runtime/agent-runtime.to
 import type { AgentRuntimeCleanup } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 const VALID_STATUSES = ['created', 'active', 'archived', 'stopped'] as const;
 type SessionStatus = (typeof VALID_STATUSES)[number];
@@ -39,6 +40,7 @@ export class SessionsService extends EventEmitter {
     private readonly tmuxManager: TmuxManager,
     @Inject(AGENT_RUNTIME_CLEANUP_SERVICE)
     private readonly agentRuntimeCleanup: AgentRuntimeCleanup,
+    private readonly settingsService: SettingsService,
   ) {
     super();
   }
@@ -50,10 +52,14 @@ export class SessionsService extends EventEmitter {
     worktreePath?: string;
     name?: string;
     surface?: SessionSurface;
+    activeAgentProvider?: AgentProviderId;
   }) {
     const resolved = await this.resolveSessionWorkspace(dto);
     let sessionName = dto.name;
     const surface = this.normalizeSurface(dto.surface);
+    const activeAgentProvider = await this.resolveInitialAgentProvider(
+      dto.activeAgentProvider,
+    );
 
     // Auto-generate name if not provided
     if (!sessionName) {
@@ -73,7 +79,7 @@ export class SessionsService extends EventEmitter {
         name: sessionName,
         surface,
         status: 'created',
-        activeAgentProvider: 'claude',
+        activeAgentProvider,
         claudeSessionId: '-1',
         codexSessionId: '-1',
         piSessionPath: '-1',
@@ -724,6 +730,7 @@ export class SessionsService extends EventEmitter {
       branchName: session.branchName,
       worktreePath: session.worktreePath,
       name: `${session.name} (reset)`,
+      activeAgentProvider: session.activeAgentProvider,
     });
 
     return newSession;
@@ -746,6 +753,7 @@ export class SessionsService extends EventEmitter {
       branchName: session.branchName,
       worktreePath: session.worktreePath,
       name: forkName,
+      activeAgentProvider: session.activeAgentProvider,
     });
 
     return newSession;
@@ -832,6 +840,17 @@ export class SessionsService extends EventEmitter {
     throw new BadRequestException(
       `Invalid session surface: ${surface}. Must be one of: ${VALID_SURFACES.join(', ')}`,
     );
+  }
+
+  private async resolveInitialAgentProvider(
+    provider: AgentProviderId | undefined,
+  ): Promise<AgentProviderId> {
+    const explicit = typeof provider === 'string' ? provider.trim() : '';
+    if (explicit) {
+      return explicit;
+    }
+
+    return (await this.settingsService.findOne()).defaultAgentProvider;
   }
 
   private visibleWhere(

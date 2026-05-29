@@ -5,10 +5,14 @@ import { Router } from '@angular/router';
 import { canAccessAppRoute, getDefaultRedirectPath, routes } from './app.routes';
 import { LAST_OPENED_SESSION_STORAGE_KEY } from './features/session/tab-service';
 import { ONBOARDING_STORAGE_KEY } from './shared/services/onboarding-state.service';
+import { AppSettingsService } from './shared/services/app-settings.service';
 
 describe('getDefaultRedirectPath', () => {
   const routerMock = {
     createUrlTree: vi.fn((commands: string[]) => commands.join('/')),
+  };
+  const appSettingsMock = {
+    load: vi.fn(),
   };
 
   beforeEach(() => {
@@ -28,11 +32,20 @@ describe('getDefaultRedirectPath', () => {
     localStorage.clear();
 
     routerMock.createUrlTree.mockClear();
+    appSettingsMock.load.mockResolvedValue({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
+      createdAt: null,
+      updatedAt: null,
+    });
 
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       providers: [
         { provide: Router, useValue: routerMock },
+        { provide: AppSettingsService, useValue: appSettingsMock },
       ],
     });
   });
@@ -70,7 +83,7 @@ describe('getDefaultRedirectPath', () => {
     expect(TestBed.runInInjectionContext(() => getDefaultRedirectPath())).toBe('/projects');
   });
 
-  it('should keep the workspace accessible for a saved SSH server even when the tunnel is not ready', () => {
+  it('should keep the workspace targetable for a saved SSH server even when the tunnel is not ready', () => {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({
       mode: 'ssh',
       currentStep: 'project',
@@ -96,11 +109,47 @@ describe('getDefaultRedirectPath', () => {
     }));
 
     expect(TestBed.runInInjectionContext(() => getDefaultRedirectPath())).toBe('/projects');
-    expect(TestBed.runInInjectionContext(() => canAccessAppRoute())).toBe(true);
   });
 
-  it('should block app routes before onboarding is complete', () => {
-    expect(TestBed.runInInjectionContext(() => canAccessAppRoute())).toBe('/onboarding');
+  it('should block app routes before backend connection preflight is complete', async () => {
+    await expect(TestBed.runInInjectionContext(() => canAccessAppRoute())).resolves.toBe('/onboarding');
+    expect(appSettingsMock.load).not.toHaveBeenCalled();
+  });
+
+  it('should block app routes when backend onboarding is incomplete', async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({
+      mode: 'local',
+      currentStep: 'project',
+      activeServerId: null,
+      remoteConnectionReady: true,
+      projectHandoffAcknowledged: false,
+      servers: [],
+      lastSshDefaults: null,
+    }));
+    appSettingsMock.load.mockResolvedValueOnce({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+
+    await expect(TestBed.runInInjectionContext(() => canAccessAppRoute())).resolves.toBe('/onboarding');
+  });
+
+  it('should allow app routes when backend onboarding is complete', async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({
+      mode: 'local',
+      currentStep: 'project',
+      activeServerId: null,
+      remoteConnectionReady: true,
+      projectHandoffAcknowledged: false,
+      servers: [],
+      lastSshDefaults: null,
+    }));
+
+    await expect(TestBed.runInInjectionContext(() => canAccessAppRoute())).resolves.toBe(true);
   });
 
   it('should register the settings route behind the app access guard', () => {

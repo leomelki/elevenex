@@ -32,7 +32,9 @@ describe('AppSettingsService', () => {
     const request = httpMock.expectOne('/api/settings');
     request.flush({
       defaultClaudeSessionSurface: 'tui',
+      defaultAgentProvider: 'codex',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     });
@@ -40,13 +42,17 @@ describe('AppSettingsService', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([
       {
         defaultClaudeSessionSurface: 'tui',
+        defaultAgentProvider: 'codex',
         sessionToolbarButtons: null,
+        onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
       },
       {
         defaultClaudeSessionSurface: 'tui',
+        defaultAgentProvider: 'codex',
         sessionToolbarButtons: null,
+        onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
       },
@@ -58,7 +64,9 @@ describe('AppSettingsService', () => {
     const load = service.load();
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -81,10 +89,12 @@ describe('AppSettingsService', () => {
     const load = service.load();
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: [
         { id: 'terminal', visible: false },
         { id: 'unknown', visible: false },
       ],
+      onboardingCompletedAt: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -100,7 +110,9 @@ describe('AppSettingsService', () => {
     const load = service.load();
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -113,7 +125,9 @@ describe('AppSettingsService', () => {
 
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: [{ id: 'terminal', visible: false }],
+      onboardingCompletedAt: null,
       createdAt: null,
       updatedAt: '2026-01-01T00:00:00.000Z',
     });
@@ -124,10 +138,60 @@ describe('AppSettingsService', () => {
 
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: null,
       createdAt: null,
       updatedAt: '2026-01-01T00:00:01.000Z',
     });
     await reset;
+  });
+
+  it('saves the default agent provider', async () => {
+    const save = service.saveDefaultAgentProvider('pi');
+    expect(service.settings().defaultAgentProvider).toBe('pi');
+
+    const request = httpMock.expectOne('/api/settings');
+    expect(request.request.method).toBe('PATCH');
+    expect(request.request.body).toEqual({ defaultAgentProvider: 'pi' });
+    request.flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'pi',
+      sessionToolbarButtons: null,
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    await save;
+    expect(service.settings().defaultAgentProvider).toBe('pi');
+  });
+
+  it('completes onboarding through the dedicated endpoint', async () => {
+    const save = service.completeOnboarding({
+      defaultAgentProvider: 'claude',
+      defaultClaudeSessionSurface: 'tui',
+    });
+    expect(service.settings().defaultAgentProvider).toBe('claude');
+    expect(service.settings().defaultClaudeSessionSurface).toBe('tui');
+    expect(service.settings().onboardingCompletedAt).toBeTruthy();
+
+    const request = httpMock.expectOne('/api/settings/onboarding/complete');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({
+      defaultAgentProvider: 'claude',
+      defaultClaudeSessionSurface: 'tui',
+    });
+    request.flush({
+      defaultClaudeSessionSurface: 'tui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    await save;
+    expect(service.settings().onboardingCompletedAt).toBe('2026-01-01T00:00:00.000Z');
   });
 });

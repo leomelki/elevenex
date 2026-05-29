@@ -1,241 +1,502 @@
-<div class="relative grid min-h-full grid-cols-[minmax(280px,420px)_minmax(0,720px)] gap-7 p-10 max-[1080px]:grid-cols-1 max-[720px]:gap-5 max-[720px]:p-5">
-  <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_15%,color-mix(in_oklch,var(--primary)_12%,transparent),transparent_28%),radial-gradient(circle_at_85%_20%,color-mix(in_oklch,var(--surface-shade)_10%,transparent),transparent_22%)]"></div>
-
-  <section class="relative z-[1] flex flex-col justify-center px-2 py-6 max-[1080px]:pb-0">
-    <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">First run</p>
-    <h1 class="m-0 text-[clamp(2rem,3vw,3.5rem)] leading-[0.96] font-bold">Set up Elevenex for the way you work.</h1>
-    <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">
-      Start locally on this machine or connect a remote SSH server and forward Elevenex into the app.
-    </p>
-
-    <div class="mt-8 grid gap-3">
-      <div
-        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_82%,var(--surface-tint)_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
-        [class.border-[color-mix(in_oklch,var(--primary)_38%,var(--surface-tint))]]="activeStep() === 'choice'"
-        [class.bg-[color-mix(in_oklch,var(--primary)_12%,var(--background))]]="activeStep() === 'choice'"
-      >
-        <span
-          class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint)_28%)] text-[0.82rem] font-bold"
-          [class.bg-[color-mix(in_oklch,var(--primary)_82%,var(--surface-tint)_18%)]]="selectedMode() !== null"
-          [class.text-primary-foreground]="selectedMode() !== null"
-        >1</span>
-        <strong>Target</strong>
-      </div>
-      <div
-        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_82%,var(--surface-tint)_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
-        [class.border-[color-mix(in_oklch,var(--primary)_38%,var(--surface-tint))]]="activeStep() === 'ssh' || activeStep() === 'install'"
-        [class.bg-[color-mix(in_oklch,var(--primary)_12%,var(--background))]]="activeStep() === 'ssh' || activeStep() === 'install'"
-      >
-        <span
-          class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint)_28%)] text-[0.82rem] font-bold"
-          [class.bg-[color-mix(in_oklch,var(--primary)_82%,var(--surface-tint)_18%)]]="serverSummary() !== null || selectedMode() === 'local'"
-          [class.text-primary-foreground]="serverSummary() !== null || selectedMode() === 'local'"
-        >2</span>
-        <strong>Connection</strong>
-      </div>
-      <div
-        class="flex items-center gap-3 rounded-[18px] border border-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_82%,var(--surface-tint)_18%)] px-4 py-3.5 shadow-[0_20px_44px_rgba(15,23,42,0.08)]"
-        [class.border-[color-mix(in_oklch,var(--primary)_38%,var(--surface-tint))]]="activeStep() === 'project'"
-        [class.bg-[color-mix(in_oklch,var(--primary)_12%,var(--background))]]="activeStep() === 'project'"
-      >
-        <span class="inline-flex size-7 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--muted)_72%,var(--surface-tint)_28%)] text-[0.82rem] font-bold">3</span>
-        <strong>First project</strong>
-      </div>
-    </div>
-  </section>
-
-  <section class="relative z-[1] rounded-[32px] border border-[color-mix(in_oklch,var(--border)_82%,var(--surface-tint)_12%)] bg-[color-mix(in_oklch,var(--background)_88%,var(--surface-tint)_12%)] p-8 shadow-[0_28px_64px_rgba(15,23,42,0.1)] backdrop-blur-[20px] max-[720px]:rounded-3xl max-[720px]:p-[22px]">
-    @if (loading()) {
-      <div class="flex min-h-[420px] items-center justify-center text-muted-foreground">Preparing your workspace…</div>
-    } @else if (activeStep() === 'choice') {
+<div class="min-h-full bg-background text-foreground">
+  <div class="mx-auto grid min-h-full w-full max-w-7xl grid-cols-[minmax(260px,360px)_minmax(0,1fr)] gap-8 px-8 py-8 max-lg:grid-cols-1 max-sm:px-4">
+    <aside class="flex min-h-[calc(100vh-4rem)] flex-col justify-between rounded-lg border border-border bg-card p-6 max-lg:min-h-0">
       <div>
-        <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">Choose a target</p>
-        <h2 class="m-0 text-[clamp(1.9rem,2.2vw,2.5rem)] leading-[0.96] font-bold">Where should Elevenex run?</h2>
-        <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">Pick the local machine for the fastest start, or connect a server over SSH.</p>
-      </div>
-
-      <div class="mt-7 grid gap-4">
-        <button type="button" class="grid grid-cols-[auto_1fr_auto] items-start gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--background)_88%,var(--surface-tint)_12%),color-mix(in_oklch,var(--background)_96%,transparent))] p-[22px] text-left transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--primary)_44%,var(--surface-tint))] hover:shadow-[0_22px_40px_rgba(15,23,42,0.08)]" (click)="chooseLocalMode()">
-          <ng-icon name="lucideHardDrive" size="22" />
+        <div class="flex items-center gap-3">
+          <img class="size-10 rounded-md border border-border bg-background object-contain p-1" src="11x.png" alt="Elevenex logo" />
           <div>
-            <strong class="block text-base">Use locally</strong>
-            <p class="mt-1.5 leading-[1.5] text-muted-foreground">Run Elevenex on this machine and go straight to creating your first project.</p>
+            <div class="text-sm font-semibold text-foreground">Elevenex</div>
+            <div class="text-xs text-muted-foreground">Backend onboarding</div>
           </div>
-          <ng-icon name="lucideArrowRight" size="16" />
-        </button>
+        </div>
 
-        <button type="button" class="grid grid-cols-[auto_1fr_auto] items-start gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--background)_88%,var(--surface-tint)_12%),color-mix(in_oklch,var(--background)_96%,transparent))] p-[22px] text-left transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklch,var(--primary)_44%,var(--surface-tint))] hover:shadow-[0_22px_40px_rgba(15,23,42,0.08)]" (click)="chooseSshMode()">
-          <ng-icon name="lucideServer" size="22" />
-          <div>
-            <strong class="block text-base">Connect an SSH server</strong>
-            <p class="mt-1.5 leading-[1.5] text-muted-foreground">Forward a remote Elevenex instance and keep working from the same desktop app.</p>
+        <div class="mt-10">
+          <div class="mb-3 text-xs font-semibold uppercase text-muted-foreground">Current step</div>
+          <h1 class="text-3xl font-semibold leading-tight text-foreground">Choose how new sessions start.</h1>
+          <p class="mt-4 text-sm leading-6 text-muted-foreground">
+            These preferences are saved on the connected backend and apply to every new session created there.
+          </p>
+        </div>
+
+        <div class="mt-8 grid gap-2">
+          <div class="flex items-center gap-3 rounded-md border border-border bg-background px-3 py-3">
+            <span class="flex size-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
+              @if (activeStep() === 'connection' || activeStep() === 'ssh' || activeStep() === 'install') { 1 } @else { <ng-icon name="lucideCheck" size="14" /> }
+            </span>
+            <span class="text-sm font-medium">Backend</span>
           </div>
-          <ng-icon name="lucideArrowRight" size="16" />
-        </button>
-      </div>
-    } @else if (activeStep() === 'ssh') {
-      <div>
-        <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">SSH connection</p>
-        <h2 class="m-0 text-[clamp(1.9rem,2.2vw,2.5rem)] leading-[0.96] font-bold">Connect a server</h2>
-        <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">We’ll connect over SSH, then verify that Elevenex is reachable on the remote server.</p>
-      </div>
-
-      @if (!sshSupported()) {
-        <div class="mt-[18px] rounded-2xl border border-[color-mix(in_oklch,var(--destructive)_26%,var(--border))] bg-[color-mix(in_oklch,var(--destructive)_10%,var(--background))] px-4 py-3.5 text-[color-mix(in_oklch,var(--destructive)_84%,var(--foreground))]">
-          SSH onboarding is only available in the Electron app.
-        </div>
-      }
-
-      <div class="mt-7 grid grid-cols-2 gap-4 max-[720px]:grid-cols-1">
-        <div class="grid gap-2">
-          <label class="text-[0.86rem] font-bold" for="serverName">Server name</label>
-          <input id="serverName" z-input [value]="serverName()" (input)="serverName.set($any($event.target).value)" placeholder="Production, staging, home lab…" />
-        </div>
-
-        <div class="grid gap-2">
-          <label class="text-[0.86rem] font-bold" for="sshHost">Host</label>
-          <input id="sshHost" z-input [value]="sshHost()" (input)="sshHost.set($any($event.target).value)" placeholder="server.example.com" />
-        </div>
-
-        <div class="grid gap-2">
-          <label class="text-[0.86rem] font-bold" for="sshUser">User</label>
-          <input id="sshUser" z-input [value]="sshUser()" (input)="sshUser.set($any($event.target).value)" placeholder="ubuntu" />
-        </div>
-
-        <div class="grid gap-2">
-          <label class="text-[0.86rem] font-bold" for="sshPort">Port</label>
-          <input id="sshPort" z-input type="number" [value]="sshPort().toString()" (input)="sshPort.set(+$any($event.target).value || 22)" />
+          <div
+            class="flex items-center gap-3 rounded-md border border-border bg-background px-3 py-3"
+            [class.border-primary]="activeStep() === 'agent'"
+            [class.bg-accent]="activeStep() === 'agent'"
+          >
+            <span
+              class="flex size-7 items-center justify-center rounded-md bg-muted text-xs font-semibold text-muted-foreground"
+              [class.bg-primary]="activeStep() !== 'connection' && activeStep() !== 'ssh' && activeStep() !== 'install'"
+              [class.text-primary-foreground]="activeStep() !== 'connection' && activeStep() !== 'ssh' && activeStep() !== 'install'"
+            >2</span>
+            <span class="text-sm font-medium">Default agent</span>
+          </div>
+          <div
+            class="flex items-center gap-3 rounded-md border border-border bg-background px-3 py-3"
+            [class.border-primary]="activeStep() === 'claude-surface' || activeStep() === 'reminder'"
+            [class.bg-accent]="activeStep() === 'claude-surface' || activeStep() === 'reminder'"
+          >
+            <span
+              class="flex size-7 items-center justify-center rounded-md bg-muted text-xs font-semibold text-muted-foreground"
+              [class.bg-primary]="activeStep() === 'claude-surface' || activeStep() === 'reminder'"
+              [class.text-primary-foreground]="activeStep() === 'claude-surface' || activeStep() === 'reminder'"
+            >3</span>
+            <span class="text-sm font-medium">{{ selectedAgent() === 'claude' ? 'Claude surface' : 'Claude reminder' }}</span>
+          </div>
         </div>
       </div>
 
-      <div class="mt-6 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--muted)_36%,var(--surface-tint)_64%)] p-[18px]">
-        <div class="flex flex-wrap gap-2.5">
-          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,var(--surface-tint)_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))]]="authMode() === 'agent'" [class.border-[color-mix(in_oklch,var(--primary)_42%,var(--surface-tint))]]="authMode() === 'agent'" (click)="authMode.set('agent')">
-            <ng-icon name="lucideShieldCheck" size="16" />
-            SSH config / agent
-          </button>
-          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,var(--surface-tint)_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))]]="authMode() === 'password'" [class.border-[color-mix(in_oklch,var(--primary)_42%,var(--surface-tint))]]="authMode() === 'password'" (click)="authMode.set('password')">
-            <ng-icon name="lucideLock" size="16" />
-            Password
-          </button>
-          <button type="button" class="inline-flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_76%,var(--surface-tint)_14%)] bg-transparent px-3.5 py-2.5 text-[0.9rem] font-semibold" [class.bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))]]="authMode() === 'key'" [class.border-[color-mix(in_oklch,var(--primary)_42%,var(--surface-tint))]]="authMode() === 'key'" (click)="authMode.set('key')">
-            <ng-icon name="lucideKeyRound" size="16" />
-            Private key
-          </button>
-        </div>
-
-        @if (authMode() === 'agent') {
-          <div class="mt-4 text-muted-foreground">
-            <p>Use the SSH config, agent, and keys already available on this machine.</p>
-          </div>
+      <div class="mt-8 rounded-md border border-border bg-background p-4 text-sm leading-6 text-muted-foreground">
+        <div class="mb-1 font-medium text-foreground">{{ stepLabel() }}</div>
+        @if (selectedMode() === 'ssh' && serverSummary(); as server) {
+          Connected to {{ server.name }} at {{ server.sshUser ? server.sshUser + '@' : '' }}{{ server.sshHost }}.
+        } @else if (selectedMode() === 'local') {
+          Using the local backend.
+        } @else {
+          Choose a backend before saving preferences.
         }
+      </div>
+    </aside>
 
-        @if (authMode() === 'password') {
-          <div class="mt-4 grid gap-4 text-muted-foreground">
-            <div class="grid gap-2">
-              <label class="text-[0.86rem] font-bold text-foreground" for="sshPassword">Password</label>
-              <input id="sshPassword" z-input type="password" [value]="password()" (input)="password.set($any($event.target).value)" placeholder="Password is only used for this connection" />
+    <main class="flex min-h-[calc(100vh-4rem)] items-center justify-center rounded-lg border border-border bg-card p-6 max-lg:min-h-[640px] max-sm:p-4">
+      @if (loading()) {
+        <div class="flex flex-col items-center gap-3 text-muted-foreground">
+          <div class="size-8 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+          <span class="text-sm">Loading backend settings...</span>
+        </div>
+      } @else if (activeStep() === 'connection') {
+        <section class="w-full max-w-4xl">
+          <div class="max-w-2xl">
+            <div class="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <ng-icon name="lucideServer" size="16" />
+              Backend connection
+            </div>
+            <h2 class="text-3xl font-semibold leading-tight text-foreground">Pick the backend to configure.</h2>
+            <p class="mt-3 text-sm leading-6 text-muted-foreground">
+              Onboarding is completed separately for each backend. Connect first, then save the defaults for that backend.
+            </p>
+          </div>
+
+          <div class="mt-8 grid gap-4 md:grid-cols-2">
+            <button
+              type="button"
+              class="group rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              (click)="chooseLocalMode()"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
+                  <ng-icon name="lucideHardDrive" size="20" />
+                </span>
+                <ng-icon name="lucideArrowRight" size="16" class="text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </div>
+              <div class="mt-5 text-base font-semibold text-foreground">Local backend</div>
+              <p class="mt-2 text-sm leading-6 text-muted-foreground">Configure the Elevenex backend running on this machine.</p>
+            </button>
+
+            <button
+              type="button"
+              class="group rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              (click)="chooseSshMode()"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
+                  <ng-icon name="lucideServer" size="20" />
+                </span>
+                <ng-icon name="lucideArrowRight" size="16" class="text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </div>
+              <div class="mt-5 text-base font-semibold text-foreground">Remote SSH backend</div>
+              <p class="mt-2 text-sm leading-6 text-muted-foreground">Connect through SSH and configure the backend hosted on that server.</p>
+            </button>
+          </div>
+        </section>
+      } @else if (activeStep() === 'agent') {
+        <section class="w-full max-w-5xl">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <div class="max-w-2xl">
+              <div class="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                <ng-icon name="lucideBot" size="16" />
+                Default agent
+              </div>
+              <h2 class="text-3xl font-semibold leading-tight text-foreground">Choose the agent for new sessions.</h2>
+              <p class="mt-3 text-sm leading-6 text-muted-foreground">
+                New sessions on this backend will start with this agent. You can still switch an unstarted session later.
+              </p>
             </div>
           </div>
-        }
 
-        @if (authMode() === 'key') {
-          <div class="mt-4 grid gap-4 text-muted-foreground">
-            <div class="grid gap-2">
-              <label class="text-[0.86rem] font-bold text-foreground" for="sshKey">Private key</label>
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2.5 max-[720px]:grid-cols-1">
-                <app-path-autocomplete-input
-                  inputId="sshKey"
-                  [value]="identityFilePath()"
-                  pathKind="either"
-                  placeholder="~/.ssh/id_ed25519"
-                  preferredStartDirectory="~/.ssh"
-                  browseLabel="Browse"
-                  (valueChange)="identityFilePath.set($event)"
-                  (browse)="pickIdentityFile()"
-                />
+          <div class="mt-8 grid gap-4 lg:grid-cols-3">
+            <button
+              type="button"
+              class="rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              [class.border-primary]="selectedAgent() === 'claude'"
+              [class.bg-accent]="selectedAgent() === 'claude'"
+              [attr.aria-pressed]="selectedAgent() === 'claude'"
+              (click)="selectAgent('claude')"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
+                  <ng-icon name="lucideSparkles" size="20" />
+                </span>
+                @if (selectedAgent() === 'claude') {
+                  <span class="flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <ng-icon name="lucideCheck" size="14" />
+                  </span>
+                }
+              </div>
+              <div class="mt-5 text-base font-semibold text-foreground">Claude</div>
+              <p class="mt-2 text-sm leading-6 text-muted-foreground">Use Claude Code as the default agent and choose between UI or terminal next.</p>
+              <div class="mt-5 rounded-md border border-border bg-card p-3">
+                <div class="flex items-center gap-2 border-b border-border pb-2 text-xs text-muted-foreground">
+                  <span class="size-2 rounded-full bg-success"></span>
+                  Claude session
+                </div>
+                <div class="mt-3 grid gap-2">
+                  <div class="h-2 w-3/4 rounded bg-muted"></div>
+                  <div class="h-2 w-1/2 rounded bg-muted"></div>
+                  <div class="mt-1 h-8 rounded-md border border-border bg-background"></div>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              [class.border-primary]="selectedAgent() === 'codex'"
+              [class.bg-accent]="selectedAgent() === 'codex'"
+              [attr.aria-pressed]="selectedAgent() === 'codex'"
+              (click)="selectAgent('codex')"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
+                  <ng-icon name="lucideCode2" size="20" />
+                </span>
+                @if (selectedAgent() === 'codex') {
+                  <span class="flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <ng-icon name="lucideCheck" size="14" />
+                  </span>
+                }
+              </div>
+              <div class="mt-5 text-base font-semibold text-foreground">Codex</div>
+              <p class="mt-2 text-sm leading-6 text-muted-foreground">Use Codex as the default agent. No separate UI/TUI preference is needed.</p>
+              <div class="mt-5 rounded-md border border-border bg-card p-3">
+                <div class="flex items-center gap-2 border-b border-border pb-2 text-xs text-muted-foreground">
+                  <ng-icon name="lucideCpu" size="13" />
+                  Codex run
+                </div>
+                <div class="mt-3 grid grid-cols-[auto_1fr] gap-2 text-xs">
+                  <span class="text-muted-foreground">diff</span><div class="h-2 rounded bg-muted"></div>
+                  <span class="text-muted-foreground">test</span><div class="h-2 w-2/3 rounded bg-muted"></div>
+                  <span class="text-muted-foreground">plan</span><div class="h-2 w-4/5 rounded bg-muted"></div>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              [class.border-primary]="selectedAgent() === 'pi'"
+              [class.bg-accent]="selectedAgent() === 'pi'"
+              [attr.aria-pressed]="selectedAgent() === 'pi'"
+              (click)="selectAgent('pi')"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
+                  <ng-icon name="lucideCircleDot" size="20" />
+                </span>
+                @if (selectedAgent() === 'pi') {
+                  <span class="flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <ng-icon name="lucideCheck" size="14" />
+                  </span>
+                }
+              </div>
+              <div class="mt-5 text-base font-semibold text-foreground">Pi</div>
+              <p class="mt-2 text-sm leading-6 text-muted-foreground">Use Pi as the default agent. No separate UI/TUI preference is needed.</p>
+              <div class="mt-5 rounded-md border border-border bg-card p-3">
+                <div class="flex items-center gap-2 border-b border-border pb-2 text-xs text-muted-foreground">
+                  <ng-icon name="lucideBot" size="13" />
+                  Pi session
+                </div>
+                <div class="mt-3 flex items-end gap-2">
+                  <div class="h-10 flex-1 rounded-md bg-muted"></div>
+                  <div class="h-16 flex-1 rounded-md bg-muted"></div>
+                  <div class="h-7 flex-1 rounded-md bg-muted"></div>
+                  <div class="h-12 flex-1 rounded-md bg-muted"></div>
+                </div>
+              </div>
+            </button>
+          </div>
+
+          <div class="mt-8 flex justify-end">
+            <button z-button type="button" (click)="continueFromAgent()">
+              Continue
+              <ng-icon name="lucideChevronsRight" size="16" class="ml-1" />
+            </button>
+          </div>
+        </section>
+      } @else if (activeStep() === 'claude-surface') {
+        <section class="w-full max-w-5xl">
+          <div class="max-w-2xl">
+            <div class="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <ng-icon name="lucideMonitor" size="16" />
+              Claude surface
+            </div>
+            <h2 class="text-3xl font-semibold leading-tight text-foreground">Choose how Claude opens.</h2>
+            <p class="mt-3 text-sm leading-6 text-muted-foreground">
+              This only applies to Claude. Codex and Pi work the same regardless of this setting.
+            </p>
+          </div>
+
+          <div class="mt-6 rounded-md border border-warning/40 bg-warning/10 p-4 text-sm leading-6 text-foreground">
+            If you use a Claude plan such as Max or Pro, Claude TUI uses your plan quota. Claude UI uses API pricing.
+          </div>
+
+          <div class="mt-6 grid gap-4 md:grid-cols-2">
+            <button
+              type="button"
+              class="rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              [class.border-primary]="selectedSurface() === 'claude-ui'"
+              [class.bg-accent]="selectedSurface() === 'claude-ui'"
+              [attr.aria-pressed]="selectedSurface() === 'claude-ui'"
+              (click)="selectSurface('claude-ui')"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
+                  <ng-icon name="lucideMonitor" size="20" />
+                </span>
+                @if (selectedSurface() === 'claude-ui') {
+                  <span class="flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <ng-icon name="lucideCheck" size="14" />
+                  </span>
+                }
+              </div>
+              <div class="mt-5 text-base font-semibold text-foreground">Claude UI</div>
+              <p class="mt-2 text-sm leading-6 text-muted-foreground">A rich in-app interface for Claude sessions. Uses API pricing.</p>
+              <div class="mt-5 rounded-md border border-border bg-card p-3">
+                <div class="grid gap-2">
+                  <div class="rounded-md border border-border bg-background p-2">
+                    <div class="h-2 w-4/5 rounded bg-muted"></div>
+                    <div class="mt-2 h-2 w-2/3 rounded bg-muted"></div>
+                  </div>
+                  <div class="grid grid-cols-[1fr_auto] gap-2">
+                    <div class="h-9 rounded-md border border-border bg-background"></div>
+                    <span class="flex size-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                      <ng-icon name="lucideArrowRight" size="15" />
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              [class.border-primary]="selectedSurface() === 'tui'"
+              [class.bg-accent]="selectedSurface() === 'tui'"
+              [attr.aria-pressed]="selectedSurface() === 'tui'"
+              (click)="selectSurface('tui')"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
+                  <ng-icon name="lucideSquareTerminal" size="20" />
+                </span>
+                @if (selectedSurface() === 'tui') {
+                  <span class="flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <ng-icon name="lucideCheck" size="14" />
+                  </span>
+                }
+              </div>
+              <div class="mt-5 text-base font-semibold text-foreground">Claude TUI</div>
+              <p class="mt-2 text-sm leading-6 text-muted-foreground">A terminal session for Claude. Uses Claude plan quota for Max, Pro, and similar plans.</p>
+              <div class="mt-5 rounded-md border border-border bg-card p-3">
+                <div class="rounded-md bg-[color-mix(in_oklch,var(--surface-shade)_92%,var(--background))] p-3 font-mono text-xs text-[color-mix(in_oklch,var(--surface-tint)_92%,var(--foreground))]">
+                  <div>$ claude</div>
+                  <div class="mt-2 opacity-80">thinking...</div>
+                  <div class="mt-2 opacity-80">ready for next prompt</div>
+                </div>
+              </div>
+            </button>
+          </div>
+
+          <div class="mt-8 flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-stretch">
+            <button z-button zType="ghost" type="button" (click)="activeStep.set('agent')">
+              <ng-icon name="lucideArrowLeft" size="16" class="mr-1" />
+              Back
+            </button>
+            <button z-button type="button" [zLoading]="appSettings.saving()" [zDisabled]="appSettings.saving()" (click)="finishOnboarding()">
+              Finish setup
+              <ng-icon name="lucideCheck" size="16" class="ml-1" />
+            </button>
+          </div>
+        </section>
+      } @else if (activeStep() === 'reminder') {
+        <section class="w-full max-w-3xl">
+          <div class="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <ng-icon name="lucideSparkles" size="16" />
+            Claude setting
+          </div>
+          <h2 class="text-3xl font-semibold leading-tight text-foreground">Your default agent is {{ selectedAgent() === 'codex' ? 'Codex' : 'Pi' }}.</h2>
+          <p class="mt-3 text-sm leading-6 text-muted-foreground">
+            Codex and Pi do not have a separate UI/TUI setting. If you later use Claude, you can choose Claude UI or Claude TUI from Settings.
+          </p>
+
+          <div class="mt-6 rounded-lg border border-border bg-background p-5">
+            <div class="flex items-start gap-3">
+              <span class="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-card">
+                <ng-icon name="lucideSquareTerminal" size="18" />
+              </span>
+              <div class="min-w-0">
+                <div class="font-semibold text-foreground">Claude plan reminder</div>
+                <p class="mt-2 text-sm leading-6 text-muted-foreground">
+                  If you use a Claude plan such as Max or Pro, Claude TUI uses your plan quota. Claude UI uses API pricing.
+                </p>
               </div>
             </div>
+          </div>
+
+          <div class="mt-8 flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-stretch">
+            <button z-button zType="ghost" type="button" (click)="activeStep.set('agent')">
+              <ng-icon name="lucideArrowLeft" size="16" class="mr-1" />
+              Back
+            </button>
+            <button z-button type="button" [zLoading]="appSettings.saving()" [zDisabled]="appSettings.saving()" (click)="finishOnboarding()">
+              Finish setup
+              <ng-icon name="lucideCheck" size="16" class="ml-1" />
+            </button>
+          </div>
+        </section>
+      } @else if (activeStep() === 'ssh') {
+        <section class="w-full max-w-4xl">
+          <div class="max-w-2xl">
+            <div class="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <ng-icon name="lucideServer" size="16" />
+              SSH backend
+            </div>
+            <h2 class="text-3xl font-semibold leading-tight text-foreground">Connect a remote backend.</h2>
+            <p class="mt-3 text-sm leading-6 text-muted-foreground">
+              We will connect over SSH and configure onboarding against that backend.
+            </p>
+          </div>
+
+          @if (!sshSupported()) {
+            <div class="mt-5 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive" role="alert">
+              SSH onboarding is only available in the Electron app.
+            </div>
+          }
+
+          <div class="mt-7 grid grid-cols-2 gap-4 max-sm:grid-cols-1">
             <div class="grid gap-2">
-              <label class="text-[0.86rem] font-bold text-foreground" for="sshPassphrase">Passphrase <span class="font-medium text-muted-foreground">(optional)</span></label>
-              <input id="sshPassphrase" z-input type="password" [value]="passphrase()" (input)="passphrase.set($any($event.target).value)" placeholder="Only if this key is encrypted" />
+              <label class="text-sm font-medium text-foreground" for="serverName">Server name</label>
+              <input id="serverName" z-input [value]="serverName()" (input)="serverName.set($any($event.target).value)" placeholder="Production, staging, home lab" />
+            </div>
+            <div class="grid gap-2">
+              <label class="text-sm font-medium text-foreground" for="sshHost">Host</label>
+              <input id="sshHost" z-input [value]="sshHost()" (input)="sshHost.set($any($event.target).value)" placeholder="server.example.com" />
+            </div>
+            <div class="grid gap-2">
+              <label class="text-sm font-medium text-foreground" for="sshUser">User</label>
+              <input id="sshUser" z-input [value]="sshUser()" (input)="sshUser.set($any($event.target).value)" placeholder="ubuntu" />
+            </div>
+            <div class="grid gap-2">
+              <label class="text-sm font-medium text-foreground" for="sshPort">Port</label>
+              <input id="sshPort" z-input type="number" [value]="sshPort().toString()" (input)="sshPort.set(+$any($event.target).value || 22)" />
             </div>
           </div>
-        }
-      </div>
 
-      @if (connectionError()) {
-        <div class="mt-[18px] rounded-2xl border border-[color-mix(in_oklch,var(--destructive)_26%,var(--border))] bg-[color-mix(in_oklch,var(--destructive)_10%,var(--background))] px-4 py-3.5 text-[color-mix(in_oklch,var(--destructive)_84%,var(--foreground))]">{{ connectionError() }}</div>
+          <div class="mt-6 rounded-lg border border-border bg-background p-4">
+            <div class="flex flex-wrap gap-2">
+              <button type="button" class="inline-flex min-h-10 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium transition-colors hover:border-primary" [class.border-primary]="authMode() === 'agent'" [class.bg-accent]="authMode() === 'agent'" (click)="authMode.set('agent')">
+                <ng-icon name="lucideShieldCheck" size="16" />
+                SSH config / agent
+              </button>
+              <button type="button" class="inline-flex min-h-10 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium transition-colors hover:border-primary" [class.border-primary]="authMode() === 'password'" [class.bg-accent]="authMode() === 'password'" (click)="authMode.set('password')">
+                <ng-icon name="lucideLock" size="16" />
+                Password
+              </button>
+              <button type="button" class="inline-flex min-h-10 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium transition-colors hover:border-primary" [class.border-primary]="authMode() === 'key'" [class.bg-accent]="authMode() === 'key'" (click)="authMode.set('key')">
+                <ng-icon name="lucideKeyRound" size="16" />
+                Private key
+              </button>
+            </div>
+
+            @if (authMode() === 'agent') {
+              <p class="mt-4 text-sm leading-6 text-muted-foreground">Use the SSH config, agent, and keys already available on this machine.</p>
+            }
+
+            @if (authMode() === 'password') {
+              <div class="mt-4 grid gap-2">
+                <label class="text-sm font-medium text-foreground" for="sshPassword">Password</label>
+                <input id="sshPassword" z-input type="password" [value]="password()" (input)="password.set($any($event.target).value)" placeholder="Password is only used for this connection" />
+              </div>
+            }
+
+            @if (authMode() === 'key') {
+              <div class="mt-4 grid gap-4">
+                <div class="grid gap-2">
+                  <label class="text-sm font-medium text-foreground" for="sshKey">Private key</label>
+                  <app-path-autocomplete-input
+                    inputId="sshKey"
+                    [value]="identityFilePath()"
+                    pathKind="either"
+                    placeholder="~/.ssh/id_ed25519"
+                    preferredStartDirectory="~/.ssh"
+                    browseLabel="Browse"
+                    (valueChange)="identityFilePath.set($event)"
+                    (browse)="pickIdentityFile()"
+                  />
+                </div>
+                <div class="grid gap-2">
+                  <label class="text-sm font-medium text-foreground" for="sshPassphrase">Passphrase <span class="font-normal text-muted-foreground">(optional)</span></label>
+                  <input id="sshPassphrase" z-input type="password" [value]="passphrase()" (input)="passphrase.set($any($event.target).value)" placeholder="Only if this key is encrypted" />
+                </div>
+              </div>
+            }
+          </div>
+
+          @if (connectionError()) {
+            <div class="mt-5 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive" role="alert">{{ connectionError() }}</div>
+          }
+
+          <div class="mt-8 flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-stretch">
+            <button z-button zType="ghost" type="button" (click)="selectedMode.set(null); activeStep.set('connection')">
+              <ng-icon name="lucideArrowLeft" size="16" class="mr-1" />
+              Back
+            </button>
+            <button z-button type="button" [zLoading]="connecting()" [zDisabled]="connecting() || !canConnect() || !sshSupported()" (click)="connectToServer()">
+              Connect
+              <ng-icon name="lucideChevronsRight" size="16" class="ml-1" />
+            </button>
+          </div>
+        </section>
+      } @else if (activeStep() === 'install') {
+        <section class="w-full max-w-3xl">
+          <div class="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <ng-icon name="lucideRefreshCw" size="16" />
+            Remote setup paused
+          </div>
+          <h2 class="text-3xl font-semibold leading-tight text-foreground">Remote prerequisites are missing.</h2>
+          <p class="mt-3 text-sm leading-6 text-muted-foreground">
+            {{ installMessage() || 'Use the remote setup terminal to install the missing dependencies, then retry.' }}
+          </p>
+
+          <div class="mt-6 rounded-lg border border-border bg-background p-5 text-sm leading-6 text-muted-foreground">
+            Install the missing pieces on the remote server. After the remote machine is ready, Elevenex will upload or update its runtime automatically.
+          </div>
+
+          <div class="mt-8 flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-stretch">
+            <button z-button zType="ghost" type="button" (click)="retryConnection()">Edit connection</button>
+            <button z-button type="button" [zLoading]="connecting()" [zDisabled]="connecting()" (click)="connectToServer()">
+              <ng-icon name="lucideRefreshCw" size="16" class="mr-1" />
+              Retry
+            </button>
+          </div>
+        </section>
       }
-
-      <div class="mt-7 flex items-center justify-between gap-3 max-[720px]:flex-col max-[720px]:items-stretch">
-        <button z-button zType="ghost" type="button" (click)="selectedMode.set(null); activeStep.set('choice')">Back</button>
-        <button z-button type="button" [zLoading]="connecting()" [zDisabled]="connecting() || !canConnect() || !sshSupported()" (click)="connectToServer()">
-          Connect and verify
-          <ng-icon name="lucideChevronsRight" size="16" class="ml-1" />
-        </button>
-      </div>
-    } @else if (activeStep() === 'install') {
-      <div>
-        <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">Remote setup paused</p>
-        <h2 class="m-0 text-[clamp(1.9rem,2.2vw,2.5rem)] leading-[0.96] font-bold">Something went wrong</h2>
-        <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">Something went wrong. Please try again.</p>
-      </div>
-
-      <div class="mt-6 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_90%,var(--surface-tint)_10%)] p-[22px]">
-        <div class="onboarding-install-card__todo">
-          <strong class="block text-base">Remote setup is paused for manual prerequisites</strong>
-          <p class="mt-1.5 leading-[1.5] text-muted-foreground">{{ installMessage() || 'Use the remote setup terminal to install the missing dependencies, then re-check.' }}</p>
-        </div>
-        <ul class="mt-[18px] list-disc pl-[18px] leading-[1.6] text-muted-foreground">
-          <li>Use the remote setup modal to install any missing pieces such as <code>tmux</code> or <code>claude</code>.</li>
-          <li>After the remote machine is ready, Elevenex will upload or update its runtime automatically.</li>
-          <li>If you close the modal, you can retry from here.</li>
-        </ul>
-      </div>
-
-      <div class="mt-7 flex items-center justify-between gap-3 max-[720px]:flex-col max-[720px]:items-stretch">
-        <button z-button zType="ghost" type="button" (click)="retryConnection()">Edit connection</button>
-        <button z-button type="button" (click)="connectToServer()">
-          <ng-icon name="lucideRefreshCw" size="16" class="mr-1" />
-          Retry
-        </button>
-      </div>
-    } @else if (activeStep() === 'project') {
-      <div>
-        <p class="mb-3.5 text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">First project</p>
-        <h2 class="m-0 text-[clamp(1.9rem,2.2vw,2.5rem)] leading-[0.96] font-bold">Build your workspace in one pass</h2>
-        <p class="mt-4 max-w-lg text-base text-[color-mix(in_oklch,var(--foreground)_70%,var(--muted-foreground))]">{{ projectStepDescription() }}</p>
-      </div>
-
-      @if (selectedMode() === 'ssh' && serverSummary(); as server) {
-        <div class="mt-6 grid grid-cols-3 gap-4 rounded-3xl border border-[color-mix(in_oklch,var(--border)_80%,var(--surface-tint)_10%)] bg-[color-mix(in_oklch,var(--background)_90%,var(--surface-tint)_10%)] p-[22px] max-[720px]:grid-cols-1">
-          <div>
-            <span class="mb-1.5 block text-[0.78rem] tracking-[0.14em] text-muted-foreground uppercase">Connected server</span>
-            <strong class="block text-base">{{ server.name }}</strong>
-          </div>
-          <div>
-            <span class="mb-1.5 block text-[0.78rem] tracking-[0.14em] text-muted-foreground uppercase">Target</span>
-            <strong class="block text-base">{{ server.sshUser ? server.sshUser + '@' : '' }}{{ server.sshHost }}:{{ server.sshPort }}</strong>
-          </div>
-          <div>
-            <span class="mb-1.5 block text-[0.78rem] tracking-[0.14em] text-muted-foreground uppercase">Forwarded locally</span>
-            <strong class="block text-base">127.0.0.1:{{ server.localPort }}</strong>
-          </div>
-        </div>
-      }
-
-      <div class="mt-7">
-        <app-project-onboarding-wizard
-          [embedded]="true"
-          [allowCancel]="false"
-          [showPortForwardStep]="shouldShowPortForwardStep()"
-          heading="Create your first project"
-          subheading="You need at least one repository before finishing onboarding."
-          ctaLabel="Finish setup"
-          (completed)="handleProjectCreated($event)"
-        />
-      </div>
-    }
-  </section>
+    </main>
+  </div>
 </div>

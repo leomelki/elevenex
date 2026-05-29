@@ -42,7 +42,9 @@ describe('SessionContainer modal browser gating', () => {
   const reconnectSignal = signal(0);
   const appSettingsSignal = signal<AppSettings>({
     defaultClaudeSessionSurface: 'claude-ui',
+    defaultAgentProvider: 'claude',
     sessionToolbarButtons: null,
+    onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
     createdAt: null,
     updatedAt: null,
   });
@@ -237,7 +239,9 @@ describe('SessionContainer modal browser gating', () => {
     reconnectSignal.set(0);
     appSettingsSignal.set({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: null,
       updatedAt: null,
     });
@@ -485,7 +489,9 @@ describe('SessionContainer modal browser gating', () => {
   it('opens a new Claude tab in terminal mode when the backend default is TUI', () => {
     appSettingsSignal.set({
       defaultClaudeSessionSurface: 'tui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: null,
       updatedAt: null,
     });
@@ -504,7 +510,9 @@ describe('SessionContainer modal browser gating', () => {
   it('keeps a new Claude tab in workspace mode when the backend default is Claude UI', () => {
     appSettingsSignal.set({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: null,
       updatedAt: null,
     });
@@ -523,7 +531,9 @@ describe('SessionContainer modal browser gating', () => {
   it('does not move an already-open tab when the backend default is TUI', () => {
     appSettingsSignal.set({
       defaultClaudeSessionSurface: 'tui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
       createdAt: null,
       updatedAt: null,
     });

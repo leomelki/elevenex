@@ -12,6 +12,64 @@
 
     <section class="rounded-lg border border-border bg-card">
       <div class="border-b border-border px-5 py-4">
+        <h2 class="text-sm font-semibold text-foreground">Agent</h2>
+      </div>
+
+      <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-foreground">Default agent</div>
+          <div class="mt-1 text-sm text-muted-foreground">Used when new sessions are created on this backend.</div>
+          @if (appSettings.error()) {
+            <div class="mt-2 text-sm text-destructive" role="alert">{{ appSettings.error() }}</div>
+          }
+        </div>
+
+        <div class="inline-grid grid-cols-3 rounded-lg border border-border bg-muted p-1">
+          <button
+            type="button"
+            class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            [class.bg-background]="appSettings.settings().defaultAgentProvider === 'claude'"
+            [class.text-foreground]="appSettings.settings().defaultAgentProvider === 'claude'"
+            [class.shadow-sm]="appSettings.settings().defaultAgentProvider === 'claude'"
+            [disabled]="appSettings.saving()"
+            [attr.aria-pressed]="appSettings.settings().defaultAgentProvider === 'claude'"
+            (click)="selectAgent('claude')"
+          >
+            <ng-icon name="lucideSparkles" size="15" />
+            <span>Claude</span>
+          </button>
+          <button
+            type="button"
+            class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            [class.bg-background]="appSettings.settings().defaultAgentProvider === 'codex'"
+            [class.text-foreground]="appSettings.settings().defaultAgentProvider === 'codex'"
+            [class.shadow-sm]="appSettings.settings().defaultAgentProvider === 'codex'"
+            [disabled]="appSettings.saving()"
+            [attr.aria-pressed]="appSettings.settings().defaultAgentProvider === 'codex'"
+            (click)="selectAgent('codex')"
+          >
+            <ng-icon name="lucideFileText" size="15" />
+            <span>Codex</span>
+          </button>
+          <button
+            type="button"
+            class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            [class.bg-background]="appSettings.settings().defaultAgentProvider === 'pi'"
+            [class.text-foreground]="appSettings.settings().defaultAgentProvider === 'pi'"
+            [class.shadow-sm]="appSettings.settings().defaultAgentProvider === 'pi'"
+            [disabled]="appSettings.saving()"
+            [attr.aria-pressed]="appSettings.settings().defaultAgentProvider === 'pi'"
+            (click)="selectAgent('pi')"
+          >
+            <ng-icon name="lucideNotebookPen" size="15" />
+            <span>Pi</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-lg border border-border bg-card">
+      <div class="border-b border-border px-5 py-4">
         <h2 class="text-sm font-semibold text-foreground">Claude Code</h2>
       </div>
 

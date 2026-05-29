@@ -43,7 +43,9 @@ describe('SettingsService', () => {
 
     await expect(service.findOne()).resolves.toEqual({
       defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -56,14 +58,18 @@ describe('SettingsService', () => {
     const settings = await service.update({ defaultClaudeSessionSurface: 'tui' });
 
     expect(settings.defaultClaudeSessionSurface).toBe('tui');
+    expect(settings.defaultAgentProvider).toBe('claude');
     expect(settings.sessionToolbarButtons).toBeNull();
+    expect(settings.onboardingCompletedAt).toBeNull();
     expect(settings.createdAt).toEqual(expect.any(String));
     expect(settings.updatedAt).toEqual(expect.any(String));
     expect(getRows()).toHaveLength(1);
     expect(getRows()[0]).toMatchObject({
       id: 1,
       defaultClaudeSessionSurface: 'tui',
+      defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      onboardingCompletedAt: null,
     });
   });
 
@@ -86,7 +92,9 @@ describe('SettingsService', () => {
       {
         id: 1,
         defaultClaudeSessionSurface: 'tui',
+        defaultAgentProvider: 'codex',
         sessionToolbarButtons: JSON.stringify([{ id: 'terminal', visible: false }]),
+        onboardingCompletedAt: null,
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
       },
@@ -98,7 +106,20 @@ describe('SettingsService', () => {
     });
 
     expect(settings.defaultClaudeSessionSurface).toBe('tui');
+    expect(settings.defaultAgentProvider).toBe('codex');
     expect(settings.sessionToolbarButtons).toEqual([{ id: 'files', visible: true }]);
+  });
+
+  it('updates the default agent provider', async () => {
+    const { db, getRows } = createDbMock();
+    const service = new SettingsService(db);
+
+    const settings = await service.update({ defaultAgentProvider: 'pi' });
+
+    expect(settings.defaultAgentProvider).toBe('pi');
+    expect(getRows()[0]).toMatchObject({
+      defaultAgentProvider: 'pi',
+    });
   });
 
   it('resets session toolbar buttons when null is saved', async () => {
@@ -125,6 +146,51 @@ describe('SettingsService', () => {
         defaultClaudeSessionSurface: 'terminal',
       } as Parameters<SettingsService['update']>[0]),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects unsupported default agent providers', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+
+    await expect(
+      service.update({
+        defaultAgentProvider: 'opencode',
+      } as Parameters<SettingsService['update']>[0]),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('completes onboarding with Claude surface and timestamp', async () => {
+    const { db, getRows } = createDbMock();
+    const service = new SettingsService(db);
+
+    const settings = await service.completeOnboarding({
+      defaultAgentProvider: 'claude',
+      defaultClaudeSessionSurface: 'tui',
+    });
+
+    expect(settings.defaultAgentProvider).toBe('claude');
+    expect(settings.defaultClaudeSessionSurface).toBe('tui');
+    expect(settings.onboardingCompletedAt).toEqual(expect.any(String));
+    expect(getRows()[0]).toMatchObject({
+      defaultAgentProvider: 'claude',
+      defaultClaudeSessionSurface: 'tui',
+      onboardingCompletedAt: expect.any(String),
+    });
+  });
+
+  it('preserves Claude surface when onboarding completes with a non-Claude agent', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+
+    await service.update({ defaultClaudeSessionSurface: 'tui' });
+    const settings = await service.completeOnboarding({
+      defaultAgentProvider: 'codex',
+      defaultClaudeSessionSurface: 'claude-ui',
+    });
+
+    expect(settings.defaultAgentProvider).toBe('codex');
+    expect(settings.defaultClaudeSessionSurface).toBe('tui');
+    expect(settings.onboardingCompletedAt).toEqual(expect.any(String));
   });
 
   it('rejects unsupported session toolbar settings', async () => {
