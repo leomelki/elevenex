@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  forwardRef,
   Inject,
   Injectable,
   Logger,
@@ -91,6 +92,7 @@ export class WorktreeContextService {
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    @Inject(forwardRef(() => SessionsService))
     private readonly sessionsService: SessionsService,
   ) {}
 
