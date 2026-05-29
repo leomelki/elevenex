@@ -1993,6 +1993,10 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const run = this.activeRuns.get(sessionId);
+    // Always capture the Claude session ID even when interrupted — if the
+    // system:init arrives after the user stops, we still need to persist the
+    // session ID so that getHistory can load it and the next run can resume.
+    this.captureClaudeSessionId(sessionId, message);
     if (run?.interruptRequested) {
       return;
     }
@@ -2018,7 +2022,6 @@ export class ClaudeRuntimeService extends EventEmitter {
       this.logPreVisibleMessage(sessionId, run, message);
     }
 
-    this.captureClaudeSessionId(sessionId, message);
     this.logSdkMessageDiagnostics(sessionId, message);
 
     if (message.type === 'stream_event') {
@@ -5658,11 +5661,17 @@ export class ClaudeRuntimeService extends EventEmitter {
     transcriptPath: string,
   ): Promise<ClaudeTranscriptRecord[]> {
     const raw = await readFile(transcriptPath, 'utf8');
-    return raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as ClaudeTranscriptRecord);
+    const records: ClaudeTranscriptRecord[] = [];
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        records.push(JSON.parse(trimmed) as ClaudeTranscriptRecord);
+      } catch {
+        // Truncated line from an interrupted write — skip and recover what we can.
+      }
+    }
+    return records;
   }
 
   private async persistTranscriptRecords(
