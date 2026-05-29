@@ -1,6 +1,7 @@
-import { ScrollingModule } from '@angular/cdk/scrolling';
+import { CdkVirtualScrollViewport, ScrollingModule } from '@angular/cdk/scrolling';
 import { CommonModule } from '@angular/common';
 import {
+  AfterViewInit,
   Component,
   computed,
   effect,
@@ -196,7 +197,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-files';
     }),
   ],
 })
-export class ChangeReviewPanelComponent implements OnDestroy {
+export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly worktreePath = input.required<string>();
   readonly highlightedMentions = input<readonly DiffSelectionMention[]>([]);
   readonly mentionSelection = output<DiffSelectionMention[]>();
@@ -207,6 +208,7 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly diffScroll = viewChild<ElementRef<HTMLElement>>('diffScroll');
+  private readonly fileViewport = viewChild<CdkVirtualScrollViewport>('fileViewport');
   private readonly rowHtmlCache = new Map<string, SafeHtml>();
   private readonly windowQueue: WindowRequest[] = [];
   private readonly pendingWindowKeys = new Set<string>();
@@ -223,6 +225,8 @@ export class ChangeReviewPanelComponent implements OnDestroy {
   private generation = 0;
   private activeScopeKey: string | null = null;
   private gitSummaryRefreshTimer: number | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private resizeFrame: number | null = null;
   private readonly countFormatter = new Intl.NumberFormat();
 
   readonly rowHeightPx = ROW_HEIGHT_PX;
@@ -345,9 +349,19 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     });
   }
 
+  ngAfterViewInit(): void {
+    this.setupResizeObserver();
+    this.scheduleResizeRefresh();
+  }
+
   ngOnDestroy(): void {
     this.generation += 1;
     this.cancelActiveRequests();
+    this.resizeObserver?.disconnect();
+    if (this.resizeFrame !== null) {
+      this.cancelResizeFrame(this.resizeFrame);
+      this.resizeFrame = null;
+    }
     window.clearInterval(this.relativeTimeInterval);
     this.requestCancel$.complete();
   }
@@ -418,12 +432,6 @@ export class ChangeReviewPanelComponent implements OnDestroy {
     this.updateDiffViewportMetrics();
     this.refreshRenderedRows();
     this.ensureVisibleRangeLoaded();
-  }
-
-  @HostListener('window:resize')
-  onWindowResize(): void {
-    this.updateDiffViewportMetrics();
-    this.refreshRenderedRows();
   }
 
   scrollToFile(file: ChangeReviewFileSummary): void {
@@ -1522,6 +1530,42 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       this.refreshRenderedRows();
       this.ensureVisibleRangeLoaded();
     }
+  }
+
+  private setupResizeObserver(): void {
+    if (typeof ResizeObserver === 'undefined') return;
+    this.resizeObserver = new ResizeObserver(() => this.scheduleResizeRefresh());
+    this.resizeObserver.observe(this.elementRef.nativeElement);
+  }
+
+  private scheduleResizeRefresh(): void {
+    if (this.resizeFrame !== null) return;
+    this.resizeFrame = this.requestResizeFrame(() => {
+      this.resizeFrame = null;
+      this.refreshAfterResize();
+    });
+  }
+
+  private refreshAfterResize(): void {
+    this.fileViewport()?.checkViewportSize();
+    this.updateDiffViewportMetrics();
+    this.refreshRenderedRows();
+    this.ensureVisibleRangeLoaded();
+  }
+
+  private requestResizeFrame(callback: FrameRequestCallback): number {
+    if (typeof window.requestAnimationFrame === 'function') {
+      return window.requestAnimationFrame(callback);
+    }
+    return window.setTimeout(() => callback(Date.now()), 0);
+  }
+
+  private cancelResizeFrame(frame: number): void {
+    if (typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(frame);
+      return;
+    }
+    window.clearTimeout(frame);
   }
 
   private updateDiffViewportMetrics(): void {

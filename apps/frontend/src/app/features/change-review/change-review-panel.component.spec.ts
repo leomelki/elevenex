@@ -239,14 +239,50 @@ describe('ChangeReviewPanelComponent', () => {
     latestSummary: ReturnType<typeof vi.fn>;
     getSummary: ReturnType<typeof vi.fn>;
   };
+  let resizeCallbacks: ResizeObserverCallback[];
+  let resizeObservedTargets: Element[];
+  let resizeDisconnectCount: number;
 
   beforeEach(async () => {
     installStorageStub();
     summaryCalls = [];
     windowCalls = [];
     contextCalls = [];
+    resizeCallbacks = [];
+    resizeObservedTargets = [];
+    resizeDisconnectCount = 0;
     latestGitSummary = signal<GitStatusSummary | null>(null);
     localStorage.clear();
+
+    Object.defineProperty(globalThis, 'ResizeObserver', {
+      configurable: true,
+      value: class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback);
+        }
+
+        observe(target: Element): void {
+          resizeObservedTargets.push(target);
+        }
+
+        unobserve(): void {}
+
+        disconnect(): void {
+          resizeDisconnectCount += 1;
+        }
+      },
+    });
+
+    Object.defineProperty(window, 'requestAnimationFrame', {
+      configurable: true,
+      value: (callback: FrameRequestCallback) =>
+        window.setTimeout(() => callback(Date.now()), 0),
+    });
+    Object.defineProperty(window, 'cancelAnimationFrame', {
+      configurable: true,
+      value: (handle: number) => window.clearTimeout(handle),
+    });
+
     serviceMock = {
       getSummary: vi.fn(
         (
@@ -376,6 +412,33 @@ describe('ChangeReviewPanelComponent', () => {
 
     expect(windowCalls.some((call) => call.path === 'src/first.ts')).toBe(true);
     expect(windowCalls.some((call) => call.path === 'src/second.ts')).toBe(false);
+  });
+
+  it('refreshes both virtual scrollers when the panel container resizes', async () => {
+    const files = [file('src/a.ts'), file('src/b.ts')];
+    const viewport = await flushSummary(summary(files));
+    const fileViewport = (
+      fixture.componentInstance as unknown as {
+        fileViewport: () => { checkViewportSize: () => void } | undefined;
+      }
+    ).fileViewport();
+    const checkViewportSize = vi.spyOn(fileViewport!, 'checkViewportSize');
+    const nextFileTop = fixture.componentInstance.layout().fileStart('src/b.ts')! * 24;
+
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 640 });
+    setViewport(viewport, 120, nextFileTop);
+
+    resizeCallbacks[resizeCallbacks.length - 1]([], {} as ResizeObserver);
+    await flush();
+    fixture.detectChanges();
+
+    expect(resizeObservedTargets).toContain(fixture.nativeElement);
+    expect(checkViewportSize).toHaveBeenCalled();
+    expect(fixture.componentInstance.diffViewportWidthPx()).toBe(640);
+    expect(fixture.componentInstance.activeFilePath()).toBe('src/b.ts');
+
+    fixture.destroy();
+    expect(resizeDisconnectCount).toBe(1);
   });
 
   it('hides large file diffs by default and loads them only after confirmation', async () => {

@@ -206,7 +206,7 @@
           <span>No files in this scope</span>
         </div>
       } @else {
-        <cdk-virtual-scroll-viewport itemSize="58" class="cr-file-viewport">
+        <cdk-virtual-scroll-viewport #fileViewport itemSize="58" class="cr-file-viewport">
           <button
             *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
             type="button"
