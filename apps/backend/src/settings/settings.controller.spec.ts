@@ -28,12 +28,14 @@ describe('SettingsController', () => {
   it('returns app settings', async () => {
     settingsService.findOne.mockResolvedValue({
       defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: null,
       createdAt: null,
       updatedAt: null,
     });
 
     await expect(controller.findOne()).resolves.toEqual({
       defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -42,17 +44,25 @@ describe('SettingsController', () => {
   it('updates app settings', async () => {
     settingsService.update.mockResolvedValue({
       defaultClaudeSessionSurface: 'tui',
+      sessionToolbarButtons: [{ id: 'terminal', visible: false }],
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     });
 
     await expect(
-      controller.update({ defaultClaudeSessionSurface: 'tui' }),
+      controller.update({
+        defaultClaudeSessionSurface: 'tui',
+        sessionToolbarButtons: [{ id: 'terminal', visible: false }],
+      }),
     ).resolves.toEqual({
       defaultClaudeSessionSurface: 'tui',
+      sessionToolbarButtons: [{ id: 'terminal', visible: false }],
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     });
-    expect(settingsService.update).toHaveBeenCalledWith('tui');
+    expect(settingsService.update).toHaveBeenCalledWith({
+      defaultClaudeSessionSurface: 'tui',
+      sessionToolbarButtons: [{ id: 'terminal', visible: false }],
+    });
   });
 });

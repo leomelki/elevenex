@@ -37,6 +37,7 @@ describe('Settings', () => {
 
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -48,6 +49,8 @@ describe('Settings', () => {
     expect(element.textContent).toContain('Workspace Preferences');
     expect(element.textContent).toContain('Claude UI');
     expect(element.textContent).toContain('TUI');
+    expect(element.textContent).toContain('Session toolbar');
+    expect(element.textContent).toContain('Reset to default');
     expect(element.textContent).toContain('Elevenex');
     expect(element.textContent).toContain('@leomelki');
     expect(element.textContent).toContain('GitHub repository');
@@ -61,6 +64,7 @@ describe('Settings', () => {
 
     httpMock.expectOne('/api/settings').flush({
       defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -87,5 +91,47 @@ describe('Settings', () => {
     fixture.detectChanges();
 
     expect(tuiButton?.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('saves and resets session toolbar button preferences', async () => {
+    const fixture = TestBed.createComponent(Settings);
+    fixture.detectChanges();
+
+    httpMock.expectOne('/api/settings').flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const savePromise = fixture.componentInstance.setToolbarButtonVisibility('terminal', false);
+    const saveRequest = httpMock.expectOne('/api/settings');
+    expect(saveRequest.request.method).toBe('PATCH');
+    expect(
+      saveRequest.request.body.sessionToolbarButtons.find(
+        (button: { id: string }) => button.id === 'terminal',
+      ),
+    ).toEqual({ id: 'terminal', visible: false });
+    saveRequest.flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: saveRequest.request.body.sessionToolbarButtons,
+      createdAt: null,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await savePromise;
+
+    const resetPromise = fixture.componentInstance.resetToolbarButtons();
+    const resetRequest = httpMock.expectOne('/api/settings');
+    expect(resetRequest.request.body.sessionToolbarButtons).toBeNull();
+    resetRequest.flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: null,
+      createdAt: null,
+      updatedAt: '2026-01-01T00:00:01.000Z',
+    });
+    await resetPromise;
   });
 });

@@ -56,6 +56,115 @@
     </section>
 
     <section class="rounded-lg border border-border bg-card">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <h2 class="text-sm font-semibold text-foreground">Session toolbar</h2>
+          <p class="mt-1 text-sm text-muted-foreground">Choose which square buttons appear after commit and arrange them in the order you use most.</p>
+        </div>
+        <button
+          z-button
+          zType="outline"
+          zSize="sm"
+          type="button"
+          [zDisabled]="appSettings.saving()"
+          (click)="resetToolbarButtons()"
+        >
+          <ng-icon name="lucideRotateCcw" size="14" />
+          <span>Reset to default</span>
+        </button>
+      </div>
+
+      <div class="grid gap-5 p-5">
+        <div class="rounded-lg border border-border bg-background p-3">
+          <div class="mb-3 text-sm font-medium text-foreground">Preview</div>
+          <div class="flex min-h-11 flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/45 px-3 py-2">
+            <span class="flex h-8 items-center rounded-md border border-border bg-background px-3 text-xs font-medium text-muted-foreground">Commit</span>
+            @if (visibleToolbarButtons().length > 0) {
+              @for (button of visibleToolbarButtons(); track button.id) {
+                <span
+                  class="flex size-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground shadow-sm"
+                  [attr.title]="toolbarButtonLabel(button.id)"
+                >
+                  <ng-icon [name]="toolbarButtonIcon(button.id)" size="16" />
+                </span>
+              }
+            } @else {
+              <span class="text-sm text-muted-foreground">No square buttons visible</span>
+            }
+          </div>
+        </div>
+
+        <div
+          cdkDropList
+          [cdkDropListData]="toolbarButtons()"
+          (cdkDropListDropped)="reorderToolbarButtons($event)"
+          class="divide-y divide-border overflow-hidden rounded-lg border border-border"
+          aria-label="Session toolbar button order"
+        >
+          @for (button of toolbarButtons(); track button.id; let i = $index) {
+            <div
+              cdkDrag
+              [cdkDragDisabled]="appSettings.saving()"
+              class="grid gap-3 bg-background px-4 py-3 transition-colors hover:bg-muted/45 md:grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] md:items-center"
+            >
+              <button
+                cdkDragHandle
+                type="button"
+                class="flex size-8 cursor-grab items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50"
+                [disabled]="appSettings.saving()"
+                [attr.aria-label]="'Drag ' + toolbarButtonLabel(button.id)"
+              >
+                <ng-icon name="lucideGripVertical" size="16" />
+              </button>
+
+              <span class="flex size-8 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
+                <ng-icon [name]="toolbarButtonIcon(button.id)" size="16" />
+              </span>
+
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-foreground">{{ toolbarButtonLabel(button.id) }}</div>
+                <div class="mt-0.5 text-sm text-muted-foreground">{{ toolbarButtonDescription(button.id) }}</div>
+              </div>
+
+              <z-checkbox
+                [zDisabled]="appSettings.saving()"
+                [ngModel]="button.visible"
+                (ngModelChange)="setToolbarButtonVisibility(button.id, $event)"
+              >
+                Show
+              </z-checkbox>
+
+              <div class="flex items-center gap-1">
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="icon-sm"
+                  type="button"
+                  [zDisabled]="appSettings.saving() || i === 0"
+                  [attr.aria-label]="'Move ' + toolbarButtonLabel(button.id) + ' up'"
+                  (click)="moveToolbarButton(i, -1)"
+                >
+                  <ng-icon name="lucideArrowUp" size="15" />
+                </button>
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="icon-sm"
+                  type="button"
+                  [zDisabled]="appSettings.saving() || i === toolbarButtons().length - 1"
+                  [attr.aria-label]="'Move ' + toolbarButtonLabel(button.id) + ' down'"
+                  (click)="moveToolbarButton(i, 1)"
+                >
+                  <ng-icon name="lucideArrowDown" size="15" />
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-lg border border-border bg-card">
       <div class="border-b border-border px-5 py-4">
         <h2 class="text-sm font-semibold text-foreground">About</h2>
       </div>

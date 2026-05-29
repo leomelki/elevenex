@@ -178,6 +178,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   activeSessionId = this.tabService.activeSessionId;
   hasTabs = this.tabService.hasTabs;
   activeTab = this.tabService.activeTab;
+  sessionToolbarButtons = this.appSettings.normalizedSessionToolbarButtons;
   activePendingDiffMentions = computed<DiffSelectionMention[]>(() => {
     const sessionId = this.activeSessionId();
     if (!sessionId) return [];

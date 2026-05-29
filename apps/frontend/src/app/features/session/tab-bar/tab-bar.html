@@ -74,128 +74,156 @@
       @if (worktreePath()) {
         <app-commit-button [worktreePath]="worktreePath()" [contextKey]="commitContextKey()" />
       }
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        title="Agent"
-        aria-label="Open agent drawer"
-        (click)="openAgentDrawer()"
-      >
-        <ng-icon name="lucideSparkles" size="16" />
-      </button>
-      @if (plannotatorAvailable()) {
-        <button
-          class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-          [ngClass]="showPlannotator() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-          title="Plannotator"
-          aria-label="Toggle Plannotator panel"
-          (click)="togglePlannotator.emit()"
-        >
-          <ng-icon name="lucideNotebookPen" size="16" />
-        </button>
-      }
-      @if (planAnnotatorAvailable()) {
-        <button
-          class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-          [ngClass]="showPlanAnnotator() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-          title="Plan review"
-          aria-label="Toggle plan review panel"
-          (click)="togglePlanAnnotator.emit()"
-        >
-          <ng-icon name="lucideClipboardList" size="16" />
-        </button>
-      }
-      @if (isClaudeProvider()) {
-        <button
-          class="relative flex size-8 items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-100 enabled:cursor-pointer enabled:hover:bg-muted enabled:hover:text-foreground"
-          [ngClass]="showClaudeTerminalFallback() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-          [disabled]="showClaudeTerminalFallback() && claudeTerminalReturnDisabled()"
-          [title]="getClaudeTerminalFallbackTitle()"
-          [attr.aria-label]="getClaudeTerminalFallbackAriaLabel()"
-          (click)="toggleClaudeTerminalFallback.emit()"
-        >
-          <ng-icon name="lucideSquareTerminal" size="16" />
-        </button>
-        @if (showClaudeTerminalFallback()) {
-          <button
-            class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-            [ngClass]="showClaudeTerminalMirror() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-            [title]="showClaudeTerminalMirror() ? 'Hide terminal transcript mirror' : 'Show terminal transcript mirror'"
-            aria-label="Toggle terminal transcript mirror"
-            (click)="toggleClaudeTerminalMirror.emit()"
-          >
-            <ng-icon name="lucidePanelRight" size="16" />
-          </button>
+      @for (button of visibleToolbarButtons(); track button.id) {
+        @switch (button.id) {
+          @case ('agent') {
+            <button
+              class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+              title="Agent"
+              aria-label="Open agent drawer"
+              (click)="openAgentDrawer()"
+            >
+              <ng-icon name="lucideSparkles" size="16" />
+            </button>
+          }
+          @case ('plannotator') {
+            @if (plannotatorAvailable()) {
+              <button
+                class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+                [ngClass]="showPlannotator() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+                title="Plannotator"
+                aria-label="Toggle Plannotator panel"
+                (click)="togglePlannotator.emit()"
+              >
+                <ng-icon name="lucideNotebookPen" size="16" />
+              </button>
+            }
+          }
+          @case ('planReview') {
+            @if (planAnnotatorAvailable()) {
+              <button
+                class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+                [ngClass]="showPlanAnnotator() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+                title="Plan review"
+                aria-label="Toggle plan review panel"
+                (click)="togglePlanAnnotator.emit()"
+              >
+                <ng-icon name="lucideClipboardList" size="16" />
+              </button>
+            }
+          }
+          @case ('claudeTerminal') {
+            @if (isClaudeProvider()) {
+              <button
+                class="relative flex size-8 items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-100 enabled:cursor-pointer enabled:hover:bg-muted enabled:hover:text-foreground"
+                [ngClass]="showClaudeTerminalFallback() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+                [disabled]="showClaudeTerminalFallback() && claudeTerminalReturnDisabled()"
+                [title]="getClaudeTerminalFallbackTitle()"
+                [attr.aria-label]="getClaudeTerminalFallbackAriaLabel()"
+                (click)="toggleClaudeTerminalFallback.emit()"
+              >
+                <ng-icon name="lucideSquareTerminal" size="16" />
+              </button>
+            }
+          }
+          @case ('terminalMirror') {
+            @if (isClaudeProvider() && showClaudeTerminalFallback()) {
+              <button
+                class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+                [ngClass]="showClaudeTerminalMirror() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+                [title]="showClaudeTerminalMirror() ? 'Hide terminal transcript mirror' : 'Show terminal transcript mirror'"
+                aria-label="Toggle terminal transcript mirror"
+                (click)="toggleClaudeTerminalMirror.emit()"
+              >
+                <ng-icon name="lucidePanelRight" size="16" />
+              </button>
+            }
+          }
+          @case ('terminal') {
+            <button
+              class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+              [ngClass]="showTerminal() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+              title="Terminal"
+              aria-label="Toggle Terminal panel"
+              (click)="toggleTerminal.emit()"
+            >
+              <ng-icon name="lucideTerminal" size="16" />
+            </button>
+          }
+          @case ('actions') {
+            <button
+              class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+              [ngClass]="showActions() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+              title="Actions"
+              aria-label="Toggle Actions panel"
+              (click)="toggleActions.emit()"
+            >
+              <ng-icon name="lucidePlay" size="16" />
+              @if (runningActionsCount() > 0) {
+                <span class="absolute -top-1 -right-1 h-4 min-w-4 rounded-full bg-[color-mix(in_oklch,var(--primary)_84%,white)] px-1 text-[10px] leading-4 font-bold text-white">{{ runningActionsCount() }}</span>
+              }
+            </button>
+          }
+          @case ('changes') {
+            <button
+              class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+              [ngClass]="showChanges() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+              title="Changes"
+              aria-label="Toggle changes review panel"
+              (click)="toggleChanges.emit()"
+            >
+              <ng-icon name="lucideGitPullRequest" size="16" />
+            </button>
+          }
+          @case ('files') {
+            <button
+              class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+              [ngClass]="showFiles() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+              title="Files"
+              aria-label="Toggle Files panel"
+              (click)="toggleFiles.emit()"
+            >
+              <ng-icon name="lucideFolderTree" size="16" />
+            </button>
+          }
+          @case ('browser') {
+            <button
+              class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+              [ngClass]="showBrowser() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+              title="Browser"
+              aria-label="Toggle Browser panel"
+              (click)="toggleBrowser.emit()"
+            >
+              <ng-icon name="lucideGlobe" size="16" />
+            </button>
+          }
+          @case ('scratchpad') {
+            <button
+              class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+              [ngClass]="showScratchpad() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+              title="Scratchpad"
+              aria-label="Toggle Scratchpad panel"
+              (click)="toggleScratchpad.emit()"
+            >
+              <ng-icon name="lucideFileText" size="16" />
+            </button>
+          }
+          @case ('todos') {
+            <button
+              class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
+              [ngClass]="showTodos() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
+              title="Tasks"
+              aria-label="Toggle Tasks panel"
+              (click)="toggleTodos.emit()"
+            >
+              <ng-icon name="lucideCheckSquare" size="16" />
+              @if (pendingTodosCount() > 0) {
+                <span class="absolute -top-1 -right-1 h-4 min-w-4 rounded-full bg-[color-mix(in_oklch,var(--primary)_84%,white)] px-1 text-[10px] leading-4 font-bold text-white">{{ pendingTodosCount() }}</span>
+              }
+            </button>
+          }
         }
       }
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showTerminal() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Terminal"
-        aria-label="Toggle Terminal panel"
-        (click)="toggleTerminal.emit()"
-      >
-        <ng-icon name="lucideTerminal" size="16" />
-      </button>
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showActions() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Actions"
-        aria-label="Toggle Actions panel"
-        (click)="toggleActions.emit()"
-      >
-        <ng-icon name="lucidePlay" size="16" />
-        @if (runningActionsCount() > 0) {
-          <span class="absolute -top-1 -right-1 h-4 min-w-4 rounded-full bg-[color-mix(in_oklch,var(--primary)_84%,white)] px-1 text-[10px] leading-4 font-bold text-white">{{ runningActionsCount() }}</span>
-        }
-      </button>
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showChanges() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Changes"
-        aria-label="Toggle changes review panel"
-        (click)="toggleChanges.emit()"
-      >
-        <ng-icon name="lucideGitPullRequest" size="16" />
-      </button>
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showFiles() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Files"
-        aria-label="Toggle Files panel"
-        (click)="toggleFiles.emit()"
-      >
-        <ng-icon name="lucideFolderTree" size="16" />
-      </button>
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showBrowser() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Browser"
-        aria-label="Toggle Browser panel"
-        (click)="toggleBrowser.emit()"
-      >
-        <ng-icon name="lucideGlobe" size="16" />
-      </button>
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showScratchpad() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Scratchpad"
-        aria-label="Toggle Scratchpad panel"
-        (click)="toggleScratchpad.emit()"
-      >
-        <ng-icon name="lucideFileText" size="16" />
-      </button>
-      <button
-        class="relative flex size-8 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground"
-        [ngClass]="showTodos() ? '!bg-primary !text-primary-foreground !border-primary' : ''"
-        title="Tasks"
-        aria-label="Toggle Tasks panel"
-        (click)="toggleTodos.emit()"
-      >
-        <ng-icon name="lucideCheckSquare" size="16" />
-        @if (pendingTodosCount() > 0) {
-          <span class="absolute -top-1 -right-1 h-4 min-w-4 rounded-full bg-[color-mix(in_oklch,var(--primary)_84%,white)] px-1 text-[10px] leading-4 font-bold text-white">{{ pendingTodosCount() }}</span>
-        }
-      </button>
     </div>
   }
 

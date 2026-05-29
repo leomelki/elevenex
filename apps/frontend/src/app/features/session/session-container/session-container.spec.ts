@@ -42,6 +42,7 @@ describe('SessionContainer modal browser gating', () => {
   const reconnectSignal = signal(0);
   const appSettingsSignal = signal<AppSettings>({
     defaultClaudeSessionSurface: 'claude-ui',
+    sessionToolbarButtons: null,
     createdAt: null,
     updatedAt: null,
   });
@@ -157,6 +158,7 @@ describe('SessionContainer modal browser gating', () => {
 
   const appSettingsServiceMock = {
     settings: appSettingsSignal.asReadonly(),
+    normalizedSessionToolbarButtons: () => [],
     load: vi.fn(() => Promise.resolve(appSettingsSignal())),
   };
 
@@ -235,6 +237,7 @@ describe('SessionContainer modal browser gating', () => {
     reconnectSignal.set(0);
     appSettingsSignal.set({
       defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -482,6 +485,7 @@ describe('SessionContainer modal browser gating', () => {
   it('opens a new Claude tab in terminal mode when the backend default is TUI', () => {
     appSettingsSignal.set({
       defaultClaudeSessionSurface: 'tui',
+      sessionToolbarButtons: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -500,6 +504,7 @@ describe('SessionContainer modal browser gating', () => {
   it('keeps a new Claude tab in workspace mode when the backend default is Claude UI', () => {
     appSettingsSignal.set({
       defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -518,6 +523,7 @@ describe('SessionContainer modal browser gating', () => {
   it('does not move an already-open tab when the backend default is TUI', () => {
     appSettingsSignal.set({
       defaultClaudeSessionSurface: 'tui',
+      sessionToolbarButtons: null,
       createdAt: null,
       updatedAt: null,
     });

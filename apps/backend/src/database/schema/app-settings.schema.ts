@@ -5,6 +5,7 @@ export const appSettings = sqliteTable('app_settings', {
   defaultClaudeSessionSurface: text('default_claude_session_surface')
     .notNull()
     .default('claude-ui'),
+  sessionToolbarButtons: text('session_toolbar_buttons'),
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),

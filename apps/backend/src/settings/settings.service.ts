@@ -7,6 +7,8 @@ import {
   CLAUDE_SESSION_SURFACES,
   DEFAULT_CLAUDE_SESSION_SURFACE,
   DefaultClaudeSessionSurface,
+  SessionToolbarButtonSetting,
+  UpdateAppSettingsInput,
 } from './settings.types.js';
 
 const SINGLETON_SETTINGS_ID = 1;
@@ -26,6 +28,7 @@ export class SettingsService {
     if (!row) {
       return {
         defaultClaudeSessionSurface: DEFAULT_CLAUDE_SESSION_SURFACE,
+        sessionToolbarButtons: null,
         createdAt: null,
         updatedAt: null,
       };
@@ -34,12 +37,19 @@ export class SettingsService {
     return this.toResponse(row);
   }
 
-  async update(
-    defaultClaudeSessionSurface: DefaultClaudeSessionSurface,
-  ): Promise<AppSettings> {
-    if (!CLAUDE_SESSION_SURFACES.includes(defaultClaudeSessionSurface)) {
-      throw new BadRequestException('Unsupported Claude session surface.');
-    }
+  async update(input: UpdateAppSettingsInput): Promise<AppSettings> {
+    const current = await this.findOne();
+    const defaultClaudeSessionSurface =
+      input.defaultClaudeSessionSurface ?? current.defaultClaudeSessionSurface;
+    this.assertDefaultClaudeSessionSurface(defaultClaudeSessionSurface);
+
+    const hasToolbarButtons = Object.prototype.hasOwnProperty.call(
+      input,
+      'sessionToolbarButtons',
+    );
+    const sessionToolbarButtons = hasToolbarButtons
+      ? this.normalizeSessionToolbarButtons(input.sessionToolbarButtons)
+      : current.sessionToolbarButtons;
 
     const timestamp = new Date().toISOString();
 
@@ -48,6 +58,9 @@ export class SettingsService {
       .values({
         id: SINGLETON_SETTINGS_ID,
         defaultClaudeSessionSurface,
+        sessionToolbarButtons: this.serializeSessionToolbarButtons(
+          sessionToolbarButtons,
+        ),
         createdAt: timestamp,
         updatedAt: timestamp,
       })
@@ -55,6 +68,9 @@ export class SettingsService {
         target: [schema.appSettings.id],
         set: {
           defaultClaudeSessionSurface,
+          sessionToolbarButtons: this.serializeSessionToolbarButtons(
+            sessionToolbarButtons,
+          ),
           updatedAt: timestamp,
         },
       });
@@ -71,8 +87,66 @@ export class SettingsService {
 
     return {
       defaultClaudeSessionSurface,
+      sessionToolbarButtons: this.parseSessionToolbarButtons(
+        row.sessionToolbarButtons,
+      ),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
+  }
+
+  private assertDefaultClaudeSessionSurface(
+    defaultClaudeSessionSurface: DefaultClaudeSessionSurface,
+  ): void {
+    if (!CLAUDE_SESSION_SURFACES.includes(defaultClaudeSessionSurface)) {
+      throw new BadRequestException('Unsupported Claude session surface.');
+    }
+  }
+
+  private normalizeSessionToolbarButtons(
+    value: SessionToolbarButtonSetting[] | null | undefined,
+  ): SessionToolbarButtonSetting[] | null {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (!Array.isArray(value)) {
+      throw new BadRequestException('Unsupported session toolbar settings.');
+    }
+
+    return value.map((button) => {
+      if (
+        typeof button !== 'object' ||
+        button === null ||
+        typeof button.id !== 'string' ||
+        typeof button.visible !== 'boolean'
+      ) {
+        throw new BadRequestException('Unsupported session toolbar settings.');
+      }
+
+      return {
+        id: button.id,
+        visible: button.visible,
+      };
+    });
+  }
+
+  private serializeSessionToolbarButtons(
+    value: SessionToolbarButtonSetting[] | null,
+  ): string | null {
+    return value === null ? null : JSON.stringify(value);
+  }
+
+  private parseSessionToolbarButtons(
+    value: string | null | undefined,
+  ): SessionToolbarButtonSetting[] | null {
+    if (!value) {
+      return null;
+    }
+
+    try {
+      return this.normalizeSessionToolbarButtons(JSON.parse(value));
+    } catch {
+      return null;
+    }
   }
 }

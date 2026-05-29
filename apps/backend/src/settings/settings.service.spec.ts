@@ -43,6 +43,7 @@ describe('SettingsService', () => {
 
     await expect(service.findOne()).resolves.toEqual({
       defaultClaudeSessionSurface: 'claude-ui',
+      sessionToolbarButtons: null,
       createdAt: null,
       updatedAt: null,
     });
@@ -52,15 +53,17 @@ describe('SettingsService', () => {
     const { db, getRows } = createDbMock();
     const service = new SettingsService(db);
 
-    const settings = await service.update('tui');
+    const settings = await service.update({ defaultClaudeSessionSurface: 'tui' });
 
     expect(settings.defaultClaudeSessionSurface).toBe('tui');
+    expect(settings.sessionToolbarButtons).toBeNull();
     expect(settings.createdAt).toEqual(expect.any(String));
     expect(settings.updatedAt).toEqual(expect.any(String));
     expect(getRows()).toHaveLength(1);
     expect(getRows()[0]).toMatchObject({
       id: 1,
       defaultClaudeSessionSurface: 'tui',
+      sessionToolbarButtons: null,
     });
   });
 
@@ -68,8 +71,8 @@ describe('SettingsService', () => {
     const { db, getRows } = createDbMock();
     const service = new SettingsService(db);
 
-    await service.update('tui');
-    await service.update('claude-ui');
+    await service.update({ defaultClaudeSessionSurface: 'tui' });
+    await service.update({ defaultClaudeSessionSurface: 'claude-ui' });
 
     expect(getRows()).toHaveLength(1);
     expect(getRows()[0]).toMatchObject({
@@ -78,12 +81,60 @@ describe('SettingsService', () => {
     });
   });
 
+  it('preserves existing settings during partial updates', async () => {
+    const { db } = createDbMock([
+      {
+        id: 1,
+        defaultClaudeSessionSurface: 'tui',
+        sessionToolbarButtons: JSON.stringify([{ id: 'terminal', visible: false }]),
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+    const service = new SettingsService(db);
+
+    const settings = await service.update({
+      sessionToolbarButtons: [{ id: 'files', visible: true }],
+    });
+
+    expect(settings.defaultClaudeSessionSurface).toBe('tui');
+    expect(settings.sessionToolbarButtons).toEqual([{ id: 'files', visible: true }]);
+  });
+
+  it('resets session toolbar buttons when null is saved', async () => {
+    const { db, getRows } = createDbMock();
+    const service = new SettingsService(db);
+
+    await service.update({
+      sessionToolbarButtons: [{ id: 'terminal', visible: false }],
+    });
+    const settings = await service.update({ sessionToolbarButtons: null });
+
+    expect(settings.sessionToolbarButtons).toBeNull();
+    expect(getRows()[0]).toMatchObject({
+      sessionToolbarButtons: null,
+    });
+  });
+
   it('rejects unsupported Claude session surfaces', async () => {
     const { db } = createDbMock();
     const service = new SettingsService(db);
 
     await expect(
-      service.update('terminal' as Parameters<SettingsService['update']>[0]),
+      service.update({
+        defaultClaudeSessionSurface: 'terminal',
+      } as Parameters<SettingsService['update']>[0]),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects unsupported session toolbar settings', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+
+    await expect(
+      service.update({
+        sessionToolbarButtons: [{ id: 'terminal' }],
+      } as Parameters<SettingsService['update']>[0]),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

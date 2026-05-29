@@ -1,13 +1,19 @@
-import { inject, Injectable, signal } from '@angular/core';
+import { computed, inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import {
   AppSettings,
   DefaultClaudeSessionSurface,
 } from '@/shared/models/app-settings.model';
+import {
+  normalizeSessionToolbarButtons,
+  normalizeStoredSessionToolbarButtons,
+  SessionToolbarButtonPreference,
+} from '@/shared/models/session-toolbar-button.model';
 
 const DEFAULT_SETTINGS: AppSettings = {
   defaultClaudeSessionSurface: 'claude-ui',
+  sessionToolbarButtons: null,
   createdAt: null,
   updatedAt: null,
 };
@@ -24,6 +30,9 @@ export class AppSettingsService {
   private loadPromise: Promise<AppSettings> | null = null;
 
   readonly settings = this.settingsState.asReadonly();
+  readonly normalizedSessionToolbarButtons = computed(() =>
+    normalizeSessionToolbarButtons(this.settingsState().sessionToolbarButtons),
+  );
   readonly loading = signal(false);
   readonly saving = signal(false);
   readonly error = signal<string | null>(null);
@@ -60,18 +69,30 @@ export class AppSettingsService {
       return Promise.reject(new Error('Unsupported Claude session surface.'));
     }
 
+    return this.saveSettings({ defaultClaudeSessionSurface });
+  }
+
+  saveSessionToolbarButtons(
+    sessionToolbarButtons: SessionToolbarButtonPreference[] | null,
+  ): Promise<AppSettings> {
+    return this.saveSettings({ sessionToolbarButtons });
+  }
+
+  private saveSettings(
+    patch: Partial<
+      Pick<AppSettings, 'defaultClaudeSessionSurface' | 'sessionToolbarButtons'>
+    >,
+  ): Promise<AppSettings> {
     const previous = this.settingsState();
     this.settingsState.set({
       ...previous,
-      defaultClaudeSessionSurface,
+      ...patch,
     });
     this.saving.set(true);
     this.error.set(null);
 
     return firstValueFrom(
-      this.http.patch<AppSettings>('/api/settings', {
-        defaultClaudeSessionSurface,
-      }),
+      this.http.patch<AppSettings>('/api/settings', patch),
     )
       .then((settings) => {
         const normalized = this.normalize(settings);
@@ -89,9 +110,14 @@ export class AppSettingsService {
   private normalize(settings: AppSettings | null | undefined): AppSettings {
     const surface = settings?.defaultClaudeSessionSurface;
     return {
-      defaultClaudeSessionSurface: VALID_SURFACES.has(surface as DefaultClaudeSessionSurface)
-        ? surface as DefaultClaudeSessionSurface
+      defaultClaudeSessionSurface: VALID_SURFACES.has(
+        surface as DefaultClaudeSessionSurface,
+      )
+        ? (surface as DefaultClaudeSessionSurface)
         : DEFAULT_SETTINGS.defaultClaudeSessionSurface,
+      sessionToolbarButtons: normalizeStoredSessionToolbarButtons(
+        settings?.sessionToolbarButtons,
+      ),
       createdAt: settings?.createdAt ?? null,
       updatedAt: settings?.updatedAt ?? null,
     };

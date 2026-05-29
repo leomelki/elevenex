@@ -11,6 +11,11 @@ import { ClaudeStatusService, ClaudeActivityStatus } from '@/shared/services/cla
 import { CommitButtonComponent } from '@/features/git/commit-button.component';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
+import {
+  defaultSessionToolbarButtons,
+  normalizeSessionToolbarButtons,
+  SessionToolbarButtonPreference,
+} from '@/shared/models/session-toolbar-button.model';
 
 @Component({
   selector: 'app-tab-bar',
@@ -85,6 +90,9 @@ export class TabBar {
   claudeTerminalReturnDisabled = input(false);
   runningActionsCount = input(0);
   pendingTodosCount = input(0);
+  toolbarButtons = input<SessionToolbarButtonPreference[]>(
+    defaultSessionToolbarButtons(),
+  );
 
   tabSelect = output<number>();
   tabClose = output<number>();
@@ -125,6 +133,12 @@ export class TabBar {
     const states = this.productivityState.states();
     return states.get(pid)?.todos ?? false;
   });
+
+  visibleToolbarButtons = computed(() =>
+    normalizeSessionToolbarButtons(this.toolbarButtons()).filter(
+      (button) => button.visible,
+    ),
+  );
 
   isActive(tab: Tab): boolean {
     return tab.sessionId === this.activeSessionId();

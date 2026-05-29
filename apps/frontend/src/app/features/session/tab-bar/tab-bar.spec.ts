@@ -232,6 +232,43 @@ describe('TabBar', () => {
     expect(el.querySelector('[aria-label="Toggle Plannotator panel"]')).toBeTruthy();
   });
 
+  it('renders configurable square toolbar buttons in saved order', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [{ ...baseTab }]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.componentRef.setInput('projectId', 10);
+    fixture.componentRef.setInput('toolbarButtons', [
+      { id: 'browser', visible: true },
+      { id: 'terminal', visible: true },
+      { id: 'agent', visible: false },
+    ]);
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    const toolbarLabels = Array.from(
+      el.querySelectorAll('.ml-auto [aria-label]'),
+    ).map(element => element.getAttribute('aria-label'));
+
+    expect(toolbarLabels[0]).toBe('Toggle Browser panel');
+    expect(toolbarLabels[1]).toBe('Toggle Terminal panel');
+    expect(toolbarLabels).not.toContain('Open agent drawer');
+  });
+
+  it('keeps conditional toolbar buttons unavailable even when configured visible', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [{ ...baseTab }]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.componentRef.setInput('projectId', 10);
+    fixture.componentRef.setInput('plannotatorAvailable', false);
+    fixture.componentRef.setInput('toolbarButtons', [
+      { id: 'plannotator', visible: true },
+    ]);
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[aria-label="Toggle Plannotator panel"]')).toBeNull();
+  });
+
   it('shows and toggles the terminal transcript mirror button only in raw terminal mode', () => {
     const fixture = TestBed.createComponent(TabBar);
     fixture.componentRef.setInput('tabs', [{ ...baseTab }]);

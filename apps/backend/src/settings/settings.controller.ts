@@ -13,6 +13,6 @@ export class SettingsController {
 
   @Patch()
   update(@Body() dto: UpdateAppSettingsDto) {
-    return this.settingsService.update(dto.defaultClaudeSessionSurface);
+    return this.settingsService.update(dto);
   }
 }
