@@ -6,6 +6,7 @@ export interface Session {
   branchName: string;
   worktreePath: string;
   name: string | null;
+  surface?: 'session' | 'embedded_plan_chat' | string;
   workspaceName?: string | null;
   status: 'created' | 'active' | 'archived' | 'stopped';
   activeAgentProvider: string;
@@ -60,4 +61,42 @@ export interface CreateSessionForkResponse {
   fork: SessionFork;
   session: Session;
   draft: string | null;
+}
+
+export interface PlanChatFork {
+  id: number;
+  parentSessionId: number;
+  childSessionId: number;
+  provider: string;
+  reviewId: string;
+  anchorMessageId: string;
+  anchorMessageKind: 'user' | 'assistant';
+  anchorExcerpt: string | null;
+  planExcerpt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  childSession: Session | null;
+}
+
+export interface EnsurePlanChatRequest {
+  reviewId: string;
+  anchorMessageId: string;
+  anchorMessageKind: 'user' | 'assistant';
+  planMarkdown?: string;
+  name?: string;
+}
+
+export interface EnsurePlanChatResponse {
+  planChat: PlanChatFork;
+  session: Session;
+}
+
+export interface SubmitPlanChatQuestionRequest {
+  question: string;
+}
+
+export interface SubmitPlanChatQuestionResponse {
+  planChat: PlanChatFork;
+  session: Session;
+  question: string;
 }

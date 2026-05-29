@@ -175,6 +175,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly openTerminalFallback = output<void>();
   readonly openInBrowser = output<string>();
   readonly planReviewRequested = output<PlanReviewRequest>();
+  readonly planQuestionRequested = output<PlanReviewRequest>();
   readonly planReviewClosed = output<PlanReviewRequest>();
   readonly activeAgentProviderChange = output<AgentProviderId>();
   readonly agentRuntimeStarted = output<void>();
@@ -869,6 +870,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   openPlanReview(review: PlanReviewRequest): void {
     this.planReviewRequested.emit(review);
+  }
+
+  openPlanQuestion(review: PlanReviewRequest): void {
+    this.planQuestionRequested.emit(review);
   }
 
   openPermissionPlanReview(req: ClaudePermissionRequest): void {

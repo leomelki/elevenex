@@ -6,7 +6,7 @@ import {
   BadRequestException,
   forwardRef,
 } from '@nestjs/common';
-import { eq, and, count } from 'drizzle-orm';
+import { eq, and, count, inArray, type SQL } from 'drizzle-orm';
 import { EventEmitter } from 'events';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
@@ -19,8 +19,14 @@ import { worktreeSimpleGit } from '../config/system-paths.js';
 
 const VALID_STATUSES = ['created', 'active', 'archived', 'stopped'] as const;
 type SessionStatus = (typeof VALID_STATUSES)[number];
+const VALID_SURFACES = ['session', 'embedded_plan_chat'] as const;
+export type SessionSurface = (typeof VALID_SURFACES)[number];
 const VALID_COMPLETION_KINDS = ['completed'] as const;
 type SessionCompletionKind = (typeof VALID_COMPLETION_KINDS)[number];
+
+interface SessionListOptions {
+  includeHidden?: boolean;
+}
 
 @Injectable()
 export class SessionsService extends EventEmitter {
@@ -43,9 +49,11 @@ export class SessionsService extends EventEmitter {
     branchName?: string;
     worktreePath?: string;
     name?: string;
+    surface?: SessionSurface;
   }) {
     const resolved = await this.resolveSessionWorkspace(dto);
     let sessionName = dto.name;
+    const surface = this.normalizeSurface(dto.surface);
 
     // Auto-generate name if not provided
     if (!sessionName) {
@@ -63,6 +71,7 @@ export class SessionsService extends EventEmitter {
         branchName: resolved.branchName,
         worktreePath: resolved.worktreePath,
         name: sessionName,
+        surface,
         status: 'created',
         activeAgentProvider: 'claude',
         claudeSessionId: '-1',
@@ -122,16 +131,21 @@ export class SessionsService extends EventEmitter {
     };
   }
 
-  async findByRepo(repoId: number) {
+  async findByRepo(repoId: number, options: SessionListOptions = {}) {
     const rows = await this.db
       .select()
       .from(schema.sessions)
-      .where(eq(schema.sessions.repoId, repoId));
+      .where(this.visibleWhere(eq(schema.sessions.repoId, repoId), options));
     return rows.map((session) => this.withInferredActiveAgentProvider(session));
   }
 
-  async findAll() {
-    const rows = await this.db.select().from(schema.sessions);
+  async findAll(options: SessionListOptions = {}) {
+    const rows = options.includeHidden
+      ? await this.db.select().from(schema.sessions)
+      : await this.db
+          .select()
+          .from(schema.sessions)
+          .where(eq(schema.sessions.surface, 'session'));
     return rows.map((session) => this.withInferredActiveAgentProvider(session));
   }
 
@@ -145,38 +159,58 @@ export class SessionsService extends EventEmitter {
         lastStateChangeAt: schema.sessions.lastStateChangeAt,
         hasInjectedWorktreeContext: schema.sessions.hasInjectedWorktreeContext,
       })
-      .from(schema.sessions);
-  }
-
-  async findByWorktreePath(worktreePath: string) {
-    const rows = await this.db
-      .select()
       .from(schema.sessions)
-      .where(eq(schema.sessions.worktreePath, worktreePath));
-    return rows.map((session) => this.withInferredActiveAgentProvider(session));
+      .where(eq(schema.sessions.surface, 'session'));
   }
 
-  async findByRepoAndBranch(repoId: number, branchName: string) {
+  async findByWorktreePath(
+    worktreePath: string,
+    options: SessionListOptions = {},
+  ) {
     const rows = await this.db
       .select()
       .from(schema.sessions)
       .where(
-        and(
-          eq(schema.sessions.repoId, repoId),
-          eq(schema.sessions.branchName, branchName),
+        this.visibleWhere(eq(schema.sessions.worktreePath, worktreePath), options),
+      );
+    return rows.map((session) => this.withInferredActiveAgentProvider(session));
+  }
+
+  async findByRepoAndBranch(
+    repoId: number,
+    branchName: string,
+    options: SessionListOptions = {},
+  ) {
+    const rows = await this.db
+      .select()
+      .from(schema.sessions)
+      .where(
+        this.visibleWhere(
+          and(
+            eq(schema.sessions.repoId, repoId),
+            eq(schema.sessions.branchName, branchName),
+          ),
+          options,
         ),
       );
     return rows.map((session) => this.withInferredActiveAgentProvider(session));
   }
 
-  async findByRepoAndWorktreePath(repoId: number, worktreePath: string) {
+  async findByRepoAndWorktreePath(
+    repoId: number,
+    worktreePath: string,
+    options: SessionListOptions = {},
+  ) {
     const rows = await this.db
       .select()
       .from(schema.sessions)
       .where(
-        and(
-          eq(schema.sessions.repoId, repoId),
-          eq(schema.sessions.worktreePath, worktreePath),
+        this.visibleWhere(
+          and(
+            eq(schema.sessions.repoId, repoId),
+            eq(schema.sessions.worktreePath, worktreePath),
+          ),
+          options,
         ),
       );
     return rows.map((session) => this.withInferredActiveAgentProvider(session));
@@ -556,8 +590,19 @@ export class SessionsService extends EventEmitter {
 
   async delete(id: number) {
     await this.findOne(id);
+    const embeddedChildRows = await this.db
+      .select({ childSessionId: schema.planChatForks.childSessionId })
+      .from(schema.planChatForks)
+      .where(eq(schema.planChatForks.parentSessionId, id));
+    const embeddedChildIds = embeddedChildRows.map((row) => row.childSessionId);
 
-    await this.cleanupSessionProcesses(id);
+    await this.cleanupSessionsBeforeBulkDelete([id, ...embeddedChildIds]);
+
+    if (embeddedChildIds.length > 0) {
+      await this.db
+        .delete(schema.sessions)
+        .where(inArray(schema.sessions.id, embeddedChildIds));
+    }
 
     // 3. Delete from database
     const rows = await this.db
@@ -574,7 +619,9 @@ export class SessionsService extends EventEmitter {
 
   async deleteByWorktreePath(worktreePath: string) {
     // Kill PTY/tmux for all sessions in this worktree before deleting
-    const sessions = await this.findByWorktreePath(worktreePath);
+    const sessions = await this.findByWorktreePath(worktreePath, {
+      includeHidden: true,
+    });
     await this.cleanupSessionsBeforeBulkDelete(
       sessions.map((session) => session.id),
     );
@@ -585,7 +632,9 @@ export class SessionsService extends EventEmitter {
   }
 
   async deleteByRepoAndWorktreePath(repoId: number, worktreePath: string) {
-    const sessions = await this.findByRepoAndWorktreePath(repoId, worktreePath);
+    const sessions = await this.findByRepoAndWorktreePath(repoId, worktreePath, {
+      includeHidden: true,
+    });
     await this.cleanupSessionsBeforeBulkDelete(
       sessions.map((session) => session.id),
     );
@@ -752,6 +801,7 @@ export class SessionsService extends EventEmitter {
         and(
           eq(schema.sessions.repoId, repoId),
           eq(schema.sessions.branchName, branchName),
+          eq(schema.sessions.surface, 'session'),
         ),
       );
 
@@ -762,9 +812,37 @@ export class SessionsService extends EventEmitter {
     const result = await this.db
       .select({ count: count() })
       .from(schema.sessions)
-      .where(eq(schema.sessions.workspaceId, workspaceId));
+      .where(
+        and(
+          eq(schema.sessions.workspaceId, workspaceId),
+          eq(schema.sessions.surface, 'session'),
+        ),
+      );
 
     return result[0].count;
+  }
+
+  private normalizeSurface(surface: SessionSurface | undefined): SessionSurface {
+    if (surface === undefined) {
+      return 'session';
+    }
+    if (VALID_SURFACES.includes(surface)) {
+      return surface;
+    }
+    throw new BadRequestException(
+      `Invalid session surface: ${surface}. Must be one of: ${VALID_SURFACES.join(', ')}`,
+    );
+  }
+
+  private visibleWhere(
+    predicate: SQL | undefined,
+    options: SessionListOptions,
+  ): SQL | undefined {
+    if (options.includeHidden) {
+      return predicate;
+    }
+    const visible = eq(schema.sessions.surface, 'session');
+    return predicate ? and(predicate, visible) : visible;
   }
 
   private async findWorkspaceByRepoAndPath(

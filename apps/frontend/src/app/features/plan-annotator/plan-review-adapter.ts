@@ -22,6 +22,8 @@ export function planReviewFromTranscriptItem(
       sessionId,
       reviewId: stableReviewId('transcript-plan', item.id),
       messageId: item.id,
+      anchorMessageId: item.transcriptMessageId ?? item.sourceMessageId ?? item.id,
+      anchorMessageKind: 'assistant',
       planMarkdown: item.content.trim(),
       createdAt: item.receivedAt || item.authoredAt || item.timestamp,
     };
@@ -36,6 +38,8 @@ export function planReviewFromTranscriptItem(
     sessionId,
     reviewId: stableReviewId('tagged-plan', item.id),
     messageId: item.id,
+    anchorMessageId: item.transcriptMessageId ?? item.sourceMessageId ?? item.id,
+    anchorMessageKind: 'assistant',
     planMarkdown: extraction.plan,
     before: extraction.before || undefined,
     after: extraction.after || undefined,

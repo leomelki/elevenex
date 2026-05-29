@@ -3,6 +3,7 @@ export * from './repos.schema.js';
 export * from './workspaces.schema.js';
 export * from './sessions.schema.js';
 export * from './session-forks.schema.js';
+export * from './plan-chat-forks.schema.js';
 export * from './scratchpad.schema.js';
 export * from './todos.schema.js';
 export * from './user-terminals.schema.js';

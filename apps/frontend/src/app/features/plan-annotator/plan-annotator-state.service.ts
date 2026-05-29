@@ -1,15 +1,19 @@
 import { Injectable, signal } from '@angular/core';
 import { PlanReviewRequest } from './plan-review.model';
 
+export type PlanReviewRailMode = 'comments' | 'ask';
+
 @Injectable({ providedIn: 'root' })
 export class PlanAnnotatorStateService {
   private readonly reviewsSignal = signal<Map<number, PlanReviewRequest>>(new Map());
   private readonly visibleSignal = signal<Set<number>>(new Set());
+  private readonly railModesSignal = signal<Map<number, PlanReviewRailMode>>(new Map());
 
   readonly reviews = this.reviewsSignal.asReadonly();
   readonly visible = this.visibleSignal.asReadonly();
+  readonly railModes = this.railModesSignal.asReadonly();
 
-  openReview(review: PlanReviewRequest): void {
+  openReview(review: PlanReviewRequest, mode: PlanReviewRailMode = 'comments'): void {
     this.reviewsSignal.update((current) => {
       const next = new Map(current);
       next.set(review.sessionId, review);
@@ -20,6 +24,7 @@ export class PlanAnnotatorStateService {
       next.add(review.sessionId);
       return next;
     });
+    this.setMode(review.sessionId, mode);
   }
 
   setReview(review: PlanReviewRequest): void {
@@ -40,6 +45,18 @@ export class PlanAnnotatorStateService {
 
   isVisible(sessionId: number | null | undefined): boolean {
     return !!sessionId && this.visibleSignal().has(sessionId);
+  }
+
+  getMode(sessionId: number | null | undefined): PlanReviewRailMode {
+    return sessionId ? this.railModesSignal().get(sessionId) ?? 'comments' : 'comments';
+  }
+
+  setMode(sessionId: number, mode: PlanReviewRailMode): void {
+    this.railModesSignal.update((current) => {
+      const next = new Map(current);
+      next.set(sessionId, mode);
+      return next;
+    });
   }
 
   show(sessionId: number): void {
@@ -65,6 +82,11 @@ export class PlanAnnotatorStateService {
 
   clear(sessionId: number): void {
     this.reviewsSignal.update((current) => {
+      const next = new Map(current);
+      next.delete(sessionId);
+      return next;
+    });
+    this.railModesSignal.update((current) => {
       const next = new Map(current);
       next.delete(sessionId);
       return next;

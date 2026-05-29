@@ -485,6 +485,70 @@ h3 {
   padding: 0.8rem;
 }
 
+.pa-rail-tabs {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  padding: 0.2rem;
+}
+
+.pa-rail-tab {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  border: 1px solid transparent;
+  border-radius: 0.42rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.pa-rail-tab span {
+  display: inline-flex;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--primary) 12%, var(--background));
+  color: var(--primary);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.pa-rail-tab:hover:not(:disabled),
+.pa-rail-tab:focus-visible,
+.pa-rail-tab--active {
+  outline: none;
+  border-color: color-mix(in oklab, var(--primary) 30%, var(--border));
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 8px 18px -16px color-mix(in oklab, var(--foreground) 42%, transparent);
+}
+
+.pa-comments__body,
+.pa-chat-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.pa-comments__body {
+  gap: 0.75rem;
+}
+
 .pa-comments__head {
   display: flex;
   align-items: flex-start;

@@ -45,6 +45,7 @@ function createTestDb() {
       branch_name TEXT NOT NULL,
       worktree_path TEXT NOT NULL,
       name TEXT,
+      surface TEXT NOT NULL DEFAULT 'session',
       status TEXT NOT NULL DEFAULT 'created',
       active_agent_provider TEXT NOT NULL DEFAULT 'claude',
       claude_session_id TEXT DEFAULT '-1',

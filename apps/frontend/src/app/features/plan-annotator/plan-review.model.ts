@@ -11,6 +11,8 @@ export interface PlanReviewRequest {
   before?: string;
   after?: string;
   messageId?: string;
+  anchorMessageId?: string;
+  anchorMessageKind?: 'user' | 'assistant';
   requestId?: string;
   planFilePath?: string;
   createdAt: string;

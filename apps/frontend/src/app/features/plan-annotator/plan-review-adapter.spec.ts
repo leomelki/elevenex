@@ -22,6 +22,8 @@ describe('plan-review-adapter', () => {
       reviewId: 'transcript-plan:plan-1',
       planMarkdown: '# Plan\n\nDo this.',
       messageId: 'plan-1',
+      anchorMessageId: 'plan-1',
+      anchorMessageKind: 'assistant',
     });
   });
 
@@ -38,8 +40,27 @@ describe('plan-review-adapter', () => {
       source: 'transcript-plan',
       reviewId: 'tagged-plan:msg-1',
       planMarkdown: '# Plan\nDo it',
+      anchorMessageId: 'msg-1',
+      anchorMessageKind: 'assistant',
       before: 'Read this first.',
       after: 'Done.',
+    });
+  });
+
+  it('uses transcript source ids as plan chat anchors when present', () => {
+    const item: ClaudeTranscriptItem = {
+      id: 'rendered-msg-1',
+      kind: 'assistant',
+      contentType: 'plan',
+      content: '# Plan\n\nDo this.',
+      sourceMessageId: 'provider-msg-1',
+      timestamp: '2026-05-22T10:00:00.000Z',
+    };
+
+    expect(planReviewFromTranscriptItem(item, 7, 'codex')).toMatchObject({
+      reviewId: 'transcript-plan:rendered-msg-1',
+      anchorMessageId: 'provider-msg-1',
+      anchorMessageKind: 'assistant',
     });
   });
 

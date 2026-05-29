@@ -47,6 +47,7 @@ import {
   PlanAnnotatorPanelComponent,
   PlanAnnotatorStateService,
   PlanFeedbackPayload,
+  PlanReviewRailMode,
   PlanReviewRequest,
 } from '@/features/plan-annotator';
 import { getBackendOrigin } from '@/shared/runtime/runtime-config';
@@ -312,6 +313,8 @@ export class SessionContainer implements OnInit, OnDestroy {
     return this.planAnnotatorState.getReview(sessionId);
   });
 
+  activePlanReviewMode = computed(() => this.planAnnotatorState.getMode(this.activeSessionId()));
+
   readonly hasBlockingOverlayPanel = computed(() => {
     return this.showScratchpad() || this.showTodos() || this.modalOverlayState.hasOpenModal();
   });
@@ -533,12 +536,18 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.saveSidePanelPreference('planAnnotator');
   }
 
-  openPlanAnnotator(review: PlanReviewRequest): void {
-    this.planAnnotatorState.openReview(review);
+  openPlanAnnotator(review: PlanReviewRequest, mode: PlanReviewRailMode = 'comments'): void {
+    this.planAnnotatorState.openReview(review, mode);
     if (review.sessionId === this.activeSessionId()) {
       this.sidePanelMode.set('planAnnotator');
       this.saveSidePanelPreference('planAnnotator');
     }
+  }
+
+  setPlanReviewRailMode(mode: PlanReviewRailMode): void {
+    const sessionId = this.activeSessionId();
+    if (!sessionId) return;
+    this.planAnnotatorState.setMode(sessionId, mode);
   }
 
   closePlanAnnotator(review?: PlanReviewRequest): void {

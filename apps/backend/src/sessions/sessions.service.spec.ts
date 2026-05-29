@@ -51,6 +51,7 @@ function createTestDb() {
       branch_name TEXT NOT NULL,
       worktree_path TEXT NOT NULL,
       name TEXT,
+      surface TEXT NOT NULL DEFAULT 'session',
       status TEXT NOT NULL DEFAULT 'created',
       active_agent_provider TEXT NOT NULL DEFAULT 'claude',
       claude_session_id TEXT DEFAULT '-1',
@@ -64,6 +65,21 @@ function createTestDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE plan_chat_forks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      parent_session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      child_session_id INTEGER NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      review_id TEXT NOT NULL,
+      anchor_message_id TEXT NOT NULL,
+      anchor_message_kind TEXT NOT NULL,
+      anchor_excerpt TEXT,
+      plan_excerpt TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX plan_chat_forks_parent_review_idx
+      ON plan_chat_forks(parent_session_id, review_id);
   `);
   return { db: drizzle(sqlite, { schema }), sqlite };
 }
@@ -356,6 +372,32 @@ describe('SessionsService', () => {
       expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(targetOne.id);
       expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(targetTwo.id);
     });
+
+    it('cleans up hidden embedded plan chat sessions for the target worktree', async () => {
+      const visible = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/shared-wt',
+        name: 'Visible',
+      });
+      const hidden = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/shared-wt',
+        name: 'Hidden plan chat',
+        surface: 'embedded_plan_chat',
+      });
+
+      expect(await service.findByRepo(repoId)).toHaveLength(1);
+
+      await service.deleteByRepoAndWorktreePath(repoId, '/tmp/shared-wt');
+
+      expect(await service.findByRepo(repoId, { includeHidden: true })).toEqual([]);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(visible.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(hidden.id);
+      expect(ptyManagerMock.kill).toHaveBeenCalledWith(hidden.id);
+      expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(hidden.id);
+    });
   });
 
   describe('delete', () => {
@@ -374,6 +416,39 @@ describe('SessionsService', () => {
       await expect(service.findOne(created.id)).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    it('deletes hidden plan chat children when deleting their parent session', async () => {
+      const parent = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+        name: 'Parent',
+      });
+      const child = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+        name: 'Plan Q&A',
+        surface: 'embedded_plan_chat',
+      });
+      await db.insert(schema.planChatForks).values({
+        parentSessionId: parent.id,
+        childSessionId: child.id,
+        provider: 'codex',
+        reviewId: 'review-1',
+        anchorMessageId: 'message-1',
+        anchorMessageKind: 'assistant',
+      });
+
+      await service.delete(parent.id);
+
+      await expect(service.findOne(parent.id)).rejects.toThrow(NotFoundException);
+      await expect(service.findOne(child.id)).rejects.toThrow(NotFoundException);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(parent.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(child.id);
+      expect(ptyManagerMock.kill).toHaveBeenCalledWith(child.id);
+      expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(child.id);
     });
 
     it('tears down runtime state before deleting the database row', async () => {

@@ -202,6 +202,7 @@
                       (openFork)="openFork($event)"
                       (forkAgain)="forkMessage(item.unit.item)"
                       (openPlanReview)="openPlanReview($event)"
+                      (openPlanChat)="openPlanQuestion($event)"
                     />
                   }
                   @case ('thinking') {
@@ -385,6 +386,7 @@
                               (openFork)="openFork($event)"
                               (forkAgain)="forkMessage(hiddenUnit.item)"
                               (openPlanReview)="openPlanReview($event)"
+                              (openPlanChat)="openPlanQuestion($event)"
                             />
                           }
                           @case ('thinking') {

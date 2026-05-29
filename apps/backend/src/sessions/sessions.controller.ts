@@ -6,10 +6,16 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { SessionsService } from './sessions.service.js';
 import { SessionForksService } from './session-forks.service.js';
 import type { CreateSessionForkDto } from './session-forks.service.js';
+import {
+  PlanChatForksService,
+  type EnsurePlanChatForkDto,
+  type SubmitPlanChatQuestionDto,
+} from './plan-chat-forks.service.js';
 import { CreateSessionDto } from './dto/create-session.dto.js';
 
 @Controller('sessions')
@@ -17,6 +23,7 @@ export class SessionsController {
   constructor(
     private readonly sessionsService: SessionsService,
     private readonly sessionForksService: SessionForksService,
+    private readonly planChatForksService: PlanChatForksService,
   ) {}
 
   @Post()
@@ -100,6 +107,40 @@ export class SessionsController {
   @Post(':id/forks')
   createFork(@Param('id') id: string, @Body() body: CreateSessionForkDto) {
     return this.sessionForksService.create(Number(id), body);
+  }
+
+  @Get(':id/plan-chats')
+  findPlanChats(@Param('id') id: string, @Query('reviewId') reviewId?: string) {
+    return this.planChatForksService.findByParent(Number(id), reviewId);
+  }
+
+  @Post(':id/plan-chats')
+  ensurePlanChat(
+    @Param('id') id: string,
+    @Body() body: EnsurePlanChatForkDto,
+  ) {
+    return this.planChatForksService.ensure(Number(id), body);
+  }
+
+  @Post(':id/plan-chats/:planChatId/questions')
+  submitPlanChatQuestion(
+    @Param('id') id: string,
+    @Param('planChatId') planChatId: string,
+    @Body() body: SubmitPlanChatQuestionDto,
+  ) {
+    return this.planChatForksService.submitQuestion(
+      Number(id),
+      Number(planChatId),
+      body,
+    );
+  }
+
+  @Delete(':id/plan-chats/:planChatId')
+  deletePlanChat(
+    @Param('id') id: string,
+    @Param('planChatId') planChatId: string,
+  ) {
+    return this.planChatForksService.delete(Number(id), Number(planChatId));
   }
 
   @Get(':id')

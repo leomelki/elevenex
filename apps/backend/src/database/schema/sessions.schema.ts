@@ -11,6 +11,7 @@ export const sessions = sqliteTable('sessions', {
   branchName: text('branch_name').notNull(),
   worktreePath: text('worktree_path').notNull(),
   name: text('name'),
+  surface: text('surface').notNull().default('session'),
   status: text('status').notNull().default('created'),
   activeAgentProvider: text('active_agent_provider').notNull().default('claude'),
   claudeSessionId: text('claude_session_id').default('-1'),

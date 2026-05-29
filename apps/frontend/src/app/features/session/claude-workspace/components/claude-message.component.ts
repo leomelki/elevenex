@@ -18,6 +18,7 @@ import {
   lucideFileText,
   lucideGitFork,
   lucideInfo,
+  lucideMessageSquarePlus,
   lucidePencil,
   lucidePlus,
   lucideTriangleAlert,
@@ -51,6 +52,7 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
       lucideFileText,
       lucideGitFork,
       lucideInfo,
+      lucideMessageSquarePlus,
       lucidePencil,
       lucidePlus,
       lucideTriangleAlert,
@@ -273,14 +275,27 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
                       }
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    class="cw-plan-launcher__button"
-                    [disabled]="!planReviewEnabled()"
-                    (click)="openPlanReview.emit(review)"
-                  >
-                    Review plan
-                  </button>
+                  <div class="cw-plan-launcher__actions">
+                    <button
+                      type="button"
+                      class="cw-plan-launcher__button cw-plan-launcher__button--secondary"
+                      [disabled]="!planReviewEnabled() || !review.anchorMessageId"
+                      title="Ask about this plan"
+                      (click)="openPlanChat.emit(review)"
+                    >
+                      <ng-icon name="lucideMessageSquarePlus" size="13" />
+                      Ask
+                    </button>
+                    <button
+                      type="button"
+                      class="cw-plan-launcher__button"
+                      [disabled]="!planReviewEnabled()"
+                      (click)="openPlanReview.emit(review)"
+                    >
+                      <ng-icon name="lucideFileText" size="13" />
+                      Review
+                    </button>
+                  </div>
                 </section>
               } @else if (streaming()) {
                 <div class="cw-md cw-md--streaming" [innerHTML]="item().content | cwMarkdown"></div>
@@ -761,6 +776,7 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
       }
       .cw-plan-launcher {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: 0.85rem;
@@ -815,10 +831,17 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
         font-size: 0.78rem;
         line-height: 1.4;
       }
+      .cw-plan-launcher__actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        flex-shrink: 0;
+      }
       .cw-plan-launcher__button {
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        gap: 0.35rem;
         min-height: 2rem;
         border: 1px solid var(--primary);
         border-radius: 0.45rem;
@@ -831,10 +854,19 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
         padding: 0 0.75rem;
         white-space: nowrap;
       }
+      .cw-plan-launcher__button--secondary {
+        border-color: color-mix(in oklab, var(--primary) 34%, var(--border));
+        background: var(--background);
+        color: var(--foreground);
+      }
       .cw-plan-launcher__button:hover:not(:disabled),
       .cw-plan-launcher__button:focus-visible {
         outline: none;
         background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+      }
+      .cw-plan-launcher__button--secondary:hover:not(:disabled),
+      .cw-plan-launcher__button--secondary:focus-visible {
+        background: color-mix(in oklab, var(--primary) 8%, var(--background));
       }
       .cw-plan-launcher__button:disabled {
         cursor: not-allowed;
@@ -1030,6 +1062,7 @@ export class ClaudeMessageComponent {
   readonly approvePlan = output<void>();
   readonly planFeedback = output<string>();
   readonly openPlanReview = output<PlanReviewRequest>();
+  readonly openPlanChat = output<PlanReviewRequest>();
 
   readonly isEmpty = computed(() => !this.item().content);
   readonly hasInlineAffordances = computed(

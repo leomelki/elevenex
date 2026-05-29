@@ -32,6 +32,8 @@ import {
 } from './plan-feedback';
 import { PlanMarkdownBlocksComponent } from './plan-markdown-blocks.component';
 import { PlanAnnotatorComment, PlanFeedbackPayload, PlanReviewRequest } from './plan-review.model';
+import { PlanChatPanelComponent } from './plan-chat-panel.component';
+import { PlanReviewRailMode } from './plan-annotator-state.service';
 
 interface PlanHeading {
   id: string;
@@ -44,7 +46,14 @@ type DraftScope = 'selection' | 'document';
 @Component({
   selector: 'app-plan-annotator-panel',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownPipe, NgIcon, PlanMarkdownBlocksComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    MarkdownPipe,
+    NgIcon,
+    PlanMarkdownBlocksComponent,
+    PlanChatPanelComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
@@ -65,8 +74,10 @@ type DraftScope = 'selection' | 'document';
 })
 export class PlanAnnotatorPanelComponent {
   readonly review = input<PlanReviewRequest | null>(null);
+  readonly railMode = input<PlanReviewRailMode>('comments');
 
   readonly close = output<PlanReviewRequest>();
+  readonly railModeChange = output<PlanReviewRailMode>();
   readonly approve = output<PlanReviewRequest>();
   readonly reject = output<PlanFeedbackPayload>();
   readonly sendFeedback = output<PlanFeedbackPayload>();
@@ -93,6 +104,11 @@ export class PlanAnnotatorPanelComponent {
     this.review()?.provider === 'codex' ? 'Codex' : 'Claude Code',
   );
   readonly headings = computed(() => extractHeadings(this.review()?.planMarkdown ?? ''));
+  readonly activeRailMode = computed<PlanReviewRailMode>(() => {
+    const review = this.review();
+    const mode = this.railMode();
+    return mode === 'ask' && review && this.canAskPlan(review) ? 'ask' : 'comments';
+  });
 
   private loadedStorageKey = '';
 
@@ -151,6 +167,7 @@ export class PlanAnnotatorPanelComponent {
   startSelectionComment(): void {
     const quote = this.selectedQuote().trim();
     if (!quote) return;
+    this.selectRailMode('comments');
     this.draftScope.set('selection');
     this.draftQuote.set(quote);
     this.draftContext.set(this.selectedContext() || quote);
@@ -160,6 +177,7 @@ export class PlanAnnotatorPanelComponent {
 
   startDocumentComment(): void {
     if (this.readonly()) return;
+    this.selectRailMode('comments');
     this.draftScope.set('document');
     this.draftQuote.set('');
     this.draftContext.set('');
@@ -277,6 +295,14 @@ export class PlanAnnotatorPanelComponent {
   approveReview(review: PlanReviewRequest): void {
     this.comments.set([]);
     this.approve.emit(review);
+  }
+
+  canAskPlan(review: PlanReviewRequest): boolean {
+    return Boolean(review.anchorMessageId && review.anchorMessageKind);
+  }
+
+  selectRailMode(mode: PlanReviewRailMode): void {
+    this.railModeChange.emit(mode);
   }
 }
 

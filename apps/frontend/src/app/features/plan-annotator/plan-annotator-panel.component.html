@@ -118,155 +118,195 @@
         }
       </main>
 
-      <aside class="pa-comments" aria-label="Pending comments">
-        <div class="pa-comments__head">
-          <div>
-            <span class="pa-eyebrow">Feedback</span>
-            <h3>Pending comments</h3>
-          </div>
-          @if (comments().length) {
-            <button
-              type="button"
-              class="pa-link-btn"
-              (click)="clearComments()"
-              [disabled]="readonly()"
-            >
-              Clear all
-            </button>
-          }
+      <aside class="pa-comments" aria-label="Plan rail">
+        <div class="pa-rail-tabs" role="tablist" aria-label="Plan rail mode">
+          <button
+            type="button"
+            class="pa-rail-tab"
+            [class.pa-rail-tab--active]="activeRailMode() === 'comments'"
+            [attr.aria-selected]="activeRailMode() === 'comments'"
+            role="tab"
+            (click)="selectRailMode('comments')"
+          >
+            <ng-icon name="lucideMessageSquarePlus" size="13" />
+            Comments
+            @if (comments().length) {
+              <span>{{ comments().length }}</span>
+            }
+          </button>
+          <button
+            type="button"
+            class="pa-rail-tab"
+            [class.pa-rail-tab--active]="activeRailMode() === 'ask'"
+            [attr.aria-selected]="activeRailMode() === 'ask'"
+            [disabled]="!canAskPlan(activeReview)"
+            title="Ask about this plan"
+            role="tab"
+            (click)="selectRailMode('ask')"
+          >
+            <ng-icon name="lucideMessageSquarePlus" size="13" />
+            Ask
+          </button>
         </div>
 
-        @if (draftOpen()) {
-          <form class="pa-draft" (submit)="$event.preventDefault(); saveDraft()">
-            <label for="pa-draft-note">{{
-              draftScope() === 'document' ? 'Document comment' : 'Comment on selection'
-            }}</label>
-            @if (draftScope() === 'selection') {
-              <blockquote>{{ draftQuote() }}</blockquote>
-            }
-            <textarea
-              id="pa-draft-note"
-              rows="4"
-              placeholder="What should change?"
-              [ngModel]="draftNote()"
-              (ngModelChange)="draftNote.set($event)"
-            ></textarea>
-            <div class="pa-draft__actions">
-              <button type="button" class="pa-btn pa-btn--ghost" (click)="cancelDraft()">
-                Cancel
-              </button>
-              <button type="submit" class="pa-btn pa-btn--primary" [disabled]="!draftNote().trim()">
-                Save
-              </button>
-            </div>
-          </form>
-        } @else if (selectedQuote() && !readonly()) {
-          <button type="button" class="pa-selection" (click)="startSelectionComment()">
-            <ng-icon name="lucideMessageSquarePlus" size="14" />
-            Comment on selection
-          </button>
-        }
-
-        @if (comments().length) {
-          <div class="pa-comment-list">
-            @for (comment of comments(); track comment.id; let index = $index) {
-              <article
-                class="pa-comment"
-                [class.pa-comment--active]="activeCommentId() === comment.id"
-              >
-                <button type="button" class="pa-comment__jump" (click)="jumpToComment(comment)">
-                  <ng-icon name="lucideChevronRight" size="13" />
-                  Comment {{ index + 1 }}
+        @if (activeRailMode() === 'ask') {
+          <app-plan-chat-panel class="pa-chat-panel" [review]="activeReview" />
+        } @else {
+          <div class="pa-comments__body">
+            <div class="pa-comments__head">
+              <div>
+                <span class="pa-eyebrow">Feedback</span>
+                <h3>Pending comments</h3>
+              </div>
+              @if (comments().length) {
+                <button
+                  type="button"
+                  class="pa-link-btn"
+                  (click)="clearComments()"
+                  [disabled]="readonly()"
+                >
+                  Clear all
                 </button>
-                @if (comment.scope === 'selection') {
-                  <blockquote>{{ comment.quote }}</blockquote>
-                } @else {
-                  <span class="pa-comment__scope">Document-wide</span>
-                }
-                @if (editingCommentId() === comment.id) {
-                  <textarea
-                    rows="3"
-                    [ngModel]="editingNote()"
-                    (ngModelChange)="editingNote.set($event)"
-                  ></textarea>
-                  <div class="pa-comment__actions">
-                    <button
-                      type="button"
-                      class="pa-icon-btn"
-                      title="Cancel edit"
-                      (click)="cancelEditComment()"
-                    >
-                      <ng-icon name="lucideX" size="13" />
-                    </button>
-                    <button
-                      type="button"
-                      class="pa-icon-btn pa-icon-btn--primary"
-                      title="Save edit"
-                      [disabled]="!editingNote().trim()"
-                      (click)="saveEditComment(comment.id)"
-                    >
-                      <ng-icon name="lucideCheck" size="13" />
-                    </button>
-                  </div>
-                } @else {
-                  <p>{{ comment.note }}</p>
-                  <div class="pa-comment__actions">
-                    <button
-                      type="button"
-                      class="pa-icon-btn"
-                      title="Edit comment"
-                      [disabled]="readonly()"
-                      (click)="editComment(comment)"
-                    >
-                      <ng-icon name="lucidePencil" size="13" />
-                    </button>
-                    <button
-                      type="button"
-                      class="pa-icon-btn"
-                      title="Delete comment"
-                      [disabled]="readonly()"
-                      (click)="removeComment(comment.id)"
-                    >
-                      <ng-icon name="lucideTrash2" size="13" />
-                    </button>
-                  </div>
-                }
-              </article>
-            }
-          </div>
-        } @else if (!draftOpen()) {
-          <p class="pa-empty">Select text in the plan or add a document comment.</p>
-        }
+              }
+            </div>
 
-        <footer class="pa-submit">
-          <button
-            type="button"
-            class="pa-btn pa-btn--ghost"
-            [disabled]="readonly()"
-            (click)="rejectReview(activeReview)"
-          >
-            <ng-icon name="lucideX" size="14" />
-            Reject
-          </button>
-          <button
-            type="button"
-            class="pa-btn pa-btn--secondary"
-            [disabled]="readonly() || !comments().length"
-            (click)="sendReviewFeedback(activeReview)"
-          >
-            <ng-icon name="lucideSend" size="14" />
-            Send feedback
-          </button>
-          <button
-            type="button"
-            class="pa-btn pa-btn--primary"
-            [disabled]="readonly()"
-            (click)="approveReview(activeReview)"
-          >
-            <ng-icon name="lucideCheck" size="14" />
-            Approve
-          </button>
-        </footer>
+            @if (draftOpen()) {
+              <form class="pa-draft" (submit)="$event.preventDefault(); saveDraft()">
+                <label for="pa-draft-note">{{
+                  draftScope() === 'document' ? 'Document comment' : 'Comment on selection'
+                }}</label>
+                @if (draftScope() === 'selection') {
+                  <blockquote>{{ draftQuote() }}</blockquote>
+                }
+                <textarea
+                  id="pa-draft-note"
+                  rows="4"
+                  placeholder="What should change?"
+                  [ngModel]="draftNote()"
+                  (ngModelChange)="draftNote.set($event)"
+                ></textarea>
+                <div class="pa-draft__actions">
+                  <button type="button" class="pa-btn pa-btn--ghost" (click)="cancelDraft()">
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    class="pa-btn pa-btn--primary"
+                    [disabled]="!draftNote().trim()"
+                  >
+                    Save
+                  </button>
+                </div>
+              </form>
+            } @else if (selectedQuote() && !readonly()) {
+              <button type="button" class="pa-selection" (click)="startSelectionComment()">
+                <ng-icon name="lucideMessageSquarePlus" size="14" />
+                Comment on selection
+              </button>
+            }
+
+            @if (comments().length) {
+              <div class="pa-comment-list">
+                @for (comment of comments(); track comment.id; let index = $index) {
+                  <article
+                    class="pa-comment"
+                    [class.pa-comment--active]="activeCommentId() === comment.id"
+                  >
+                    <button type="button" class="pa-comment__jump" (click)="jumpToComment(comment)">
+                      <ng-icon name="lucideChevronRight" size="13" />
+                      Comment {{ index + 1 }}
+                    </button>
+                    @if (comment.scope === 'selection') {
+                      <blockquote>{{ comment.quote }}</blockquote>
+                    } @else {
+                      <span class="pa-comment__scope">Document-wide</span>
+                    }
+                    @if (editingCommentId() === comment.id) {
+                      <textarea
+                        rows="3"
+                        [ngModel]="editingNote()"
+                        (ngModelChange)="editingNote.set($event)"
+                      ></textarea>
+                      <div class="pa-comment__actions">
+                        <button
+                          type="button"
+                          class="pa-icon-btn"
+                          title="Cancel edit"
+                          (click)="cancelEditComment()"
+                        >
+                          <ng-icon name="lucideX" size="13" />
+                        </button>
+                        <button
+                          type="button"
+                          class="pa-icon-btn pa-icon-btn--primary"
+                          title="Save edit"
+                          [disabled]="!editingNote().trim()"
+                          (click)="saveEditComment(comment.id)"
+                        >
+                          <ng-icon name="lucideCheck" size="13" />
+                        </button>
+                      </div>
+                    } @else {
+                      <p>{{ comment.note }}</p>
+                      <div class="pa-comment__actions">
+                        <button
+                          type="button"
+                          class="pa-icon-btn"
+                          title="Edit comment"
+                          [disabled]="readonly()"
+                          (click)="editComment(comment)"
+                        >
+                          <ng-icon name="lucidePencil" size="13" />
+                        </button>
+                        <button
+                          type="button"
+                          class="pa-icon-btn"
+                          title="Delete comment"
+                          [disabled]="readonly()"
+                          (click)="removeComment(comment.id)"
+                        >
+                          <ng-icon name="lucideTrash2" size="13" />
+                        </button>
+                      </div>
+                    }
+                  </article>
+                }
+              </div>
+            } @else if (!draftOpen()) {
+              <p class="pa-empty">Select text in the plan or add a document comment.</p>
+            }
+
+            <footer class="pa-submit">
+              <button
+                type="button"
+                class="pa-btn pa-btn--ghost"
+                [disabled]="readonly()"
+                (click)="rejectReview(activeReview)"
+              >
+                <ng-icon name="lucideX" size="14" />
+                Reject
+              </button>
+              <button
+                type="button"
+                class="pa-btn pa-btn--secondary"
+                [disabled]="readonly() || !comments().length"
+                (click)="sendReviewFeedback(activeReview)"
+              >
+                <ng-icon name="lucideSend" size="14" />
+                Send feedback
+              </button>
+              <button
+                type="button"
+                class="pa-btn pa-btn--primary"
+                [disabled]="readonly()"
+                (click)="approveReview(activeReview)"
+              >
+                <ng-icon name="lucideCheck" size="14" />
+                Approve
+              </button>
+            </footer>
+          </div>
+        }
       </aside>
     </div>
   </section>

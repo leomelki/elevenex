@@ -219,6 +219,45 @@ describe('ClaudeMessageComponent', () => {
     expect(forkAgainSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('emits a plan chat request from the plan launcher ask button', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeMessageComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeMessageComponent);
+    const review = {
+      provider: 'codex' as const,
+      source: 'transcript-plan' as const,
+      sessionId: 7,
+      reviewId: 'transcript-plan:assistant-1',
+      messageId: 'assistant-1',
+      anchorMessageId: 'provider-msg-1',
+      anchorMessageKind: 'assistant' as const,
+      planMarkdown: '# Plan',
+      createdAt: '2026-04-24T08:00:01.000Z',
+    };
+    fixture.componentRef.setInput('item', {
+      id: 'assistant-1',
+      kind: 'assistant',
+      content: '# Plan',
+      timestamp: '2026-04-24T08:00:01.000Z',
+      receivedAt: '2026-04-24T08:00:01.000Z',
+    });
+    fixture.componentRef.setInput('planReviewEnabled', true);
+    fixture.componentRef.setInput('planReview', review);
+
+    const askSpy = vi.fn();
+    fixture.componentInstance.openPlanChat.subscribe(askSpy);
+    fixture.detectChanges();
+
+    const askButton = Array.from<HTMLButtonElement>(
+      fixture.nativeElement.querySelectorAll('.cw-plan-launcher__button'),
+    ).find((button) => button.textContent?.includes('Ask')) as HTMLButtonElement;
+    askButton.click();
+
+    expect(askSpy).toHaveBeenCalledWith(review);
+  });
+
   it('renders markdown while assistant text is streaming', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeMessageComponent],

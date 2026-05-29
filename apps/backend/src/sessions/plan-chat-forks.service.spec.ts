@@ -8,7 +8,7 @@ import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-regi
 import { AGENT_RUNTIME_CLEANUP_SERVICE } from '../agent-runtime/agent-runtime.tokens.js';
 import { PtyManager } from '../terminal/pty-manager.service.js';
 import { TmuxManager } from '../terminal/tmux-manager.service.js';
-import { SessionForksService } from './session-forks.service.js';
+import { PlanChatForksService } from './plan-chat-forks.service.js';
 import { SessionsService } from './sessions.service.js';
 
 function createTestDb() {
@@ -64,17 +64,6 @@ function createTestDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    CREATE TABLE session_forks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      parent_session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      child_session_id INTEGER NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
-      provider TEXT NOT NULL,
-      anchor_message_id TEXT NOT NULL,
-      anchor_message_kind TEXT NOT NULL,
-      anchor_excerpt TEXT,
-      draft TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
     CREATE TABLE plan_chat_forks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       parent_session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -93,13 +82,17 @@ function createTestDb() {
   return { db: drizzle(sqlite, { schema }), sqlite };
 }
 
-describe('SessionForksService', () => {
+describe('PlanChatForksService', () => {
   let sessionsService: SessionsService;
-  let forksService: SessionForksService;
+  let planChatsService: PlanChatForksService;
   let db: BetterSQLite3Database<typeof schema>;
   let sqliteConn: InstanceType<typeof Database>;
   let repoId: number;
-  let provider: { forkConversation: jest.Mock };
+  let provider: {
+    forkConversation: jest.Mock;
+    setPlanMode: jest.Mock;
+    submitPrompt: jest.Mock;
+  };
   let agentRuntimeCleanup: { cleanupSession: jest.Mock };
 
   beforeEach(async () => {
@@ -123,6 +116,8 @@ describe('SessionForksService', () => {
 
     provider = {
       forkConversation: jest.fn(),
+      setPlanMode: jest.fn().mockResolvedValue({}),
+      submitPrompt: jest.fn().mockResolvedValue(undefined),
     };
     agentRuntimeCleanup = {
       cleanupSession: jest.fn().mockResolvedValue(undefined),
@@ -130,6 +125,7 @@ describe('SessionForksService', () => {
 
     const registry = {
       getProviderFeature: jest.fn(() => provider),
+      getProvider: jest.fn(() => provider),
     };
     const moduleRef = {
       get: jest.fn((token) =>
@@ -140,7 +136,7 @@ describe('SessionForksService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SessionsService,
-        SessionForksService,
+        PlanChatForksService,
         { provide: DRIZZLE, useValue: db },
         {
           provide: PtyManager,
@@ -166,7 +162,7 @@ describe('SessionForksService', () => {
     }).compile();
 
     sessionsService = module.get(SessionsService);
-    forksService = module.get(SessionForksService);
+    planChatsService = module.get(PlanChatForksService);
   });
 
   afterEach(() => {
@@ -184,85 +180,107 @@ describe('SessionForksService', () => {
     return sessionsService.findOne(parent.id);
   }
 
-  it('allows multiple forks from the same anchor message', async () => {
-    const parent = await createParent();
-    provider.forkConversation
-      .mockResolvedValueOnce({
-        providerSessionId: 'claude-child-one',
-        draft: null,
-        anchorExcerpt: 'Done',
-      })
-      .mockResolvedValueOnce({
-        providerSessionId: 'claude-child-two',
-        draft: null,
-        anchorExcerpt: 'Done',
-      });
-
-    const first = await forksService.create(parent.id, {
-      anchorMessageId: 'assistant-1',
-      anchorMessageKind: 'assistant',
-    });
-    const second = await forksService.create(parent.id, {
-      anchorMessageId: 'assistant-1',
-      anchorMessageKind: 'assistant',
-    });
-
-    expect(first.session.id).not.toBe(second.session.id);
-    expect(first.fork.anchorMessageId).toBe('assistant-1');
-    expect(second.fork.anchorMessageId).toBe('assistant-1');
-    expect(provider.forkConversation).toHaveBeenCalledTimes(2);
-  });
-
-  it('lists fork metadata with child sessions', async () => {
+  it('creates and reuses hidden plan chat forks by review id', async () => {
     const parent = await createParent();
     provider.forkConversation.mockResolvedValue({
-      providerSessionId: 'claude-child',
-      draft: 'draft text',
-      anchorExcerpt: 'Question',
+      providerSessionId: 'claude-plan-chat',
+      anchorExcerpt: '# Plan',
     });
 
-    await forksService.create(parent.id, {
-      anchorMessageId: 'user-1',
-      anchorMessageKind: 'user',
+    const first = await planChatsService.ensure(parent.id, {
+      reviewId: 'tagged-plan:message-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      planMarkdown: '# Plan\n\nDo it',
+    });
+    const second = await planChatsService.ensure(parent.id, {
+      reviewId: 'tagged-plan:message-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      planMarkdown: '# Plan\n\nDo it',
     });
 
-    const forks = await forksService.findByParent(parent.id);
+    expect(second.planChat.id).toBe(first.planChat.id);
+    expect(provider.forkConversation).toHaveBeenCalledTimes(1);
+    expect(provider.setPlanMode).toHaveBeenCalledWith(first.session.id, true);
 
-    expect(forks).toHaveLength(1);
-    expect(forks[0]).toMatchObject({
-      parentSessionId: parent.id,
-      provider: 'claude',
-      anchorMessageId: 'user-1',
-      anchorMessageKind: 'user',
-      anchorExcerpt: 'Question',
-      draft: 'draft text',
+    const visibleSessions = await sessionsService.findByRepo(repoId);
+    const allSessions = await sessionsService.findByRepo(repoId, {
+      includeHidden: true,
     });
-    expect(forks[0].childSession?.claudeSessionId).toBe('claude-child');
+    expect(visibleSessions.map((session) => session.id)).toEqual([parent.id]);
+    expect(allSessions.map((session) => session.id).sort()).toEqual(
+      [parent.id, first.session.id].sort(),
+    );
+    expect(first.session.surface).toBe('embedded_plan_chat');
   });
 
-  it('removes the child session when provider fork creation fails', async () => {
+  it('submits questions with a guarded prompt and raw title prompt', async () => {
+    const parent = await createParent();
+    provider.forkConversation.mockResolvedValue({
+      providerSessionId: 'claude-plan-chat',
+      anchorExcerpt: '# Plan',
+    });
+    const { planChat, session } = await planChatsService.ensure(parent.id, {
+      reviewId: 'review-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      planMarkdown: '# Plan\n\nDo it',
+    });
+
+    await planChatsService.submitQuestion(parent.id, planChat.id, {
+      question: 'Why this order?',
+    });
+
+    expect(provider.submitPrompt).toHaveBeenCalledTimes(1);
+    const [sessionId, prompt, titlePrompt] = provider.submitPrompt.mock.calls[0];
+    expect(sessionId).toBe(session.id);
+    expect(titlePrompt).toBe('Why this order?');
+    expect(prompt).toContain('hidden Q&A fork');
+    expect(prompt).toContain('<elevenex_plan_question>\nWhy this order?\n</elevenex_plan_question>');
+    expect(prompt).toContain('Do not write a new plan');
+  });
+
+  it('removes the hidden child session when provider fork creation fails', async () => {
     const parent = await createParent();
     provider.forkConversation.mockRejectedValue(new Error('provider failed'));
 
     await expect(
-      forksService.create(parent.id, {
+      planChatsService.ensure(parent.id, {
+        reviewId: 'review-1',
         anchorMessageId: 'assistant-1',
         anchorMessageKind: 'assistant',
+        planMarkdown: '# Plan',
       }),
     ).rejects.toThrow('provider failed');
 
-    const sessions = await sessionsService.findByRepo(repoId);
-    expect(sessions.map((session) => session.id)).toEqual([parent.id]);
+    const allSessions = await sessionsService.findByRepo(repoId, {
+      includeHidden: true,
+    });
+    expect(allSessions.map((session) => session.id)).toEqual([parent.id]);
     expect(agentRuntimeCleanup.cleanupSession).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps legacy session forks independent from message fork metadata', async () => {
+  it('deletes hidden plan chat forks so a later question can start fresh', async () => {
     const parent = await createParent();
+    provider.forkConversation.mockResolvedValue({
+      providerSessionId: 'claude-plan-chat',
+      anchorExcerpt: '# Plan',
+    });
+    const { planChat, session } = await planChatsService.ensure(parent.id, {
+      reviewId: 'review-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      planMarkdown: '# Plan',
+    });
 
-    const legacyFork = await sessionsService.fork(parent.id);
-    const forks = await forksService.findByParent(parent.id);
+    await planChatsService.delete(parent.id, planChat.id);
 
-    expect(legacyFork.name).toBe('Parent (fork)');
-    expect(forks).toEqual([]);
+    const allSessions = await sessionsService.findByRepo(repoId, {
+      includeHidden: true,
+    });
+    const planChats = await planChatsService.findByParent(parent.id, 'review-1');
+    expect(allSessions.map((item) => item.id)).not.toContain(session.id);
+    expect(planChats).toEqual([]);
   });
 });
