@@ -283,6 +283,10 @@ export class ChangeReviewPanelComponent implements OnDestroy {
       null
     );
   });
+  readonly activeFileHeader = computed(() => {
+    const file = this.activeFile();
+    return file ? [file] : [];
+  });
 
   readonly filteredFiles = computed(() => {
     const summary = this.summary();

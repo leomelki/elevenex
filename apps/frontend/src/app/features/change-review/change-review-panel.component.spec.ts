@@ -493,6 +493,41 @@ describe('ChangeReviewPanelComponent', () => {
     expect(fixture.componentInstance.isFileCollapsed(files[0])).toBe(true);
   });
 
+  it('shows the next file as unchecked immediately after marking the active file viewed', async () => {
+    const files = [file('src/a.ts'), file('src/b.ts')];
+    await flushSummary(summary(files));
+
+    windowCalls[0].response.next(fileWindow('src/a.ts'));
+    windowCalls[0].response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    const nextWindow = windowCalls.find((call) => call.path === 'src/b.ts');
+    expect(nextWindow).toBeDefined();
+    nextWindow!.response.next(fileWindow('src/b.ts'));
+    nextWindow!.response.complete();
+    await flush();
+    fixture.detectChanges();
+
+    fixture.componentInstance.scrollToFile(files[0]);
+    fixture.detectChanges();
+
+    const stickyInput = () =>
+      (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+        '.cr-file-header-row--sticky input[type="checkbox"]',
+      );
+
+    expect(stickyInput()?.checked).toBe(false);
+    stickyInput()!.click();
+    fixture.detectChanges();
+
+    const input = stickyInput();
+    const stickyHeader = input?.closest('.cr-file-header-row--sticky') as HTMLElement | null;
+    expect(fixture.componentInstance.activeFilePath()).toBe('src/b.ts');
+    expect(stickyHeader?.textContent).toContain('src/b.ts');
+    expect(input?.checked).toBe(false);
+  });
+
   it('collapses a file to its main header row', async () => {
     const files = [file('src/a.ts'), file('src/b.ts')];
     await flushSummary(summary(files));

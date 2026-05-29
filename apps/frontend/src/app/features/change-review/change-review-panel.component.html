@@ -366,7 +366,7 @@
           (mouseup)="captureDiffSelection()"
           (keyup)="captureDiffSelection()"
         >
-          @if (activeFile(); as file) {
+          @for (file of activeFileHeader(); track file.path) {
             <div
               class="cr-file-header-row cr-file-header-row--main cr-file-header-row--sticky"
               [style.transform]="headerTranslateX()"
