@@ -4,10 +4,10 @@ import {
   AgentControlContext,
   AgentMission,
   AgentMissionArtifact,
+  AgentMissionKind,
   AgentMissionMessage,
   AgentMissionStatus,
   AgentMissionStep,
-  AgentMissionTemplate,
 } from './agent-control.model';
 
 interface PersistedAgentControlState {
@@ -19,41 +19,15 @@ interface PersistedAgentControlState {
 
 const STORAGE_KEY = 'elevenex-agent-control-state';
 
-const templates: AgentMissionTemplate[] = [
-  {
-    id: 'create_project',
-    label: 'Create project',
-    description: 'Preview project creation, repository attachment, and starter workspace setup.',
-    icon: 'lucideFolder',
-    prompt: 'Create a new Elevenex project, attach the right repositories, and prepare an initial workspace.',
-  },
-  {
-    id: 'create_worktree',
-    label: 'Create worktree',
-    description: 'Preview branch selection, worktree creation, and session bootstrapping.',
-    icon: 'lucideGitBranch',
-    prompt: 'Create a focused worktree from the best base ref and open a session for the agent.',
-  },
-  {
-    id: 'run_agent',
-    label: 'Run agent',
-    description: 'Preview an agent run against the selected project, worktree, or session.',
-    icon: 'lucidePlay',
-    prompt: 'Run an agent on the selected scope, keep a review checkpoint, and summarize the result.',
-  },
-  {
-    id: 'review_work',
-    label: 'Review work',
-    description: 'Preview transcript, diff, and completion review steps before accepting work.',
-    icon: 'lucideClipboardList',
-    prompt: 'Review the selected work, inspect changed files and agent output, and prepare findings.',
-  },
-];
+const missionKindLabels: Record<AgentMissionKind, string> = {
+  create_project: 'Create project',
+  create_worktree: 'Create worktree',
+  run_agent: 'Run agent',
+  review_work: 'Review work',
+};
 
 @Injectable({ providedIn: 'root' })
 export class AgentControlStateService {
-  readonly templates = templates;
-
   private readonly initialState = this.loadState();
   private readonly openSignal = signal(false);
   private readonly contextSignal = signal<AgentControlContext>(
@@ -71,12 +45,13 @@ export class AgentControlStateService {
   readonly selectedMissionId = this.selectedMissionIdSignal.asReadonly();
   readonly selectedMission = computed(() => {
     const id = this.selectedMissionIdSignal();
-    return this.missionsSignal().find(mission => mission.id === id) ?? null;
+    return this.missionsSignal().find((mission) => mission.id === id) ?? null;
   });
-  readonly activeMissionsCount = computed(() =>
-    this.missionsSignal().filter(mission =>
-      mission.status !== 'complete' && mission.status !== 'blocked',
-    ).length,
+  readonly activeMissionsCount = computed(
+    () =>
+      this.missionsSignal().filter(
+        (mission) => mission.status !== 'complete' && mission.status !== 'blocked',
+      ).length,
   );
 
   open(context: AgentControlContext = AGENT_CONTROL_GLOBAL_CONTEXT): void {
@@ -125,21 +100,20 @@ export class AgentControlStateService {
   }
 
   selectMission(id: string): void {
-    if (!this.missionsSignal().some(mission => mission.id === id)) {
+    if (!this.missionsSignal().some((mission) => mission.id === id)) {
       return;
     }
     this.selectedMissionIdSignal.set(id);
     this.persist();
   }
 
-  createMission(prompt: string, templateId?: AgentMissionTemplate['id']): AgentMission | null {
+  createMission(prompt: string): AgentMission | null {
     const cleanPrompt = prompt.trim();
     if (!cleanPrompt) {
       return null;
     }
 
-    const template = templates.find(candidate => candidate.id === templateId);
-    const kind = template?.id ?? this.inferTemplateId(cleanPrompt);
+    const kind = this.inferMissionKind(cleanPrompt);
     const now = new Date().toISOString();
     const sequence = this.sequenceSignal() + 1;
     this.sequenceSignal.set(sequence);
@@ -165,20 +139,15 @@ export class AgentControlStateService {
       updatedAt: now,
     };
 
-    this.missionsSignal.update(missions => [mission, ...missions]);
+    this.missionsSignal.update((missions) => [mission, ...missions]);
     this.selectedMissionIdSignal.set(mission.id);
     this.openSignal.set(true);
     this.persist();
     return mission;
   }
 
-  createMissionFromTemplate(templateId: AgentMissionTemplate['id']): AgentMission | null {
-    const template = templates.find(candidate => candidate.id === templateId);
-    return template ? this.createMission(template.prompt, template.id) : null;
-  }
-
   approveMission(id: string): void {
-    this.updateMission(id, mission =>
+    this.updateMission(id, (mission) =>
       mission.status === 'waiting_approval'
         ? this.withStatus(mission, 'planned', 'Preview plan approved locally.')
         : mission,
@@ -186,7 +155,7 @@ export class AgentControlStateService {
   }
 
   runMission(id: string): void {
-    this.updateMission(id, mission =>
+    this.updateMission(id, (mission) =>
       mission.status === 'planned'
         ? this.withStatus(mission, 'running', 'Preview run started locally.')
         : mission,
@@ -194,7 +163,7 @@ export class AgentControlStateService {
   }
 
   reviewMission(id: string): void {
-    this.updateMission(id, mission =>
+    this.updateMission(id, (mission) =>
       mission.status === 'running'
         ? this.withStatus(mission, 'review', 'Preview run moved into review.')
         : mission,
@@ -202,7 +171,7 @@ export class AgentControlStateService {
   }
 
   completeMission(id: string): void {
-    this.updateMission(id, mission =>
+    this.updateMission(id, (mission) =>
       mission.status === 'review'
         ? this.withStatus(mission, 'complete', 'Preview mission marked complete.')
         : mission,
@@ -219,7 +188,7 @@ export class AgentControlStateService {
   private resolveInitialSelectedMissionId(): string | null {
     const missions = this.initialState.missions ?? [];
     const selected = this.initialState.selectedMissionId ?? null;
-    if (selected && missions.some(mission => mission.id === selected)) {
+    if (selected && missions.some((mission) => mission.id === selected)) {
       return selected;
     }
     return missions[0]?.id ?? null;
@@ -238,8 +207,8 @@ export class AgentControlStateService {
 
   private updateMission(id: string, updater: (mission: AgentMission) => AgentMission): void {
     let changed = false;
-    this.missionsSignal.update(missions =>
-      missions.map(mission => {
+    this.missionsSignal.update((missions) =>
+      missions.map((mission) => {
         if (mission.id !== id) {
           return mission;
         }
@@ -264,7 +233,7 @@ export class AgentControlStateService {
       ...mission,
       status,
       steps: this.stepsForStatus(mission.steps, status),
-      approvals: mission.approvals.map(approval => ({
+      approvals: mission.approvals.map((approval) => ({
         ...approval,
         status: status === 'waiting_approval' ? approval.status : 'approved',
       })),
@@ -281,9 +250,12 @@ export class AgentControlStateService {
     };
   }
 
-  private stepsForStatus(steps: AgentMissionStep[], status: AgentMissionStatus): AgentMissionStep[] {
+  private stepsForStatus(
+    steps: AgentMissionStep[],
+    status: AgentMissionStatus,
+  ): AgentMissionStep[] {
     if (status === 'planned' || status === 'waiting_approval') {
-      return steps.map(step => ({ ...step, status: 'pending' }));
+      return steps.map((step) => ({ ...step, status: 'pending' }));
     }
     if (status === 'running') {
       return steps.map((step, index) => ({
@@ -298,24 +270,23 @@ export class AgentControlStateService {
       }));
     }
     if (status === 'complete') {
-      return steps.map(step => ({ ...step, status: 'complete' }));
+      return steps.map((step) => ({ ...step, status: 'complete' }));
     }
     if (status === 'blocked') {
-      return steps.map(step => ({ ...step, status: 'blocked' }));
+      return steps.map((step) => ({ ...step, status: 'blocked' }));
     }
     return steps;
   }
 
-  private titleFor(prompt: string, kind: AgentMissionTemplate['id']): string {
-    const template = templates.find(candidate => candidate.id === kind);
+  private titleFor(prompt: string, kind: AgentMissionKind): string {
     const compactPrompt = prompt.replace(/\s+/g, ' ').trim();
     if (compactPrompt.length <= 72) {
       return compactPrompt;
     }
-    return template?.label ?? `${compactPrompt.slice(0, 69)}...`;
+    return missionKindLabels[kind] ?? `${compactPrompt.slice(0, 69)}...`;
   }
 
-  private inferTemplateId(prompt: string): AgentMissionTemplate['id'] {
+  private inferMissionKind(prompt: string): AgentMissionKind {
     const normalized = prompt.toLowerCase();
     if (normalized.includes('project')) {
       return 'create_project';
@@ -329,7 +300,7 @@ export class AgentControlStateService {
     return 'run_agent';
   }
 
-  private stepsFor(kind: AgentMissionTemplate['id'], prompt: string): AgentMissionStep[] {
+  private stepsFor(kind: AgentMissionKind, prompt: string): AgentMissionStep[] {
     const target = this.targetSummary();
     const payload = {
       contextKind: this.contextSignal().kind,
@@ -339,7 +310,7 @@ export class AgentControlStateService {
     };
 
     type StepRow = Omit<AgentMissionStep, 'id' | 'status' | 'previewPayload'>;
-    const rowsByKind: Record<AgentMissionTemplate['id'], StepRow[]> = {
+    const rowsByKind: Record<AgentMissionKind, StepRow[]> = {
       create_project: [
         { kind: 'project', label: 'Draft project shell', targetSummary: target },
         { kind: 'repo', label: 'Preview repository attachments', targetSummary: target },
@@ -375,14 +346,14 @@ export class AgentControlStateService {
     }));
   }
 
-  private artifactsFor(kind: AgentMissionTemplate['id']): AgentMissionArtifact[] {
-    const template = templates.find(candidate => candidate.id === kind);
+  private artifactsFor(kind: AgentMissionKind): AgentMissionArtifact[] {
+    const label = missionKindLabels[kind] ?? 'Agent';
     return [
       {
         id: `${kind}-plan`,
         kind: 'plan',
         label: 'Preview plan',
-        summary: `${template?.label ?? 'Agent'} plan generated locally.`,
+        summary: `${label} plan generated locally.`,
       },
       {
         id: `${kind}-review`,
@@ -395,10 +366,10 @@ export class AgentControlStateService {
 
   private messagesFor(
     prompt: string,
-    kind: AgentMissionTemplate['id'],
+    kind: AgentMissionKind,
     createdAt: string,
   ): AgentMissionMessage[] {
-    const template = templates.find(candidate => candidate.id === kind);
+    const label = missionKindLabels[kind] ?? 'Agent';
     return [
       {
         id: `${kind}-user`,
@@ -409,7 +380,7 @@ export class AgentControlStateService {
       {
         id: `${kind}-agent`,
         role: 'agent',
-        content: `${template?.label ?? 'Agent'} preview prepared for ${this.targetSummary()}.`,
+        content: `${label} preview prepared for ${this.targetSummary()}.`,
         createdAt,
       },
     ];

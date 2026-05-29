@@ -55,7 +55,9 @@ describe('AgentControlStateService', () => {
 
   it('advances preview-only missions through local statuses', () => {
     const service = new AgentControlStateService();
-    const mission = service.createMissionFromTemplate('run_agent');
+    const mission = service.createMission(
+      'Run an agent on the selected scope and summarize the result',
+    );
     expect(mission).toBeTruthy();
 
     service.approveMission(mission!.id);
@@ -71,13 +73,13 @@ describe('AgentControlStateService', () => {
 
     service.completeMission(mission!.id);
     expect(service.selectedMission()?.status).toBe('complete');
-    expect(service.selectedMission()?.steps.every(step => step.status === 'complete')).toBe(true);
+    expect(service.selectedMission()?.steps.every((step) => step.status === 'complete')).toBe(true);
   });
 
   it('resets missions and selected state without closing the drawer', () => {
     const service = new AgentControlStateService();
     service.openGlobal();
-    service.createMissionFromTemplate('create_project');
+    service.createMission('Create a new Elevenex project and prepare an initial workspace');
 
     service.reset();
 

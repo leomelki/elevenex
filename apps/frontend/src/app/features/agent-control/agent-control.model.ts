@@ -23,6 +23,8 @@ export type AgentMissionStatus =
   | 'complete'
   | 'blocked';
 
+export type AgentMissionKind = 'create_project' | 'create_worktree' | 'run_agent' | 'review_work';
+
 export type AgentMissionStepStatus = 'pending' | 'active' | 'complete' | 'blocked';
 
 export interface AgentMissionStep {
@@ -67,14 +69,6 @@ export interface AgentMission {
   messages: AgentMissionMessage[];
   createdAt: string;
   updatedAt: string;
-}
-
-export interface AgentMissionTemplate {
-  id: 'create_project' | 'create_worktree' | 'run_agent' | 'review_work';
-  label: string;
-  description: string;
-  icon: string;
-  prompt: string;
 }
 
 export const AGENT_CONTROL_GLOBAL_CONTEXT: AgentControlContext = {

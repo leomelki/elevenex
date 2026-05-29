@@ -57,36 +57,51 @@ describe('AgentControlDrawerComponent', () => {
     const fixture = TestBed.createComponent(AgentControlDrawerComponent);
     fixture.detectChanges();
 
-    const textarea = (fixture.nativeElement as HTMLElement).querySelector('textarea') as HTMLTextAreaElement;
+    const textarea = (fixture.nativeElement as HTMLElement).querySelector(
+      'textarea',
+    ) as HTMLTextAreaElement;
     textarea.value = 'Run the agent and review the changes';
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
     fixture.detectChanges();
 
-    const submit = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('button'))
-      .find(button => button.textContent?.includes('Generate preview')) as HTMLButtonElement;
+    const submit = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ).find((button) => button.textContent?.includes('Generate preview')) as HTMLButtonElement;
     submit.click();
     fixture.detectChanges();
 
     expect(service.missions()).toHaveLength(1);
-    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Run the agent and review the changes');
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain(
+      'Run the agent and review the changes',
+    );
+    expect((fixture.nativeElement as HTMLElement).textContent).not.toContain('Create worktree');
   });
 
-  it('creates a deterministic template mission and advances it locally', () => {
+  it('advances a composer-created preview locally', () => {
     const service = TestBed.inject(AgentControlStateService);
     service.openGlobal();
 
     const fixture = TestBed.createComponent(AgentControlDrawerComponent);
     fixture.detectChanges();
 
-    const template = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('button'))
-      .find(button => button.textContent?.includes('Create worktree')) as HTMLButtonElement;
-    template.click();
+    const textarea = (fixture.nativeElement as HTMLElement).querySelector(
+      'textarea',
+    ) as HTMLTextAreaElement;
+    textarea.value = 'Create a focused worktree from the best base ref';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+
+    const submit = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ).find((button) => button.textContent?.includes('Generate preview')) as HTMLButtonElement;
+    submit.click();
     fixture.detectChanges();
 
     expect(service.selectedMission()?.status).toBe('waiting_approval');
 
-    const approve = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('button'))
-      .find(button => button.textContent?.includes('Approve preview')) as HTMLButtonElement;
+    const approve = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ).find((button) => button.textContent?.includes('Approve preview')) as HTMLButtonElement;
     approve.click();
     fixture.detectChanges();
 

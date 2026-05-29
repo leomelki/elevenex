@@ -1,7 +1,12 @@
 @if (state.isOpen()) {
   <div class="agent-control-backdrop" aria-hidden="true" (click)="close()"></div>
 
-  <aside class="agent-control-drawer" role="dialog" aria-modal="true" aria-label="Elevenex agent preview">
+  <aside
+    class="agent-control-drawer"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Elevenex agent preview"
+  >
     <header class="agent-control-header">
       <div class="agent-control-header__identity">
         <span class="agent-control-header__icon">
@@ -26,69 +31,85 @@
           <span>Provider</span>
           <strong>Agent preview</strong>
         </button>
-        <button z-button zType="ghost" zSize="icon-sm" type="button" aria-label="Close agent drawer" (click)="close()">
+        <button
+          z-button
+          zType="ghost"
+          zSize="icon-sm"
+          type="button"
+          aria-label="Close agent drawer"
+          (click)="close()"
+        >
           <ng-icon name="lucideX" size="16" />
         </button>
       </div>
     </header>
 
     <section class="agent-control-chat" aria-label="Agent chat preview">
-      <div class="agent-control-chat__topbar">
-        <div class="agent-control-suggestions" aria-label="Agent prompt templates">
-          @for (template of state.templates; track template.id) {
-            <button
-              type="button"
-              class="agent-control-suggestion"
-              [title]="template.description"
-              (click)="createMissionFromTemplate(template.id)"
-            >
-              <ng-icon [name]="template.icon" size="14" />
-              <span>{{ template.label }}</span>
-            </button>
+      <div class="agent-control-chat__topbar" aria-label="Recent preview missions">
+        <div class="agent-control-recent-pills">
+          @if (state.missions().length > 0) {
+            @for (mission of recentMissions(); track mission.id) {
+              <button
+                type="button"
+                class="agent-control-recent-pill"
+                [class.is-selected]="state.selectedMissionId() === mission.id"
+                [title]="mission.title"
+                (click)="selectMission(mission.id)"
+              >
+                <span
+                  class="agent-control-recent-pill__dot"
+                  [attr.data-status]="mission.status"
+                ></span>
+                <span class="agent-control-recent-pill__copy">
+                  <span>{{ mission.title }}</span>
+                  <small>{{ statusLabel(mission.status) }}</small>
+                </span>
+              </button>
+            }
+          } @else {
+            <div class="agent-control-recent-pill agent-control-recent-pill--placeholder">
+              <span class="agent-control-recent-pill__dot" data-status="draft"></span>
+              <span class="agent-control-recent-pill__copy">
+                <span>New preview</span>
+                <small>No preview missions</small>
+              </span>
+            </div>
           }
         </div>
 
         @if (state.missions().length > 0) {
-          <button type="button" class="agent-control-link-button" (click)="resetMissions()">Reset</button>
+          <button type="button" class="agent-control-link-button" (click)="resetMissions()">
+            Reset
+          </button>
         }
       </div>
-
-      @if (state.missions().length > 1) {
-        <div class="agent-control-recent" aria-label="Recent preview missions">
-          @for (mission of recentMissions(); track mission.id) {
-            <button
-              type="button"
-              class="agent-control-recent__item"
-              [class.is-selected]="state.selectedMissionId() === mission.id"
-              (click)="selectMission(mission.id)"
-            >
-              <span>{{ mission.title }}</span>
-              <small>{{ statusLabel(mission.status) }}</small>
-            </button>
-          }
-        </div>
-      }
 
       <div class="agent-control-thread">
         @if (state.selectedMission(); as mission) {
           @for (message of mission.messages; track message.id) {
             <article class="agent-control-message" [attr.data-role]="message.role">
-              @if (message.role !== 'system') {
-                <span class="agent-control-message__avatar">
-                  @if (message.role === 'user') {
-                    <span>You</span>
-                  } @else {
-                    <ng-icon name="lucideSparkles" size="14" />
-                  }
-                </span>
-              }
-              <div class="agent-control-message__bubble">
-                <div class="agent-control-message__meta">
-                  <span>{{ message.role === 'user' ? 'You' : message.role === 'agent' ? 'Agent preview' : 'Preview event' }}</span>
-                  <span>{{ formatDate(message.createdAt) }}</span>
+              @if (message.role === 'system') {
+                <div class="agent-control-message__system">
+                  <ng-icon name="lucideCircleDashed" size="13" />
+                  <span>{{ message.content }}</span>
+                  <small>{{ formatDate(message.createdAt) }}</small>
                 </div>
-                <p>{{ message.content }}</p>
-              </div>
+              } @else {
+                @if (message.role === 'agent') {
+                  <span class="agent-control-message__avatar">
+                    <ng-icon name="lucideSparkles" size="14" />
+                  </span>
+                }
+                <div class="agent-control-message__body">
+                  <div class="agent-control-message__bubble">
+                    <p>{{ message.content }}</p>
+                  </div>
+                  <div class="agent-control-message__meta-row">
+                    <span>{{ message.role === 'user' ? 'You' : 'Agent preview' }}</span>
+                    <span>{{ formatDate(message.createdAt) }}</span>
+                  </div>
+                </div>
+              }
             </article>
           }
 
@@ -96,64 +117,72 @@
             <span class="agent-control-message__avatar">
               <ng-icon name="lucideSparkles" size="14" />
             </span>
-            <div class="agent-control-message__bubble agent-control-message__bubble--wide">
-              <div class="agent-control-message__meta">
-                <span>Preview plan</span>
-                <span class="agent-control-status" [attr.data-status]="mission.status">
-                  {{ statusLabel(mission.status) }}
-                </span>
-              </div>
+            <div class="agent-control-message__body agent-control-message__body--wide">
+              <div class="agent-control-message__bubble agent-control-message__bubble--wide">
+                <div class="agent-control-message__meta">
+                  <span>Preview plan</span>
+                  <span class="agent-control-status" [attr.data-status]="mission.status">
+                    {{ statusLabel(mission.status) }}
+                  </span>
+                </div>
 
-              <p>This is a local-only preview. Nothing is created, run, changed, or reviewed outside this chat.</p>
+                <p>
+                  This is a local-only preview. Nothing is created, run, changed, or reviewed
+                  outside this chat.
+                </p>
 
-              <section class="agent-control-embed" aria-label="Mission plan">
-                <header class="agent-control-embed__header">
-                  <div>
-                    <span>Mission</span>
-                    <strong>{{ mission.title }}</strong>
-                  </div>
-                  @if (nextActionLabel(mission); as actionLabel) {
-                    <button z-button zSize="sm" type="button" (click)="advanceMission(mission)">
-                      <ng-icon name="lucidePlay" size="14" />
-                      {{ actionLabel }}
-                    </button>
-                  }
-                </header>
-
-                @if (mission.approvals[0]; as approval) {
-                  <div class="agent-control-approval" aria-label="Preview approvals">
+                <section class="agent-control-embed" aria-label="Mission plan">
+                  <header class="agent-control-embed__header">
                     <div>
-                      <span>Preview-only approval</span>
-                      <strong>{{ approval.label }}</strong>
-                      <p>{{ approval.summary }}</p>
+                      <span>Mission</span>
+                      <strong>{{ mission.title }}</strong>
                     </div>
-                    <span class="agent-control-approval__state" [attr.data-state]="approval.status">
-                      {{ approval.status }}
-                    </span>
-                  </div>
-                }
+                    @if (nextActionLabel(mission); as actionLabel) {
+                      <button z-button zSize="sm" type="button" (click)="advanceMission(mission)">
+                        <ng-icon name="lucidePlay" size="14" />
+                        {{ actionLabel }}
+                      </button>
+                    }
+                  </header>
 
-                <div class="agent-control-step-list">
-                  @for (step of mission.steps; track step.id) {
-                    <div class="agent-control-step" [attr.data-status]="step.status">
-                      <span class="agent-control-step__icon">
-                        <ng-icon [name]="stepIcon(step)" size="14" />
-                      </span>
+                  @if (mission.approvals[0]; as approval) {
+                    <div class="agent-control-approval" aria-label="Preview approvals">
                       <div>
-                        <span>{{ step.label }}</span>
-                        <small>{{ step.targetSummary }}</small>
+                        <span>Preview-only approval</span>
+                        <strong>{{ approval.label }}</strong>
+                        <p>{{ approval.summary }}</p>
                       </div>
-                      <span class="agent-control-step__status">{{ step.status }}</span>
+                      <span
+                        class="agent-control-approval__state"
+                        [attr.data-state]="approval.status"
+                      >
+                        {{ approval.status }}
+                      </span>
                     </div>
                   }
-                </div>
 
-                <div class="agent-control-artifacts" aria-label="Preview artifacts">
-                  @for (artifact of mission.artifacts; track artifact.id) {
-                    <span>{{ artifact.label }}</span>
-                  }
-                </div>
-              </section>
+                  <div class="agent-control-step-list">
+                    @for (step of mission.steps; track step.id) {
+                      <div class="agent-control-step" [attr.data-status]="step.status">
+                        <span class="agent-control-step__icon">
+                          <ng-icon [name]="stepIcon(step)" size="14" />
+                        </span>
+                        <div>
+                          <span>{{ step.label }}</span>
+                          <small>{{ step.targetSummary }}</small>
+                        </div>
+                        <span class="agent-control-step__status">{{ step.status }}</span>
+                      </div>
+                    }
+                  </div>
+
+                  <div class="agent-control-artifacts" aria-label="Preview artifacts">
+                    @for (artifact of mission.artifacts; track artifact.id) {
+                      <span>{{ artifact.label }}</span>
+                    }
+                  </div>
+                </section>
+              </div>
             </div>
           </article>
         } @else {
@@ -161,18 +190,26 @@
             <span class="agent-control-message__avatar">
               <ng-icon name="lucideSparkles" size="14" />
             </span>
-            <div class="agent-control-message__bubble agent-control-message__bubble--wide">
-              <div class="agent-control-message__meta">
-                <span>Agent preview</span>
-                <span>No preview missions</span>
+            <div class="agent-control-message__body agent-control-message__body--wide">
+              <div class="agent-control-message__bubble agent-control-message__bubble--wide">
+                <div class="agent-control-message__meta">
+                  <span>Agent preview</span>
+                  <span>No preview missions</span>
+                </div>
+                <p>
+                  Tell the Elevenex agent what you want to do. For now this creates a local preview
+                  plan in chat only.
+                </p>
               </div>
-              <p>Tell the Elevenex agent what you want to do. For now this creates a local preview plan in chat only.</p>
             </div>
           </article>
         }
       </div>
 
-      <form class="agent-control-composer" (submit)="$event.preventDefault(); createMissionFromPrompt()">
+      <form
+        class="agent-control-composer"
+        (submit)="$event.preventDefault(); createMissionFromPrompt()"
+      >
         <textarea
           z-input
           rows="3"

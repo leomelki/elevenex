@@ -22,7 +22,6 @@ import {
   AgentMission,
   AgentMissionStatus,
   AgentMissionStep,
-  AgentMissionTemplate,
 } from './agent-control.model';
 
 @Component({
@@ -66,10 +65,6 @@ export class AgentControlDrawerComponent {
     if (mission) {
       this.promptDraft.set('');
     }
-  }
-
-  createMissionFromTemplate(templateId: AgentMissionTemplate['id']): void {
-    this.state.createMissionFromTemplate(templateId);
   }
 
   resetMissions(): void {
