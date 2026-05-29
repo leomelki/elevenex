@@ -223,6 +223,34 @@ describe('App', () => {
     expect(startupServiceMock.startAllStartupPortForwards).toHaveBeenCalled();
   });
 
+  it('should size the app body below the startup forward banner', async () => {
+    prompt.set({
+      serverLabel: 'deploy@example.com:22',
+      totalCount: 1,
+      forwards: [],
+      startingIds: [],
+    });
+
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const shell = compiled.querySelector('.app-shell') as HTMLElement | null;
+    const body = compiled.querySelector('.app-shell__body') as HTMLElement | null;
+
+    expect(compiled.querySelector('.startup-forward-bar')).toBeTruthy();
+    expect(shell).toBeTruthy();
+    expect(body).toBeTruthy();
+
+    expect(getComputedStyle(shell!).display).toBe('flex');
+    expect(getComputedStyle(shell!).flexDirection).toBe('column');
+    expect(getComputedStyle(body!).flexGrow).toBe('1');
+    expect(getComputedStyle(body!).minHeight).toBe('0px');
+    expect(getComputedStyle(body!).height).not.toBe('100%');
+  });
+
   it('should render the disconnected forward banner when runtime disconnects are present', async () => {
     disconnectedBanner.set({
       totalCount: 2,
