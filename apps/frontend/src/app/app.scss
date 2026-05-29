@@ -5,6 +5,8 @@
   --shell-highlight: color-mix(in oklch, var(--primary) 14%, var(--surface-tint));
   --shell-shadow: 0 24px 64px rgba(15, 23, 42, 0.08);
   position: relative;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background:
     radial-gradient(circle at top left, color-mix(in oklch, var(--primary) 10%, transparent), transparent 34%),
@@ -123,7 +125,8 @@
 
 .app-shell__body {
   display: flex;
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
 }
 
