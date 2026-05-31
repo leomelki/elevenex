@@ -228,6 +228,35 @@ describe('PlanChatForksService', () => {
     expect(first.session.surface).toBe('embedded_plan_chat');
   });
 
+  it('passes pending ExitPlanMode fork metadata to the provider', async () => {
+    const parent = await createParent();
+    provider.forkConversation.mockResolvedValue({
+      providerSessionId: 'claude-plan-chat',
+      anchorExcerpt: '# Plan',
+    });
+
+    await planChatsService.ensure(parent.id, {
+      reviewId: 'exit-plan:perm-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor',
+      planMarkdown: '# Plan\n\nDo it',
+    });
+
+    expect(provider.forkConversation).toHaveBeenCalledWith({
+      parentSessionId: parent.id,
+      childSessionId: expect.any(Number),
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor',
+      childSessionName: 'Parent plan Q&A',
+    });
+  });
+
   it('submits questions with a guarded prompt and raw title prompt', async () => {
     const parent = await createParent();
     provider.forkConversation.mockResolvedValue({

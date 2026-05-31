@@ -130,6 +130,11 @@ export interface ClaudePermissionRequest {
   decisionReason?: string;
   blockedPath?: string;
   suggestions?: ClaudePermissionUpdate[];
+  anchorMessageId?: string;
+  anchorMessageKind?: 'user' | 'assistant';
+  pendingToolUseId?: string;
+  pendingPermissionRequestId?: string;
+  planChatForkPoint?: 'include_anchor' | 'before_anchor';
   createdAt: string;
 }
 

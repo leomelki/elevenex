@@ -89,6 +89,7 @@
                               (openInBrowser)="onOpenInBrowser($event)"
                               (planReviewRequested)="openPlanAnnotator($event)"
                               (planQuestionRequested)="openPlanAnnotator($event, 'ask')"
+                              (planReviewUpdated)="onPlanReviewUpdated($event)"
                               (planReviewClosed)="onPlanReviewClosed($event)"
                               class="h-full block border-l border-border/60"
                             />
@@ -111,6 +112,7 @@
                         (openInBrowser)="onOpenInBrowser($event)"
                         (planReviewRequested)="openPlanAnnotator($event)"
                         (planQuestionRequested)="openPlanAnnotator($event, 'ask')"
+                        (planReviewUpdated)="onPlanReviewUpdated($event)"
                         (planReviewClosed)="onPlanReviewClosed($event)"
                         (activeAgentProviderChange)="onSessionProviderChange(tab.sessionId, $event)"
                         (agentRuntimeStarted)="onSessionRuntimeStarted(tab.sessionId)"

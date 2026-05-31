@@ -24,6 +24,7 @@ export function planReviewFromTranscriptItem(
       messageId: item.id,
       anchorMessageId: item.transcriptMessageId ?? item.sourceMessageId ?? item.id,
       anchorMessageKind: 'assistant',
+      planChatForkPoint: 'include_anchor',
       planMarkdown: item.content.trim(),
       createdAt: item.receivedAt || item.authoredAt || item.timestamp,
     };
@@ -40,6 +41,7 @@ export function planReviewFromTranscriptItem(
     messageId: item.id,
     anchorMessageId: item.transcriptMessageId ?? item.sourceMessageId ?? item.id,
     anchorMessageKind: 'assistant',
+    planChatForkPoint: 'include_anchor',
     planMarkdown: extraction.plan,
     before: extraction.before || undefined,
     after: extraction.after || undefined,
@@ -66,6 +68,11 @@ export function planReviewFromPermissionRequest(
     sessionId,
     reviewId: stableReviewId('exit-plan', request.requestId),
     requestId: request.requestId,
+    anchorMessageId: request.anchorMessageId,
+    anchorMessageKind: request.anchorMessageKind,
+    pendingToolUseId: request.pendingToolUseId ?? request.toolUseId,
+    pendingPermissionRequestId: request.pendingPermissionRequestId ?? request.requestId,
+    planChatForkPoint: request.planChatForkPoint ?? 'before_anchor',
     planMarkdown: plan.trim(),
     planFilePath:
       stringField(input, 'planFilePath')

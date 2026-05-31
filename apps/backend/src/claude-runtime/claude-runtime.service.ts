@@ -372,6 +372,8 @@ const CLAUDE_PREWARM_IDLE_SHUTDOWN_MS = 90_000;
 const CLAUDE_POST_TURN_IDLE_SHUTDOWN_MS = 5 * 60_000;
 const CLAUDE_PREWARM_COOLDOWN_MS = 30_000;
 const MAX_IDLE_CLAUDE_RUNTIMES = 2;
+const FORK_ANCHOR_RETRY_ATTEMPTS = 5;
+const FORK_ANCHOR_RETRY_DELAY_MS = 75;
 
 @Injectable()
 export class ClaudeRuntimeService extends EventEmitter {
@@ -692,9 +694,15 @@ export class ClaudeRuntimeService extends EventEmitter {
       throw new BadRequestException('A messageId is required.');
     }
 
+    if (this.initializingRuns.has(request.parentSessionId)) {
+      throw new ConflictException(
+        'Cannot fork while Claude is actively running.',
+      );
+    }
+    const activeRun = this.activeRuns.get(request.parentSessionId);
     if (
-      this.activeRuns.has(request.parentSessionId) ||
-      this.initializingRuns.has(request.parentSessionId)
+      activeRun &&
+      !this.canForkFromPendingExitPlan(request.parentSessionId, request)
     ) {
       throw new ConflictException(
         'Cannot fork while Claude is actively running.',
@@ -714,7 +722,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       throw new NotFoundException('Claude transcript not found.');
     }
 
-    const records = await this.loadTranscriptRecords(transcriptPath);
+    const records = await this.loadTranscriptRecordsForFork(
+      transcriptPath,
+      request.anchorMessageKind,
+      anchorMessageId,
+    );
     const targetIndex = records.findIndex(
       (record) =>
         record.type === request.anchorMessageKind &&
@@ -744,10 +756,13 @@ export class ClaudeRuntimeService extends EventEmitter {
       request.anchorMessageKind === 'user'
         ? this.extractUserTextFromTranscriptRecord(target)
         : null;
+    const forkPoint = request.planChatForkPoint ?? 'include_anchor';
     const upToMessageId =
-      request.anchorMessageKind === 'assistant'
-        ? anchorMessageId
-        : this.findPreviousTranscriptMessageId(records, targetIndex);
+      forkPoint === 'before_anchor'
+        ? this.findPreviousTranscriptMessageId(records, targetIndex)
+        : request.anchorMessageKind === 'assistant'
+          ? anchorMessageId
+          : this.findPreviousTranscriptMessageId(records, targetIndex);
 
     if (!upToMessageId) {
       return {
@@ -768,6 +783,49 @@ export class ClaudeRuntimeService extends EventEmitter {
       draft,
       anchorExcerpt,
     };
+  }
+
+  private canForkFromPendingExitPlan(
+    sessionId: number,
+    request: AgentForkConversationRequest,
+  ): boolean {
+    if (request.planChatForkPoint !== 'before_anchor') return false;
+    if (request.anchorMessageKind !== 'assistant') return false;
+
+    const pending = this.ensureRuntimeState(sessionId).pendingPermissionRequest;
+    if (!pending || !this.isExitPlanPermissionRequest(pending)) return false;
+
+    return (
+      pending.anchorMessageId === request.anchorMessageId &&
+      pending.anchorMessageKind === request.anchorMessageKind &&
+      pending.toolUseId === request.pendingToolUseId &&
+      pending.requestId === request.pendingPermissionRequestId
+    );
+  }
+
+  private async loadTranscriptRecordsForFork(
+    transcriptPath: string,
+    anchorMessageKind: 'user' | 'assistant',
+    anchorMessageId: string,
+  ): Promise<ClaudeTranscriptRecord[]> {
+    let records: ClaudeTranscriptRecord[] = [];
+    for (let attempt = 0; attempt < FORK_ANCHOR_RETRY_ATTEMPTS; attempt += 1) {
+      records = await this.loadTranscriptRecords(transcriptPath);
+      if (
+        records.some(
+          (record) =>
+            record.type === anchorMessageKind &&
+            typeof record.uuid === 'string' &&
+            record.uuid === anchorMessageId,
+        )
+      ) {
+        return records;
+      }
+      if (attempt < FORK_ANCHOR_RETRY_ATTEMPTS - 1) {
+        await sleep(FORK_ANCHOR_RETRY_DELAY_MS);
+      }
+    }
+    return records;
   }
 
   async setSelectedModel(
@@ -1885,11 +1943,23 @@ export class ClaudeRuntimeService extends EventEmitter {
       this.promoteNextPendingPermissionRequest(sessionId, state, run);
       return;
     }
+    nextPermission.request = this.enrichPermissionRequestForPlanChat(
+      sessionId,
+      nextPermission.request,
+    );
 
     if (
       state.pendingPermissionRequest?.requestId ===
       nextPermission.request.requestId
     ) {
+      if (state.pendingPermissionRequest !== nextPermission.request) {
+        state.pendingPermissionRequest = nextPermission.request;
+        this.emitEvent({
+          type: 'permission_request',
+          payload: { sessionId, request: nextPermission.request },
+        });
+        this.emitRunState(sessionId);
+      }
       return;
     }
 
@@ -1904,6 +1974,72 @@ export class ClaudeRuntimeService extends EventEmitter {
     void this.claudeHooksService.updateStatus(sessionId, 'waiting', {
       markCompletion: false,
     });
+  }
+
+  private refreshPendingPermissionPlanChatAnchor(
+    sessionId: number,
+    item: ClaudeTranscriptItem,
+  ): void {
+    if (item.kind !== 'tool_use') return;
+    const state = this.ensureRuntimeState(sessionId);
+    const pending = state.pendingPermissionRequest;
+    if (!pending || pending.toolUseId !== item.toolUseId) return;
+
+    const enriched = this.enrichPermissionRequestForPlanChat(sessionId, pending);
+    if (enriched === pending) return;
+
+    state.pendingPermissionRequest = enriched;
+    const run = this.activeRuns.get(sessionId);
+    const active = run?.permissionRequests.get(pending.requestId);
+    if (active) {
+      active.request = enriched;
+    }
+    this.emitEvent({
+      type: 'permission_request',
+      payload: { sessionId, request: enriched },
+    });
+    this.emitRunState(sessionId);
+  }
+
+  private enrichPermissionRequestForPlanChat(
+    sessionId: number,
+    request: ClaudePermissionRequest,
+  ): ClaudePermissionRequest {
+    if (!this.isExitPlanPermissionRequest(request)) {
+      return request;
+    }
+    if (request.anchorMessageId && request.anchorMessageKind) {
+      if (
+        request.pendingToolUseId &&
+        request.pendingPermissionRequestId &&
+        request.planChatForkPoint
+      ) {
+        return request;
+      }
+      return {
+        ...request,
+        pendingToolUseId: request.pendingToolUseId ?? request.toolUseId,
+        pendingPermissionRequestId:
+          request.pendingPermissionRequestId ?? request.requestId,
+        planChatForkPoint: request.planChatForkPoint ?? 'before_anchor',
+      };
+    }
+
+    const toolUse = this.ensureRuntimeState(sessionId).liveItems.find(
+      (item) => item.kind === 'tool_use' && item.toolUseId === request.toolUseId,
+    );
+    if (!toolUse?.transcriptMessageId) {
+      return request;
+    }
+
+    return {
+      ...request,
+      anchorMessageId: toolUse.transcriptMessageId,
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: request.toolUseId,
+      pendingPermissionRequestId: request.requestId,
+      planChatForkPoint: 'before_anchor',
+    };
   }
 
   async answerUserInput(
@@ -3734,6 +3870,7 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     if (eventType === 'tool_use') {
+      this.refreshPendingPermissionPlanChatAnchor(sessionId, item);
       this.emitEvent({ type: 'tool_use', payload: { sessionId, item } });
       return;
     }
@@ -4879,6 +5016,13 @@ export class ClaudeRuntimeService extends EventEmitter {
     return 'permission';
   }
 
+  private isExitPlanPermissionRequest(request: ClaudePermissionRequest): boolean {
+    return (
+      request.toolKind === 'exit_plan_mode' ||
+      this.normalizeToolName(request.toolName) === 'exitplanmode'
+    );
+  }
+
   private extractInteractionAnswers(
     content: Record<string, unknown> | null,
   ): ClaudeToolInteractionAnswer[] {
@@ -5835,6 +5979,10 @@ function hashString(str: string): number {
 
 function flushIo(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function withTimeout<T>(

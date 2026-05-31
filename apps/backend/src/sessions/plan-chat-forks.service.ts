@@ -19,12 +19,16 @@ import { SessionsService } from './sessions.service.js';
 
 type PlanChatForkRow = typeof schema.planChatForks.$inferSelect;
 type PlanChatAnchorKind = 'user' | 'assistant';
+type PlanChatForkPoint = 'include_anchor' | 'before_anchor';
 type SessionWithContext = Awaited<ReturnType<SessionsService['findOne']>>;
 
 export interface EnsurePlanChatForkDto {
   reviewId?: string;
   anchorMessageId?: string;
   anchorMessageKind?: string;
+  pendingToolUseId?: string;
+  pendingPermissionRequestId?: string;
+  planChatForkPoint?: string;
   planMarkdown?: string;
   name?: string;
 }
@@ -81,6 +85,9 @@ export class PlanChatForksService {
     const reviewId = dto.reviewId?.trim();
     const anchorMessageId = dto.anchorMessageId?.trim();
     const anchorMessageKind = this.parseAnchorKind(dto.anchorMessageKind);
+    const pendingToolUseId = dto.pendingToolUseId?.trim();
+    const pendingPermissionRequestId = dto.pendingPermissionRequestId?.trim();
+    const planChatForkPoint = this.parseForkPoint(dto.planChatForkPoint);
 
     if (!reviewId) {
       throw new BadRequestException('A plan review id is required.');
@@ -129,6 +136,9 @@ export class PlanChatForksService {
         childSessionId: child.id,
         anchorMessageId,
         anchorMessageKind,
+        ...(pendingToolUseId ? { pendingToolUseId } : {}),
+        ...(pendingPermissionRequestId ? { pendingPermissionRequestId } : {}),
+        planChatForkPoint,
         childSessionName: childName,
       });
 
@@ -313,6 +323,16 @@ export class PlanChatForksService {
     );
   }
 
+  private parseForkPoint(value: string | undefined): PlanChatForkPoint {
+    if (!value) return 'include_anchor';
+    if (value === 'include_anchor' || value === 'before_anchor') {
+      return value;
+    }
+    throw new BadRequestException(
+      'Plan chat fork point must be "include_anchor" or "before_anchor".',
+    );
+  }
+
   private normalizeProvider(provider: AgentProviderId): AgentProviderId {
     if (provider === 'claude' || provider === 'codex') {
       return provider;
@@ -328,7 +348,8 @@ export class PlanChatForksService {
   ): string {
     return [
       '<elevenex-plan-chat>',
-      'You are in a hidden Q&A fork for the plan already present in this conversation.',
+      'You are in a hidden Q&A fork for the plan under review in the parent conversation.',
+      'Use the available forked conversation history plus the exact plan excerpt below. Treat the plan excerpt as authoritative when it differs from prior context.',
       'Answer only the user question about that plan.',
       'Do not write a new plan, do not continue the original task, do not implement changes, and do not modify files.',
       'Do not include proposed_plan tags in your response.',

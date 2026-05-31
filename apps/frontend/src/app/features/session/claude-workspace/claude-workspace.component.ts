@@ -176,6 +176,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly openInBrowser = output<string>();
   readonly planReviewRequested = output<PlanReviewRequest>();
   readonly planQuestionRequested = output<PlanReviewRequest>();
+  readonly planReviewUpdated = output<PlanReviewRequest>();
   readonly planReviewClosed = output<PlanReviewRequest>();
   readonly activeAgentProviderChange = output<AgentProviderId>();
   readonly agentRuntimeStarted = output<void>();
@@ -651,6 +652,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.pairedTranscript();
       this.runPhase();
       queueMicrotask(() => this.scrollTranscriptToBottomIfPinned());
+    });
+
+    effect(() => {
+      const review = this.latestPlanReview();
+      if (review) {
+        this.planReviewUpdated.emit(review);
+      }
     });
 
     // Re-hydrate the runtime WS after server reconnection to catch any missed events.

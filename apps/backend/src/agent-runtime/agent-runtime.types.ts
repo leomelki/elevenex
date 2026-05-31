@@ -219,6 +219,9 @@ export interface AgentForkConversationRequest {
   childSessionId: number;
   anchorMessageId: string;
   anchorMessageKind: 'user' | 'assistant';
+  pendingToolUseId?: string;
+  pendingPermissionRequestId?: string;
+  planChatForkPoint?: 'include_anchor' | 'before_anchor';
   childSessionName: string;
 }
 

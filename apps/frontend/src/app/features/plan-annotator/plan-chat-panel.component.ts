@@ -29,7 +29,7 @@ import type {
   ClaudeRuntimeEvent,
   ClaudeTranscriptItem,
 } from '@/shared/models/claude-runtime.model';
-import type { PlanChatFork } from '@/shared/models/session.model';
+import type { EnsurePlanChatRequest, PlanChatFork } from '@/shared/models/session.model';
 import { MarkdownPipe } from '../session/claude-workspace/pipes/markdown.pipe';
 import { PlanReviewRequest } from './plan-review.model';
 import { PlanChatService } from './plan-chat.service';
@@ -85,7 +85,7 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
 
         @if (!canAsk(activeReview)) {
           <p class="pc-empty">
-            Questions are available for transcript plans after the plan message is saved.
+            Questions are available after this plan can be anchored to the conversation.
           </p>
         } @else {
           <div class="pc-messages" aria-live="polite">
@@ -600,14 +600,18 @@ export class PlanChatPanelComponent {
       throw new Error('This plan cannot be forked for questions yet.');
     }
 
-    const response = await firstValueFrom(
-      this.planChats.ensure(review.sessionId, {
-        reviewId: review.reviewId,
-        anchorMessageId: review.anchorMessageId,
-        anchorMessageKind: review.anchorMessageKind,
-        planMarkdown: review.planMarkdown,
-      }),
-    );
+    const request: EnsurePlanChatRequest = {
+      reviewId: review.reviewId,
+      anchorMessageId: review.anchorMessageId,
+      anchorMessageKind: review.anchorMessageKind,
+      planMarkdown: review.planMarkdown,
+      ...(review.pendingToolUseId ? { pendingToolUseId: review.pendingToolUseId } : {}),
+      ...(review.pendingPermissionRequestId
+        ? { pendingPermissionRequestId: review.pendingPermissionRequestId }
+        : {}),
+      ...(review.planChatForkPoint ? { planChatForkPoint: review.planChatForkPoint } : {}),
+    };
+    const response = await firstValueFrom(this.planChats.ensure(review.sessionId, request));
     this.currentChat.set(response.planChat);
     this.connectToChat(response.planChat);
     return response.planChat;

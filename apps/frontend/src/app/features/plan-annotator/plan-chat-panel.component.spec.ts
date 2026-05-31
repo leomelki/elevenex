@@ -124,4 +124,70 @@ describe('PlanChatPanelComponent', () => {
     expect(websocketMock.connect).toHaveBeenCalledWith(22, 'codex');
     expect(websocketMock.send).toHaveBeenCalledWith(22, { type: 'hydrate' }, 'codex');
   });
+
+  it('passes pending ExitPlanMode fork metadata when asking about a pending plan', async () => {
+    const events$ = new Subject<any>();
+    const planChat = makePlanChat({
+      provider: 'claude',
+      reviewId: 'exit-plan:perm-1',
+      anchorMessageId: 'assistant-1',
+    });
+    const planChatsMock = {
+      getByReview: vi.fn(() => of([])),
+      ensure: vi.fn(() => of({ planChat, session: planChat.childSession })),
+      submitQuestion: vi.fn(() =>
+        of({ planChat, session: planChat.childSession, question: 'Why this plan?' }),
+      ),
+      delete: vi.fn(),
+    };
+    const websocketMock = {
+      connect: vi.fn(() => events$.asObservable()),
+      send: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    const agentApiMock = {
+      getHistory: vi.fn(() => of([])),
+    };
+
+    await TestBed.configureTestingModule({
+      imports: [PlanChatPanelComponent],
+      providers: [
+        { provide: PlanChatService, useValue: planChatsMock },
+        { provide: AgentRuntimeWebsocketService, useValue: websocketMock },
+        { provide: AgentRuntimeApiService, useValue: agentApiMock },
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(PlanChatPanelComponent);
+    const review: PlanReviewRequest = {
+      provider: 'claude',
+      source: 'exit-plan-permission',
+      sessionId: 11,
+      reviewId: 'exit-plan:perm-1',
+      requestId: 'perm-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor',
+      planMarkdown: '# Plan\n\nDo this.',
+      createdAt: '2026-05-29T10:00:00.000Z',
+    };
+    fixture.componentRef.setInput('review', review);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    fixture.componentInstance.draft.set('Why this plan?');
+    await fixture.componentInstance.sendQuestion(review);
+
+    expect(planChatsMock.ensure).toHaveBeenCalledWith(11, {
+      reviewId: 'exit-plan:perm-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor',
+      planMarkdown: '# Plan\n\nDo this.',
+    });
+  });
 });

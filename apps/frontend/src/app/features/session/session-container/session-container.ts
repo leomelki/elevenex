@@ -49,6 +49,7 @@ import {
   PlanFeedbackPayload,
   PlanReviewRailMode,
   PlanReviewRequest,
+  isSamePlanReview,
 } from '@/features/plan-annotator';
 import { getBackendOrigin } from '@/shared/runtime/runtime-config';
 import { ActionsPanelComponent, ActionsStateService } from '@/features/actions';
@@ -541,6 +542,13 @@ export class SessionContainer implements OnInit, OnDestroy {
     if (review.sessionId === this.activeSessionId()) {
       this.sidePanelMode.set('planAnnotator');
       this.saveSidePanelPreference('planAnnotator');
+    }
+  }
+
+  onPlanReviewUpdated(review: PlanReviewRequest): void {
+    const existing = this.planAnnotatorState.getReview(review.sessionId);
+    if (isSamePlanReview(existing, review)) {
+      this.planAnnotatorState.setReview(review);
     }
   }
 

@@ -2942,6 +2942,157 @@ describe('ClaudeRuntimeService', () => {
     });
   });
 
+  it('enriches pending ExitPlanMode permissions with plan chat fork metadata', () => {
+    const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
+    state.liveItems = [
+      {
+        id: 'assistant-1:tool:tool-1',
+        kind: 'tool_use',
+        toolUseId: 'tool-1',
+        toolName: 'ExitPlanMode',
+        toolKind: 'exit_plan_mode',
+        transcriptMessageId: 'assistant-1',
+        timestamp: '2026-05-29T10:00:00.000Z',
+      },
+    ];
+    const run = {
+      interruptRequested: false,
+      permissionRequestOrder: ['perm-1'],
+      permissionRequests: new Map([
+        [
+          'perm-1',
+          {
+            request: {
+              requestId: 'perm-1',
+              toolUseId: 'tool-1',
+              toolName: 'ExitPlanMode',
+              toolKind: 'exit_plan_mode',
+              input: { plan: '# Plan' },
+              createdAt: '2026-05-29T10:00:00.000Z',
+            },
+            resolve: jest.fn(),
+          },
+        ],
+      ]),
+    };
+
+    (service as any).promoteNextPendingPermissionRequest(7, state, run);
+
+    expect(state.pendingPermissionRequest).toMatchObject({
+      requestId: 'perm-1',
+      toolUseId: 'tool-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor',
+    });
+  });
+
+  it('allows a matching pending ExitPlanMode plan chat fork before the unresolved tool call', async () => {
+    jest
+      .spyOn(service as any, 'findTranscriptPath')
+      .mockResolvedValue('/tmp/claude-session-1.jsonl');
+    jest.spyOn(service as any, 'loadTranscriptRecords').mockResolvedValue([
+      { type: 'user', uuid: 'user-1', message: { content: 'build it' } },
+      {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool-1',
+              name: 'ExitPlanMode',
+              input: { plan: '# Plan' },
+            },
+          ],
+        },
+      },
+    ]);
+    (forkSession as jest.Mock).mockResolvedValue({ sessionId: 'forked-plan-chat' });
+    const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
+    state.pendingPermissionRequest = {
+      requestId: 'perm-1',
+      toolUseId: 'tool-1',
+      toolName: 'ExitPlanMode',
+      toolKind: 'exit_plan_mode',
+      input: { plan: '# Plan' },
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor',
+      createdAt: '2026-05-29T10:00:00.000Z',
+    };
+    (service as any).activeRuns.set(7, { interruptRequested: false });
+
+    const result = await service.forkConversation({
+      parentSessionId: 7,
+      childSessionId: 8,
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor',
+      childSessionName: 'Plan Q&A',
+    });
+
+    expect(forkSession).toHaveBeenCalledWith('claude-session-1', {
+      dir: '/tmp/project',
+      upToMessageId: 'user-1',
+      title: 'Plan Q&A',
+    });
+    expect(result.providerSessionId).toBe('forked-plan-chat');
+  });
+
+  it('rejects active-run forks that do not match the pending ExitPlanMode request', async () => {
+    const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
+    (service as any).activeRuns.set(7, { interruptRequested: false });
+    const request = {
+      parentSessionId: 7,
+      childSessionId: 8,
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant' as const,
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor' as const,
+      childSessionName: 'Plan Q&A',
+    };
+
+    await expect(service.forkConversation(request)).rejects.toThrow(
+      'Cannot fork while Claude is actively running.',
+    );
+
+    state.pendingPermissionRequest = {
+      requestId: 'perm-2',
+      toolUseId: 'tool-2',
+      toolName: 'ExitPlanMode',
+      toolKind: 'exit_plan_mode',
+      input: { plan: '# Plan' },
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      createdAt: '2026-05-29T10:00:00.000Z',
+    };
+    await expect(service.forkConversation(request)).rejects.toThrow(
+      'Cannot fork while Claude is actively running.',
+    );
+
+    state.pendingPermissionRequest = {
+      requestId: 'perm-1',
+      toolUseId: 'tool-1',
+      toolName: 'Bash',
+      toolKind: 'bash',
+      input: { command: 'ls' },
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      createdAt: '2026-05-29T10:00:00.000Z',
+    };
+    await expect(service.forkConversation(request)).rejects.toThrow(
+      'Cannot fork while Claude is actively running.',
+    );
+  });
+
   it('persists interaction summaries for approvals and updates the live tool card', async () => {
     (service as any).ensureRuntimeState(7, 'claude-session-1').liveItems = [
       {

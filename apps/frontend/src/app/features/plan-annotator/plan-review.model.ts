@@ -1,6 +1,7 @@
 export type PlanReviewProvider = 'codex' | 'claude';
 
 export type PlanReviewSource = 'transcript-plan' | 'exit-plan-permission';
+export type PlanChatForkPoint = 'include_anchor' | 'before_anchor';
 
 export interface PlanReviewRequest {
   provider: PlanReviewProvider;
@@ -13,6 +14,9 @@ export interface PlanReviewRequest {
   messageId?: string;
   anchorMessageId?: string;
   anchorMessageKind?: 'user' | 'assistant';
+  pendingToolUseId?: string;
+  pendingPermissionRequestId?: string;
+  planChatForkPoint?: PlanChatForkPoint;
   requestId?: string;
   planFilePath?: string;
   createdAt: string;

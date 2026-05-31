@@ -82,6 +82,9 @@ export interface EnsurePlanChatRequest {
   reviewId: string;
   anchorMessageId: string;
   anchorMessageKind: 'user' | 'assistant';
+  pendingToolUseId?: string;
+  pendingPermissionRequestId?: string;
+  planChatForkPoint?: 'include_anchor' | 'before_anchor';
   planMarkdown?: string;
   name?: string;
 }

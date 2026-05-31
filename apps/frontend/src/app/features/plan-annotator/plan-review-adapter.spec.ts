@@ -71,6 +71,11 @@ describe('plan-review-adapter', () => {
       toolName: 'ExitPlanMode',
       toolKind: 'exit_plan_mode',
       input: { plan: '# Plan\nDo it', planFilePath: '.claude/plans/a.md' },
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor',
       createdAt: '2026-05-22T10:00:00.000Z',
     };
 
@@ -79,6 +84,11 @@ describe('plan-review-adapter', () => {
       source: 'exit-plan-permission',
       sessionId: 9,
       requestId: 'perm-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      pendingToolUseId: 'tool-1',
+      pendingPermissionRequestId: 'perm-1',
+      planChatForkPoint: 'before_anchor',
       planMarkdown: '# Plan\nDo it',
       planFilePath: '.claude/plans/a.md',
     });
