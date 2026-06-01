@@ -91,9 +91,6 @@ function buildRuntimePackageJson(target) {
     name: 'elevenex-remote-runtime',
     private: true,
     type: 'commonjs',
-    pnpm: {
-      onlyBuiltDependencies: ['better-sqlite3', 'node-pty'],
-    },
     dependencies: Object.fromEntries(
       NATIVE_RUNTIME_DEPENDENCIES.map((name) => [name, backendPackageJson.dependencies[name]]),
     ),
@@ -209,6 +206,14 @@ function installRuntimeDependencies(targetRoot, target) {
   writeFileSync(
     path.join(targetRoot, 'package.json'),
     `${JSON.stringify(buildRuntimePackageJson(target), null, 2)}\n`,
+    'utf8',
+  );
+
+  // pnpm 11 only reads allowBuilds from pnpm-workspace.yaml; package.json's
+  // pnpm.onlyBuiltDependencies is not honoured for --ignore-workspace installs.
+  writeFileSync(
+    path.join(targetRoot, 'pnpm-workspace.yaml'),
+    'allowBuilds:\n  better-sqlite3: true\n  node-pty: true\n',
     'utf8',
   );
 
