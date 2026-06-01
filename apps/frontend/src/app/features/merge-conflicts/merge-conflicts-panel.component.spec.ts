@@ -169,7 +169,7 @@ describe('MergeConflictsPanelComponent', () => {
   });
 
   it('loads only conflicted files and their conflict blocks', () => {
-    expect(gitServiceMock.getSummary).toHaveBeenCalledWith('/tmp/repo');
+    expect(gitServiceMock.getSummary).toHaveBeenCalledWith('/tmp/repo', { conflictsOnly: true });
     expect(filesServiceMock.readFile).toHaveBeenCalledWith('/tmp/repo', 'src/a.ts');
     expect(fixture.componentInstance.conflictedFiles()).toHaveLength(1);
     expect(fixture.componentInstance.activeBlocks()).toHaveLength(1);

@@ -1,5 +1,4 @@
 import { Injectable } from '@angular/core';
-import { getBackendOrigin } from '../runtime/runtime-config';
 
 type MonacoRequire = {
   config: (options: { paths: { vs: string } }) => void;
@@ -85,9 +84,9 @@ export class MonacoEditorLoaderService {
   }
 
   private async loadMonaco(): Promise<MonacoApi> {
-    const vsBase = `${getBackendOrigin()}/vs`;
+    const vsBase = this.frontendAssetUrl('vs');
     if (!window.require) {
-      await this.loadScript(`${vsBase}/loader.js`);
+      await this.loadScript(this.frontendAssetUrl('vs/loader.js'));
     }
 
     return new Promise<MonacoApi>((resolve, reject) => {
@@ -114,7 +113,7 @@ export class MonacoEditorLoaderService {
 
   private loadScript(src: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
+      const existing = Array.from(document.scripts).find((script) => script.src === src);
       if (existing) {
         if (existing.dataset['loaded']) {
           resolve();
@@ -145,11 +144,18 @@ export class MonacoEditorLoaderService {
   }
 
   private ensureStylesheet(): void {
-    const href = `${getBackendOrigin()}/vs/editor/editor.main.css`;
-    if (document.querySelector(`link[href="${href}"]`)) return;
+    const href = this.frontendAssetUrl('vs/editor/editor.main.css');
+    const existing = Array.from(
+      document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'),
+    ).some((link) => link.href === href);
+    if (existing) return;
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = href;
     document.head.appendChild(link);
+  }
+
+  private frontendAssetUrl(path: string): string {
+    return new URL(path, document.baseURI || window.location.href).toString().replace(/\/$/, '');
   }
 }
