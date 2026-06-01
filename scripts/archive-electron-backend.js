@@ -109,7 +109,6 @@ function pruneStagedNodeModules() {
 
     const plan = FINAL_RUNTIME_PACKAGE_PLANS[entry];
     if (!plan) {
-      rmSync(packageRoot, { recursive: true, force: true });
       continue;
     }
 
