@@ -293,22 +293,34 @@ describe('PlanChatForksService', () => {
 
   it('creates hidden plan chat forks for pending exit-plan reviews without a transcript anchor', async () => {
     const parent = await createParent();
+    provider.forkConversation.mockResolvedValue({
+      providerSessionId: 'claude-plan-chat',
+      anchorExcerpt: '# Plan',
+    });
 
     const result = await planChatsService.ensure(parent.id, {
       reviewId: 'exit-plan:permission-1',
       reviewSource: 'exit-plan-permission',
+      permissionRequestId: 'permission-1',
+      toolUseId: 'tool-1',
       planMarkdown: '# Plan\n\nDo it',
     });
 
-    expect(provider.forkConversation).not.toHaveBeenCalled();
+    expect(provider.forkConversation).toHaveBeenCalledWith({
+      parentSessionId: parent.id,
+      childSessionId: result.session.id,
+      anchorToolUseId: 'tool-1',
+      activePermissionRequestId: 'permission-1',
+      childSessionName: 'Parent plan Q&A',
+    });
     expect(provider.setPlanMode).toHaveBeenCalledWith(result.session.id, true);
-    expect(result.session.claudeSessionId).toBe('-1');
+    expect(result.session.claudeSessionId).toBe('claude-plan-chat');
     expect(result.planChat).toEqual(
       expect.objectContaining({
         reviewId: 'exit-plan:permission-1',
         anchorMessageId: 'plan-review:exit-plan:permission-1',
         anchorMessageKind: 'assistant',
-        anchorExcerpt: '# Plan\n\nDo it',
+        anchorExcerpt: '# Plan',
       }),
     );
 

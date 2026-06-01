@@ -603,6 +603,8 @@ export class PlanChatPanelComponent {
         reviewSource: review.source,
         anchorMessageId: review.anchorMessageId,
         anchorMessageKind: review.anchorMessageKind,
+        permissionRequestId: review.requestId,
+        toolUseId: review.toolUseId,
         planMarkdown: review.planMarkdown,
       }),
     );

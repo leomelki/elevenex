@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -157,6 +158,11 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
   async forkConversation(
     request: AgentForkConversationRequest,
   ): Promise<AgentForkConversationResult> {
+    if (!request.anchorMessageId || !request.anchorMessageKind) {
+      throw new BadRequestException('A Pi fork anchor message is required.');
+    }
+    const anchorMessageId = request.anchorMessageId;
+    const anchorMessageKind = request.anchorMessageKind;
     if (
       this.activeRuns.has(request.parentSessionId) ||
       this.initializingRuns.has(request.parentSessionId)
@@ -172,12 +178,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
 
     const records = await this.readPiSessionRecords(sessionPath);
     const targetIndex = records.findIndex((entry, index) =>
-      this.isForkAnchorEntry(
-        entry,
-        index,
-        request.anchorMessageId,
-        request.anchorMessageKind,
-      ),
+      this.isForkAnchorEntry(entry, index, anchorMessageId, anchorMessageKind),
     );
     if (targetIndex === -1) {
       throw new NotFoundException('Message not found in Pi session.');
@@ -185,18 +186,18 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
 
     const target = records[targetIndex];
     const draft =
-      request.anchorMessageKind === 'user'
+      anchorMessageKind === 'user'
         ? this.stripInjectedWorktreeContext(
             this.contentToText(asRecord(target.message)?.content),
           )
         : null;
     const anchorExcerpt =
-      request.anchorMessageKind === 'user'
+      anchorMessageKind === 'user'
         ? draft
         : this.contentToText(asRecord(target.message)?.content);
     const retainedRecords = records.slice(
       0,
-      request.anchorMessageKind === 'user' ? targetIndex : targetIndex + 1,
+      anchorMessageKind === 'user' ? targetIndex : targetIndex + 1,
     );
 
     if (retainedRecords.length === 0) {

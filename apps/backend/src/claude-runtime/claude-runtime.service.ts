@@ -687,18 +687,32 @@ export class ClaudeRuntimeService extends EventEmitter {
   async forkConversation(
     request: AgentForkConversationRequest,
   ): Promise<AgentForkConversationResult> {
-    const anchorMessageId = request.anchorMessageId.trim();
-    if (!anchorMessageId) {
-      throw new BadRequestException('A messageId is required.');
+    const anchorMessageId = request.anchorMessageId?.trim() ?? '';
+    const anchorToolUseId = request.anchorToolUseId?.trim() ?? '';
+    if (!anchorMessageId && !anchorToolUseId) {
+      throw new BadRequestException('A messageId or toolUseId is required.');
     }
 
-    if (
-      this.activeRuns.has(request.parentSessionId) ||
-      this.initializingRuns.has(request.parentSessionId)
-    ) {
+    if (this.initializingRuns.has(request.parentSessionId)) {
       throw new ConflictException(
         'Cannot fork while Claude is actively running.',
       );
+    }
+    const activeRun = this.activeRuns.get(request.parentSessionId);
+    if (activeRun) {
+      const state = this.ensureRuntimeState(request.parentSessionId);
+      const pending = state.pendingPermissionRequest;
+      const canForkFrozenPlanRequest =
+        Boolean(request.activePermissionRequestId) &&
+        pending !== null &&
+        pending.requestId === request.activePermissionRequestId &&
+        pending.toolUseId === anchorToolUseId &&
+        this.getInteractionKind(pending.toolName) === 'exit_plan_mode';
+      if (!canForkFrozenPlanRequest) {
+        throw new ConflictException(
+          'Cannot fork while Claude is actively running.',
+        );
+      }
     }
 
     const session = await this.sessionsService.findOne(request.parentSessionId);
@@ -715,14 +729,19 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const records = await this.loadTranscriptRecords(transcriptPath);
-    const targetIndex = records.findIndex(
-      (record) =>
-        record.type === request.anchorMessageKind &&
-        typeof record.uuid === 'string' &&
-        record.uuid === anchorMessageId,
-    );
+    const targetIndex = anchorToolUseId
+      ? this.findAssistantTranscriptIndexForToolUse(records, anchorToolUseId)
+      : records.findIndex(
+          (record) =>
+            record.type === request.anchorMessageKind &&
+            typeof record.uuid === 'string' &&
+            record.uuid === anchorMessageId,
+        );
 
     if (targetIndex === -1) {
+      if (anchorToolUseId) {
+        throw new NotFoundException('Tool use not found in Claude transcript.');
+      }
       const hasMessage = records.some(
         (record) =>
           typeof record.uuid === 'string' && record.uuid === anchorMessageId,
@@ -736,17 +755,23 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const target = records[targetIndex];
+    const targetMessageId =
+      typeof target.uuid === 'string' && target.uuid ? target.uuid : '';
+    const targetKind =
+      target.type === 'user' || target.type === 'assistant'
+        ? target.type
+        : request.anchorMessageKind;
     const anchorExcerpt =
-      request.anchorMessageKind === 'user'
+      targetKind === 'user'
         ? this.extractUserTextFromTranscriptRecord(target)
         : this.extractAssistantTextFromTranscriptRecord(target);
     const draft =
-      request.anchorMessageKind === 'user'
+      targetKind === 'user'
         ? this.extractUserTextFromTranscriptRecord(target)
         : null;
     const upToMessageId =
-      request.anchorMessageKind === 'assistant'
-        ? anchorMessageId
+      targetKind === 'assistant'
+        ? targetMessageId
         : this.findPreviousTranscriptMessageId(records, targetIndex);
 
     if (!upToMessageId) {
@@ -3870,12 +3895,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       effort: (reasoningEffort as EffortLevel | null) ?? undefined,
       fastMode,
       fastModePerSessionOptIn: true,
-      permissionMode:
-        (planMode
-          ? 'plan'
-          : this.normalizeStoredPermissionMode(selectedPermissionMode)) as
-          | PermissionMode
-          | undefined,
+      permissionMode: (planMode
+        ? 'plan'
+        : this.normalizeStoredPermissionMode(selectedPermissionMode)) as
+        | PermissionMode
+        | undefined,
       resume:
         claudeSessionId && claudeSessionId !== '-1'
           ? claudeSessionId
@@ -5029,6 +5053,26 @@ export class ClaudeRuntimeService extends EventEmitter {
       }
     }
     return null;
+  }
+
+  private findAssistantTranscriptIndexForToolUse(
+    records: ClaudeTranscriptRecord[],
+    toolUseId: string,
+  ): number {
+    return records.findIndex((record) => {
+      if (record.type !== 'assistant') return false;
+      const message = asRecord(record.message);
+      const content = message?.['content'];
+      if (!Array.isArray(content)) return false;
+      return content.some((part) => {
+        const partRecord = asRecord(part);
+        return (
+          partRecord?.['type'] === 'tool_use' &&
+          typeof partRecord['id'] === 'string' &&
+          partRecord['id'] === toolUseId
+        );
+      });
+    });
   }
 
   private extractUserTextFromTranscriptRecord(

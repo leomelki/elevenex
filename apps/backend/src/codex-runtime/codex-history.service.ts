@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   Logger,
@@ -19,7 +20,9 @@ import type {
 
 type JsonRecord = Record<string, unknown>;
 
-export const CODEX_HISTORY_SESSIONS_ROOT = Symbol('CODEX_HISTORY_SESSIONS_ROOT');
+export const CODEX_HISTORY_SESSIONS_ROOT = Symbol(
+  'CODEX_HISTORY_SESSIONS_ROOT',
+);
 
 @Injectable()
 export class CodexHistoryService {
@@ -52,6 +55,11 @@ export class CodexHistoryService {
     codexSessionId: string | null,
     request: AgentForkConversationRequest,
   ): Promise<AgentForkConversationResult> {
+    if (!request.anchorMessageId || !request.anchorMessageKind) {
+      throw new BadRequestException('A Codex fork anchor message is required.');
+    }
+    const anchorMessageId = request.anchorMessageId;
+    const anchorMessageKind = request.anchorMessageKind;
     if (!codexSessionId || codexSessionId === '-1') {
       throw new NotFoundException('Codex thread not found.');
     }
@@ -66,8 +74,8 @@ export class CodexHistoryService {
       this.isForkAnchorRecord(
         record,
         index,
-        request.anchorMessageId,
-        request.anchorMessageKind,
+        anchorMessageId,
+        anchorMessageKind,
       ),
     );
     if (targetIndex === -1) {
@@ -76,16 +84,14 @@ export class CodexHistoryService {
 
     const target = records[targetIndex];
     const draft =
-      request.anchorMessageKind === 'user'
-        ? this.extractUserMessageText(target)
-        : null;
+      anchorMessageKind === 'user' ? this.extractUserMessageText(target) : null;
     const anchorExcerpt =
-      request.anchorMessageKind === 'user'
+      anchorMessageKind === 'user'
         ? draft
         : this.extractAssistantMessageText(target);
     const retainedRecords = records.slice(
       0,
-      request.anchorMessageKind === 'user' ? targetIndex : targetIndex + 1,
+      anchorMessageKind === 'user' ? targetIndex : targetIndex + 1,
     );
 
     if (retainedRecords.length === 0) {

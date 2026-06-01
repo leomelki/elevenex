@@ -53,7 +53,8 @@ export function planReviewFromPermissionRequest(
   provider: AgentProviderId,
 ): PlanReviewRequest | null {
   const reviewProvider = normalizeReviewProvider(provider);
-  if (!reviewProvider || !request || !isExitPlanTool(request.toolName, request.toolKind)) return null;
+  if (!reviewProvider || !request || !isExitPlanTool(request.toolName, request.toolKind))
+    return null;
 
   const input = asRecord(request.input);
   const providerInput = asRecord(request.providerInput);
@@ -66,11 +67,10 @@ export function planReviewFromPermissionRequest(
     sessionId,
     reviewId: stableReviewId('exit-plan', request.requestId),
     requestId: request.requestId,
+    toolUseId: request.toolUseId,
     planMarkdown: plan.trim(),
     planFilePath:
-      stringField(input, 'planFilePath')
-      || stringField(providerInput, 'planFilePath')
-      || undefined,
+      stringField(input, 'planFilePath') || stringField(providerInput, 'planFilePath') || undefined,
     createdAt: request.createdAt,
   };
 }
@@ -81,7 +81,11 @@ export function planReviewFromExitPlanToolCall(
   provider: AgentProviderId,
 ): PlanReviewRequest | null {
   const reviewProvider = normalizeReviewProvider(provider);
-  if (!reviewProvider || item.kind !== 'tool_use' || !isExitPlanTool(item.toolName, item.toolKind)) {
+  if (
+    !reviewProvider ||
+    item.kind !== 'tool_use' ||
+    !isExitPlanTool(item.toolName, item.toolKind)
+  ) {
     return null;
   }
 
@@ -96,17 +100,21 @@ export function planReviewFromExitPlanToolCall(
     sessionId,
     reviewId: stableReviewId('exit-plan-history', item.id),
     messageId: item.id,
+    anchorMessageId: item.transcriptMessageId ?? item.sourceMessageId,
+    anchorMessageKind: 'assistant',
+    toolUseId: item.toolUseId,
     planMarkdown: plan.trim(),
     planFilePath:
-      stringField(input, 'planFilePath')
-      || stringField(providerInput, 'planFilePath')
-      || undefined,
+      stringField(input, 'planFilePath') || stringField(providerInput, 'planFilePath') || undefined,
     createdAt: item.receivedAt || item.authoredAt || item.timestamp,
     readonly: true,
   };
 }
 
-export function isSamePlanReview(a: PlanReviewRequest | null, b: PlanReviewRequest | null): boolean {
+export function isSamePlanReview(
+  a: PlanReviewRequest | null,
+  b: PlanReviewRequest | null,
+): boolean {
   return !!a && !!b && a.sessionId === b.sessionId && a.reviewId === b.reviewId;
 }
 
@@ -118,7 +126,10 @@ function stableReviewId(prefix: string, id: string): string {
   return `${prefix}:${id}`;
 }
 
-function isExitPlanTool(toolName: string | undefined, toolKind: AgentToolKind | undefined): boolean {
+function isExitPlanTool(
+  toolName: string | undefined,
+  toolKind: AgentToolKind | undefined,
+): boolean {
   if (toolKind === 'exit_plan_mode') return true;
   return (toolName ?? '').toLowerCase().replace(/[_\-\s]/g, '') === 'exitplanmode';
 }

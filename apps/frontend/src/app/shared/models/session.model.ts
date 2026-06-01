@@ -83,6 +83,8 @@ export interface EnsurePlanChatRequest {
   reviewSource?: 'transcript-plan' | 'exit-plan-permission';
   anchorMessageId?: string;
   anchorMessageKind?: 'user' | 'assistant';
+  permissionRequestId?: string;
+  toolUseId?: string;
   planMarkdown?: string;
   name?: string;
 }

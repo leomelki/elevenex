@@ -26,6 +26,8 @@ export interface EnsurePlanChatForkDto {
   reviewSource?: string;
   anchorMessageId?: string;
   anchorMessageKind?: string;
+  permissionRequestId?: string;
+  toolUseId?: string;
   planMarkdown?: string;
   name?: string;
 }
@@ -84,6 +86,8 @@ export class PlanChatForksService {
     const anchorMessageKind = dto.anchorMessageKind
       ? this.parseAnchorKind(dto.anchorMessageKind)
       : null;
+    const permissionRequestId = dto.permissionRequestId?.trim();
+    const toolUseId = dto.toolUseId?.trim();
     const canUseUnanchoredPlan =
       dto.reviewSource === 'exit-plan-permission' ||
       reviewId?.startsWith('exit-plan:') ||
@@ -95,6 +99,11 @@ export class PlanChatForksService {
     if (!anchorMessageId && !canUseUnanchoredPlan) {
       throw new BadRequestException(
         'A plan chat anchor message id is required.',
+      );
+    }
+    if (!anchorMessageId && (!permissionRequestId || !toolUseId)) {
+      throw new BadRequestException(
+        'A pending plan chat fork requires the permission request and tool use ids.',
       );
     }
     if (anchorMessageId && !anchorMessageKind) {
@@ -137,24 +146,19 @@ export class PlanChatForksService {
         activeAgentProvider: provider,
       });
 
-      const providerResult =
-        anchorMessageId && anchorMessageKind
-          ? await registry
-              .getProviderFeature(provider, 'forkConversation')
-              .forkConversation({
-                parentSessionId,
-                childSessionId: child.id,
-                anchorMessageId,
-                anchorMessageKind,
-                childSessionName: childName,
-              })
-          : {
-              providerSessionId: null,
-              anchorExcerpt: this.truncateNullable(
-                dto.planMarkdown ?? null,
-                500,
-              ),
-            };
+      const providerResult = await registry
+        .getProviderFeature(provider, 'forkConversation')
+        .forkConversation({
+          parentSessionId,
+          childSessionId: child.id,
+          ...(anchorMessageId && anchorMessageKind
+            ? { anchorMessageId, anchorMessageKind }
+            : {
+                anchorToolUseId: toolUseId,
+                activePermissionRequestId: permissionRequestId,
+              }),
+          childSessionName: childName,
+        });
 
       const updatedChild = await this.applyProviderResult(
         child.id,

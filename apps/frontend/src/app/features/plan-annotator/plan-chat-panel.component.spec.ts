@@ -118,6 +118,8 @@ describe('PlanChatPanelComponent', () => {
       reviewSource: 'transcript-plan',
       anchorMessageId: 'msg-1',
       anchorMessageKind: 'assistant',
+      permissionRequestId: undefined,
+      toolUseId: undefined,
       planMarkdown: '# Plan\n\nDo this.',
     });
     expect(planChatsMock.submitQuestion).toHaveBeenCalledWith(11, 5, {
@@ -164,6 +166,7 @@ describe('PlanChatPanelComponent', () => {
       source: 'exit-plan-permission',
       reviewId: 'exit-plan:perm-1',
       requestId: 'perm-1',
+      toolUseId: 'tool-1',
       anchorMessageId: undefined,
       anchorMessageKind: undefined,
     });
@@ -181,6 +184,8 @@ describe('PlanChatPanelComponent', () => {
       reviewSource: 'exit-plan-permission',
       anchorMessageId: undefined,
       anchorMessageKind: undefined,
+      permissionRequestId: 'perm-1',
+      toolUseId: 'tool-1',
       planMarkdown: '# Plan\n\nDo this.',
     });
     expect(planChatsMock.submitQuestion).toHaveBeenCalledWith(11, 5, {

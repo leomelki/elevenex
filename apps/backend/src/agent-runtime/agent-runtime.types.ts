@@ -217,8 +217,10 @@ export interface AgentRuntimeCleanup {
 export interface AgentForkConversationRequest {
   parentSessionId: number;
   childSessionId: number;
-  anchorMessageId: string;
-  anchorMessageKind: 'user' | 'assistant';
+  anchorMessageId?: string;
+  anchorMessageKind?: 'user' | 'assistant';
+  anchorToolUseId?: string;
+  activePermissionRequestId?: string;
   childSessionName: string;
 }
 

@@ -2907,6 +2907,84 @@ describe('ClaudeRuntimeService', () => {
     });
   });
 
+  it('forks Claude while waiting on the matching ExitPlanMode tool permission', async () => {
+    jest
+      .spyOn(service as any, 'findTranscriptPath')
+      .mockResolvedValue('/tmp/claude-session-1.jsonl');
+    jest.spyOn(service as any, 'loadTranscriptRecords').mockResolvedValue([
+      { type: 'user', uuid: 'user-1', message: { content: 'make a plan' } },
+      {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        message: {
+          content: [
+            { type: 'text', text: 'Here is the plan.' },
+            {
+              type: 'tool_use',
+              id: 'tool-1',
+              name: 'ExitPlanMode',
+              input: { plan: '# Plan' },
+            },
+          ],
+        },
+      },
+    ]);
+    (forkSession as jest.Mock).mockResolvedValue({ sessionId: 'forked-plan' });
+
+    (service as any).activeRuns.set(7, {
+      query: { close: jest.fn() },
+      worktreePath: '/tmp/project',
+      interruptRequested: false,
+      tornDown: false,
+      permissionRequests: new Map(),
+      permissionRequestOrder: [],
+      userInputRequests: new Map(),
+      partialAssistantItems: new Map(),
+      partialThinkingItems: new Map(),
+      currentStreamMessageId: null,
+      completionPromise: Promise.resolve(),
+      resolveCompletion: jest.fn(),
+      startedAtMs: Date.now(),
+      runId: 'run-1',
+      queryCreatedAtMs: Date.now(),
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
+      sawFirstSdkMessage: true,
+      sawFirstVisibleItem: true,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
+    });
+    const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
+    state.pendingPermissionRequest = {
+      requestId: 'perm-1',
+      toolUseId: 'tool-1',
+      toolName: 'ExitPlanMode',
+      input: { plan: '# Plan' },
+      createdAt: 'now',
+    };
+    state.runPhase = 'waiting';
+    state.sessionState = 'requires_action';
+
+    const result = await service.forkConversation({
+      parentSessionId: 7,
+      childSessionId: 8,
+      anchorToolUseId: 'tool-1',
+      activePermissionRequestId: 'perm-1',
+      childSessionName: 'Plan Q&A',
+    });
+
+    expect(forkSession).toHaveBeenCalledWith('claude-session-1', {
+      dir: '/tmp/project',
+      upToMessageId: 'assistant-1',
+      title: 'Plan Q&A',
+    });
+    expect(result).toEqual({
+      providerSessionId: 'forked-plan',
+      draft: null,
+      anchorExcerpt: 'Here is the plan.',
+    });
+  });
+
   it('forks Claude before a selected user message and returns that text as a draft', async () => {
     jest
       .spyOn(service as any, 'findTranscriptPath')
