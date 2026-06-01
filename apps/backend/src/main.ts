@@ -34,7 +34,6 @@ import { readFile } from 'fs/promises';
 import {
   getBackendRuntimeRoot,
   getBackendVSCodeStaticPath,
-  getMonacoStaticPath,
 } from './config/runtime-paths.js';
 import { ShellEnvService } from './config/shell-env.service.js';
 import {
@@ -145,12 +144,6 @@ async function bootstrap() {
   // Serve SCM extension bundle
   const ext2Path = join(runtimeRoot, 'vscode-scm-extension');
   app.use('/vscode-ext2', express.static(ext2Path));
-
-  // Serve Monaco editor assets (used by the merge-conflicts panel)
-  const monacoStaticPath = getMonacoStaticPath();
-  if (monacoStaticPath) {
-    app.use('/vs', express.static(monacoStaticPath));
-  }
 
   // Register MCP auth proxy BEFORE body-parser so req stream is readable
   // Proxies localhost MCP auth servers for SSH/remote access: /api/mcp-auth-proxy/:port/*

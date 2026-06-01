@@ -5,6 +5,10 @@ The project is meant to be used in repositories with multiple thousands of files
 - Follow the commit convention in `COMMIT_CONVENTION.md`.
 - Use Conventional Commits in the form `feat(scope): description` whenever a scope is applicable.
 
+## Frontend ↔ Backend communication
+
+All frontend connections to the backend (HTTP, WebSocket, etc.) must go through the Angular dev proxy (`proxy.conf.json`) in development. Never construct backend URLs using hardcoded `127.0.0.1` addresses directly in frontend code — use `getBackendOrigin()` from `runtime-config.ts`, which resolves to the correct origin in every environment (dev proxy, production, Electron). Static assets that are owned by the frontend (e.g. bundled editor assets) must be served from the frontend's own origin and must not be routed through the backend.
+
 ## Frontend UI
 
 - Use Zard UI components and Tailwind CSS utilities as much as possible when building or modifying frontend UI.

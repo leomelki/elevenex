@@ -1,5 +1,4 @@
 import { Injectable } from '@angular/core';
-import { getBackendOrigin } from '../runtime/runtime-config';
 
 type MonacoRequire = {
   config: (options: { paths: { vs: string } }) => void;
@@ -85,7 +84,7 @@ export class MonacoEditorLoaderService {
   }
 
   private async loadMonaco(): Promise<MonacoApi> {
-    const vsBase = `${getBackendOrigin()}/vs`;
+    const vsBase = `${window.location.origin}/vs`;
     if (!window.require) {
       await this.loadScript(`${vsBase}/loader.js`);
     }
@@ -145,7 +144,7 @@ export class MonacoEditorLoaderService {
   }
 
   private ensureStylesheet(): void {
-    const href = `${getBackendOrigin()}/vs/editor/editor.main.css`;
+    const href = `${window.location.origin}/vs/editor/editor.main.css`;
     if (document.querySelector(`link[href="${href}"]`)) return;
     const link = document.createElement('link');
     link.rel = 'stylesheet';
