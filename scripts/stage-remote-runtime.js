@@ -87,16 +87,12 @@ function shouldBuildNativeDependenciesOnHost(target) {
 }
 
 function buildRuntimePackageJson(target) {
-  const onlyBuiltDependencies = shouldBuildNativeDependenciesOnHost(target)
-    ? ['better-sqlite3', 'node-pty']
-    : [];
-
   return {
     name: 'elevenex-remote-runtime',
     private: true,
     type: 'commonjs',
     pnpm: {
-      onlyBuiltDependencies,
+      onlyBuiltDependencies: ['better-sqlite3', 'node-pty'],
     },
     dependencies: Object.fromEntries(
       NATIVE_RUNTIME_DEPENDENCIES.map((name) => [name, backendPackageJson.dependencies[name]]),
