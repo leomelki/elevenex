@@ -230,6 +230,9 @@ importers:
       marked:
         specifier: ^17.0.5
         version: 17.0.6
+      monaco-editor:
+        specifier: ^0.55.1
+        version: 0.55.1
       ngx-sonner:
         specifier: ^3.1.0
         version: 3.1.0(@angular/common@21.2.10)(@angular/core@21.2.10)
@@ -7046,6 +7049,12 @@ packages:
       domelementtype: 2.3.0
     dev: true
 
+  /dompurify@3.2.7:
+    resolution: {integrity: sha512-WhL/YuveyGXJaerVlMYGWhvQswa7myDG17P7Vu65EWC05o8vfeNbvNf4d/BOvH99+ZW+LlQsc1GDKMa1vNK6dw==}
+    optionalDependencies:
+      '@types/trusted-types': 2.0.7
+    dev: false
+
   /dompurify@3.4.1:
     resolution: {integrity: sha512-JahakDAIg1gyOm7dlgWSDjV4n7Ip2PKR55NIT6jrMfIgLFgWo81vdr1/QGqWtFNRqXP9UV71oVePtjqS2ebnPw==}
     optionalDependencies:
@@ -9685,6 +9694,12 @@ packages:
       tmpl: 1.0.5
     dev: true
 
+  /marked@14.0.0:
+    resolution: {integrity: sha512-uIj4+faQ+MgHgwUW1l2PsPglZLOLOT1uErt06dAPtx2kjteLAkbsd/0FiYg/MGS+i7ZKLb7w2WClxHkzOOuryQ==}
+    engines: {node: '>= 18'}
+    hasBin: true
+    dev: false
+
   /marked@17.0.6:
     resolution: {integrity: sha512-gB0gkNafnonOw0obSTEGZTT86IuhILt2Wfx0mWH/1Au83kybTayroZ/V6nS25mN7u8ASy+5fMhgB3XPNrOZdmA==}
     engines: {node: '>= 20'}
@@ -9913,6 +9928,13 @@ packages:
       yargs-parser: 20.2.9
       yargs-unparser: 2.0.0
     dev: true
+
+  /monaco-editor@0.55.1:
+    resolution: {integrity: sha512-jz4x+TJNFHwHtwuV9vA9rMujcZRb0CEilTEwG2rRSpe/A7Jdkuj8xPKttCgOh+v/lkHy7HsZ64oj+q3xoAFl9A==}
+    dependencies:
+      dompurify: 3.2.7
+      marked: 14.0.0
+    dev: false
 
   /mrmime@2.0.1:
     resolution: {integrity: sha512-Y3wQdFg2Va6etvQ5I82yUhGdsKrcYox6p7FfL1LbK2J4V01F9TGlepTIhnK24t7koZibmg82KGglhA1XK5IsLQ==}

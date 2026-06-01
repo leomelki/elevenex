@@ -49,6 +49,14 @@ describe('FilesService', () => {
       expect(detectLanguage('script.py')).toBe('python');
     });
 
+    it('should detect Go from .go extension', () => {
+      expect(detectLanguage('main.go')).toBe('go');
+    });
+
+    it('should detect Rust from .rs extension', () => {
+      expect(detectLanguage('lib.rs')).toBe('rust');
+    });
+
     it('should detect CSS from .css extension', () => {
       expect(detectLanguage('style.css')).toBe('css');
     });

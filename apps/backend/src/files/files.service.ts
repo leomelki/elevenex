@@ -33,6 +33,8 @@ const LANGUAGE_MAP: Record<string, string> = {
   '.json': 'json',
   '.md': 'markdown',
   '.py': 'python',
+  '.go': 'go',
+  '.rs': 'rust',
   '.css': 'css',
   '.scss': 'scss',
   '.html': 'html',

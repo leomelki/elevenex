@@ -1,9 +1,5 @@
 import { Injectable } from '@angular/core';
-
-type MonacoRequire = {
-  config: (options: { paths: { vs: string } }) => void;
-  (modules: string[], onLoad: () => void, onError?: (error: unknown) => void): void;
-};
+import type { Environment } from 'monaco-editor';
 
 export interface MonacoEditorModel {
   getValue(): string;
@@ -49,14 +45,17 @@ export interface MonacoApi {
     create(element: HTMLElement, options: Record<string, unknown>): MonacoEditorInstance;
     createModel(value: string, language?: string, uri?: unknown): MonacoEditorModel;
     getModel(uri: unknown): MonacoEditorModel | null;
+    setModelLanguage(model: MonacoEditorModel, languageId: string): void;
     setTheme(themeName: string): void;
+  };
+  languages: {
+    getLanguages(): Array<{ id: string; extensions?: string[]; filenames?: string[] }>;
   };
 };
 
 declare global {
   interface Window {
     monaco?: MonacoApi;
-    require?: MonacoRequire;
   }
 }
 
@@ -66,11 +65,9 @@ export class MonacoEditorLoaderService {
 
   load(): Promise<MonacoApi> {
     if (window.monaco) {
-      this.ensureStylesheet();
       return Promise.resolve(window.monaco);
     }
 
-    this.ensureStylesheet();
     if (!this.loadPromise) {
       const attempt = this.loadMonaco();
       this.loadPromise = attempt;
@@ -84,78 +81,43 @@ export class MonacoEditorLoaderService {
   }
 
   private async loadMonaco(): Promise<MonacoApi> {
-    const vsBase = this.frontendAssetUrl('vs');
-    if (!window.require) {
-      await this.loadScript(this.frontendAssetUrl('vs/loader.js'));
-    }
-
-    return new Promise<MonacoApi>((resolve, reject) => {
-      const require = window.require;
-      if (!require) {
-        reject(new Error('Monaco loader is unavailable.'));
-        return;
-      }
-
-      require.config({ paths: { vs: vsBase } });
-      require(
-        ['vs/editor/editor.main'],
-        () => {
-          if (window.monaco) {
-            resolve(window.monaco);
-            return;
-          }
-          reject(new Error('Monaco editor did not initialize.'));
-        },
-        reject,
-      );
-    });
+    this.configureWorkers();
+    const monaco = await import('monaco-editor');
+    window.monaco = monaco as unknown as MonacoApi;
+    return window.monaco;
   }
 
-  private loadScript(src: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const existing = Array.from(document.scripts).find((script) => script.src === src);
-      if (existing) {
-        if (existing.dataset['loaded']) {
-          resolve();
-          return;
+  private configureWorkers(): void {
+    globalThis.MonacoEnvironment ??= {
+      getWorker: (_moduleId: string, label: string) => {
+        switch (label) {
+          case 'json':
+            return new Worker(new URL('./monaco-workers/json.worker', import.meta.url), {
+              type: 'module',
+            });
+          case 'css':
+          case 'scss':
+          case 'less':
+            return new Worker(new URL('./monaco-workers/css.worker', import.meta.url), {
+              type: 'module',
+            });
+          case 'html':
+          case 'handlebars':
+          case 'razor':
+            return new Worker(new URL('./monaco-workers/html.worker', import.meta.url), {
+              type: 'module',
+            });
+          case 'typescript':
+          case 'javascript':
+            return new Worker(new URL('./monaco-workers/typescript.worker', import.meta.url), {
+              type: 'module',
+            });
+          default:
+            return new Worker(new URL('./monaco-workers/editor.worker', import.meta.url), {
+              type: 'module',
+            });
         }
-        if (existing.dataset['error']) {
-          reject(new Error(`Could not load ${src}`));
-          return;
-        }
-        existing.addEventListener('load', () => resolve(), { once: true });
-        existing.addEventListener('error', () => reject(new Error(`Could not load ${src}`)), { once: true });
-        return;
-      }
-
-      const script = document.createElement('script');
-      script.src = src;
-      script.async = true;
-      script.addEventListener('load', () => {
-        script.dataset['loaded'] = 'true';
-        resolve();
-      }, { once: true });
-      script.addEventListener('error', () => {
-        script.dataset['error'] = 'true';
-        reject(new Error(`Could not load ${src}`));
-      }, { once: true });
-      document.head.appendChild(script);
-    });
-  }
-
-  private ensureStylesheet(): void {
-    const href = this.frontendAssetUrl('vs/editor/editor.main.css');
-    const existing = Array.from(
-      document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'),
-    ).some((link) => link.href === href);
-    if (existing) return;
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = href;
-    document.head.appendChild(link);
-  }
-
-  private frontendAssetUrl(path: string): string {
-    return new URL(path, document.baseURI || window.location.href).toString().replace(/\/$/, '');
+      },
+    } satisfies Environment;
   }
 }

@@ -1,60 +1,51 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { MonacoApi, MonacoEditorLoaderService } from './monaco-editor-loader.service';
+import { MonacoEditorLoaderService } from './monaco-editor-loader.service';
 
 describe('MonacoEditorLoaderService', () => {
   let originalMonaco: typeof window.monaco;
-  let originalRequire: typeof window.require;
   let originalRuntime: typeof window.__ELEVENEX_RUNTIME__;
+  let originalMonacoEnvironment: typeof globalThis.MonacoEnvironment;
+  let originalQueryCommandSupported: typeof document.queryCommandSupported;
   let originalHeadHtml: string;
 
   beforeEach(() => {
     originalMonaco = window.monaco;
-    originalRequire = window.require;
     originalRuntime = window.__ELEVENEX_RUNTIME__;
+    originalMonacoEnvironment = globalThis.MonacoEnvironment;
+    originalQueryCommandSupported = document.queryCommandSupported;
     originalHeadHtml = document.head.innerHTML;
     window.monaco = undefined;
-    window.require = undefined;
     window.__ELEVENEX_RUNTIME__ = { backendOrigin: 'http://backend.test' };
-    document.head.innerHTML = '<base href="http://frontend.test/app/">';
+    globalThis.MonacoEnvironment = undefined;
+    document.queryCommandSupported ??= () => false;
     document.body.innerHTML = '';
   });
 
   afterEach(() => {
     window.monaco = originalMonaco;
-    window.require = originalRequire;
     window.__ELEVENEX_RUNTIME__ = originalRuntime;
+    globalThis.MonacoEnvironment = originalMonacoEnvironment;
+    document.queryCommandSupported = originalQueryCommandSupported;
     document.head.innerHTML = originalHeadHtml;
     document.body.innerHTML = '';
   });
 
-  it('loads Monaco from the frontend asset base instead of the backend origin', async () => {
+  it('loads Monaco from bundled frontend modules instead of /vs assets', async () => {
     const service = new MonacoEditorLoaderService();
-    const fakeMonaco = { editor: {} } as MonacoApi;
-    const requireMock = vi.fn((modules: string[], onLoad: () => void) => {
-      expect(modules).toEqual(['vs/editor/editor.main']);
-      window.monaco = fakeMonaco;
-      onLoad();
-    }) as unknown as NonNullable<typeof window.require>;
-    requireMock.config = vi.fn();
 
-    const loadPromise = service.load();
-    const script = Array.from(document.scripts).find(
-      (element) => element.src === 'http://frontend.test/app/vs/loader.js',
-    );
-    const stylesheet = Array.from(
-      document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'),
-    ).find((element) => element.href === 'http://frontend.test/app/vs/editor/editor.main.css');
+    const monaco = await service.load();
+    const languageIds = monaco.languages.getLanguages().map((language) => language.id);
 
-    expect(script).toBeTruthy();
-    expect(stylesheet).toBeTruthy();
-
-    window.require = requireMock;
-    script?.dispatchEvent(new Event('load'));
-
-    await expect(loadPromise).resolves.toBe(fakeMonaco);
-    expect(requireMock.config).toHaveBeenCalledWith({
-      paths: { vs: 'http://frontend.test/app/vs' },
-    });
-  });
+    expect(monaco.editor.createModel).toEqual(expect.any(Function));
+    expect(languageIds).toEqual(expect.arrayContaining(['go', 'rust', 'typescript']));
+    expect(window.monaco).toBe(monaco);
+    expect(globalThis.MonacoEnvironment?.getWorker).toEqual(expect.any(Function));
+    expect(Array.from(document.scripts).some((element) => element.src.includes('/vs/'))).toBe(false);
+    expect(
+      Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')).some(
+        (element) => element.href.includes('/vs/'),
+      ),
+    ).toBe(false);
+  }, 15_000);
 });

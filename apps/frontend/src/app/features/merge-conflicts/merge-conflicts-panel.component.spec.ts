@@ -115,9 +115,11 @@ describe('MergeConflictsPanelComponent', () => {
     readFile: ReturnType<typeof vi.fn>;
     writeFile: ReturnType<typeof vi.fn>;
   };
+  let setModelLanguageMock: ReturnType<typeof vi.fn>;
   let fakeEditor!: FakeEditor;
 
   beforeEach(async () => {
+    setModelLanguageMock = vi.fn();
     const fakeMonaco = {
       Uri: { parse: (value: string) => value },
       Range: class {
@@ -135,7 +137,17 @@ describe('MergeConflictsPanelComponent', () => {
         },
         createModel: (value: string) => new FakeModel(value),
         getModel: () => null,
+        setModelLanguage: setModelLanguageMock,
         setTheme: vi.fn(),
+      },
+      languages: {
+        getLanguages: () => [
+          { id: 'go', extensions: ['.go'] },
+          { id: 'rust', extensions: ['.rs', '.rlib'] },
+          { id: 'typescript', extensions: ['.ts', '.tsx', '.cts', '.mts'] },
+          { id: 'dockerfile', filenames: ['Dockerfile'], extensions: ['.dockerfile'] },
+          { id: 'plaintext' },
+        ],
       },
     };
 
@@ -173,6 +185,21 @@ describe('MergeConflictsPanelComponent', () => {
     expect(filesServiceMock.readFile).toHaveBeenCalledWith('/tmp/repo', 'src/a.ts');
     expect(fixture.componentInstance.conflictedFiles()).toHaveLength(1);
     expect(fixture.componentInstance.activeBlocks()).toHaveLength(1);
+  });
+
+  it('uses Monaco registered languages when the backend language is plaintext', async () => {
+    gitServiceMock.getSummary.mockReturnValueOnce(of(conflictedSummary(['src/main.go'])));
+    filesServiceMock.readFile.mockReturnValueOnce(
+      of({ content: conflictContent, language: 'plaintext' }),
+    );
+
+    await fixture.componentInstance.refresh();
+    fixture.detectChanges();
+    await flush();
+    fixture.detectChanges();
+
+    expect(filesServiceMock.readFile).toHaveBeenCalledWith('/tmp/repo', 'src/main.go');
+    expect(setModelLanguageMock).toHaveBeenLastCalledWith(expect.any(FakeModel), 'go');
   });
 
   it('blocks resolving while conflict markers remain', async () => {

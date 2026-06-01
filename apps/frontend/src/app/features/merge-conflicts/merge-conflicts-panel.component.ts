@@ -475,11 +475,13 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     const uri = monaco.Uri.parse(
       `inmemory://merge-conflicts/${encodeURIComponent(this.worktreePath())}/${encodeURIComponent(state.file.path)}`,
     );
+    const language = this.resolveEditorLanguage(monaco, state.file.path, state.language);
     const model =
-      monaco.editor.getModel(uri) ?? monaco.editor.createModel(state.content, state.language, uri);
+      monaco.editor.getModel(uri) ?? monaco.editor.createModel(state.content, language, uri);
     if (model.getValue() !== state.content) {
       model.setValue(state.content);
     }
+    monaco.editor.setModelLanguage(model, language);
 
     if (!this.editor) {
       this.editor = monaco.editor.create(host, {
@@ -517,6 +519,34 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     this.redecorate();
     this.revealActiveConflict();
     window.setTimeout(() => this.editor?.layout(), 0);
+  }
+
+  private resolveEditorLanguage(monaco: MonacoApi, filePath: string, language: string): string {
+    const registeredLanguages = monaco.languages.getLanguages();
+    const requestedLanguage = language.trim() || 'plaintext';
+    const requestedLanguageIsRegistered = registeredLanguages.some(
+      (registered) => registered.id === requestedLanguage,
+    );
+    if (requestedLanguage !== 'plaintext' && requestedLanguageIsRegistered) {
+      return requestedLanguage;
+    }
+
+    const basename = filePath.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+    const extensionStart = basename.lastIndexOf('.');
+    const extension = extensionStart >= 0 ? basename.slice(extensionStart) : '';
+    const matchedLanguage =
+      registeredLanguages.find((registered) =>
+        registered.filenames?.some((filename) => filename.toLowerCase() === basename),
+      ) ??
+      registeredLanguages.find((registered) =>
+        extension
+          ? registered.extensions?.some(
+              (registeredExtension) => registeredExtension.toLowerCase() === extension,
+            )
+          : false,
+      );
+
+    return matchedLanguage?.id ?? (requestedLanguageIsRegistered ? requestedLanguage : 'plaintext');
   }
 
   private setEditorValue(value: string | null): void {

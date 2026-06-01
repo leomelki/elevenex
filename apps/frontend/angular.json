@@ -30,6 +30,9 @@
                 "input": "public"
               }
             ],
+            "loader": {
+              ".ttf": "dataurl"
+            },
             "styles": ["src/styles.css"]
           },
           "configurations": {
