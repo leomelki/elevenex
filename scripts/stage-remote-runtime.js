@@ -209,11 +209,13 @@ function installRuntimeDependencies(targetRoot, target) {
     'utf8',
   );
 
-  // pnpm 11 only reads allowBuilds from pnpm-workspace.yaml; package.json's
-  // pnpm.onlyBuiltDependencies is not honoured for --ignore-workspace installs.
+  // pnpm 11 reads allowBuilds only from pnpm-workspace.yaml. --ignore-workspace
+  // drops all workspace config including one we write ourselves, so instead we
+  // make targetRoot its own minimal workspace root. pnpm stops discovery here
+  // and never reaches the parent workspace, so --ignore-workspace is not needed.
   writeFileSync(
     path.join(targetRoot, 'pnpm-workspace.yaml'),
-    'allowBuilds:\n  better-sqlite3: true\n  node-pty: true\n',
+    'packages: []\nallowBuilds:\n  better-sqlite3: true\n  node-pty: true\n',
     'utf8',
   );
 
@@ -228,7 +230,7 @@ function installRuntimeDependencies(targetRoot, target) {
     prebuild_install_arch: target.arch,
   };
 
-  runCommand('pnpm', ['install', '--prod', '--ignore-workspace', '--no-lockfile'], {
+  runCommand('pnpm', ['install', '--prod', '--no-lockfile'], {
     cwd: targetRoot,
     env,
   });
