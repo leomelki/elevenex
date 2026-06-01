@@ -23,6 +23,7 @@ type SessionWithContext = Awaited<ReturnType<SessionsService['findOne']>>;
 
 export interface EnsurePlanChatForkDto {
   reviewId?: string;
+  reviewSource?: string;
   anchorMessageId?: string;
   anchorMessageKind?: string;
   planMarkdown?: string;
@@ -80,13 +81,26 @@ export class PlanChatForksService {
     const provider = this.normalizeProvider(parent.activeAgentProvider);
     const reviewId = dto.reviewId?.trim();
     const anchorMessageId = dto.anchorMessageId?.trim();
-    const anchorMessageKind = this.parseAnchorKind(dto.anchorMessageKind);
+    const anchorMessageKind = dto.anchorMessageKind
+      ? this.parseAnchorKind(dto.anchorMessageKind)
+      : null;
+    const canUseUnanchoredPlan =
+      dto.reviewSource === 'exit-plan-permission' ||
+      reviewId?.startsWith('exit-plan:') ||
+      reviewId?.startsWith('exit-plan-history:');
 
     if (!reviewId) {
       throw new BadRequestException('A plan review id is required.');
     }
-    if (!anchorMessageId) {
-      throw new BadRequestException('A plan chat anchor message id is required.');
+    if (!anchorMessageId && !canUseUnanchoredPlan) {
+      throw new BadRequestException(
+        'A plan chat anchor message id is required.',
+      );
+    }
+    if (anchorMessageId && !anchorMessageKind) {
+      throw new BadRequestException(
+        'Plan chat anchor kind must be "user" or "assistant".',
+      );
     }
 
     const existing = await this.findExisting(parentSessionId, reviewId);
@@ -109,7 +123,6 @@ export class PlanChatForksService {
     const registry = this.moduleRef.get(AgentRuntimeRegistryService, {
       strict: false,
     });
-    const runtime = registry.getProviderFeature(provider, 'forkConversation');
     const childName = dto.name?.trim() || this.defaultPlanChatName(parent.name);
     let child: { id: number } | null = null;
 
@@ -124,13 +137,24 @@ export class PlanChatForksService {
         activeAgentProvider: provider,
       });
 
-      const providerResult = await runtime.forkConversation({
-        parentSessionId,
-        childSessionId: child.id,
-        anchorMessageId,
-        anchorMessageKind,
-        childSessionName: childName,
-      });
+      const providerResult =
+        anchorMessageId && anchorMessageKind
+          ? await registry
+              .getProviderFeature(provider, 'forkConversation')
+              .forkConversation({
+                parentSessionId,
+                childSessionId: child.id,
+                anchorMessageId,
+                anchorMessageKind,
+                childSessionName: childName,
+              })
+          : {
+              providerSessionId: null,
+              anchorExcerpt: this.truncateNullable(
+                dto.planMarkdown ?? null,
+                500,
+              ),
+            };
 
       const updatedChild = await this.applyProviderResult(
         child.id,
@@ -146,8 +170,8 @@ export class PlanChatForksService {
           childSessionId: updatedChild.id,
           provider,
           reviewId,
-          anchorMessageId,
-          anchorMessageKind,
+          anchorMessageId: anchorMessageId ?? `plan-review:${reviewId}`,
+          anchorMessageKind: anchorMessageKind ?? 'assistant',
           anchorExcerpt: this.truncateNullable(
             providerResult.anchorExcerpt ?? null,
             500,
@@ -199,13 +223,18 @@ export class PlanChatForksService {
     });
     const provider = this.normalizeProvider(row.provider);
     await this.ensurePlanMode(registry, provider, row.childSessionId);
-    await registry
+    void registry
       .getProvider(provider)
       .submitPrompt(
         row.childSessionId,
         this.buildGuardedQuestionPrompt(question, row.planExcerpt),
         question,
-      );
+      )
+      .catch((error) => {
+        this.logger.error(
+          `Plan chat question failed session=${row.childSessionId}: ${String(error)}`,
+        );
+      });
 
     return {
       planChat: {
@@ -219,12 +248,14 @@ export class PlanChatForksService {
 
   async delete(parentSessionId: number, planChatId: number) {
     const row = await this.findById(parentSessionId, planChatId);
-    await this.sessionsService.delete(row.childSessionId).catch(async (error) => {
-      this.logger.warn(
-        `Failed to delete plan chat child session ${row.childSessionId}: ${String(error)}`,
-      );
-      await this.deleteRow(row.id);
-    });
+    await this.sessionsService
+      .delete(row.childSessionId)
+      .catch(async (error) => {
+        this.logger.warn(
+          `Failed to delete plan chat child session ${row.childSessionId}: ${String(error)}`,
+        );
+        await this.deleteRow(row.id);
+      });
     return { id: planChatId, deleted: true };
   }
 

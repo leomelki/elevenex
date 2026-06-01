@@ -246,12 +246,83 @@ describe('PlanChatForksService', () => {
     });
 
     expect(provider.submitPrompt).toHaveBeenCalledTimes(1);
-    const [sessionId, prompt, titlePrompt] = provider.submitPrompt.mock.calls[0];
+    const [sessionId, prompt, titlePrompt] =
+      provider.submitPrompt.mock.calls[0];
     expect(sessionId).toBe(session.id);
     expect(titlePrompt).toBe('Why this order?');
     expect(prompt).toContain('hidden Q&A fork');
-    expect(prompt).toContain('<elevenex_plan_question>\nWhy this order?\n</elevenex_plan_question>');
+    expect(prompt).toContain(
+      '<elevenex_plan_question>\nWhy this order?\n</elevenex_plan_question>',
+    );
     expect(prompt).toContain('Do not write a new plan');
+  });
+
+  it('returns immediately after dispatching a plan chat question', async () => {
+    const parent = await createParent();
+    provider.forkConversation.mockResolvedValue({
+      providerSessionId: 'claude-plan-chat',
+      anchorExcerpt: '# Plan',
+    });
+    const { planChat } = await planChatsService.ensure(parent.id, {
+      reviewId: 'review-1',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      planMarkdown: '# Plan',
+    });
+
+    let resolvePrompt!: () => void;
+    provider.submitPrompt.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolvePrompt = resolve;
+      }),
+    );
+
+    await expect(
+      planChatsService.submitQuestion(parent.id, planChat.id, {
+        question: 'Can I ask while you answer?',
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        question: 'Can I ask while you answer?',
+      }),
+    );
+
+    expect(provider.submitPrompt).toHaveBeenCalledTimes(1);
+    resolvePrompt();
+  });
+
+  it('creates hidden plan chat forks for pending exit-plan reviews without a transcript anchor', async () => {
+    const parent = await createParent();
+
+    const result = await planChatsService.ensure(parent.id, {
+      reviewId: 'exit-plan:permission-1',
+      reviewSource: 'exit-plan-permission',
+      planMarkdown: '# Plan\n\nDo it',
+    });
+
+    expect(provider.forkConversation).not.toHaveBeenCalled();
+    expect(provider.setPlanMode).toHaveBeenCalledWith(result.session.id, true);
+    expect(result.session.claudeSessionId).toBe('-1');
+    expect(result.planChat).toEqual(
+      expect.objectContaining({
+        reviewId: 'exit-plan:permission-1',
+        anchorMessageId: 'plan-review:exit-plan:permission-1',
+        anchorMessageKind: 'assistant',
+        anchorExcerpt: '# Plan\n\nDo it',
+      }),
+    );
+
+    await planChatsService.submitQuestion(parent.id, result.planChat.id, {
+      question: 'Why this order?',
+    });
+
+    expect(provider.submitPrompt).toHaveBeenCalledWith(
+      result.session.id,
+      expect.stringContaining(
+        '<elevenex_plan_excerpt>\n# Plan\n\nDo it\n</elevenex_plan_excerpt>',
+      ),
+      'Why this order?',
+    );
   });
 
   it('removes the hidden child session when provider fork creation fails', async () => {
@@ -292,7 +363,10 @@ describe('PlanChatForksService', () => {
     const allSessions = await sessionsService.findByRepo(repoId, {
       includeHidden: true,
     });
-    const planChats = await planChatsService.findByParent(parent.id, 'review-1');
+    const planChats = await planChatsService.findByParent(
+      parent.id,
+      'review-1',
+    );
     expect(allSessions.map((item) => item.id)).not.toContain(session.id);
     expect(planChats).toEqual([]);
   });

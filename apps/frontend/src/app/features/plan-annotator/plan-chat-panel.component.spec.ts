@@ -51,7 +51,7 @@ function makePlanChat(overrides: Partial<PlanChatFork> = {}): PlanChatFork {
   };
 }
 
-function makeReview(): PlanReviewRequest {
+function makeReview(overrides: Partial<PlanReviewRequest> = {}): PlanReviewRequest {
   return {
     provider: 'codex',
     source: 'transcript-plan',
@@ -62,6 +62,7 @@ function makeReview(): PlanReviewRequest {
     anchorMessageKind: 'assistant',
     planMarkdown: '# Plan\n\nDo this.',
     createdAt: '2026-05-29T10:00:00.000Z',
+    ...overrides,
   };
 }
 
@@ -114,6 +115,7 @@ describe('PlanChatPanelComponent', () => {
 
     expect(planChatsMock.ensure).toHaveBeenCalledWith(11, {
       reviewId: 'transcript-plan:msg-1',
+      reviewSource: 'transcript-plan',
       anchorMessageId: 'msg-1',
       anchorMessageKind: 'assistant',
       planMarkdown: '# Plan\n\nDo this.',
@@ -123,5 +125,66 @@ describe('PlanChatPanelComponent', () => {
     });
     expect(websocketMock.connect).toHaveBeenCalledWith(22, 'codex');
     expect(websocketMock.send).toHaveBeenCalledWith(22, { type: 'hydrate' }, 'codex');
+  });
+
+  it('submits questions for a pending ExitPlanMode review without a saved transcript anchor', async () => {
+    const events$ = new Subject<any>();
+    const planChat = makePlanChat({
+      reviewId: 'exit-plan:perm-1',
+      anchorMessageId: 'plan-review:exit-plan:perm-1',
+    });
+    const planChatsMock = {
+      getByReview: vi.fn(() => of([])),
+      ensure: vi.fn(() => of({ planChat, session: planChat.childSession })),
+      submitQuestion: vi.fn(() =>
+        of({ planChat, session: planChat.childSession, question: 'Why this order?' }),
+      ),
+      delete: vi.fn(),
+    };
+    const websocketMock = {
+      connect: vi.fn(() => events$.asObservable()),
+      send: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    const agentApiMock = {
+      getHistory: vi.fn(() => of([])),
+    };
+
+    await TestBed.configureTestingModule({
+      imports: [PlanChatPanelComponent],
+      providers: [
+        { provide: PlanChatService, useValue: planChatsMock },
+        { provide: AgentRuntimeWebsocketService, useValue: websocketMock },
+        { provide: AgentRuntimeApiService, useValue: agentApiMock },
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(PlanChatPanelComponent);
+    const review = makeReview({
+      source: 'exit-plan-permission',
+      reviewId: 'exit-plan:perm-1',
+      requestId: 'perm-1',
+      anchorMessageId: undefined,
+      anchorMessageKind: undefined,
+    });
+    fixture.componentRef.setInput('review', review);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(fixture.componentInstance.canAsk(review)).toBe(true);
+
+    fixture.componentInstance.draft.set('Why this order?');
+    await fixture.componentInstance.sendQuestion(review);
+
+    expect(planChatsMock.ensure).toHaveBeenCalledWith(11, {
+      reviewId: 'exit-plan:perm-1',
+      reviewSource: 'exit-plan-permission',
+      anchorMessageId: undefined,
+      anchorMessageKind: undefined,
+      planMarkdown: '# Plan\n\nDo this.',
+    });
+    expect(planChatsMock.submitQuestion).toHaveBeenCalledWith(11, 5, {
+      question: 'Why this order?',
+    });
   });
 });

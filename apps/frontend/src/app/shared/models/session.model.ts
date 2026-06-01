@@ -80,8 +80,9 @@ export interface PlanChatFork {
 
 export interface EnsurePlanChatRequest {
   reviewId: string;
-  anchorMessageId: string;
-  anchorMessageKind: 'user' | 'assistant';
+  reviewSource?: 'transcript-plan' | 'exit-plan-permission';
+  anchorMessageId?: string;
+  anchorMessageKind?: 'user' | 'assistant';
   planMarkdown?: string;
   name?: string;
 }

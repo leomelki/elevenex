@@ -478,9 +478,7 @@ export class PlanChatPanelComponent {
       (item): item is PlanChatVisibleItem =>
         item.kind === 'user' || item.kind === 'assistant' || item.kind === 'error',
     );
-    return items.sort((left, right) =>
-      (left.timestamp || '').localeCompare(right.timestamp || ''),
-    );
+    return items.sort((left, right) => (left.timestamp || '').localeCompare(right.timestamp || ''));
   });
 
   private loadedReviewKey = '';
@@ -503,7 +501,10 @@ export class PlanChatPanelComponent {
   }
 
   canAsk(review: PlanReviewRequest): boolean {
-    return Boolean(review.anchorMessageId && review.anchorMessageKind);
+    return Boolean(
+      (review.anchorMessageId && review.anchorMessageKind) ||
+      (review.source === 'exit-plan-permission' && review.planMarkdown.trim()),
+    );
   }
 
   itemContent(item: PlanChatVisibleItem): string {
@@ -533,13 +534,9 @@ export class PlanChatPanelComponent {
 
     try {
       const chat = await this.ensureChat(review);
-      await firstValueFrom(
-        this.planChats.submitQuestion(review.sessionId, chat.id, { question }),
-      );
+      await firstValueFrom(this.planChats.submitQuestion(review.sessionId, chat.id, { question }));
     } catch (error) {
-      this.optimisticUserItems.update((items) =>
-        items.filter((item) => item.id !== optimistic.id),
-      );
+      this.optimisticUserItems.update((items) => items.filter((item) => item.id !== optimistic.id));
       this.draft.set(question);
       this.lastError.set(this.httpErrorMessage(error, 'Could not ask about this plan.'));
     } finally {
@@ -596,13 +593,14 @@ export class PlanChatPanelComponent {
   private async ensureChat(review: PlanReviewRequest): Promise<PlanChatFork> {
     const existing = this.currentChat();
     if (existing?.childSession) return existing;
-    if (!review.anchorMessageId || !review.anchorMessageKind) {
+    if (!this.canAsk(review)) {
       throw new Error('This plan cannot be forked for questions yet.');
     }
 
     const response = await firstValueFrom(
       this.planChats.ensure(review.sessionId, {
         reviewId: review.reviewId,
+        reviewSource: review.source,
         anchorMessageId: review.anchorMessageId,
         anchorMessageKind: review.anchorMessageKind,
         planMarkdown: review.planMarkdown,

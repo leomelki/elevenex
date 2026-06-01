@@ -293,7 +293,10 @@ export class PlanAnnotatorPanelComponent {
   }
 
   canAskPlan(review: PlanReviewRequest): boolean {
-    return Boolean(review.anchorMessageId && review.anchorMessageKind);
+    return Boolean(
+      (review.anchorMessageId && review.anchorMessageKind) ||
+      (review.source === 'exit-plan-permission' && review.planMarkdown.trim()),
+    );
   }
 
   selectRailMode(mode: PlanReviewRailMode): void {
