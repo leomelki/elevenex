@@ -102,6 +102,38 @@ describe('UserPtyManager', () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
+  it('falls back to a direct PTY when tmux startup fails', async () => {
+    mockFindBinary.mockReturnValue('/usr/bin/tmux');
+    manager = new UserPtyManager({
+      sendToTerminal: jest.fn(),
+    } as never);
+
+    mockExecFileQuiet.mockImplementation((_file, args) => {
+      if (args[0] === 'has-session' || args[0] === 'new-session') {
+        return Promise.reject(new Error('tmux unavailable'));
+      }
+      return Promise.resolve();
+    });
+    const process = createMockPty();
+    mockSpawn.mockReturnValue(process as never);
+
+    const result = await manager.spawn(3, '/repo/worktree', '/bin/zsh');
+
+    expect(result).toBe(process);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      '/bin/zsh',
+      [],
+      expect.objectContaining({
+        cwd: '/repo/worktree',
+        env: expect.objectContaining({
+          PATH: '/mock/bin',
+          TERM: 'xterm-256color',
+          COLORTERM: 'truecolor',
+        }),
+      }),
+    );
+  });
+
   it('ignores stale exit events from a replaced terminal PTY process', async () => {
     jest.useFakeTimers();
     let nextPid = 200;

@@ -226,6 +226,7 @@ function buildRemoteInstallCommand({ remoteArchivePath, remoteReleaseDir, remote
     `mkdir -p ${releaseDir}`,
     `tar -xzf ${shellPathQuote(remoteArchivePath)} -C ${releaseDir}`,
     `RELEASE_DIR=${releaseDir}`,
+    'find "$RELEASE_DIR/node_modules/.pnpm" -path "*/node-pty@*/node_modules/node-pty/prebuilds/*/spawn-helper" -type f -exec chmod 755 {} + 2>/dev/null || true',
     'PTY_DIR="$(find "$RELEASE_DIR/node_modules/.pnpm" -maxdepth 4 -type d -path "*/node-pty@*/node_modules/node-pty" 2>/dev/null | head -n 1 || true)"',
     'if [ -n "$PTY_DIR" ] && [ ! -f "$PTY_DIR/build/Release/pty.node" ]; then',
     '  PLATFORM_KEY="$(uname -s 2>/dev/null | tr \'[:upper:]\' \'[:lower:]\')"',

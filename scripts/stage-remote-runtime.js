@@ -243,6 +243,26 @@ function installRuntimeDependencies(targetRoot, target) {
   }
 }
 
+function ensureNativeExecutablePermissions(rootDir) {
+  if (!existsSync(rootDir)) {
+    return;
+  }
+
+  for (const entry of readdirSync(rootDir)) {
+    const fullPath = path.join(rootDir, entry);
+    const stats = statSync(fullPath);
+
+    if (stats.isDirectory()) {
+      ensureNativeExecutablePermissions(fullPath);
+      continue;
+    }
+
+    if (entry === 'spawn-helper') {
+      chmodSync(fullPath, 0o755);
+    }
+  }
+}
+
 function writeLauncher(targetRoot) {
   const launcherPath = path.join(targetRoot, 'bin', 'start-backend.sh');
   const script = [
@@ -284,6 +304,7 @@ async function stageTarget(target, commitSha, nodeVersion) {
 
   await stageBundledNodeRuntime(targetRoot, target, nodeVersion);
   installRuntimeDependencies(targetRoot, target);
+  ensureNativeExecutablePermissions(path.join(targetRoot, 'node_modules'));
   writeLauncher(targetRoot);
 
   removeSourceMaps(targetRoot);

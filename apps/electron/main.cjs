@@ -696,6 +696,13 @@ function resignNativeBinaries(dir) {
       || NATIVE_EXECUTABLE_NAMES.includes(entry);
 
     if (isNative) {
+      if (NATIVE_EXECUTABLE_NAMES.includes(entry)) {
+        try {
+          chmodSync(fullPath, 0o755);
+        } catch {
+          // Codesigning below will surface unusable native helpers if chmod failed.
+        }
+      }
       spawnSync('codesign', ['--sign', '-', '--force', '--timestamp=none', fullPath], {
         stdio: 'ignore',
       });

@@ -158,7 +158,13 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
         }
         return null;
       }
-      return tmuxSession;
+      if (tmuxSession) {
+        return tmuxSession;
+      }
+
+      this.logger.warn(
+        `Falling back to direct PTY for terminal ${terminalId} after tmux startup failed`,
+      );
     }
 
     // Fallback: direct PTY spawn (no persistence)
