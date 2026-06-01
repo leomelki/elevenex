@@ -33,7 +33,38 @@
       }
     </div>
 
-    <div class="ml-auto flex gap-1">
+    <div class="ml-auto flex items-center gap-1">
+      @if (conflictCount() > 0 || showConflictResolver()) {
+        <div
+          class="mr-1 inline-flex shrink-0 gap-0.5 rounded-md border border-border bg-muted/50 p-0.5"
+          aria-label="Git review mode"
+        >
+          <button
+            type="button"
+            class="inline-flex min-h-7 items-center gap-1 rounded-sm px-2 text-[0.72rem] font-semibold text-muted-foreground transition-colors hover:text-foreground"
+            [class.bg-background]="!showConflictResolver()"
+            [class.text-foreground]="!showConflictResolver()"
+            [class.shadow-sm]="!showConflictResolver()"
+            (click)="showDiffReview()"
+          >
+            <ng-icon name="lucideFileCode" size="13" />
+            Diff
+          </button>
+          <button
+            type="button"
+            class="inline-flex min-h-7 items-center gap-1 rounded-sm px-2 text-[0.72rem] font-semibold text-destructive transition-colors hover:text-destructive"
+            [class.bg-background]="showConflictResolver()"
+            [class.shadow-sm]="showConflictResolver()"
+            (click)="openMergeConflicts()"
+          >
+            <ng-icon name="lucideGitMerge" size="13" />
+            Resolve
+            @if (conflictCount() > 0) {
+              <span class="font-mono">{{ formatCount(conflictCount()) }}</span>
+            }
+          </button>
+        </div>
+      }
       @if (summary()?.pullRequest) {
         <button
           z-button
@@ -78,326 +109,190 @@
     </div>
   </header>
 
-  @if (error(); as message) {
-    <div
-      class="flex items-center gap-2 border-b border-[color-mix(in_oklch,var(--warning)_30%,var(--border))] bg-warning/10 px-3 py-2 text-[0.76rem] text-warning"
-    >
-      <ng-icon name="lucideTriangleAlert" size="16" />
-      <span>{{ message }}</span>
-    </div>
-  }
-
-  @if (conflictCount() > 0) {
-    <div
-      class="flex min-h-10 items-center gap-2 border-b border-[color-mix(in_oklch,var(--destructive)_34%,var(--border))] bg-destructive/10 px-3 py-2 text-[0.76rem] text-destructive"
-    >
-      <ng-icon name="lucideGitMerge" size="16" />
-      <span class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-semibold">
-        {{ conflictCount() }} file{{ conflictCount() === 1 ? '' : 's' }} with merge conflicts
-        detected
-      </span>
-      <button
-        z-button
-        zType="outline"
-        zSize="sm"
-        type="button"
-        class="h-7 border-[color-mix(in_oklch,var(--destructive)_45%,var(--border))] bg-background px-2 text-[0.72rem] font-bold text-destructive hover:bg-destructive hover:text-destructive-foreground"
-        (click)="openMergeConflicts()"
+  @if (showConflictResolver()) {
+    <app-merge-conflicts-panel
+      [worktreePath]="worktreePath()"
+      (mentionSelection)="forwardMentionSelection($event)"
+      (summaryChange)="onConflictSummaryChange($event)"
+      class="min-h-0 flex-1"
+    />
+  } @else {
+    @if (error(); as message) {
+      <div
+        class="flex items-center gap-2 border-b border-[color-mix(in_oklch,var(--warning)_30%,var(--border))] bg-warning/10 px-3 py-2 text-[0.76rem] text-warning"
       >
-        Resolve
-      </button>
-    </div>
-  }
-
-  @if (summary(); as current) {
-    <div
-      class="flex min-h-8 items-center gap-3 overflow-x-auto whitespace-nowrap border-b border-border px-3 font-mono text-[0.68rem] text-muted-foreground"
-    >
-      <span>{{ formatCount(current.totals.files) }} files</span>
-      @if (largeChangeGuard(); as guard) {
-        <span class="inline-flex items-center gap-1 text-warning">
-          <ng-icon name="lucideTriangleAlert" size="12" />
-          diff loading paused
-        </span>
-      } @else {
-        <span class="text-success">+{{ formatCount(current.totals.additions) }}</span>
-        <span class="text-destructive">-{{ formatCount(current.totals.deletions) }}</span>
-      }
-      <span>refreshed {{ refreshAgeText(current) }}</span>
-      @if (prefetchText(windowLoadState()); as warmup) {
-        <span>{{ warmup }}</span>
-      }
-      <span>base {{ shortSha(current.mergeBaseSha || current.baseSha) }}</span>
-      <span>head {{ shortSha(current.headSha) }}</span>
-      @if (current.staleBase) {
-        <span class="inline-flex items-center gap-1 text-warning">
-          <ng-icon name="lucideTriangleAlert" size="12" />
-          base ref {{ staleText(current.originRefAgeSeconds) }}
-        </span>
-      }
-    </div>
-  }
-
-  <div class="grid min-h-0 flex-1 grid-cols-[minmax(15rem,28%)_minmax(0,1fr)]">
-    <aside class="flex min-h-0 min-w-0 flex-col border-r border-border">
-      <div class="flex items-center gap-2 border-b border-border p-2">
-        <ng-icon name="lucideSearch" size="14" />
-        <input
-          z-input
-          class="h-8 min-w-0 text-xs"
-          type="search"
-          placeholder="Search files"
-          [value]="search()"
-          (input)="setSearch($any($event.target).value)"
-        />
+        <ng-icon name="lucideTriangleAlert" size="16" />
+        <span>{{ message }}</span>
       </div>
+    }
 
-      <div class="flex gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
-        @for (filter of statusFilters(); track filter.value) {
-          <button
-            type="button"
-            class="inline-flex min-h-6 items-center gap-1 rounded px-2 text-[0.68rem] font-semibold text-muted-foreground transition-colors hover:text-foreground"
-            [class.bg-accent]="statusFilter() === filter.value"
-            [class.text-accent-foreground]="statusFilter() === filter.value"
-            (click)="setStatusFilter(filter.value)"
-          >
-            {{ filter.label }}
-            <span>{{ filter.count }}</span>
-          </button>
+    @if (conflictCount() > 0) {
+      <div
+        class="flex min-h-10 items-center gap-2 border-b border-[color-mix(in_oklch,var(--destructive)_34%,var(--border))] bg-destructive/10 px-3 py-2 text-[0.76rem] text-destructive"
+      >
+        <ng-icon name="lucideGitMerge" size="16" />
+        <span class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-semibold">
+          {{ conflictCount() }} file{{ conflictCount() === 1 ? '' : 's' }} with merge conflicts
+          detected
+        </span>
+        <button
+          z-button
+          zType="outline"
+          zSize="sm"
+          type="button"
+          class="h-7 border-[color-mix(in_oklch,var(--destructive)_45%,var(--border))] bg-background px-2 text-[0.72rem] font-bold text-destructive hover:bg-destructive hover:text-destructive-foreground"
+          (click)="openMergeConflicts()"
+        >
+          Resolve
+        </button>
+      </div>
+    }
+
+    @if (summary(); as current) {
+      <div
+        class="flex min-h-8 items-center gap-3 overflow-x-auto whitespace-nowrap border-b border-border px-3 font-mono text-[0.68rem] text-muted-foreground"
+      >
+        <span>{{ formatCount(current.totals.files) }} files</span>
+        @if (largeChangeGuard(); as guard) {
+          <span class="inline-flex items-center gap-1 text-warning">
+            <ng-icon name="lucideTriangleAlert" size="12" />
+            diff loading paused
+          </span>
+        } @else {
+          <span class="text-success">+{{ formatCount(current.totals.additions) }}</span>
+          <span class="text-destructive">-{{ formatCount(current.totals.deletions) }}</span>
+        }
+        <span>refreshed {{ refreshAgeText(current) }}</span>
+        @if (prefetchText(windowLoadState()); as warmup) {
+          <span>{{ warmup }}</span>
+        }
+        <span>base {{ shortSha(current.mergeBaseSha || current.baseSha) }}</span>
+        <span>head {{ shortSha(current.headSha) }}</span>
+        @if (current.staleBase) {
+          <span class="inline-flex items-center gap-1 text-warning">
+            <ng-icon name="lucideTriangleAlert" size="12" />
+            base ref {{ staleText(current.originRefAgeSeconds) }}
+          </span>
         }
       </div>
+    }
 
-      @if (loadingSummary()) {
-        <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-          <ng-icon name="lucideLoader" size="16" class="cr-spin" />
-          Loading summary
+    <div class="grid min-h-0 flex-1 grid-cols-[minmax(15rem,28%)_minmax(0,1fr)]">
+      <aside class="flex min-h-0 min-w-0 flex-col border-r border-border">
+        <div class="flex items-center gap-2 border-b border-border p-2">
+          <ng-icon name="lucideSearch" size="14" />
+          <input
+            z-input
+            class="h-8 min-w-0 text-xs"
+            type="search"
+            placeholder="Search files"
+            [value]="search()"
+            (input)="setSearch($any($event.target).value)"
+          />
         </div>
-      } @else if (largeChangeGuard(); as guard) {
-        <div class="flex flex-col gap-3 p-3 text-xs">
-          <div class="flex items-start gap-2 text-warning">
-            <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 shrink-0" />
-            <div class="min-w-0">
-              <div class="font-bold text-foreground">Large change set</div>
-              <div class="mt-0.5 text-muted-foreground">
-                {{ formatCount(guard.totalFiles) }} {{ guardedReasonText(guard) }}. File rows are
-                paused.
-              </div>
-            </div>
-          </div>
-          @if (guard.conflictedFiles > 0) {
+
+        <div class="flex gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
+          @for (filter of statusFilters(); track filter.value) {
             <button
-              z-button
-              zType="outline"
-              zSize="sm"
               type="button"
-              class="justify-start gap-2"
-              (click)="openMergeConflicts()"
+              class="inline-flex min-h-6 items-center gap-1 rounded px-2 text-[0.68rem] font-semibold text-muted-foreground transition-colors hover:text-foreground"
+              [class.bg-accent]="statusFilter() === filter.value"
+              [class.text-accent-foreground]="statusFilter() === filter.value"
+              (click)="setStatusFilter(filter.value)"
             >
-              <ng-icon name="lucideGitMerge" size="14" />
-              Resolve {{ formatCount(guard.conflictedFiles) }} conflict{{
-                guard.conflictedFiles === 1 ? '' : 's'
-              }}
+              {{ filter.label }}
+              <span>{{ filter.count }}</span>
             </button>
           }
         </div>
-      } @else if (filteredFiles().length === 0) {
-        <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-          <ng-icon name="lucideFileCode" size="18" />
-          <span>No files in this scope</span>
-        </div>
-      } @else {
-        <cdk-virtual-scroll-viewport #fileViewport itemSize="58" class="cr-file-viewport">
-          <button
-            *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
-            type="button"
-            class="grid h-[58px] w-full grid-cols-[1.35rem_1.45rem_minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-transparent px-2.5 text-left text-foreground transition-colors hover:bg-accent/70"
-            [ngClass]="{
-              'bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))] shadow-[inset_3px_0_0_var(--primary)]':
-                isSelectedFile(file),
-              'opacity-55': isFileViewed(file) && !isSelectedFile(file),
-            }"
-            (click)="scrollToFile(file)"
-            (mouseenter)="prefetchFile(file)"
-            (focus)="prefetchFile(file)"
-            [title]="file.path"
-          >
-            <span
-              class="flex size-4 items-center justify-center rounded border text-[0.6rem]"
-              [ngClass]="
-                isFileViewed(file)
-                  ? 'border-success bg-success text-success-foreground'
-                  : isSelectedFile(file)
-                    ? 'border-primary bg-background text-primary'
-                    : 'border-border bg-background text-transparent'
-              "
-              aria-hidden="true"
-            >
-              <ng-icon name="lucideCheck" size="11" />
-            </span>
-            <span class="cr-file-status" [ngClass]="statusClass(file.status)">{{
-              statusLabel(file.status)
-            }}</span>
-            <span class="flex min-w-0 flex-col">
-              <span
-                class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.78rem] font-semibold"
-                [class.line-through]="isFileViewed(file)"
-                [class.text-muted-foreground]="isFileViewed(file) && !isSelectedFile(file)"
-              >
-                {{ fileBasename(file.path) }}
-              </span>
-              <span
-                class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground"
-                [class.line-through]="isFileViewed(file)"
-              >
-                {{ fileDirname(file.path) }}
-              </span>
-            </span>
-            <span
-              class="inline-flex gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground"
-            >
-              @if (file.binary) {
-                <ng-icon name="lucideBinary" size="14" />
-              } @else {
-                <span class="text-success">+{{ file.additions }}</span>
-                <span class="text-destructive">-{{ file.deletions }}</span>
-              }
-            </span>
-          </button>
-        </cdk-virtual-scroll-viewport>
-      }
-    </aside>
 
-    <main class="flex min-h-0 min-w-0 flex-col">
-      @if (loadingSummary()) {
-        <div
-          class="flex h-full items-center justify-center gap-2 p-3 text-xs text-muted-foreground"
-        >
-          <ng-icon name="lucideLoader" size="18" class="cr-spin" />
-          Loading changes
-        </div>
-      } @else if (largeChangeGuard(); as guard) {
-        <div class="flex h-full items-center justify-center p-6">
-          <div class="flex max-w-xl flex-col gap-4">
-            <div class="flex items-start gap-3">
-              <span
-                class="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-[color-mix(in_oklch,var(--warning)_36%,var(--border))] bg-warning/10 text-warning"
-              >
-                <ng-icon name="lucideTriangleAlert" size="20" />
-              </span>
+        @if (loadingSummary()) {
+          <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+            <ng-icon name="lucideLoader" size="16" class="cr-spin" />
+            Loading summary
+          </div>
+        } @else if (largeChangeGuard(); as guard) {
+          <div class="flex flex-col gap-3 p-3 text-xs">
+            <div class="flex items-start gap-2 text-warning">
+              <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 shrink-0" />
               <div class="min-w-0">
-                <h2 class="text-sm font-bold text-foreground">Diff loading paused</h2>
-                <p class="mt-1 text-sm leading-6 text-muted-foreground">
-                  This scope has {{ formatCount(guard.totalFiles) }} {{ guardedReasonText(guard) }},
-                  which is above the {{ formatCount(guard.threshold) }} file default. Only summary
-                  counts were loaded to keep the backend responsive.
-                </p>
+                <div class="font-bold text-foreground">Large change set</div>
+                <div class="mt-0.5 text-muted-foreground">
+                  {{ formatCount(guard.totalFiles) }} {{ guardedReasonText(guard) }}. File rows are
+                  paused.
+                </div>
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-              <div class="rounded-md border border-border bg-muted/25 px-3 py-2">
-                <div class="font-mono text-sm font-bold text-foreground">
-                  {{ formatCount(guard.totalFiles) }}
-                </div>
-                <div class="text-muted-foreground">files</div>
-              </div>
-              <div class="rounded-md border border-border bg-muted/25 px-3 py-2">
-                <div class="font-mono text-sm font-bold text-foreground">
-                  {{ formatCount(guard.stagedFiles) }}
-                </div>
-                <div class="text-muted-foreground">staged</div>
-              </div>
-              <div class="rounded-md border border-border bg-muted/25 px-3 py-2">
-                <div class="font-mono text-sm font-bold text-foreground">
-                  {{ formatCount(guard.unstagedFiles) }}
-                </div>
-                <div class="text-muted-foreground">pending</div>
-              </div>
-              <div class="rounded-md border border-border bg-muted/25 px-3 py-2">
-                <div class="font-mono text-sm font-bold text-foreground">
-                  {{ formatCount(guard.conflictedFiles) }}
-                </div>
-                <div class="text-muted-foreground">conflicts</div>
-              </div>
-            </div>
-            <div class="flex flex-wrap gap-2">
+            @if (guard.conflictedFiles > 0) {
               <button
                 z-button
-                zType="default"
+                zType="outline"
                 zSize="sm"
                 type="button"
-                class="gap-2"
-                [zDisabled]="loadingSummary()"
-                (click)="loadLargeChangeSet()"
+                class="justify-start gap-2"
+                (click)="openMergeConflicts()"
               >
-                <ng-icon name="lucideFileCode" size="15" />
-                Load all diffs
+                <ng-icon name="lucideGitMerge" size="14" />
+                Resolve {{ formatCount(guard.conflictedFiles) }} conflict{{
+                  guard.conflictedFiles === 1 ? '' : 's'
+                }}
               </button>
-              @if (guard.conflictedFiles > 0) {
-                <button
-                  z-button
-                  zType="outline"
-                  zSize="sm"
-                  type="button"
-                  class="gap-2"
-                  (click)="openMergeConflicts()"
-                >
-                  <ng-icon name="lucideGitMerge" size="15" />
-                  Resolve conflicts
-                </button>
-              }
-            </div>
-            <p class="text-xs text-warning">
-              Loading every file can make the diff panel and backend lag until the requests finish.
-            </p>
+            }
           </div>
-        </div>
-      } @else if (filteredFiles().length === 0) {
-        <div
-          class="flex h-full items-center justify-center gap-2 p-3 text-xs text-muted-foreground"
-        >
-          <ng-icon name="lucideFileCode" size="24" />
-          <span>No files in this scope</span>
-        </div>
-      } @else {
-        <div
-          #diffScroll
-          class="cr-diff-viewport"
-          (scroll)="onDiffScroll()"
-          (mouseup)="captureDiffSelection()"
-          (keyup)="captureDiffSelection()"
-        >
-          @for (file of activeFileHeader(); track file.path) {
-            <div
-              class="cr-file-header-row cr-file-header-row--main cr-file-header-row--sticky"
-              [style.transform]="headerTranslateX()"
-              [style.width.px]="diffViewportWidthPx()"
+        } @else if (filteredFiles().length === 0) {
+          <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+            <ng-icon name="lucideFileCode" size="18" />
+            <span>No files in this scope</span>
+          </div>
+        } @else {
+          <cdk-virtual-scroll-viewport #fileViewport itemSize="58" class="cr-file-viewport">
+            <button
+              *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
+              type="button"
+              class="grid h-[58px] w-full grid-cols-[1.35rem_1.45rem_minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-transparent px-2.5 text-left text-foreground transition-colors hover:bg-accent/70"
+              [ngClass]="{
+                'bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))] shadow-[inset_3px_0_0_var(--primary)]':
+                  isSelectedFile(file),
+                'opacity-55': isFileViewed(file) && !isSelectedFile(file),
+              }"
+              (click)="scrollToFile(file)"
+              (mouseenter)="prefetchFile(file)"
+              (focus)="prefetchFile(file)"
+              [title]="file.path"
             >
-              <button
-                type="button"
-                class="cr-collapse-button"
-                [attr.aria-label]="
-                  isFileCollapsed(file) ? 'Expand ' + file.path : 'Collapse ' + file.path
+              <span
+                class="flex size-4 items-center justify-center rounded border text-[0.6rem]"
+                [ngClass]="
+                  isFileViewed(file)
+                    ? 'border-success bg-success text-success-foreground'
+                    : isSelectedFile(file)
+                      ? 'border-primary bg-background text-primary'
+                      : 'border-border bg-background text-transparent'
                 "
-                [title]="isFileCollapsed(file) ? 'Expand file' : 'Collapse file'"
-                (click)="toggleFileCollapsed(file)"
+                aria-hidden="true"
               >
-                <ng-icon
-                  [name]="isFileCollapsed(file) ? 'lucideChevronRight' : 'lucideChevronDown'"
-                  size="14"
-                />
-              </button>
+                <ng-icon name="lucideCheck" size="11" />
+              </span>
               <span class="cr-file-status" [ngClass]="statusClass(file.status)">{{
                 statusLabel(file.status)
               }}</span>
-              <span class="cr-path" [title]="file.path">
-                @if (fileDirname(file.path); as dirname) {
-                  <span class="cr-path__dir">{{ dirname }}</span>
-                  <span class="cr-path__slash" aria-hidden="true">/</span>
-                }
-                <strong class="cr-path__name">{{ fileBasename(file.path) }}</strong>
+              <span class="flex min-w-0 flex-col">
+                <span
+                  class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.78rem] font-semibold"
+                  [class.line-through]="isFileViewed(file)"
+                  [class.text-muted-foreground]="isFileViewed(file) && !isSelectedFile(file)"
+                >
+                  {{ fileBasename(file.path) }}
+                </span>
+                <span
+                  class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground"
+                  [class.line-through]="isFileViewed(file)"
+                >
+                  {{ fileDirname(file.path) }}
+                </span>
               </span>
               <span
-                class="ml-auto inline-flex shrink-0 gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground"
+                class="inline-flex gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground"
               >
                 @if (file.binary) {
                   <ng-icon name="lucideBinary" size="14" />
@@ -406,214 +301,363 @@
                   <span class="text-destructive">-{{ file.deletions }}</span>
                 }
               </span>
-              <label
-                class="cr-viewed-control"
-                [class.cr-viewed-control--checked]="isFileViewed(file)"
-                [class.cr-viewed-control--disabled]="isFileFingerprintLoading(file)"
-              >
-                <input
-                  type="checkbox"
-                  class="size-3.5 accent-[var(--success)]"
-                  [checked]="isFileViewed(file)"
-                  [disabled]="isFileFingerprintLoading(file)"
-                  (change)="toggleFileViewed(file)"
-                />
-                Viewed
-              </label>
-            </div>
-          }
-          <div class="cr-diff-spacer" [style.height.px]="totalHeightPx()"></div>
+            </button>
+          </cdk-virtual-scroll-viewport>
+        }
+      </aside>
+
+      <main class="flex min-h-0 min-w-0 flex-col">
+        @if (loadingSummary()) {
           <div
-            class="cr-diff-rendered"
-            [style.transform]="'translateY(' + renderedOffsetPx() + 'px)'"
+            class="flex h-full items-center justify-center gap-2 p-3 text-xs text-muted-foreground"
           >
-            @for (renderRow of visibleRows(); track renderRowTrack($index, renderRow)) {
-              @if (renderRow.kind === 'fileHeader') {
-                <div
-                  class="cr-file-header-row cr-file-header-row--main"
-                  [style.transform]="headerTranslateX()"
-                  [style.width.px]="diffViewportWidthPx()"
+            <ng-icon name="lucideLoader" size="18" class="cr-spin" />
+            Loading changes
+          </div>
+        } @else if (largeChangeGuard(); as guard) {
+          <div class="flex h-full items-center justify-center p-6">
+            <div class="flex max-w-xl flex-col gap-4">
+              <div class="flex items-start gap-3">
+                <span
+                  class="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-[color-mix(in_oklch,var(--warning)_36%,var(--border))] bg-warning/10 text-warning"
                 >
-                  <button
-                    type="button"
-                    class="cr-collapse-button"
-                    [attr.aria-label]="
-                      isFileCollapsed(renderRow.file)
-                        ? 'Expand ' + renderRow.file.path
-                        : 'Collapse ' + renderRow.file.path
-                    "
-                    [title]="isFileCollapsed(renderRow.file) ? 'Expand file' : 'Collapse file'"
-                    (click)="toggleFileCollapsed(renderRow.file)"
-                  >
-                    <ng-icon
-                      [name]="
-                        isFileCollapsed(renderRow.file) ? 'lucideChevronRight' : 'lucideChevronDown'
-                      "
-                      size="14"
-                    />
-                  </button>
-                  <span class="cr-file-status" [ngClass]="statusClass(renderRow.file.status)">{{
-                    statusLabel(renderRow.file.status)
-                  }}</span>
-                  <span class="cr-path" [title]="renderRow.file.path">
-                    @if (fileDirname(renderRow.file.path); as dirname) {
-                      <span class="cr-path__dir">{{ dirname }}</span>
-                      <span class="cr-path__slash" aria-hidden="true">/</span>
-                    }
-                    <strong class="cr-path__name">{{ fileBasename(renderRow.file.path) }}</strong>
-                  </span>
-                  <span
-                    class="ml-auto inline-flex shrink-0 gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground"
-                  >
-                    @if (renderRow.file.binary) {
-                      <ng-icon name="lucideBinary" size="14" />
-                    } @else {
-                      <span class="text-success">+{{ renderRow.file.additions }}</span>
-                      <span class="text-destructive">-{{ renderRow.file.deletions }}</span>
-                    }
-                  </span>
-                  <label
-                    class="cr-viewed-control"
-                    [class.cr-viewed-control--checked]="isFileViewed(renderRow.file)"
-                    [class.cr-viewed-control--disabled]="isFileFingerprintLoading(renderRow.file)"
-                  >
-                    <input
-                      type="checkbox"
-                      class="size-3.5 accent-[var(--success)]"
-                      [checked]="isFileViewed(renderRow.file)"
-                      [disabled]="isFileFingerprintLoading(renderRow.file)"
-                      (change)="toggleFileViewed(renderRow.file)"
-                    />
-                    Viewed
-                  </label>
+                  <ng-icon name="lucideTriangleAlert" size="20" />
+                </span>
+                <div class="min-w-0">
+                  <h2 class="text-sm font-bold text-foreground">Diff loading paused</h2>
+                  <p class="mt-1 text-sm leading-6 text-muted-foreground">
+                    This scope has {{ formatCount(guard.totalFiles) }}
+                    {{ guardedReasonText(guard) }}, which is above the
+                    {{ formatCount(guard.threshold) }} file default. Only summary counts were loaded
+                    to keep the backend responsive.
+                  </p>
                 </div>
-              } @else if (renderRow.kind === 'fileMeta') {
-                <div
-                  class="cr-file-header-row cr-file-header-row--meta"
-                  [style.transform]="headerTranslateX()"
-                  [style.width.px]="diffViewportWidthPx()"
-                >
-                  <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{{
-                    fileMetaText(renderRow)
-                  }}</span>
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                <div class="rounded-md border border-border bg-muted/25 px-3 py-2">
+                  <div class="font-mono text-sm font-bold text-foreground">
+                    {{ formatCount(guard.totalFiles) }}
+                  </div>
+                  <div class="text-muted-foreground">files</div>
                 </div>
-              } @else if (renderRow.kind === 'largeDiffGate') {
-                <div
-                  class="cr-large-diff-gate"
-                  [style.transform]="headerTranslateX()"
-                  [style.width.px]="diffViewportWidthPx()"
+                <div class="rounded-md border border-border bg-muted/25 px-3 py-2">
+                  <div class="font-mono text-sm font-bold text-foreground">
+                    {{ formatCount(guard.stagedFiles) }}
+                  </div>
+                  <div class="text-muted-foreground">staged</div>
+                </div>
+                <div class="rounded-md border border-border bg-muted/25 px-3 py-2">
+                  <div class="font-mono text-sm font-bold text-foreground">
+                    {{ formatCount(guard.unstagedFiles) }}
+                  </div>
+                  <div class="text-muted-foreground">pending</div>
+                </div>
+                <div class="rounded-md border border-border bg-muted/25 px-3 py-2">
+                  <div class="font-mono text-sm font-bold text-foreground">
+                    {{ formatCount(guard.conflictedFiles) }}
+                  </div>
+                  <div class="text-muted-foreground">conflicts</div>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  z-button
+                  zType="default"
+                  zSize="sm"
+                  type="button"
+                  class="gap-2"
+                  [zDisabled]="loadingSummary()"
+                  (click)="loadLargeChangeSet()"
                 >
-                  <span class="cr-large-diff-gate__icon">
-                    <ng-icon name="lucideTriangleAlert" size="13" />
-                  </span>
-                  <span class="cr-large-diff-gate__text">
-                    <strong>Large diff hidden by default.</strong>
-                    <span>{{ largeFileDiffText(renderRow.file) }}.</span>
-                  </span>
+                  <ng-icon name="lucideFileCode" size="15" />
+                  Load all diffs
+                </button>
+                @if (guard.conflictedFiles > 0) {
                   <button
                     z-button
-                    zType="ghost"
+                    zType="outline"
                     zSize="sm"
                     type="button"
-                    class="cr-large-diff-gate__button"
-                    (click)="loadLargeFileDiff(renderRow.file)"
+                    class="gap-2"
+                    (click)="openMergeConflicts()"
                   >
-                    <ng-icon name="lucideFileCode" size="13" />
-                    Load diff
+                    <ng-icon name="lucideGitMerge" size="15" />
+                    Resolve conflicts
                   </button>
-                </div>
-              } @else {
-                <div
-                  class="cr-diff-row"
-                  [attr.data-cr-row-id]="renderRow.id"
-                  [class.cr-diff-row--add]="renderRow.row?.type === 'add'"
-                  [class.cr-diff-row--delete]="renderRow.row?.type === 'delete'"
-                  [class.cr-diff-row--change]="renderRow.row?.type === 'change'"
-                  [class.cr-diff-row--hunk]="renderRow.row?.type === 'hunk'"
-                  [class.cr-diff-row--expand]="renderRow.row?.type === 'expand'"
-                  [class.cr-diff-row--meta]="renderRow.row?.type === 'meta'"
-                  [class.cr-diff-row--loading]="!renderRow.row"
-                  [class.cr-diff-row--mentioned]="isMentionedDiffRow(renderRow)"
+                }
+              </div>
+              <p class="text-xs text-warning">
+                Loading every file can make the diff panel and backend lag until the requests
+                finish.
+              </p>
+            </div>
+          </div>
+        } @else if (filteredFiles().length === 0) {
+          <div
+            class="flex h-full items-center justify-center gap-2 p-3 text-xs text-muted-foreground"
+          >
+            <ng-icon name="lucideFileCode" size="24" />
+            <span>No files in this scope</span>
+          </div>
+        } @else {
+          <div
+            #diffScroll
+            class="cr-diff-viewport"
+            (scroll)="onDiffScroll()"
+            (mouseup)="captureDiffSelection()"
+            (keyup)="captureDiffSelection()"
+          >
+            @for (file of activeFileHeader(); track file.path) {
+              <div
+                class="cr-file-header-row cr-file-header-row--main cr-file-header-row--sticky"
+                [style.transform]="headerTranslateX()"
+                [style.width.px]="diffViewportWidthPx()"
+              >
+                <button
+                  type="button"
+                  class="cr-collapse-button"
+                  [attr.aria-label]="
+                    isFileCollapsed(file) ? 'Expand ' + file.path : 'Collapse ' + file.path
+                  "
+                  [title]="isFileCollapsed(file) ? 'Expand file' : 'Collapse file'"
+                  (click)="toggleFileCollapsed(file)"
                 >
-                  @if (renderRow.row; as row) {
-                    <span class="cr-line cr-line--old">{{ row.oldLine ?? '' }}</span>
-                    <span class="cr-line cr-line--new">{{ row.newLine ?? '' }}</span>
-                    <span class="cr-marker">
-                      @if (row.type === 'add') {
-                        +
-                      } @else if (row.type === 'delete') {
-                        -
-                      } @else if (row.type === 'change') {
-                        ~
+                  <ng-icon
+                    [name]="isFileCollapsed(file) ? 'lucideChevronRight' : 'lucideChevronDown'"
+                    size="14"
+                  />
+                </button>
+                <span class="cr-file-status" [ngClass]="statusClass(file.status)">{{
+                  statusLabel(file.status)
+                }}</span>
+                <span class="cr-path" [title]="file.path">
+                  @if (fileDirname(file.path); as dirname) {
+                    <span class="cr-path__dir">{{ dirname }}</span>
+                    <span class="cr-path__slash" aria-hidden="true">/</span>
+                  }
+                  <strong class="cr-path__name">{{ fileBasename(file.path) }}</strong>
+                </span>
+                <span
+                  class="ml-auto inline-flex shrink-0 gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground"
+                >
+                  @if (file.binary) {
+                    <ng-icon name="lucideBinary" size="14" />
+                  } @else {
+                    <span class="text-success">+{{ file.additions }}</span>
+                    <span class="text-destructive">-{{ file.deletions }}</span>
+                  }
+                </span>
+                <label
+                  class="cr-viewed-control"
+                  [class.cr-viewed-control--checked]="isFileViewed(file)"
+                  [class.cr-viewed-control--disabled]="isFileFingerprintLoading(file)"
+                >
+                  <input
+                    type="checkbox"
+                    class="size-3.5 accent-[var(--success)]"
+                    [checked]="isFileViewed(file)"
+                    [disabled]="isFileFingerprintLoading(file)"
+                    (change)="toggleFileViewed(file)"
+                  />
+                  Viewed
+                </label>
+              </div>
+            }
+            <div class="cr-diff-spacer" [style.height.px]="totalHeightPx()"></div>
+            <div
+              class="cr-diff-rendered"
+              [style.transform]="'translateY(' + renderedOffsetPx() + 'px)'"
+            >
+              @for (renderRow of visibleRows(); track renderRowTrack($index, renderRow)) {
+                @if (renderRow.kind === 'fileHeader') {
+                  <div
+                    class="cr-file-header-row cr-file-header-row--main"
+                    [style.transform]="headerTranslateX()"
+                    [style.width.px]="diffViewportWidthPx()"
+                  >
+                    <button
+                      type="button"
+                      class="cr-collapse-button"
+                      [attr.aria-label]="
+                        isFileCollapsed(renderRow.file)
+                          ? 'Expand ' + renderRow.file.path
+                          : 'Collapse ' + renderRow.file.path
+                      "
+                      [title]="isFileCollapsed(renderRow.file) ? 'Expand file' : 'Collapse file'"
+                      (click)="toggleFileCollapsed(renderRow.file)"
+                    >
+                      <ng-icon
+                        [name]="
+                          isFileCollapsed(renderRow.file)
+                            ? 'lucideChevronRight'
+                            : 'lucideChevronDown'
+                        "
+                        size="14"
+                      />
+                    </button>
+                    <span class="cr-file-status" [ngClass]="statusClass(renderRow.file.status)">{{
+                      statusLabel(renderRow.file.status)
+                    }}</span>
+                    <span class="cr-path" [title]="renderRow.file.path">
+                      @if (fileDirname(renderRow.file.path); as dirname) {
+                        <span class="cr-path__dir">{{ dirname }}</span>
+                        <span class="cr-path__slash" aria-hidden="true">/</span>
+                      }
+                      <strong class="cr-path__name">{{ fileBasename(renderRow.file.path) }}</strong>
+                    </span>
+                    <span
+                      class="ml-auto inline-flex shrink-0 gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground"
+                    >
+                      @if (renderRow.file.binary) {
+                        <ng-icon name="lucideBinary" size="14" />
                       } @else {
-                        &nbsp;
+                        <span class="text-success">+{{ renderRow.file.additions }}</span>
+                        <span class="text-destructive">-{{ renderRow.file.deletions }}</span>
                       }
                     </span>
-                    @if (row.type === 'expand') {
-                      <div class="cr-expand-row">
-                        @if (isContextRangeLoading(row)) {
-                          <ng-icon name="lucideLoader" size="13" class="cr-spin" />
-                          Loading context
-                        } @else {
-                          <span class="cr-expand-row__label">{{ row.content }}</span>
-                          <span class="cr-expand-row__actions">
-                            <button
-                              class="cr-expand-row__button"
-                              type="button"
-                              title="Load context from top"
-                              [attr.aria-label]="'Load context from top: ' + row.content"
-                              (click)="expandContext(renderRow, 'down')"
-                            >
-                              <ng-icon name="lucideChevronDown" size="12" />
-                              <span>Top</span>
-                            </button>
-                            <button
-                              class="cr-expand-row__button"
-                              type="button"
-                              title="Load context from bottom"
-                              [attr.aria-label]="'Load context from bottom: ' + row.content"
-                              (click)="expandContext(renderRow, 'up')"
-                            >
-                              <ng-icon name="lucideChevronUp" size="12" />
-                              <span>Bottom</span>
-                            </button>
-                          </span>
-                        }
-                      </div>
-                    } @else {
-                      <code class="cr-code" [innerHTML]="rowHtml(row)"></code>
-                    }
-                  } @else {
-                    <span class="cr-line cr-line--old"></span>
-                    <span class="cr-line cr-line--new"></span>
-                    <span class="cr-marker">&nbsp;</span>
-                    <span class="cr-code cr-code--loading">
-                      <ng-icon name="lucideLoader" size="12" class="cr-spin" />
-                      Loading diff rows
+                    <label
+                      class="cr-viewed-control"
+                      [class.cr-viewed-control--checked]="isFileViewed(renderRow.file)"
+                      [class.cr-viewed-control--disabled]="isFileFingerprintLoading(renderRow.file)"
+                    >
+                      <input
+                        type="checkbox"
+                        class="size-3.5 accent-[var(--success)]"
+                        [checked]="isFileViewed(renderRow.file)"
+                        [disabled]="isFileFingerprintLoading(renderRow.file)"
+                        (change)="toggleFileViewed(renderRow.file)"
+                      />
+                      Viewed
+                    </label>
+                  </div>
+                } @else if (renderRow.kind === 'fileMeta') {
+                  <div
+                    class="cr-file-header-row cr-file-header-row--meta"
+                    [style.transform]="headerTranslateX()"
+                    [style.width.px]="diffViewportWidthPx()"
+                  >
+                    <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{{
+                      fileMetaText(renderRow)
+                    }}</span>
+                  </div>
+                } @else if (renderRow.kind === 'largeDiffGate') {
+                  <div
+                    class="cr-large-diff-gate"
+                    [style.transform]="headerTranslateX()"
+                    [style.width.px]="diffViewportWidthPx()"
+                  >
+                    <span class="cr-large-diff-gate__icon">
+                      <ng-icon name="lucideTriangleAlert" size="13" />
                     </span>
-                  }
-                </div>
+                    <span class="cr-large-diff-gate__text">
+                      <strong>Large diff hidden by default.</strong>
+                      <span>{{ largeFileDiffText(renderRow.file) }}.</span>
+                    </span>
+                    <button
+                      z-button
+                      zType="ghost"
+                      zSize="sm"
+                      type="button"
+                      class="cr-large-diff-gate__button"
+                      (click)="loadLargeFileDiff(renderRow.file)"
+                    >
+                      <ng-icon name="lucideFileCode" size="13" />
+                      Load diff
+                    </button>
+                  </div>
+                } @else {
+                  <div
+                    class="cr-diff-row"
+                    [attr.data-cr-row-id]="renderRow.id"
+                    [class.cr-diff-row--add]="renderRow.row?.type === 'add'"
+                    [class.cr-diff-row--delete]="renderRow.row?.type === 'delete'"
+                    [class.cr-diff-row--change]="renderRow.row?.type === 'change'"
+                    [class.cr-diff-row--hunk]="renderRow.row?.type === 'hunk'"
+                    [class.cr-diff-row--expand]="renderRow.row?.type === 'expand'"
+                    [class.cr-diff-row--meta]="renderRow.row?.type === 'meta'"
+                    [class.cr-diff-row--loading]="!renderRow.row"
+                    [class.cr-diff-row--mentioned]="isMentionedDiffRow(renderRow)"
+                  >
+                    @if (renderRow.row; as row) {
+                      <span class="cr-line cr-line--old">{{ row.oldLine ?? '' }}</span>
+                      <span class="cr-line cr-line--new">{{ row.newLine ?? '' }}</span>
+                      <span class="cr-marker">
+                        @if (row.type === 'add') {
+                          +
+                        } @else if (row.type === 'delete') {
+                          -
+                        } @else if (row.type === 'change') {
+                          ~
+                        } @else {
+                          &nbsp;
+                        }
+                      </span>
+                      @if (row.type === 'expand') {
+                        <div class="cr-expand-row">
+                          @if (isContextRangeLoading(row)) {
+                            <ng-icon name="lucideLoader" size="13" class="cr-spin" />
+                            Loading context
+                          } @else {
+                            <span class="cr-expand-row__label">{{ row.content }}</span>
+                            <span class="cr-expand-row__actions">
+                              <button
+                                class="cr-expand-row__button"
+                                type="button"
+                                title="Load context from top"
+                                [attr.aria-label]="'Load context from top: ' + row.content"
+                                (click)="expandContext(renderRow, 'down')"
+                              >
+                                <ng-icon name="lucideChevronDown" size="12" />
+                                <span>Top</span>
+                              </button>
+                              <button
+                                class="cr-expand-row__button"
+                                type="button"
+                                title="Load context from bottom"
+                                [attr.aria-label]="'Load context from bottom: ' + row.content"
+                                (click)="expandContext(renderRow, 'up')"
+                              >
+                                <ng-icon name="lucideChevronUp" size="12" />
+                                <span>Bottom</span>
+                              </button>
+                            </span>
+                          }
+                        </div>
+                      } @else {
+                        <code class="cr-code" [innerHTML]="rowHtml(row)"></code>
+                      }
+                    } @else {
+                      <span class="cr-line cr-line--old"></span>
+                      <span class="cr-line cr-line--new"></span>
+                      <span class="cr-marker">&nbsp;</span>
+                      <span class="cr-code cr-code--loading">
+                        <ng-icon name="lucideLoader" size="12" class="cr-spin" />
+                        Loading diff rows
+                      </span>
+                    }
+                  </div>
+                }
               }
+            </div>
+            @if (selectionMentionAction(); as action) {
+              <button
+                type="button"
+                class="cr-mention-action"
+                [style.top.px]="action.top"
+                [style.left.px]="action.left"
+                (mousedown)="$event.preventDefault()"
+                (click)="mentionCurrentSelection()"
+              >
+                <ng-icon name="lucideMessageSquarePlus" size="14" />
+                <span>Mention in chat</span>
+                @if (action.mentions.length > 1) {
+                  <span class="cr-mention-action__count">{{ action.mentions.length }}</span>
+                }
+              </button>
             }
           </div>
-          @if (selectionMentionAction(); as action) {
-            <button
-              type="button"
-              class="cr-mention-action"
-              [style.top.px]="action.top"
-              [style.left.px]="action.left"
-              (mousedown)="$event.preventDefault()"
-              (click)="mentionCurrentSelection()"
-            >
-              <ng-icon name="lucideMessageSquarePlus" size="14" />
-              <span>Mention in chat</span>
-              @if (action.mentions.length > 1) {
-                <span class="cr-mention-action__count">{{ action.mentions.length }}</span>
-              }
-            </button>
-          }
-        </div>
-      }
-    </main>
-  </div>
+        }
+      </main>
+    </div>
+  }
 </section>

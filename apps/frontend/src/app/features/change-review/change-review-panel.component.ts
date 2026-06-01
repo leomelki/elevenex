@@ -53,6 +53,7 @@ import {
   DiffSelectionMention,
   DiffSelectionMentionContextRow,
 } from '@/shared/models/diff-selection-mention.model';
+import { GitStatusSummary } from '@/shared/models/git.model';
 import { ChangeReviewService } from '@/shared/services/change-review.service';
 import { GitService } from '@/shared/services/git.service';
 import { ZardButtonComponent } from '@/shared/components/button';
@@ -62,6 +63,7 @@ import {
   escapeHtml,
   inlineChangeHtml,
 } from '@/features/session/claude-workspace/util/code-highlight';
+import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
 import {
   ChangeReviewVirtualAnchor,
   ChangeReviewVirtualLayout,
@@ -175,7 +177,14 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-file-fingerprints-v1';
 @Component({
   selector: 'app-change-review-panel',
   standalone: true,
-  imports: [CommonModule, ScrollingModule, NgIcon, ZardButtonComponent, ZardInputDirective],
+  imports: [
+    CommonModule,
+    ScrollingModule,
+    NgIcon,
+    ZardButtonComponent,
+    ZardInputDirective,
+    MergeConflictsPanelComponent,
+  ],
   templateUrl: './change-review-panel.component.html',
   styleUrl: './change-review-panel.component.scss',
   host: { class: 'block h-full min-h-0 bg-background text-foreground' },
@@ -203,7 +212,6 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly worktreePath = input.required<string>();
   readonly highlightedMentions = input<readonly DiffSelectionMention[]>([]);
   readonly mentionSelection = output<DiffSelectionMention[]>();
-  readonly openConflicts = output<void>();
 
   private readonly changeReview = inject(ChangeReviewService);
   private readonly gitService = inject(GitService);
@@ -256,6 +264,8 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly collapsedPaths = signal<ReadonlySet<string>>(new Set());
   readonly windowLoadState = signal<WindowLoadState>({ running: false, total: 0 });
   readonly selectionMentionAction = signal<DiffSelectionMentionAction | null>(null);
+  readonly showConflictResolver = signal(false);
+  readonly conflictResolverSummary = signal<GitStatusSummary | null>(null);
   readonly diffScrollLeftPx = signal(0);
   readonly diffViewportWidthPx = signal<number | null>(null);
   readonly mentionedRowKeys = computed(() => {
@@ -281,14 +291,19 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly totalHeightPx = computed(() => this.layout().totalRows * ROW_HEIGHT_PX);
   readonly latestGitSummary = computed(() => this.gitService.latestSummary(this.worktreePath()));
   readonly conflictedFiles = computed(
-    () => this.latestGitSummary()?.files.filter((file) => file.status === 'conflicted') ?? [],
+    () =>
+      (this.conflictResolverSummary() ?? this.latestGitSummary())?.files.filter(
+        (file) => file.status === 'conflicted',
+      ) ?? [],
   );
   readonly largeChangeGuard = computed<ChangeReviewLoadGuard | null>(() => {
     const guard = this.summary()?.loadGuard;
     return guard?.blocked ? guard : null;
   });
-  readonly conflictCount = computed(
-    () => this.largeChangeGuard()?.conflictedFiles ?? this.conflictedFiles().length,
+  readonly conflictCount = computed(() =>
+    this.conflictResolverSummary()
+      ? this.conflictedFiles().length
+      : (this.largeChangeGuard()?.conflictedFiles ?? this.conflictedFiles().length),
   );
   readonly diffsOutdated = computed(() => {
     const summary = this.summary();
@@ -351,6 +366,14 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       const scope = this.scope();
       if (!worktreePath || !scope) return;
       untracked(() => this.activateScope(worktreePath, scope));
+    });
+
+    effect(() => {
+      this.worktreePath();
+      untracked(() => {
+        this.conflictResolverSummary.set(null);
+        this.showConflictResolver.set(false);
+      });
     });
   }
 
@@ -426,6 +449,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent): void {
+    if (this.showConflictResolver()) return;
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     if (!this.eventStartedInsidePanel(event) || this.isEditableTarget(event.target)) return;
     event.preventDefault();
@@ -489,8 +513,26 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   openMergeConflicts(): void {
     if (this.conflictCount() > 0) {
-      this.openConflicts.emit();
+      this.selectionMentionAction.set(null);
+      this.showConflictResolver.set(true);
     }
+  }
+
+  showDiffReview(): void {
+    if (!this.showConflictResolver()) return;
+    this.showConflictResolver.set(false);
+    this.scheduleResizeRefresh();
+  }
+
+  onConflictSummaryChange(summary: GitStatusSummary): void {
+    this.conflictResolverSummary.set(summary);
+    const remaining = summary.files.filter((file) => file.status === 'conflicted').length;
+    if (remaining > 0) return;
+
+    this.showConflictResolver.set(false);
+    this.changeReview.clearCache(this.worktreePath(), this.scope());
+    this.clearCurrentScopeSnapshot();
+    void this.loadForCurrentScope(false);
   }
 
   captureDiffSelection(): void {
@@ -549,6 +591,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
         ? 'Added diff selection to chat'
         : `Added ${action.mentions.length} diff selections to chat`,
     );
+  }
+
+  forwardMentionSelection(mentions: DiffSelectionMention[]): void {
+    this.mentionSelection.emit(mentions);
   }
 
   rowHtml(row: ChangeReviewRow): SafeHtml {

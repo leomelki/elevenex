@@ -372,16 +372,6 @@ describe('SessionContainer modal browser gating', () => {
     expect(element.querySelector('.browser-panel-placeholder')).toBeNull();
   });
 
-  it('opens the merge conflicts side panel mode', () => {
-    const fixture = TestBed.createComponent(SessionContainer);
-    fixture.detectChanges();
-
-    fixture.componentInstance.openConflictsPanel();
-
-    expect(fixture.componentInstance.sidePanelMode()).toBe('conflicts');
-    expect(fixture.componentInstance.showConflictsPanel()).toBe(true);
-  });
-
   it('opens the terminal transcript mirror by default and toggles it independently', () => {
     const fixture = TestBed.createComponent(SessionContainer);
     fixture.detectChanges();

@@ -97,6 +97,7 @@ interface PendingMention {
 export class MergeConflictsPanelComponent implements OnDestroy {
   readonly worktreePath = input.required<string>();
   readonly mentionSelection = output<DiffSelectionMention[]>();
+  readonly summaryChange = output<GitStatusSummary>();
 
   private readonly gitService = inject(GitService);
   private readonly filesService = inject(FilesService);
@@ -388,6 +389,7 @@ export class MergeConflictsPanelComponent implements OnDestroy {
           ? activePath
           : (conflictFiles[0]?.path ?? null);
       this.selectFile(nextActive);
+      this.summaryChange.emit(summary);
     } catch (error: any) {
       if (generation !== this.requestGeneration) return;
       const message = error?.error?.message || 'Could not load conflicted files.';

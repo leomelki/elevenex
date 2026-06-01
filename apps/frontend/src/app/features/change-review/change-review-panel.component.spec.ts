@@ -15,7 +15,9 @@ import {
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import { GitStatusSummary } from '@/shared/models/git.model';
 import { ChangeReviewService } from '@/shared/services/change-review.service';
+import { FilesService } from '@/shared/services/files.service';
 import { GitService } from '@/shared/services/git.service';
+import { MonacoEditorLoaderService } from '@/shared/services/monaco-editor-loader.service';
 import { ChangeReviewPanelComponent } from './change-review-panel.component';
 
 const flush = () => new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -276,6 +278,11 @@ describe('ChangeReviewPanelComponent', () => {
   let gitServiceMock: {
     latestSummary: ReturnType<typeof vi.fn>;
     getSummary: ReturnType<typeof vi.fn>;
+    stageFiles: ReturnType<typeof vi.fn>;
+  };
+  let filesServiceMock: {
+    readFile: ReturnType<typeof vi.fn>;
+    writeFile: ReturnType<typeof vi.fn>;
   };
   let resizeCallbacks: ResizeObserverCallback[];
   let resizeObservedTargets: Element[];
@@ -383,6 +390,11 @@ describe('ChangeReviewPanelComponent', () => {
     gitServiceMock = {
       latestSummary: vi.fn(() => latestGitSummary()),
       getSummary: vi.fn(() => of(latestGitSummary() ?? gitSummary())),
+      stageFiles: vi.fn(() => of(undefined)),
+    };
+    filesServiceMock = {
+      readFile: vi.fn(() => of({ content: '\0', language: 'plaintext' })),
+      writeFile: vi.fn(() => of({ success: true })),
     };
 
     await TestBed.configureTestingModule({
@@ -390,6 +402,11 @@ describe('ChangeReviewPanelComponent', () => {
       providers: [
         { provide: ChangeReviewService, useValue: serviceMock },
         { provide: GitService, useValue: gitServiceMock },
+        { provide: FilesService, useValue: filesServiceMock },
+        {
+          provide: MonacoEditorLoaderService,
+          useValue: { load: vi.fn(() => Promise.resolve(null)) },
+        },
       ],
     }).compileComponents();
 
@@ -764,7 +781,7 @@ describe('ChangeReviewPanelComponent', () => {
     expect(fixture.componentInstance.diffsOutdated()).toBe(true);
   });
 
-  it('shows a merge conflict banner and emits the resolver action only when conflicts exist', async () => {
+  it('shows the merge conflict resolver inside the diff panel', async () => {
     await flushSummary(summary([file('src/a.ts')]));
     fixture.detectChanges();
 
@@ -780,9 +797,6 @@ describe('ChangeReviewPanelComponent', () => {
     );
     fixture.detectChanges();
 
-    const emitted: true[] = [];
-    fixture.componentInstance.openConflicts.subscribe(() => emitted.push(true));
-
     element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).toContain('1 file with merge conflicts detected');
 
@@ -790,8 +804,13 @@ describe('ChangeReviewPanelComponent', () => {
       button.textContent?.includes('Resolve'),
     ) as HTMLButtonElement;
     resolveButton.click();
+    await flush();
+    fixture.detectChanges();
 
-    expect(emitted).toEqual([true]);
+    expect(fixture.componentInstance.showConflictResolver()).toBe(true);
+    expect(element.querySelector('app-merge-conflicts-panel')).toBeTruthy();
+    expect(element.textContent).toContain('Accept Current');
+    expect(element.querySelector('input[placeholder="Search conflicted files"]')).toBeTruthy();
   });
 
   it('pauses diff loading for guarded large change sets until explicitly loaded', async () => {

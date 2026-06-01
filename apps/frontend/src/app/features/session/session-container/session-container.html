@@ -142,13 +142,6 @@
                     [worktreePath]="worktreePath()!"
                     [highlightedMentions]="activePendingDiffMentions()"
                     (mentionSelection)="mentionDiffSelection($event)"
-                    (openConflicts)="openConflictsPanel()"
-                    class="h-full"
-                  />
-                } @else if (showConflictsPanel()) {
-                  <app-merge-conflicts-panel
-                    [worktreePath]="worktreePath()!"
-                    (mentionSelection)="mentionDiffSelection($event)"
                     class="h-full"
                   />
                 } @else if (showPlanAnnotatorPanel() && activePlanReview()) {

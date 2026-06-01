@@ -68,7 +68,6 @@ import { BrowserIsolationConfig } from '@/shared/models/browser-isolation.model'
 import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { toast } from 'ngx-sonner';
 import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
-import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
 import {
   ClaudeStatusService,
   type ClaudeActivityStatus,
@@ -102,7 +101,6 @@ type SidePanelMode =
   | 'files'
   | 'browser'
   | 'changes'
-  | 'conflicts'
   | 'plannotator'
   | 'planAnnotator';
 
@@ -128,7 +126,6 @@ type ClaudeSurfaceMode = 'workspace' | 'terminal';
     ActionsPanelComponent,
     UserTerminalPanelComponent,
     ChangeReviewPanelComponent,
-    MergeConflictsPanelComponent,
     TrackNativeModalDirective,
   ],
   templateUrl: './session-container.html',
@@ -227,7 +224,6 @@ export class SessionContainer implements OnInit, OnDestroy {
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
   showChangesPanel = computed(() => this.sidePanelMode() === 'changes');
-  showConflictsPanel = computed(() => this.sidePanelMode() === 'conflicts');
   showPlannotatorPanel = computed(
     () => this.sidePanelMode() === 'plannotator' && this.plannotatorAvailable(),
   );
@@ -363,7 +359,6 @@ export class SessionContainer implements OnInit, OnDestroy {
       const current = stored ? JSON.parse(stored) : {};
       const persistedMode =
         mode === 'changes' ||
-        mode === 'conflicts' ||
         mode === 'plannotator' ||
         mode === 'planAnnotator'
           ? 'none'
@@ -469,11 +464,6 @@ export class SessionContainer implements OnInit, OnDestroy {
     const nextMode = this.showChangesPanel() ? 'none' : 'changes';
     this.sidePanelMode.set(nextMode);
     this.saveSidePanelPreference(nextMode);
-  }
-
-  openConflictsPanel(): void {
-    this.sidePanelMode.set('conflicts');
-    this.saveSidePanelPreference('conflicts');
   }
 
   togglePlannotatorPanel(): void {
