@@ -29,7 +29,9 @@ import {
   lucideGitMerge,
   lucideGitPullRequest,
   lucideLoader,
+  lucideMaximize2,
   lucideMessageSquarePlus,
+  lucideMinimize2,
   lucideRefreshCw,
   lucideSearch,
   lucideTriangleAlert,
@@ -201,7 +203,9 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-file-fingerprints-v1';
       lucideGitMerge,
       lucideGitPullRequest,
       lucideLoader,
+      lucideMaximize2,
       lucideMessageSquarePlus,
+      lucideMinimize2,
       lucideRefreshCw,
       lucideSearch,
       lucideTriangleAlert,
@@ -266,6 +270,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly selectionMentionAction = signal<DiffSelectionMentionAction | null>(null);
   readonly showConflictResolver = signal(false);
   readonly conflictResolverSummary = signal<GitStatusSummary | null>(null);
+  readonly isFullscreen = signal(false);
   readonly diffScrollLeftPx = signal(0);
   readonly diffViewportWidthPx = signal<number | null>(null);
   readonly mentionedRowKeys = computed(() => {
@@ -449,11 +454,35 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && this.isFullscreen()) {
+      event.preventDefault();
+      this.exitFullscreen();
+      return;
+    }
+
     if (this.showConflictResolver()) return;
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     if (!this.eventStartedInsidePanel(event) || this.isEditableTarget(event.target)) return;
     event.preventDefault();
     this.scrollToAdjacentFile(event.key === 'ArrowDown' ? 1 : -1);
+  }
+
+  @HostListener('window:resize')
+  onWindowResize(): void {
+    if (this.isFullscreen()) {
+      this.scheduleResizeRefresh();
+    }
+  }
+
+  toggleFullscreen(): void {
+    this.isFullscreen.update((value) => !value);
+    this.scheduleResizeRefresh();
+  }
+
+  exitFullscreen(): void {
+    if (!this.isFullscreen()) return;
+    this.isFullscreen.set(false);
+    this.scheduleResizeRefresh();
   }
 
   onDiffScroll(): void {

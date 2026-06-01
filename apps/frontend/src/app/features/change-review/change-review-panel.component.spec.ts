@@ -503,6 +503,32 @@ describe('ChangeReviewPanelComponent', () => {
     expect(resizeDisconnectCount).toBe(1);
   });
 
+  it('can expand the diff review to the full app viewport and exit with Escape', async () => {
+    await flushSummary(summary([file('src/a.ts')]));
+    const element = fixture.nativeElement as HTMLElement;
+    const shell = element.querySelector('section') as HTMLElement;
+
+    const enterButton = element.querySelector<HTMLButtonElement>(
+      '[aria-label="Enter fullscreen diff review"]',
+    );
+    enterButton?.click();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.isFullscreen()).toBe(true);
+    expect(shell.classList.contains('fixed')).toBe(true);
+    expect(shell.classList.contains('inset-0')).toBe(true);
+    expect(shell.classList.contains('z-[100]')).toBe(true);
+    expect(
+      element.querySelector<HTMLButtonElement>('[aria-label="Exit fullscreen diff review"]'),
+    ).toBeTruthy();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.isFullscreen()).toBe(false);
+    expect(shell.classList.contains('fixed')).toBe(false);
+  });
+
   it('hides large file diffs by default and loads them only after confirmation', async () => {
     await flushSummary(summary([file('src/large.ts', 701, 0)]));
     fixture.detectChanges();

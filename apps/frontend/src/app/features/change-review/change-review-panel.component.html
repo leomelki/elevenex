@@ -1,4 +1,9 @@
-<section class="flex h-full min-h-0 flex-col bg-background text-foreground">
+<section
+  class="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground"
+  [class.fixed]="isFullscreen()"
+  [class.inset-0]="isFullscreen()"
+  [class.z-[100]]="isFullscreen()"
+>
   <header class="flex min-h-13 items-center gap-3 border-b border-border px-3 py-2">
     <div class="flex min-w-0 items-center gap-2">
       <ng-icon name="lucideGitPullRequest" size="16" />
@@ -106,6 +111,21 @@
           <ng-icon name="lucideRefreshCw" size="15" [class.cr-spin]="loadingSummary()" />
         </button>
       }
+      <button
+        z-button
+        zType="ghost"
+        zSize="sm"
+        class="w-8 p-0"
+        type="button"
+        [attr.aria-label]="
+          isFullscreen() ? 'Exit fullscreen diff review' : 'Enter fullscreen diff review'
+        "
+        [attr.aria-pressed]="isFullscreen()"
+        [title]="isFullscreen() ? 'Exit fullscreen' : 'Fullscreen'"
+        (click)="toggleFullscreen()"
+      >
+        <ng-icon [name]="isFullscreen() ? 'lucideMinimize2' : 'lucideMaximize2'" size="15" />
+      </button>
     </div>
   </header>
 
