@@ -24,7 +24,13 @@ const TARGETS = [
   { key: 'darwin-x64', platform: 'darwin', arch: 'x64', nodeArch: 'x64' },
   { key: 'darwin-arm64', platform: 'darwin', arch: 'arm64', nodeArch: 'arm64' },
 ];
-const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@openai/codex-sdk'];
+const NATIVE_RUNTIME_DEPENDENCIES = [
+  '@anthropic-ai/claude-agent-sdk',
+  '@openai/codex-sdk',
+  'better-sqlite3',
+  'node-pty',
+  'zod',
+];
 
 function ensureDir(targetPath) {
   mkdirSync(targetPath, { recursive: true });
@@ -86,13 +92,74 @@ function shouldBuildNativeDependenciesOnHost(target) {
   return target.platform === process.platform && target.arch === process.arch;
 }
 
+function resolveInstalledPackagePath(packageName, searchPaths = [backendRoot, repoRoot]) {
+  try {
+    const manifestPath = require.resolve(`${packageName}/package.json`, {
+      paths: searchPaths,
+    });
+
+    return path.dirname(manifestPath);
+  } catch (error) {
+    if (error?.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
+      throw error;
+    }
+  }
+
+  const entryPath = require.resolve(packageName, { paths: searchPaths });
+  let current = path.dirname(entryPath);
+  while (current !== path.dirname(current)) {
+    const manifestPath = path.join(current, 'package.json');
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      if (manifest.name === packageName) {
+        return current;
+      }
+    }
+
+    current = path.dirname(current);
+  }
+
+  throw new Error(`Could not locate package root for ${packageName}`);
+}
+
+function readInstalledPackageVersion(packageName) {
+  const packageRoot = resolveInstalledPackagePath(
+    packageName,
+    getRuntimeDependencySearchPaths(packageName),
+  );
+  const manifestPath = path.join(packageRoot, 'package.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+
+  if (!manifest.version) {
+    throw new Error(`Could not determine installed version for ${packageName}`);
+  }
+
+  return manifest.version;
+}
+
+function getRuntimeDependencySearchPaths(packageName) {
+  if (packageName === 'zod') {
+    return [
+      resolveInstalledPackagePath('@anthropic-ai/claude-agent-sdk'),
+      backendRoot,
+      repoRoot,
+    ];
+  }
+
+  return [backendRoot, repoRoot];
+}
+
+function getRuntimeDependencySpecifier(packageName) {
+  return backendPackageJson.dependencies[packageName] ?? readInstalledPackageVersion(packageName);
+}
+
 function buildRuntimePackageJson(target) {
   return {
     name: 'elevenex-remote-runtime',
     private: true,
     type: 'commonjs',
     dependencies: Object.fromEntries(
-      NATIVE_RUNTIME_DEPENDENCIES.map((name) => [name, backendPackageJson.dependencies[name]]),
+      NATIVE_RUNTIME_DEPENDENCIES.map((name) => [name, getRuntimeDependencySpecifier(name)]),
     ),
   };
 }

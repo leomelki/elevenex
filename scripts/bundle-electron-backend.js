@@ -7,6 +7,10 @@ const backendDistEntry = path.join(backendRoot, 'dist', 'src', 'main.js');
 const backendBundleRoot = path.join(backendRoot, 'bundle');
 const backendBundleEntry = path.join(backendBundleRoot, 'main.cjs');
 const EXTERNAL_MODULES = [
+  // The Claude SDK resolves its native CLI package from `import.meta.url`.
+  // Bundling it into this CommonJS file rewrites that metadata to undefined,
+  // causing createRequire(undefined) during embedded backend startup.
+  '@anthropic-ai/claude-agent-sdk',
   'better-sqlite3',
   'node-pty',
   '@nestjs/microservices',

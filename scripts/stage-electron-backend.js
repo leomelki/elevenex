@@ -14,7 +14,12 @@ const backendBundleRoot = path.join(backendRoot, 'bundle');
 const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const backendPackageJson = require(path.join(backendRoot, 'package.json'));
-const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty'];
+const NATIVE_RUNTIME_DEPENDENCIES = [
+  '@anthropic-ai/claude-agent-sdk',
+  'better-sqlite3',
+  'node-pty',
+  'zod',
+];
 const STAGE_COPY_PLANS = {
   'better-sqlite3': {
     files: ['package.json', 'binding.gyp', 'LICENSE'],
@@ -55,11 +60,33 @@ function copyDependencyTree(packageName, searchPaths) {
 }
 
 function resolveInstalledPackagePath(packageName, searchPaths = [backendRoot, repoRoot]) {
-  const manifestPath = require.resolve(`${packageName}/package.json`, {
-    paths: searchPaths,
-  });
+  try {
+    const manifestPath = require.resolve(`${packageName}/package.json`, {
+      paths: searchPaths,
+    });
 
-  return path.dirname(manifestPath);
+    return path.dirname(manifestPath);
+  } catch (error) {
+    if (error?.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
+      throw error;
+    }
+  }
+
+  const entryPath = require.resolve(packageName, { paths: searchPaths });
+  let current = path.dirname(entryPath);
+  while (current !== path.dirname(current)) {
+    const manifestPath = path.join(current, 'package.json');
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      if (manifest.name === packageName) {
+        return current;
+      }
+    }
+
+    current = path.dirname(current);
+  }
+
+  throw new Error(`Could not locate package root for ${packageName}`);
 }
 
 function copyRequiredPath(source, destination, options = {}) {
@@ -108,13 +135,18 @@ function stageExtensionRuntime(extensionDirName) {
 }
 
 function writeStagedBackendPackageJson() {
+  const dependencyVersions = Object.fromEntries(
+    NATIVE_RUNTIME_DEPENDENCIES.map((name) => [
+      name,
+      backendPackageJson.dependencies[name]
+        ?? readInstalledPackageVersion(name, getRuntimeDependencySearchPaths(name)),
+    ]),
+  );
   const stagedPackageJson = {
     name: 'elevenex-embedded-backend',
     private: true,
     type: 'commonjs',
-    dependencies: Object.fromEntries(
-      NATIVE_RUNTIME_DEPENDENCIES.map((name) => [name, backendPackageJson.dependencies[name]]),
-    ),
+    dependencies: dependencyVersions,
   };
 
   copyRequiredPath(
@@ -128,24 +160,64 @@ function writeStagedBackendPackageJson() {
   );
 }
 
-function stageNativePackageTree(packageName, seen = new Set(), searchPaths = [backendRoot, repoRoot]) {
+function readInstalledPackageVersion(packageName, searchPaths = [backendRoot, repoRoot]) {
+  const packageRoot = resolveInstalledPackagePath(packageName, searchPaths);
+  const manifestPath = path.join(packageRoot, 'package.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+
+  if (!manifest.version) {
+    throw new Error(`Could not determine installed version for ${packageName}`);
+  }
+
+  return manifest.version;
+}
+
+function getRuntimeDependencySearchPaths(packageName) {
+  if (packageName === 'zod') {
+    return [
+      resolveInstalledPackagePath('@anthropic-ai/claude-agent-sdk'),
+      backendRoot,
+      repoRoot,
+    ];
+  }
+
+  return [backendRoot, repoRoot];
+}
+
+function isMissingOptionalPackageError(error) {
+  return error?.code === 'MODULE_NOT_FOUND';
+}
+
+function stageNativePackageTree(packageName, seen = new Set(), searchPaths = [backendRoot, repoRoot], required = true) {
   if (seen.has(packageName)) {
     return;
   }
 
   seen.add(packageName);
-  copyDependencyTree(packageName, searchPaths);
+  let packageRoot;
+  try {
+    packageRoot = resolveInstalledPackagePath(packageName, searchPaths);
+    copyDependencyTree(packageName, searchPaths);
+  } catch (error) {
+    if (!required && isMissingOptionalPackageError(error)) {
+      return;
+    }
 
-  const packageRoot = resolveInstalledPackagePath(packageName, searchPaths);
+    throw error;
+  }
+
   const manifestPath = path.join(packageRoot, 'package.json');
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  const nestedDependencies = {
+  const requiredDependencies = {
     ...(manifest.dependencies || {}),
-    ...(manifest.optionalDependencies || {}),
+    ...(manifest.peerDependencies || {}),
   };
 
-  for (const dependencyName of Object.keys(nestedDependencies)) {
+  for (const dependencyName of Object.keys(requiredDependencies)) {
     stageNativePackageTree(dependencyName, seen, [packageRoot, backendRoot, repoRoot]);
+  }
+  for (const dependencyName of Object.keys(manifest.optionalDependencies || {})) {
+    stageNativePackageTree(dependencyName, seen, [packageRoot, backendRoot, repoRoot], false);
   }
 }
 
@@ -159,7 +231,11 @@ function main() {
   ensureDir(path.join(stageBackendRoot, 'node_modules'));
   const stagedNativePackages = new Set();
   for (const packageName of NATIVE_RUNTIME_DEPENDENCIES) {
-    stageNativePackageTree(packageName, stagedNativePackages);
+    stageNativePackageTree(
+      packageName,
+      stagedNativePackages,
+      getRuntimeDependencySearchPaths(packageName),
+    );
   }
   writeStagedBackendPackageJson();
   copyRequiredPath(path.join(repoRoot, 'apps', 'frontend', 'proxy.conf.json'), path.join(stageBackendRoot, 'proxy.conf.json'));
