@@ -4,28 +4,25 @@
 }
 
 .pm-doc {
-  display: flex;
-  flex-direction: column;
-  gap: 0.72rem;
   color: color-mix(in oklab, var(--foreground) 91%, var(--muted-foreground));
-  font-size: 0.95rem;
-  line-height: 1.72;
+  font-size: 0.94rem;
+  line-height: 1.7;
 }
 
 .pm-block {
   position: relative;
   scroll-margin: 5rem;
-  border-radius: 0.55rem;
+  border-radius: 0.35rem;
 }
 
 .pm-block--match {
-  outline: 2px solid color-mix(in oklab, var(--warning) 56%, transparent);
-  outline-offset: 0.2rem;
-  background: color-mix(in oklab, var(--warning) 9%, transparent);
+  outline: 2px solid color-mix(in oklab, var(--warning) 55%, transparent);
+  outline-offset: 0.16rem;
+  background: color-mix(in oklab, var(--warning) 8%, transparent);
 }
 
 .pm-heading {
-  margin: 0.85rem 0 0.15rem;
+  margin: 0;
 }
 
 .pm-heading h1,
@@ -36,99 +33,48 @@
 .pm-heading h6 {
   margin: 0;
   color: var(--foreground);
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
 .pm-heading--1 {
-  padding: 1rem 1.1rem 1.05rem;
-  border: 1px solid color-mix(in oklab, var(--primary) 28%, var(--border));
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in oklab, var(--primary) 13%, transparent),
-      color-mix(in oklab, var(--card) 88%, transparent)
-    ),
-    var(--card);
-  box-shadow: 0 20px 46px -36px color-mix(in oklab, var(--foreground) 56%, transparent);
+  margin: 0 0 1.2rem;
 }
 
 .pm-heading--1 h1 {
-  font-size: 1.95rem;
-  line-height: 1.08;
+  font-size: 1.75rem;
+  line-height: 1.12;
 }
 
 .pm-heading--2 {
-  display: grid;
-  grid-template-columns: 0.36rem minmax(0, 1fr);
-  gap: 0.7rem;
-  align-items: center;
-  padding: 0.78rem 0 0.62rem;
-  border-bottom: 1px solid color-mix(in oklab, var(--primary) 26%, var(--border));
-}
-
-.pm-heading--2::before {
-  content: '';
-  width: 0.36rem;
-  height: 2.05rem;
-  border-radius: 999px;
-  background: var(--primary);
-}
-
-.pm-heading--2 .pm-heading__kicker,
-.pm-heading--2 h2 {
-  grid-column: 2;
+  margin: 2rem 0 0.65rem;
 }
 
 .pm-heading--2 h2 {
-  font-size: 1.42rem;
-  line-height: 1.18;
+  font-size: 1.22rem;
+  line-height: 1.22;
 }
 
 .pm-heading--3 {
-  display: flex;
-  flex-direction: column;
-  gap: 0.18rem;
-  padding-top: 0.5rem;
+  margin: 1.45rem 0 0.45rem;
 }
 
 .pm-heading--3 h3 {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  font-size: 1.12rem;
-  line-height: 1.25;
-}
-
-.pm-heading--3 h3::before {
-  content: '';
-  width: 0.55rem;
-  height: 0.55rem;
-  border: 2px solid color-mix(in oklab, var(--primary) 58%, var(--border));
-  border-radius: 999px;
+  color: color-mix(in oklab, var(--foreground) 92%, var(--muted-foreground));
+  font-size: 1rem;
+  line-height: 1.3;
 }
 
 .pm-heading--minor {
-  padding-top: 0.35rem;
+  margin: 1rem 0 0.35rem;
 }
 
 .pm-heading--minor h4,
 .pm-heading--minor h5,
 .pm-heading--minor h6 {
-  font-size: 0.98rem;
-  line-height: 1.3;
-}
-
-.pm-heading__kicker {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-bottom: 0.22rem;
-  color: var(--muted-foreground);
-  font-size: 0.66rem;
-  font-weight: 800;
-  line-height: 1.2;
-  text-transform: uppercase;
+  color: color-mix(in oklab, var(--foreground) 88%, var(--muted-foreground));
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 
 .pm-paragraph,
@@ -138,37 +84,44 @@
 }
 
 .pm-paragraph {
-  padding: 0.16rem 0;
+  margin: 0.75rem 0;
 }
 
 .pm-list {
   display: flex;
   flex-direction: column;
-  gap: 0.32rem;
-  padding: 0.18rem 0;
+  gap: 0.38rem;
+  margin: 0.75rem 0;
 }
 
 .pm-list-item {
   display: grid;
-  grid-template-columns: 1.25rem minmax(0, 1fr);
-  gap: 0.55rem;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: 0.45rem;
   align-items: flex-start;
 }
 
 .pm-list-item__marker {
   display: inline-flex;
-  width: 1.25rem;
-  height: 1.65rem;
+  min-width: 1.5rem;
+  height: 1.58rem;
   align-items: center;
   justify-content: center;
-  color: color-mix(in oklab, var(--primary) 72%, var(--muted-foreground));
+  color: color-mix(in oklab, var(--muted-foreground) 82%, var(--foreground));
+  font-variant-numeric: tabular-nums;
 }
 
-.pm-list-item__marker span {
-  width: 0.36rem;
-  height: 0.36rem;
+.pm-list-item__bullet {
+  width: 0.32rem;
+  height: 0.32rem;
   border-radius: 999px;
   background: currentColor;
+}
+
+.pm-list-item__number {
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.2;
 }
 
 .pm-list-item--checked {
@@ -181,51 +134,42 @@
 }
 
 .pm-quote {
-  margin: 0.35rem 0;
-  padding: 0.78rem 0.95rem;
-  border: 1px solid color-mix(in oklab, var(--warning) 30%, var(--border));
-  border-left: 4px solid var(--warning);
-  background: color-mix(in oklab, var(--warning) 8%, var(--background));
+  margin: 1rem 0;
+  border-left: 2px solid color-mix(in oklab, var(--primary) 42%, var(--border));
+  color: var(--muted-foreground);
+  padding: 0.05rem 0 0.05rem 1rem;
 }
 
 .pm-code {
-  margin: 0.5rem 0;
+  margin: 1rem 0;
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--border) 88%, var(--foreground));
-  background: color-mix(in oklab, var(--surface-shade) 8%, var(--card));
-  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--surface-tint) 48%, transparent);
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 0.6rem;
+  background: color-mix(in oklab, var(--surface-shade) 7%, var(--card));
 }
 
 .pm-code figcaption {
   display: flex;
   align-items: center;
-  min-height: 1.85rem;
-  padding: 0 0.8rem;
-  border-bottom: 1px solid var(--border);
+  min-height: 1.75rem;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
   color: var(--muted-foreground);
-  font-size: 0.68rem;
-  font-weight: 800;
+  font-size: 0.66rem;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
-.pm-code__body {
-  overflow: auto;
-}
-
+.pm-code__body,
 .pm-table {
   overflow: auto;
 }
 
 .pm-rule {
   height: 1px;
-  margin: 1.1rem 0;
+  margin: 1.45rem 0;
   border: 0;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in oklab, var(--primary) 32%, var(--border)),
-    transparent
-  );
+  background: color-mix(in oklab, var(--border) 76%, transparent);
 }
 
 :host ::ng-deep .pm-inline p {
@@ -233,24 +177,31 @@
 }
 
 :host ::ng-deep .pm-inline p + p {
-  margin-top: 0.72rem;
+  margin-top: 0.75rem;
+}
+
+:host ::ng-deep .pm-inline ul,
+:host ::ng-deep .pm-inline ol {
+  margin: 0.55rem 0;
+  padding-left: 1.25rem;
+}
+
+:host ::ng-deep .pm-inline li {
+  margin: 0.2rem 0;
 }
 
 :host ::ng-deep .pm-inline strong {
   color: var(--foreground);
-  font-weight: 820;
+  font-weight: 700;
 }
 
 :host ::ng-deep .pm-inline em {
-  color: color-mix(in oklab, var(--foreground) 78%, var(--primary));
+  color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground));
 }
 
 :host ::ng-deep .pm-inline a {
-  border-radius: 0.28rem;
-  background: color-mix(in oklab, var(--primary) 8%, transparent);
   color: color-mix(in oklab, var(--primary) 82%, var(--foreground));
-  font-weight: 750;
-  padding: 0.02rem 0.18rem;
+  font-weight: 650;
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
@@ -258,25 +209,24 @@
 
 :host ::ng-deep .pm-inline code,
 :host ::ng-deep .pm-code :not(pre) > code {
-  border: 1px solid color-mix(in oklab, var(--primary) 26%, var(--border));
-  border-radius: 0.33rem;
-  background: color-mix(in oklab, var(--primary) 11%, var(--background));
-  color: color-mix(in oklab, var(--primary) 72%, var(--foreground));
+  border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  border-radius: 0.28rem;
+  background: color-mix(in oklab, var(--muted) 56%, transparent);
+  color: var(--foreground);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.84em;
-  font-weight: 750;
-  padding: 0.1rem 0.36rem;
+  font-size: 0.86em;
+  padding: 0.08rem 0.28rem;
 }
 
 :host ::ng-deep .pm-code pre {
   margin: 0;
-  padding: 0.95rem 1rem;
   overflow: auto;
   border: 0;
   background: transparent;
   color: var(--foreground);
-  font-size: 0.82rem;
-  line-height: 1.62;
+  font-size: 0.81rem;
+  line-height: 1.58;
+  padding: 0.9rem 1rem;
 }
 
 :host ::ng-deep .pm-code pre code {
@@ -285,46 +235,45 @@
   color: inherit;
   padding: 0;
   font-size: inherit;
-  font-weight: 500;
 }
 
 :host ::ng-deep .pm-table table {
   width: 100%;
   border-collapse: collapse;
-  margin: 0.35rem 0;
-  border: 1px solid var(--border);
-  border-radius: 0.55rem;
+  margin: 1rem 0;
   overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 0.55rem;
   font-size: 0.84rem;
 }
 
 :host ::ng-deep .pm-table th {
-  background: color-mix(in oklab, var(--primary) 8%, var(--card));
+  background: color-mix(in oklab, var(--muted) 58%, transparent);
   color: var(--foreground);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 :host ::ng-deep .pm-table th,
 :host ::ng-deep .pm-table td {
-  border: 1px solid var(--border);
-  padding: 0.48rem 0.62rem;
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  padding: 0.45rem 0.58rem;
   text-align: left;
 }
 
 .pm-doc ::selection {
-  background: color-mix(in oklab, var(--primary) 26%, transparent);
+  background: color-mix(in oklab, var(--primary) 24%, transparent);
 }
 
-@container (max-width: 42rem) {
-  .pm-heading--1 {
-    padding: 0.85rem 0.9rem;
+@container (max-width: 38rem) {
+  .pm-doc {
+    font-size: 0.9rem;
   }
 
   .pm-heading--1 h1 {
-    font-size: 1.48rem;
+    font-size: 1.42rem;
   }
 
   .pm-heading--2 h2 {
-    font-size: 1.18rem;
+    font-size: 1.08rem;
   }
 }

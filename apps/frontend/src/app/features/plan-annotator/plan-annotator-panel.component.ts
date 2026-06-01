@@ -15,7 +15,6 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
   lucideChevronRight,
-  lucideFileText,
   lucideMessageSquarePlus,
   lucidePanelRightClose,
   lucidePencil,
@@ -24,6 +23,8 @@ import {
   lucideTrash2,
   lucideX,
 } from '@ng-icons/lucide';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
 import { MarkdownPipe } from '../session/claude-workspace/pipes/markdown.pipe';
 import {
   formatPlanFeedbackMessage,
@@ -35,12 +36,6 @@ import { PlanAnnotatorComment, PlanFeedbackPayload, PlanReviewRequest } from './
 import { PlanChatPanelComponent } from './plan-chat-panel.component';
 import { PlanReviewRailMode } from './plan-annotator-state.service';
 
-interface PlanHeading {
-  id: string;
-  level: number;
-  text: string;
-}
-
 type DraftScope = 'selection' | 'document';
 
 @Component({
@@ -51,6 +46,8 @@ type DraftScope = 'selection' | 'document';
     FormsModule,
     MarkdownPipe,
     NgIcon,
+    ZardButtonComponent,
+    ZardInputDirective,
     PlanMarkdownBlocksComponent,
     PlanChatPanelComponent,
   ],
@@ -59,7 +56,6 @@ type DraftScope = 'selection' | 'document';
     provideIcons({
       lucideCheck,
       lucideChevronRight,
-      lucideFileText,
       lucideMessageSquarePlus,
       lucidePanelRightClose,
       lucidePencil,
@@ -103,7 +99,6 @@ export class PlanAnnotatorPanelComponent {
   readonly providerLabel = computed(() =>
     this.review()?.provider === 'codex' ? 'Codex' : 'Claude Code',
   );
-  readonly headings = computed(() => extractHeadings(this.review()?.planMarkdown ?? ''));
   readonly activeRailMode = computed<PlanReviewRailMode>(() => {
     const review = this.review();
     const mode = this.railMode();
@@ -328,32 +323,6 @@ function isPlanComment(value: unknown): value is PlanAnnotatorComment {
     typeof record['createdAt'] === 'string' &&
     typeof record['updatedAt'] === 'string'
   );
-}
-
-function extractHeadings(markdown: string): PlanHeading[] {
-  const seen = new Map<string, number>();
-  return markdown
-    .split('\n')
-    .map((line) => /^(#{1,4})\s+(.+?)\s*$/.exec(line))
-    .filter((match): match is RegExpExecArray => !!match)
-    .map((match) => {
-      const text = match[2].replace(/[#*_`[\]]/g, '').trim();
-      const base = slug(text) || 'section';
-      const count = seen.get(base) ?? 0;
-      seen.set(base, count + 1);
-      return {
-        id: count ? `${base}-${count + 1}` : base,
-        level: match[1].length,
-        text,
-      };
-    });
-}
-
-function slug(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
 }
 
 function compactWhitespace(value: string): string {

@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideCheckCircle2, lucideCircle, lucideHash, lucideListOrdered } from '@ng-icons/lucide';
+import { lucideCheckCircle2, lucideCircle } from '@ng-icons/lucide';
 import { MarkdownPipe } from '../session/claude-workspace/pipes/markdown.pipe';
 import {
   PlanMarkdownBlock,
@@ -18,8 +18,6 @@ import {
     provideIcons({
       lucideCheckCircle2,
       lucideCircle,
-      lucideHash,
-      lucideListOrdered,
     }),
   ],
   templateUrl: './plan-markdown-blocks.component.html',
@@ -40,6 +38,10 @@ export class PlanMarkdownBlocksComponent {
 
   groupIsList(group: PlanMarkdownBlock[]): boolean {
     return group.length > 0 && group.every((block) => block.type === 'list-item');
+  }
+
+  orderedMarker(block: PlanMarkdownBlock): string {
+    return `${block.orderedStart ?? 1}.`;
   }
 
   headingTag(level: number): 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' {

@@ -1,29 +1,50 @@
 @if (review(); as activeReview) {
   <section class="pa-panel" aria-label="Plan annotator">
-    <header class="pa-topbar">
-      <div class="pa-title">
-        <span class="pa-icon" aria-hidden="true">
-          <ng-icon name="lucideFileText" size="16" />
-        </span>
-        <div class="pa-title__copy">
-          <span class="pa-eyebrow">{{ providerLabel() }} plan review</span>
-          <h2>Review plan</h2>
+    <header class="pa-header">
+      <div class="pa-header__title">
+        <span class="pa-eyebrow">{{ providerLabel() }} plan review</span>
+        <h2>Plan</h2>
+        <div class="pa-header__meta">
+          <span>{{
+            activeReview.source === 'exit-plan-permission' ? 'Approval request' : 'Transcript plan'
+          }}</span>
+          @if (activeReview.planFilePath) {
+            <code [title]="activeReview.planFilePath">{{ activeReview.planFilePath }}</code>
+          }
+          @if (comments().length) {
+            <span>{{ comments().length }} comment{{ comments().length === 1 ? '' : 's' }}</span>
+          }
         </div>
       </div>
 
-      <div class="pa-actions">
+      <div class="pa-header__actions">
+        <label class="pa-search">
+          <ng-icon name="lucideSearch" size="13" aria-hidden="true" />
+          <input
+            z-input
+            zBorderless
+            type="search"
+            placeholder="Search"
+            [ngModel]="query()"
+            (ngModelChange)="query.set($event)"
+          />
+        </label>
         <button
+          z-button
+          zType="ghost"
+          zSize="sm"
           type="button"
-          class="pa-btn pa-btn--ghost"
           (click)="startDocumentComment()"
-          [disabled]="readonly()"
+          [zDisabled]="readonly()"
         >
           <ng-icon name="lucideMessageSquarePlus" size="14" />
-          Document comment
+          Comment
         </button>
         <button
+          z-button
+          zType="ghost"
+          zSize="icon-sm"
           type="button"
-          class="pa-icon-btn"
           title="Close review"
           aria-label="Close review"
           (click)="close.emit(activeReview)"
@@ -33,92 +54,37 @@
       </div>
     </header>
 
-    <div class="pa-meta">
-      <span>{{
-        activeReview.source === 'exit-plan-permission' ? 'Approval request' : 'Transcript plan'
-      }}</span>
-      @if (activeReview.planFilePath) {
-        <code [title]="activeReview.planFilePath">{{ activeReview.planFilePath }}</code>
-      }
-      @if (comments().length) {
-        <span>{{ comments().length }} pending comment{{ comments().length === 1 ? '' : 's' }}</span>
-      }
+    <div class="pa-progress" aria-hidden="true">
+      <span [style.width.%]="readingProgress()"></span>
     </div>
 
-    <div class="pa-layout">
-      <aside class="pa-outline" aria-label="Plan outline">
-        <label class="pa-search">
-          <ng-icon name="lucideSearch" size="13" aria-hidden="true" />
-          <input
-            type="search"
-            placeholder="Search plan"
-            [ngModel]="query()"
-            (ngModelChange)="query.set($event)"
-          />
-        </label>
+    <div class="pa-main">
+      <main #scrollRoot class="pa-reader bg-grid" (scroll)="onReaderScroll()">
+        <div class="pa-reader__inner">
+          @if (activeReview.before) {
+            <section
+              class="pa-preface cw-md"
+              [innerHTML]="activeReview.before | cwMarkdown"
+            ></section>
+          }
 
-        <div class="pa-progress" aria-hidden="true">
-          <span [style.width.%]="readingProgress()"></span>
+          <article
+            #planDocument
+            class="pa-doc"
+            [class.pa-doc--selection]="selectedQuote()"
+            (mouseup)="captureSelection()"
+            (keyup)="captureSelection()"
+          >
+            <app-plan-markdown-blocks [markdown]="activeReview.planMarkdown" [query]="query()" />
+          </article>
+
+          @if (activeReview.after) {
+            <section class="pa-preface cw-md" [innerHTML]="activeReview.after | cwMarkdown"></section>
+          }
         </div>
-
-        @if (headings().length) {
-          <nav class="pa-outline__list">
-            @for (heading of headings(); track heading.id) {
-              <button
-                type="button"
-                class="pa-outline__item"
-                [style.paddingLeft.rem]="0.55 + (heading.level - 1) * 0.55"
-                (click)="scrollToText(heading.text)"
-              >
-                {{ heading.text }}
-              </button>
-            }
-          </nav>
-        } @else {
-          <p class="pa-empty">No headings found.</p>
-        }
-      </aside>
-
-      <main #scrollRoot class="pa-reader" (scroll)="onReaderScroll()">
-        <div class="pa-reader-tools" aria-label="Plan navigation">
-          <label class="pa-search">
-            <ng-icon name="lucideSearch" size="13" aria-hidden="true" />
-            <input
-              type="search"
-              placeholder="Search plan"
-              [ngModel]="query()"
-              (ngModelChange)="query.set($event)"
-            />
-          </label>
-
-          <div class="pa-progress" aria-hidden="true">
-            <span [style.width.%]="readingProgress()"></span>
-          </div>
-        </div>
-
-        @if (activeReview.before) {
-          <section
-            class="pa-preface cw-md"
-            [innerHTML]="activeReview.before | cwMarkdown"
-          ></section>
-        }
-
-        <article
-          #planDocument
-          class="pa-doc"
-          [class.pa-doc--selection]="selectedQuote()"
-          (mouseup)="captureSelection()"
-          (keyup)="captureSelection()"
-        >
-          <app-plan-markdown-blocks [markdown]="activeReview.planMarkdown" [query]="query()" />
-        </article>
-
-        @if (activeReview.after) {
-          <section class="pa-preface cw-md" [innerHTML]="activeReview.after | cwMarkdown"></section>
-        }
       </main>
 
-      <aside class="pa-comments" aria-label="Plan rail">
+      <aside class="pa-rail" aria-label="Plan rail">
         <div class="pa-rail-tabs" role="tablist" aria-label="Plan rail mode">
           <button
             type="button"
@@ -128,7 +94,6 @@
             role="tab"
             (click)="selectRailMode('comments')"
           >
-            <ng-icon name="lucideMessageSquarePlus" size="13" />
             Comments
             @if (comments().length) {
               <span>{{ comments().length }}</span>
@@ -144,7 +109,6 @@
             role="tab"
             (click)="selectRailMode('ask')"
           >
-            <ng-icon name="lucideMessageSquarePlus" size="13" />
             Ask
           </button>
         </div>
@@ -152,24 +116,7 @@
         @if (activeRailMode() === 'ask') {
           <app-plan-chat-panel class="pa-chat-panel" [review]="activeReview" />
         } @else {
-          <div class="pa-comments__body">
-            <div class="pa-comments__head">
-              <div>
-                <span class="pa-eyebrow">Feedback</span>
-                <h3>Pending comments</h3>
-              </div>
-              @if (comments().length) {
-                <button
-                  type="button"
-                  class="pa-link-btn"
-                  (click)="clearComments()"
-                  [disabled]="readonly()"
-                >
-                  Clear all
-                </button>
-              }
-            </div>
-
+          <div class="pa-comments">
             @if (draftOpen()) {
               <form class="pa-draft" (submit)="$event.preventDefault(); saveDraft()">
                 <label for="pa-draft-note">{{
@@ -179,6 +126,7 @@
                   <blockquote>{{ draftQuote() }}</blockquote>
                 }
                 <textarea
+                  z-input
                   id="pa-draft-note"
                   rows="4"
                   placeholder="What should change?"
@@ -186,13 +134,14 @@
                   (ngModelChange)="draftNote.set($event)"
                 ></textarea>
                 <div class="pa-draft__actions">
-                  <button type="button" class="pa-btn pa-btn--ghost" (click)="cancelDraft()">
+                  <button z-button zType="ghost" zSize="sm" type="button" (click)="cancelDraft()">
                     Cancel
                   </button>
                   <button
+                    z-button
+                    zSize="sm"
                     type="submit"
-                    class="pa-btn pa-btn--primary"
-                    [disabled]="!draftNote().trim()"
+                    [zDisabled]="!draftNote().trim()"
                   >
                     Save
                   </button>
@@ -206,11 +155,26 @@
             }
 
             @if (comments().length) {
+              <div class="pa-comments__head">
+                <span class="pa-eyebrow">Annotations</span>
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="xs"
+                  type="button"
+                  (click)="clearComments()"
+                  [zDisabled]="readonly()"
+                >
+                  Clear
+                </button>
+              </div>
+
               <div class="pa-comment-list">
                 @for (comment of comments(); track comment.id; let index = $index) {
                   <article
                     class="pa-comment"
                     [class.pa-comment--active]="activeCommentId() === comment.id"
+                    [attr.data-annotation-id]="comment.id"
                   >
                     <button type="button" class="pa-comment__jump" (click)="jumpToComment(comment)">
                       <ng-icon name="lucideChevronRight" size="13" />
@@ -221,26 +185,31 @@
                     } @else {
                       <span class="pa-comment__scope">Document-wide</span>
                     }
+
                     @if (editingCommentId() === comment.id) {
                       <textarea
+                        z-input
                         rows="3"
                         [ngModel]="editingNote()"
                         (ngModelChange)="editingNote.set($event)"
                       ></textarea>
                       <div class="pa-comment__actions">
                         <button
+                          z-button
+                          zType="ghost"
+                          zSize="icon-xs"
                           type="button"
-                          class="pa-icon-btn"
                           title="Cancel edit"
                           (click)="cancelEditComment()"
                         >
                           <ng-icon name="lucideX" size="13" />
                         </button>
                         <button
+                          z-button
+                          zSize="icon-xs"
                           type="button"
-                          class="pa-icon-btn pa-icon-btn--primary"
                           title="Save edit"
-                          [disabled]="!editingNote().trim()"
+                          [zDisabled]="!editingNote().trim()"
                           (click)="saveEditComment(comment.id)"
                         >
                           <ng-icon name="lucideCheck" size="13" />
@@ -250,19 +219,23 @@
                       <p>{{ comment.note }}</p>
                       <div class="pa-comment__actions">
                         <button
+                          z-button
+                          zType="ghost"
+                          zSize="icon-xs"
                           type="button"
-                          class="pa-icon-btn"
                           title="Edit comment"
-                          [disabled]="readonly()"
+                          [zDisabled]="readonly()"
                           (click)="editComment(comment)"
                         >
                           <ng-icon name="lucidePencil" size="13" />
                         </button>
                         <button
+                          z-button
+                          zType="ghost"
+                          zSize="icon-xs"
                           type="button"
-                          class="pa-icon-btn"
                           title="Delete comment"
-                          [disabled]="readonly()"
+                          [zDisabled]="readonly()"
                           (click)="removeComment(comment.id)"
                         >
                           <ng-icon name="lucideTrash2" size="13" />
@@ -273,40 +246,50 @@
                 }
               </div>
             } @else if (!draftOpen()) {
-              <p class="pa-empty">Select text in the plan or add a document comment.</p>
+              <div class="pa-empty">
+                <span class="pa-empty__icon">
+                  <ng-icon name="lucideMessageSquarePlus" size="17" />
+                </span>
+                <p>Select text in the plan or add a document comment.</p>
+              </div>
             }
-
-            <footer class="pa-submit">
-              <button
-                type="button"
-                class="pa-btn pa-btn--ghost"
-                [disabled]="readonly()"
-                (click)="rejectReview(activeReview)"
-              >
-                <ng-icon name="lucideX" size="14" />
-                Reject
-              </button>
-              <button
-                type="button"
-                class="pa-btn pa-btn--secondary"
-                [disabled]="readonly() || !comments().length"
-                (click)="sendReviewFeedback(activeReview)"
-              >
-                <ng-icon name="lucideSend" size="14" />
-                Send feedback
-              </button>
-              <button
-                type="button"
-                class="pa-btn pa-btn--primary"
-                [disabled]="readonly()"
-                (click)="approveReview(activeReview)"
-              >
-                <ng-icon name="lucideCheck" size="14" />
-                Approve
-              </button>
-            </footer>
           </div>
         }
+
+        <footer class="pa-submit">
+          <button
+            z-button
+            zType="ghost"
+            zSize="sm"
+            type="button"
+            [zDisabled]="readonly()"
+            (click)="rejectReview(activeReview)"
+          >
+            <ng-icon name="lucideX" size="14" />
+            Reject
+          </button>
+          <button
+            z-button
+            zType="outline"
+            zSize="sm"
+            type="button"
+            [zDisabled]="readonly() || !comments().length"
+            (click)="sendReviewFeedback(activeReview)"
+          >
+            <ng-icon name="lucideSend" size="14" />
+            Feedback
+          </button>
+          <button
+            z-button
+            zSize="sm"
+            type="button"
+            [zDisabled]="readonly()"
+            (click)="approveReview(activeReview)"
+          >
+            <ng-icon name="lucideCheck" size="14" />
+            Approve
+          </button>
+        </footer>
       </aside>
     </div>
   </section>

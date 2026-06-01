@@ -18,9 +18,9 @@
               } @else if (block.checked === false) {
                 <ng-icon name="lucideCircle" size="16" />
               } @else if (block.ordered) {
-                <ng-icon name="lucideListOrdered" size="16" />
+                <span class="pm-list-item__number">{{ orderedMarker(block) }}</span>
               } @else {
-                <span></span>
+                <span class="pm-list-item__bullet"></span>
               }
             </span>
             <div class="pm-inline" [innerHTML]="block.content | cwMarkdown"></div>
@@ -43,10 +43,6 @@
             data-block-type="heading"
             [attr.data-line]="block.startLine"
           >
-            <span class="pm-heading__kicker">
-              <ng-icon name="lucideHash" size="13" />
-              Line {{ block.startLine }}
-            </span>
             <ng-container [ngSwitch]="headingTag(block.level)">
               <h1 *ngSwitchCase="'h1'">{{ block.content }}</h1>
               <h2 *ngSwitchCase="'h2'">{{ block.content }}</h2>

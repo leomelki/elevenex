@@ -18,14 +18,17 @@ export interface PlanMarkdownBlock {
   language?: string;
   checked?: boolean;
   ordered?: boolean;
+  orderedStart?: number;
 }
 
 export function parsePlanMarkdownBlocks(markdown: string): PlanMarkdownBlock[] {
-  const lines = stripFrontmatter(markdown).split('\n');
+  const { content, contentStartLine } = stripFrontmatter(markdown);
+  const lines = content.split('\n');
   const blocks: PlanMarkdownBlock[] = [];
   let index = 0;
   let buffer: string[] = [];
-  let bufferStartLine = 1;
+  let bufferStartLine = contentStartLine;
+  let pendingBlankLines = 0;
 
   const flushParagraph = () => {
     if (!buffer.length) return;
@@ -38,13 +41,16 @@ export function parsePlanMarkdownBlocks(markdown: string): PlanMarkdownBlock[] {
     buffer = [];
   };
 
+  const lastBlock = () => blocks[blocks.length - 1];
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
-    const lineNumber = i + 1;
+    const lineNumber = i + contentStartLine;
 
     if (!trimmed) {
       flushParagraph();
+      pendingBlankLines++;
       continue;
     }
 
@@ -73,6 +79,7 @@ export function parsePlanMarkdownBlocks(markdown: string): PlanMarkdownBlock[] {
           language,
         }),
       );
+      pendingBlankLines = 0;
       continue;
     }
 
@@ -86,12 +93,14 @@ export function parsePlanMarkdownBlocks(markdown: string): PlanMarkdownBlock[] {
           startLine: lineNumber,
         }),
       );
+      pendingBlankLines = 0;
       continue;
     }
 
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
       flushParagraph();
       blocks.push(createBlock(index++, 'hr', '', { raw: line, startLine: lineNumber }));
+      pendingBlankLines = 0;
       continue;
     }
 
@@ -99,7 +108,8 @@ export function parsePlanMarkdownBlocks(markdown: string): PlanMarkdownBlock[] {
     if (listItem) {
       flushParagraph();
       const level = Math.floor(listItem[1].replace(/\t/g, '  ').length / 2);
-      const ordered = /^\d+[.)]$/.test(listItem[2]);
+      const orderedMatch = /^(\d+)[.)]$/.exec(listItem[2]);
+      const ordered = !!orderedMatch;
       let content = listItem[3].trim();
       const checkbox = /^\[([ xX])\]\s+/.exec(content);
       let checked: boolean | undefined;
@@ -114,8 +124,10 @@ export function parsePlanMarkdownBlocks(markdown: string): PlanMarkdownBlock[] {
           startLine: lineNumber,
           checked,
           ordered,
+          orderedStart: orderedMatch ? Number.parseInt(orderedMatch[1], 10) : undefined,
         }),
       );
+      pendingBlankLines = 0;
       continue;
     }
 
@@ -134,6 +146,7 @@ export function parsePlanMarkdownBlocks(markdown: string): PlanMarkdownBlock[] {
           startLine: lineNumber,
         }),
       );
+      pendingBlankLines = 0;
       continue;
     }
 
@@ -150,6 +163,19 @@ export function parsePlanMarkdownBlocks(markdown: string): PlanMarkdownBlock[] {
           startLine: lineNumber,
         }),
       );
+      pendingBlankLines = 0;
+      continue;
+    }
+
+    const previous = lastBlock();
+    const leadingWhitespace = line.match(/^\s*/)?.[0] ?? '';
+    const indent = leadingWhitespace.replace(/\t/g, '  ').length;
+    if (previous?.type === 'list-item' && indent >= 2) {
+      const separator = pendingBlankLines > 0 ? '\n\n' : '\n';
+      const continuation = line.slice(leadingWhitespace.length);
+      previous.content = `${previous.content}${separator}${continuation}`;
+      previous.raw = `${previous.raw}${'\n'.repeat(Math.max(1, pendingBlankLines))}${line}`;
+      pendingBlankLines = 0;
       continue;
     }
 
@@ -157,6 +183,7 @@ export function parsePlanMarkdownBlocks(markdown: string): PlanMarkdownBlock[] {
       bufferStartLine = lineNumber;
     }
     buffer.push(line);
+    pendingBlankLines = 0;
   }
 
   flushParagraph();
@@ -203,15 +230,25 @@ function createBlock(
     language: options.language,
     checked: options.checked,
     ordered: options.ordered,
+    orderedStart: options.orderedStart,
   };
 }
 
-function stripFrontmatter(markdown: string): string {
+function stripFrontmatter(markdown: string): { content: string; contentStartLine: number } {
   const trimmed = markdown.trimStart();
-  if (!trimmed.startsWith('---')) return markdown;
+  if (!trimmed.startsWith('---')) return { content: markdown, contentStartLine: 1 };
   const endIndex = trimmed.indexOf('\n---', 3);
-  if (endIndex === -1) return markdown;
-  return trimmed.slice(endIndex + 4).trimStart();
+  if (endIndex === -1) return { content: markdown, contentStartLine: 1 };
+
+  const rawAfterFrontmatter = trimmed.slice(endIndex + 4);
+  const content = rawAfterFrontmatter.trimStart();
+  const leadingChars = markdown.length - trimmed.length;
+  const consumedInTrimmed =
+    endIndex + 4 + (rawAfterFrontmatter.length - content.length);
+  const consumedTotal = leadingChars + consumedInTrimmed;
+  const contentStartLine = (markdown.slice(0, consumedTotal).match(/\n/g) ?? []).length + 1;
+
+  return { content, contentStartLine };
 }
 
 function isTableLine(trimmed: string): boolean {
