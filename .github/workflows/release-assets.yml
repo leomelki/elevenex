@@ -16,7 +16,6 @@ on:
       - 'scripts/bundle-electron-backend.js'
       - 'scripts/rebuild-electron-backend-natives.js'
       - 'scripts/archive-electron-backend.js'
-      - 'package.json'
       - 'pnpm-lock.yaml'
       - '.github/workflows/release-assets.yml'
       - '.github/workflows/reusable-build-runtime.yml'
