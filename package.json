@@ -27,5 +27,13 @@
     "electron:package": "pnpm frontend:build && pnpm backend:bundle && pnpm electron:backend:prepare && pnpm source-maps:collect && pnpm --dir apps/electron package",
     "electron:stage-version": "node scripts/stage-version.js",
     "electron:package:mac": "pnpm frontend:build && pnpm source-maps:collect && pnpm electron:stage-version && pnpm --dir apps/electron package:mac"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "electron-winstaller",
+      "node-pty"
+    ]
   }
 }
