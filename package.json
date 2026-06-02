@@ -4,6 +4,7 @@
   "publisher": "elevenex",
   "author": "leomelki",
   "license": "CC-BY-NC-4.0",
+  "packageManager": "pnpm@8.15.4",
   "scripts": {
     "assets:icons": "node scripts/generate-icons.js",
     "postinstall": "node scripts/postinstall.js",
