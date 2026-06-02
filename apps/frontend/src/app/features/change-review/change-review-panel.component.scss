@@ -223,15 +223,49 @@
 }
 
 .cr-diff-row--add {
-  background: color-mix(in oklch, oklch(0.72 0.12 235) 18%, var(--background));
+  background: color-mix(in oklch, var(--success) 12%, var(--background));
 }
 
 .cr-diff-row--delete {
-  background: color-mix(in oklch, oklch(0.76 0.15 35) 24%, var(--background));
+  background: color-mix(in oklch, var(--destructive) 12%, var(--background));
 }
 
 .cr-diff-row--change {
-  background: color-mix(in oklch, var(--success) 8%, var(--background));
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--destructive) 10%, var(--background)) 0%,
+    color-mix(in oklch, var(--destructive) 6%, var(--background)) 48%,
+    color-mix(in oklch, var(--success) 6%, var(--background)) 52%,
+    color-mix(in oklch, var(--success) 10%, var(--background)) 100%
+  );
+}
+
+.cr-diff-row--add .cr-line--new,
+.cr-diff-row--add .cr-marker {
+  background: color-mix(in oklch, var(--success) 16%, var(--background));
+  color: color-mix(in oklch, var(--success) 88%, var(--foreground));
+}
+
+.cr-diff-row--delete .cr-line--old,
+.cr-diff-row--delete .cr-marker {
+  background: color-mix(in oklch, var(--destructive) 16%, var(--background));
+  color: color-mix(in oklch, var(--destructive) 88%, var(--foreground));
+}
+
+.cr-diff-row--change .cr-line--old {
+  background: color-mix(in oklch, var(--destructive) 14%, var(--background));
+  color: color-mix(in oklch, var(--destructive) 88%, var(--foreground));
+}
+
+.cr-diff-row--change .cr-line--new {
+  background: color-mix(in oklch, var(--success) 14%, var(--background));
+  color: color-mix(in oklch, var(--success) 88%, var(--foreground));
+}
+
+.cr-diff-row--change .cr-marker {
+  background: color-mix(in oklch, var(--warning) 16%, var(--background));
+  color: color-mix(in oklch, var(--warning) 82%, var(--foreground));
+  font-weight: 800;
 }
 
 .cr-diff-row--hunk,
@@ -261,18 +295,26 @@
   color: color-mix(in oklch, var(--warning) 78%, var(--foreground));
 }
 
-.diff-inline-del {
+:host ::ng-deep .diff-inline-del {
+  display: inline-block;
+  padding: 0 0.18rem;
   border-radius: 0.18rem;
-  background: color-mix(in oklch, var(--destructive) 16%, transparent);
+  background: color-mix(in oklch, var(--destructive) 22%, var(--background));
   color: color-mix(in oklch, var(--destructive) 88%, var(--foreground));
+  box-shadow: inset 0 -1px 0 color-mix(in oklch, var(--destructive) 52%, transparent);
+  font-weight: 700;
   text-decoration-line: line-through;
   text-decoration-thickness: 0.08em;
 }
 
-.diff-inline-add {
+:host ::ng-deep .diff-inline-add {
+  display: inline-block;
+  padding: 0 0.18rem;
   border-radius: 0.18rem;
-  background: color-mix(in oklch, var(--success) 20%, transparent);
+  background: color-mix(in oklch, var(--success) 24%, var(--background));
   color: color-mix(in oklch, var(--success) 88%, var(--foreground));
+  box-shadow: inset 0 -1px 0 color-mix(in oklch, var(--success) 52%, transparent);
+  font-weight: 700;
 }
 
 .cr-large-diff-gate {
