@@ -22,28 +22,50 @@
             <ng-icon name="lucideArrowLeft" size="15" />
           </button>
           <div class="min-w-0">
-            <div class="project-kicker">Project setup</div>
+            <div class="project-kicker">{{ isArchived() ? 'Archived project' : 'Project setup' }}</div>
             <h1>{{ project()!.name }}</h1>
-            <p>Updated {{ formatDate(project()!.updatedAt) }}</p>
+            <p>
+              Updated {{ formatDate(project()!.updatedAt) }}
+              @if (project()!.archivedAt) {
+                <span> · Archived {{ formatDate(project()!.archivedAt) }}</span>
+              }
+            </p>
           </div>
         </div>
 
         <div class="project-actions">
-          <button z-button zType="outline" zSize="sm" type="button" aria-label="Open agent drawer" (click)="openAgentDrawer()">
-            <ng-icon name="lucideSparkles" size="14" />
-            Agent
-          </button>
-          <button z-button zType="outline" zSize="sm" type="button" (click)="toggleScratchpad()">
-            <ng-icon name="lucideFileText" size="14" />
-            Scratchpad
-          </button>
-          <button z-button zType="outline" zSize="sm" type="button" (click)="toggleTodos()">
-            <ng-icon name="lucideCheckSquare" size="14" />
-            Tasks
-          </button>
-          <button z-button zType="destructive" zSize="sm" type="button" (click)="openDeleteProjectDialog()">Delete</button>
+          @if (!isArchived()) {
+            <button z-button zType="outline" zSize="sm" type="button" aria-label="Open agent drawer" (click)="openAgentDrawer()">
+              <ng-icon name="lucideSparkles" size="14" />
+              Agent
+            </button>
+            <button z-button zType="outline" zSize="sm" type="button" (click)="toggleScratchpad()">
+              <ng-icon name="lucideFileText" size="14" />
+              Scratchpad
+            </button>
+            <button z-button zType="outline" zSize="sm" type="button" (click)="toggleTodos()">
+              <ng-icon name="lucideCheckSquare" size="14" />
+              Tasks
+            </button>
+            <button z-button zType="outline" zSize="sm" type="button" (click)="openArchiveProjectDialog()">
+              <ng-icon name="lucideArchive" size="14" />
+              Archive
+            </button>
+          } @else {
+            <button z-button zType="outline" zSize="sm" type="button" [zLoading]="restoringProject()" [zDisabled]="restoringProject()" (click)="restoreProject()">
+              <ng-icon name="lucideRotateCcw" size="14" />
+              Restore
+            </button>
+            <button z-button zType="destructive" zSize="sm" type="button" (click)="openDeleteProjectDialog()">Delete permanently</button>
+          }
         </div>
       </div>
+
+      @if (isArchived()) {
+        <div class="mt-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-foreground">
+          This project is archived and read-only. Restore it to add repositories, edit setup, or run saved workflows.
+        </div>
+      }
 
       <div class="project-summary-strip" aria-label="Project setup summary">
         <button type="button" class="summary-tile" [class.summary-tile--active]="activeSection() === 'repos'" (click)="selectSection('repos')">
@@ -89,10 +111,12 @@
               <h2>Repositories</h2>
               <p>Attach local Git repositories and define their default comparison root.</p>
             </div>
-            <button z-button type="button" (click)="openAddRepoDialog()">
-              <ng-icon name="lucidePlus" size="15" />
-              Add repository
-            </button>
+            @if (!isArchived()) {
+              <button z-button type="button" (click)="openAddRepoDialog()">
+                <ng-icon name="lucidePlus" size="15" />
+                Add repository
+              </button>
+            }
           </div>
 
           @if (repos().length === 0) {
@@ -102,7 +126,9 @@
                 <h3>No repositories attached</h3>
                 <p>Add a Git repository to make branches, worktrees, and sessions available in the sidebar.</p>
               </div>
-              <button z-button zType="outline" zSize="sm" type="button" (click)="openAddRepoDialog()">Add repository</button>
+              @if (!isArchived()) {
+                <button z-button zType="outline" zSize="sm" type="button" (click)="openAddRepoDialog()">Add repository</button>
+              }
             </div>
           }
 
@@ -133,6 +159,7 @@
                       [value]="repoContextRootDrafts()[repo.id] || ''"
                       placeholder="origin/main"
                       aria-label="Default context root"
+                      [disabled]="isArchived()"
                       (input)="updateRepoContextRootDraft(repo.id, $any($event.target).value)"
                     />
                     <button
@@ -141,6 +168,7 @@
                       zSize="sm"
                       type="button"
                       [zLoading]="savingRepoContextRootId() === repo.id"
+                      [zDisabled]="isArchived()"
                       (click)="saveRepoContextRoot(repo)"
                     >
                       Save
@@ -148,7 +176,7 @@
                   </div>
 
                   <div class="repo-row__actions">
-                    <button z-button zType="ghost" zSize="sm" type="button" class="text-destructive" [attr.aria-label]="'Remove ' + repo.name" (click)="openRemoveRepoDialog(repo)">
+                    <button z-button zType="ghost" zSize="sm" type="button" class="text-destructive" [zDisabled]="isArchived()" [attr.aria-label]="'Remove ' + repo.name" (click)="openRemoveRepoDialog(repo)">
                       <ng-icon name="lucideTrash2" size="14" />
                       Remove
                     </button>
@@ -168,10 +196,12 @@
               <h2>SSH Port Forwarding</h2>
               <p>Save repeatable tunnels, see live ports, and start or stop them from this project.</p>
             </div>
-            <button z-button type="button" (click)="openAddSshForwardDialog()">
-              <ng-icon name="lucidePlus" size="15" />
-              New forward
-            </button>
+            @if (!isArchived()) {
+              <button z-button type="button" (click)="openAddSshForwardDialog()">
+                <ng-icon name="lucidePlus" size="15" />
+                New forward
+              </button>
+            }
           </div>
 
           @if (!sshForwardingSupported()) {
@@ -210,7 +240,9 @@
                 <h3>No SSH forwards saved</h3>
                 <p>Use this for databases, private web apps, or any remote service you want on a stable local port.</p>
               </div>
-              <button z-button zType="outline" zSize="sm" type="button" (click)="openAddSshForwardDialog()">Create forward</button>
+              @if (!isArchived()) {
+                <button z-button zType="outline" zSize="sm" type="button" (click)="openAddSshForwardDialog()">Create forward</button>
+              }
             </div>
           }
 
@@ -249,7 +281,7 @@
                       zSize="sm"
                       type="button"
                       [zLoading]="isForwardBusy(forward)"
-                      [zDisabled]="isForwardBusy(forward) || !canToggleForwarding()"
+                      [zDisabled]="isArchived() || isForwardBusy(forward) || !canToggleForwarding()"
                       (click)="toggleSshForward(forward)">
                       <ng-icon [name]="forward.status === 'active' || forward.status === 'connecting' ? 'lucideSquare' : 'lucidePlay'" size="14" />
                       {{ forward.status === 'active' || forward.status === 'connecting' ? 'Stop' : 'Start' }}
@@ -260,6 +292,7 @@
                       zSize="sm"
                       type="button"
                       class="text-destructive"
+                      [zDisabled]="isArchived()"
                       [attr.aria-label]="'Remove ' + forward.name"
                       (click)="openRemoveSshForwardDialog(forward)">
                       <ng-icon name="lucideTrash2" size="14" />
@@ -322,7 +355,7 @@
                 class="browser-mode-option"
                 [class.is-active]="browserIsolationConfig()!.mode === 'shared'"
                 [attr.aria-pressed]="browserIsolationConfig()!.mode === 'shared'"
-                [disabled]="savingBrowserIsolation()"
+                [disabled]="isArchived() || savingBrowserIsolation()"
                 (click)="setBrowserIsolationMode('shared')">
                 <ng-icon name="lucideGlobe" size="18" />
                 <span>
@@ -335,7 +368,7 @@
                 class="browser-mode-option"
                 [class.is-active]="browserIsolationConfig()!.mode === 'isolated'"
                 [attr.aria-pressed]="browserIsolationConfig()!.mode === 'isolated'"
-                [disabled]="savingBrowserIsolation()"
+                [disabled]="isArchived() || savingBrowserIsolation()"
                 (click)="setBrowserIsolationMode('isolated')">
                 <ng-icon name="lucideShield" size="18" />
                 <span>
@@ -357,27 +390,31 @@
                     @for (glob of browserIsolationConfig()!.sharedGlobs; track glob; let i = $index) {
                       <div class="browser-glob-item">
                         <code>{{ glob }}</code>
-                        <button type="button" aria-label="Remove pattern" (click)="removeSharedGlob(i)">
-                          <ng-icon name="lucideX" size="13" />
-                        </button>
+                        @if (!isArchived()) {
+                          <button type="button" aria-label="Remove pattern" (click)="removeSharedGlob(i)">
+                            <ng-icon name="lucideX" size="13" />
+                          </button>
+                        }
                       </div>
                     }
                   </div>
                 }
 
-                <div class="browser-glob-input-row">
-                  <input
-                    z-input
-                    type="text"
-                    placeholder="https://accounts.google.com/*"
-                    [value]="newGlobInput()"
-                    (input)="newGlobInput.set($any($event.target).value)"
-                    (keydown.enter)="addSharedGlob()" />
-                  <button z-button type="button" [zDisabled]="!newGlobInput().trim()" (click)="addSharedGlob()">
-                    <ng-icon name="lucidePlus" size="15" />
-                    Add
-                  </button>
-                </div>
+                @if (!isArchived()) {
+                  <div class="browser-glob-input-row">
+                    <input
+                      z-input
+                      type="text"
+                      placeholder="https://accounts.google.com/*"
+                      [value]="newGlobInput()"
+                      (input)="newGlobInput.set($any($event.target).value)"
+                      (keydown.enter)="addSharedGlob()" />
+                    <button z-button type="button" [zDisabled]="!newGlobInput().trim()" (click)="addSharedGlob()">
+                      <ng-icon name="lucidePlus" size="15" />
+                      Add
+                    </button>
+                  </div>
+                }
               </div>
             }
           }
@@ -386,9 +423,23 @@
     </main>
   </section>
 
+  @if (showArchiveProjectDialog()) {
+    <dialog #archiveProjectDialog="trackedNativeModal" trackNativeModal class="project-dialog" (close)="closeArchiveProjectDialog()">
+      <h4>Archive project</h4>
+      <p>This will hide the project from the active list and sidebar. The project, repositories, sessions, and notes stay saved and can be restored from the Archived filter.</p>
+      <div class="project-dialog__actions">
+        <button z-button zType="ghost" type="button" (click)="closeArchiveProjectDialog()">Cancel</button>
+        <button z-button type="button" [zLoading]="archivingProject()" [zDisabled]="archivingProject()" (click)="archiveProject()">
+          <ng-icon name="lucideArchive" size="14" />
+          Archive project
+        </button>
+      </div>
+    </dialog>
+  }
+
   @if (showDeleteProjectDialog()) {
     <dialog #deleteProjectDialog="trackedNativeModal" trackNativeModal class="project-dialog" (close)="closeDeleteProjectDialog()">
-      <h4>Delete project</h4>
+      <h4>Delete project permanently</h4>
       <p>This will permanently delete the project and remove all its repository links. This cannot be undone.</p>
       <div class="project-dialog__actions">
         <button z-button zType="ghost" type="button" (click)="closeDeleteProjectDialog()">Cancel</button>

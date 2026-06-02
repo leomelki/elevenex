@@ -1,7 +1,7 @@
 import { Component, inject, OnInit, OnDestroy, signal, viewChild, computed } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX } from '@ng-icons/lucide';
+import { lucideArchive, lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideRotateCcw, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { Subscription, firstValueFrom } from 'rxjs';
 
@@ -44,7 +44,7 @@ type ProjectDetailSection = 'repos' | 'ssh' | 'browser';
   templateUrl: './project-detail.html',
   styleUrl: './project-detail.scss',
   host: { class: 'block flex-1 overflow-y-auto bg-background' },
-  viewProviders: [provideIcons({ lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX })],
+  viewProviders: [provideIcons({ lucideArchive, lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideRotateCcw, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX })],
 })
 export class ProjectDetail implements OnInit, OnDestroy {
   private projectsService = inject(ProjectsService);
@@ -68,6 +68,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
   showAddRepoDialog = signal(false);
   showAddSshForwardDialog = signal(false);
+  showArchiveProjectDialog = signal(false);
   showDeleteProjectDialog = signal(false);
   showRemoveRepoDialog = signal<Repo | null>(null);
   showRemoveSshForwardDialog = signal<SshForward | null>(null);
@@ -75,6 +76,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
   addingRepo = signal(false);
   addingSshForward = signal(false);
+  archivingProject = signal(false);
+  restoringProject = signal(false);
   deletingProject = signal(false);
   removingRepo = signal(false);
   removingSshForward = signal(false);
@@ -116,6 +119,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
   private addRepoDialogRef = viewChild<TrackNativeModalDirective>('addRepoDialog');
   private addSshForwardDialogRef = viewChild<TrackNativeModalDirective>('addSshForwardDialog');
+  private archiveProjectDialogRef = viewChild<TrackNativeModalDirective>('archiveProjectDialog');
   private deleteProjectDialogRef = viewChild<TrackNativeModalDirective>('deleteProjectDialog');
   private removeRepoDialogRef = viewChild<TrackNativeModalDirective>('removeRepoDialog');
   private removeSshForwardDialogRef = viewChild<TrackNativeModalDirective>('removeSshForwardDialog');
@@ -133,6 +137,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   browserModeLabel = computed(() =>
     this.browserIsolationConfig()?.mode === 'isolated' ? 'Isolated' : 'Shared',
   );
+  isArchived = computed(() => Boolean(this.project()?.archivedAt));
 
   ngOnInit() {
     this.routeSubscription = this.route.paramMap.subscribe((paramMap) => {
@@ -183,6 +188,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
   // Add repo dialog
   openAddRepoDialog() {
+    if (this.isArchived()) return;
+
     this.newRepoPath.set('');
     this.showAddRepoDialog.set(true);
     setTimeout(() => this.addRepoDialogRef()?.open());
@@ -208,6 +215,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   openAddSshForwardDialog() {
+    if (this.isArchived()) return;
+
     const snapshot = this.onboardingState.readSnapshot();
     const activeServer = snapshot.remoteConnectionReady
       ? this.onboardingState.getActiveServer(snapshot)
@@ -257,6 +266,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   addRepo() {
+    if (this.isArchived()) return;
+
     const path = this.newRepoPath().trim();
     if (!path) return;
 
@@ -321,6 +332,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   addSshForward() {
+    if (this.isArchived()) return;
+
     const projectId = this.project()?.id;
     const payload = this.buildSshForwardPayload();
     if (!projectId || !payload || !this.canCreateSshForward()) return;
@@ -347,7 +360,17 @@ export class ProjectDetail implements OnInit, OnDestroy {
     });
   }
 
-  // Delete project dialog
+  // Project lifecycle dialogs
+  openArchiveProjectDialog() {
+    this.showArchiveProjectDialog.set(true);
+    setTimeout(() => this.archiveProjectDialogRef()?.open());
+  }
+
+  closeArchiveProjectDialog() {
+    this.archiveProjectDialogRef()?.close();
+    this.showArchiveProjectDialog.set(false);
+  }
+
   openDeleteProjectDialog() {
     this.showDeleteProjectDialog.set(true);
     setTimeout(() => this.deleteProjectDialogRef()?.open());
@@ -358,6 +381,44 @@ export class ProjectDetail implements OnInit, OnDestroy {
     this.showDeleteProjectDialog.set(false);
   }
 
+  archiveProject() {
+    const projectId = this.project()?.id;
+    if (!projectId) return;
+
+    this.archivingProject.set(true);
+    this.projectsService.archive(projectId).subscribe({
+      next: () => {
+        toast.success('Project archived');
+        this.navigationService.refreshTree();
+        this.closeArchiveProjectDialog();
+        void this.router.navigate(['/projects']);
+      },
+      error: () => {
+        toast.error('Could not archive project.');
+        this.archivingProject.set(false);
+      },
+    });
+  }
+
+  restoreProject() {
+    const projectId = this.project()?.id;
+    if (!projectId) return;
+
+    this.restoringProject.set(true);
+    this.projectsService.unarchive(projectId).subscribe({
+      next: (project) => {
+        this.project.set(project);
+        this.navigationService.refreshTree();
+        toast.success('Project restored');
+        this.restoringProject.set(false);
+      },
+      error: () => {
+        toast.error('Could not restore project.');
+        this.restoringProject.set(false);
+      },
+    });
+  }
+
   deleteProject() {
     const projectId = this.project()?.id;
     if (!projectId) return;
@@ -366,6 +427,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
     this.projectsService.delete(projectId).subscribe({
       next: () => {
         toast.success('Project deleted');
+        this.navigationService.refreshTree();
         this.router.navigate(['/projects']);
       },
       error: () => {
@@ -405,6 +467,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   removeRepo() {
+    if (this.isArchived()) return;
+
     const repo = this.showRemoveRepoDialog();
     if (!repo) return;
 
@@ -424,6 +488,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   removeSshForward() {
+    if (this.isArchived()) return;
+
     const forward = this.showRemoveSshForwardDialog();
     if (!forward) return;
 
@@ -443,6 +509,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   toggleSshForward(forward: SshForward) {
+    if (this.isArchived()) return;
+
     const action = forward.status === 'active' || forward.status === 'connecting'
       ? this.sshForwardsService.stop(forward.id)
       : this.sshForwardsService.start(forward.id);
@@ -552,6 +620,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   setBrowserIsolationMode(mode: 'shared' | 'isolated') {
+    if (this.isArchived()) return;
+
     const config = this.browserIsolationConfig();
     if (!config || config.mode === mode) return;
     const projectId = this.project()?.id;
@@ -574,6 +644,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   addSharedGlob() {
+    if (this.isArchived()) return;
+
     const glob = this.newGlobInput().trim();
     if (!glob) return;
     const config = this.browserIsolationConfig();
@@ -597,6 +669,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   removeSharedGlob(index: number) {
+    if (this.isArchived()) return;
+
     const config = this.browserIsolationConfig();
     const projectId = this.project()?.id;
     if (!config || !projectId) return;
