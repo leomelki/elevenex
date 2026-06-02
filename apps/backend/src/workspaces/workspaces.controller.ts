@@ -21,12 +21,14 @@ import { SwitchWorkspaceBranchDto } from './dto/switch-workspace-branch.dto.js';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto.js';
 import { WorkspaceCreationJobsService } from './workspace-creation-jobs.service.js';
 import { WorkspacesService } from './workspaces.service.js';
+import { ProjectsService } from '../projects/projects.service.js';
 
 @Controller()
 export class WorkspacesController {
   constructor(
     private readonly workspacesService: WorkspacesService,
     private readonly workspaceCreationJobsService: WorkspaceCreationJobsService,
+    private readonly projectsService: ProjectsService,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
   ) {}
 
@@ -40,6 +42,8 @@ export class WorkspacesController {
   @HttpCode(HttpStatus.ACCEPTED)
   async create(@Param('repoId') repoId: string, @Body() dto: CreateWorkspaceDto) {
     const repo = await this.findRepo(+repoId);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     const job = this.workspaceCreationJobsService.startJob(repo, dto);
 
     return {

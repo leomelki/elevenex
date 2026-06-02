@@ -9,4 +9,5 @@ export const projects = sqliteTable('projects', {
   updatedAt: text('updated_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
+  archivedAt: text('archived_at'),
 });

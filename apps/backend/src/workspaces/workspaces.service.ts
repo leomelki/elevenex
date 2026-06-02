@@ -16,6 +16,7 @@ import {
   WorktreesService,
 } from '../worktrees/worktrees.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import { ProjectsService } from '../projects/projects.service.js';
 
 export interface WorkspaceSnapshot {
   id: number;
@@ -42,6 +43,7 @@ export class WorkspacesService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly worktreesService: WorktreesService,
     private readonly sessionsService: SessionsService,
+    private readonly projectsService: ProjectsService,
   ) {}
 
   async ensureDefaultWorkspace(repo: typeof schema.repos.$inferSelect) {
@@ -163,6 +165,8 @@ export class WorkspacesService {
       branchName?: string;
     },
   ) {
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     const name = this.normalizeName(input.name);
     const startPoint = input.startPoint?.trim() || 'HEAD';
     const workspacePath =
@@ -215,6 +219,8 @@ export class WorkspacesService {
       name?: string;
     },
   ) {
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     const requestedPath = input.path.trim();
     if (!requestedPath) {
       throw new BadRequestException('Workspace path is required');
@@ -265,6 +271,9 @@ export class WorkspacesService {
 
   async renameWorkspace(id: number, name: string, repoId?: number) {
     const workspace = await this.findOneForRepo(id, repoId);
+    const repo = await this.findRepo(workspace.repoId);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     const rows = await this.db
       .update(schema.workspaces)
       .set({
@@ -284,6 +293,8 @@ export class WorkspacesService {
   ) {
     const workspace = await this.findOneForRepo(id, repoId);
     const repo = await this.findRepo(workspace.repoId);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     const branch = branchName.trim();
     if (!branch) {
       throw new BadRequestException('Branch name is required');
@@ -330,6 +341,8 @@ export class WorkspacesService {
   ) {
     const workspace = await this.findOneForRepo(workspaceId, repoId);
     const repo = await this.findRepo(workspace.repoId);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     const branchName = input.branchName.trim();
     this.assertValidBranchName(branchName);
     const startPoint = input.startPoint?.trim() || 'HEAD';
@@ -376,6 +389,9 @@ export class WorkspacesService {
 
   async deleteWorkspace(id: number, removeFromDisk: boolean, repoId?: number) {
     const workspace = await this.findOneForRepo(id, repoId);
+    const repo = await this.findRepo(workspace.repoId);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     if (workspace.isDefault && removeFromDisk) {
       throw new BadRequestException(
         'The default workspace cannot be deleted from disk.',
@@ -386,8 +402,6 @@ export class WorkspacesService {
         'The default workspace cannot be removed from the project.',
       );
     }
-
-    const repo = await this.findRepo(workspace.repoId);
     if (removeFromDisk) {
       await this.worktreesService.removeWorktree(repo.path, workspace.path);
     }

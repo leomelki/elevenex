@@ -18,6 +18,7 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreeCreationJobsService } from './worktree-creation-jobs.service.js';
 import * as schema from '../database/schema/index.js';
 import * as path from 'node:path';
+import { ProjectsService } from '../projects/projects.service.js';
 
 @Controller()
 export class WorktreesController {
@@ -25,6 +26,7 @@ export class WorktreesController {
     private readonly worktreesService: WorktreesService,
     private readonly worktreeCreationJobsService: WorktreeCreationJobsService,
     private readonly sessionsService: SessionsService,
+    private readonly projectsService: ProjectsService,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
   ) {}
 
@@ -51,6 +53,8 @@ export class WorktreesController {
     @Body() dto: CreateWorktreeDto,
   ) {
     const { id, repo } = await this.findRepo(repoId);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     const worktreePath =
       dto.worktreePath ||
       path.join(path.dirname(repo.path), '.worktrees', repo.name, dto.branchName);
@@ -94,6 +98,7 @@ export class WorktreesController {
     @Body() body: { worktreePath: string },
   ) {
     const { id, repo } = await this.findRepo(repoId);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
 
     // Delete sessions associated with this repo/worktree before removing it.
     await this.sessionsService.deleteByRepoAndWorktreePath(
@@ -109,7 +114,8 @@ export class WorktreesController {
     @Param('repoId') repoId: string,
     @Body() body: { worktreePath: string },
   ) {
-    const { id } = await this.findRepo(repoId);
+    const { id, repo } = await this.findRepo(repoId);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
 
     await this.sessionsService.deleteByRepoAndWorktreePath(
       id,

@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import { ProjectsService } from '../projects/projects.service.js';
 import {
   DEFAULT_BROWSER_ISOLATION_MODE,
   DEFAULT_BROWSER_ISOLATION_SHARED_GLOBS,
@@ -9,7 +10,10 @@ import {
 
 @Injectable()
 export class BrowserIsolationService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly projectsService: ProjectsService,
+  ) {}
 
   async findOne(projectId: number) {
     const rows = await this.db
@@ -34,6 +38,8 @@ export class BrowserIsolationService {
   }
 
   async upsert(projectId: number, mode: string, sharedGlobs: string[]) {
+    await this.projectsService.assertProjectIsActive(projectId);
+
     const timestamp = new Date().toISOString();
     const sharedGlobsJson = JSON.stringify(sharedGlobs);
 

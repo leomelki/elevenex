@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { asc, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import { ProjectsService } from '../projects/projects.service.js';
 import { UpsertProjectBrowserStateDto } from './dto/upsert-project-browser-state.dto.js';
 
 export interface ProjectBrowserTabState {
@@ -19,7 +20,10 @@ export interface ProjectBrowserSnapshot {
 
 @Injectable()
 export class ProjectBrowserStateService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly projectsService: ProjectsService,
+  ) {}
 
   async findOne(projectId: number) {
     const rows = await this.db
@@ -32,6 +36,8 @@ export class ProjectBrowserStateService {
   }
 
   async upsert(dto: UpsertProjectBrowserStateDto) {
+    await this.projectsService.assertProjectIsActive(dto.projectId);
+
     this.validateSnapshot(dto);
     const timestamp = new Date().toISOString();
     const tabs = [...dto.tabs].sort((left, right) => left.position - right.position);

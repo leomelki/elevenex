@@ -6,12 +6,18 @@ import {
 import { eq, asc } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import { ProjectsService } from '../projects/projects.service.js';
 
 @Injectable()
 export class ScratchpadService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly projectsService: ProjectsService,
+  ) {}
 
   async create(projectId: number, name: string, description?: string) {
+    await this.projectsService.assertProjectIsActive(projectId);
+
     // Get count of existing sections to assign sortOrder
     const existing = await this.db
       .select()
@@ -47,6 +53,9 @@ export class ScratchpadService {
       isMarkdown: boolean;
     }>,
   ) {
+    const section = await this.findOne(sectionId);
+    await this.projectsService.assertProjectIsActive(section.projectId);
+
     const rows = await this.db
       .update(schema.scratchpadSections)
       .set(data)
@@ -59,6 +68,8 @@ export class ScratchpadService {
     projectId: number,
     orders: { id: number; sortOrder: number }[],
   ) {
+    await this.projectsService.assertProjectIsActive(projectId);
+
     // Update each section's sort order
     for (const order of orders) {
       await this.db
@@ -69,6 +80,9 @@ export class ScratchpadService {
   }
 
   async delete(sectionId: number) {
+    const section = await this.findOne(sectionId);
+    await this.projectsService.assertProjectIsActive(section.projectId);
+
     const rows = await this.db
       .delete(schema.scratchpadSections)
       .where(eq(schema.scratchpadSections.id, sectionId))
@@ -77,6 +91,19 @@ export class ScratchpadService {
     if (rows.length === 0) {
       throw new NotFoundException(`Scratchpad section with id ${sectionId} not found`);
     }
+    return rows[0];
+  }
+
+  private async findOne(sectionId: number) {
+    const rows = await this.db
+      .select()
+      .from(schema.scratchpadSections)
+      .where(eq(schema.scratchpadSections.id, sectionId));
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Scratchpad section with id ${sectionId} not found`);
+    }
+
     return rows[0];
   }
 }

@@ -10,6 +10,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import { ProjectsService } from '../projects/projects.service.js';
 
 // Colorblind-safe palette (OKLCH-based perceptually distinct colors)
 // These colors are distinguishable for protanopia, deuteranopia, and tritanopia
@@ -28,7 +29,10 @@ const REPO_COLORS = [
 
 @Injectable()
 export class ReposService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly projectsService: ProjectsService,
+  ) {}
 
   async findByProject(projectId: number) {
     return this.db
@@ -38,6 +42,8 @@ export class ReposService {
   }
 
   async addRepo(projectId: number, repoPath: string) {
+    await this.projectsService.assertProjectIsActive(projectId);
+
     let stat;
     try {
       stat = await fs.stat(repoPath);
@@ -104,6 +110,9 @@ export class ReposService {
   }
 
   async remove(id: number) {
+    const repo = await this.findOne(id);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     const rows = await this.db
       .delete(schema.repos)
       .where(eq(schema.repos.id, id))
@@ -127,6 +136,9 @@ export class ReposService {
     id: number,
     preferredContextRootRef: string | null,
   ) {
+    const repo = await this.findOne(id);
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+
     const rows = await this.db
       .update(schema.repos)
       .set({
@@ -134,6 +146,19 @@ export class ReposService {
       })
       .where(eq(schema.repos.id, id))
       .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Repo with id ${id} not found`);
+    }
+
+    return rows[0];
+  }
+
+  private async findOne(id: number) {
+    const rows = await this.db
+      .select()
+      .from(schema.repos)
+      .where(eq(schema.repos.id, id));
 
     if (rows.length === 0) {
       throw new NotFoundException(`Repo with id ${id} not found`);
