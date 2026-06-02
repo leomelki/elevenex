@@ -242,6 +242,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   private gitSummaryRefreshTimer: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private resizeFrame: number | null = null;
+  private defaultedWorktreePath: string | null = null;
   private readonly countFormatter = new Intl.NumberFormat();
 
   readonly rowHeightPx = ROW_HEIGHT_PX;
@@ -370,7 +371,14 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       const worktreePath = this.worktreePath();
       const scope = this.scope();
       if (!worktreePath || !scope) return;
-      untracked(() => this.activateScope(worktreePath, scope));
+      untracked(() => {
+        const initialScope = this.consumeInitialScope(worktreePath);
+        if (initialScope && initialScope !== scope) {
+          this.scope.set(initialScope);
+          return;
+        }
+        this.activateScope(worktreePath, scope);
+      });
     });
 
     effect(() => {
@@ -419,6 +427,19 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   setScope(scope: ChangeReviewScope): void {
     if (scope === this.scope()) return;
     this.scope.set(scope);
+  }
+
+  private consumeInitialScope(worktreePath: string): ChangeReviewScope | null {
+    if (this.defaultedWorktreePath === worktreePath) return null;
+    this.defaultedWorktreePath = worktreePath;
+
+    const summary = this.gitService.latestSummary(worktreePath);
+    if (!summary) return 'branch';
+    if (summary.hasChanges) return 'uncommitted';
+    if (summary.branch !== 'HEAD' && (!summary.upstream || summary.ahead > 0)) {
+      return 'last-commit';
+    }
+    return 'branch';
   }
 
   async loadLargeChangeSet(): Promise<void> {

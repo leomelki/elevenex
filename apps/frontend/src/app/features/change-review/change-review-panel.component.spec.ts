@@ -321,10 +321,12 @@ describe('ChangeReviewPanelComponent', () => {
 
     Object.defineProperty(window, 'requestAnimationFrame', {
       configurable: true,
+      writable: true,
       value: (callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0),
     });
     Object.defineProperty(window, 'cancelAnimationFrame', {
       configurable: true,
+      writable: true,
       value: (handle: number) => window.clearTimeout(handle),
     });
 
@@ -410,10 +412,24 @@ describe('ChangeReviewPanelComponent', () => {
       ],
     }).compileComponents();
 
+    createPanelFixture();
+  });
+
+  function createPanelFixture(): void {
     fixture = TestBed.createComponent(ChangeReviewPanelComponent);
     fixture.componentRef.setInput('worktreePath', '/tmp/repo');
     fixture.detectChanges();
-  });
+  }
+
+  function recreatePanelWithLatestGitSummary(value: GitStatusSummary | null): void {
+    fixture.destroy();
+    summaryCalls = [];
+    windowCalls = [];
+    fingerprintCalls = [];
+    contextCalls = [];
+    latestGitSummary.set(value);
+    createPanelFixture();
+  }
 
   async function flushSummary(value: ChangeReviewSummary): Promise<HTMLElement> {
     summaryCalls[summaryCalls.length - 1].response.next(value);
@@ -430,6 +446,33 @@ describe('ChangeReviewPanelComponent', () => {
     fixture.detectChanges();
     return viewport as HTMLElement;
   }
+
+  it('defaults to uncommitted changes when cached git status has pending changes', () => {
+    recreatePanelWithLatestGitSummary(gitSummary({ hasChanges: true }));
+
+    expect(fixture.componentInstance.scope()).toBe('uncommitted');
+    expect(summaryCalls[0].scope).toBe('uncommitted');
+  });
+
+  it('defaults to the last commit when cached git status has unpushed commits', () => {
+    recreatePanelWithLatestGitSummary(
+      gitSummary({
+        hasChanges: false,
+        ahead: 1,
+        total: { files: 0, additions: 0, deletions: 0 },
+      }),
+    );
+
+    expect(fixture.componentInstance.scope()).toBe('last-commit');
+    expect(summaryCalls[0].scope).toBe('last-commit');
+  });
+
+  it('keeps the branch scope when git status is not cached yet', () => {
+    recreatePanelWithLatestGitSummary(null);
+
+    expect(fixture.componentInstance.scope()).toBe('branch');
+    expect(summaryCalls[0].scope).toBe('branch');
+  });
 
   it('renders multiple file headers in one continuous diff surface', async () => {
     await flushSummary(summary([file('src/a.ts'), file('src/b.ts')]));
