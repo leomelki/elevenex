@@ -343,6 +343,7 @@ export class ProjectOnboardingWizard implements OnInit {
         name: target.name,
         createdAt: '',
         updatedAt: '',
+        archivedAt: null,
       };
     }
 
