@@ -33,6 +33,7 @@ import { PlannotatorInstallPromptComponent } from './features/plannotator/planno
 import { ThemeService } from './shared/services/theme.service';
 import { ServerConnectionService } from './shared/services/server-connection.service';
 import { AgentControlDrawerComponent } from './features/agent-control/agent-control-drawer.component';
+import { ZardInputDirective } from './shared/components/input';
 
 const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 420;
@@ -49,7 +50,7 @@ function readSidebarWidth(): number {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, PlannotatorInstallPromptComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent],
+  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, PlannotatorInstallPromptComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, ZardInputDirective],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   viewProviders: [
@@ -86,6 +87,7 @@ export class App implements OnInit, OnDestroy {
   isMaximized = signal(false);
   isFullScreen = signal(false);
   isFocused = signal(false);
+  remoteReconnectPassword = signal('');
   windowEnvironmentReady = signal(false);
   isOnboardingRoute = signal(this.router.url.startsWith('/onboarding'));
   switchingEnvironment = this.connectionManager.switching;
@@ -244,11 +246,30 @@ export class App implements OnInit, OnDestroy {
   }
 
   async retryRemoteConnection() {
-    await this.sshRuntimeRecovery.retryRemoteConnection();
+    const disconnect = this.remoteDisconnect();
+    if (disconnect?.server.authMode !== 'password') {
+      await this.sshRuntimeRecovery.retryRemoteConnection();
+      return;
+    }
+
+    const password = this.remoteReconnectPassword().trim();
+    if (!password) {
+      toast.error('Enter the SSH password to reconnect.');
+      return;
+    }
+
+    await this.sshRuntimeRecovery.retryRemoteConnection({
+      password,
+    });
+
+    if (!this.remoteDisconnect()) {
+      this.clearRemoteReconnectCredentials();
+    }
   }
 
   cancelRemoteConnection() {
     this.sshRuntimeRecovery.cancelRemoteConnection();
+    this.clearRemoteReconnectCredentials();
   }
 
   async switchToLocalFromOverlay() {
@@ -258,7 +279,13 @@ export class App implements OnInit, OnDestroy {
     const result = await this.connectionManager.switchToLocal();
     if (!result.ok && result.error) {
       toast.error(result.error);
+      return;
     }
+    this.clearRemoteReconnectCredentials();
+  }
+
+  private clearRemoteReconnectCredentials() {
+    this.remoteReconnectPassword.set('');
   }
 
   onResizeStart(event: MouseEvent) {

@@ -231,6 +231,24 @@ describe('SshRuntimeRecoveryService', () => {
     expect(service.remoteDisconnect()?.message).toBe('Still offline');
   });
 
+  it('passes password credentials through manual remote reconnects', async () => {
+    const passwordServer = { ...server, authMode: 'password' as const };
+    const service = createService();
+    (service as any)._remoteDisconnect.set({
+      server: passwordServer,
+      localPort: passwordServer.localPort,
+      message: 'Enter password',
+    });
+
+    await service.retryRemoteConnection({ password: 'secret' });
+
+    expect(onboardingConnectionMock.reconnect).toHaveBeenCalledWith(passwordServer, {
+      interactive: true,
+      password: 'secret',
+      passphrase: undefined,
+    });
+  });
+
   it('clears the remote overlay and updates onboarding state after reconnect success', async () => {
     const service = createService();
     (service as any)._remoteDisconnect.set({

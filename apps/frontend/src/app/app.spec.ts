@@ -344,6 +344,48 @@ describe('App', () => {
     expect(compiled.textContent).toContain('Tunnel dropped unexpectedly.');
   });
 
+  it('should prompt for a password before reconnecting a password-based remote', async () => {
+    remoteDisconnect.set({
+      server: {
+        id: 19,
+        name: 'Prod',
+        sshHost: 'example.com',
+        sshUser: 'deploy',
+        sshPort: 22,
+        authMode: 'password',
+        identityFilePath: null,
+        localPort: 4200,
+        remotePort: 11111,
+        installStatus: 'available',
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+        lastConnectedAt: '2024-01-01',
+      },
+      localPort: 4200,
+      message: 'Enter the SSH password to reconnect to this remote server.',
+    });
+
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const passwordInput = compiled.querySelector('input[type="password"]') as HTMLInputElement | null;
+    expect(passwordInput).toBeTruthy();
+
+    const reconnectButton = Array.from(compiled.querySelectorAll('button'))
+      .find(button => button.textContent?.includes('Reconnect now')) as HTMLButtonElement | undefined;
+    expect(reconnectButton?.disabled).toBe(true);
+
+    passwordInput!.value = 'secret';
+    passwordInput!.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    reconnectButton?.click();
+    expect(runtimeRecoveryServiceMock.retryRemoteConnection).toHaveBeenCalledWith({ password: 'secret' });
+  });
+
   it('should render a blocking server disconnect overlay above the shell', async () => {
     showServerConnectionOverlay.set(true);
     serverConnectionState.set({

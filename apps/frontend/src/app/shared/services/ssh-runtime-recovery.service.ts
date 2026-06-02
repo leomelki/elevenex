@@ -239,7 +239,7 @@ export class SshRuntimeRecoveryService {
     return failures;
   }
 
-  async retryRemoteConnection(): Promise<void> {
+  async retryRemoteConnection(options: { password?: string; passphrase?: string } = {}): Promise<void> {
     const current = this._remoteDisconnect();
     if (!current || this._remoteRetrying()) {
       return;
@@ -252,7 +252,11 @@ export class SshRuntimeRecoveryService {
     this._remoteRetrying.set({ server: current.server, localPort: current.localPort, phaseOverride: null });
 
     try {
-      const result = await this.onboardingConnection.reconnect(current.server);
+      const result = await this.onboardingConnection.reconnect(current.server, {
+        interactive: true,
+        password: options.password,
+        passphrase: options.passphrase,
+      });
 
       if (this.cancelToken !== token) {
         return;

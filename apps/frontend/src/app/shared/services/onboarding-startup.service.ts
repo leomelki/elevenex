@@ -83,7 +83,7 @@ export class OnboardingStartupService {
     if (server.authMode === 'password') {
       this._startupFailure.set({
         server,
-        message: 'Password-based SSH connections must be reconnected manually after restarting the app.',
+        message: 'Enter the SSH password to reconnect to this remote server.',
       });
       return;
     }

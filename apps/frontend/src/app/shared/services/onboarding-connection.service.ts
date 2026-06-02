@@ -89,12 +89,13 @@ export class OnboardingConnectionService {
 
   async reconnect(
     server: SavedServer,
-    options: { interactive?: boolean } = {},
+    options: { interactive?: boolean; password?: string; passphrase?: string } = {},
   ): Promise<OnboardingConnectionResult> {
-    if (server.authMode === 'password') {
+    const password = options.password?.trim() || null;
+    if (server.authMode === 'password' && !password) {
       return {
         kind: 'error',
-        message: 'Password-based SSH connections must be reconnected manually after restarting the app.',
+        message: 'Enter the SSH password to reconnect to this remote server.',
       };
     }
 
@@ -104,9 +105,9 @@ export class OnboardingConnectionService {
       sshUser: server.sshUser,
       sshPort: server.sshPort,
       authMode: server.authMode,
-      password: null,
+      password,
       identityFilePath: server.identityFilePath,
-      passphrase: null,
+      passphrase: options.passphrase?.trim() || null,
     }, { interactive: options.interactive ?? true });
   }
 

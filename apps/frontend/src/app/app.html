@@ -219,10 +219,27 @@
           <span>{{ disconnect.message }}</span>
         </div>
 
+        @if (disconnect.server.authMode === 'password') {
+          <div class="runtime-remote-overlay__credentials" aria-label="SSH credentials">
+            <label class="runtime-remote-overlay__field">
+              <span>Password</span>
+              <input
+                z-input
+                type="password"
+                autocomplete="current-password"
+                placeholder="SSH password"
+                [value]="remoteReconnectPassword()"
+                (input)="remoteReconnectPassword.set(($any($event.target).value || '').toString())"
+                (keydown.enter)="retryRemoteConnection()"
+              />
+            </label>
+          </div>
+        }
+
         <button
           class="runtime-remote-overlay__button"
           type="button"
-          [disabled]="switchingEnvironment()"
+          [disabled]="switchingEnvironment() || (disconnect.server.authMode === 'password' && !remoteReconnectPassword().trim())"
           (click)="retryRemoteConnection()"
         >
           <ng-icon name="lucideRefreshCw" size="16" />

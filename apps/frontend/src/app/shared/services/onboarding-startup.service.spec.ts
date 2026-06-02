@@ -129,6 +129,20 @@ describe('OnboardingStartupService', () => {
     expect(onboardingStateMock.setCurrentStep).not.toHaveBeenCalled();
   });
 
+  it('should surface password reconnects through startup failure without auto-retrying', async () => {
+    const passwordServer = { ...server, authMode: 'password' as const };
+    onboardingStateMock.getActiveServer.mockReturnValue(passwordServer);
+
+    const service = createService();
+    await service.initialize();
+
+    expect(onboardingConnectionMock.reconnect).not.toHaveBeenCalled();
+    expect(service.startupFailure()).toEqual({
+      server: passwordServer,
+      message: 'Enter the SSH password to reconnect to this remote server.',
+    });
+  });
+
   it('should refresh the navigation tree after a successful startup reconnect', async () => {
     const service = createService();
     await service.initialize();

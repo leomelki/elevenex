@@ -411,6 +411,29 @@
   line-height: 1.55;
 }
 
+.runtime-remote-overlay__credentials {
+  width: 100%;
+  margin-top: 18px;
+  display: grid;
+  gap: 12px;
+  text-align: left;
+}
+
+.runtime-remote-overlay__field {
+  display: grid;
+  gap: 7px;
+}
+
+.runtime-remote-overlay__field span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.runtime-remote-overlay__field input {
+  width: 100%;
+}
+
 .runtime-remote-overlay__button {
   margin-top: 24px;
   min-width: 180px;
