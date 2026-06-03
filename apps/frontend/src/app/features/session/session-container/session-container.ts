@@ -134,6 +134,7 @@ type ClaudeSurfaceMode = 'workspace' | 'terminal';
 export class SessionContainer implements OnInit, OnDestroy {
   private static readonly SIDEBAR_MODE_STORAGE_KEY = 'elevenex-layout-preferences';
   private static readonly CLAUDE_SURFACE_MODE_STORAGE_KEY = 'elevenex-claude-surface-modes';
+  private static readonly CHANGES_PANEL_STATE_KEY = 'elevenex-changes-panel-state';
 
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -216,6 +217,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   });
 
   sidePanelMode = signal<SidePanelMode>(this.getSidePanelPreference());
+  private changesOpenByWorktree = signal<Map<string, boolean>>(this.loadChangesPanelState());
   private claudeSurfaceModes = signal<ReadonlyMap<number, ClaudeSurfaceMode>>(
     this.getClaudeSurfaceModePreference(),
   );
@@ -223,7 +225,11 @@ export class SessionContainer implements OnInit, OnDestroy {
   activeSessionArchived = computed(() => this.activeTab()?.status === 'archived');
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
-  showChangesPanel = computed(() => this.sidePanelMode() === 'changes');
+  showChangesPanel = computed(() => {
+    const wt = this.worktreePath();
+    if (!wt) return false;
+    return this.changesOpenByWorktree().get(wt) ?? false;
+  });
   showPlannotatorPanel = computed(
     () => this.sidePanelMode() === 'plannotator' && this.plannotatorAvailable(),
   );
@@ -233,9 +239,10 @@ export class SessionContainer implements OnInit, OnDestroy {
   sidePanelVisible = computed(
     () =>
       !this.activeSessionArchived() &&
-      this.sidePanelMode() !== 'none' &&
-      (this.sidePanelMode() !== 'plannotator' || this.plannotatorAvailable()) &&
-      (this.sidePanelMode() !== 'planAnnotator' || this.planAnnotatorAvailable()),
+      (this.showChangesPanel() ||
+        (this.sidePanelMode() !== 'none' &&
+          (this.sidePanelMode() !== 'plannotator' || this.plannotatorAvailable()) &&
+          (this.sidePanelMode() !== 'planAnnotator' || this.planAnnotatorAvailable()))),
   );
   showClaudeTerminalFallback = computed(() => {
     const id = this.activeSessionId();
@@ -376,6 +383,27 @@ export class SessionContainer implements OnInit, OnDestroy {
     }
   }
 
+  private loadChangesPanelState(): Map<string, boolean> {
+    try {
+      const stored = localStorage.getItem(SessionContainer.CHANGES_PANEL_STATE_KEY);
+      if (stored) return new Map(Object.entries(JSON.parse(stored)));
+    } catch {
+      // Ignore storage errors
+    }
+    return new Map();
+  }
+
+  private saveChangesPanelState(map: Map<string, boolean>): void {
+    try {
+      localStorage.setItem(
+        SessionContainer.CHANGES_PANEL_STATE_KEY,
+        JSON.stringify(Object.fromEntries(map)),
+      );
+    } catch {
+      // Ignore storage errors
+    }
+  }
+
   private getClaudeSurfaceModePreference(): ReadonlyMap<number, ClaudeSurfaceMode> {
     const modes = new Map<number, ClaudeSurfaceMode>();
     try {
@@ -461,7 +489,14 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   toggleChangesPanel(): void {
-    const nextMode = this.showChangesPanel() ? 'none' : 'changes';
+    const wt = this.worktreePath();
+    if (!wt) return;
+    const nextOpen = !this.showChangesPanel();
+    const map = new Map(this.changesOpenByWorktree());
+    map.set(wt, nextOpen);
+    this.changesOpenByWorktree.set(map);
+    this.saveChangesPanelState(map);
+    const nextMode = nextOpen ? 'changes' : 'none';
     this.sidePanelMode.set(nextMode);
     this.saveSidePanelPreference(nextMode);
   }
@@ -720,6 +755,19 @@ export class SessionContainer implements OnInit, OnDestroy {
       if (wt) {
         void this.actionsState.loadActions(wt);
       }
+    });
+
+    effect(() => {
+      const wt = this.worktreePath();
+      if (!wt) return;
+      const changesOpen = this.changesOpenByWorktree().get(wt) ?? false;
+      untracked(() => {
+        if (changesOpen && this.sidePanelMode() !== 'changes') {
+          this.sidePanelMode.set('changes');
+        } else if (!changesOpen && this.sidePanelMode() === 'changes') {
+          this.sidePanelMode.set('none');
+        }
+      });
     });
 
     effect(() => {
