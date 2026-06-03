@@ -276,7 +276,7 @@ export class ChangeReviewService {
       summary.deletions,
       summary.status,
     ].join('\0');
-    const full = await this.getOrBuildRows(
+    const rowsPromise = this.getOrBuildRows(
       cacheKey,
       git,
       worktreePath,
@@ -287,6 +287,10 @@ export class ChangeReviewService {
       worktreeState.fingerprint,
       Boolean(options.forceFileLoad),
     );
+    const fingerprintPromise = offset === 0
+      ? this.buildFileFingerprint(git, worktreePath, scope, base, summary)
+      : Promise.resolve(null);
+    const [full, fingerprintResult] = await Promise.all([rowsPromise, fingerprintPromise]);
     const rows = full.rows.slice(offset, offset + limit);
 
     return {
@@ -304,6 +308,7 @@ export class ChangeReviewService {
       hasMore: offset + rows.length < full.rows.length,
       context,
       changeHash: full.changeHash,
+      fingerprint: fingerprintResult?.fingerprint ?? null,
       rows,
       contextRanges: full.contextRanges,
     };

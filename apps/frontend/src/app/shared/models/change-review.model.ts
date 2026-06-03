@@ -100,6 +100,8 @@ export interface ChangeReviewFileWindow {
   hasMore: boolean;
   context: number;
   changeHash: string;
+  /** Fingerprint of the file content as of this response, included only for offset=0 windows. */
+  fingerprint: string | null;
   rows: ChangeReviewRow[];
   contextRanges: ChangeReviewContextRange[];
 }

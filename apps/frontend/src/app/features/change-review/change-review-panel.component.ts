@@ -152,11 +152,17 @@ interface WindowCacheEntry {
   length: number;
 }
 
+interface DiffSnapshotEntry {
+  fingerprint: string;
+  changeHash: string;
+}
+
 interface ScopeViewSnapshot {
   summary: ChangeReviewSummary;
   fileStates: ReadonlyMap<string, FileRenderState>;
   fileChangeHashes: ReadonlyMap<string, string>;
   fileFingerprints: ReadonlyMap<string, string>;
+  diffSnapshotFingerprints: ReadonlyMap<string, DiffSnapshotEntry>;
   activeFilePath: string | null;
   collapsedPaths: ReadonlySet<string>;
   forceLoadedFileDiffs: ReadonlySet<string>;
@@ -277,6 +283,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly loadingContextRanges = signal<ReadonlySet<string>>(new Set());
   readonly fileChangeHashes = signal<ReadonlyMap<string, string>>(new Map());
   readonly fileFingerprints = signal<ReadonlyMap<string, string>>(new Map());
+  private readonly diffSnapshotFingerprints = signal<ReadonlyMap<string, DiffSnapshotEntry>>(new Map());
   readonly viewedFingerprints = signal<Record<string, string>>(this.readViewedFingerprints());
   readonly loadingFileFingerprints = signal<ReadonlySet<string>>(new Set());
   readonly collapsedPaths = signal<ReadonlySet<string>>(new Set());
@@ -652,7 +659,16 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     }
 
     const requestGeneration = this.generation;
-    const fingerprint = await this.ensureFileFingerprint(file.path, requestGeneration, true);
+
+    // Prefer the fingerprint captured in parallel at diff-load time so that we mark the
+    // exact version the user reviewed, not whatever the file happens to be right now.
+    const snapshot = this.diffSnapshotFingerprints().get(file.path);
+    const currentChangeHash = this.fileChangeHashes().get(file.path);
+    const fingerprint =
+      snapshot && currentChangeHash && snapshot.changeHash === currentChangeHash
+        ? snapshot.fingerprint
+        : await this.ensureFileFingerprint(file.path, requestGeneration, true);
+
     if (requestGeneration !== this.generation || !fingerprint) return;
 
     this.markViewed(file.path, fingerprint);
@@ -1080,6 +1096,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       fileStates: this.snapshotFileStates(),
       fileChangeHashes: new Map(this.fileChangeHashes()),
       fileFingerprints: new Map(this.fileFingerprints()),
+      diffSnapshotFingerprints: new Map(this.diffSnapshotFingerprints()),
       activeFilePath: this.activeFilePath(),
       collapsedPaths: new Set(this.collapsedPaths()),
       forceLoadedFileDiffs: new Set(this.forceLoadedFileDiffs()),
@@ -1116,6 +1133,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     this.fileStates.set(snapshot.fileStates);
     this.fileChangeHashes.set(snapshot.fileChangeHashes);
     this.fileFingerprints.set(snapshot.fileFingerprints);
+    this.diffSnapshotFingerprints.set(snapshot.diffSnapshotFingerprints);
     this.collapsedPaths.set(snapshot.collapsedPaths);
     this.forceLoadedFileDiffs.set(snapshot.forceLoadedFileDiffs);
     this.forceLoadLargeChangeSet.set(snapshot.forceLoadLargeChangeSet);
@@ -1196,6 +1214,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     this.fileStates.set(new Map());
     this.fileChangeHashes.set(new Map());
     this.fileFingerprints.set(new Map());
+    this.diffSnapshotFingerprints.set(new Map());
     this.activeFilePath.set(null);
     this.layout.set(new ChangeReviewVirtualLayout([]));
     this.visibleRows.set([]);
@@ -1600,6 +1619,9 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     if (request.generation !== this.generation) return;
     const anchor = this.captureAnchor();
     this.rememberFileChangeHash(fileWindow.path, fileWindow.changeHash);
+    if (fileWindow.offset === 0 && fileWindow.fingerprint !== null) {
+      this.storeDiffSnapshotFingerprint(fileWindow.path, fileWindow.fingerprint, fileWindow.changeHash);
+    }
     this.setFileState(fileWindow.path, (state) => {
       const baseRows = new Map(state.baseRows);
       fileWindow.rows.forEach((row, index) => {
@@ -2126,6 +2148,14 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
           next.delete(filePath);
         }
       }
+      return next;
+    });
+  }
+
+  private storeDiffSnapshotFingerprint(filePath: string, fingerprint: string, changeHash: string): void {
+    this.diffSnapshotFingerprints.update((current) => {
+      const next = new Map(current);
+      next.set(filePath, { fingerprint, changeHash });
       return next;
     });
   }
