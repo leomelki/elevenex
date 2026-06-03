@@ -175,7 +175,7 @@ import { type TaskNotification, parseTaskNotifications } from '@/shared/utils/ta
                         title="Copy message"
                         aria-label="Copy message"
                         (mousedown)="preserveSelection($event)"
-                        (click)="copy.emit(getSelectedText())"
+                        (click)="messageCopy.emit(getSelectedText())"
                       >
                         <ng-icon name="lucideCopy" size="12" />
                       </button>
@@ -377,7 +377,7 @@ import { type TaskNotification, parseTaskNotifications } from '@/shared/utils/ta
                         title="Copy message"
                         aria-label="Copy message"
                         (mousedown)="preserveSelection($event)"
-                        (click)="copy.emit(getSelectedText())"
+                        (click)="messageCopy.emit(getSelectedText())"
                       >
                         <ng-icon name="lucideCopy" size="12" />
                       </button>
@@ -1212,7 +1212,7 @@ export class ClaudeMessageComponent {
   readonly planReviewEnabled = input<boolean>(false);
   readonly planReview = input<PlanReviewRequest | null>(null);
 
-  readonly copy = output<string | null>();
+  readonly messageCopy = output<string | null>();
   readonly fork = output<void>();
   readonly armEdit = output<void>();
   readonly confirmEdit = output<void>();
