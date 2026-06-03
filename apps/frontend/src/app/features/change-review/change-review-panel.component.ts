@@ -35,6 +35,7 @@ import {
   lucideRefreshCw,
   lucideSearch,
   lucideTriangleAlert,
+  lucideX,
 } from '@ng-icons/lucide';
 import hljs from 'highlight.js/lib/common';
 import { firstValueFrom, Subject, takeUntil } from 'rxjs';
@@ -67,6 +68,7 @@ import {
 } from '@/features/session/claude-workspace/util/code-highlight';
 import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
 import {
+  CHANGE_REVIEW_HEADER_ROWS,
   ChangeReviewVirtualAnchor,
   ChangeReviewVirtualLayout,
   estimateChangeReviewDiffRows,
@@ -123,6 +125,12 @@ interface RenderRow {
 interface SelectedDiffRow {
   renderRow: RenderRow;
   text: string;
+}
+
+interface SearchMatch {
+  filePath: string;
+  baseIndex: number;
+  diffIndex: number;
 }
 
 interface DiffSelectionMentionAction {
@@ -209,6 +217,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-file-fingerprints-v1';
       lucideRefreshCw,
       lucideSearch,
       lucideTriangleAlert,
+      lucideX,
     }),
   ],
 })
@@ -223,6 +232,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   private readonly sanitizer = inject(DomSanitizer);
   private readonly diffScroll = viewChild<ElementRef<HTMLElement>>('diffScroll');
   private readonly fileViewport = viewChild<CdkVirtualScrollViewport>('fileViewport');
+  private readonly diffSearchInput = viewChild<ElementRef<HTMLInputElement>>('diffSearchInput');
   private readonly rowHtmlCache = new Map<string, SafeHtml>();
   private readonly windowQueue: WindowRequest[] = [];
   private readonly pendingWindowKeys = new Set<string>();
@@ -248,6 +258,9 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly rowHeightPx = ROW_HEIGHT_PX;
   readonly scopes = SCOPES;
   readonly scope = signal<ChangeReviewScope>('branch');
+  readonly diffSearchVisible = signal(false);
+  readonly diffSearch = signal('');
+  readonly diffSearchMatchIndex = signal(0);
   readonly statusFilter = signal<StatusFilter>('all');
   readonly search = signal('');
   readonly context = signal(8);
@@ -292,6 +305,60 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       }
     }
     return keys;
+  });
+
+  readonly diffSearchMatches = computed((): SearchMatch[] => {
+    const query = this.diffSearch().trim().toLowerCase();
+    if (!query) return [];
+
+    const fileStates = this.fileStates();
+    const collapsedPaths = this.collapsedPaths();
+    const matches: SearchMatch[] = [];
+
+    for (const file of this.filteredFiles()) {
+      if (collapsedPaths.has(file.path)) continue;
+      const state = fileStates.get(file.path);
+      if (!state) continue;
+
+      const fileMatches: SearchMatch[] = [];
+      for (const [baseIndex, row] of state.baseRows) {
+        if (row.type === 'hunk' || row.type === 'expand' || row.type === 'meta') continue;
+        const searchable = row.type === 'change'
+          ? `${row.content}\0${row.oldContent ?? ''}`.toLowerCase()
+          : row.content.toLowerCase();
+        if (searchable.includes(query)) {
+          fileMatches.push({ filePath: file.path, baseIndex, diffIndex: 0 });
+        }
+      }
+
+      fileMatches.sort((a, b) => a.baseIndex - b.baseIndex);
+      for (const match of fileMatches) {
+        match.diffIndex = baseIndexToDiffIndex(state, match.baseIndex);
+        matches.push(match);
+      }
+    }
+
+    return matches;
+  });
+
+  readonly diffSearchSafeIndex = computed(() => {
+    const len = this.diffSearchMatches().length;
+    return len > 0 ? Math.min(this.diffSearchMatchIndex(), len - 1) : 0;
+  });
+
+  readonly diffSearchMatchedKeys = computed(() => {
+    const keys = new Set<string>();
+    for (const match of this.diffSearchMatches()) {
+      keys.add(`${match.filePath}::${match.baseIndex}`);
+    }
+    return keys;
+  });
+
+  readonly diffSearchCurrentKey = computed(() => {
+    const matches = this.diffSearchMatches();
+    if (!matches.length) return null;
+    const match = matches[this.diffSearchSafeIndex()];
+    return match ? `${match.filePath}::${match.baseIndex}` : null;
   });
 
   readonly totalHeightPx = computed(() => this.layout().totalRows * ROW_HEIGHT_PX);
@@ -388,6 +455,17 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
         this.showConflictResolver.set(false);
       });
     });
+
+    effect(() => {
+      this.diffSearch();
+      untracked(() => {
+        this.diffSearchMatchIndex.set(0);
+        const matches = this.diffSearchMatches();
+        if (matches.length > 0) {
+          this.scrollToSearchMatch(matches[0]);
+        }
+      });
+    });
   }
 
   ngAfterViewInit(): void {
@@ -475,10 +553,25 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && this.isFullscreen()) {
-      event.preventDefault();
-      this.exitFullscreen();
-      return;
+    if ((event.metaKey || event.ctrlKey) && event.key === 'f') {
+      if (this.eventStartedInsidePanel(event)) {
+        event.preventDefault();
+        this.openDiffSearch();
+        return;
+      }
+    }
+
+    if (event.key === 'Escape') {
+      if (this.diffSearchVisible()) {
+        event.preventDefault();
+        this.closeDiffSearch();
+        return;
+      }
+      if (this.isFullscreen()) {
+        event.preventDefault();
+        this.exitFullscreen();
+        return;
+      }
     }
 
     if (this.showConflictResolver()) return;
@@ -509,6 +602,19 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   onDiffScroll(): void {
     this.selectionMentionAction.set(null);
     this.updateDiffViewportMetrics();
+    this.refreshRenderedRows();
+    this.ensureVisibleRangeLoaded();
+  }
+
+  private scrollToSearchMatch(match: SearchMatch): void {
+    const layout = this.layout();
+    const fileStart = layout.fileStart(match.filePath);
+    if (fileStart === null) return;
+    const scrollEl = this.diffScroll()?.nativeElement;
+    if (!scrollEl) return;
+    const scrollRow = fileStart + CHANGE_REVIEW_HEADER_ROWS + match.diffIndex;
+    const rowTop = scrollRow * ROW_HEIGHT_PX;
+    scrollEl.scrollTop = Math.max(0, rowTop - scrollEl.clientHeight / 2 + ROW_HEIGHT_PX / 2);
     this.refreshRenderedRows();
     this.ensureVisibleRangeLoaded();
   }
@@ -572,6 +678,64 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     if (!this.showConflictResolver()) return;
     this.showConflictResolver.set(false);
     this.scheduleResizeRefresh();
+  }
+
+  openDiffSearch(): void {
+    this.diffSearchVisible.set(true);
+    queueMicrotask(() => {
+      const input = this.diffSearchInput()?.nativeElement;
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
+
+  closeDiffSearch(): void {
+    this.diffSearchVisible.set(false);
+    this.diffSearch.set('');
+    this.diffSearchMatchIndex.set(0);
+  }
+
+  setDiffSearch(value: string): void {
+    this.diffSearch.set(value);
+  }
+
+  nextSearchMatch(): void {
+    const matches = this.diffSearchMatches();
+    if (!matches.length) return;
+    const next = (this.diffSearchSafeIndex() + 1) % matches.length;
+    this.diffSearchMatchIndex.set(next);
+    this.scrollToSearchMatch(matches[next]);
+  }
+
+  prevSearchMatch(): void {
+    const matches = this.diffSearchMatches();
+    if (!matches.length) return;
+    const prev = (this.diffSearchSafeIndex() - 1 + matches.length) % matches.length;
+    this.diffSearchMatchIndex.set(prev);
+    this.scrollToSearchMatch(matches[prev]);
+  }
+
+  onDiffSearchKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (event.shiftKey) {
+        this.prevSearchMatch();
+      } else {
+        this.nextSearchMatch();
+      }
+    }
+  }
+
+  isSearchMatchedRow(renderRow: RenderRow): boolean {
+    if (!this.diffSearch().trim() || renderRow.baseIndex === null) return false;
+    return this.diffSearchMatchedKeys().has(`${renderRow.file.path}::${renderRow.baseIndex}`);
+  }
+
+  isCurrentSearchMatchRow(renderRow: RenderRow): boolean {
+    if (!this.diffSearch().trim() || renderRow.baseIndex === null) return false;
+    return this.diffSearchCurrentKey() === `${renderRow.file.path}::${renderRow.baseIndex}`;
   }
 
   onConflictSummaryChange(summary: GitStatusSummary): void {
@@ -2223,6 +2387,15 @@ function maxLine(rows: RenderRow[], key: 'oldLine' | 'newLine'): number | null {
     .map((row) => row.row?.[key])
     .filter((value): value is number => typeof value === 'number');
   return values.length ? Math.max(...values) : null;
+}
+
+function baseIndexToDiffIndex(state: FileRenderState, targetBaseIndex: number): number {
+  let shift = 0;
+  for (const replacement of state.replacements) {
+    if (replacement.baseIndex >= targetBaseIndex) break;
+    shift += replacement.rows.length - 1;
+  }
+  return targetBaseIndex + shift;
 }
 
 function diffMentionRowKey(

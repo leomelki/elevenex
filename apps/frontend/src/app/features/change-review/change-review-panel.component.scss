@@ -295,6 +295,15 @@
   color: color-mix(in oklch, var(--warning) 78%, var(--foreground));
 }
 
+.cr-diff-row--search-match {
+  background: color-mix(in oklch, var(--primary) 12%, var(--background));
+}
+
+.cr-diff-row--search-match-current {
+  background: color-mix(in oklch, var(--primary) 22%, var(--background));
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
 :host ::ng-deep .diff-inline-del {
   display: inline-block;
   padding: 0 0.18rem;

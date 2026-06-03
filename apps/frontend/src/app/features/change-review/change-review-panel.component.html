@@ -420,6 +420,57 @@
             <span>No files in this scope</span>
           </div>
         } @else {
+          @if (diffSearchVisible()) {
+            <div class="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-background px-2">
+              <ng-icon name="lucideSearch" size="14" class="shrink-0 text-muted-foreground" />
+              <input
+                #diffSearchInput
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Search in diff…"
+                class="h-full min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
+                [value]="diffSearch()"
+                (input)="setDiffSearch($any($event.target).value)"
+                (keydown)="onDiffSearchKeydown($event)"
+              />
+              @if (diffSearch().trim()) {
+                @if (diffSearchMatches().length === 0) {
+                  <span class="shrink-0 text-xs text-muted-foreground/70">No results</span>
+                } @else {
+                  <span class="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                    {{ diffSearchSafeIndex() + 1 }}&thinsp;/&thinsp;{{ diffSearchMatches().length }}
+                  </span>
+                }
+              }
+              <button
+                type="button"
+                class="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+                title="Previous match (Shift+Enter)"
+                [disabled]="diffSearchMatches().length === 0"
+                (click)="prevSearchMatch()"
+              >
+                <ng-icon name="lucideChevronUp" size="13" />
+              </button>
+              <button
+                type="button"
+                class="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+                title="Next match (Enter)"
+                [disabled]="diffSearchMatches().length === 0"
+                (click)="nextSearchMatch()"
+              >
+                <ng-icon name="lucideChevronDown" size="13" />
+              </button>
+              <button
+                type="button"
+                class="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                title="Close (Escape)"
+                (click)="closeDiffSearch()"
+              >
+                <ng-icon name="lucideX" size="13" />
+              </button>
+            </div>
+          }
           <div
             #diffScroll
             class="cr-diff-viewport"
@@ -597,6 +648,8 @@
                     [class.cr-diff-row--meta]="renderRow.row?.type === 'meta'"
                     [class.cr-diff-row--loading]="!renderRow.row"
                     [class.cr-diff-row--mentioned]="isMentionedDiffRow(renderRow)"
+                    [class.cr-diff-row--search-match]="isSearchMatchedRow(renderRow)"
+                    [class.cr-diff-row--search-match-current]="isCurrentSearchMatchRow(renderRow)"
                   >
                     @if (renderRow.row; as row) {
                       <span class="cr-line cr-line--old">{{ row.oldLine ?? '' }}</span>
