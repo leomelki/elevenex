@@ -409,9 +409,9 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   async refresh(refreshBase = false): Promise<void> {
     if (refreshBase) {
-      this.changeReview.clearCache(this.worktreePath(), this.scope());
+      this.changeReview.clearCache(this.worktreePath());
     }
-    this.clearCurrentScopeSnapshot();
+    this.clearAllScopeSnapshotsForWorktree();
     await this.loadForCurrentScope(refreshBase);
   }
 
@@ -419,8 +419,8 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     const summary = this.summary();
     const latest = this.latestGitSummary();
     const needsBaseRefresh = Boolean(summary && latest && summary.headSha !== latest.headSha);
-    this.changeReview.clearCache(this.worktreePath(), this.scope());
-    this.clearCurrentScopeSnapshot();
+    this.changeReview.clearCache(this.worktreePath());
+    this.clearAllScopeSnapshotsForWorktree();
     await this.loadForCurrentScope(needsBaseRefresh);
   }
 
@@ -1004,6 +1004,15 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   private clearCurrentScopeSnapshot(): void {
     this.scopeSnapshots.delete(this.scopeSnapshotKey(this.worktreePath(), this.scope()));
+  }
+
+  private clearAllScopeSnapshotsForWorktree(): void {
+    const prefix = `${this.worktreePath()}\0`;
+    for (const key of this.scopeSnapshots.keys()) {
+      if (key.startsWith(prefix)) {
+        this.scopeSnapshots.delete(key);
+      }
+    }
   }
 
   private scopeSnapshotKey(worktreePath: string, scope: ChangeReviewScope): string {

@@ -202,7 +202,11 @@ export class ChangeReviewService {
   }
 
   clearCache(worktreePath?: string, scope?: ChangeReviewScope): void {
-    const prefix = worktreePath && scope ? this.scopePrefix(worktreePath, scope) : null;
+    const prefix = worktreePath
+      ? scope
+        ? this.scopePrefix(worktreePath, scope)
+        : `${worktreePath}\0`
+      : null;
     this.clearMap(this.summaryCache, prefix);
     this.clearMap(this.fileWindowCache, prefix);
     this.clearMap(this.contextWindowCache, prefix);
