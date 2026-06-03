@@ -10,6 +10,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideCheckCircle,
   lucideChevronDown,
   lucideCheck,
   lucideCopy,
@@ -21,8 +22,10 @@ import {
   lucideMessageSquarePlus,
   lucidePencil,
   lucidePlus,
+  lucideSquare,
   lucideTriangleAlert,
   lucideX,
+  lucideXCircle,
 } from '@ng-icons/lucide';
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import type { SessionFork } from '@/shared/models/session.model';
@@ -36,6 +39,7 @@ import {
   parseDiffSelectionMentions,
 } from '@/shared/utils/diff-selection-mention';
 import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
+import { type TaskNotification, parseTaskNotifications } from '@/shared/utils/task-notification';
 
 @Component({
   selector: 'cw-message',
@@ -44,6 +48,7 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
+      lucideCheckCircle,
       lucideChevronDown,
       lucideCheck,
       lucideCopy,
@@ -55,13 +60,44 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
       lucideMessageSquarePlus,
       lucidePencil,
       lucidePlus,
+      lucideSquare,
       lucideTriangleAlert,
       lucideX,
+      lucideXCircle,
     }),
   ],
   template: `
     @switch (item().kind) {
       @case ('user') {
+        @if (isTaskNotificationOnly()) {
+          <div class="cw-task-notif" [attr.title]="timestampTitle()">
+            @for (notif of userTaskNotifications(); track notif.taskId) {
+              <div
+                class="cw-task-notif__card"
+                [class.cw-task-notif__card--completed]="notif.status === 'completed'"
+                [class.cw-task-notif__card--failed]="notif.status === 'failed'"
+                [class.cw-task-notif__card--stopped]="notif.status === 'stopped'"
+              >
+                <span class="cw-task-notif__icon" aria-hidden="true">
+                  @if (notif.status === 'completed') {
+                    <ng-icon name="lucideCheckCircle" size="14" />
+                  } @else if (notif.status === 'failed') {
+                    <ng-icon name="lucideXCircle" size="14" />
+                  } @else {
+                    <ng-icon name="lucideSquare" size="12" />
+                  }
+                </span>
+                <span class="cw-task-notif__summary">{{ notif.summary }}</span>
+                <span class="cw-task-notif__meta">
+                  <span class="cw-task-notif__id" [title]="notif.taskId">{{ notif.taskId }}</span>
+                  @if (timestampLabel(); as label) {
+                    <span class="cw-task-notif__time" aria-hidden="true">{{ label }}</span>
+                  }
+                </span>
+              </div>
+            }
+          </div>
+        } @else {
         <div
           class="cw-msg cw-msg--user"
           [class.cw-msg--armed]="editArmed()"
@@ -71,6 +107,29 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
             <div class="cw-msg__bubble">
               @if (userMessageText(); as text) {
                 <div class="cw-msg__user-text">{{ text }}</div>
+              }
+              @if (userTaskNotifications().length) {
+                <div class="cw-msg__task-notifs">
+                  @for (notif of userTaskNotifications(); track notif.taskId) {
+                    <div
+                      class="cw-msg__task-notif"
+                      [class.cw-msg__task-notif--completed]="notif.status === 'completed'"
+                      [class.cw-msg__task-notif--failed]="notif.status === 'failed'"
+                      [class.cw-msg__task-notif--stopped]="notif.status === 'stopped'"
+                    >
+                      <span class="cw-msg__task-notif-icon" aria-hidden="true">
+                        @if (notif.status === 'completed') {
+                          <ng-icon name="lucideCheckCircle" size="12" />
+                        } @else if (notif.status === 'failed') {
+                          <ng-icon name="lucideXCircle" size="12" />
+                        } @else {
+                          <ng-icon name="lucideSquare" size="10" />
+                        }
+                      </span>
+                      <span class="cw-msg__task-notif-summary">{{ notif.summary }}</span>
+                    </div>
+                  }
+                </div>
               }
               @if (userDiffMentions().length) {
                 <div class="cw-msg__mentions" aria-label="Mentioned diff selections">
@@ -247,6 +306,7 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
             </div>
           }
         </div>
+        }
       }
       @case ('assistant') {
         <div class="cw-msg cw-msg--assistant" [attr.title]="timestampTitle()">
@@ -434,6 +494,107 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
     `
       :host {
         display: block;
+      }
+      .cw-task-notif {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      .cw-task-notif__card {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.4rem 0.65rem;
+        border: 1px solid var(--border);
+        border-left-width: 2.5px;
+        border-radius: 0.5rem;
+        background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+        font-size: 0.775rem;
+        line-height: 1.4;
+        border-left-color: var(--muted-foreground);
+      }
+      .cw-task-notif__card--completed {
+        border-left-color: var(--success);
+        background: color-mix(in oklab, var(--success) 5%, transparent);
+      }
+      .cw-task-notif__card--failed {
+        border-left-color: var(--destructive);
+        background: color-mix(in oklab, var(--destructive) 6%, transparent);
+      }
+      .cw-task-notif__card--stopped {
+        border-left-color: var(--muted-foreground);
+      }
+      .cw-task-notif__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        color: var(--muted-foreground);
+      }
+      .cw-task-notif__card--completed .cw-task-notif__icon {
+        color: var(--success);
+      }
+      .cw-task-notif__card--failed .cw-task-notif__icon {
+        color: var(--destructive);
+      }
+      .cw-task-notif__summary {
+        color: var(--foreground);
+        font-size: 0.8rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cw-task-notif__meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        flex-shrink: 0;
+        color: var(--muted-foreground);
+        font-size: 0.68rem;
+      }
+      .cw-task-notif__id {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        opacity: 0.7;
+        max-width: 7ch;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cw-task-notif__time {
+        white-space: nowrap;
+      }
+      .cw-msg__task-notifs {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+      }
+      .cw-msg__task-notif {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.75rem;
+        color: var(--muted-foreground);
+        padding: 0.2rem 0;
+        border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+      }
+      .cw-msg__task-notif-icon {
+        display: inline-flex;
+        align-items: center;
+        flex-shrink: 0;
+        color: var(--muted-foreground);
+      }
+      .cw-msg__task-notif--completed .cw-msg__task-notif-icon {
+        color: var(--success);
+      }
+      .cw-msg__task-notif--failed .cw-msg__task-notif-icon {
+        color: var(--destructive);
+      }
+      .cw-msg__task-notif-summary {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--foreground);
       }
       .cw-msg {
         font-size: 0.875rem;
@@ -1087,7 +1248,20 @@ export class ClaudeMessageComponent {
     if (!content) return 'No details';
     return content.length > 180 ? `${content.slice(0, 180)}...` : content;
   });
-  readonly userMessageDisplay = computed(() => parseDiffSelectionMentions(this.item().content));
+  readonly userTaskNotificationDisplay = computed(() =>
+    parseTaskNotifications(this.item().content),
+  );
+  readonly userTaskNotifications = computed(
+    () => this.userTaskNotificationDisplay().notifications,
+  );
+  readonly isTaskNotificationOnly = computed(
+    () =>
+      this.userTaskNotifications().length > 0 &&
+      !this.userTaskNotificationDisplay().text.trim(),
+  );
+  readonly userMessageDisplay = computed(() =>
+    parseDiffSelectionMentions(this.userTaskNotificationDisplay().text),
+  );
   readonly userMessageText = computed(() => this.userMessageDisplay().text);
   readonly userDiffMentions = computed(() => this.userMessageDisplay().mentions);
 
