@@ -6,7 +6,7 @@ import {
   BadRequestException,
   forwardRef,
 } from '@nestjs/common';
-import { eq, and, count, inArray, type SQL } from 'drizzle-orm';
+import { eq, and, count, inArray, ne, type SQL } from 'drizzle-orm';
 import { EventEmitter } from 'events';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
@@ -705,6 +705,21 @@ export class SessionsService extends EventEmitter {
       // 2. Kill the tmux session if exists
       await this.ptyManager.killTmuxSession(id);
     }
+  }
+
+  async archiveAllByProject(projectId: number) {
+    const sessions = await this.db
+      .select({ id: schema.sessions.id })
+      .from(schema.sessions)
+      .innerJoin(schema.repos, eq(schema.sessions.repoId, schema.repos.id))
+      .where(
+        and(
+          eq(schema.repos.projectId, projectId),
+          ne(schema.sessions.status, 'archived'),
+        ),
+      );
+
+    await Promise.all(sessions.map((s) => this.archive(s.id)));
   }
 
   async unarchive(id: number) {

@@ -3,6 +3,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { eq, isNotNull, isNull } from 'drizzle-orm';
@@ -12,12 +13,18 @@ import {
   DEFAULT_BROWSER_ISOLATION_MODE,
   DEFAULT_BROWSER_ISOLATION_SHARED_GLOBS,
 } from '../browser-isolation/browser-isolation.defaults.js';
+import { SessionsService } from '../sessions/sessions.service.js';
 
 export type ProjectListState = 'active' | 'archived' | 'all';
 
 @Injectable()
 export class ProjectsService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  private readonly logger = new Logger(ProjectsService.name);
+
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly sessionsService: SessionsService,
+  ) {}
 
   async findAll(state: ProjectListState = 'active') {
     if (state === 'all') {
@@ -92,6 +99,13 @@ export class ProjectsService {
       })
       .where(eq(schema.projects.id, id))
       .returning();
+
+    void this.sessionsService.archiveAllByProject(id).catch((error) => {
+      this.logger.error(
+        `Failed to archive sessions for project ${id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    });
 
     return rows[0];
   }
