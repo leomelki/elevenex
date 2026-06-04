@@ -10,6 +10,7 @@ import { NavigationService } from './navigation.service';
 import { OnboardingConnectionService, OnboardingConnectionSuccess } from './onboarding-connection.service';
 import { OnboardingStartupService } from './onboarding-startup.service';
 import { OnboardingStateService } from './onboarding-state.service';
+import { ProjectsService } from './projects.service';
 import { SshForwardsService } from './ssh-forwards.service';
 
 const POLL_INTERVAL_MS = 3000;
@@ -134,6 +135,7 @@ export class SshRuntimeRecoveryService {
 
   constructor(
     private readonly sshForwardsService: SshForwardsService,
+    private readonly projectsService: ProjectsService,
     private readonly onboardingState: OnboardingStateService,
     private readonly onboardingConnection: OnboardingConnectionService,
     private readonly onboardingStartup: OnboardingStartupService,
@@ -355,7 +357,12 @@ export class SshRuntimeRecoveryService {
   }
 
   private async refreshSavedForwards(): Promise<void> {
-    const forwards = await this.sshForwardsService.getAllOnce().catch(() => []);
+    const [allForwards, activeProjects] = await Promise.all([
+      this.sshForwardsService.getAllOnce().catch(() => []),
+      firstValueFrom(this.projectsService.getAll('active')).catch(() => []),
+    ]);
+    const activeProjectIds = new Set(activeProjects.map(p => p.id));
+    const forwards = allForwards.filter(f => activeProjectIds.has(f.projectId));
     const currentStatuses = new Map<number, SshForwardStatus>();
 
     for (const forward of forwards) {

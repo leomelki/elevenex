@@ -6,6 +6,7 @@ import { OnboardingConnectionService } from './onboarding-connection.service';
 import { OnboardingStateService } from './onboarding-state.service';
 import { NavigationService } from './navigation.service';
 import { SshForwardsService } from './ssh-forwards.service';
+import { ProjectsService } from './projects.service';
 
 export interface StartupConnectionFailure {
   server: SavedServer;
@@ -65,6 +66,7 @@ export class OnboardingStartupService {
     private readonly onboardingState: OnboardingStateService,
     private readonly onboardingConnection: OnboardingConnectionService,
     private readonly sshForwardsService: SshForwardsService,
+    private readonly projectsService: ProjectsService,
     private readonly navigationService: NavigationService,
   ) {}
 
@@ -132,9 +134,14 @@ export class OnboardingStartupService {
   }
 
   async prepareStartupPortForwardPrompt(server: SavedServer): Promise<void> {
-    const allForwards = await firstValueFrom(this.sshForwardsService.getAll()).catch(() => []);
+    const [allForwards, activeProjects] = await Promise.all([
+      firstValueFrom(this.sshForwardsService.getAll()).catch(() => []),
+      firstValueFrom(this.projectsService.getAll('active')).catch(() => []),
+    ]);
+    const activeProjectIds = new Set(activeProjects.map(p => p.id));
     const pending = allForwards
       .filter(forward => matchesServer(forward, server))
+      .filter(forward => activeProjectIds.has(forward.projectId))
       .filter(forward => forward.status !== 'active' && forward.status !== 'connecting')
       .map(toPromptItem);
 
