@@ -1,5 +1,5 @@
 const { execFileSync, execSync } = require('child_process');
-const { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } = require('fs');
+const { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } = require('fs');
 const { join } = require('path');
 
 const root = join(__dirname, '..');
@@ -7,7 +7,26 @@ const extensionToolchainPackages = ['webpack', 'webpack-cli', 'ts-loader', 'type
 
 function ensureSymlink(targetPath, linkPath, type = 'dir') {
   rmSync(linkPath, { recursive: true, force: true });
-  symlinkSync(targetPath, linkPath, type);
+  symlinkSync(targetPath, linkPath, process.platform === 'win32' && type === 'dir' ? 'junction' : type);
+}
+
+function ensureBinShim(binName, entryPath, binDir) {
+  const shellShim = join(binDir, binName);
+  rmSync(shellShim, { force: true });
+
+  if (process.platform === 'win32') {
+    const cmdShim = join(binDir, `${binName}.cmd`);
+    const psShim = join(binDir, `${binName}.ps1`);
+    rmSync(cmdShim, { force: true });
+    rmSync(psShim, { force: true });
+
+    writeFileSync(cmdShim, `@ECHO off\r\nnode "%~dp0\\${entryPath.replaceAll('/', '\\')}" %*\r\n`, 'utf8');
+    writeFileSync(psShim, `& node "$PSScriptRoot/${entryPath}" @args\r\nexit $LASTEXITCODE\r\n`, 'utf8');
+    return;
+  }
+
+  ensureSymlink(entryPath, shellShim, 'file');
+  chmodSync(shellShim, 0o755);
 }
 
 function findPnpmPackageRoot(packageName) {
@@ -40,8 +59,8 @@ function prepareExtensionToolchain(packageDir) {
 
   const webpackCliEntry = join(nodeModulesDir, 'webpack-cli', 'bin', 'cli.js');
   if (existsSync(webpackCliEntry)) {
-    ensureSymlink('../webpack-cli/bin/cli.js', join(binDir, 'webpack'), 'file');
-    ensureSymlink('../webpack-cli/bin/cli.js', join(binDir, 'webpack-cli'), 'file');
+    ensureBinShim('webpack', '../webpack-cli/bin/cli.js', binDir);
+    ensureBinShim('webpack-cli', '../webpack-cli/bin/cli.js', binDir);
   }
 }
 

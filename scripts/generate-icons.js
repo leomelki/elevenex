@@ -7,6 +7,7 @@ const outputDir = join(root, 'apps', 'frontend', 'public', 'favicons');
 const manifestPath = join(outputDir, 'manifest.webmanifest');
 const electronAssetDir = join(root, 'apps', 'electron', 'assets');
 const macRuntimeIconPath = join(electronAssetDir, 'macos-runtime-icon.png');
+const transparentBackground = process.platform === 'win32' ? '"rgba(0,0,0,0)"' : "'rgba(0,0,0,0)'";
 
 rmSync(outputDir, { recursive: true, force: true });
 mkdirSync(outputDir, { recursive: true });
@@ -41,7 +42,7 @@ rmSync(electronAssetDir, { recursive: true, force: true });
 mkdirSync(electronAssetDir, { recursive: true });
 
 execSync(
-  'npx -y sharp-cli -i 11x.png -o apps/electron/assets resize 384 384 --fit contain --background rgba\\(0,0,0,0\\) -- extend 64 64 64 64 --background rgba\\(0,0,0,0\\) --format png',
+  `npx -y sharp-cli -i 11x.png -o apps/electron/assets resize 384 384 --fit contain --background ${transparentBackground} -- extend 64 64 64 64 --background ${transparentBackground} --format png`,
   {
     cwd: root,
     stdio: 'inherit',
