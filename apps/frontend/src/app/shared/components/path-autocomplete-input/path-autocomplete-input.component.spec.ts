@@ -107,6 +107,49 @@ describe('PathAutocompleteInputComponent', () => {
     expect(overlayContainerElement.querySelector('.pac__panel')).toBeNull();
   });
 
+  it('opens suggestions for Windows drive paths and preserves backslashes on completion', async () => {
+    suggestPaths.mockReturnValue(of([
+      { path: 'C:\\Users\\melki\\Documents', name: 'Documents', kind: 'directory', isExactParent: true, trailingSlashHint: true },
+    ]));
+
+    const fixture = TestBed.createComponent(HostComponent);
+    fixture.componentInstance.value = 'C:\\Users\\melki\\Doc';
+    fixture.detectChanges();
+
+    const input = fixture.debugElement.query(By.css('input')).nativeElement as HTMLInputElement;
+    input.dispatchEvent(new FocusEvent('focus'));
+    fixture.detectChanges();
+    await new Promise(resolve => setTimeout(resolve, 160));
+    fixture.detectChanges();
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+    fixture.detectChanges();
+
+    expect(suggestPaths).toHaveBeenCalledWith('C:\\Users\\melki\\Doc', 'either', undefined);
+    expect(fixture.componentInstance.onValueChange).toHaveBeenLastCalledWith('C:\\Users\\melki\\Documents\\');
+  });
+
+  it('keeps forward slashes when completing Windows paths typed with forward slashes', async () => {
+    suggestPaths.mockReturnValue(of([
+      { path: 'C:\\Users\\melki\\Documents', name: 'Documents', kind: 'directory', isExactParent: true, trailingSlashHint: true },
+    ]));
+
+    const fixture = TestBed.createComponent(HostComponent);
+    fixture.componentInstance.value = 'C:/Users/melki/Doc';
+    fixture.detectChanges();
+
+    const input = fixture.debugElement.query(By.css('input')).nativeElement as HTMLInputElement;
+    input.dispatchEvent(new FocusEvent('focus'));
+    fixture.detectChanges();
+    await new Promise(resolve => setTimeout(resolve, 160));
+    fixture.detectChanges();
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.onValueChange).toHaveBeenLastCalledWith('C:/Users/melki/Documents/');
+  });
+
   it('shows loading and empty states', async () => {
     const subject = new Subject<any[]>();
     suggestPaths.mockReturnValue(subject.asObservable());

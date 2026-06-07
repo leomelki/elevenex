@@ -357,7 +357,11 @@ export class PathAutocompleteInputComponent implements OnChanges {
   }
 
   applySuggestion(item: PathSuggestion) {
-    const nextValue = item.kind === 'directory' ? `${item.path}${item.trailingSlashHint ? '/' : ''}` : item.path;
+    const separator = this.completionSeparator(this.draftValue(), item.path);
+    const itemPath = this.formatPathWithSeparator(item.path, separator);
+    const nextValue = item.kind === 'directory'
+      ? `${this.trimTrailingSeparators(itemPath)}${item.trailingSlashHint ? separator : ''}`
+      : itemPath;
     this.draftValue.set(nextValue);
     this.valueChange.emit(nextValue);
 
@@ -397,6 +401,44 @@ export class PathAutocompleteInputComponent implements OnChanges {
 
   private isPathLike(query: string): boolean {
     const trimmed = query.trim();
-    return trimmed.startsWith('/') || trimmed.startsWith('~');
+    return /^[a-zA-Z]:(?:[\\/]|$)/.test(trimmed)
+      || trimmed.startsWith('\\\\')
+      || trimmed.startsWith('//')
+      || /^[~](?:[\\/]|$)/.test(trimmed)
+      || trimmed.startsWith('/')
+      || trimmed.startsWith('\\');
+  }
+
+  private completionSeparator(query: string, suggestedPath: string): '/' | '\\' {
+    const lastForwardSlash = query.lastIndexOf('/');
+    const lastBackslash = query.lastIndexOf('\\');
+
+    if (lastForwardSlash > lastBackslash) {
+      return '/';
+    }
+
+    if (lastBackslash > lastForwardSlash) {
+      return '\\';
+    }
+
+    return suggestedPath.includes('\\') ? '\\' : '/';
+  }
+
+  private formatPathWithSeparator(pathValue: string, separator: '/' | '\\'): string {
+    return separator === '/'
+      ? pathValue.replace(/\\/g, '/')
+      : pathValue.replace(/\//g, '\\');
+  }
+
+  private trimTrailingSeparators(pathValue: string): string {
+    if (/^[a-zA-Z]:[\\/]?$/.test(pathValue)) {
+      return pathValue;
+    }
+
+    if (/^[\\/]+$/.test(pathValue)) {
+      return pathValue;
+    }
+
+    return pathValue.replace(/[\\/]+$/, '');
   }
 }

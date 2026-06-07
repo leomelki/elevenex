@@ -60,7 +60,11 @@ export function detectLanguage(filename: string): string {
 export function isWithinWorktree(worktreePath: string, filePath: string): boolean {
   const resolvedWorktree = path.resolve(worktreePath);
   const resolvedFile = path.resolve(filePath);
-  return resolvedFile.startsWith(resolvedWorktree);
+  const relativePath = path.relative(resolvedWorktree, resolvedFile);
+  return relativePath === ''
+    || (relativePath !== '..'
+      && !relativePath.startsWith(`..${path.sep}`)
+      && !path.isAbsolute(relativePath));
 }
 
 function expandHomePath(inputPath: string): string {
@@ -72,7 +76,7 @@ function expandHomePath(inputPath: string): string {
     return os.homedir();
   }
 
-  if (inputPath.startsWith(`~${path.sep}`)) {
+  if (/^~[\\/]/.test(inputPath)) {
     return path.join(os.homedir(), inputPath.slice(2));
   }
 
@@ -134,7 +138,7 @@ export class FilesService {
     const normalizedInput = path.isAbsolute(expandedInput)
       ? path.normalize(expandedInput)
       : path.resolve(expandedInput);
-    const exactParent = trimmedInput.endsWith(path.sep) || trimmedInput === '~';
+    const exactParent = /[\\/]$/.test(trimmedInput) || trimmedInput === '~';
 
     const requestedDirectory = exactParent
       ? normalizedInput

@@ -98,6 +98,14 @@ describe('FilesService', () => {
     it('should return false for path traversal attempt', () => {
       expect(isWithinWorktree('/worktree', '/worktree/../other/file.ts')).toBe(false);
     });
+
+    it('should return false for paths that only share a prefix with the worktree', () => {
+      expect(isWithinWorktree('/worktree', '/worktree-other/file.ts')).toBe(false);
+    });
+
+    it('should allow child paths whose names start with dots', () => {
+      expect(isWithinWorktree('/worktree', '/worktree/..cache/file.ts')).toBe(true);
+    });
   });
 
   describe('listFiles', () => {
@@ -233,6 +241,15 @@ describe('FilesService', () => {
       expect(result.some(item => item.path === homeSshDir)).toBe(true);
     });
 
+    it('expands the home directory when tilde input uses a backslash', async () => {
+      const homeSshDir = path.join(os.homedir(), '.ssh');
+      fs.mkdirSync(homeSshDir, { recursive: true });
+
+      const result = await service.suggestPaths('~\\.s', 'directory');
+
+      expect(result.some(item => item.path === homeSshDir)).toBe(true);
+    });
+
     it('resolves partial parent directories against the deepest existing directory', async () => {
       fs.mkdirSync(path.join(tmpDir, 'projects'));
 
@@ -297,6 +314,21 @@ describe('FilesService', () => {
         'directory:beta-dir',
         'file:alpha.txt',
         'file:zeta.txt',
+      ]);
+    });
+
+    it('treats a trailing forward slash as an exact parent directory', async () => {
+      fs.mkdirSync(path.join(tmpDir, 'nested'));
+
+      const result = await service.suggestPaths(`${tmpDir.replace(/\\/g, '/')}/`, 'either');
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          name: 'nested',
+          path: path.join(tmpDir, 'nested'),
+          kind: 'directory',
+          isExactParent: true,
+        }),
       ]);
     });
   });
