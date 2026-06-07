@@ -8,10 +8,15 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { EventEmitter } = require('events');
 const {
+  REMOTE_RUNTIME_TARGETS,
   buildRemoteInstallCommand,
   buildRemotePreflightScript,
   buildRemoteStartCommand,
   buildRemoteWaitForReadyCommand,
+  buildWindowsRemoteInstallCommand,
+  buildWindowsRemotePreflightScript,
+  buildWindowsRemoteStartCommand,
+  buildWindowsRemoteWaitForReadyCommand,
   getSuggestedInstallCommands,
   parseRemotePreflight,
   resolveRemoteRuntimeTarget,
@@ -1202,13 +1207,33 @@ function getSshBaseArgs(resolvedConfig, target) {
   return ['-F', resolvedConfig.configPath, target];
 }
 
-function runSshCommandAsync(forward, command) {
+function encodePowershellCommand(command) {
+  return Buffer.from(`${command}`, 'utf16le').toString('base64');
+}
+
+function getRemoteCommandArgs(command, options = {}) {
+  if (options.remotePlatform === 'win32') {
+    return [
+      'powershell.exe',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-EncodedCommand',
+      encodePowershellCommand(command),
+    ];
+  }
+
+  return ['sh', '-lc', shellSingleQuote(command)];
+}
+
+function runSshCommandAsync(forward, command, options = {}) {
   return new Promise((resolve, reject) => {
     const resolvedConfig = buildResolvedSshConfig(forward);
     const askPass = createSshAskPassRuntime(forward);
     const target = buildSshTarget(forward);
     const baseArgs = getSshBaseArgs(resolvedConfig, target);
-    const sshArgs = [...baseArgs, 'sh', '-lc', shellSingleQuote(command)];
+    const sshArgs = [...baseArgs, ...getRemoteCommandArgs(command, options)];
 
     let child;
     try {
@@ -1249,19 +1274,15 @@ function runSshCommand(forward, command, options = {}) {
   const askPass = createSshAskPassRuntime(forward);
   const target = buildSshTarget(forward);
   const baseArgs = getSshBaseArgs(resolvedConfig, target);
-  const sshArgs = [
-    ...baseArgs,
-    'sh',
-    '-lc',
-    shellSingleQuote(command),
-  ];
+  const sshArgs = [...baseArgs, ...getRemoteCommandArgs(command, options)];
 
   try {
+    const { remotePlatform: _remotePlatform, ...spawnOptions } = options;
     const result = spawnSync('ssh', sshArgs, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       env: askPass?.env ?? process.env,
-      ...options,
+      ...spawnOptions,
     });
 
     if (result.error) {
@@ -1381,8 +1402,25 @@ function createRemoteInstallerSession(forward, preflight) {
   return sessionState;
 }
 
+async function runRemotePreflight(forward) {
+  const remotePort = forward.remotePort || 11111;
+  try {
+    return await runSshCommandAsync(forward, buildRemotePreflightScript(remotePort));
+  } catch (unixError) {
+    try {
+      return await runSshCommandAsync(
+        forward,
+        buildWindowsRemotePreflightScript(remotePort),
+        { remotePlatform: 'win32' },
+      );
+    } catch {
+      throw unixError;
+    }
+  }
+}
+
 function getRemoteInstallStatus(preflight, bundledVersion) {
-  if (!['linux', 'darwin'].includes(preflight.remotePlatform)) {
+  if (!['linux', 'darwin', 'win32'].includes(preflight.remotePlatform)) {
     return 'unsupported-os';
   }
 
@@ -1437,7 +1475,8 @@ function buildRemoteRuntimeDownloadUrl(version, targetKey) {
   if (!/^[a-f0-9]{7,64}$/i.test(version) && !/^v?\d+\.\d+\.\d+/.test(version)) {
     return null;
   }
-  return `${RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-remote-runtime-${targetKey}.tar.gz`;
+  const archiveExtension = REMOTE_RUNTIME_TARGETS[targetKey]?.archiveExtension || 'tar.gz';
+  return `${RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-remote-runtime-${targetKey}.${archiveExtension}`;
 }
 
 function buildDownloadScript(url, remoteDestination) {
@@ -1459,9 +1498,30 @@ function buildDownloadScript(url, remoteDestination) {
   ].join('\n');
 }
 
-function tryRemoteDownload(forward, url, remoteDestination) {
+function buildWindowsDownloadScript(url, remoteDestination) {
+  return [
+    '$ErrorActionPreference = "Stop"',
+    `$url = ${JSON.stringify(url)}`,
+    `$dest = ${JSON.stringify(remoteDestination)}`,
+    'if ($dest -eq "~") { $dest = $HOME }',
+    'elseif ($dest.StartsWith("~/") -or $dest.StartsWith("~\\")) { $dest = Join-Path $HOME $dest.Substring(2) }',
+    '$tmp = "$dest.partial"',
+    'New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null',
+    'Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue',
+    'Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 600',
+    'Move-Item -LiteralPath $tmp -Destination $dest -Force',
+  ].join('\r\n');
+}
+
+function buildRemoteDownloadScript(url, remoteDestination, remotePlatform) {
+  return remotePlatform === 'win32'
+    ? buildWindowsDownloadScript(url, remoteDestination)
+    : buildDownloadScript(url, remoteDestination);
+}
+
+function tryRemoteDownload(forward, url, remoteDestination, remotePlatform) {
   try {
-    runSshCommand(forward, buildDownloadScript(url, remoteDestination));
+    runSshCommand(forward, buildRemoteDownloadScript(url, remoteDestination, remotePlatform), { remotePlatform });
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : `${error}`;
@@ -1470,9 +1530,13 @@ function tryRemoteDownload(forward, url, remoteDestination) {
   }
 }
 
-async function tryRemoteDownloadAsync(forward, url, remoteDestination) {
+async function tryRemoteDownloadAsync(forward, url, remoteDestination, remotePlatform) {
   try {
-    await runSshCommandAsync(forward, buildDownloadScript(url, remoteDestination));
+    await runSshCommandAsync(
+      forward,
+      buildRemoteDownloadScript(url, remoteDestination, remotePlatform),
+      { remotePlatform },
+    );
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : `${error}`;
@@ -1504,7 +1568,7 @@ async function ensureRemoteServerReady(forward) {
     bundledVersion,
   });
   emitRemoteServerPhaseEvent(forward.id, 'checking');
-  const preflightResult = await runSshCommandAsync(forward, buildRemotePreflightScript(forward.remotePort || 11111));
+  const preflightResult = await runRemotePreflight(forward);
   const preflight = parseRemotePreflight(preflightResult.stdout);
   console.info('[remote-runtime] preflight result', {
     serverId: forward.id,
@@ -1518,11 +1582,11 @@ async function ensureRemoteServerReady(forward) {
     missingDependencies: preflight.missingDependencies,
   });
 
-  if (!['linux', 'darwin'].includes(preflight.remotePlatform)) {
+  if (!['linux', 'darwin', 'win32'].includes(preflight.remotePlatform)) {
     return toRemoteEnsureReadyResult(forward, preflight, {
       status: 'unsupported',
       installPhase: 'checking',
-      message: `Remote OS ${preflight.remotePlatform || 'unknown'} is not supported yet. Linux or macOS is required for auto-install.`,
+      message: `Remote OS ${preflight.remotePlatform || 'unknown'} is not supported yet. Linux, macOS, or Windows is required for auto-install.`,
       bundledVersion,
     });
   }
@@ -1557,20 +1621,37 @@ async function ensureRemoteServerReady(forward) {
     || installStatus === 'needs-update'
     || !preflight.backendReachable
     || runningVersionMismatch;
-  const remoteArchivePath = `~/.elevenex/tmp/elevenex-${bundledVersion}-${preflight.remoteTarget}.tar.gz`;
+  const remoteArchiveExtension = REMOTE_RUNTIME_TARGETS[preflight.remoteTarget]?.archiveExtension || 'tar.gz';
+  const remoteArchivePath = `~/.elevenex/tmp/elevenex-${bundledVersion}-${preflight.remoteTarget}.${remoteArchiveExtension}`;
   const remoteReleaseDir = `~/.elevenex/releases/${bundledVersion}-${preflight.remoteTarget}`;
   const remoteCurrentLink = '~/.elevenex/current';
   const remoteCurrentRoot = '~/.elevenex/current';
+  const remoteCommandOptions = { remotePlatform: preflight.remotePlatform };
+  const installCommand = preflight.remotePlatform === 'win32'
+    ? buildWindowsRemoteInstallCommand
+    : buildRemoteInstallCommand;
+  const startCommand = preflight.remotePlatform === 'win32'
+    ? buildWindowsRemoteStartCommand
+    : buildRemoteStartCommand;
+  const waitCommand = preflight.remotePlatform === 'win32'
+    ? buildWindowsRemoteWaitForReadyCommand
+    : buildRemoteWaitForReadyCommand;
 
   if (installStatus === 'missing' || installStatus === 'needs-update') {
     emitRemoteServerPhaseEvent(forward.id, 'uploading');
-    await runSshCommandAsync(forward, 'mkdir -p "$HOME/.elevenex/tmp" "$HOME/.elevenex/releases" "$HOME/.elevenex/logs"');
+    await runSshCommandAsync(
+      forward,
+      preflight.remotePlatform === 'win32'
+        ? 'New-Item -ItemType Directory -Force -Path (Join-Path $HOME ".elevenex\\tmp"), (Join-Path $HOME ".elevenex\\releases"), (Join-Path $HOME ".elevenex\\logs") | Out-Null'
+        : 'mkdir -p "$HOME/.elevenex/tmp" "$HOME/.elevenex/releases" "$HOME/.elevenex/logs"',
+      remoteCommandOptions,
+    );
 
     const downloadUrl = buildRemoteRuntimeDownloadUrl(bundledVersion, preflight.remoteTarget);
     if (!downloadUrl) {
       throw new Error(`Remote runtime download URL could not be resolved for ${bundledVersion}.`);
     }
-    const downloaded = await tryRemoteDownloadAsync(forward, downloadUrl, remoteArchivePath);
+    const downloaded = await tryRemoteDownloadAsync(forward, downloadUrl, remoteArchivePath, preflight.remotePlatform);
 
     if (!downloaded) {
       throw new Error(
@@ -1581,11 +1662,12 @@ async function ensureRemoteServerReady(forward) {
     emitRemoteServerPhaseEvent(forward.id, 'installing');
     await runSshCommandAsync(
       forward,
-      buildRemoteInstallCommand({
+      installCommand({
         remoteArchivePath,
         remoteReleaseDir,
         remoteCurrentLink,
       }),
+      remoteCommandOptions,
     );
   }
 
@@ -1593,7 +1675,7 @@ async function ensureRemoteServerReady(forward) {
     emitRemoteServerPhaseEvent(forward.id, 'starting');
     await runSshCommandAsync(
       forward,
-      buildRemoteStartCommand({
+      startCommand({
         remoteRoot: remoteCurrentRoot,
         remotePort: forward.remotePort || 11111,
         forcePortCleanup: preflight.backendReachable && (
@@ -1601,16 +1683,18 @@ async function ensureRemoteServerReady(forward) {
           || runningVersionMismatch
         ),
       }),
+      remoteCommandOptions,
     );
   }
 
   await runSshCommandAsync(
     forward,
-    buildRemoteWaitForReadyCommand({
+    waitCommand({
       remoteRoot: remoteCurrentRoot,
       remotePort: forward.remotePort || 11111,
       expectedVersion: bundledVersion,
     }),
+    remoteCommandOptions,
   );
 
   emitRemoteServerPhaseEvent(forward.id, 'probing');
@@ -1633,20 +1717,22 @@ async function ensureRemoteServerReady(forward) {
     emitRemoteServerPhaseEvent(forward.id, 'starting');
     await runSshCommandAsync(
       forward,
-      buildRemoteStartCommand({
+      startCommand({
         remoteRoot: remoteCurrentRoot,
         remotePort: forward.remotePort || 11111,
         forcePortCleanup: true,
       }),
+      remoteCommandOptions,
     );
 
     await runSshCommandAsync(
       forward,
-      buildRemoteWaitForReadyCommand({
+      waitCommand({
         remoteRoot: remoteCurrentRoot,
         remotePort: forward.remotePort || 11111,
         expectedVersion: bundledVersion,
       }),
+      remoteCommandOptions,
     );
 
     emitRemoteServerPhaseEvent(forward.id, 'probing');

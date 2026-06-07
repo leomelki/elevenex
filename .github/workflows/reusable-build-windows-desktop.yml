@@ -1,0 +1,74 @@
+name: Reusable Windows desktop build
+
+on:
+  workflow_call:
+
+jobs:
+  build-windows-desktop:
+    name: Build Windows desktop
+    permissions:
+      contents: read
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.4
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build backend bundle and Windows runtime tarball
+        run: pnpm backend:bundle && pnpm electron:backend:prepare
+
+      - name: Build Windows desktop installer
+        run: pnpm electron:package:win
+
+      - name: Rename Windows desktop installer for release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist-desktop | Out-Null
+          $installer = Get-ChildItem apps/electron/dist -File -Filter '*.exe' |
+            Where-Object { $_.Name -notmatch 'blockmap' } |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw 'No Windows installer artifact produced'
+          }
+          Copy-Item $installer.FullName dist-desktop/elevenex-desktop-windows-x64.exe
+          Get-FileHash dist-desktop/elevenex-desktop-windows-x64.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  elevenex-desktop-windows-x64.exe" } |
+            Set-Content dist-desktop/elevenex-desktop-windows-x64.exe.sha256
+          Get-ChildItem dist-desktop | Format-Table -AutoSize
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-desktop-windows-x64
+          path: dist-desktop/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Rename Windows desktop runtime tarball for release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist-runtime | Out-Null
+          Copy-Item apps/electron/.stage/backend.tar.gz dist-runtime/elevenex-runtime-windows-x64.tar.gz
+          Get-FileHash dist-runtime/elevenex-runtime-windows-x64.tar.gz -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  elevenex-runtime-windows-x64.tar.gz" } |
+            Set-Content dist-runtime/elevenex-runtime-windows-x64.tar.gz.sha256
+          Get-ChildItem dist-runtime | Format-Table -AutoSize
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-runtime-windows-x64
+          path: dist-runtime/*
+          if-no-files-found: error
+          retention-days: 30

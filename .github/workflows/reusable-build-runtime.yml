@@ -15,12 +15,18 @@ jobs:
           - target: linux-x64
             runs-on: ubuntu-22.04
             checksum-command: sha256sum
+            archive_extension: tar.gz
           - target: linux-arm64
             runs-on: ubuntu-22.04-arm
             checksum-command: sha256sum
+            archive_extension: tar.gz
           - target: darwin-arm64
             runs-on: macos-15
             checksum-command: shasum -a 256
+            archive_extension: tar.gz
+          - target: win32-x64
+            runs-on: windows-2022
+            archive_extension: zip
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +57,7 @@ jobs:
         run: node scripts/stage-remote-runtime.js --target=${{ matrix.target }}
 
       - name: Verify native binaries are present
+        if: runner.os != 'Windows'
         run: |
           set -eu
           ROOT="apps/electron/.stage/remote-runtime/${{ matrix.target }}"
@@ -60,14 +67,46 @@ jobs:
           test -f "$ROOT/node_modules/.pnpm/better-sqlite3@"*"/node_modules/better-sqlite3/build/Release/better_sqlite3.node" \
             || { echo "better-sqlite3 native binary missing for ${{ matrix.target }}"; exit 1; }
 
+      - name: Verify native binaries are present
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'apps/electron/.stage/remote-runtime/${{ matrix.target }}'
+          $pty = Get-ChildItem "$root/node_modules/.pnpm" -Recurse -File -Filter pty.node |
+            Where-Object { $_.FullName -match 'node-pty' } |
+            Select-Object -First 1
+          if (-not $pty) {
+            throw 'node-pty native binary missing for ${{ matrix.target }}'
+          }
+          $sqlite = Get-ChildItem "$root/node_modules/.pnpm" -Recurse -File -Filter better_sqlite3.node |
+            Select-Object -First 1
+          if (-not $sqlite) {
+            throw 'better-sqlite3 native binary missing for ${{ matrix.target }}'
+          }
+
       - name: Rename archive for release
+        if: runner.os != 'Windows'
         run: |
           mkdir -p dist-runtime
-          cp "apps/electron/.stage/remote-runtime/${{ matrix.target }}.tar.gz" \
-             "dist-runtime/elevenex-remote-runtime-${{ matrix.target }}.tar.gz"
-          (cd dist-runtime && ${{ matrix.checksum-command }} "elevenex-remote-runtime-${{ matrix.target }}.tar.gz" \
-            > "elevenex-remote-runtime-${{ matrix.target }}.tar.gz.sha256")
+          cp "apps/electron/.stage/remote-runtime/${{ matrix.target }}.${{ matrix.archive_extension }}" \
+             "dist-runtime/elevenex-remote-runtime-${{ matrix.target }}.${{ matrix.archive_extension }}"
+          (cd dist-runtime && ${{ matrix.checksum-command }} "elevenex-remote-runtime-${{ matrix.target }}.${{ matrix.archive_extension }}" \
+            > "elevenex-remote-runtime-${{ matrix.target }}.${{ matrix.archive_extension }}.sha256")
           ls -lh dist-runtime/
+
+      - name: Rename archive for release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist-runtime | Out-Null
+          $archiveName = 'elevenex-remote-runtime-${{ matrix.target }}.${{ matrix.archive_extension }}'
+          Copy-Item "apps/electron/.stage/remote-runtime/${{ matrix.target }}.${{ matrix.archive_extension }}" "dist-runtime/$archiveName"
+          Get-FileHash "dist-runtime/$archiveName" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  $archiveName" } |
+            Set-Content "dist-runtime/$archiveName.sha256"
+          Get-ChildItem dist-runtime | Format-Table -AutoSize
 
       - uses: actions/upload-artifact@v4
         with:

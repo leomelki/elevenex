@@ -16,7 +16,9 @@
     "package:mac": "electron-builder --mac",
     "package:mac:dir": "electron-builder --mac dir",
     "package:linux": "electron-builder --linux",
-    "package:linux:dir": "electron-builder --linux dir"
+    "package:linux:dir": "electron-builder --linux dir",
+    "package:win": "electron-builder --win",
+    "package:win:dir": "electron-builder --win dir"
   },
   "build": {
     "appId": "fr.leomelki.elevenex",
@@ -97,6 +99,21 @@
         "AppImage",
         "deb"
       ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
     },
     "dmg": {
       "sign": false

@@ -23,6 +23,7 @@ const TARGETS = [
   { key: 'linux-arm64', platform: 'linux', arch: 'arm64', nodeArch: 'arm64' },
   { key: 'darwin-x64', platform: 'darwin', arch: 'x64', nodeArch: 'x64' },
   { key: 'darwin-arm64', platform: 'darwin', arch: 'arm64', nodeArch: 'arm64' },
+  { key: 'win32-x64', platform: 'win32', arch: 'x64', nodeArch: 'x64', nodePlatform: 'win', archiveExtension: 'zip' },
 ];
 const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@openai/codex-sdk'];
 
@@ -105,7 +106,8 @@ function buildRuntimePackageJson(target) {
 }
 
 function runCommand(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const executable = process.platform === 'win32' && command === 'pnpm' ? 'pnpm.cmd' : command;
+  const result = spawnSync(executable, args, {
     stdio: 'inherit',
     ...options,
   });
@@ -115,7 +117,7 @@ function runCommand(command, args, options = {}) {
   }
 
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} failed with exit code ${result.status ?? 'unknown'}`);
+    throw new Error(`${executable} ${args.join(' ')} failed with exit code ${result.status ?? 'unknown'}`);
   }
 }
 
@@ -191,11 +193,13 @@ async function resolveLatestNodeVersion() {
 
 async function stageBundledNodeRuntime(targetRoot, target, nodeVersion) {
   const targetTempRoot = path.join(tempRoot, target.key);
-  const archiveName = `node-${nodeVersion}-${target.platform}-${target.nodeArch}.tar.gz`;
+  const nodePlatform = target.nodePlatform || target.platform;
+  const isZipArchive = target.archiveExtension === 'zip';
+  const archiveName = `node-${nodeVersion}-${nodePlatform}-${target.nodeArch}.${isZipArchive ? 'zip' : 'tar.gz'}`;
   const archivePath = path.join(targetTempRoot, archiveName);
   const downloadUrl = `https://nodejs.org/dist/${nodeVersion}/${archiveName}`;
   const extractRoot = path.join(targetTempRoot, 'extract');
-  const extractedNodeRoot = path.join(extractRoot, `node-${nodeVersion}-${target.platform}-${target.nodeArch}`);
+  const extractedNodeRoot = path.join(extractRoot, `node-${nodeVersion}-${nodePlatform}-${target.nodeArch}`);
 
   ensureDir(targetTempRoot);
   if (!existsSync(archivePath)) {
@@ -205,7 +209,18 @@ async function stageBundledNodeRuntime(targetRoot, target, nodeVersion) {
 
   rmSync(extractRoot, { recursive: true, force: true });
   ensureDir(extractRoot);
-  runCommand('tar', ['-xzf', archivePath, '-C', extractRoot]);
+  if (isZipArchive) {
+    runCommand('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      `Expand-Archive -LiteralPath ${JSON.stringify(archivePath)} -DestinationPath ${JSON.stringify(extractRoot)} -Force`,
+    ]);
+  } else {
+    runCommand('tar', ['-xzf', archivePath, '-C', extractRoot]);
+  }
   copyRequiredPath(extractedNodeRoot, path.join(targetRoot, 'node'));
 }
 
@@ -240,7 +255,37 @@ function installRuntimeDependencies(targetRoot, target) {
   }
 }
 
-function writeLauncher(targetRoot) {
+function writeLauncher(targetRoot, target) {
+  if (target.platform === 'win32') {
+    const powershellLauncherPath = path.join(targetRoot, 'bin', 'start-backend.ps1');
+    const cmdLauncherPath = path.join(targetRoot, 'bin', 'start-backend.cmd');
+    const powershellScript = [
+      '$ErrorActionPreference = "Stop"',
+      '$port = if ($args.Count -gt 0 -and $args[0]) { [int]$args[0] } else { 11111 }',
+      '$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path',
+      '$runtimeRoot = Split-Path -Parent $scriptDir',
+      '$logRoot = Join-Path $HOME ".elevenex\\logs"',
+      'New-Item -ItemType Directory -Force $logRoot | Out-Null',
+      '$env:ELEVENEX_BACKEND_RUNTIME_ROOT = $runtimeRoot',
+      '$env:DB_PATH = Join-Path $HOME ".elevenex\\elevenex.db"',
+      '$env:ELEVENEX_PROXY_PORT = "$port"',
+      '$env:FRONTEND_PORT = "$port"',
+      '$node = Join-Path $runtimeRoot "node\\node.exe"',
+      '$entry = Join-Path $runtimeRoot "main.cjs"',
+      '$stdoutLog = Join-Path $logRoot "backend.log"',
+      '$stderrLog = Join-Path $logRoot "backend.err.log"',
+      '$pidPath = Join-Path $HOME ".elevenex\\backend.pid"',
+      '$process = Start-Process -FilePath $node -ArgumentList @($entry) -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru',
+      'Set-Content -LiteralPath $pidPath -Value $process.Id',
+      'Wait-Process -Id $process.Id',
+    ].join('\r\n');
+    const cmdScript = '@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-backend.ps1" %*\r\n';
+    ensureDir(path.dirname(powershellLauncherPath));
+    writeFileSync(powershellLauncherPath, `${powershellScript}\r\n`, 'utf8');
+    writeFileSync(cmdLauncherPath, cmdScript, 'utf8');
+    return;
+  }
+
   const launcherPath = path.join(targetRoot, 'bin', 'start-backend.sh');
   const script = [
     '#!/bin/sh',
@@ -260,8 +305,22 @@ function writeLauncher(targetRoot) {
   chmodSync(launcherPath, 0o755);
 }
 
-function archiveTarget(targetRoot, targetKey) {
-  const archivePath = path.join(remoteRuntimeRoot, `${targetKey}.tar.gz`);
+function archiveTarget(targetRoot, target) {
+  if (target.archiveExtension === 'zip') {
+    const archivePath = path.join(remoteRuntimeRoot, `${target.key}.zip`);
+    rmSync(archivePath, { force: true });
+    runCommand('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      `Compress-Archive -Path ${JSON.stringify(path.join(targetRoot, '*'))} -DestinationPath ${JSON.stringify(archivePath)} -Force`,
+    ]);
+    return;
+  }
+
+  const archivePath = path.join(remoteRuntimeRoot, `${target.key}.tar.gz`);
   runCommand('tar', ['-czf', archivePath, '-C', targetRoot, '.']);
 }
 
@@ -281,11 +340,11 @@ async function stageTarget(target, commitSha, nodeVersion) {
 
   await stageBundledNodeRuntime(targetRoot, target, nodeVersion);
   installRuntimeDependencies(targetRoot, target);
-  writeLauncher(targetRoot);
+  writeLauncher(targetRoot, target);
 
   removeSourceMaps(targetRoot);
   removeGitArtifacts(targetRoot);
-  archiveTarget(targetRoot, target.key);
+  archiveTarget(targetRoot, target);
 }
 
 function parseCliArgs(argv) {
@@ -338,7 +397,8 @@ async function main() {
     (existingManifest.targets || []).map((entry) => [entry.key, entry]),
   );
   for (const target of selectedTargets) {
-    targetEntries.set(target.key, { key: target.key, archive: `${target.key}.tar.gz` });
+    const archiveExtension = target.archiveExtension || 'tar.gz';
+    targetEntries.set(target.key, { key: target.key, archive: `${target.key}.${archiveExtension}` });
   }
 
   const manifest = {
