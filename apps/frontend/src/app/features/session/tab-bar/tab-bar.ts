@@ -204,21 +204,7 @@ export class TabBar {
   }
 
   openAgentDrawer(): void {
-    const activeId = this.activeSessionId();
-    const tab = this.tabs().find(candidate => candidate.sessionId === activeId);
-    if (!tab) {
-      return;
-    }
-
-    this.agentControl.openSession({
-      projectId: tab.projectId,
-      repoId: tab.repoId,
-      sessionId: tab.sessionId,
-      sessionName: tab.sessionName,
-      worktreePath: tab.worktreePath,
-      workspaceName: tab.workspaceName,
-      branchName: tab.branchName,
-    });
+    this.agentControl.openGlobal();
   }
 
   /**

@@ -95,14 +95,7 @@ describe('TabBar', () => {
 
     const agentControl = TestBed.inject(AgentControlStateService);
     expect(agentControl.isOpen()).toBe(true);
-    expect(agentControl.context()).toMatchObject({
-      kind: 'session',
-      projectId: 10,
-      repoId: 1,
-      sessionId: 42,
-      worktreePath: '/tmp/main',
-      workspaceName: 'Main workspace',
-    });
+    expect(agentControl.context().kind).toBe('global');
   });
 
   it('shows the completion badge when a tab has unreviewed completion', () => {

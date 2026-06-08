@@ -222,7 +222,7 @@ describe('ProjectDetail', () => {
     expect(fixture.nativeElement.textContent).toContain('Live');
   });
 
-  it('opens the app-wide agent drawer with the current project context', async () => {
+  it('opens the app-wide global agent drawer', async () => {
     const fixture = await render();
 
     const button = fixture.nativeElement.querySelector(
@@ -232,11 +232,7 @@ describe('ProjectDetail', () => {
 
     const agentControl = TestBed.inject(AgentControlStateService);
     expect(agentControl.isOpen()).toBe(true);
-    expect(agentControl.context()).toMatchObject({
-      kind: 'project',
-      projectId: 1,
-      projectName: 'Platform',
-    });
+    expect(agentControl.context().kind).toBe('global');
   });
 
   it('updates the fragment when switching sections', async () => {

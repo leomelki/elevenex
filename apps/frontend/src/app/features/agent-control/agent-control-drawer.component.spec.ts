@@ -48,6 +48,12 @@ describe('AgentControlDrawerComponent', () => {
     expect(text).toContain('Elevenex agent');
     expect(text).toContain('Preview mode');
     expect(text).toContain('No preview missions');
+    expect((fixture.nativeElement as HTMLElement).querySelector('.agent-control-backdrop')).toBeNull();
+    expect(
+      (fixture.nativeElement as HTMLElement)
+        .querySelector('.agent-control-drawer')
+        ?.getAttribute('role'),
+    ).toBe('complementary');
   });
 
   it('creates a local mission from the composer', () => {

@@ -169,11 +169,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   openAgentDrawer() {
-    const project = this.project();
-    if (!project) {
-      return;
-    }
-    this.agentControl.openProject(project);
+    this.agentControl.openGlobal();
   }
 
   selectSection(section: ProjectDetailSection) {

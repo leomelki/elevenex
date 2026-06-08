@@ -1,11 +1,8 @@
 @if (state.isOpen()) {
-  <div class="agent-control-backdrop" aria-hidden="true" (click)="close()"></div>
-
   <aside
     class="agent-control-drawer"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Elevenex agent preview"
+    role="complementary"
+    aria-label="Elevenex agent"
   >
     <header class="agent-control-header">
       <div class="agent-control-header__identity">
@@ -14,14 +11,7 @@
         </span>
         <div class="agent-control-header__copy">
           <h2>Elevenex agent</h2>
-          <div class="agent-control-header__eyebrow">
-            @for (part of contextParts(); track part; let last = $last) {
-              <span>{{ part }}</span>
-              @if (!last) {
-                <ng-icon name="lucideChevronRight" size="11" />
-              }
-            }
-          </div>
+          <div class="agent-control-header__eyebrow">Global controller</div>
         </div>
       </div>
 

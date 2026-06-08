@@ -30,9 +30,7 @@ const missionKindLabels: Record<AgentMissionKind, string> = {
 export class AgentControlStateService {
   private readonly initialState = this.loadState();
   private readonly openSignal = signal(false);
-  private readonly contextSignal = signal<AgentControlContext>(
-    this.initialState.context ?? AGENT_CONTROL_GLOBAL_CONTEXT,
-  );
+  private readonly contextSignal = signal<AgentControlContext>(AGENT_CONTROL_GLOBAL_CONTEXT);
   private readonly missionsSignal = signal<AgentMission[]>(this.initialState.missions ?? []);
   private readonly selectedMissionIdSignal = signal<string | null>(
     this.resolveInitialSelectedMissionId(),
@@ -54,8 +52,8 @@ export class AgentControlStateService {
       ).length,
   );
 
-  open(context: AgentControlContext = AGENT_CONTROL_GLOBAL_CONTEXT): void {
-    this.contextSignal.set(this.normalizeContext(context));
+  open(_context: AgentControlContext = AGENT_CONTROL_GLOBAL_CONTEXT): void {
+    this.contextSignal.set(AGENT_CONTROL_GLOBAL_CONTEXT);
     this.openSignal.set(true);
     this.persist();
   }
@@ -65,12 +63,8 @@ export class AgentControlStateService {
   }
 
   openProject(project: { id: number; name: string }): void {
-    this.open({
-      kind: 'project',
-      label: project.name,
-      projectId: project.id,
-      projectName: project.name,
-    });
+    void project;
+    this.openGlobal();
   }
 
   openSession(context: {
@@ -82,17 +76,8 @@ export class AgentControlStateService {
     workspaceName?: string | null;
     branchName: string;
   }): void {
-    this.open({
-      kind: 'session',
-      label: context.sessionName,
-      projectId: context.projectId,
-      repoId: context.repoId,
-      sessionId: context.sessionId,
-      sessionName: context.sessionName,
-      worktreePath: context.worktreePath,
-      workspaceName: context.workspaceName,
-      branchName: context.branchName,
-    });
+    void context;
+    this.openGlobal();
   }
 
   close(): void {
@@ -192,17 +177,6 @@ export class AgentControlStateService {
       return selected;
     }
     return missions[0]?.id ?? null;
-  }
-
-  private normalizeContext(context: AgentControlContext): AgentControlContext {
-    if (context.kind === 'global') {
-      return AGENT_CONTROL_GLOBAL_CONTEXT;
-    }
-
-    return {
-      ...context,
-      label: context.label || context.projectName || context.sessionName || 'Selected context',
-    };
   }
 
   private updateMission(id: string, updater: (mission: AgentMission) => AgentMission): void {
@@ -387,20 +361,7 @@ export class AgentControlStateService {
   }
 
   private targetSummary(): string {
-    const context = this.contextSignal();
-    if (context.kind === 'global') {
-      return 'all Elevenex projects';
-    }
-    if (context.kind === 'project') {
-      return `project ${context.projectName ?? context.label}`;
-    }
-    if (context.kind === 'repo') {
-      return `repository ${context.repoName ?? context.label}`;
-    }
-    if (context.kind === 'worktree') {
-      return context.workspaceName || context.worktreePath || context.label;
-    }
-    return context.sessionName || `session ${context.sessionId}`;
+    return 'Elevenex';
   }
 
   private loadState(): PersistedAgentControlState {

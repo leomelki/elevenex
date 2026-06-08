@@ -9,6 +9,7 @@ import { SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recover
 import { EnvironmentConnectionManagerService } from './shared/services/environment-connection-manager.service';
 import { ServerConnectionService, ServerConnectionState } from './shared/services/server-connection.service';
 import { PlannotatorInstallPromptService } from './features/plannotator/plannotator-install-prompt.service';
+import { AgentControlStateService } from './features/agent-control/agent-control-state.service';
 
 describe('App', () => {
   const prompt = signal<any>(null);
@@ -249,6 +250,28 @@ describe('App', () => {
     expect(getComputedStyle(body!).flexGrow).toBe('1');
     expect(getComputedStyle(body!).minHeight).toBe('0px');
     expect(getComputedStyle(body!).height).not.toBe('100%');
+  });
+
+  it('should dock the agent panel as a right-side app body column', async () => {
+    const fixture = TestBed.createComponent(App);
+    const agentControl = TestBed.inject(AgentControlStateService);
+    agentControl.openGlobal();
+
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const body = compiled.querySelector('.app-shell__body') as HTMLElement | null;
+    const drawer = compiled.querySelector('.agent-control-drawer') as HTMLElement | null;
+
+    expect(body).toBeTruthy();
+    expect(drawer).toBeTruthy();
+    expect(body?.lastElementChild?.tagName.toLowerCase()).toBe('app-agent-control-drawer');
+    expect(drawer?.parentElement).toBe(body?.lastElementChild);
+    expect(compiled.querySelector('.agent-control-backdrop')).toBeNull();
+    expect(drawer?.getAttribute('role')).toBe('complementary');
+    expect(getComputedStyle(drawer!).position).not.toBe('fixed');
   });
 
   it('should render the disconnected forward banner when runtime disconnects are present', async () => {

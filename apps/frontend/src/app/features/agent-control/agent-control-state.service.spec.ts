@@ -33,20 +33,20 @@ describe('AgentControlStateService', () => {
     });
   });
 
-  it('opens a project context and persists created preview missions', () => {
+  it('opens as a global controller and persists created preview missions', () => {
     const service = new AgentControlStateService();
     service.openProject({ id: 7, name: 'Platform' });
 
     const mission = service.createMission('Review the current work before it ships');
 
     expect(service.isOpen()).toBe(true);
-    expect(service.context()).toMatchObject({ kind: 'project', projectId: 7 });
+    expect(service.context()).toEqual({ kind: 'global', label: 'Elevenex' });
     expect(mission?.status).toBe('waiting_approval');
     expect(service.selectedMission()).toEqual(mission);
 
     const persisted = JSON.parse(storageValues.get(STORAGE_KEY) ?? '{}');
     expect(persisted.missions).toHaveLength(1);
-    expect(persisted.context.projectName).toBe('Platform');
+    expect(persisted.context).toEqual({ kind: 'global', label: 'Elevenex' });
 
     const restored = new AgentControlStateService();
     expect(restored.missions()[0].title).toBe(mission?.title);

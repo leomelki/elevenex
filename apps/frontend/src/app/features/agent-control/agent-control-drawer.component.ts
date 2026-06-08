@@ -3,7 +3,6 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
-  lucideChevronRight,
   lucideCircleDashed,
   lucideClipboardList,
   lucideFileText,
@@ -18,7 +17,6 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { AgentControlStateService } from './agent-control-state.service';
 import {
-  AgentControlContext,
   AgentMission,
   AgentMissionStatus,
   AgentMissionStep,
@@ -33,7 +31,6 @@ import {
   viewProviders: [
     provideIcons({
       lucideCheck,
-      lucideChevronRight,
       lucideCircleDashed,
       lucideClipboardList,
       lucideFileText,
@@ -50,7 +47,6 @@ export class AgentControlDrawerComponent {
 
   readonly promptDraft = signal('');
   readonly recentMissions = computed(() => this.state.missions().slice(0, 5));
-  readonly contextParts = computed(() => this.partsForContext(this.state.context()));
 
   close(): void {
     this.state.close();
@@ -167,20 +163,4 @@ export class AgentControlDrawerComponent {
     }).format(date);
   }
 
-  private partsForContext(context: AgentControlContext): string[] {
-    const parts = ['Elevenex'];
-    if (context.projectName || context.kind === 'project') {
-      parts.push(context.projectName ?? context.label);
-    }
-    if (context.repoName) {
-      parts.push(context.repoName);
-    }
-    if (context.workspaceName || context.branchName) {
-      parts.push(context.workspaceName ?? context.branchName ?? '');
-    }
-    if (context.kind === 'session') {
-      parts.push(context.sessionName ?? context.label);
-    }
-    return parts.filter(Boolean);
-  }
 }
