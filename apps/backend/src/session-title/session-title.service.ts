@@ -25,7 +25,8 @@ export class SessionTitleService {
     const runtimeQuery = sdk.query({
       prompt: [
         'Name this session based on the user\'s first message.',
-        'Respond promptly with a broad short title. Do not investigate, browse, inspect files, or dig into details.',
+        'Respond immediately with a broad short title from the first message only.',
+        'Do not use tools, investigate, browse, inspect files, or dig into details.',
         'Return only the session name, with no quotes, markdown, or commentary.',
         'Rules:',
         '- 3 to 5 words maximum',
@@ -40,14 +41,16 @@ export class SessionTitleService {
         cwd: worktreePath,
         model: 'haiku',
         maxTurns: 1,
-        permissionMode: 'plan',
+        settingSources: [],
+        allowedTools: [],
         canUseTool: async () => ({
           behavior: 'deny' as const,
           message: 'Tool use disabled for session title generation',
         }),
         ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-        systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
-        tools: { type: 'preset' as const, preset: 'claude_code' as const },
+        systemPrompt:
+          'You generate concise session titles. Reply with only the title.',
+        tools: [],
         env: buildAugmentedEnv(process.env, worktreePath),
       },
     });

@@ -1325,85 +1325,55 @@ describe('ClaudeRuntimeService', () => {
     );
   });
 
-  it('generates a Haiku title for the first prompt of an auto-named session', async () => {
-    sessionsService.findOne.mockResolvedValue({
-      id: 7,
-      name: 'Session 7',
-      worktreePath: '/tmp/project',
-      claudeSessionId: '-1',
-    });
-    const runtimeClose = jest.fn();
+  it('generates and saves a text-only Haiku session title', async () => {
     const titleClose = jest.fn();
-    (query as jest.Mock).mockImplementation(({ prompt }) => {
-      const isTitleQuery = String(prompt).includes(
-        'Name this Claude Code session',
-      );
-      return {
-        supportedModels: jest.fn().mockResolvedValue([]),
-        getContextUsage: jest.fn().mockResolvedValue({
-          model: 'sonnet',
-          totalTokens: 0,
-          maxTokens: 0,
-          percentage: 0,
-          apiUsage: undefined,
-          autoCompactThreshold: 0,
-          isAutoCompactEnabled: false,
-          memoryFiles: [],
-          mcpTools: [],
-        }),
-        close: isTitleQuery ? titleClose : runtimeClose,
-        [Symbol.asyncIterator]: () => {
-          let emitted = false;
-          return {
-            next: async () => {
-              if (!isTitleQuery) {
-                if (emitted) {
-                  return { done: true, value: undefined };
-                }
-                emitted = true;
-                return { done: false, value: successfulResultMessage() };
-              }
-
-              if (emitted) {
-                return { done: true, value: undefined };
-              }
-              emitted = true;
-              return {
-                done: false,
-                value: {
-                  type: 'assistant',
-                  message: {
-                    content: [{ type: 'text', text: 'Implement Auto Names' }],
-                  },
+    (query as jest.Mock).mockImplementationOnce(() => ({
+      close: titleClose,
+      [Symbol.asyncIterator]: () => {
+        let emitted = false;
+        return {
+          next: async () => {
+            if (emitted) {
+              return { done: true, value: undefined };
+            }
+            emitted = true;
+            return {
+              done: false,
+              value: {
+                type: 'assistant',
+                message: {
+                  content: [{ type: 'text', text: 'Implement Auto Names' }],
                 },
-              };
-            },
-          };
-        },
-      };
-    });
+              },
+            };
+          },
+        };
+      },
+    }));
 
-    await service.submitPrompt(
+    await (service as any).generateAndSaveSessionTitle(
       7,
-      'Please implement auto names',
+      '/tmp/project',
       'Please implement auto names',
     );
-    await new Promise((resolve) => setImmediate(resolve));
-    await Promise.resolve();
 
-    expect(query).toHaveBeenCalledTimes(2);
-    expect((query as jest.Mock).mock.calls[1][0]).toEqual(
+    expect(query).toHaveBeenCalledTimes(1);
+    expect((query as jest.Mock).mock.calls[0][0]).toEqual(
       expect.objectContaining({
         options: expect.objectContaining({
           model: 'haiku',
           maxTurns: 1,
-          permissionMode: 'plan',
+          settingSources: [],
+          allowedTools: [],
+          systemPrompt:
+            'You generate concise session titles. Reply with only the title.',
+          tools: [],
           cwd: '/tmp/project',
         }),
       }),
     );
-    expect((query as jest.Mock).mock.calls[1][0].prompt).toContain(
-      'Respond promptly with a broad short title',
+    expect((query as jest.Mock).mock.calls[0][0].prompt).toContain(
+      'Respond immediately with a broad short title',
     );
     expect(sessionsService.renameFromGeneratedTitle).toHaveBeenCalledWith(
       7,
