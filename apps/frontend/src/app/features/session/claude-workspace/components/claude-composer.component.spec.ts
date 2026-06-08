@@ -1,7 +1,10 @@
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
-import { ClaudeComposerComponent } from './claude-composer.component';
+import {
+  ClaudeComposerComponent,
+  ComposerImageAttachment,
+} from './claude-composer.component';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 
 const mention = (overrides: Partial<DiffSelectionMention> = {}): DiffSelectionMention => ({
@@ -22,6 +25,15 @@ const mention = (overrides: Partial<DiffSelectionMention> = {}): DiffSelectionMe
   selectedText: 'const value = true;',
   context: { before: [], selected: [], after: [] },
   truncated: false,
+  ...overrides,
+});
+
+const image = (overrides: Partial<ComposerImageAttachment> = {}): ComposerImageAttachment => ({
+  id: 'img-1',
+  name: 'screen.png',
+  mediaType: 'image/png',
+  dataUrl: 'data:image/png;base64,abc',
+  size: 3,
   ...overrides,
 });
 
@@ -124,5 +136,53 @@ describe('ClaudeComposerComponent', () => {
 
     fixture.componentInstance.submit();
     expect(sendSpy).toHaveBeenCalledWith({ text: '', images: [], diffMentions: [diffMention] });
+  });
+
+  it('renders controlled image attachments and emits removal changes', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    const first = image();
+    const second = image({ id: 'img-2', name: 'other.png' });
+    const imageChangeSpy = vi.fn();
+    fixture.componentInstance.imageAttachmentsChange.subscribe(imageChangeSpy);
+    fixture.componentRef.setInput('imageAttachments', [first, second]);
+    fixture.detectChanges();
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelectorAll('.cw-comp__image')).toHaveLength(2);
+
+    fixture.componentInstance.removeImage('img-1');
+    expect(imageChangeSpy).toHaveBeenCalledWith([second]);
+  });
+
+  it('clears image attachments after submitting an image-only prompt', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    const attachedImage = image();
+    const sendSpy = vi.fn();
+    const imageChangeSpy = vi.fn();
+    fixture.componentInstance.send.subscribe(sendSpy);
+    fixture.componentInstance.imageAttachmentsChange.subscribe(imageChangeSpy);
+    fixture.componentRef.setInput('value', '');
+    fixture.componentRef.setInput('imageAttachments', [attachedImage]);
+    fixture.detectChanges();
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+    fixture.componentInstance.submit();
+
+    expect(sendSpy).toHaveBeenCalledWith({
+      text: '',
+      images: [attachedImage],
+      diffMentions: [],
+    });
+    expect(imageChangeSpy).toHaveBeenCalledWith([]);
   });
 });

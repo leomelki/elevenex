@@ -106,6 +106,7 @@ import {
   appendDiffSelectionMentions,
   parseDiffSelectionMentions,
 } from '@/shared/utils/diff-selection-mention';
+import { ComposerDraftService } from './composer-draft.service';
 
 type TranscriptRenderItem =
   | { kind: 'unit'; id: string; unit: PairedTranscriptUnit }
@@ -193,12 +194,14 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly forkDrafts = inject(ConversationForkDraftService);
   private readonly claudeStatusService = inject(ClaudeStatusService);
   private readonly worktreeContextService = inject(WorktreeContextService);
+  private readonly composerDrafts = inject(ComposerDraftService);
 
   readonly loading = signal(true);
   readonly hydrated = signal(false);
   readonly submitting = signal(false);
   readonly prompt = signal('');
   readonly pendingDiffMentions = signal<DiffSelectionMention[]>([]);
+  readonly composerImages = signal<ComposerImageAttachment[]>([]);
   readonly runPhase = signal<ClaudeRunPhase>('idle');
   readonly sessionState = signal<ClaudeSessionExecutionState>('idle');
   readonly canInterrupt = signal(false);
@@ -239,6 +242,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private currentRunHadSubstantiveOutput = false;
   private bootstrappedProvider: AgentProviderId | null = null;
   private deferredContextGenerationTimer: number | null = null;
+  private composerDraftRevision = 0;
+  private composerDraftRestoreVersion = 0;
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
   readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
@@ -717,7 +722,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (this.isVisible) {
       this.providerSelection.setProvider(this.activeAgentProvider);
       void this.bootstrapForMode();
-      this.applyPendingForkDraft();
+      this.restoreInitialComposerDraft();
     }
   }
 
@@ -729,7 +734,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       if (this.isVisible) {
         this.providerSelection.setProvider(this.activeAgentProvider);
         void this.bootstrapForMode();
-        this.applyPendingForkDraft();
+        this.restoreInitialComposerDraft();
       }
     }
     if (
@@ -747,7 +752,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.reset();
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
         void this.bootstrapForMode();
-        this.applyPendingForkDraft();
+        this.restoreInitialComposerDraft();
       } else if (!this.archived && !this.readOnlyTranscript) {
         void this.loadWorktreeContext(false);
       }
@@ -757,7 +762,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       this.providerSelection.setProvider(this.activeAgentProvider);
       void this.bootstrapForMode();
-      this.applyPendingForkDraft();
+      this.restoreInitialComposerDraft();
     }
     const transcriptModeChanged =
       (changes['readOnlyTranscript'] && !changes['readOnlyTranscript'].firstChange) ||
@@ -779,23 +784,35 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.reset();
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
         void this.bootstrapForMode();
-        this.applyPendingForkDraft();
+        this.restoreInitialComposerDraft();
       }
     }
   }
 
   onPromptChange(value: string): void {
     this.prompt.set(value);
+    this.markComposerDraftChanged();
+    this.persistComposerDraft();
+  }
+
+  onComposerImagesChange(images: ComposerImageAttachment[]): void {
+    this.composerImages.set(images);
+    this.markComposerDraftChanged();
+    this.persistComposerDraft();
   }
 
   addDiffMentions(mentions: readonly DiffSelectionMention[]): void {
     if (this.isTranscriptReadOnly() || !mentions.length) return;
     this.pendingDiffMentions.update((items) => [...items, ...mentions]);
+    this.markComposerDraftChanged();
+    this.persistComposerDraft();
     queueMicrotask(() => this.composer?.focusAtEnd());
   }
 
   removeDiffMention(id: string): void {
     this.pendingDiffMentions.update((items) => items.filter((mention) => mention.id !== id));
+    this.markComposerDraftChanged();
+    this.persistComposerDraft();
   }
 
   async submitPrompt(payload: ComposerSendPayload | string): Promise<void> {
@@ -833,6 +850,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.cancelArmedEdit();
     this.prompt.set('');
     this.pendingDiffMentions.set([]);
+    this.composerImages.set([]);
+    this.markComposerDraftChanged();
+    this.clearComposerDraft();
     const prepared = this.prepareRuntimePrompt(promptWithMentions);
     this.sendRuntimeAction({
       type: 'submit_prompt',
@@ -1434,6 +1454,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.expandedTurnChanges.set({});
       this.prompt.set(restored.text);
       this.pendingDiffMentions.set(restored.mentions);
+      this.composerImages.set([]);
+      this.markComposerDraftChanged();
+      this.persistComposerDraft();
       this.cancelArmedEdit();
       this.closeAgentInspector();
       queueMicrotask(() => this.composer?.focusAtEnd());
@@ -1566,13 +1589,60 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     return this.archived ? this.bootstrapArchived() : this.bootstrap();
   }
 
-  private applyPendingForkDraft(): void {
+  private restoreInitialComposerDraft(): void {
+    if (this.isTranscriptReadOnly()) return;
+    if (this.applyPendingForkDraft()) return;
+    this.restoreSavedComposerDraft();
+  }
+
+  private applyPendingForkDraft(): boolean {
     const draft = this.forkDrafts.consumeDraft(this.sessionId);
-    if (!draft) return;
+    if (!draft) return false;
     const parsed = parseDiffSelectionMentions(draft);
     this.prompt.set(parsed.text);
     this.pendingDiffMentions.set(parsed.mentions);
+    this.composerImages.set([]);
+    this.markComposerDraftChanged();
+    this.persistComposerDraft();
     queueMicrotask(() => this.composer?.focusAtEnd());
+    return true;
+  }
+
+  private restoreSavedComposerDraft(): void {
+    const sessionId = this.sessionId;
+    const restoreVersion = ++this.composerDraftRestoreVersion;
+    const revision = this.composerDraftRevision;
+
+    void this.composerDrafts.load(sessionId).then((draft) => {
+      if (!draft) return;
+      if (restoreVersion !== this.composerDraftRestoreVersion) return;
+      if (sessionId !== this.sessionId || this.isTranscriptReadOnly()) return;
+      if (revision !== this.composerDraftRevision) return;
+
+      this.prompt.set(draft.text);
+      this.pendingDiffMentions.set(draft.diffMentions);
+      this.composerImages.set(draft.images);
+      queueMicrotask(() => this.composer?.focusAtEnd());
+    });
+  }
+
+  private markComposerDraftChanged(): void {
+    this.composerDraftRevision += 1;
+    this.composerDraftRestoreVersion += 1;
+  }
+
+  private persistComposerDraft(): void {
+    if (this.isTranscriptReadOnly()) return;
+    void this.composerDrafts.save({
+      sessionId: this.sessionId,
+      text: this.prompt(),
+      diffMentions: this.pendingDiffMentions(),
+      images: this.composerImages(),
+    });
+  }
+
+  private clearComposerDraft(): void {
+    void this.composerDrafts.delete(this.sessionId);
   }
 
   private async loadForks(version: number = this.bootstrapVersion): Promise<void> {
@@ -2124,6 +2194,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.submitting.set(false);
     this.prompt.set('');
     this.pendingDiffMentions.set([]);
+    this.composerImages.set([]);
     this.runPhase.set('idle');
     this.sessionState.set('idle');
     this.canInterrupt.set(false);

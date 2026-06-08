@@ -10,6 +10,10 @@ import { ClaudeTerminalTranscriptWebsocketService } from '@/shared/services/clau
 import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { SessionsService } from '@/shared/services/sessions.service';
+import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
+import { ComposerDraftService } from './composer-draft.service';
+import type { ComposerImageAttachment } from './components/claude-composer.component';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -94,6 +98,11 @@ describe('ClaudeWorkspaceComponent', () => {
     updateRootRef: ReturnType<typeof vi.fn>;
     consume: ReturnType<typeof vi.fn>;
   };
+  let composerDraftsMock: {
+    load: ReturnType<typeof vi.fn>;
+    save: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
+  };
   const readyWorktreeContext = () => ({
     repoId: 1,
     worktreePath: '/tmp/project',
@@ -114,6 +123,15 @@ describe('ClaudeWorkspaceComponent', () => {
 
   const linesOf = (count: number) =>
     Array.from({ length: count }, (_, i) => `line-${i}`).join('\n');
+
+  const image = (overrides: Partial<ComposerImageAttachment> = {}): ComposerImageAttachment => ({
+    id: 'img-1',
+    name: 'screen.png',
+    mediaType: 'image/png',
+    dataUrl: 'data:image/png;base64,abc',
+    size: 3,
+    ...overrides,
+  });
 
   type EditCall = {
     tool: 'Edit' | 'Write' | 'MultiEdit';
@@ -327,6 +345,11 @@ describe('ClaudeWorkspaceComponent', () => {
       updateRootRef: vi.fn(() => of({})),
       consume: vi.fn(() => of({ shouldInject: false, contextSentence: null })),
     };
+    composerDraftsMock = {
+      load: vi.fn(() => Promise.resolve(null)),
+      save: vi.fn(() => Promise.resolve()),
+      delete: vi.fn(() => Promise.resolve()),
+    };
     await TestBed.configureTestingModule({
       imports: [ClaudeWorkspaceComponent],
       providers: [
@@ -334,6 +357,7 @@ describe('ClaudeWorkspaceComponent', () => {
         { provide: ClaudeRuntimeWebsocketService, useValue: wsMock },
         { provide: ClaudeTerminalTranscriptWebsocketService, useValue: terminalTranscriptWsMock },
         { provide: WorktreeContextService, useValue: worktreeContextServiceMock },
+        { provide: ComposerDraftService, useValue: composerDraftsMock },
         {
           provide: SessionsService,
           useValue: {
@@ -458,6 +482,129 @@ describe('ClaudeWorkspaceComponent', () => {
 
     await fixture.componentInstance.submitPrompt('should not send');
     expect(terminalTranscriptWsMock.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores saved composer drafts with text, diff mentions, and images', async () => {
+    const diffMention = {
+      id: 'mention-1',
+      version: 1,
+      scope: 'branch',
+      compareLabel: 'feature vs main',
+      baseSha: 'base',
+      headSha: 'head',
+      filePath: 'src/app.ts',
+      oldPath: null,
+      status: 'modified',
+      changeHash: 'hash',
+      oldLineStart: 1,
+      oldLineEnd: 1,
+      newLineStart: 2,
+      newLineEnd: 2,
+      selectedText: 'const value = true;',
+      context: { before: [], selected: [], after: [] },
+      truncated: false,
+    } as DiffSelectionMention;
+    const attachedImage = image();
+    composerDraftsMock.load.mockResolvedValueOnce({
+      version: 1,
+      sessionId: 7,
+      text: 'Saved prompt',
+      diffMentions: [diffMention],
+      images: [attachedImage],
+      updatedAt: '2026-04-24T08:00:00.000Z',
+    });
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    await flushPromises();
+
+    expect(composerDraftsMock.load).toHaveBeenCalledWith(7);
+    expect(fixture.componentInstance.prompt()).toBe('Saved prompt');
+    expect(fixture.componentInstance.pendingDiffMentions()).toEqual([diffMention]);
+    expect(fixture.componentInstance.composerImages()).toEqual([attachedImage]);
+  });
+
+  it('clears the saved composer draft after accepting a prompt', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    await flushPromises();
+
+    fixture.componentInstance.prompt.set('Ship this change');
+    fixture.componentInstance.composerImages.set([image()]);
+    await fixture.componentInstance.submitPrompt('Ship this change');
+
+    expect(fixture.componentInstance.prompt()).toBe('');
+    expect(fixture.componentInstance.composerImages()).toEqual([]);
+    expect(composerDraftsMock.delete).toHaveBeenCalledWith(7);
+  });
+
+  it('gives pending fork drafts priority over saved composer drafts', async () => {
+    const forkDrafts = TestBed.inject(ConversationForkDraftService);
+    forkDrafts.setDraft(7, 'Fork draft');
+    composerDraftsMock.load.mockResolvedValueOnce({
+      version: 1,
+      sessionId: 7,
+      text: 'Saved prompt',
+      diffMentions: [],
+      images: [image()],
+      updatedAt: '2026-04-24T08:00:00.000Z',
+    });
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    await flushPromises();
+
+    expect(composerDraftsMock.load).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.prompt()).toBe('Fork draft');
+    expect(fixture.componentInstance.composerImages()).toEqual([]);
+    expect(composerDraftsMock.save).toHaveBeenCalledWith({
+      sessionId: 7,
+      text: 'Fork draft',
+      diffMentions: [],
+      images: [],
+    });
+  });
+
+  it('does not let async draft restore overwrite newly typed input', async () => {
+    let resolveDraft: (value: {
+      version: 1;
+      sessionId: number;
+      text: string;
+      diffMentions: [];
+      images: [];
+      updatedAt: string;
+    }) => void = () => undefined;
+    composerDraftsMock.load.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDraft = resolve;
+      }),
+    );
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.onPromptChange('Fresh input');
+
+    resolveDraft({
+      version: 1,
+      sessionId: 7,
+      text: 'Older saved draft',
+      diffMentions: [],
+      images: [],
+      updatedAt: '2026-04-24T08:00:00.000Z',
+    });
+    await flushPromises();
+
+    expect(fixture.componentInstance.prompt()).toBe('Fresh input');
+    expect(composerDraftsMock.save).toHaveBeenCalledWith({
+      sessionId: 7,
+      text: 'Fresh input',
+      diffMentions: [],
+      images: [],
+    });
   });
 
   it('copies message content to the clipboard', async () => {

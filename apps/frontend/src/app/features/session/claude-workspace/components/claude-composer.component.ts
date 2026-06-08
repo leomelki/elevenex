@@ -639,9 +639,11 @@ export class ClaudeComposerComponent {
   readonly pendingPrompts = input<ClaudePendingPrompt[]>([]);
   readonly disconnected = input<boolean>(false);
   readonly diffMentions = input<DiffSelectionMention[]>([]);
+  readonly imageAttachments = input<ComposerImageAttachment[]>([]);
 
   readonly send = output<ComposerSendPayload>();
   readonly valueChange = output<string>();
+  readonly imageAttachmentsChange = output<ComposerImageAttachment[]>();
   readonly interrupt = output<void>();
   readonly cancelPending = output<string>();
   readonly removeDiffMention = output<string>();
@@ -682,8 +684,14 @@ export class ClaudeComposerComponent {
       });
     });
     effect(() => {
-      if (!this.allowImages() && this.attachedImages().length) {
-        this.attachedImages.set([]);
+      if (!this.allowImages() && (this.attachedImages().length || this.imageAttachments().length)) {
+        this.setAttachedImages([]);
+      }
+    });
+    effect(() => {
+      const nextImages = this.allowImages() ? this.imageAttachments() : [];
+      if (!sameImages(this.attachedImages(), nextImages)) {
+        this.attachedImages.set(nextImages);
       }
     });
   }
@@ -772,7 +780,7 @@ export class ClaudeComposerComponent {
     if (this.blockedByPermission()) return;
     if (this.submitting() && !this.running()) return;
     this.send.emit({ text: v, images, diffMentions });
-    this.attachedImages.set([]);
+    this.setAttachedImages([]);
   }
 
   mentionLineLabel(mention: DiffSelectionMention): string {
@@ -799,7 +807,7 @@ export class ClaudeComposerComponent {
   }
 
   removeImage(id: string): void {
-    this.attachedImages.update((items) => items.filter((i) => i.id !== id));
+    this.setAttachedImages(this.attachedImages().filter((i) => i.id !== id));
   }
 
   openFilePicker(): void {
@@ -913,8 +921,13 @@ export class ClaudeComposerComponent {
       }
     }
     if (accepted.length) {
-      this.attachedImages.update((items) => [...items, ...accepted]);
+      this.setAttachedImages([...this.attachedImages(), ...accepted]);
     }
+  }
+
+  private setAttachedImages(images: ComposerImageAttachment[]): void {
+    this.attachedImages.set(images);
+    this.imageAttachmentsChange.emit(images);
   }
 
   private readFileAsDataUrl(file: File): Promise<string> {
@@ -973,4 +986,21 @@ function score(item: ClaudeAutocompleteItem, query: string): number {
   if (label.includes(query)) return 300;
   if ((item.description || '').toLowerCase().includes(query)) return 200;
   return Number.NEGATIVE_INFINITY;
+}
+
+function sameImages(
+  left: readonly ComposerImageAttachment[],
+  right: readonly ComposerImageAttachment[],
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((image, index) => {
+    const other = right[index];
+    return (
+      image.id === other.id &&
+      image.name === other.name &&
+      image.mediaType === other.mediaType &&
+      image.dataUrl === other.dataUrl &&
+      image.size === other.size
+    );
+  });
 }
