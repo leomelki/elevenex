@@ -191,7 +191,10 @@ export class NavigationService {
     sessions: Awaited<ReturnType<SessionsService['findByRepo']>>,
   ): WorkspaceInTree[] {
     const workspaceMap = new Map<number, WorkspaceInTree>(
-      workspaces.map((workspace) => [workspace.id, { ...workspace, sessions: [], archivedSessions: [] }]),
+      workspaces.map((workspace) => [
+        workspace.id,
+        { ...workspace, sessions: [], archivedSessions: [] },
+      ]),
     );
     const workspaceByPath = new Map<string, WorkspaceInTree>();
     for (const workspace of workspaceMap.values()) {
@@ -202,9 +205,15 @@ export class NavigationService {
 
     for (const session of sessions) {
       const entry =
-        (session.workspaceId ? workspaceMap.get(session.workspaceId) : undefined)
-        ?? workspaceByPath.get(session.worktreePath)
-        ?? this.getOrCreateVirtualWorkspace(repoId, session, virtualWorkspaceByPath);
+        (session.workspaceId
+          ? workspaceMap.get(session.workspaceId)
+          : undefined) ??
+        workspaceByPath.get(session.worktreePath) ??
+        this.getOrCreateVirtualWorkspace(
+          repoId,
+          session,
+          virtualWorkspaceByPath,
+        );
 
       const sessionInTree: SessionInTree = {
         id: session.id,
@@ -280,7 +289,9 @@ export class NavigationService {
     return -Math.max(1, Math.abs(hash));
   }
 
-  private toCompatibilityBranches(workspaces: WorkspaceInTree[]): BranchInTree[] {
+  private toCompatibilityBranches(
+    workspaces: WorkspaceInTree[],
+  ): BranchInTree[] {
     return workspaces.map((workspace) => ({
       name: workspace.currentBranch ?? workspace.name,
       commit: workspace.head ?? '',

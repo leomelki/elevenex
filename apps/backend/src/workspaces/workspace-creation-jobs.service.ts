@@ -3,7 +3,11 @@ import * as path from 'node:path';
 import * as schema from '../database/schema/index.js';
 import { WorkspacesService } from './workspaces.service.js';
 
-export type WorkspaceCreationJobStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+export type WorkspaceCreationJobStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed';
 
 export interface WorkspaceCreationJob {
   id: string;
@@ -27,7 +31,10 @@ const FINISHED_JOB_TTL_MS = 60_000;
 export class WorkspaceCreationJobsService implements OnModuleDestroy {
   private readonly jobs = new Map<string, WorkspaceCreationJob>();
   private readonly activeJobKeys = new Map<string, string>();
-  private readonly cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly cleanupTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
 
   constructor(private readonly workspacesService: WorkspacesService) {}
 
@@ -43,8 +50,14 @@ export class WorkspaceCreationJobsService implements OnModuleDestroy {
   ): WorkspaceCreationJob {
     const name = input.name.trim();
     const startPoint = input.startPoint?.trim() || 'HEAD';
-    const worktreePath = input.path?.trim()
-      || path.join(path.dirname(repo.path), '.worktrees', repo.name, this.slugify(name));
+    const worktreePath =
+      input.path?.trim() ||
+      path.join(
+        path.dirname(repo.path),
+        '.worktrees',
+        repo.name,
+        this.slugify(name),
+      );
     const createBranch = Boolean(input.createBranch);
     const branchName = input.branchName?.trim() || null;
     const key = this.buildActiveKey(repo.id, worktreePath);
@@ -123,7 +136,9 @@ export class WorkspaceCreationJobsService implements OnModuleDestroy {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     } finally {
-      this.activeJobKeys.delete(this.buildActiveKey(job.repoId, job.worktreePath));
+      this.activeJobKeys.delete(
+        this.buildActiveKey(job.repoId, job.worktreePath),
+      );
       this.scheduleCleanup(jobId);
     }
   }
@@ -162,6 +177,12 @@ export class WorkspaceCreationJobsService implements OnModuleDestroy {
   }
 
   private slugify(value: string): string {
-    return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
+    return (
+      value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'workspace'
+    );
   }
 }

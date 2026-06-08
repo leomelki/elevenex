@@ -42,16 +42,16 @@ describe('TodosService', () => {
     sqlite = testDb.sqlite;
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        TodosService,
-        { provide: DRIZZLE, useValue: db },
-      ],
+      providers: [TodosService, { provide: DRIZZLE, useValue: db }],
     }).compile();
 
     service = module.get<TodosService>(TodosService);
 
     // Create a test project for all tests
-    const result = await db.insert(schema.projects).values({ name: 'Test Project' }).returning();
+    const result = await db
+      .insert(schema.projects)
+      .values({ name: 'Test Project' })
+      .returning();
     projectId = result[0].id;
   });
 
@@ -90,13 +90,16 @@ describe('TodosService', () => {
       await service.create(projectId, 'Todo C');
 
       // Update sort orders to test ordering
-      await db.update(schema.todoItems)
+      await db
+        .update(schema.todoItems)
         .set({ sortOrder: 2 })
         .where(eq(schema.todoItems.text, 'Todo A'));
-      await db.update(schema.todoItems)
+      await db
+        .update(schema.todoItems)
         .set({ sortOrder: 0 })
         .where(eq(schema.todoItems.text, 'Todo B'));
-      await db.update(schema.todoItems)
+      await db
+        .update(schema.todoItems)
         .set({ sortOrder: 1 })
         .where(eq(schema.todoItems.text, 'Todo C'));
 

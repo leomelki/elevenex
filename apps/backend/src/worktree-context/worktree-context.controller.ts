@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Logger, Post, Put, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Logger,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
 import { ConsumeWorktreeContextDto } from './dto/consume-worktree-context.dto.js';
 import { GenerateWorktreeContextDto } from './dto/generate-worktree-context.dto.js';
 import { GetWorktreeContextDto } from './dto/get-worktree-context.dto.js';
@@ -9,15 +17,25 @@ import { WorktreeContextService } from './worktree-context.service.js';
 export class WorktreeContextController {
   private readonly logger = new Logger(WorktreeContextController.name);
 
-  constructor(private readonly worktreeContextService: WorktreeContextService) {}
+  constructor(
+    private readonly worktreeContextService: WorktreeContextService,
+  ) {}
 
   @Get()
   getSnapshot(@Query() query: GetWorktreeContextDto) {
-    this.logger.log(`GET / repo=${query.repoId} path=${query.worktreePath} cachedOnly=${!!query.cachedOnly}`);
+    this.logger.log(
+      `GET / repo=${query.repoId} path=${query.worktreePath} cachedOnly=${!!query.cachedOnly}`,
+    );
     if (query.cachedOnly) {
-      return this.worktreeContextService.getCachedSnapshot(query.repoId, query.worktreePath);
+      return this.worktreeContextService.getCachedSnapshot(
+        query.repoId,
+        query.worktreePath,
+      );
     }
-    return this.worktreeContextService.getSnapshot(query.repoId, query.worktreePath);
+    return this.worktreeContextService.getSnapshot(
+      query.repoId,
+      query.worktreePath,
+    );
   }
 
   @Post('generate')
@@ -34,7 +52,9 @@ export class WorktreeContextController {
 
   @Put('root-ref')
   updateRootRef(@Body() dto: UpdateWorktreeRootRefDto) {
-    this.logger.log(`PUT /root-ref repo=${dto.repoId} path=${dto.worktreePath} rootRef=${dto.rootRef ?? 'null'}`);
+    this.logger.log(
+      `PUT /root-ref repo=${dto.repoId} path=${dto.worktreePath} rootRef=${dto.rootRef ?? 'null'}`,
+    );
     return this.worktreeContextService.updateRootRef(
       dto.repoId,
       dto.worktreePath,
@@ -44,7 +64,9 @@ export class WorktreeContextController {
 
   @Post('consume')
   consume(@Body() dto: ConsumeWorktreeContextDto) {
-    this.logger.log(`POST /consume session=${dto.sessionId} enabled=${dto.enabled ?? true}`);
+    this.logger.log(
+      `POST /consume session=${dto.sessionId} enabled=${dto.enabled ?? true}`,
+    );
     return this.worktreeContextService.consumeForSession(
       dto.sessionId,
       dto.enabled ?? true,

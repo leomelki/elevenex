@@ -29,8 +29,12 @@ export class BackendLogsGateway implements OnModuleInit, OnModuleDestroy {
     this.wss.on('connection', (ws) => {
       this.clients.add(ws);
 
-      ws.on('close', () => { this.clients.delete(ws); });
-      ws.on('error', () => { this.clients.delete(ws); });
+      ws.on('close', () => {
+        this.clients.delete(ws);
+      });
+      ws.on('error', () => {
+        this.clients.delete(ws);
+      });
     });
   }
 

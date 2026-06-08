@@ -2,7 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { ScratchpadController, ScratchpadSectionController } from './scratchpad.controller.js';
+import {
+  ScratchpadController,
+  ScratchpadSectionController,
+} from './scratchpad.controller.js';
 import { ScratchpadService } from './scratchpad.service.js';
 import { DRIZZLE } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
@@ -47,18 +50,20 @@ describe('ScratchpadController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ScratchpadController, ScratchpadSectionController],
-      providers: [
-        ScratchpadService,
-        { provide: DRIZZLE, useValue: db },
-      ],
+      providers: [ScratchpadService, { provide: DRIZZLE, useValue: db }],
     }).compile();
 
     controller = module.get<ScratchpadController>(ScratchpadController);
-    sectionController = module.get<ScratchpadSectionController>(ScratchpadSectionController);
+    sectionController = module.get<ScratchpadSectionController>(
+      ScratchpadSectionController,
+    );
     service = module.get<ScratchpadService>(ScratchpadService);
 
     // Create a test project
-    const result = await db.insert(schema.projects).values({ name: 'Test Project' }).returning();
+    const result = await db
+      .insert(schema.projects)
+      .values({ name: 'Test Project' })
+      .returning();
     projectId = result[0].id;
   });
 
@@ -131,7 +136,13 @@ describe('ScratchpadController', () => {
     it('should update sort orders for multiple sections', async () => {
       const s1 = await service.create(projectId, 'Section 1');
       const s2 = await service.create(projectId, 'Section 2');
-      const dto = { projectId, orders: [{ id: s1.id, sortOrder: 1 }, { id: s2.id, sortOrder: 0 }] };
+      const dto = {
+        projectId,
+        orders: [
+          { id: s1.id, sortOrder: 1 },
+          { id: s2.id, sortOrder: 0 },
+        ],
+      };
 
       await controller.updateSortOrders(projectId, dto);
 
@@ -154,7 +165,9 @@ describe('ScratchpadController', () => {
     });
 
     it('should throw NotFoundException for non-existent section', async () => {
-      await expect(sectionController.delete(999)).rejects.toThrow(NotFoundException);
+      await expect(sectionController.delete(999)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

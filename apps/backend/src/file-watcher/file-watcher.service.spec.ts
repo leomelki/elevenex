@@ -79,7 +79,7 @@ describe('FileWatcherService', () => {
         event: 'change',
         path: 'src/file.ts',
         worktreePath,
-      } as FileChangeEvent);
+      });
     });
 
     it('should ignore paths outside worktree', () => {
@@ -112,7 +112,9 @@ describe('FileWatcherService', () => {
 
       // Test node_modules exclusion
       expect(ignoredFn('/test/worktree/node_modules/package')).toBe(true);
-      expect(ignoredFn('/test/worktree/node_modules/@scope/package')).toBe(true);
+      expect(ignoredFn('/test/worktree/node_modules/@scope/package')).toBe(
+        true,
+      );
     });
 
     it('should exclude hidden files and directories', () => {

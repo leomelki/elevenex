@@ -47,7 +47,11 @@ export function canonicalizeAgentTool(
   const rawName = toolName || 'Tool';
   const normalized = normalizeToolName(rawName);
 
-  if (normalized === 'read' || normalized === 'fileread' || normalized === 'filereadtool') {
+  if (
+    normalized === 'read' ||
+    normalized === 'fileread' ||
+    normalized === 'filereadtool'
+  ) {
     return {
       toolKind: 'read',
       toolDisplayName: 'Read',
@@ -55,7 +59,12 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'write' || normalized === 'filewrite' || normalized === 'filewritetool' || normalized === 'create') {
+  if (
+    normalized === 'write' ||
+    normalized === 'filewrite' ||
+    normalized === 'filewritetool' ||
+    normalized === 'create'
+  ) {
     return {
       toolKind: 'write',
       toolDisplayName: data['old_string'] === '' ? 'Create' : 'Write',
@@ -63,7 +72,15 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'edit' || normalized === 'multiedit' || normalized === 'fileedit' || normalized === 'fileedittool' || normalized === 'strreplace' || normalized === 'strreplacebasededittool' || normalized === 'strreplacebasedeittool') {
+  if (
+    normalized === 'edit' ||
+    normalized === 'multiedit' ||
+    normalized === 'fileedit' ||
+    normalized === 'fileedittool' ||
+    normalized === 'strreplace' ||
+    normalized === 'strreplacebasededittool' ||
+    normalized === 'strreplacebasedeittool'
+  ) {
     return {
       toolKind: 'edit',
       toolDisplayName: 'Edit',
@@ -79,7 +96,11 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'bash' || normalized === 'powershell' || normalized === 'shellcommand') {
+  if (
+    normalized === 'bash' ||
+    normalized === 'powershell' ||
+    normalized === 'shellcommand'
+  ) {
     const readPath = readActionPath(input);
     if (readPath) {
       return {
@@ -111,23 +132,47 @@ export function canonicalizeAgentTool(
   }
 
   if (normalized === 'webfetch') {
-    return { toolKind: 'web_fetch', toolDisplayName: 'WebFetch', toolInput: data };
+    return {
+      toolKind: 'web_fetch',
+      toolDisplayName: 'WebFetch',
+      toolInput: data,
+    };
   }
 
   if (normalized === 'websearch') {
-    return { toolKind: 'web_search', toolDisplayName: 'WebSearch', toolInput: data };
+    return {
+      toolKind: 'web_search',
+      toolDisplayName: 'WebSearch',
+      toolInput: data,
+    };
   }
 
   if (normalized === 'filechanges') {
-    return { toolKind: 'file_changes', toolDisplayName: 'File changes', toolInput: data };
+    return {
+      toolKind: 'file_changes',
+      toolDisplayName: 'File changes',
+      toolInput: data,
+    };
   }
 
-  if (normalized === 'task' || normalized === 'agent' || normalized === 'agenttool') {
-    return { toolKind: 'task_agent', toolDisplayName: 'Agent', toolInput: data };
+  if (
+    normalized === 'task' ||
+    normalized === 'agent' ||
+    normalized === 'agenttool'
+  ) {
+    return {
+      toolKind: 'task_agent',
+      toolDisplayName: 'Agent',
+      toolInput: data,
+    };
   }
 
   if (normalized === 'todowrite') {
-    return { toolKind: 'todo_write', toolDisplayName: 'Todos', toolInput: data };
+    return {
+      toolKind: 'todo_write',
+      toolDisplayName: 'Todos',
+      toolInput: data,
+    };
   }
 
   if (normalized === 'askuserquestion') {
@@ -168,7 +213,8 @@ export function canonicalizeAgentTool(
 
   if (normalized.startsWith('mcp') || typeof data['server'] === 'string') {
     const parts = rawName.split('__');
-    const server = typeof data['server'] === 'string' ? data['server'] : parts[1];
+    const server =
+      typeof data['server'] === 'string' ? data['server'] : parts[1];
     const tool = parts.length > 2 ? parts.slice(2).join('.') : rawName;
     return {
       toolKind: 'mcp',
@@ -181,7 +227,11 @@ export function canonicalizeAgentTool(
     };
   }
 
-  return { toolKind: 'unknown', toolDisplayName: rawName, toolInput: input ?? {} };
+  return {
+    toolKind: 'unknown',
+    toolDisplayName: rawName,
+    toolInput: input ?? {},
+  };
 }
 
 function stringField(data: JsonRecord, ...keys: string[]): string {

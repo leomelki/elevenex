@@ -51,10 +51,7 @@ describe('ProjectsService', () => {
     sqlite = testDb.sqlite;
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ProjectsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
+      providers: [ProjectsService, { provide: DRIZZLE, useValue: db }],
     }).compile();
 
     service = module.get<ProjectsService>(ProjectsService);

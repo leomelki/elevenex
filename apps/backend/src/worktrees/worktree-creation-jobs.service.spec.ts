@@ -24,7 +24,12 @@ describe('WorktreeCreationJobsService', () => {
     });
     const service = new WorktreeCreationJobsService({ createWorktree } as any);
 
-    const job = service.startJob(7, '/tmp/repo', 'feature', '/tmp/repo/.worktrees/feature');
+    const job = service.startJob(
+      7,
+      '/tmp/repo',
+      'feature',
+      '/tmp/repo/.worktrees/feature',
+    );
 
     expect(job.status).toBe('pending');
 
@@ -32,16 +37,27 @@ describe('WorktreeCreationJobsService', () => {
     await Promise.resolve();
 
     const updated = service.getJob(7, job.id);
-    expect(createWorktree).toHaveBeenCalledWith('/tmp/repo', 'feature', '/tmp/repo/.worktrees/feature');
+    expect(createWorktree).toHaveBeenCalledWith(
+      '/tmp/repo',
+      'feature',
+      '/tmp/repo/.worktrees/feature',
+    );
     expect(updated.status).toBe('succeeded');
     expect(updated.result?.branch).toBe('feature');
   });
 
   it('marks a failed job with the surfaced error', async () => {
-    const createWorktree = jest.fn().mockRejectedValue(new BadRequestException('boom'));
+    const createWorktree = jest
+      .fn()
+      .mockRejectedValue(new BadRequestException('boom'));
     const service = new WorktreeCreationJobsService({ createWorktree } as any);
 
-    const job = service.startJob(7, '/tmp/repo', 'feature', '/tmp/repo/.worktrees/feature');
+    const job = service.startJob(
+      7,
+      '/tmp/repo',
+      'feature',
+      '/tmp/repo/.worktrees/feature',
+    );
 
     await Promise.resolve();
     await Promise.resolve();
@@ -53,13 +69,26 @@ describe('WorktreeCreationJobsService', () => {
 
   it('deduplicates active jobs for the same repo branch and path', async () => {
     let resolveJob: ((value: unknown) => void) | null = null;
-    const createWorktree = jest.fn().mockImplementation(() => new Promise((resolve) => {
-      resolveJob = resolve;
-    }));
+    const createWorktree = jest.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveJob = resolve;
+        }),
+    );
     const service = new WorktreeCreationJobsService({ createWorktree } as any);
 
-    const first = service.startJob(7, '/tmp/repo', 'feature', '/tmp/repo/.worktrees/feature');
-    const second = service.startJob(7, '/tmp/repo', 'feature', '/tmp/repo/.worktrees/feature');
+    const first = service.startJob(
+      7,
+      '/tmp/repo',
+      'feature',
+      '/tmp/repo/.worktrees/feature',
+    );
+    const second = service.startJob(
+      7,
+      '/tmp/repo',
+      'feature',
+      '/tmp/repo/.worktrees/feature',
+    );
 
     expect(second.id).toBe(first.id);
 
@@ -79,7 +108,12 @@ describe('WorktreeCreationJobsService', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    const third = service.startJob(7, '/tmp/repo', 'feature', '/tmp/repo/.worktrees/feature');
+    const third = service.startJob(
+      7,
+      '/tmp/repo',
+      'feature',
+      '/tmp/repo/.worktrees/feature',
+    );
     expect(third.id).not.toBe(first.id);
   });
 
@@ -96,7 +130,12 @@ describe('WorktreeCreationJobsService', () => {
       }),
     } as any);
 
-    const job = service.startJob(7, '/tmp/repo', 'feature', '/tmp/repo/.worktrees/feature');
+    const job = service.startJob(
+      7,
+      '/tmp/repo',
+      'feature',
+      '/tmp/repo/.worktrees/feature',
+    );
     await Promise.resolve();
     await Promise.resolve();
 

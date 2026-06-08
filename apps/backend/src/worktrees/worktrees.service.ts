@@ -113,7 +113,7 @@ export class WorktreesService {
       if (!block.trim()) continue;
 
       const lines = block.split('\n');
-      let worktree: Partial<WorktreeInfo> = {
+      const worktree: Partial<WorktreeInfo> = {
         isDetached: false,
         isBare: false,
         isLocked: false,

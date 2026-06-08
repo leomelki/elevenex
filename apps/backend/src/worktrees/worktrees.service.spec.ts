@@ -65,7 +65,7 @@ describe('WorktreesService', () => {
       const worktrees = await service.listWorktrees(mainRepoPath);
 
       expect(worktrees).toHaveLength(2);
-      
+
       // Compare using realpath for macOS symlink handling
       const realWorktreePath = fs.realpathSync(worktreePath);
       const featureWt = worktrees.find((w) => {
@@ -87,7 +87,12 @@ describe('WorktreesService', () => {
         'feature-branch',
       );
 
-      const expectedPath = path.join(tmpDir, '.worktrees', 'main-repo', 'feature-branch');
+      const expectedPath = path.join(
+        tmpDir,
+        '.worktrees',
+        'main-repo',
+        'feature-branch',
+      );
       // Compare using realpath for macOS symlink handling
       const realResultPath = fs.realpathSync(result.path);
       const realExpectedPath = fs.realpathSync(expectedPath);

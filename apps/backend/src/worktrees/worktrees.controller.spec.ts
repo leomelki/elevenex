@@ -2,7 +2,9 @@ import { NotFoundException } from '@nestjs/common';
 import { WorktreesController } from './worktrees.controller.js';
 
 describe('WorktreesController', () => {
-  const makeDb = (repos: Array<{ id: number; name?: string; path: string }>) => ({
+  const makeDb = (
+    repos: Array<{ id: number; name?: string; path: string }>,
+  ) => ({
     select: jest.fn(() => ({
       from: jest.fn(() => ({
         where: jest.fn(() => repos),
@@ -34,10 +36,9 @@ describe('WorktreesController', () => {
     });
 
     expect(result).toEqual({ success: true });
-    expect(sessionsServiceMock.deleteByRepoAndWorktreePath).toHaveBeenCalledWith(
-      7,
-      '/tmp/test-repo/.worktrees/feature',
-    );
+    expect(
+      sessionsServiceMock.deleteByRepoAndWorktreePath,
+    ).toHaveBeenCalledWith(7, '/tmp/test-repo/.worktrees/feature');
     expect(worktreesServiceMock.removeWorktree).not.toHaveBeenCalled();
     expect(sessionsServiceMock.deleteByWorktreePath).not.toHaveBeenCalled();
   });
@@ -66,10 +67,9 @@ describe('WorktreesController', () => {
     });
 
     expect(result).toEqual({ success: true });
-    expect(sessionsServiceMock.deleteByRepoAndWorktreePath).toHaveBeenCalledWith(
-      7,
-      '/tmp/test-repo/.worktrees/feature',
-    );
+    expect(
+      sessionsServiceMock.deleteByRepoAndWorktreePath,
+    ).toHaveBeenCalledWith(7, '/tmp/test-repo/.worktrees/feature');
     expect(sessionsServiceMock.deleteByWorktreePath).not.toHaveBeenCalled();
     expect(worktreesServiceMock.removeWorktree).toHaveBeenCalledWith(
       '/tmp/test-repo',
@@ -89,7 +89,9 @@ describe('WorktreesController', () => {
     );
 
     await expect(
-      controller.removeWorktreeFromProject('999', { worktreePath: '/tmp/missing' }),
+      controller.removeWorktreeFromProject('999', {
+        worktreePath: '/tmp/missing',
+      }),
     ).rejects.toThrow(NotFoundException);
   });
 
@@ -113,7 +115,9 @@ describe('WorktreesController', () => {
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
-    await expect(controller.createWorktree('7', { branchName: 'feature' })).resolves.toEqual({
+    await expect(
+      controller.createWorktree('7', { branchName: 'feature' }),
+    ).resolves.toEqual({
       jobId: 'job-1',
       repoId: 7,
       branchName: 'feature',
@@ -150,7 +154,9 @@ describe('WorktreesController', () => {
       makeDb([{ id: 7, path: '/tmp/test-repo' }]) as any,
     );
 
-    await expect(controller.getCreateWorktreeJob('7', 'job-1')).resolves.toEqual({
+    await expect(
+      controller.getCreateWorktreeJob('7', 'job-1'),
+    ).resolves.toEqual({
       jobId: 'job-1',
       status: 'succeeded',
       branchName: 'feature',

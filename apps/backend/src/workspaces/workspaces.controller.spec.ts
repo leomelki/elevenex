@@ -2,7 +2,9 @@ import { NotFoundException } from '@nestjs/common';
 import { WorkspacesController } from './workspaces.controller.js';
 
 describe('WorkspacesController', () => {
-  const makeDb = (repos: Array<{ id: number; name?: string; path: string }>) => ({
+  const makeDb = (
+    repos: Array<{ id: number; name?: string; path: string }>,
+  ) => ({
     select: jest.fn(() => ({
       from: jest.fn(() => ({
         where: jest.fn(() => repos),
@@ -28,11 +30,13 @@ describe('WorkspacesController', () => {
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
-    await expect(controller.create('7', {
-      name: 'Feature',
-      path: '/tmp/test-repo/.worktrees/feature',
-      startPoint: 'feature',
-    })).resolves.toEqual({
+    await expect(
+      controller.create('7', {
+        name: 'Feature',
+        path: '/tmp/test-repo/.worktrees/feature',
+        startPoint: 'feature',
+      }),
+    ).resolves.toEqual({
       jobId: 'job-1',
       repoId: 7,
       name: 'Feature',
@@ -75,7 +79,9 @@ describe('WorkspacesController', () => {
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
-    await expect(controller.getCreateWorkspaceJob('7', 'job-1')).resolves.toEqual({
+    await expect(
+      controller.getCreateWorkspaceJob('7', 'job-1'),
+    ).resolves.toEqual({
       jobId: 'job-1',
       status: 'succeeded',
       name: 'Feature',
@@ -104,9 +110,11 @@ describe('WorkspacesController', () => {
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
-    await expect(controller.attach('7', {
-      path: '/tmp/test-repo/.worktrees/feature',
-    })).resolves.toBe(workspace);
+    await expect(
+      controller.attach('7', {
+        path: '/tmp/test-repo/.worktrees/feature',
+      }),
+    ).resolves.toBe(workspace);
     expect(workspacesServiceMock.attachExistingWorkspace).toHaveBeenCalledWith(
       { id: 7, name: 'test-repo', path: '/tmp/test-repo' },
       { path: '/tmp/test-repo/.worktrees/feature' },
@@ -124,8 +132,14 @@ describe('WorkspacesController', () => {
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
-    await expect(controller.forget('7', '99')).resolves.toEqual({ success: true });
-    expect(workspacesServiceMock.deleteWorkspace).toHaveBeenCalledWith(99, false, 7);
+    await expect(controller.forget('7', '99')).resolves.toEqual({
+      success: true,
+    });
+    expect(workspacesServiceMock.deleteWorkspace).toHaveBeenCalledWith(
+      99,
+      false,
+      7,
+    );
   });
 
   it('throws when the repo does not exist for workspace creation', async () => {

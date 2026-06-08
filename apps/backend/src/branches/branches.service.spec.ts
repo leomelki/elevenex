@@ -27,7 +27,7 @@ describe('BranchesService', () => {
     execSync('git init', { cwd: mainRepoPath });
     execSync('git config user.email "test@test.com"', { cwd: mainRepoPath });
     execSync('git config user.name "Test User"', { cwd: mainRepoPath });
-    
+
     // Create initial commit on main
     fs.writeFileSync(path.join(mainRepoPath, 'file.txt'), 'initial');
     execSync('git add .', { cwd: mainRepoPath });
@@ -52,7 +52,7 @@ describe('BranchesService', () => {
       const branches = await service.getBranches(mainRepoPath);
 
       expect(branches).toHaveLength(2);
-      
+
       const mainBranch = branches.find((b) => b.name === 'main');
       const featureBranch = branches.find((b) => b.name === 'feature-branch');
 
@@ -79,8 +79,8 @@ describe('BranchesService', () => {
       expect(featureBranch?.hasWorktree).toBe(true);
       // Compare using realpath for macOS symlink handling
       const realWorktreePath = fs.realpathSync(worktreePath);
-      const realBranchWorktreePath = featureBranch?.worktreePath 
-        ? fs.realpathSync(featureBranch.worktreePath) 
+      const realBranchWorktreePath = featureBranch?.worktreePath
+        ? fs.realpathSync(featureBranch.worktreePath)
         : null;
       expect(realBranchWorktreePath).toBe(realWorktreePath);
 
@@ -90,9 +90,9 @@ describe('BranchesService', () => {
     });
 
     it('should throw BadRequestException for invalid path', async () => {
-      await expect(
-        service.getBranches('/nonexistent/path'),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.getBranches('/nonexistent/path')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should throw BadRequestException for non-git directory', async () => {

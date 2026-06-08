@@ -6,15 +6,7 @@ import { UserPtyManager } from './user-pty-manager.service.js';
 
 @Module({
   controllers: [UserTerminalController],
-  providers: [
-    UserTerminalService,
-    UserTerminalGateway,
-    UserPtyManager,
-  ],
-  exports: [
-    UserTerminalService,
-    UserTerminalGateway,
-    UserPtyManager,
-  ],
+  providers: [UserTerminalService, UserTerminalGateway, UserPtyManager],
+  exports: [UserTerminalService, UserTerminalGateway, UserPtyManager],
 })
 export class UserTerminalModule {}

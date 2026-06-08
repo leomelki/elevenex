@@ -6,7 +6,9 @@ import {
 
 describe('MCP auth proxy helpers', () => {
   it('parses proxied request URLs with path and query intact', () => {
-    expect(parseMcpAuthProxyRequestUrl('/49152/callback?code=abc&state=def')).toEqual({
+    expect(
+      parseMcpAuthProxyRequestUrl('/49152/callback?code=abc&state=def'),
+    ).toEqual({
       port: 49152,
       upstreamPath: '/callback?code=abc&state=def',
     });
@@ -53,6 +55,8 @@ describe('MCP auth proxy helpers', () => {
   });
 
   it('renders a clear unavailable callback response', () => {
-    expect(buildMcpAuthProxyUnavailableHtml(49152)).toContain('127.0.0.1:49152');
+    expect(buildMcpAuthProxyUnavailableHtml(49152)).toContain(
+      '127.0.0.1:49152',
+    );
   });
 });

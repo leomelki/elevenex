@@ -9,9 +9,17 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { existsSync } from 'fs';
 import { createRequire } from 'module';
-import { type DefaultLogFields, type ListLogLine, type SimpleGit } from 'simple-git';
+import {
+  type DefaultLogFields,
+  type ListLogLine,
+  type SimpleGit,
+} from 'simple-git';
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
-import { buildAugmentedEnv, findBinary, worktreeSimpleGit } from '../config/system-paths.js';
+import {
+  buildAugmentedEnv,
+  findBinary,
+  worktreeSimpleGit,
+} from '../config/system-paths.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { SessionsService } from '../sessions/sessions.service.js';
@@ -23,7 +31,12 @@ const MAX_CHANGED_FILES = 40;
 const MAX_COMMITS = 20;
 const MAX_DIFF_CHARS = 18_000;
 const EMPTY_SNAPSHOT_CACHE_TTL_MS = 60_000;
-const VALID_GENERATION_STATUSES = ['idle', 'generating', 'ready', 'failed'] as const;
+const VALID_GENERATION_STATUSES = [
+  'idle',
+  'generating',
+  'ready',
+  'failed',
+] as const;
 
 type GenerationStatus = (typeof VALID_GENERATION_STATUSES)[number];
 type ContextGenerationProvider = 'claude' | 'codex';
@@ -68,7 +81,9 @@ function resolveSdkClaudePath(): string | null {
           `@anthropic-ai/claude-agent-sdk-linux-${process.arch}-musl/claude${ext}`,
           `@anthropic-ai/claude-agent-sdk-linux-${process.arch}/claude${ext}`,
         ]
-      : [`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`];
+      : [
+          `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`,
+        ];
   const scopedRequire = createRequire(__filename);
   for (const candidate of candidates) {
     try {
@@ -86,8 +101,14 @@ function resolveSdkClaudePath(): string | null {
 @Injectable()
 export class WorktreeContextService {
   private readonly logger = new Logger(WorktreeContextService.name);
-  private readonly snapshotLocks = new Map<string, Promise<WorktreeContextSnapshot>>();
-  private readonly generationLocks = new Map<string, Promise<WorktreeContextSnapshot>>();
+  private readonly snapshotLocks = new Map<
+    string,
+    Promise<WorktreeContextSnapshot>
+  >();
+  private readonly generationLocks = new Map<
+    string,
+    Promise<WorktreeContextSnapshot>
+  >();
   private readonly emptySnapshotCache = new Map<string, CachedSnapshotEntry>();
 
   constructor(
@@ -96,7 +117,10 @@ export class WorktreeContextService {
     private readonly sessionsService: SessionsService,
   ) {}
 
-  async getSnapshot(repoId: number, worktreePath: string): Promise<WorktreeContextSnapshot> {
+  async getSnapshot(
+    repoId: number,
+    worktreePath: string,
+  ): Promise<WorktreeContextSnapshot> {
     const key = this.cacheKey(repoId, worktreePath);
     const inFlight = this.snapshotLocks.get(key);
     if (inFlight) {
@@ -106,10 +130,11 @@ export class WorktreeContextService {
       return inFlight;
     }
 
-    const promise = this.getSnapshotInternal(repoId, worktreePath)
-      .finally(() => {
+    const promise = this.getSnapshotInternal(repoId, worktreePath).finally(
+      () => {
         this.snapshotLocks.delete(key);
-      });
+      },
+    );
     this.snapshotLocks.set(key, promise);
     return promise;
   }
@@ -123,10 +148,16 @@ export class WorktreeContextService {
     return this.toRecordOnlySnapshot(repoId, worktreePath, existing);
   }
 
-  private async getSnapshotInternal(repoId: number, worktreePath: string): Promise<WorktreeContextSnapshot> {
+  private async getSnapshotInternal(
+    repoId: number,
+    worktreePath: string,
+  ): Promise<WorktreeContextSnapshot> {
     const repo = await this.getRepo(repoId);
     const existing = await this.findRecord(repoId, worktreePath);
-    const fingerprint = this.snapshotFingerprint(existing, repo.preferredContextRootRef ?? null);
+    const fingerprint = this.snapshotFingerprint(
+      existing,
+      repo.preferredContextRootRef ?? null,
+    );
 
     // Fast path: a previously generated sentence is cached. Return it without
     // running any git commands. The user can click Recompute to refresh.
@@ -138,7 +169,11 @@ export class WorktreeContextService {
       return this.toCachedSnapshot(repoId, worktreePath, existing);
     }
 
-    const cachedEmptySnapshot = this.getCachedEmptySnapshot(repoId, worktreePath, fingerprint);
+    const cachedEmptySnapshot = this.getCachedEmptySnapshot(
+      repoId,
+      worktreePath,
+      fingerprint,
+    );
     if (cachedEmptySnapshot) {
       this.logger.log(
         `[worktree-context] snapshot empty-cache hit for ${worktreePath} (repo=${repoId})`,
@@ -155,7 +190,12 @@ export class WorktreeContextService {
       `[worktree-context] snapshot for ${worktreePath} hasRecord=${!!existing} status=${existing?.generationStatus ?? 'none'} hasSentence=${!!existing?.contextSentence} hasChanges=${branchContext.hasChanges}`,
     );
 
-    const snapshot = this.toSnapshot(repoId, worktreePath, existing, branchContext);
+    const snapshot = this.toSnapshot(
+      repoId,
+      worktreePath,
+      existing,
+      branchContext,
+    );
     this.storeEmptySnapshotCache(repoId, worktreePath, fingerprint, snapshot);
     return snapshot;
   }
@@ -191,7 +231,9 @@ export class WorktreeContextService {
       worktreePath,
       contextSentence: record?.contextSentence ?? null,
       rootRef: record?.rootRef ?? null,
-      generationStatus: this.normalizeGenerationStatus(record?.generationStatus),
+      generationStatus: this.normalizeGenerationStatus(
+        record?.generationStatus,
+      ),
       generatedAt: record?.generatedAt ?? null,
       lastUsedAt: record?.lastUsedAt ?? null,
       canGenerate: true,
@@ -202,7 +244,11 @@ export class WorktreeContextService {
     };
   }
 
-  async updateRootRef(repoId: number, worktreePath: string, rootRef: string | null): Promise<WorktreeContextSnapshot> {
+  async updateRootRef(
+    repoId: number,
+    worktreePath: string,
+    rootRef: string | null,
+  ): Promise<WorktreeContextSnapshot> {
     await this.getRepo(repoId);
     const existing = await this.findRecord(repoId, worktreePath);
     const now = new Date().toISOString();
@@ -211,7 +257,9 @@ export class WorktreeContextService {
     await this.upsertRecord(repoId, worktreePath, {
       rootRef: this.normalizeOptionalText(rootRef),
       contextSentence: existing?.contextSentence ?? null,
-      generationStatus: this.normalizeGenerationStatus(existing?.generationStatus),
+      generationStatus: this.normalizeGenerationStatus(
+        existing?.generationStatus,
+      ),
       generatedAt: existing?.generatedAt ?? null,
       lastUsedAt: existing?.lastUsedAt ?? null,
       updatedAt: now,
@@ -224,7 +272,11 @@ export class WorktreeContextService {
   async generate(
     repoId: number,
     worktreePath: string,
-    options: { force?: boolean; rootRef?: string | null; provider: AgentProviderId },
+    options: {
+      force?: boolean;
+      rootRef?: string | null;
+      provider: AgentProviderId;
+    },
   ): Promise<WorktreeContextSnapshot> {
     const key = `${repoId}:${worktreePath}`;
     const inFlight = this.generationLocks.get(key);
@@ -239,13 +291,16 @@ export class WorktreeContextService {
       `[worktree-context] start generation for ${worktreePath} (repo=${repoId}, force=${!!options.force}, rootRef=${options.rootRef ?? 'inherit'})`,
     );
     const startedAt = Date.now();
-    const promise = this.generateInternal(repoId, worktreePath, options)
-      .finally(() => {
-        this.generationLocks.delete(key);
-        this.logger.log(
-          `[worktree-context] generation released for ${worktreePath} after ${Date.now() - startedAt}ms`,
-        );
-      });
+    const promise = this.generateInternal(
+      repoId,
+      worktreePath,
+      options,
+    ).finally(() => {
+      this.generationLocks.delete(key);
+      this.logger.log(
+        `[worktree-context] generation released for ${worktreePath} after ${Date.now() - startedAt}ms`,
+      );
+    });
     this.generationLocks.set(key, promise);
     return promise;
   }
@@ -268,7 +323,10 @@ export class WorktreeContextService {
       return { shouldInject: true, contextSentence: providedSentence };
     }
 
-    const snapshot = await this.getSnapshot(session.repoId, session.worktreePath);
+    const snapshot = await this.getSnapshot(
+      session.repoId,
+      session.worktreePath,
+    );
     if (snapshot.generationStatus !== 'ready' || !snapshot.contextSentence) {
       return { shouldInject: false, contextSentence: null };
     }
@@ -281,22 +339,31 @@ export class WorktreeContextService {
   private async generateInternal(
     repoId: number,
     worktreePath: string,
-    options: { force?: boolean; rootRef?: string | null; provider: AgentProviderId },
+    options: {
+      force?: boolean;
+      rootRef?: string | null;
+      provider: AgentProviderId;
+    },
   ): Promise<WorktreeContextSnapshot> {
     const repo = await this.getRepo(repoId);
     const provider = this.normalizeGenerationProvider(options.provider);
     const existing = await this.findRecord(repoId, worktreePath);
     this.clearEmptySnapshotCache(repoId, worktreePath);
-    const requestedRootRef = options.rootRef !== undefined
-      ? this.normalizeOptionalText(options.rootRef)
-      : existing?.rootRef ?? null;
+    const requestedRootRef =
+      options.rootRef !== undefined
+        ? this.normalizeOptionalText(options.rootRef)
+        : (existing?.rootRef ?? null);
     const branchContext = await this.collectBranchContext(
       worktreePath,
       requestedRootRef,
       repo.preferredContextRootRef ?? null,
     );
 
-    if (!options.force && existing?.generationStatus === 'ready' && existing.contextSentence) {
+    if (
+      !options.force &&
+      existing?.generationStatus === 'ready' &&
+      existing.contextSentence
+    ) {
       this.logger.log(
         `[worktree-context] reuse cached sentence for ${worktreePath}: "${existing.contextSentence}"`,
       );
@@ -307,7 +374,12 @@ export class WorktreeContextService {
       this.logger.log(
         `[worktree-context] no branch-specific changes for ${worktreePath} (root=${branchContext.resolvedRootRef ?? 'unresolved'}); skipping LLM call and not persisting`,
       );
-      return this.toSnapshot(repoId, worktreePath, existing ?? null, branchContext);
+      return this.toSnapshot(
+        repoId,
+        worktreePath,
+        existing ?? null,
+        branchContext,
+      );
     }
 
     const now = new Date().toISOString();
@@ -325,8 +397,14 @@ export class WorktreeContextService {
       this.logger.log(
         `[worktree-context] invoking ${provider} for ${worktreePath} (root=${branchContext.resolvedRootRef}, commits=${branchContext.commits.length}, files=${branchContext.changedFiles.length})`,
       );
-      const sentence = await this.generateSentence(worktreePath, branchContext, provider);
-      this.logger.log(`[worktree-context] generated for ${worktreePath}: "${sentence}"`);
+      const sentence = await this.generateSentence(
+        worktreePath,
+        branchContext,
+        provider,
+      );
+      this.logger.log(
+        `[worktree-context] generated for ${worktreePath}: "${sentence}"`,
+      );
       const ready = await this.persistGenerationOutcome(repoId, worktreePath, {
         rootRef: branchContext.rootRef,
         contextSentence: sentence,
@@ -335,14 +413,22 @@ export class WorktreeContextService {
       });
       return this.toSnapshot(repoId, worktreePath, ready, branchContext);
     } catch (error) {
-      this.logger.warn(`[worktree-context] generation failed for ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `[worktree-context] generation failed for ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       const failed = await this.persistGenerationOutcome(repoId, worktreePath, {
         rootRef: branchContext.rootRef,
         contextSentence: existing?.contextSentence ?? null,
         generationStatus: 'failed',
         generatedAt: existing?.generatedAt ?? null,
       });
-      return this.toSnapshot(repoId, worktreePath, failed, branchContext, error instanceof Error ? error.message : 'Generation failed');
+      return this.toSnapshot(
+        repoId,
+        worktreePath,
+        failed,
+        branchContext,
+        error instanceof Error ? error.message : 'Generation failed',
+      );
     }
   }
 
@@ -382,12 +468,14 @@ export class WorktreeContextService {
       '',
       'Branch-specific commits (most recent first):',
       branchContext.commits.length
-        ? branchContext.commits.map(commit => `- ${commit.hash} ${commit.message}`).join('\n')
+        ? branchContext.commits
+            .map((commit) => `- ${commit.hash} ${commit.message}`)
+            .join('\n')
         : '- none',
       '',
       'Changed files:',
       branchContext.changedFiles.length
-        ? branchContext.changedFiles.map(file => `- ${file}`).join('\n')
+        ? branchContext.changedFiles.map((file) => `- ${file}`).join('\n')
         : '- none',
       '',
       'Diff summary (stat + untracked):',
@@ -399,34 +487,35 @@ export class WorktreeContextService {
         `[worktree-context] === git observations (cwd=${repoPath}) ===`,
         `  root: ${branchContext.resolvedRootRef}`,
         `  commits (${branchContext.commits.length}):`,
-        ...branchContext.commits.map(c => `    - ${c.hash} ${c.message}`),
+        ...branchContext.commits.map((c) => `    - ${c.hash} ${c.message}`),
         `  changed files (${branchContext.changedFiles.length}):`,
-        ...branchContext.changedFiles.map(f => `    - ${f}`),
+        ...branchContext.changedFiles.map((f) => `    - ${f}`),
         `  diff summary (${branchContext.diffSummary.length} chars):`,
-        ...(branchContext.diffSummary ? branchContext.diffSummary.split('\n').map(l => `    ${l}`) : ['    [empty]']),
+        ...(branchContext.diffSummary
+          ? branchContext.diffSummary.split('\n').map((l) => `    ${l}`)
+          : ['    [empty]']),
       ].join('\n'),
     );
     this.logger.log(
       [
         `[worktree-context] === prompt to LLM (${prompt.length} chars) ===`,
-        ...prompt.split('\n').map(l => `  | ${l}`),
+        ...prompt.split('\n').map((l) => `  | ${l}`),
       ].join('\n'),
     );
 
     const llmStartedAt = Date.now();
-    const assistantText = provider === 'codex'
-      ? await this.generateSentenceWithCodex(repoPath, prompt)
-      : await this.generateSentenceWithClaude(
-        repoPath,
-        prompt,
-        canUseTool,
-      );
+    const assistantText =
+      provider === 'codex'
+        ? await this.generateSentenceWithCodex(repoPath, prompt)
+        : await this.generateSentenceWithClaude(repoPath, prompt, canUseTool);
 
     const llmDurationMs = Date.now() - llmStartedAt;
     this.logger.log(
       [
         `[worktree-context] === LLM raw response (${assistantText.length} chars, ${llmDurationMs}ms) ===`,
-        ...(assistantText ? assistantText.split('\n').map(l => `  > ${l}`) : ['  > [empty]']),
+        ...(assistantText
+          ? assistantText.split('\n').map((l) => `  > ${l}`)
+          : ['  > [empty]']),
       ].join('\n'),
     );
 
@@ -503,8 +592,8 @@ export class WorktreeContextService {
       for await (const message of runtimeQuery) {
         if (message.type !== 'assistant') continue;
         const turnText = message.message.content
-          .filter(block => block.type === 'text')
-          .map(block => block.text)
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
           .join('')
           .trim();
         if (!turnText) continue;
@@ -559,16 +648,23 @@ export class WorktreeContextService {
     repoPreferredRootRef: string | null,
   ): Promise<BranchContextInput> {
     const git = worktreeSimpleGit(repoPath);
-    const usingRepoDefaultRootRef = !this.normalizeOptionalText(worktreeRootRef);
+    const usingRepoDefaultRootRef =
+      !this.normalizeOptionalText(worktreeRootRef);
 
     let resolvedRootRef: string | null;
     let resolutionError: string | undefined;
     try {
-      resolvedRootRef = await this.resolveRootRef(git, worktreeRootRef, repoPreferredRootRef);
+      resolvedRootRef = await this.resolveRootRef(
+        git,
+        worktreeRootRef,
+        repoPreferredRootRef,
+      );
     } catch (error) {
       resolvedRootRef = null;
       resolutionError = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`[worktree-context] rootRef resolution failed: ${resolutionError}`);
+      this.logger.warn(
+        `[worktree-context] rootRef resolution failed: ${resolutionError}`,
+      );
     }
 
     if (!resolvedRootRef) {
@@ -584,7 +680,9 @@ export class WorktreeContextService {
       };
     }
 
-    const mergeBase = (await git.raw(['merge-base', 'HEAD', resolvedRootRef])).trim();
+    const mergeBase = (
+      await git.raw(['merge-base', 'HEAD', resolvedRootRef])
+    ).trim();
     const commits = await git.log({
       from: mergeBase,
       to: 'HEAD',
@@ -608,39 +706,65 @@ export class WorktreeContextService {
       };
     }
 
-    const committedFilesOutput = await git.raw(['diff', '--name-only', '--find-renames', `${mergeBase}...HEAD`]);
-    const committedDiffSummary = await git.raw(['diff', '--stat', '--find-renames', `${mergeBase}...HEAD`]);
+    const committedFilesOutput = await git.raw([
+      'diff',
+      '--name-only',
+      '--find-renames',
+      `${mergeBase}...HEAD`,
+    ]);
+    const committedDiffSummary = await git.raw([
+      'diff',
+      '--stat',
+      '--find-renames',
+      `${mergeBase}...HEAD`,
+    ]);
 
     // Working tree: staged + unstaged + untracked relative to HEAD.
-    const workingDiffSummary = await git.raw(['diff', '--stat', '--find-renames', 'HEAD']);
+    const workingDiffSummary = await git.raw([
+      'diff',
+      '--stat',
+      '--find-renames',
+      'HEAD',
+    ]);
 
     const committedFiles = committedFilesOutput
       .split('\n')
-      .map(file => file.trim())
+      .map((file) => file.trim())
       .filter(Boolean);
 
     const workingFiles = workingChangedOutput
       .split('\n')
-      .map(line => line.trim())
+      .map((line) => line.trim())
       .filter(Boolean)
-      .map(line => line.replace(/^..\s+/, '').replace(/^"(.*)"$/, '$1'));
+      .map((line) => line.replace(/^..\s+/, '').replace(/^"(.*)"$/, '$1'));
 
-    const changedFiles = Array.from(new Set([...committedFiles, ...workingFiles])).slice(0, MAX_CHANGED_FILES);
+    const changedFiles = Array.from(
+      new Set([...committedFiles, ...workingFiles]),
+    ).slice(0, MAX_CHANGED_FILES);
 
     const diffSummaryParts: string[] = [];
     const trimmedCommittedDiff = committedDiffSummary.trim();
     if (trimmedCommittedDiff) {
-      diffSummaryParts.push(`# Committed vs ${resolvedRootRef} (merge-base: ${mergeBase.slice(0, 7)})\n${trimmedCommittedDiff}`);
+      diffSummaryParts.push(
+        `# Committed vs ${resolvedRootRef} (merge-base: ${mergeBase.slice(0, 7)})\n${trimmedCommittedDiff}`,
+      );
     }
     const trimmedWorkingDiff = workingDiffSummary.trim();
     if (trimmedWorkingDiff) {
       diffSummaryParts.push(`# Working tree vs HEAD\n${trimmedWorkingDiff}`);
     }
-    if (workingFiles.length > committedFiles.length || (workingFiles.length && !trimmedWorkingDiff)) {
+    if (
+      workingFiles.length > committedFiles.length ||
+      (workingFiles.length && !trimmedWorkingDiff)
+    ) {
       // Make sure untracked files show up in the summary even if --stat misses them.
-      const untrackedOnly = workingFiles.filter(f => !committedFiles.includes(f));
+      const untrackedOnly = workingFiles.filter(
+        (f) => !committedFiles.includes(f),
+      );
       if (untrackedOnly.length) {
-        diffSummaryParts.push(`# Uncommitted / untracked files:\n${untrackedOnly.map(f => `  ${f}`).join('\n')}`);
+        diffSummaryParts.push(
+          `# Uncommitted / untracked files:\n${untrackedOnly.map((f) => `  ${f}`).join('\n')}`,
+        );
       }
     }
     const diffSummary = diffSummaryParts.join('\n\n').slice(0, MAX_DIFF_CHARS);
@@ -668,12 +792,16 @@ export class WorktreeContextService {
     // Explicit user choice: honor it strictly. If it doesn't exist, fail loud
     // rather than silently falling back to origin/main — the old behavior
     // caused the comparison ref to lie about what we actually compared against.
-    const explicit = this.normalizeOptionalText(worktreeRootRef) ?? this.normalizeOptionalText(repoPreferredRootRef);
+    const explicit =
+      this.normalizeOptionalText(worktreeRootRef) ??
+      this.normalizeOptionalText(repoPreferredRootRef);
     if (explicit) {
       if (await this.refExists(git, explicit)) {
         return explicit;
       }
-      throw new Error(`Comparison root "${explicit}" does not exist in this worktree. Fetch it first, or pick another ref.`);
+      throw new Error(
+        `Comparison root "${explicit}" does not exist in this worktree. Fetch it first, or pick another ref.`,
+      );
     }
 
     // No explicit choice: auto-detect.
@@ -685,7 +813,10 @@ export class WorktreeContextService {
       'main',
       'master',
       'trunk',
-    ].filter((value, index, list): value is string => !!value && list.indexOf(value) === index);
+    ].filter(
+      (value, index, list): value is string =>
+        !!value && list.indexOf(value) === index,
+    );
 
     for (const candidate of candidates) {
       if (await this.refExists(git, candidate)) {
@@ -698,7 +829,9 @@ export class WorktreeContextService {
 
   private async resolveOriginHead(git: SimpleGit): Promise<string | null> {
     try {
-      const output = (await git.raw(['symbolic-ref', 'refs/remotes/origin/HEAD'])).trim();
+      const output = (
+        await git.raw(['symbolic-ref', 'refs/remotes/origin/HEAD'])
+      ).trim();
       return output.replace(/^refs\/remotes\//, '');
     } catch {
       return null;
@@ -739,7 +872,10 @@ export class WorktreeContextService {
     return this.findRecord(repoId, worktreePath);
   }
 
-  private async touchLastUsed(repoId: number, worktreePath: string): Promise<void> {
+  private async touchLastUsed(
+    repoId: number,
+    worktreePath: string,
+  ): Promise<void> {
     const existing = await this.findRecord(repoId, worktreePath);
     if (!existing) return;
     this.clearEmptySnapshotCache(repoId, worktreePath);
@@ -750,10 +886,12 @@ export class WorktreeContextService {
         lastUsedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       })
-      .where(and(
-        eq(schema.worktreeContexts.repoId, repoId),
-        eq(schema.worktreeContexts.worktreePath, worktreePath),
-      ));
+      .where(
+        and(
+          eq(schema.worktreeContexts.repoId, repoId),
+          eq(schema.worktreeContexts.worktreePath, worktreePath),
+        ),
+      );
   }
 
   private async getRepo(repoId: number) {
@@ -771,10 +909,12 @@ export class WorktreeContextService {
     const rows = await this.db
       .select()
       .from(schema.worktreeContexts)
-      .where(and(
-        eq(schema.worktreeContexts.repoId, repoId),
-        eq(schema.worktreeContexts.worktreePath, worktreePath),
-      ));
+      .where(
+        and(
+          eq(schema.worktreeContexts.repoId, repoId),
+          eq(schema.worktreeContexts.worktreePath, worktreePath),
+        ),
+      );
     return rows[0] ?? null;
   }
 
@@ -831,8 +971,14 @@ export class WorktreeContextService {
       repoId,
       worktreePath,
       contextSentence: record?.contextSentence ?? null,
-      rootRef: record?.rootRef ?? branchContext.rootRef ?? branchContext.resolvedRootRef ?? null,
-      generationStatus: this.normalizeGenerationStatus(record?.generationStatus),
+      rootRef:
+        record?.rootRef ??
+        branchContext.rootRef ??
+        branchContext.resolvedRootRef ??
+        null,
+      generationStatus: this.normalizeGenerationStatus(
+        record?.generationStatus,
+      ),
       errorMessage: errorMessage ?? branchContext.errorMessage ?? null,
       generatedAt: record?.generatedAt ?? null,
       lastUsedAt: record?.lastUsedAt ?? null,
@@ -843,13 +989,17 @@ export class WorktreeContextService {
     };
   }
 
-  private normalizeGenerationStatus(value: string | null | undefined): GenerationStatus {
+  private normalizeGenerationStatus(
+    value: string | null | undefined,
+  ): GenerationStatus {
     return VALID_GENERATION_STATUSES.includes(value as GenerationStatus)
-      ? value as GenerationStatus
+      ? (value as GenerationStatus)
       : 'idle';
   }
 
-  private normalizeOptionalText(value: string | null | undefined): string | null {
+  private normalizeOptionalText(
+    value: string | null | undefined,
+  ): string | null {
     const trimmed = value?.trim();
     return trimmed ? trimmed : null;
   }
@@ -910,7 +1060,9 @@ export class WorktreeContextService {
     this.emptySnapshotCache.delete(this.cacheKey(repoId, worktreePath));
   }
 
-  private normalizeGenerationProvider(provider: AgentProviderId | undefined): ContextGenerationProvider {
+  private normalizeGenerationProvider(
+    provider: AgentProviderId | undefined,
+  ): ContextGenerationProvider {
     if (provider === 'claude' || provider === 'codex') {
       return provider;
     }

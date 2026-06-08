@@ -1,8 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import {
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { SessionsService } from './sessions.service.js';
@@ -92,7 +89,11 @@ describe('SessionsService', () => {
   let projectId: number;
   let repoId: number;
   let otherRepoId: number;
-  let ptyManagerMock: { kill: jest.Mock; isAlive: jest.Mock; killTmuxSession: jest.Mock };
+  let ptyManagerMock: {
+    kill: jest.Mock;
+    isAlive: jest.Mock;
+    killTmuxSession: jest.Mock;
+  };
   let agentRuntimeCleanupMock: { cleanupSession: jest.Mock };
   let settingsServiceMock: { findOne: jest.Mock };
 
@@ -145,8 +146,18 @@ describe('SessionsService', () => {
         SessionsService,
         { provide: DRIZZLE, useValue: db },
         { provide: PtyManager, useValue: ptyManagerMock },
-        { provide: TmuxManager, useValue: { isTmuxAvailable: jest.fn(() => false), sessionExists: jest.fn(), killSession: jest.fn() } },
-        { provide: AGENT_RUNTIME_CLEANUP_SERVICE, useValue: agentRuntimeCleanupMock },
+        {
+          provide: TmuxManager,
+          useValue: {
+            isTmuxAvailable: jest.fn(() => false),
+            sessionExists: jest.fn(),
+            killSession: jest.fn(),
+          },
+        },
+        {
+          provide: AGENT_RUNTIME_CLEANUP_SERVICE,
+          useValue: agentRuntimeCleanupMock,
+        },
         { provide: SettingsService, useValue: settingsServiceMock },
       ],
     }).compile();
@@ -352,9 +363,9 @@ describe('SessionsService', () => {
     });
 
     it('should throw NotFoundException for non-existent id', async () => {
-      await expect(
-        service.updateStatus(999, 'active'),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.updateStatus(999, 'active')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -388,8 +399,12 @@ describe('SessionsService', () => {
       await service.deleteByRepoAndWorktreePath(repoId, '/tmp/shared-wt');
 
       const remainingRepoSessions = await service.findByRepo(repoId);
-      expect(remainingRepoSessions.map(session => session.id)).not.toContain(targetOne.id);
-      expect(remainingRepoSessions.map(session => session.id)).not.toContain(targetTwo.id);
+      expect(remainingRepoSessions.map((session) => session.id)).not.toContain(
+        targetOne.id,
+      );
+      expect(remainingRepoSessions.map((session) => session.id)).not.toContain(
+        targetTwo.id,
+      );
       expect(remainingRepoSessions).toHaveLength(1);
       expect(remainingRepoSessions[0].worktreePath).toBe('/tmp/other-wt');
 
@@ -401,8 +416,12 @@ describe('SessionsService', () => {
       expect(ptyManagerMock.kill).toHaveBeenCalledWith(targetTwo.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(targetOne.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(targetTwo.id);
-      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(targetOne.id);
-      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(targetTwo.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
+        targetOne.id,
+      );
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
+        targetTwo.id,
+      );
     });
 
     it('cleans up hidden embedded plan chat sessions for the target worktree', async () => {
@@ -424,9 +443,15 @@ describe('SessionsService', () => {
 
       await service.deleteByRepoAndWorktreePath(repoId, '/tmp/shared-wt');
 
-      expect(await service.findByRepo(repoId, { includeHidden: true })).toEqual([]);
-      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(visible.id);
-      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(hidden.id);
+      expect(await service.findByRepo(repoId, { includeHidden: true })).toEqual(
+        [],
+      );
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
+        visible.id,
+      );
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
+        hidden.id,
+      );
       expect(ptyManagerMock.kill).toHaveBeenCalledWith(hidden.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(hidden.id);
     });
@@ -442,7 +467,9 @@ describe('SessionsService', () => {
 
       await service.delete(created.id);
 
-      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(created.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
+        created.id,
+      );
       expect(ptyManagerMock.kill).toHaveBeenCalledWith(created.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(created.id);
       await expect(service.findOne(created.id)).rejects.toThrow(
@@ -475,10 +502,18 @@ describe('SessionsService', () => {
 
       await service.delete(parent.id);
 
-      await expect(service.findOne(parent.id)).rejects.toThrow(NotFoundException);
-      await expect(service.findOne(child.id)).rejects.toThrow(NotFoundException);
-      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(parent.id);
-      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(child.id);
+      await expect(service.findOne(parent.id)).rejects.toThrow(
+        NotFoundException,
+      );
+      await expect(service.findOne(child.id)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
+        parent.id,
+      );
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
+        child.id,
+      );
       expect(ptyManagerMock.kill).toHaveBeenCalledWith(child.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(child.id);
     });
@@ -496,7 +531,9 @@ describe('SessionsService', () => {
 
       await service.delete(created.id);
 
-      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(created.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
+        created.id,
+      );
     });
 
     it('should throw NotFoundException for non-existent id', async () => {
@@ -521,9 +558,13 @@ describe('SessionsService', () => {
       const archived = await service.archive(created.id);
 
       expect(archived.status).toBe('archived');
-      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(created.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
+        created.id,
+      );
       expect(ptyManagerMock.kill).not.toHaveBeenCalledWith(created.id);
-      expect(ptyManagerMock.killTmuxSession).not.toHaveBeenCalledWith(created.id);
+      expect(ptyManagerMock.killTmuxSession).not.toHaveBeenCalledWith(
+        created.id,
+      );
 
       const persisted = await service.findOne(created.id);
       expect(persisted.status).toBe('archived');
@@ -541,7 +582,9 @@ describe('SessionsService', () => {
         branchName: 'main',
         worktreePath: '/tmp/wt',
       });
-      agentRuntimeCleanupMock.cleanupSession.mockRejectedValueOnce(new Error('cleanup failed'));
+      agentRuntimeCleanupMock.cleanupSession.mockRejectedValueOnce(
+        new Error('cleanup failed'),
+      );
 
       const archived = await service.archive(created.id);
       expect(archived.status).toBe('archived');
@@ -574,7 +617,9 @@ describe('SessionsService', () => {
         worktreePath: '/tmp/wt',
       });
 
-      await expect(service.unarchive(created.id)).rejects.toThrow(BadRequestException);
+      await expect(service.unarchive(created.id)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('throws NotFoundException for non-existent sessions', async () => {
@@ -642,7 +687,9 @@ describe('SessionsService', () => {
       // Get the mock PTY manager from the service
       const ptyManager = (service as any).ptyManager;
       const killSpy = jest.spyOn(ptyManager, 'kill').mockReturnValue(true);
-      const killTmuxSpy = jest.spyOn(ptyManager, 'killTmuxSession').mockImplementation();
+      const killTmuxSpy = jest
+        .spyOn(ptyManager, 'killTmuxSession')
+        .mockImplementation();
 
       await service.kill(session.id);
 
@@ -694,7 +741,10 @@ describe('SessionsService', () => {
         worktreePath: '/path',
       });
 
-      const updated = await service.markCompletionUnreviewed(session.id, 'completed');
+      const updated = await service.markCompletionUnreviewed(
+        session.id,
+        'completed',
+      );
 
       expect(updated.hasUnreviewedCompletion).toBe(true);
       expect(updated.lastCompletionKind).toBe('completed');
@@ -727,7 +777,10 @@ describe('SessionsService', () => {
       const listener = jest.fn();
       service.on('session-last-state-change-changed', listener);
 
-      const updated = await service.markLastStateChange(session.id, '2024-01-03T10:00:00.000Z');
+      const updated = await service.markLastStateChange(
+        session.id,
+        '2024-01-03T10:00:00.000Z',
+      );
 
       expect(updated.lastStateChangeAt).toBe('2024-01-03T10:00:00.000Z');
       expect(listener).toHaveBeenCalledWith({
@@ -746,7 +799,10 @@ describe('SessionsService', () => {
         name: 'Tracked Session',
       });
 
-      const updated = await service.updateClaudeSessionId(created.id, 'claude-session-1');
+      const updated = await service.updateClaudeSessionId(
+        created.id,
+        'claude-session-1',
+      );
 
       expect(updated.claudeSessionId).toBe('claude-session-1');
       expect(updated.activeAgentProvider).toBe('claude');
@@ -764,7 +820,10 @@ describe('SessionsService', () => {
       });
 
       await service.updateClaudeSessionId(created.id, 'claude-session-1');
-      const unchanged = await service.updateClaudeSessionId(created.id, 'claude-session-1');
+      const unchanged = await service.updateClaudeSessionId(
+        created.id,
+        'claude-session-1',
+      );
 
       expect(unchanged.claudeSessionId).toBe('claude-session-1');
       expect(unchanged.activeAgentProvider).toBe('claude');
@@ -783,7 +842,10 @@ describe('SessionsService', () => {
         name: 'Tracked Session',
       });
 
-      const updated = await service.updateCodexSessionId(created.id, 'codex-session-1');
+      const updated = await service.updateCodexSessionId(
+        created.id,
+        'codex-session-1',
+      );
 
       expect(updated.codexSessionId).toBe('codex-session-1');
       expect(updated.activeAgentProvider).toBe('codex');
@@ -807,10 +869,14 @@ describe('SessionsService', () => {
         '/Users/test/.pi/agent/sessions/session.jsonl',
       );
 
-      expect(updated.piSessionPath).toBe('/Users/test/.pi/agent/sessions/session.jsonl');
+      expect(updated.piSessionPath).toBe(
+        '/Users/test/.pi/agent/sessions/session.jsonl',
+      );
       expect(updated.activeAgentProvider).toBe('pi');
       const reloaded = await service.findOne(created.id);
-      expect(reloaded.piSessionPath).toBe('/Users/test/.pi/agent/sessions/session.jsonl');
+      expect(reloaded.piSessionPath).toBe(
+        '/Users/test/.pi/agent/sessions/session.jsonl',
+      );
       expect(reloaded.activeAgentProvider).toBe('pi');
     });
   });
@@ -824,7 +890,10 @@ describe('SessionsService', () => {
         name: 'Tracked Session',
       });
 
-      const updated = await service.updateActiveAgentProvider(created.id, 'codex');
+      const updated = await service.updateActiveAgentProvider(
+        created.id,
+        'codex',
+      );
 
       expect(updated.activeAgentProvider).toBe('codex');
       const reloaded = await service.findOne(created.id);

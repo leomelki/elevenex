@@ -32,7 +32,9 @@ describe('WorkspaceCreationJobsService', () => {
       createdFromRef: 'feature',
     };
     const createWorkspace = jest.fn().mockResolvedValue(workspace);
-    const service = new WorkspaceCreationJobsService({ createWorkspace } as any);
+    const service = new WorkspaceCreationJobsService({
+      createWorkspace,
+    } as any);
 
     const job = service.startJob(repo as any, {
       name: 'Feature',
@@ -58,8 +60,12 @@ describe('WorkspaceCreationJobsService', () => {
   });
 
   it('marks a failed job with the surfaced error', async () => {
-    const createWorkspace = jest.fn().mockRejectedValue(new BadRequestException('boom'));
-    const service = new WorkspaceCreationJobsService({ createWorkspace } as any);
+    const createWorkspace = jest
+      .fn()
+      .mockRejectedValue(new BadRequestException('boom'));
+    const service = new WorkspaceCreationJobsService({
+      createWorkspace,
+    } as any);
 
     const job = service.startJob(repo as any, {
       name: 'Feature',
@@ -77,10 +83,15 @@ describe('WorkspaceCreationJobsService', () => {
 
   it('deduplicates active jobs for the same repo and path', async () => {
     let resolveJob: ((value: unknown) => void) | null = null;
-    const createWorkspace = jest.fn().mockImplementation(() => new Promise((resolve) => {
-      resolveJob = resolve;
-    }));
-    const service = new WorkspaceCreationJobsService({ createWorkspace } as any);
+    const createWorkspace = jest.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveJob = resolve;
+        }),
+    );
+    const service = new WorkspaceCreationJobsService({
+      createWorkspace,
+    } as any);
 
     const first = service.startJob(repo as any, {
       name: 'Feature',

@@ -16,10 +16,10 @@ describe('FilesController', () => {
         {
           provide: FilesService,
           useValue: {
-          stat: jest.fn(),
-          suggestPaths: jest.fn(),
-          listFiles: jest.fn(),
-          readFile: jest.fn(),
+            stat: jest.fn(),
+            suggestPaths: jest.fn(),
+            listFiles: jest.fn(),
+            readFile: jest.fn(),
             writeFile: jest.fn(),
             createDirectory: jest.fn(),
             rename: jest.fn(),
@@ -30,14 +30,19 @@ describe('FilesController', () => {
     }).compile();
 
     controller = module.get<FilesController>(FilesController);
-    filesystemController = module.get<FilesystemController>(FilesystemController);
+    filesystemController =
+      module.get<FilesystemController>(FilesystemController);
     service = module.get<FilesService>(FilesService);
   });
 
   describe('createDirectory', () => {
     it('delegates path suggestions to the service', async () => {
-      const suggestPaths = jest.fn().mockResolvedValue([{ path: '/tmp/repo', name: 'repo', kind: 'directory' }]);
-      service.suggestPaths = suggestPaths as unknown as FilesService['suggestPaths'];
+      const suggestPaths = jest
+        .fn()
+        .mockResolvedValue([
+          { path: '/tmp/repo', name: 'repo', kind: 'directory' },
+        ]);
+      service.suggestPaths = suggestPaths;
 
       const result = await filesystemController.suggestPaths({
         input: '/tmp/re',
@@ -45,7 +50,9 @@ describe('FilesController', () => {
         preferredStartDirectory: '/tmp',
       });
 
-      expect(result).toEqual([{ path: '/tmp/repo', name: 'repo', kind: 'directory' }]);
+      expect(result).toEqual([
+        { path: '/tmp/repo', name: 'repo', kind: 'directory' },
+      ]);
       expect(suggestPaths).toHaveBeenCalledWith('/tmp/re', 'directory', '/tmp');
     });
 
@@ -103,7 +110,9 @@ describe('FilesController', () => {
     it('bubbles BadRequestException', async () => {
       const rename = jest
         .fn()
-        .mockRejectedValue(new BadRequestException('Destination already exists'));
+        .mockRejectedValue(
+          new BadRequestException('Destination already exists'),
+        );
       service.rename = rename;
 
       await expect(
@@ -137,7 +146,10 @@ describe('FilesController', () => {
       const deleteEntry = jest.fn().mockResolvedValue(undefined);
       service.deleteEntry = deleteEntry;
 
-      await controller.deleteEntry(encodeURIComponent('/tmp/worktree'), 'file.ts');
+      await controller.deleteEntry(
+        encodeURIComponent('/tmp/worktree'),
+        'file.ts',
+      );
 
       expect(deleteEntry).toHaveBeenCalledWith(
         path.join('/tmp/worktree', 'file.ts'),
@@ -153,7 +165,10 @@ describe('FilesController', () => {
       service.deleteEntry = deleteEntry;
 
       await expect(
-        controller.deleteEntry(encodeURIComponent('/tmp/worktree'), 'missing.ts'),
+        controller.deleteEntry(
+          encodeURIComponent('/tmp/worktree'),
+          'missing.ts',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });

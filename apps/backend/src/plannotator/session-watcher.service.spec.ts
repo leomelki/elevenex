@@ -26,10 +26,9 @@ describe('PlannotatorSessionWatcher', () => {
   });
 
   function setKnownSessions(): void {
-    (service as unknown as { knownSessions: Map<number, typeof session> }).knownSessions.set(
-      session.pid,
-      session,
-    );
+    (
+      service as unknown as { knownSessions: Map<number, typeof session> }
+    ).knownSessions.set(session.pid, session);
   }
 
   it('terminates the process matching a known port', () => {

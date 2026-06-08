@@ -57,7 +57,12 @@ export class WorktreesController {
 
     const worktreePath =
       dto.worktreePath ||
-      path.join(path.dirname(repo.path), '.worktrees', repo.name, dto.branchName);
+      path.join(
+        path.dirname(repo.path),
+        '.worktrees',
+        repo.name,
+        dto.branchName,
+      );
     const job = this.worktreeCreationJobsService.startJob(
       id,
       repo.path,

@@ -77,7 +77,7 @@ export class ClaudeTerminalTranscriptMirrorService
   private readonly hookEventListener = (data: {
     sessionId: number;
     payload: Record<string, unknown>;
-  }) => this.handleHookEvent(data.sessionId, data.payload as ClaudeHookPayload);
+  }) => this.handleHookEvent(data.sessionId, data.payload);
 
   private readonly statusChangedListener = (data: StatusChangedPayload) =>
     this.handleStatusChanged(data);

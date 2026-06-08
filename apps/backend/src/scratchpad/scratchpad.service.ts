@@ -1,8 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { eq, asc } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
@@ -89,7 +85,9 @@ export class ScratchpadService {
       .returning();
 
     if (rows.length === 0) {
-      throw new NotFoundException(`Scratchpad section with id ${sectionId} not found`);
+      throw new NotFoundException(
+        `Scratchpad section with id ${sectionId} not found`,
+      );
     }
     return rows[0];
   }
@@ -101,7 +99,9 @@ export class ScratchpadService {
       .where(eq(schema.scratchpadSections.id, sectionId));
 
     if (rows.length === 0) {
-      throw new NotFoundException(`Scratchpad section with id ${sectionId} not found`);
+      throw new NotFoundException(
+        `Scratchpad section with id ${sectionId} not found`,
+      );
     }
 
     return rows[0];

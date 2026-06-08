@@ -83,7 +83,10 @@ export class ClaudeMcpService {
     private readonly runtimeService: ClaudeRuntimeService,
   ) {}
 
-  async getSnapshot(sessionId: number, forceRefresh = false): Promise<ClaudeMcpSnapshot> {
+  async getSnapshot(
+    sessionId: number,
+    forceRefresh = false,
+  ): Promise<ClaudeMcpSnapshot> {
     const session = await this.sessionsService.findOne(sessionId);
     const [globalConfigResult, projectFileResult, enterpriseResult] =
       await Promise.all([
@@ -101,9 +104,21 @@ export class ClaudeMcpService {
     const diagnostics: ClaudeMcpDiagnosticGroup[] = [];
 
     diagnostics.push(
-      this.buildFileDiagnostics('user', this.getGlobalConfigPath(), globalConfigResult.error),
-      this.buildFileDiagnostics('project', join(session.worktreePath, '.mcp.json'), projectFileResult.error),
-      this.buildFileDiagnostics('enterprise', this.getEnterpriseMcpPath(), enterpriseResult.error),
+      this.buildFileDiagnostics(
+        'user',
+        this.getGlobalConfigPath(),
+        globalConfigResult.error,
+      ),
+      this.buildFileDiagnostics(
+        'project',
+        join(session.worktreePath, '.mcp.json'),
+        projectFileResult.error,
+      ),
+      this.buildFileDiagnostics(
+        'enterprise',
+        this.getEnterpriseMcpPath(),
+        enterpriseResult.error,
+      ),
     );
 
     const scopedConfigs = [
@@ -145,7 +160,13 @@ export class ClaudeMcpService {
     const runtimeState = await this.runtimeService.getRuntimeState(sessionId);
     const servers = await Promise.all(
       scopedConfigs.map((config) =>
-        this.toServerEntry(session.worktreePath, config, runtimeState.sessionMetadata, runtimeState.contextUsage, forceRefresh),
+        this.toServerEntry(
+          session.worktreePath,
+          config,
+          runtimeState.sessionMetadata,
+          runtimeState.contextUsage,
+          forceRefresh,
+        ),
       ),
     );
 
@@ -162,25 +183,39 @@ export class ClaudeMcpService {
           ),
         ) ?? [];
 
-    const allServers = [...servers, ...runtimeOnlyServers].sort((left, right) => {
-      if (left.scope !== right.scope) {
-        return scopeOrder(left.scope) - scopeOrder(right.scope);
-      }
-      return left.name.localeCompare(right.name);
-    });
+    const allServers = [...servers, ...runtimeOnlyServers].sort(
+      (left, right) => {
+        if (left.scope !== right.scope) {
+          return scopeOrder(left.scope) - scopeOrder(right.scope);
+        }
+        return left.name.localeCompare(right.name);
+      },
+    );
 
     const malformed =
-      allServers.filter((server) => server.configStatus === 'error').length
-      + diagnostics.filter((group) => group.errors.length > 0 && group.scope !== 'user').length;
+      allServers.filter((server) => server.configStatus === 'error').length +
+      diagnostics.filter(
+        (group) => group.errors.length > 0 && group.scope !== 'user',
+      ).length;
 
     return {
       servers: allServers,
-      diagnostics: diagnostics.filter((group) => group.errors.length > 0 || group.warnings.length > 0),
+      diagnostics: diagnostics.filter(
+        (group) => group.errors.length > 0 || group.warnings.length > 0,
+      ),
       summary: {
-        connected: allServers.filter((server) => server.connectionStatus === 'connected').length,
-        needsAuth: allServers.filter((server) => server.connectionStatus === 'needs-auth').length,
-        failed: allServers.filter((server) => server.connectionStatus === 'failed').length,
-        disabled: allServers.filter((server) => server.connectionStatus === 'disabled').length,
+        connected: allServers.filter(
+          (server) => server.connectionStatus === 'connected',
+        ).length,
+        needsAuth: allServers.filter(
+          (server) => server.connectionStatus === 'needs-auth',
+        ).length,
+        failed: allServers.filter(
+          (server) => server.connectionStatus === 'failed',
+        ).length,
+        disabled: allServers.filter(
+          (server) => server.connectionStatus === 'disabled',
+        ).length,
         malformed,
         total: allServers.length,
       },
@@ -188,12 +223,17 @@ export class ClaudeMcpService {
     };
   }
 
-  async toggleServer(sessionId: number, serverName: string): Promise<ClaudeMcpSnapshot> {
+  async toggleServer(
+    sessionId: number,
+    serverName: string,
+  ): Promise<ClaudeMcpSnapshot> {
     const session = await this.sessionsService.findOne(sessionId);
     const configPath = this.getGlobalConfigPath();
-    const current = (await this.readJsonFile<GlobalConfig>(configPath)).data ?? {};
+    const current =
+      (await this.readJsonFile<GlobalConfig>(configPath)).data ?? {};
     const projectConfig = current.projects?.[session.worktreePath] ?? {};
-    const isDisabled = this.isProjectServerEnabled(projectConfig, serverName) === false;
+    const isDisabled =
+      this.isProjectServerEnabled(projectConfig, serverName) === false;
     const nextProjectConfig: ProjectConfig = {
       ...projectConfig,
       disabledMcpServers: toggleMembership(
@@ -211,17 +251,27 @@ export class ClaudeMcpService {
         [session.worktreePath]: nextProjectConfig,
       },
     });
-    this.probeCache.delete(this.getProbeCacheKey(session.worktreePath, serverName));
+    this.probeCache.delete(
+      this.getProbeCacheKey(session.worktreePath, serverName),
+    );
     return this.getSnapshot(sessionId, true);
   }
 
-  async recheckServer(sessionId: number, serverName: string): Promise<ClaudeMcpSnapshot> {
+  async recheckServer(
+    sessionId: number,
+    serverName: string,
+  ): Promise<ClaudeMcpSnapshot> {
     const session = await this.sessionsService.findOne(sessionId);
-    this.probeCache.delete(this.getProbeCacheKey(session.worktreePath, serverName));
+    this.probeCache.delete(
+      this.getProbeCacheKey(session.worktreePath, serverName),
+    );
     return this.getSnapshot(sessionId, true);
   }
 
-  async startAuth(sessionId: number, serverName: string): Promise<ClaudeMcpAuthStartResult> {
+  async startAuth(
+    sessionId: number,
+    serverName: string,
+  ): Promise<ClaudeMcpAuthStartResult> {
     const [snapshot, config] = await Promise.all([
       this.getSnapshot(sessionId),
       this.findConfigByServerName(sessionId, serverName),
@@ -232,12 +282,16 @@ export class ClaudeMcpService {
     }
 
     if (!server.actions.canAuth && !server.actions.canReauth) {
-      throw new BadRequestException(`MCP server "${serverName}" does not expose browser auth.`);
+      throw new BadRequestException(
+        `MCP server "${serverName}" does not expose browser auth.`,
+      );
     }
 
     const authUrl = await this.resolveAuthUrl(sessionId, server, config);
     if (!authUrl) {
-      throw new BadRequestException(`MCP server "${serverName}" does not provide an auth URL.`);
+      throw new BadRequestException(
+        `MCP server "${serverName}" does not provide an auth URL.`,
+      );
     }
 
     return {
@@ -258,13 +312,15 @@ export class ClaudeMcpService {
     contextUsage: ClaudeContextUsage | null,
     forceRefresh: boolean,
   ): Promise<ClaudeMcpServerEntry> {
-    const runtimeStatus = metadata?.mcpServers.find((candidate) => candidate.name === server.name)?.status;
+    const runtimeStatus = metadata?.mcpServers.find(
+      (candidate) => candidate.name === server.name,
+    )?.status;
     const probe: ProbeResult | null = server.enabled
       ? await this.getProbeStatus(worktreePath, server.name, forceRefresh)
       : null;
     const connectionStatus = runtimeStatus
       ? normalizeConnectionStatus(runtimeStatus)
-      : probe?.status ?? 'disabled';
+      : (probe?.status ?? 'disabled');
     const counts = this.buildCounts(server.name, metadata, contextUsage);
     const tools = this.buildTools(server.name, metadata) ?? [];
 
@@ -284,14 +340,14 @@ export class ClaudeMcpService {
         canToggle: server.scope !== 'runtime',
         canRecheck: server.enabled,
         canAuth:
-          server.enabled
-          && connectionStatus === 'needs-auth'
-          && supportsBrowserAuth(server.transport, server.config),
+          server.enabled &&
+          connectionStatus === 'needs-auth' &&
+          supportsBrowserAuth(server.transport, server.config),
         canReauth:
-          server.enabled
-          && connectionStatus !== 'needs-auth'
-          && connectionStatus !== 'disabled'
-          && supportsBrowserAuth(server.transport, server.config),
+          server.enabled &&
+          connectionStatus !== 'needs-auth' &&
+          connectionStatus !== 'disabled' &&
+          supportsBrowserAuth(server.transport, server.config),
         canViewTools: tools.length > 0,
       },
     };
@@ -348,10 +404,14 @@ export class ClaudeMcpService {
   ): ClaudeMcpServerEntry['counts'] {
     const normalizedName = normalizeNameForMcp(serverName);
     const toolPrefix = `mcp__${normalizedName}__`;
-    const tools = metadata?.tools.filter((name) => name.startsWith(toolPrefix)).length ?? 0;
-    const prompts = metadata?.slashCommands.filter((name) => name.startsWith(toolPrefix)).length ?? 0;
+    const tools =
+      metadata?.tools.filter((name) => name.startsWith(toolPrefix)).length ?? 0;
+    const prompts =
+      metadata?.slashCommands.filter((name) => name.startsWith(toolPrefix))
+        .length ?? 0;
     const loadedContextTools =
-      contextUsage?.mcpTools.filter((tool) => tool.serverName === serverName).length ?? 0;
+      contextUsage?.mcpTools.filter((tool) => tool.serverName === serverName)
+        .length ?? 0;
 
     return {
       tools,
@@ -384,7 +444,11 @@ export class ClaudeMcpService {
   ): Promise<ProbeResult> {
     const cacheKey = this.getProbeCacheKey(worktreePath, serverName);
     const cached = this.probeCache.get(cacheKey);
-    if (!forceRefresh && cached && Date.now() - cached.checkedAt < PROBE_TTL_MS) {
+    if (
+      !forceRefresh &&
+      cached &&
+      Date.now() - cached.checkedAt < PROBE_TTL_MS
+    ) {
       return cached;
     }
 
@@ -404,18 +468,19 @@ export class ClaudeMcpService {
       const result: ProbeResult = {
         status,
         checkedAt: Date.now(),
-        error:
-          status === 'failed'
-            ? extractProbeError(output)
-            : undefined,
+        error: status === 'failed' ? extractProbeError(output) : undefined,
       };
       this.probeCache.set(cacheKey, result);
       return result;
     } catch (error) {
       const output =
-        error instanceof Error ? error.message : 'Could not run Claude MCP probe.';
+        error instanceof Error
+          ? error.message
+          : 'Could not run Claude MCP probe.';
       const result: ProbeResult = {
-        status: output.includes('Needs authentication') ? 'needs-auth' : 'failed',
+        status: output.includes('Needs authentication')
+          ? 'needs-auth'
+          : 'failed',
         error: output,
         checkedAt: Date.now(),
       };
@@ -435,7 +500,10 @@ export class ClaudeMcpService {
     }
 
     return Object.entries(servers).map(([name, config]) => {
-      const { transport, errors, warnings } = validateServerConfig(name, config);
+      const { transport, errors, warnings } = validateServerConfig(
+        name,
+        config,
+      );
       return {
         scope,
         name,
@@ -444,7 +512,11 @@ export class ClaudeMcpService {
           typeof enabledResolver === 'boolean'
             ? enabledResolver
             : enabledResolver(name),
-        configStatus: errors.length ? 'error' : warnings.length ? 'warning' : 'valid',
+        configStatus: errors.length
+          ? 'error'
+          : warnings.length
+            ? 'warning'
+            : 'valid',
         warnings,
         errors,
         transport,
@@ -453,7 +525,10 @@ export class ClaudeMcpService {
     });
   }
 
-  private isProjectServerEnabled(projectConfig: ProjectConfig, name: string): boolean {
+  private isProjectServerEnabled(
+    projectConfig: ProjectConfig,
+    name: string,
+  ): boolean {
     if (!name) {
       return true;
     }
@@ -498,15 +573,17 @@ export class ClaudeMcpService {
     const projectConfig = globalConfig.projects?.[session.worktreePath] ?? {};
 
     return (
-      projectConfig.mcpServers?.[serverName]
-      || projectFileResult.data?.mcpServers?.[serverName]
-      || globalConfig.mcpServers?.[serverName]
-      || enterpriseResult.data?.mcpServers?.[serverName]
-      || null
+      projectConfig.mcpServers?.[serverName] ||
+      projectFileResult.data?.mcpServers?.[serverName] ||
+      globalConfig.mcpServers?.[serverName] ||
+      enterpriseResult.data?.mcpServers?.[serverName] ||
+      null
     );
   }
 
-  private async readJsonFile<T>(path: string): Promise<{ data?: T; error?: string }> {
+  private async readJsonFile<T>(
+    path: string,
+  ): Promise<{ data?: T; error?: string }> {
     try {
       const raw = await fs.readFile(path, 'utf-8');
       return { data: JSON.parse(raw) as T };
@@ -515,7 +592,8 @@ export class ClaudeMcpService {
         return {};
       }
       return {
-        error: error instanceof Error ? error.message : `Could not parse ${path}`,
+        error:
+          error instanceof Error ? error.message : `Could not parse ${path}`,
       };
     }
   }
@@ -530,7 +608,10 @@ export class ClaudeMcpService {
 
   private getEnterpriseMcpPath(): string {
     if (process.env.CLAUDE_CODE_MANAGED_SETTINGS_PATH) {
-      return join(process.env.CLAUDE_CODE_MANAGED_SETTINGS_PATH, 'managed-mcp.json');
+      return join(
+        process.env.CLAUDE_CODE_MANAGED_SETTINGS_PATH,
+        'managed-mcp.json',
+      );
     }
 
     if (process.platform === 'darwin') {
@@ -568,11 +649,11 @@ function validateServerConfig(
   }
 
   if (
-    (transport === 'http'
-      || transport === 'sse'
-      || transport === 'ws'
-      || transport === 'claudeai-proxy')
-    && typeof config.url !== 'string'
+    (transport === 'http' ||
+      transport === 'sse' ||
+      transport === 'ws' ||
+      transport === 'claudeai-proxy') &&
+    typeof config.url !== 'string'
   ) {
     errors.push({
       serverName,
@@ -620,9 +701,9 @@ function supportsBrowserAuth(
 
   // Claude Code handles OAuth auth flows for HTTP/SSE network transports.
   if (
-    ['http', 'sse'].includes(transport)
-    && typeof config.url === 'string'
-    && config.url.trim()
+    ['http', 'sse'].includes(transport) &&
+    typeof config.url === 'string' &&
+    config.url.trim()
   ) {
     return true;
   }
@@ -651,7 +732,10 @@ function parseProbeOutput(output: string): ClaudeMcpConnectionStatus {
 function extractProbeError(output: string): string | undefined {
   const trimmed = output.trim();
   if (!trimmed) return undefined;
-  const lines = trimmed.split('\n').map((line) => line.trim()).filter(Boolean);
+  const lines = trimmed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
   return lines.at(-1);
 }
 
@@ -671,12 +755,18 @@ function normalizeNameForMcp(name: string): string {
   return normalized;
 }
 
-function toggleMembership(list: string[], name: string, shouldContain: boolean): string[] {
+function toggleMembership(
+  list: string[],
+  name: string,
+  shouldContain: boolean,
+): string[] {
   const contains = list.includes(name);
   if (contains === shouldContain) {
     return list;
   }
-  return shouldContain ? [...list, name] : list.filter((entry) => entry !== name);
+  return shouldContain
+    ? [...list, name]
+    : list.filter((entry) => entry !== name);
 }
 
 function scopeOrder(scope: ClaudeMcpScope): number {

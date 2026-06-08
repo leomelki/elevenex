@@ -168,7 +168,7 @@ describe('TerminalService', () => {
     });
     ptyManager.isAlive.mockReturnValue(false);
     ptyManager.hasTmuxSession.mockResolvedValue(false);
-    ptyManager.spawn.mockResolvedValue({} as never);
+    ptyManager.spawn.mockResolvedValue({});
 
     const firstStart = service.startSession(1);
     const secondStart = service.startSession(1);

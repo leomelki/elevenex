@@ -44,7 +44,7 @@ export interface CodexRuntimeStatePayload extends Omit<
   'sessionMetadata' | 'permissionMode' | 'authStatus'
 > {
   sessionMetadata: CodexRuntimeSessionMetadata | null;
-  permissionMode: CodexPermissionMode | ClaudePermissionMode | null;
+  permissionMode: CodexPermissionMode | null;
   authStatus: CodexAuthStatus | ClaudeAuthStatus | null;
 }
 

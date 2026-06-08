@@ -146,7 +146,9 @@ export class ProjectsService {
     if (value === 'archived' || value === 'all') {
       return value;
     }
-    throw new BadRequestException('Project state must be active, archived, or all');
+    throw new BadRequestException(
+      'Project state must be active, archived, or all',
+    );
   }
 
   async delete(id: number) {

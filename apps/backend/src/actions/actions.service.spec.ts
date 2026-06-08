@@ -38,8 +38,6 @@ describe('ActionsService', () => {
     }
 
     expect(caught).toBeInstanceOf(BadRequestException);
-    expect((caught as Error).message).toBe(
-      'Action "Tests" is already running',
-    );
+    expect((caught as Error).message).toBe('Action "Tests" is already running');
   });
 });

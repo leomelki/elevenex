@@ -86,10 +86,7 @@ export class ClaudeRuntimeController {
     await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature('claude', 'setPermissionMode')
-      .setPermissionMode(
-        sessionId,
-        (body.mode ?? null) as AgentPermissionMode | null,
-      );
+      .setPermissionMode(sessionId, body.mode ?? null);
   }
 
   @Post('mcp/:serverName/toggle')
@@ -126,7 +123,9 @@ export class ClaudeRuntimeController {
   }
 
   @Post('terminal-fallback')
-  async openTerminalFallback(@Param('sessionId', ParseIntPipe) sessionId: number) {
+  async openTerminalFallback(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+  ) {
     await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature('claude', 'openTerminalFallback')

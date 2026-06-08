@@ -23,7 +23,7 @@ function status(overrides: Partial<StatusResult> = {}): StatusResult {
     detached: false,
     isClean: () => true,
     ...overrides,
-  } as StatusResult;
+  };
 }
 
 describe('git worktree fingerprint cache', () => {

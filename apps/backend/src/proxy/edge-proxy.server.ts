@@ -1,4 +1,10 @@
-import { createServer, IncomingMessage, request as httpRequest, Server as HttpServer, ServerResponse } from 'http';
+import {
+  createServer,
+  IncomingMessage,
+  request as httpRequest,
+  Server as HttpServer,
+  ServerResponse,
+} from 'http';
 import { request as httpsRequest } from 'https';
 import { Socket } from 'net';
 import { connect as tlsConnect } from 'tls';
@@ -42,8 +48,13 @@ function loadFrontendProxyConfig(repoRoot: string): FrontendProxyConfig {
   return JSON.parse(readFileSync(configPath, 'utf8')) as FrontendProxyConfig;
 }
 
-function matchProxyRule(pathname: string, rules: FrontendProxyConfig): FrontendProxyRule | null {
-  const sortedPrefixes = Object.keys(rules).sort((left, right) => right.length - left.length);
+function matchProxyRule(
+  pathname: string,
+  rules: FrontendProxyConfig,
+): FrontendProxyRule | null {
+  const sortedPrefixes = Object.keys(rules).sort(
+    (left, right) => right.length - left.length,
+  );
 
   for (const prefix of sortedPrefixes) {
     if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
@@ -84,7 +95,10 @@ function resolveProxyTarget(
   return target;
 }
 
-function copyProxyHeaders(request: IncomingMessage, target: URL): Record<string, string | string[]> {
+function copyProxyHeaders(
+  request: IncomingMessage,
+  target: URL,
+): Record<string, string | string[]> {
   const headers: Record<string, string | string[]> = {};
 
   for (const [key, value] of Object.entries(request.headers)) {
@@ -97,7 +111,10 @@ function copyProxyHeaders(request: IncomingMessage, target: URL): Record<string,
 
   headers.host = target.host;
   headers['x-forwarded-host'] = request.headers.host ?? '';
-  headers['x-forwarded-proto'] = (request.socket as { encrypted?: boolean }).encrypted ? 'https' : 'http';
+  headers['x-forwarded-proto'] = (request.socket as { encrypted?: boolean })
+    .encrypted
+    ? 'https'
+    : 'http';
 
   return headers;
 }
@@ -110,10 +127,12 @@ function writeProxyError(response: ServerResponse, error: Error): void {
 
   response.statusCode = 502;
   response.setHeader('Content-Type', 'application/json');
-  response.end(JSON.stringify({
-    message: 'Elevenex proxy request failed',
-    error: error.message,
-  }));
+  response.end(
+    JSON.stringify({
+      message: 'Elevenex proxy request failed',
+      error: error.message,
+    }),
+  );
 }
 
 function proxyHttpRequest(
@@ -132,7 +151,10 @@ function proxyHttpRequest(
       headers: copyProxyHeaders(request, target),
     },
     (proxyResponse) => {
-      response.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.headers);
+      response.writeHead(
+        proxyResponse.statusCode ?? 502,
+        proxyResponse.headers,
+      );
       proxyResponse.pipe(response);
     },
   );
@@ -144,7 +166,10 @@ function proxyHttpRequest(
   request.pipe(proxyRequest);
 }
 
-function serializeHeaders(headers: IncomingMessage['headers'], host: string): string {
+function serializeHeaders(
+  headers: IncomingMessage['headers'],
+  host: string,
+): string {
   const lines: string[] = [];
 
   for (const [key, rawValue] of Object.entries(headers)) {
@@ -163,7 +188,11 @@ function serializeHeaders(headers: IncomingMessage['headers'], host: string): st
 }
 
 function createUpstreamSocket(target: URL): Socket {
-  const port = target.port ? Number.parseInt(target.port, 10) : target.protocol === 'wss:' ? 443 : 80;
+  const port = target.port
+    ? Number.parseInt(target.port, 10)
+    : target.protocol === 'wss:'
+      ? 443
+      : 80;
   if (target.protocol === 'wss:' || target.protocol === 'https:') {
     return tlsConnect({
       host: target.hostname,
@@ -209,7 +238,9 @@ function proxyWebSocketUpgrade(
   });
 }
 
-export function createEdgeProxyServer(options: EdgeProxyServerOptions): HttpServer {
+export function createEdgeProxyServer(
+  options: EdgeProxyServerOptions,
+): HttpServer {
   const proxyConfig = loadFrontendProxyConfig(options.repoRoot);
   const { upstreamOrigin, localHttpServer } = options;
 
@@ -220,7 +251,9 @@ export function createEdgeProxyServer(options: EdgeProxyServerOptions): HttpServ
     if (!matchedRule) {
       response.statusCode = 404;
       response.setHeader('Content-Type', 'application/json');
-      response.end(JSON.stringify({ message: 'Route not exposed by Elevenex edge proxy' }));
+      response.end(
+        JSON.stringify({ message: 'Route not exposed by Elevenex edge proxy' }),
+      );
       return;
     }
 

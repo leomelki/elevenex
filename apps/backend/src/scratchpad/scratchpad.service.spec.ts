@@ -44,16 +44,16 @@ describe('ScratchpadService', () => {
     sqlite = testDb.sqlite;
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ScratchpadService,
-        { provide: DRIZZLE, useValue: db },
-      ],
+      providers: [ScratchpadService, { provide: DRIZZLE, useValue: db }],
     }).compile();
 
     service = module.get<ScratchpadService>(ScratchpadService);
 
     // Create a test project for all tests
-    const result = await db.insert(schema.projects).values({ name: 'Test Project' }).returning();
+    const result = await db
+      .insert(schema.projects)
+      .values({ name: 'Test Project' })
+      .returning();
     projectId = result[0].id;
   });
 
@@ -63,7 +63,11 @@ describe('ScratchpadService', () => {
 
   describe('create', () => {
     it('should create a section with correct fields', async () => {
-      const result = await service.create(projectId, 'My Section', 'Test description');
+      const result = await service.create(
+        projectId,
+        'My Section',
+        'Test description',
+      );
 
       expect(result).toBeDefined();
       expect(result.id).toBeDefined();
@@ -101,13 +105,16 @@ describe('ScratchpadService', () => {
       await service.create(projectId, 'Section C');
 
       // Update sort orders to test ordering
-      await db.update(schema.scratchpadSections)
+      await db
+        .update(schema.scratchpadSections)
         .set({ sortOrder: 2 })
         .where(eq(schema.scratchpadSections.name, 'Section A'));
-      await db.update(schema.scratchpadSections)
+      await db
+        .update(schema.scratchpadSections)
         .set({ sortOrder: 0 })
         .where(eq(schema.scratchpadSections.name, 'Section B'));
-      await db.update(schema.scratchpadSections)
+      await db
+        .update(schema.scratchpadSections)
         .set({ sortOrder: 1 })
         .where(eq(schema.scratchpadSections.name, 'Section C'));
 
@@ -145,7 +152,9 @@ describe('ScratchpadService', () => {
     it('should allow partial updates', async () => {
       const section = await service.create(projectId, 'Test', 'Desc');
 
-      const updated = await service.update(section.id, { content: 'Only content' });
+      const updated = await service.update(section.id, {
+        content: 'Only content',
+      });
 
       expect(updated.name).toBe('Test');
       expect(updated.description).toBe('Desc');

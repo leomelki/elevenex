@@ -3,7 +3,11 @@ import { BadRequestException } from '@nestjs/common';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { FilesService, detectLanguage, isWithinWorktree } from './files.service.js';
+import {
+  FilesService,
+  detectLanguage,
+  isWithinWorktree,
+} from './files.service.js';
 
 describe('FilesService', () => {
   let service: FilesService;
@@ -96,15 +100,21 @@ describe('FilesService', () => {
     });
 
     it('should return false for path traversal attempt', () => {
-      expect(isWithinWorktree('/worktree', '/worktree/../other/file.ts')).toBe(false);
+      expect(isWithinWorktree('/worktree', '/worktree/../other/file.ts')).toBe(
+        false,
+      );
     });
 
     it('should return false for paths that only share a prefix with the worktree', () => {
-      expect(isWithinWorktree('/worktree', '/worktree-other/file.ts')).toBe(false);
+      expect(isWithinWorktree('/worktree', '/worktree-other/file.ts')).toBe(
+        false,
+      );
     });
 
     it('should allow child paths whose names start with dots', () => {
-      expect(isWithinWorktree('/worktree', '/worktree/..cache/file.ts')).toBe(true);
+      expect(isWithinWorktree('/worktree', '/worktree/..cache/file.ts')).toBe(
+        true,
+      );
     });
   });
 
@@ -238,7 +248,7 @@ describe('FilesService', () => {
 
       const result = await service.suggestPaths('~/.s', 'directory');
 
-      expect(result.some(item => item.path === homeSshDir)).toBe(true);
+      expect(result.some((item) => item.path === homeSshDir)).toBe(true);
     });
 
     it('expands the home directory when tilde input uses a backslash', async () => {
@@ -247,13 +257,16 @@ describe('FilesService', () => {
 
       const result = await service.suggestPaths('~\\.s', 'directory');
 
-      expect(result.some(item => item.path === homeSshDir)).toBe(true);
+      expect(result.some((item) => item.path === homeSshDir)).toBe(true);
     });
 
     it('resolves partial parent directories against the deepest existing directory', async () => {
       fs.mkdirSync(path.join(tmpDir, 'projects'));
 
-      const result = await service.suggestPaths(path.join(tmpDir, 'pro'), 'directory');
+      const result = await service.suggestPaths(
+        path.join(tmpDir, 'pro'),
+        'directory',
+      );
 
       expect(result).toEqual([
         expect.objectContaining({
@@ -270,7 +283,10 @@ describe('FilesService', () => {
       fs.mkdirSync(path.join(tmpDir, 'repo-one'));
       fs.writeFileSync(path.join(tmpDir, 'repo-one.txt'), 'content');
 
-      const result = await service.suggestPaths(path.join(tmpDir, 'repo'), 'directory');
+      const result = await service.suggestPaths(
+        path.join(tmpDir, 'repo'),
+        'directory',
+      );
 
       expect(result).toEqual([
         expect.objectContaining({
@@ -284,7 +300,10 @@ describe('FilesService', () => {
       fs.mkdirSync(path.join(tmpDir, 'keys'));
       fs.writeFileSync(path.join(tmpDir, 'id_ed25519'), 'secret');
 
-      const result = await service.suggestPaths(path.join(tmpDir, 'id_'), 'either');
+      const result = await service.suggestPaths(
+        path.join(tmpDir, 'id_'),
+        'either',
+      );
 
       expect(result).toEqual([
         expect.objectContaining({
@@ -296,7 +315,10 @@ describe('FilesService', () => {
     });
 
     it('returns an empty list for nonexistent parent directories', async () => {
-      const result = await service.suggestPaths('/definitely-not-a-real-path/example', 'directory');
+      const result = await service.suggestPaths(
+        '/definitely-not-a-real-path/example',
+        'directory',
+      );
 
       expect(result).toEqual([]);
     });
@@ -307,9 +329,12 @@ describe('FilesService', () => {
       fs.writeFileSync(path.join(tmpDir, 'zeta.txt'), 'zeta');
       fs.writeFileSync(path.join(tmpDir, 'alpha.txt'), 'alpha');
 
-      const result = await service.suggestPaths(`${tmpDir}${path.sep}`, 'either');
+      const result = await service.suggestPaths(
+        `${tmpDir}${path.sep}`,
+        'either',
+      );
 
-      expect(result.map(item => `${item.kind}:${item.name}`)).toEqual([
+      expect(result.map((item) => `${item.kind}:${item.name}`)).toEqual([
         'directory:alpha-dir',
         'directory:beta-dir',
         'file:alpha.txt',
@@ -320,7 +345,10 @@ describe('FilesService', () => {
     it('treats a trailing forward slash as an exact parent directory', async () => {
       fs.mkdirSync(path.join(tmpDir, 'nested'));
 
-      const result = await service.suggestPaths(`${tmpDir.replace(/\\/g, '/')}/`, 'either');
+      const result = await service.suggestPaths(
+        `${tmpDir.replace(/\\/g, '/')}/`,
+        'either',
+      );
 
       expect(result).toEqual([
         expect.objectContaining({
@@ -406,9 +434,9 @@ describe('FilesService', () => {
       fs.mkdirSync(otherDir, { recursive: true });
       const filePath = path.join(otherDir, 'file.ts');
 
-      await expect(service.writeFile(filePath, 'content', tmpDir)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.writeFile(filePath, 'content', tmpDir),
+      ).rejects.toThrow(BadRequestException);
 
       expect(fs.existsSync(filePath)).toBe(false);
       fs.rmSync(otherDir, { recursive: true, force: true });
@@ -459,12 +487,16 @@ describe('FilesService', () => {
 
     it('rejects paths outside the worktree', async () => {
       const sourcePath = path.join(tmpDir, 'source.ts');
-      const outsidePath = path.join(os.tmpdir(), 'other-' + Date.now(), 'target.ts');
+      const outsidePath = path.join(
+        os.tmpdir(),
+        'other-' + Date.now(),
+        'target.ts',
+      );
       fs.writeFileSync(sourcePath, 'source');
 
-      await expect(service.rename(sourcePath, outsidePath, tmpDir)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.rename(sourcePath, outsidePath, tmpDir),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -483,7 +515,9 @@ describe('FilesService', () => {
       fs.mkdirSync(dirPath);
       fs.writeFileSync(path.join(dirPath, 'file.ts'), 'content');
 
-      await expect(service.deleteEntry(dirPath, tmpDir, false)).rejects.toThrow();
+      await expect(
+        service.deleteEntry(dirPath, tmpDir, false),
+      ).rejects.toThrow();
       expect(fs.existsSync(dirPath)).toBe(true);
 
       await service.deleteEntry(dirPath, tmpDir, true);
@@ -491,11 +525,15 @@ describe('FilesService', () => {
     });
 
     it('rejects paths outside the worktree', async () => {
-      const outsidePath = path.join(os.tmpdir(), 'other-' + Date.now(), 'file.ts');
-
-      await expect(service.deleteEntry(outsidePath, tmpDir, false)).rejects.toThrow(
-        BadRequestException,
+      const outsidePath = path.join(
+        os.tmpdir(),
+        'other-' + Date.now(),
+        'file.ts',
       );
+
+      await expect(
+        service.deleteEntry(outsidePath, tmpDir, false),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

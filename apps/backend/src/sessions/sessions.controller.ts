@@ -115,10 +115,7 @@ export class SessionsController {
   }
 
   @Post(':id/plan-chats')
-  ensurePlanChat(
-    @Param('id') id: string,
-    @Body() body: EnsurePlanChatForkDto,
-  ) {
+  ensurePlanChat(@Param('id') id: string, @Body() body: EnsurePlanChatForkDto) {
     return this.planChatForksService.ensure(Number(id), body);
   }
 

@@ -35,8 +35,12 @@ describe('renderVSCodeWorkbenchHtml', () => {
     const html = renderVSCodeWorkbenchHtml(template);
 
     expect(html).not.toContain('{{WORKBENCH_WEB_BASE_URL}}');
-    expect(html).toContain('/vscode-static/out/vs/workbench/workbench.web.main.css');
-    expect(html).toContain('/vscode-static/out/vs/code/browser/workbench/workbench.js');
+    expect(html).toContain(
+      '/vscode-static/out/vs/workbench/workbench.web.main.css',
+    );
+    expect(html).toContain(
+      '/vscode-static/out/vs/code/browser/workbench/workbench.js',
+    );
   });
 
   it('replaces auth, nls, and configuration placeholders with safe defaults', () => {
@@ -74,8 +78,12 @@ describe('renderVSCodeWorkbenchHtml', () => {
   });
 
   it('allows overriding the base URL', () => {
-    const html = renderVSCodeWorkbenchHtml(template, { baseUrl: '/custom/base' });
+    const html = renderVSCodeWorkbenchHtml(template, {
+      baseUrl: '/custom/base',
+    });
 
-    expect(html).toContain('/custom/base/out/vs/workbench/workbench.web.main.css');
+    expect(html).toContain(
+      '/custom/base/out/vs/workbench/workbench.web.main.css',
+    );
   });
 });

@@ -30,7 +30,10 @@ export class BranchesService {
     }
   }
 
-  async getBranches(repoPath: string, includeRemote = false): Promise<BranchInfo[]> {
+  async getBranches(
+    repoPath: string,
+    includeRemote = false,
+  ): Promise<BranchInfo[]> {
     const cacheKey = this.getCacheKey(repoPath, includeRemote);
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
@@ -41,7 +44,9 @@ export class BranchesService {
       // Use separate SimpleGit instances for true parallelism
       // (simple-git serializes commands per instance)
       const [branchSummary, worktreePaths] = await Promise.all([
-        worktreeSimpleGit(repoPath).branch(includeRemote ? ['-a'] : []) as Promise<BranchSummary>,
+        worktreeSimpleGit(repoPath).branch(
+          includeRemote ? ['-a'] : [],
+        ) as Promise<BranchSummary>,
         this.listWorktreePaths(worktreeSimpleGit(repoPath)),
       ]);
 
@@ -49,7 +54,9 @@ export class BranchesService {
       let normalizedRepoPath = repoPath;
       try {
         normalizedRepoPath = await fs.promises.realpath(repoPath);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       const branches: BranchInfo[] = [];
 
@@ -82,11 +89,14 @@ export class BranchesService {
         // Normalize worktree path for comparison
         if (worktreePath) {
           try {
-            const normalizedWorktreePath = await fs.promises.realpath(worktreePath);
+            const normalizedWorktreePath =
+              await fs.promises.realpath(worktreePath);
             if (normalizedWorktreePath === normalizedRepoPath) {
               worktreePath = null; // Don't show main repo as a worktree
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
 
         branches.push({
@@ -103,8 +113,7 @@ export class BranchesService {
       this.cache.set(cacheKey, { data: branches, timestamp: Date.now() });
       return branches;
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : 'Unknown error';
+      const message = error instanceof Error ? error.message : 'Unknown error';
       throw new BadRequestException(
         `Cannot access repository at path: ${repoPath}. ${message}`,
       );
@@ -207,11 +216,8 @@ export class BranchesService {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      const message =
-        error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(
-        `Failed to create branch: ${message}`,
-      );
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(`Failed to create branch: ${message}`);
     }
   }
 
@@ -225,7 +231,9 @@ export class BranchesService {
     return true;
   }
 
-  private async listWorktreePaths(git: SimpleGit): Promise<Map<string, string>> {
+  private async listWorktreePaths(
+    git: SimpleGit,
+  ): Promise<Map<string, string>> {
     const worktreeMap = new Map<string, string>();
 
     try {

@@ -1,7 +1,11 @@
 import { Injectable, NotFoundException, OnModuleDestroy } from '@nestjs/common';
 import { WorktreesService, WorktreeInfo } from './worktrees.service.js';
 
-export type WorktreeCreationJobStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+export type WorktreeCreationJobStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed';
 
 export interface WorktreeCreationJob {
   id: string;
@@ -22,7 +26,10 @@ const FINISHED_JOB_TTL_MS = 60_000;
 export class WorktreeCreationJobsService implements OnModuleDestroy {
   private readonly jobs = new Map<string, WorktreeCreationJob>();
   private readonly activeJobKeys = new Map<string, string>();
-  private readonly cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly cleanupTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
 
   constructor(private readonly worktreesService: WorktreesService) {}
 
@@ -103,7 +110,9 @@ export class WorktreeCreationJobsService implements OnModuleDestroy {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     } finally {
-      this.activeJobKeys.delete(this.buildActiveKey(job.repoId, job.branchName, job.worktreePath));
+      this.activeJobKeys.delete(
+        this.buildActiveKey(job.repoId, job.branchName, job.worktreePath),
+      );
       this.scheduleCleanup(jobId);
     }
   }
@@ -133,7 +142,11 @@ export class WorktreeCreationJobsService implements OnModuleDestroy {
     this.cleanupTimers.set(jobId, timer);
   }
 
-  private buildActiveKey(repoId: number, branchName: string, worktreePath: string): string {
+  private buildActiveKey(
+    repoId: number,
+    branchName: string,
+    worktreePath: string,
+  ): string {
     return `${repoId}:${branchName}:${worktreePath}`;
   }
 

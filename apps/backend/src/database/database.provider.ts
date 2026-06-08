@@ -27,7 +27,9 @@ export const DrizzleProvider: Provider = {
     // Run migrations automatically on startup
     const migrationsFolder = resolveMigrationsFolder();
     migrate(db, { migrationsFolder });
-    logger.log(`Database migrations applied successfully from ${migrationsFolder}`);
+    logger.log(
+      `Database migrations applied successfully from ${migrationsFolder}`,
+    );
 
     return db;
   },
@@ -44,7 +46,12 @@ function resolveMigrationsFolder(): string {
     return cwdDrizzle;
   }
 
-  const workspaceBackendDrizzle = join(process.cwd(), 'apps', 'backend', 'drizzle');
+  const workspaceBackendDrizzle = join(
+    process.cwd(),
+    'apps',
+    'backend',
+    'drizzle',
+  );
   if (existsSync(workspaceBackendDrizzle)) {
     return workspaceBackendDrizzle;
   }
@@ -52,22 +59,31 @@ function resolveMigrationsFolder(): string {
   return cwdDrizzle;
 }
 
-function ensureProjectBrowserStateCompatibility(sqlite: InstanceType<typeof Database>, logger: Logger): void {
+function ensureProjectBrowserStateCompatibility(
+  sqlite: InstanceType<typeof Database>,
+  logger: Logger,
+): void {
   const tableExists = sqlite
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_browser_state'")
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_browser_state'",
+    )
     .get();
 
   if (!tableExists) {
     return;
   }
 
-  const columns = sqlite.prepare("PRAGMA table_info('project_browser_state')").all() as Array<{ name: string }>;
-  const hasTabId = columns.some(column => column.name === 'tab_id');
+  const columns = sqlite
+    .prepare("PRAGMA table_info('project_browser_state')")
+    .all() as Array<{ name: string }>;
+  const hasTabId = columns.some((column) => column.name === 'tab_id');
   if (hasTabId) {
     return;
   }
 
-  logger.warn('Repairing legacy project_browser_state schema before Drizzle migrations');
+  logger.warn(
+    'Repairing legacy project_browser_state schema before Drizzle migrations',
+  );
   sqlite.exec(`
     ALTER TABLE project_browser_state RENAME TO project_browser_state__old;
 

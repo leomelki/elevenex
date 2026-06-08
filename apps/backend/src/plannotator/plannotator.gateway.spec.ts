@@ -42,8 +42,12 @@ describe('PlannotatorGateway', () => {
     gateway.handleClosePanel(client as never, { sessionId: panel.sessionId });
 
     expect(registry.handleClientClose).toHaveBeenCalledWith(panel.sessionId);
-    expect(sessionWatcher.terminateSessionByPort).toHaveBeenCalledWith(panel.upstreamPort);
-    expect(client.emit).toHaveBeenCalledWith('panel-closed', { sessionId: panel.sessionId });
+    expect(sessionWatcher.terminateSessionByPort).toHaveBeenCalledWith(
+      panel.upstreamPort,
+    );
+    expect(client.emit).toHaveBeenCalledWith('panel-closed', {
+      sessionId: panel.sessionId,
+    });
   });
 
   it('does not terminate a process when client close has no active panel', () => {
@@ -53,15 +57,19 @@ describe('PlannotatorGateway', () => {
     gateway.handleClosePanel(client as never, { sessionId: panel.sessionId });
 
     expect(sessionWatcher.terminateSessionByPort).not.toHaveBeenCalled();
-    expect(client.emit).toHaveBeenCalledWith('panel-closed', { sessionId: panel.sessionId });
+    expect(client.emit).toHaveBeenCalledWith('panel-closed', {
+      sessionId: panel.sessionId,
+    });
   });
 
   it('terminates the plannotator process when the proxied page requests close', () => {
-    (gateway as unknown as { handleProxyClose: (upstreamPort: number) => void }).handleProxyClose(
-      panel.upstreamPort,
-    );
+    (
+      gateway as unknown as { handleProxyClose: (upstreamPort: number) => void }
+    ).handleProxyClose(panel.upstreamPort);
 
     expect(registry.handleProxyClose).toHaveBeenCalledWith(panel.upstreamPort);
-    expect(sessionWatcher.terminateSessionByPort).toHaveBeenCalledWith(panel.upstreamPort);
+    expect(sessionWatcher.terminateSessionByPort).toHaveBeenCalledWith(
+      panel.upstreamPort,
+    );
   });
 });

@@ -9,7 +9,9 @@ export const scratchpadSections = sqliteTable('scratchpad_sections', {
   name: text('name').notNull(),
   description: text('description'),
   content: text('content').notNull().default(''),
-  isMarkdown: integer('is_markdown', { mode: 'boolean' }).notNull().default(true),
+  isMarkdown: integer('is_markdown', { mode: 'boolean' })
+    .notNull()
+    .default(true),
   sortOrder: integer('sort_order').notNull().default(0),
   createdAt: text('created_at')
     .notNull()

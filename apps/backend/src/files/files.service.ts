@@ -57,14 +57,19 @@ export function detectLanguage(filename: string): string {
  * Validate that a file path is within the worktree directory.
  * Prevents path traversal attacks.
  */
-export function isWithinWorktree(worktreePath: string, filePath: string): boolean {
+export function isWithinWorktree(
+  worktreePath: string,
+  filePath: string,
+): boolean {
   const resolvedWorktree = path.resolve(worktreePath);
   const resolvedFile = path.resolve(filePath);
   const relativePath = path.relative(resolvedWorktree, resolvedFile);
-  return relativePath === ''
-    || (relativePath !== '..'
-      && !relativePath.startsWith(`..${path.sep}`)
-      && !path.isAbsolute(relativePath));
+  return (
+    relativePath === '' ||
+    (relativePath !== '..' &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath))
+  );
 }
 
 function expandHomePath(inputPath: string): string {
@@ -92,15 +97,21 @@ async function isDirectory(targetPath: string): Promise<boolean> {
   }
 }
 
-async function resolveExistingParentDirectory(targetDirectory: string): Promise<{
+async function resolveExistingParentDirectory(
+  targetDirectory: string,
+): Promise<{
   existingDirectory: string;
   missingSegments: string[];
 }> {
   const resolvedTarget = path.resolve(targetDirectory);
   const parsed = path.parse(resolvedTarget);
-  const relativeSegments = parsed.dir === parsed.root
-    ? resolvedTarget.slice(parsed.root.length).split(path.sep).filter(Boolean)
-    : path.relative(parsed.root, resolvedTarget).split(path.sep).filter(Boolean);
+  const relativeSegments =
+    parsed.dir === parsed.root
+      ? resolvedTarget.slice(parsed.root.length).split(path.sep).filter(Boolean)
+      : path
+          .relative(parsed.root, resolvedTarget)
+          .split(path.sep)
+          .filter(Boolean);
 
   let cursor = parsed.root;
 
@@ -144,7 +155,8 @@ export class FilesService {
       ? normalizedInput
       : path.dirname(normalizedInput);
     const requestedPrefix = exactParent ? '' : path.basename(normalizedInput);
-    const { existingDirectory, missingSegments } = await resolveExistingParentDirectory(requestedDirectory);
+    const { existingDirectory, missingSegments } =
+      await resolveExistingParentDirectory(requestedDirectory);
     const effectivePrefix = missingSegments[0] ?? requestedPrefix;
     const includeHidden = effectivePrefix.startsWith('.');
 
@@ -185,7 +197,10 @@ export class FilesService {
         continue;
       }
 
-      if (normalizedPrefix && !entry.name.toLowerCase().startsWith(normalizedPrefix)) {
+      if (
+        normalizedPrefix &&
+        !entry.name.toLowerCase().startsWith(normalizedPrefix)
+      ) {
         continue;
       }
 
@@ -210,7 +225,12 @@ export class FilesService {
   async stat(
     targetPath: string,
     worktreePath: string,
-  ): Promise<{ type: 'file' | 'directory'; ctime: number; mtime: number; size: number }> {
+  ): Promise<{
+    type: 'file' | 'directory';
+    ctime: number;
+    mtime: number;
+    size: number;
+  }> {
     if (!isWithinWorktree(worktreePath, targetPath)) {
       throw new BadRequestException('Access denied: path outside worktree');
     }
@@ -238,18 +258,25 @@ export class FilesService {
    * @param worktreePath - Absolute path to the worktree root
    * @param dirPath - Relative path from worktree root to the directory to list
    */
-  async listFiles(worktreePath: string, dirPath: string = ''): Promise<FileTreeNode[]> {
+  async listFiles(
+    worktreePath: string,
+    dirPath: string = '',
+  ): Promise<FileTreeNode[]> {
     const targetDir = dirPath ? path.join(worktreePath, dirPath) : worktreePath;
 
     // Validate worktree exists
     try {
       const stat = await fs.stat(targetDir);
       if (!stat.isDirectory()) {
-        throw new BadRequestException(`Path is not a directory: ${dirPath || worktreePath}`);
+        throw new BadRequestException(
+          `Path is not a directory: ${dirPath || worktreePath}`,
+        );
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new BadRequestException(`Directory does not exist: ${dirPath || worktreePath}`);
+        throw new BadRequestException(
+          `Directory does not exist: ${dirPath || worktreePath}`,
+        );
       }
       throw error;
     }
@@ -275,7 +302,9 @@ export class FilesService {
         continue;
       }
 
-      const relativePath = relativeBase ? `${relativeBase}/${entry.name}` : entry.name;
+      const relativePath = relativeBase
+        ? `${relativeBase}/${entry.name}`
+        : entry.name;
 
       if (entry.isDirectory()) {
         // Directory: don't load children, just mark as expandable

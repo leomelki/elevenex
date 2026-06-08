@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createRequire } from 'module';
-import { buildAugmentedEnv, findBinary } from '../config/system-paths.js';
+import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
 
 const MAX_PROMPT_CHARS = 4000;
 type SDKAssistantMessage =
@@ -20,11 +20,12 @@ export class SessionTitleService {
       return null;
     }
     const pathToClaudeCodeExecutable =
-      this.resolveSdkClaudePath() ?? findBinary('claude') ?? undefined;
+      this.resolveClaudeCodeExecutable() ?? undefined;
+    const env = await buildAugmentedEnvAsync(process.env, worktreePath);
 
     const runtimeQuery = sdk.query({
       prompt: [
-        'Name this session based on the user\'s first message.',
+        "Name this session based on the user's first message.",
         'Respond immediately with a broad short title from the first message only.',
         'Do not use tools, investigate, browse, inspect files, or dig into details.',
         'Return only the session name, with no quotes, markdown, or commentary.',
@@ -43,15 +44,16 @@ export class SessionTitleService {
         maxTurns: 1,
         settingSources: [],
         allowedTools: [],
-        canUseTool: async () => ({
-          behavior: 'deny' as const,
-          message: 'Tool use disabled for session title generation',
-        }),
+        canUseTool: () =>
+          Promise.resolve({
+            behavior: 'deny' as const,
+            message: 'Tool use disabled for session title generation',
+          }),
         ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
         systemPrompt:
           'You generate concise session titles. Reply with only the title.',
         tools: [],
-        env: buildAugmentedEnv(process.env, worktreePath),
+        env,
       },
     });
 
@@ -59,7 +61,7 @@ export class SessionTitleService {
     try {
       for await (const message of runtimeQuery) {
         if (message.type === 'assistant') {
-          assistantText += this.extractText(message as SDKAssistantMessage);
+          assistantText += this.extractText(message);
         }
       }
     } catch (error) {
@@ -81,20 +83,31 @@ export class SessionTitleService {
   }
 
   private extractText(message: SDKAssistantMessage): string {
-    const content = Array.isArray(message.message?.content) ? message.message.content : [];
-    return content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    const content = Array.isArray(message.message?.content)
+      ? message.message.content
+      : [];
+    return content
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('');
   }
 
   private normalize(rawTitle: string): string | null {
     const cleaned = rawTitle
-      .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z]*|```/g, ''))
+      .replace(/```[\s\S]*?```/g, (block) =>
+        block.replace(/```[a-zA-Z]*|```/g, ''),
+      )
       .replace(/^[\s"'`*_#>-]+|[\s"'`*_#>-]+$/g, '')
       .replace(/[.!?;:,\s"'`*_#>-]+$/g, '')
       .replace(/\s+/g, ' ')
       .trim();
 
     if (!cleaned) return null;
-    const title = cleaned.split(' ').filter(Boolean).slice(0, 5).join(' ').trim();
+    const title = cleaned
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 5)
+      .join(' ')
+      .trim();
     return title || null;
   }
 
@@ -116,7 +129,9 @@ export class SessionTitleService {
             `@anthropic-ai/claude-agent-sdk-linux-${process.arch}-musl/claude${ext}`,
             `@anthropic-ai/claude-agent-sdk-linux-${process.arch}/claude${ext}`,
           ]
-        : [`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`];
+        : [
+            `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`,
+          ];
 
     const scopedRequire = createRequire(__filename);
     for (const candidate of candidates) {
@@ -127,5 +142,14 @@ export class SessionTitleService {
       }
     }
     return null;
+  }
+
+  private resolveClaudeCodeExecutable(): string | null {
+    const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
+    if (configuredPath) {
+      return findBinary(configuredPath) ?? configuredPath;
+    }
+
+    return this.resolveSdkClaudePath() ?? findBinary('claude');
   }
 }

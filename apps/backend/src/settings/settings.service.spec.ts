@@ -3,36 +3,50 @@ import type { DrizzleDB } from '../database/database.provider.js';
 import { SettingsService } from './settings.service.js';
 
 function createDbMock(initialRows: unknown[] = []) {
-  let rows = [...initialRows];
+  const rows = [...initialRows];
   const limit = jest.fn(async () => rows);
   const where = jest.fn(() => ({ limit }));
   const from = jest.fn(() => ({ where }));
   const select = jest.fn(() => ({ from }));
-  const onConflictDoUpdate = jest.fn(async ({ set }: { set: Record<string, unknown> }) => {
-    const values = valuesMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
-    const index = rows.findIndex((row) => (
-      typeof row === 'object' &&
-      row !== null &&
-      'id' in row &&
-      (row as { id: unknown }).id === values.id
-    ));
+  const onConflictDoUpdate = jest.fn(
+    async ({ set }: { set: Record<string, unknown> }) => {
+      const values = valuesMock.mock.calls.at(-1)?.[0] as Record<
+        string,
+        unknown
+      >;
+      const index = rows.findIndex(
+        (row) =>
+          typeof row === 'object' &&
+          row !== null &&
+          'id' in row &&
+          row.id === values.id,
+      );
 
-    if (index === -1) {
-      rows.push(values);
-    } else {
-      rows[index] = {
-        ...(rows[index] as Record<string, unknown>),
-        ...set,
-      };
-    }
-  });
+      if (index === -1) {
+        rows.push(values);
+      } else {
+        rows[index] = {
+          ...(rows[index] as Record<string, unknown>),
+          ...set,
+        };
+      }
+    },
+  );
   const valuesMock = jest.fn(() => ({ onConflictDoUpdate }));
   const insert = jest.fn(() => ({ values: valuesMock }));
 
   return {
     db: { select, insert } as unknown as DrizzleDB,
     getRows: () => rows,
-    mocks: { select, from, where, limit, insert, values: valuesMock, onConflictDoUpdate },
+    mocks: {
+      select,
+      from,
+      where,
+      limit,
+      insert,
+      values: valuesMock,
+      onConflictDoUpdate,
+    },
   };
 }
 
@@ -55,7 +69,9 @@ describe('SettingsService', () => {
     const { db, getRows } = createDbMock();
     const service = new SettingsService(db);
 
-    const settings = await service.update({ defaultClaudeSessionSurface: 'tui' });
+    const settings = await service.update({
+      defaultClaudeSessionSurface: 'tui',
+    });
 
     expect(settings.defaultClaudeSessionSurface).toBe('tui');
     expect(settings.defaultAgentProvider).toBe('claude');
@@ -93,7 +109,9 @@ describe('SettingsService', () => {
         id: 1,
         defaultClaudeSessionSurface: 'tui',
         defaultAgentProvider: 'codex',
-        sessionToolbarButtons: JSON.stringify([{ id: 'terminal', visible: false }]),
+        sessionToolbarButtons: JSON.stringify([
+          { id: 'terminal', visible: false },
+        ]),
         onboardingCompletedAt: null,
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
@@ -107,7 +125,9 @@ describe('SettingsService', () => {
 
     expect(settings.defaultClaudeSessionSurface).toBe('tui');
     expect(settings.defaultAgentProvider).toBe('codex');
-    expect(settings.sessionToolbarButtons).toEqual([{ id: 'files', visible: true }]);
+    expect(settings.sessionToolbarButtons).toEqual([
+      { id: 'files', visible: true },
+    ]);
   });
 
   it('updates the default agent provider', async () => {

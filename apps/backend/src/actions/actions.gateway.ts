@@ -45,7 +45,10 @@ export class ActionsGateway implements OnModuleDestroy {
     });
   }
 
-  private async handleConnection(ws: WebSocket, actionId: number): Promise<void> {
+  private async handleConnection(
+    ws: WebSocket,
+    actionId: number,
+  ): Promise<void> {
     const set = this.connections.get(actionId) ?? new Set<ActionConnection>();
     const connection = { ws };
     set.add(connection);
@@ -60,10 +63,12 @@ export class ActionsGateway implements OnModuleDestroy {
       ws.send(output);
     }
 
-    ws.send(JSON.stringify({
-      type: 'status',
-      status: this.ptyManager.isRunning(actionId) ? 'running' : action.status,
-    }));
+    ws.send(
+      JSON.stringify({
+        type: 'status',
+        status: this.ptyManager.isRunning(actionId) ? 'running' : action.status,
+      }),
+    );
 
     ws.on('close', () => {
       const connections = this.connections.get(actionId);

@@ -35,7 +35,7 @@ describe('UserTerminalService', () => {
       shell: '/bin/zsh',
       name: 'zsh',
       createdAt: new Date().toISOString(),
-    } as never);
+    });
   });
 
   afterEach(() => {
@@ -68,7 +68,7 @@ describe('UserTerminalService', () => {
     const access = createDeferred<void>();
     jest.spyOn(fs, 'access').mockReturnValue(access.promise);
     ptyManager.isAlive.mockReturnValue(false);
-    ptyManager.spawn.mockResolvedValue({} as never);
+    ptyManager.spawn.mockResolvedValue({});
 
     const firstStart = service.startTerminal(3);
     const secondStart = service.startTerminal(3);

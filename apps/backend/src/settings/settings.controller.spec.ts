@@ -19,9 +19,7 @@ describe('SettingsController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [SettingsController],
-      providers: [
-        { provide: SettingsService, useValue: settingsService },
-      ],
+      providers: [{ provide: SettingsService, useValue: settingsService }],
     }).compile();
 
     controller = module.get(SettingsController);

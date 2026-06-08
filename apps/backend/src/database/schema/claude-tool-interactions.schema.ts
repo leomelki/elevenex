@@ -1,4 +1,9 @@
-import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 import { sessions } from './sessions.schema.js';
 
 export const claudeToolInteractions = sqliteTable(
@@ -19,9 +24,8 @@ export const claudeToolInteractions = sqliteTable(
     resolvedAt: text('resolved_at').notNull(),
   },
   (table) => ({
-    sessionToolUseIdx: uniqueIndex('claude_tool_interactions_session_tool_use_idx').on(
-      table.sessionId,
-      table.toolUseId,
-    ),
+    sessionToolUseIdx: uniqueIndex(
+      'claude_tool_interactions_session_tool_use_idx',
+    ).on(table.sessionId, table.toolUseId),
   }),
 );

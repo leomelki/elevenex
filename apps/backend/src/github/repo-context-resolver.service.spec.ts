@@ -15,7 +15,9 @@ describe('RepoContextResolverService', () => {
       providers: [RepoContextResolverService],
     }).compile();
 
-    service = module.get<RepoContextResolverService>(RepoContextResolverService);
+    service = module.get<RepoContextResolverService>(
+      RepoContextResolverService,
+    );
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-context-'));
     repoPath = path.join(tmpDir, 'repo');
     fs.mkdirSync(repoPath);
@@ -26,7 +28,9 @@ describe('RepoContextResolverService', () => {
     execSync('git add README.md', { cwd: repoPath });
     execSync('git commit -m "init"', { cwd: repoPath });
     execSync('git branch -M main', { cwd: repoPath });
-    execSync('git remote add origin git@github.com:acme/elevenex.git', { cwd: repoPath });
+    execSync('git remote add origin git@github.com:acme/elevenex.git', {
+      cwd: repoPath,
+    });
   });
 
   afterEach(() => {
@@ -34,12 +38,16 @@ describe('RepoContextResolverService', () => {
   });
 
   it('parses github remotes', () => {
-    expect(service.parseGitHubRemote('git@github.com:acme/elevenex.git')).toEqual({
+    expect(
+      service.parseGitHubRemote('git@github.com:acme/elevenex.git'),
+    ).toEqual({
       host: 'github.com',
       owner: 'acme',
       repo: 'elevenex',
     });
-    expect(service.parseGitHubRemote('https://github.com/acme/elevenex.git')).toEqual({
+    expect(
+      service.parseGitHubRemote('https://github.com/acme/elevenex.git'),
+    ).toEqual({
       host: 'github.com',
       owner: 'acme',
       repo: 'elevenex',

@@ -6,15 +6,7 @@ import { ActionsService } from './actions.service.js';
 
 @Module({
   controllers: [ActionsController],
-  providers: [
-    ActionsService,
-    ActionsGateway,
-    ActionPtyManager,
-  ],
-  exports: [
-    ActionsService,
-    ActionsGateway,
-    ActionPtyManager,
-  ],
+  providers: [ActionsService, ActionsGateway, ActionPtyManager],
+  exports: [ActionsService, ActionsGateway, ActionPtyManager],
 })
 export class ActionsModule {}

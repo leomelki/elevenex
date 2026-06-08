@@ -9,12 +9,10 @@ type MockQuery = ReturnType<typeof createMockQuery>;
 
 function createMockQuery() {
   const outputQueue: any[] = [];
-  let outputWaiter:
-    | {
-        resolve: (value: IteratorResult<any>) => void;
-        reject: (error: unknown) => void;
-      }
-    | null = null;
+  let outputWaiter: {
+    resolve: (value: IteratorResult<any>) => void;
+    reject: (error: unknown) => void;
+  } | null = null;
   let closed = false;
 
   const flushWaiter = (): void => {
@@ -98,7 +96,7 @@ function createRuntime() {
 
   const runtime = new ClaudeSessionRuntime({
     sessionId: 7,
-    options: { cwd: '/tmp/project' } as any,
+    options: { cwd: '/tmp/project' },
     onMessage: (message) => {
       messages.push(message);
     },
@@ -127,7 +125,9 @@ async function waitForQuery(queries: MockQuery[], count = 1): Promise<void> {
     if (queries.length >= count) return;
     await flushAsync();
   }
-  throw new Error(`Expected ${count} query instance(s), got ${queries.length}.`);
+  throw new Error(
+    `Expected ${count} query instance(s), got ${queries.length}.`,
+  );
 }
 
 describe('ClaudeSessionRuntime', () => {
@@ -153,7 +153,8 @@ describe('ClaudeSessionRuntime', () => {
     const firstTurn = runtime.submitTurn(firstInput);
     await waitForQuery(queries);
 
-    const prompt = (query as jest.Mock).mock.calls[0][0].prompt as AsyncIterable<any>;
+    const prompt = (query as jest.Mock).mock.calls[0][0]
+      .prompt as AsyncIterable<any>;
     const promptIterator = prompt[Symbol.asyncIterator]();
     await expect(promptIterator.next()).resolves.toEqual({
       done: false,
@@ -199,7 +200,8 @@ describe('ClaudeSessionRuntime', () => {
     const secondTurn = runtime.submitTurn(secondInput);
     await waitForQuery(queries);
 
-    const prompt = (query as jest.Mock).mock.calls[0][0].prompt as AsyncIterable<any>;
+    const prompt = (query as jest.Mock).mock.calls[0][0]
+      .prompt as AsyncIterable<any>;
     const promptIterator = prompt[Symbol.asyncIterator]();
     await expect(promptIterator.next()).resolves.toEqual({
       done: false,
@@ -278,7 +280,7 @@ describe('ClaudeSessionRuntime', () => {
 
     await runtime.ensureStarted('prewarm');
     await runtime.setModel('opus');
-    await runtime.setPermissionMode('acceptEdits' as any);
+    await runtime.setPermissionMode('acceptEdits');
 
     expect(queries[0].setModel).toHaveBeenCalledWith('opus');
     expect(queries[0].setPermissionMode).toHaveBeenCalledWith('acceptEdits');

@@ -56,7 +56,11 @@ export class ClaudeSessionRuntime {
   }
 
   get lastUsedAtMs(): number | null {
-    return this.lastUsedAtMsValue ?? this.lastWarmedAtMsValue ?? this.startedAtMsValue;
+    return (
+      this.lastUsedAtMsValue ??
+      this.lastWarmedAtMsValue ??
+      this.startedAtMsValue
+    );
   }
 
   get lastWarmedAtMs(): number | null {
@@ -116,7 +120,9 @@ export class ClaudeSessionRuntime {
   }
 
   submitTurn(input: SDKUserMessage): Promise<void> {
-    const turn = this.turnChain.catch(() => undefined).then(() => this.runTurn(input));
+    const turn = this.turnChain
+      .catch(() => undefined)
+      .then(() => this.runTurn(input));
     this.turnChain = turn.catch(() => undefined);
     return turn;
   }

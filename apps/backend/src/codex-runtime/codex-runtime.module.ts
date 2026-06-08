@@ -10,7 +10,11 @@ import { CodexMcpService } from './codex-mcp.service.js';
 import { CodexRuntimeService } from './codex-runtime.service.js';
 
 @Module({
-  imports: [forwardRef(() => SessionsModule), ClaudeHooksModule, SessionTitleModule],
+  imports: [
+    forwardRef(() => SessionsModule),
+    ClaudeHooksModule,
+    SessionTitleModule,
+  ],
   providers: [
     CodexAgentRuntimeProvider,
     CodexAppServerClient,

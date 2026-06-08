@@ -7,7 +7,11 @@ import { PiAuthService } from './pi-auth.service.js';
 import { PiRuntimeService } from './pi-runtime.service.js';
 
 @Module({
-  imports: [forwardRef(() => SessionsModule), ClaudeHooksModule, SessionTitleModule],
+  imports: [
+    forwardRef(() => SessionsModule),
+    ClaudeHooksModule,
+    SessionTitleModule,
+  ],
   providers: [PiAgentRuntimeProvider, PiAuthService, PiRuntimeService],
   exports: [PiAgentRuntimeProvider, PiAuthService, PiRuntimeService],
 })

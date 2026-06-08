@@ -272,13 +272,13 @@ describe('TerminalGateway', () => {
       headers: { host: 'localhost:3000' },
     });
 
-    handlers
-      .get('message')
-      ?.(Buffer.from(JSON.stringify({ type: 'resize', cols: 90, rows: 24 })));
+    handlers.get('message')?.(
+      Buffer.from(JSON.stringify({ type: 'resize', cols: 90, rows: 24 })),
+    );
     handlers.get('message')?.(Buffer.from('queued input\r'));
-    handlers
-      .get('message')
-      ?.(Buffer.from(JSON.stringify({ type: 'resize', cols: 140, rows: 42 })));
+    handlers.get('message')?.(
+      Buffer.from(JSON.stringify({ type: 'resize', cols: 140, rows: 42 })),
+    );
 
     expect(mockPtyManager.resize).not.toHaveBeenCalled();
     expect(mockPtyManager.write).not.toHaveBeenCalled();

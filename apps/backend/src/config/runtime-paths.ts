@@ -20,7 +20,9 @@ function resolveVSCodeStaticPathForRoot(root: string): string | null {
 
     try {
       const scopedRequire = createRequire(packageAnchor);
-      const vscodeWebPackageJson = scopedRequire.resolve('vscode-web/package.json');
+      const vscodeWebPackageJson = scopedRequire.resolve(
+        'vscode-web/package.json',
+      );
       candidates.add(join(dirname(vscodeWebPackageJson), 'dist'));
     } catch {
       // Ignore missing package resolution for this anchor and continue searching.
@@ -28,7 +30,19 @@ function resolveVSCodeStaticPathForRoot(root: string): string | null {
   }
 
   for (const candidate of candidates) {
-    if (existsSync(join(candidate, 'out', 'vs', 'code', 'browser', 'workbench', 'workbench.html'))) {
+    if (
+      existsSync(
+        join(
+          candidate,
+          'out',
+          'vs',
+          'code',
+          'browser',
+          'workbench',
+          'workbench.html',
+        ),
+      )
+    ) {
       return candidate;
     }
   }
@@ -69,8 +83,8 @@ export function getBackendRuntimeRoot(): string {
 
   for (const candidate of resolveBackendRootCandidates()) {
     if (
-      existsSync(join(candidate, 'proxy.conf.json'))
-      || existsSync(join(candidate, 'apps', 'frontend', 'proxy.conf.json'))
+      existsSync(join(candidate, 'proxy.conf.json')) ||
+      existsSync(join(candidate, 'apps', 'frontend', 'proxy.conf.json'))
     ) {
       return candidate;
     }
@@ -103,7 +117,10 @@ export function getBackendAssetsRoot(): string {
 export function getBackendVSCodeStaticPath(): string {
   const explicitRoot = getExplicitRuntimeRoot();
   if (explicitRoot) {
-    return resolveVSCodeStaticPathForRoot(explicitRoot) ?? join(explicitRoot, 'vscode-web-dist');
+    return (
+      resolveVSCodeStaticPathForRoot(explicitRoot) ??
+      join(explicitRoot, 'vscode-web-dist')
+    );
   }
 
   for (const candidate of resolveAssetsRootCandidates()) {

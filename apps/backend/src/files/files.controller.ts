@@ -135,7 +135,11 @@ export class FilesController {
     const decodedFile = decodeURIComponent(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 
-    await this.filesService.writeFile(absolutePath, body.content, decodedWorktree);
+    await this.filesService.writeFile(
+      absolutePath,
+      body.content,
+      decodedWorktree,
+    );
     return { success: true };
   }
 
@@ -149,7 +153,11 @@ export class FilesController {
     const decodedFile = decodeURIComponent(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 
-    await this.filesService.writeFile(absolutePath, body.content, decodedWorktree);
+    await this.filesService.writeFile(
+      absolutePath,
+      body.content,
+      decodedWorktree,
+    );
     return { success: true };
   }
 

@@ -142,13 +142,13 @@ describe('UserTerminalGateway', () => {
       headers: { host: 'localhost:3000' },
     });
 
-    handlers
-      .get('message')
-      ?.(Buffer.from(JSON.stringify({ type: 'resize', cols: 90, rows: 24 })));
+    handlers.get('message')?.(
+      Buffer.from(JSON.stringify({ type: 'resize', cols: 90, rows: 24 })),
+    );
     handlers.get('message')?.(Buffer.from('echo before-ready\r'));
-    handlers
-      .get('message')
-      ?.(Buffer.from(JSON.stringify({ type: 'resize', cols: 132, rows: 40 })));
+    handlers.get('message')?.(
+      Buffer.from(JSON.stringify({ type: 'resize', cols: 132, rows: 40 })),
+    );
 
     expect(mockPtyManager.resize).not.toHaveBeenCalled();
     expect(mockPtyManager.write).not.toHaveBeenCalled();
@@ -160,9 +160,6 @@ describe('UserTerminalGateway', () => {
     expect(mockPtyManager.resize).toHaveBeenCalledTimes(1);
     expect(mockPtyManager.resize).toHaveBeenCalledWith(3, 132, 40);
     expect(mockPtyManager.write).toHaveBeenCalledTimes(1);
-    expect(mockPtyManager.write).toHaveBeenCalledWith(
-      3,
-      'echo before-ready\r',
-    );
+    expect(mockPtyManager.write).toHaveBeenCalledWith(3, 'echo before-ready\r');
   });
 });

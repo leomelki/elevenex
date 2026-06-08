@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { GitService, PushResult } from '../git/git.service.js';
-import { GhCommandError, GhCommandRunnerService } from './gh-command-runner.service.js';
+import {
+  GhCommandError,
+  GhCommandRunnerService,
+} from './gh-command-runner.service.js';
 import { RepoContextResolverService } from './repo-context-resolver.service.js';
 import type {
   GitHubBranchContext,
@@ -29,7 +32,10 @@ export class GithubService {
     private readonly gitService: GitService,
   ) {}
 
-  async getCapabilities(worktreePath: string, refresh = false): Promise<GitHubCapabilities> {
+  async getCapabilities(
+    worktreePath: string,
+    refresh = false,
+  ): Promise<GitHubCapabilities> {
     const context = await this.repoContextResolver.resolve(worktreePath);
     const ghInstalled = await this.runner.isInstalled(context.repoRoot);
 
@@ -56,7 +62,9 @@ export class GithubService {
     return {
       ghInstalled: true,
       authenticated,
-      hasGitHubRemote: Boolean(context.host === 'github.com' && context.owner && context.repo),
+      hasGitHubRemote: Boolean(
+        context.host === 'github.com' && context.owner && context.repo,
+      ),
       hasUpstream: Boolean(context.upstream),
       linkedPullRequest,
       defaultRemote: context.remoteName,
@@ -67,7 +75,10 @@ export class GithubService {
     };
   }
 
-  async getBranchContext(worktreePath: string, refresh = false): Promise<GitHubBranchContext> {
+  async getBranchContext(
+    worktreePath: string,
+    refresh = false,
+  ): Promise<GitHubBranchContext> {
     const cacheKey = `context:${worktreePath}`;
     if (!refresh) {
       const cached = this.getCache<GitHubBranchContext>(cacheKey);
@@ -75,7 +86,10 @@ export class GithubService {
     }
 
     const context = await this.repoContextResolver.resolve(worktreePath);
-    const linkedPullRequest = await this.findLinkedPullRequest(worktreePath, refresh);
+    const linkedPullRequest = await this.findLinkedPullRequest(
+      worktreePath,
+      refresh,
+    );
     const response: GitHubBranchContext = {
       repoRoot: context.repoRoot,
       worktreePath: context.worktreePath,
@@ -93,7 +107,10 @@ export class GithubService {
     return response;
   }
 
-  async getPullRequest(worktreePath: string, refresh = false): Promise<PullRequestDetail | null> {
+  async getPullRequest(
+    worktreePath: string,
+    refresh = false,
+  ): Promise<PullRequestDetail | null> {
     const cacheKey = `pr:${worktreePath}`;
     if (!refresh) {
       const cached = this.getCache<PullRequestDetail | null>(cacheKey);
@@ -131,7 +148,15 @@ export class GithubService {
     }
 
     const checks = await this.getPullRequestChecks(worktreePath, refresh);
-    const reviewersMap = new Map<string, { login: string; name: string | null; avatarUrl: string | null; state: string | null }>();
+    const reviewersMap = new Map<
+      string,
+      {
+        login: string;
+        name: string | null;
+        avatarUrl: string | null;
+        state: string | null;
+      }
+    >();
 
     for (const review of raw.reviews ?? []) {
       if (!review?.author?.login) continue;
@@ -150,11 +175,13 @@ export class GithubService {
       state: raw.state,
       isDraft: Boolean(raw.isDraft),
       body: raw.body ?? '',
-      author: raw.author ? {
-        login: raw.author.login,
-        name: raw.author.name ?? null,
-        avatarUrl: raw.author.avatarUrl ?? null,
-      } : null,
+      author: raw.author
+        ? {
+            login: raw.author.login,
+            name: raw.author.name ?? null,
+            avatarUrl: raw.author.avatarUrl ?? null,
+          }
+        : null,
       baseRefName: raw.baseRefName,
       headRefName: raw.headRefName,
       createdAt: raw.createdAt,
@@ -171,7 +198,10 @@ export class GithubService {
     return detail;
   }
 
-  async getPullRequestDiff(worktreePath: string, refresh = false): Promise<PullRequestFileDiff[]> {
+  async getPullRequestDiff(
+    worktreePath: string,
+    refresh = false,
+  ): Promise<PullRequestFileDiff[]> {
     const cacheKey = `diff:${worktreePath}`;
     if (!refresh) {
       const cached = this.getCache<PullRequestFileDiff[]>(cacheKey);
@@ -185,16 +215,30 @@ export class GithubService {
     }
 
     const context = await this.repoContextResolver.resolve(worktreePath);
-    const diffRaw = await this.runner.run(['pr', 'diff', String(summary.number), '--repo', `${context.owner}/${context.repo}`], context.repoRoot);
-    const conversation = await this.getPullRequestConversation(worktreePath, refresh);
-    const threadsByPath = conversation.threads.reduce<Map<string, PullRequestReviewThread[]>>((map, thread) => {
+    const diffRaw = await this.runner.run(
+      [
+        'pr',
+        'diff',
+        String(summary.number),
+        '--repo',
+        `${context.owner}/${context.repo}`,
+      ],
+      context.repoRoot,
+    );
+    const conversation = await this.getPullRequestConversation(
+      worktreePath,
+      refresh,
+    );
+    const threadsByPath = conversation.threads.reduce<
+      Map<string, PullRequestReviewThread[]>
+    >((map, thread) => {
       const existing = map.get(thread.path) || [];
       existing.push(thread);
       map.set(thread.path, existing);
       return map;
     }, new Map());
 
-    const diff = this.parseUnifiedDiff(diffRaw).map(file => ({
+    const diff = this.parseUnifiedDiff(diffRaw).map((file) => ({
       ...file,
       threads: threadsByPath.get(file.path) || [],
     }));
@@ -202,7 +246,10 @@ export class GithubService {
     return diff;
   }
 
-  async getPullRequestConversation(worktreePath: string, refresh = false): Promise<PullRequestConversation> {
+  async getPullRequestConversation(
+    worktreePath: string,
+    refresh = false,
+  ): Promise<PullRequestConversation> {
     const cacheKey = `conversation:${worktreePath}`;
     if (!refresh) {
       const cached = this.getCache<PullRequestConversation>(cacheKey);
@@ -210,14 +257,23 @@ export class GithubService {
     }
 
     const context = await this.repoContextResolver.resolve(worktreePath);
-    const pr = await this.runPrViewJson(worktreePath, ['number', 'comments', 'reviews']);
+    const pr = await this.runPrViewJson(worktreePath, [
+      'number',
+      'comments',
+      'reviews',
+    ]);
     if (!pr) {
       const empty = { reviews: [], comments: [], threads: [] };
       this.setCache(cacheKey, empty);
       return empty;
     }
 
-    const threads = await this.getReviewThreads(context.repoRoot, context.owner!, context.repo!, pr.number);
+    const threads = await this.getReviewThreads(
+      context.repoRoot,
+      context.owner!,
+      context.repo!,
+      pr.number,
+    );
     const conversation: PullRequestConversation = {
       reviews: (pr.reviews ?? []).map((review: any) => ({
         id: String(review.id),
@@ -242,7 +298,10 @@ export class GithubService {
     return conversation;
   }
 
-  async getPullRequestChecks(worktreePath: string, refresh = false): Promise<PullRequestCheckRollup> {
+  async getPullRequestChecks(
+    worktreePath: string,
+    refresh = false,
+  ): Promise<PullRequestCheckRollup> {
     const cacheKey = `checks:${worktreePath}`;
     if (!refresh) {
       const cached = this.getCache<PullRequestCheckRollup>(cacheKey);
@@ -263,7 +322,15 @@ export class GithubService {
     let stdout = '';
     try {
       stdout = await this.runner.run(
-        ['pr', 'checks', String(summary.number), '--repo', `${context.owner}/${context.repo}`, '--json', 'bucket,name,workflow,state,description,link,startedAt,completedAt'],
+        [
+          'pr',
+          'checks',
+          String(summary.number),
+          '--repo',
+          `${context.owner}/${context.repo}`,
+          '--json',
+          'bucket,name,workflow,state,description,link,startedAt,completedAt',
+        ],
         context.repoRoot,
       );
     } catch (error) {
@@ -289,8 +356,11 @@ export class GithubService {
       summary: {
         total: checks.length,
         passing: checks.filter((check: any) => check.bucket === 'pass').length,
-        failing: checks.filter((check: any) => check.bucket === 'fail' || check.bucket === 'cancel').length,
-        pending: checks.filter((check: any) => check.bucket === 'pending').length,
+        failing: checks.filter(
+          (check: any) => check.bucket === 'fail' || check.bucket === 'cancel',
+        ).length,
+        pending: checks.filter((check: any) => check.bucket === 'pending')
+          .length,
       },
       checks,
     };
@@ -299,7 +369,10 @@ export class GithubService {
     return rollup;
   }
 
-  async addComment(worktreePath: string, body: string): Promise<{ success: boolean }> {
+  async addComment(
+    worktreePath: string,
+    body: string,
+  ): Promise<{ success: boolean }> {
     const pr = await this.findLinkedPullRequest(worktreePath, true);
     if (!pr) {
       throw new Error('No pull request is linked to this branch.');
@@ -307,7 +380,15 @@ export class GithubService {
 
     const context = await this.repoContextResolver.resolve(worktreePath);
     await this.runner.run(
-      ['pr', 'comment', String(pr.number), '--repo', `${context.owner}/${context.repo}`, '--body', body],
+      [
+        'pr',
+        'comment',
+        String(pr.number),
+        '--repo',
+        `${context.owner}/${context.repo}`,
+        '--body',
+        body,
+      ],
       context.repoRoot,
     );
     this.invalidate(worktreePath);
@@ -325,14 +406,24 @@ export class GithubService {
     }
 
     const context = await this.repoContextResolver.resolve(worktreePath);
-    const flags = event === 'APPROVE'
-      ? ['--approve']
-      : event === 'REQUEST_CHANGES'
-        ? ['--request-changes']
-        : ['--comment'];
+    const flags =
+      event === 'APPROVE'
+        ? ['--approve']
+        : event === 'REQUEST_CHANGES'
+          ? ['--request-changes']
+          : ['--comment'];
 
     await this.runner.run(
-      ['pr', 'review', String(pr.number), '--repo', `${context.owner}/${context.repo}`, ...flags, '--body', body],
+      [
+        'pr',
+        'review',
+        String(pr.number),
+        '--repo',
+        `${context.owner}/${context.repo}`,
+        ...flags,
+        '--body',
+        body,
+      ],
       context.repoRoot,
     );
     this.invalidate(worktreePath);
@@ -351,26 +442,40 @@ export class GithubService {
     }
   }
 
-  private async findLinkedPullRequest(worktreePath: string, refresh = false): Promise<LinkedPullRequestSummary | null> {
+  private async findLinkedPullRequest(
+    worktreePath: string,
+    refresh = false,
+  ): Promise<LinkedPullRequestSummary | null> {
     const cacheKey = `pr-summary:${worktreePath}`;
     if (!refresh) {
       const cached = this.getCache<LinkedPullRequestSummary | null>(cacheKey);
       if (cached !== null) return cached;
     }
 
-    const raw = await this.runPrViewJson(worktreePath, ['number', 'title', 'url', 'state', 'isDraft']);
-    const summary = raw ? {
-      number: raw.number,
-      title: raw.title,
-      url: raw.url,
-      state: raw.state,
-      isDraft: Boolean(raw.isDraft),
-    } : null;
+    const raw = await this.runPrViewJson(worktreePath, [
+      'number',
+      'title',
+      'url',
+      'state',
+      'isDraft',
+    ]);
+    const summary = raw
+      ? {
+          number: raw.number,
+          title: raw.title,
+          url: raw.url,
+          state: raw.state,
+          isDraft: Boolean(raw.isDraft),
+        }
+      : null;
     this.setCache(cacheKey, summary);
     return summary;
   }
 
-  private async runPrViewJson(worktreePath: string, fields: string[]): Promise<any | null> {
+  private async runPrViewJson(
+    worktreePath: string,
+    fields: string[],
+  ): Promise<any | null> {
     const context = await this.repoContextResolver.resolve(worktreePath);
     if (!this.supportsGitHub(context)) {
       return null;
@@ -378,22 +483,43 @@ export class GithubService {
 
     try {
       const stdout = await this.runner.run(
-        ['pr', 'view', context.branch, '--repo', `${context.owner}/${context.repo}`, '--json', fields.join(',')],
+        [
+          'pr',
+          'view',
+          context.branch,
+          '--repo',
+          `${context.owner}/${context.repo}`,
+          '--json',
+          fields.join(','),
+        ],
         context.repoRoot,
       );
       return JSON.parse(stdout);
     } catch (error) {
-      if (error instanceof GhCommandError && /no pull requests found/i.test(error.stderr || error.message)) {
+      if (
+        error instanceof GhCommandError &&
+        /no pull requests found/i.test(error.stderr || error.message)
+      ) {
         return null;
       }
-      if (error instanceof GhCommandError && /authentication required|not logged into/i.test(`${error.stderr} ${error.stdout} ${error.message}`)) {
+      if (
+        error instanceof GhCommandError &&
+        /authentication required|not logged into/i.test(
+          `${error.stderr} ${error.stdout} ${error.message}`,
+        )
+      ) {
         return null;
       }
       throw error;
     }
   }
 
-  private async getReviewThreads(repoRoot: string, owner: string, repo: string, number: number): Promise<PullRequestReviewThread[]> {
+  private async getReviewThreads(
+    repoRoot: string,
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<PullRequestReviewThread[]> {
     const query = `
       query($owner: String!, $repo: String!, $number: Int!) {
         repository(owner: $owner, name: $repo) {
@@ -429,20 +555,27 @@ export class GithubService {
         [
           'api',
           'graphql',
-          '-f', `query=${query}`,
-          '-F', `owner=${owner}`,
-          '-F', `repo=${repo}`,
-          '-F', `number=${number}`,
+          '-f',
+          `query=${query}`,
+          '-F',
+          `owner=${owner}`,
+          '-F',
+          `repo=${repo}`,
+          '-F',
+          `number=${number}`,
         ],
         repoRoot,
       );
 
-      const nodes = JSON.parse(stdout)?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+      const nodes =
+        JSON.parse(stdout)?.data?.repository?.pullRequest?.reviewThreads
+          ?.nodes ?? [];
       return nodes.map((thread: any) => ({
         id: thread.id,
         path: thread.path,
         line: typeof thread.line === 'number' ? thread.line : null,
-        originalLine: typeof thread.originalLine === 'number' ? thread.originalLine : null,
+        originalLine:
+          typeof thread.originalLine === 'number' ? thread.originalLine : null,
         isResolved: Boolean(thread.isResolved),
         comments: (thread.comments?.nodes ?? []).map((comment: any) => ({
           id: comment.id,
@@ -461,11 +594,13 @@ export class GithubService {
   private parseUnifiedDiff(diff: string): PullRequestFileDiff[] {
     const chunks = diff
       .split(/^diff --git /m)
-      .map(chunk => chunk.trim())
+      .map((chunk) => chunk.trim())
       .filter(Boolean);
 
-    return chunks.map(chunk => {
-      const normalizedChunk = chunk.startsWith('a/') ? `diff --git ${chunk}` : `diff --git ${chunk}`;
+    return chunks.map((chunk) => {
+      const normalizedChunk = chunk.startsWith('a/')
+        ? `diff --git ${chunk}`
+        : `diff --git ${chunk}`;
       const lines = normalizedChunk.split('\n');
       const header = lines[0] ?? '';
       const match = header.match(/^diff --git a\/(.+?) b\/(.+)$/);
@@ -473,16 +608,20 @@ export class GithubService {
       const path = match?.[2] ?? oldPath ?? 'unknown';
 
       let status: PullRequestFileDiff['status'] = 'modified';
-      if (lines.some(line => line.startsWith('new file mode'))) {
+      if (lines.some((line) => line.startsWith('new file mode'))) {
         status = 'added';
-      } else if (lines.some(line => line.startsWith('deleted file mode'))) {
+      } else if (lines.some((line) => line.startsWith('deleted file mode'))) {
         status = 'removed';
-      } else if (lines.some(line => line.startsWith('rename from '))) {
+      } else if (lines.some((line) => line.startsWith('rename from '))) {
         status = 'renamed';
       }
 
-      const additions = lines.filter(line => line.startsWith('+') && !line.startsWith('+++')).length;
-      const deletions = lines.filter(line => line.startsWith('-') && !line.startsWith('---')).length;
+      const additions = lines.filter(
+        (line) => line.startsWith('+') && !line.startsWith('+++'),
+      ).length;
+      const deletions = lines.filter(
+        (line) => line.startsWith('-') && !line.startsWith('---'),
+      ).length;
 
       return {
         path,
@@ -496,8 +635,12 @@ export class GithubService {
     });
   }
 
-  private supportsGitHub(context: Awaited<ReturnType<RepoContextResolverService['resolve']>>): boolean {
-    return context.host === 'github.com' && Boolean(context.owner && context.repo);
+  private supportsGitHub(
+    context: Awaited<ReturnType<RepoContextResolverService['resolve']>>,
+  ): boolean {
+    return (
+      context.host === 'github.com' && Boolean(context.owner && context.repo)
+    );
   }
 
   private buildCapabilityMessage(
@@ -518,7 +661,10 @@ export class GithubService {
 
   private async isAuthenticated(repoRoot: string): Promise<boolean> {
     try {
-      await this.runner.run(['auth', 'status', '--hostname', 'github.com'], repoRoot);
+      await this.runner.run(
+        ['auth', 'status', '--hostname', 'github.com'],
+        repoRoot,
+      );
       return true;
     } catch (error) {
       if (error instanceof GhCommandError) {

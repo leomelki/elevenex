@@ -89,10 +89,7 @@ export class ClaudeAgentRuntimeProvider
   }
 
   setPermissionMode(sessionId: number, mode: AgentPermissionMode | null) {
-    return this.runtimeService.setPermissionMode(
-      sessionId,
-      mode as ClaudePermissionMode | null,
-    );
+    return this.runtimeService.setPermissionMode(sessionId, mode);
   }
 
   setPlanMode(sessionId: number, enabled: boolean) {

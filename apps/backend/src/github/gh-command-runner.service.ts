@@ -36,7 +36,9 @@ export class GhCommandRunnerService {
         },
         (error, stdout, stderr) => {
           if (error) {
-            const nodeError = error as NodeJS.ErrnoException & { code?: string | number | null };
+            const nodeError = error as NodeJS.ErrnoException & {
+              code?: string | number | null;
+            };
             reject(
               new GhCommandError(
                 stderr?.trim() || stdout?.trim() || error.message,

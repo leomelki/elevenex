@@ -175,10 +175,10 @@ export class PiSessionRuntime extends EventEmitter {
       return;
     }
     if (obj.type === 'extension_ui_request') {
-      this.emit('extension_ui_request', obj as PiRpcExtensionUiRequest);
+      this.emit('extension_ui_request', obj);
       return;
     }
-    this.emit('event', obj as PiSessionRuntimeEvent);
+    this.emit('event', obj);
   }
 
   private handleExit(error: Error): void {

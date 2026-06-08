@@ -33,11 +33,7 @@ import {
         claudeProvider: ClaudeAgentRuntimeProvider,
         codexProvider: CodexAgentRuntimeProvider,
         piProvider: PiAgentRuntimeProvider,
-      ) => [
-        claudeProvider,
-        codexProvider,
-        piProvider,
-      ],
+      ) => [claudeProvider, codexProvider, piProvider],
       inject: [
         ClaudeAgentRuntimeProvider,
         CodexAgentRuntimeProvider,

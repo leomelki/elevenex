@@ -23,15 +23,8 @@ export class ScratchpadController {
   }
 
   @Post()
-  create(
-    @Param('projectId') projectId: string,
-    @Body() dto: CreateSectionDto,
-  ) {
-    return this.scratchpadService.create(
-      +projectId,
-      dto.name,
-      dto.description,
-    );
+  create(@Param('projectId') projectId: string, @Body() dto: CreateSectionDto) {
+    return this.scratchpadService.create(+projectId, dto.name, dto.description);
   }
 
   @Put('orders')

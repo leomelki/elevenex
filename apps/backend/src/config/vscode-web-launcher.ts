@@ -111,11 +111,14 @@ export interface RenderWorkbenchHtmlOptions {
   nlsBaseUrl?: string;
 }
 
-export function renderVSCodeWorkbenchHtml(rawHtml: string, options: RenderWorkbenchHtmlOptions = {}): string {
+export function renderVSCodeWorkbenchHtml(
+  rawHtml: string,
+  options: RenderWorkbenchHtmlOptions = {},
+): string {
   const baseUrl = options.baseUrl ?? '/vscode-static';
   const nlsBaseUrl = options.nlsBaseUrl ?? '';
 
-  let html = rawHtml
+  const html = rawHtml
     .replace(/\{\{WORKBENCH_WEB_BASE_URL\}\}/g, baseUrl)
     .replace(/\{\{WORKBENCH_WEB_CONFIGURATION\}\}/g, '{}')
     .replace(/\{\{WORKBENCH_AUTH_SESSION\}\}/g, '{}')

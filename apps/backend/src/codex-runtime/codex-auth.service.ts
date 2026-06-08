@@ -46,7 +46,8 @@ export class CodexAuthService extends EventEmitter {
   // The Codex binary version is fixed for the lifetime of the install — caching
   // it avoids spawning `codex --version` on every getStatus() call, which was
   // ~100-500ms of process-spawn overhead per check (and getStatus is polled).
-  private versionCache: { value: string | null; expiresAt: number } | null = null;
+  private versionCache: { value: string | null; expiresAt: number } | null =
+    null;
   private versionInFlight: Promise<string | null> | null = null;
 
   async getStatus(): Promise<CodexAuthStatus> {
@@ -79,7 +80,8 @@ export class CodexAuthService extends EventEmitter {
     const apiKey = stringValue(authFile?.OPENAI_API_KEY);
     const email = idToken ? this.extractJwtEmail(idToken) : undefined;
     const authenticated = Boolean(idToken || accessToken || apiKey);
-    const authMethod = idToken || accessToken ? 'oauth' : apiKey ? 'api_key' : 'none';
+    const authMethod =
+      idToken || accessToken ? 'oauth' : apiKey ? 'api_key' : 'none';
     const active = this.active;
     const output = [
       version ? `codex ${version}` : 'Codex CLI not found',
@@ -189,10 +191,7 @@ export class CodexAuthService extends EventEmitter {
         // process may already be gone
       }
     }, 500);
-    await Promise.race([
-      exited,
-      new Promise<void>((r) => setTimeout(r, 1500)),
-    ]);
+    await Promise.race([exited, new Promise<void>((r) => setTimeout(r, 1500))]);
     clearTimeout(escalate);
   }
 
@@ -257,8 +256,9 @@ export class CodexAuthService extends EventEmitter {
       if (code === 0) {
         this.lastError = null;
       } else if (code !== null) {
-        this.lastError = combined.split('\n').filter(Boolean).pop()
-          ?? `codex login exited with code ${code}`;
+        this.lastError =
+          combined.split('\n').filter(Boolean).pop() ??
+          `codex login exited with code ${code}`;
       }
       if (wasActive) {
         this.active = null;
@@ -299,7 +299,8 @@ export class CodexAuthService extends EventEmitter {
         } else {
           reject(
             new BadRequestException(
-              this.lastError ?? 'codex login exited before producing a verification code.',
+              this.lastError ??
+                'codex login exited before producing a verification code.',
             ),
           );
         }
@@ -368,8 +369,9 @@ export class CodexAuthService extends EventEmitter {
             message: 'OPENAI_API_KEY saved.',
           });
         } else {
-          this.lastError = combined.split('\n').filter(Boolean).pop()
-            ?? `codex login --with-api-key exited with code ${code}`;
+          this.lastError =
+            combined.split('\n').filter(Boolean).pop() ??
+            `codex login --with-api-key exited with code ${code}`;
           this.emitChanged();
           reject(new BadRequestException(this.lastError));
         }

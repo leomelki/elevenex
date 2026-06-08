@@ -177,7 +177,10 @@ export class SessionsService extends EventEmitter {
       .select()
       .from(schema.sessions)
       .where(
-        this.visibleWhere(eq(schema.sessions.worktreePath, worktreePath), options),
+        this.visibleWhere(
+          eq(schema.sessions.worktreePath, worktreePath),
+          options,
+        ),
       );
     return rows.map((session) => this.withInferredActiveAgentProvider(session));
   }
@@ -638,9 +641,13 @@ export class SessionsService extends EventEmitter {
   }
 
   async deleteByRepoAndWorktreePath(repoId: number, worktreePath: string) {
-    const sessions = await this.findByRepoAndWorktreePath(repoId, worktreePath, {
-      includeHidden: true,
-    });
+    const sessions = await this.findByRepoAndWorktreePath(
+      repoId,
+      worktreePath,
+      {
+        includeHidden: true,
+      },
+    );
     await this.cleanupSessionsBeforeBulkDelete(
       sessions.map((session) => session.id),
     );
@@ -845,7 +852,9 @@ export class SessionsService extends EventEmitter {
     return result[0].count;
   }
 
-  private normalizeSurface(surface: SessionSurface | undefined): SessionSurface {
+  private normalizeSurface(
+    surface: SessionSurface | undefined,
+  ): SessionSurface {
     if (surface === undefined) {
       return 'session';
     }

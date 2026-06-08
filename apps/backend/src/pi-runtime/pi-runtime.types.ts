@@ -8,7 +8,10 @@ import type {
   ClaudeTranscriptItem,
   ClaudeUserInputRequest,
 } from '../claude-runtime/claude-runtime.types.js';
-import type { AgentImageInput, AgentLoginMode } from '../agent-runtime/agent-runtime.types.js';
+import type {
+  AgentImageInput,
+  AgentLoginMode,
+} from '../agent-runtime/agent-runtime.types.js';
 
 export type PiRunPhase = 'idle' | 'running' | 'waiting' | 'error';
 

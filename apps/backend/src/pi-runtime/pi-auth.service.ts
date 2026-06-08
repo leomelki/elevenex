@@ -412,7 +412,7 @@ export class PiAuthService extends EventEmitter {
       });
 
     return Promise.resolve({
-      mode: 'oauth' as AgentLoginMode,
+      mode: 'oauth',
       authUrl,
       userCode: null,
       message: `Open the link to authorize ${provider === 'anthropic' ? 'Anthropic' : 'OpenAI Codex'}.`,
@@ -541,10 +541,9 @@ export class PiAuthService extends EventEmitter {
 
           const credential: AuthCredential = {
             type: 'oauth',
-            access: copilotData['token'] as string,
+            access: copilotData['token'],
             refresh: githubToken,
-            expires:
-              (copilotData['expires_at'] as number) * 1000 - 5 * 60 * 1000,
+            expires: copilotData['expires_at'] * 1000 - 5 * 60 * 1000,
           };
 
           if (this.active !== active) return;
@@ -560,7 +559,7 @@ export class PiAuthService extends EventEmitter {
         }
 
         if (typeof data['error'] === 'string') {
-          const error = data['error'] as string;
+          const error = data['error'];
           if (error === 'authorization_pending') {
             continue;
           }

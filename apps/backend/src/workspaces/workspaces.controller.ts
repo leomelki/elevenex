@@ -40,7 +40,10 @@ export class WorkspacesController {
 
   @Post('repos/:repoId/workspaces')
   @HttpCode(HttpStatus.ACCEPTED)
-  async create(@Param('repoId') repoId: string, @Body() dto: CreateWorkspaceDto) {
+  async create(
+    @Param('repoId') repoId: string,
+    @Body() dto: CreateWorkspaceDto,
+  ) {
     const repo = await this.findRepo(+repoId);
     await this.projectsService.assertProjectIsActive(repo.projectId);
 
@@ -57,7 +60,10 @@ export class WorkspacesController {
   }
 
   @Post('repos/:repoId/workspaces/attachments')
-  async attach(@Param('repoId') repoId: string, @Body() dto: AttachWorkspaceDto) {
+  async attach(
+    @Param('repoId') repoId: string,
+    @Body() dto: AttachWorkspaceDto,
+  ) {
     const repo = await this.findRepo(+repoId);
     return this.workspacesService.attachExistingWorkspace(repo, dto);
   }
@@ -87,7 +93,11 @@ export class WorkspacesController {
     @Param('workspaceId') workspaceId: string,
     @Body() dto: UpdateWorkspaceDto,
   ) {
-    return this.workspacesService.renameWorkspace(+workspaceId, dto.name, +repoId);
+    return this.workspacesService.renameWorkspace(
+      +workspaceId,
+      dto.name,
+      +repoId,
+    );
   }
 
   @Post('repos/:repoId/workspaces/:workspaceId/switch-branch')
@@ -96,7 +106,12 @@ export class WorkspacesController {
     @Param('workspaceId') workspaceId: string,
     @Body() dto: SwitchWorkspaceBranchDto,
   ) {
-    return this.workspacesService.switchBranch(+workspaceId, dto.branchName, dto.force, +repoId);
+    return this.workspacesService.switchBranch(
+      +workspaceId,
+      dto.branchName,
+      dto.force,
+      +repoId,
+    );
   }
 
   @Post('repos/:repoId/workspaces/:workspaceId/create-branch')
@@ -109,17 +124,26 @@ export class WorkspacesController {
   }
 
   @Delete('repos/:repoId/workspaces/:workspaceId')
-  async delete(@Param('repoId') repoId: string, @Param('workspaceId') workspaceId: string) {
+  async delete(
+    @Param('repoId') repoId: string,
+    @Param('workspaceId') workspaceId: string,
+  ) {
     return this.workspacesService.deleteWorkspace(+workspaceId, true, +repoId);
   }
 
   @Delete('repos/:repoId/workspaces/:workspaceId/project-attachment')
-  async forget(@Param('repoId') repoId: string, @Param('workspaceId') workspaceId: string) {
+  async forget(
+    @Param('repoId') repoId: string,
+    @Param('workspaceId') workspaceId: string,
+  ) {
     return this.workspacesService.deleteWorkspace(+workspaceId, false, +repoId);
   }
 
   private async findRepo(repoId: number) {
-    const rows = await this.db.select().from(schema.repos).where(eq(schema.repos.id, repoId));
+    const rows = await this.db
+      .select()
+      .from(schema.repos)
+      .where(eq(schema.repos.id, repoId));
     if (rows.length === 0) {
       throw new NotFoundException(`Repo with id ${repoId} not found`);
     }

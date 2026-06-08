@@ -23,10 +23,7 @@ export class TodosController {
   }
 
   @Post()
-  create(
-    @Param('projectId') projectId: string,
-    @Body() dto: CreateTodoDto,
-  ) {
+  create(@Param('projectId') projectId: string, @Body() dto: CreateTodoDto) {
     return this.todosService.create(+projectId, dto.text);
   }
 

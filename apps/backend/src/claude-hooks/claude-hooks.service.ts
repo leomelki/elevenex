@@ -141,7 +141,10 @@ export class ClaudeHooksService extends EventEmitter {
     };
   }
 
-  updateRuntimeActivity(sessionId: number, activity: ClaudeSessionActivity): void {
+  updateRuntimeActivity(
+    sessionId: number,
+    activity: ClaudeSessionActivity,
+  ): void {
     const previous = this.getActivity(sessionId);
     if (activity.activityStatus === 'idle') {
       this.runtimeActivities.delete(sessionId);
@@ -151,9 +154,9 @@ export class ClaudeHooksService extends EventEmitter {
 
     const current = this.getActivity(sessionId);
     if (
-      previous.activityStatus === current.activityStatus
-      && previous.actionKind === current.actionKind
-      && previous.actionLabel === current.actionLabel
+      previous.activityStatus === current.activityStatus &&
+      previous.actionKind === current.actionKind &&
+      previous.actionLabel === current.actionLabel
     ) {
       return;
     }
@@ -482,7 +485,9 @@ export class ClaudeHooksService extends EventEmitter {
     return { continue: true };
   }
 
-  private summarizeHookPayload(payload: ClaudeHookPayload): Record<string, unknown> {
+  private summarizeHookPayload(
+    payload: ClaudeHookPayload,
+  ): Record<string, unknown> {
     const summary: Record<string, unknown> = {
       source: payload.source ?? null,
       notificationType: payload.notification_type ?? null,

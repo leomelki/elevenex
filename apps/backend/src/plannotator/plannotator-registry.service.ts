@@ -73,8 +73,10 @@ export class PlannotatorRegistryService extends EventEmitter {
       generation,
       worktreePath,
       active: true,
-      panel: options.reuseExisting ? existing?.panel ?? null : null,
-      lastClosedGeneration: options.reuseExisting ? existing?.lastClosedGeneration ?? null : null,
+      panel: options.reuseExisting ? (existing?.panel ?? null) : null,
+      lastClosedGeneration: options.reuseExisting
+        ? (existing?.lastClosedGeneration ?? null)
+        : null,
     });
 
     this.logger.log(
@@ -260,7 +262,12 @@ export class PlannotatorRegistryService extends EventEmitter {
     try {
       const parsed = new URL(url);
       const mode = parsed.searchParams.get('mode');
-      if (mode === 'plan' || mode === 'review' || mode === 'annotate' || mode === 'archive') {
+      if (
+        mode === 'plan' ||
+        mode === 'review' ||
+        mode === 'annotate' ||
+        mode === 'archive'
+      ) {
         return mode;
       }
 

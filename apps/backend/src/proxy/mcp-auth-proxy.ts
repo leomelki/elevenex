@@ -1,13 +1,18 @@
 export const MCP_AUTH_PROXY_PREFIX = '/api/mcp-auth-proxy';
 
 export function isLoopbackHostname(hostname: string): boolean {
-  return hostname === 'localhost'
-    || hostname === '127.0.0.1'
-    || hostname === '::1'
-    || hostname === '[::1]';
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
+  );
 }
 
-export function buildMcpAuthProxyPath(port: number | string, pathWithSearchAndHash = '/'): string {
+export function buildMcpAuthProxyPath(
+  port: number | string,
+  pathWithSearchAndHash = '/',
+): string {
   const normalizedPath = pathWithSearchAndHash.startsWith('/')
     ? pathWithSearchAndHash
     : `/${pathWithSearchAndHash}`;
@@ -42,7 +47,10 @@ export function rewriteMcpAuthLocationHeader(
   try {
     const parsed = new URL(location);
     if (isLoopbackHostname(parsed.hostname) && parsed.port) {
-      return buildMcpAuthProxyPath(parsed.port, `${parsed.pathname}${parsed.search}${parsed.hash}`);
+      return buildMcpAuthProxyPath(
+        parsed.port,
+        `${parsed.pathname}${parsed.search}${parsed.hash}`,
+      );
     }
 
     return location;
@@ -52,7 +60,10 @@ export function rewriteMcpAuthLocationHeader(
   }
 
   try {
-    const base = new URL(currentUpstreamPath || '/', `http://127.0.0.1:${currentPort}`);
+    const base = new URL(
+      currentUpstreamPath || '/',
+      `http://127.0.0.1:${currentPort}`,
+    );
     const resolved = new URL(location, base);
     if (isLoopbackHostname(resolved.hostname)) {
       return buildMcpAuthProxyPath(

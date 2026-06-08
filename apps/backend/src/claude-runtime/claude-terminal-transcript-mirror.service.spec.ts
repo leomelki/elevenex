@@ -152,7 +152,7 @@ describe('ClaudeTerminalTranscriptMirrorService', () => {
       })),
     });
     service = new ClaudeTerminalTranscriptMirrorService(
-      runtime as never,
+      runtime,
       hooks as never,
     );
     service.onModuleInit();

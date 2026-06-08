@@ -8,7 +8,11 @@ import { RepoContextResolverService } from './repo-context-resolver.service.js';
 @Module({
   imports: [GitModule],
   controllers: [GithubController],
-  providers: [GithubService, GhCommandRunnerService, RepoContextResolverService],
+  providers: [
+    GithubService,
+    GhCommandRunnerService,
+    RepoContextResolverService,
+  ],
   exports: [GithubService, RepoContextResolverService],
 })
 export class GithubModule {}

@@ -286,9 +286,7 @@ export class CodexRuntimeService extends EventEmitter {
   private normalizeStoredPermissionMode(
     mode: CodexPermissionMode | null,
   ): CodexPermissionMode {
-    return mode && mode !== 'plan' && mode !== 'planBypass'
-      ? mode
-      : 'default';
+    return mode && mode !== 'plan' && mode !== 'planBypass' ? mode : 'default';
   }
 
   async setReasoningEffort(
@@ -386,7 +384,7 @@ export class CodexRuntimeService extends EventEmitter {
         setImmediate(() => {
           void this.generateAndSaveSessionTitle(
             sessionId,
-            worktreePath!,
+            worktreePath,
             effectiveTitlePrompt,
           );
         });
@@ -1078,7 +1076,7 @@ export class CodexRuntimeService extends EventEmitter {
     this.emitEvent({
       type: eventType,
       payload: { sessionId, item },
-    } as CodexRuntimeEvent);
+    });
   }
 
   private upsertLiveItem(
@@ -1109,7 +1107,7 @@ export class CodexRuntimeService extends EventEmitter {
           type:
             eventType === 'message_start' ? 'message_delta' : 'thinking_delta',
           payload: { sessionId, itemId: item.id, delta },
-        } as CodexRuntimeEvent);
+        });
       }
     }
     if (terminal && eventType !== 'tool_use') {
@@ -1119,7 +1117,7 @@ export class CodexRuntimeService extends EventEmitter {
             ? 'message_complete'
             : 'thinking_complete',
         payload: { sessionId, itemId: item.id },
-      } as CodexRuntimeEvent);
+      });
     }
   }
 
@@ -1584,7 +1582,10 @@ export class CodexRuntimeService extends EventEmitter {
     try {
       await this.appServer.ensureReady();
       const permissionOptions = state.planMode
-        ? { sandboxMode: 'read-only' as const, approvalPolicy: 'never' as const }
+        ? {
+            sandboxMode: 'read-only' as const,
+            approvalPolicy: 'never' as const,
+          }
         : this.mapPermissionMode(state.selectedPermissionMode);
       const sandboxMap: Record<SandboxMode, string> = {
         'read-only': 'read-only',
@@ -1616,9 +1617,9 @@ export class CodexRuntimeService extends EventEmitter {
       };
 
       const startFreshThread = async (): Promise<string> => {
-        const response = (await this.appServer.request('thread/start', {
+        const response = await this.appServer.request('thread/start', {
           ...commonThreadParams,
-        })) as { thread?: { id?: string } };
+        });
         const newId = response?.thread?.id ?? null;
         if (!newId) {
           throw new Error('codex app-server thread/start did not return an id');
@@ -2074,7 +2075,7 @@ export class CodexRuntimeService extends EventEmitter {
           id,
           type: 'agent_message',
           text: opts.isFinal ? finalText : (messageText.get(id) ?? finalText),
-        } as ThreadItem;
+        };
       }
       case 'reasoning': {
         const summary = Array.isArray(raw.summary)
@@ -2091,7 +2092,7 @@ export class CodexRuntimeService extends EventEmitter {
           id,
           type: 'reasoning',
           text: opts.isFinal ? text : (reasoningText.get(id) ?? text),
-        } as ThreadItem;
+        };
       }
       case 'plan': {
         const finalText = typeof raw.text === 'string' ? raw.text : '';
@@ -2119,15 +2120,15 @@ export class CodexRuntimeService extends EventEmitter {
             ? { exit_code: raw.exitCode }
             : {}),
           status,
-        } as ThreadItem;
+        };
       }
       case 'fileChange':
         return {
           id,
           type: 'file_change',
           changes: Array.isArray(raw.changes) ? raw.changes : [],
-          status: status === 'in_progress' ? 'completed' : (status as any),
-        } as ThreadItem;
+          status: status === 'in_progress' ? 'completed' : status,
+        };
       case 'mcpToolCall':
         return {
           id,
@@ -2138,26 +2139,26 @@ export class CodexRuntimeService extends EventEmitter {
           ...(raw.result ? { result: raw.result } : {}),
           ...(raw.error ? { error: raw.error } : {}),
           status,
-        } as ThreadItem;
+        };
       case 'webSearch':
         return {
           id,
           type: 'web_search',
           query: typeof raw.query === 'string' ? raw.query : '',
-        } as ThreadItem;
+        };
       case 'todoList':
         return {
           id,
           type: 'todo_list',
           items: Array.isArray(raw.items) ? raw.items : [],
-        } as ThreadItem;
+        };
       case 'error':
         return {
           id,
           type: 'error',
           message:
             typeof raw.message === 'string' ? raw.message : 'Codex error',
-        } as ThreadItem;
+        };
       default:
         return null;
     }

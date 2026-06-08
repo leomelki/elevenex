@@ -80,10 +80,12 @@ describe('createEdgeProxyServer', () => {
     upstreamServer = createServer((request, response) => {
       if (request.url === '/api/ping?value=1') {
         response.setHeader('Content-Type', 'application/json');
-        response.end(JSON.stringify({
-          ok: true,
-          host: request.headers.host,
-        }));
+        response.end(
+          JSON.stringify({
+            ok: true,
+            host: request.headers.host,
+          }),
+        );
         return;
       }
 
@@ -96,7 +98,9 @@ describe('createEdgeProxyServer', () => {
     proxyServer = createEdgeProxyServer({ repoRoot });
     const proxyPort = await listen(proxyServer);
 
-    const response = await fetch(`http://127.0.0.1:${proxyPort}/api/ping?value=1`);
+    const response = await fetch(
+      `http://127.0.0.1:${proxyPort}/api/ping?value=1`,
+    );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({

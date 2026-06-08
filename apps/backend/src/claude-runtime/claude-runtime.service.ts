@@ -1051,9 +1051,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         description: options.description,
         decisionReason: options.decisionReason,
         blockedPath: options.blockedPath,
-        suggestions:
-          (options.suggestions as ClaudePermissionUpdate[] | undefined) ??
-          undefined,
+        suggestions: options.suggestions ?? undefined,
         createdAt: new Date().toISOString(),
       };
 
@@ -1119,7 +1117,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         return {
           behavior: 'allow',
           updatedInput: {
-            ...((input ?? {}) as Record<string, unknown>),
+            ...(input ?? {}),
             ...(decisionContext.decision.content ?? {}),
           },
           updatedPermissions:
@@ -1813,7 +1811,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         content: images.length ? content : text,
       },
       parent_tool_use_id: null,
-    } as SDKUserMessage;
+    };
   }
 
   async cancelPendingPrompt(sessionId: number, id: string): Promise<void> {
@@ -2748,7 +2746,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       updatedAt: startedAt,
     });
     this.logger.debug(
-      `Claude hook started session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event}${this.formatHookMessageDetails(message as Record<string, unknown>)}`,
+      `Claude hook started session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event}${this.formatHookMessageDetails(message)}`,
     );
     this.emitEvent({ type: 'hook_started', payload: { sessionId, hook } });
   }
@@ -2769,7 +2767,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       updatedAt,
     });
     this.logger.debug(
-      `Claude hook progress session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event} elapsedMs=${this.computeHookElapsedMs(hook, updatedAt)} outputBytes=${this.byteLength(message.output)} stdoutBytes=${this.byteLength(message.stdout)} stderrBytes=${this.byteLength(message.stderr)}${this.formatHookMessageDetails(message as Record<string, unknown>)}`,
+      `Claude hook progress session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event} elapsedMs=${this.computeHookElapsedMs(hook, updatedAt)} outputBytes=${this.byteLength(message.output)} stdoutBytes=${this.byteLength(message.stdout)} stderrBytes=${this.byteLength(message.stderr)}${this.formatHookMessageDetails(message)}`,
     );
     this.emitEvent({ type: 'hook_progress', payload: { sessionId, hook } });
   }
@@ -2791,7 +2789,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       updatedAt,
     });
     this.logger.debug(
-      `Claude hook completed session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event} outcome=${message.outcome} exitCode=${String(message.exit_code ?? 'null')} elapsedMs=${this.computeHookElapsedMs(hook, updatedAt)} outputBytes=${this.byteLength(message.output)} stdoutBytes=${this.byteLength(message.stdout)} stderrBytes=${this.byteLength(message.stderr)}${this.formatHookMessageDetails(message as Record<string, unknown>)}`,
+      `Claude hook completed session=${sessionId} hookId=${message.hook_id} hookName=${message.hook_name} hookEvent=${message.hook_event} outcome=${message.outcome} exitCode=${String(message.exit_code ?? 'null')} elapsedMs=${this.computeHookElapsedMs(hook, updatedAt)} outputBytes=${this.byteLength(message.output)} stdoutBytes=${this.byteLength(message.stdout)} stderrBytes=${this.byteLength(message.stderr)}${this.formatHookMessageDetails(message)}`,
     );
     this.emitEvent({ type: 'hook_complete', payload: { sessionId, hook } });
   }

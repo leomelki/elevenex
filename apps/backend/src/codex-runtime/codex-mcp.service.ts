@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
@@ -64,30 +68,42 @@ export class CodexMcpService {
       servers,
       diagnostics,
       summary: {
-        connected: servers.filter((server) => server.connectionStatus === 'connected').length,
+        connected: servers.filter(
+          (server) => server.connectionStatus === 'connected',
+        ).length,
         needsAuth: 0,
-        failed: servers.filter((server) => server.connectionStatus === 'failed').length,
-        disabled: servers.filter((server) => server.connectionStatus === 'disabled').length,
-        malformed: servers.filter((server) => server.configStatus === 'error').length,
+        failed: servers.filter((server) => server.connectionStatus === 'failed')
+          .length,
+        disabled: servers.filter(
+          (server) => server.connectionStatus === 'disabled',
+        ).length,
+        malformed: servers.filter((server) => server.configStatus === 'error')
+          .length,
         total: servers.length,
       },
       lastUpdatedAt: new Date().toISOString(),
     };
   }
 
-  async toggleServer(sessionId: number, serverName: string): Promise<CodexMcpSnapshot> {
+  async toggleServer(
+    sessionId: number,
+    serverName: string,
+  ): Promise<CodexMcpSnapshot> {
     const server = await this.findServer(sessionId, serverName);
     const config = await this.readTomlFile(server.configLocation);
     const root = config.data ?? {};
     const mcpServers = ensureRecord(root, 'mcp_servers');
     const current = asRecord(mcpServers[server.name]) ?? {};
-    current.disabled = !Boolean(current.disabled);
+    current.disabled = !current.disabled;
     mcpServers[server.name] = current;
     await this.writeTomlFile(server.configLocation, root);
     return this.getSnapshot(sessionId);
   }
 
-  async recheckServer(sessionId: number, serverName?: string): Promise<CodexMcpSnapshot> {
+  async recheckServer(
+    sessionId: number,
+    serverName?: string,
+  ): Promise<CodexMcpSnapshot> {
     void serverName;
     return this.getSnapshot(sessionId);
   }
@@ -112,7 +128,11 @@ export class CodexMcpService {
       ...this.collectServers(
         'project',
         this.getProjectConfigPath(session.worktreePath),
-        (await this.readTomlFile(this.getProjectConfigPath(session.worktreePath))).data,
+        (
+          await this.readTomlFile(
+            this.getProjectConfigPath(session.worktreePath),
+          )
+        ).data,
       ),
     ];
     const server = candidates.find((item) => item.name === serverName);
@@ -133,8 +153,9 @@ export class CodexMcpService {
     }
 
     return Object.entries(servers)
-      .filter((entry): entry is [string, CodexMcpServerConfig] =>
-        Boolean(entry[1]) && typeof entry[1] === 'object',
+      .filter(
+        (entry): entry is [string, CodexMcpServerConfig] =>
+          Boolean(entry[1]) && typeof entry[1] === 'object',
       )
       .map(([name, config]) => ({
         scope,
@@ -145,7 +166,8 @@ export class CodexMcpService {
   }
 
   private toServerEntry(server: ScopedServerConfig): CodexMcpServerEntry {
-    const hasUrl = typeof server.config.url === 'string' && server.config.url.trim();
+    const hasUrl =
+      typeof server.config.url === 'string' && server.config.url.trim();
     const hasCommand =
       typeof server.config.command === 'string' && server.config.command.trim();
     const configStatus = hasUrl || hasCommand ? 'valid' : 'error';
@@ -165,7 +187,10 @@ export class CodexMcpService {
           ? 'failed'
           : 'unknown',
       configStatus,
-      error: configStatus === 'error' ? 'Codex MCP server needs a command or url.' : undefined,
+      error:
+        configStatus === 'error'
+          ? 'Codex MCP server needs a command or url.'
+          : undefined,
       counts: { tools: 0, resources: 0, prompts: 0, loadedContextTools: 0 },
       actions: {
         canToggle: true,
@@ -177,7 +202,11 @@ export class CodexMcpService {
     };
   }
 
-  private fileDiagnostic(scope: CodexMcpScope, configLocation: string, error: string | null) {
+  private fileDiagnostic(
+    scope: CodexMcpScope,
+    configLocation: string,
+    error: string | null,
+  ) {
     return {
       scope,
       configLocation,
@@ -191,7 +220,7 @@ export class CodexMcpService {
   ): Promise<{ data: TomlRecord | null; error: string | null }> {
     try {
       const content = await fs.readFile(path, 'utf-8');
-      return { data: parse(content) as TomlRecord, error: null };
+      return { data: parse(content), error: null };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return { data: null, error: null };

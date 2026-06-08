@@ -41,16 +41,20 @@ export class AgentRuntimeController {
   @Post('agent-providers/:provider/auth/login')
   startLogin(
     @Param('provider') provider: string,
-    @Body() body: { mode?: AgentLoginMode; apiKey?: string; oauthProvider?: string; apiKeyProvider?: string },
+    @Body()
+    body: {
+      mode?: AgentLoginMode;
+      apiKey?: string;
+      oauthProvider?: string;
+      apiKeyProvider?: string;
+    },
   ) {
-    return this.registry
-      .getProviderFeature(provider, 'startLogin')
-      .startLogin({
-        mode: body.mode === 'api_key' ? 'api_key' : 'oauth',
-        apiKey: body.apiKey,
-        oauthProvider: body.oauthProvider,
-        apiKeyProvider: body.apiKeyProvider,
-      });
+    return this.registry.getProviderFeature(provider, 'startLogin').startLogin({
+      mode: body.mode === 'api_key' ? 'api_key' : 'oauth',
+      apiKey: body.apiKey,
+      oauthProvider: body.oauthProvider,
+      apiKeyProvider: body.apiKeyProvider,
+    });
   }
 
   @Post('agent-providers/:provider/auth/cancel-login')
@@ -148,10 +152,7 @@ export class AgentRuntimeController {
     await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature(provider, 'setPermissionMode')
-      .setPermissionMode(
-        sessionId,
-        (body.mode ?? null) as AgentPermissionMode | null,
-      );
+      .setPermissionMode(sessionId, body.mode ?? null);
   }
 
   @Post('sessions/:sessionId/agents/:provider/plan-mode')
@@ -175,10 +176,7 @@ export class AgentRuntimeController {
     await this.assertSessionMutable(sessionId);
     return this.registry
       .getProviderFeature(provider, 'setReasoningEffort')
-      .setReasoningEffort(
-        sessionId,
-        (body.effort ?? null) as AgentReasoningEffort | null,
-      );
+      .setReasoningEffort(sessionId, body.effort ?? null);
   }
 
   @Post('sessions/:sessionId/agents/:provider/fast-mode')

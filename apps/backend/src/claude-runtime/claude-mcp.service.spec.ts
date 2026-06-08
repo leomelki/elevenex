@@ -55,24 +55,27 @@ describe('ClaudeMcpService', () => {
   });
 
   it('only exposes auth when the server still needs auth', async () => {
-    jest.spyOn(service as never, 'readJsonFile' as never).mockImplementation(async (path: string) => {
-      if (path.endsWith('.claude.json')) {
-        return {
-          data: {
-            mcpServers: {
-              linear: {
-                type: 'http',
-                url: 'https://mcp.example.com',
-                oauth: {
-                  authServerMetadataUrl: 'https://auth.example.com/.well-known/oauth-authorization-server',
+    jest
+      .spyOn(service as never, 'readJsonFile' as never)
+      .mockImplementation(async (path: string) => {
+        if (path.endsWith('.claude.json')) {
+          return {
+            data: {
+              mcpServers: {
+                linear: {
+                  type: 'http',
+                  url: 'https://mcp.example.com',
+                  oauth: {
+                    authServerMetadataUrl:
+                      'https://auth.example.com/.well-known/oauth-authorization-server',
+                  },
                 },
               },
             },
-          },
-        };
-      }
-      return {};
-    });
+          };
+        }
+        return {};
+      });
 
     jest.spyOn(service as never, 'getProbeStatus' as never).mockResolvedValue({
       status: 'connected',
@@ -124,13 +127,16 @@ describe('ClaudeMcpService', () => {
       lastUpdatedAt: new Date().toISOString(),
     });
 
-    jest.spyOn(service as never, 'findConfigByServerName' as never).mockResolvedValue({
-      type: 'http',
-      url: 'https://mcp.example.com',
-      oauth: {
-        authServerMetadataUrl: 'https://auth.example.com/.well-known/oauth-authorization-server',
-      },
-    });
+    jest
+      .spyOn(service as never, 'findConfigByServerName' as never)
+      .mockResolvedValue({
+        type: 'http',
+        url: 'https://mcp.example.com',
+        oauth: {
+          authServerMetadataUrl:
+            'https://auth.example.com/.well-known/oauth-authorization-server',
+        },
+      });
 
     runtimeService.startMcpAuthFlow.mockResolvedValue(
       'https://auth.example.com/authorize?client_id=claude-code&redirect_uri=http%3A%2F%2Flocalhost%3A49152%2Fcallback&state=abc&code_challenge=pkce',
@@ -178,10 +184,12 @@ describe('ClaudeMcpService', () => {
       lastUpdatedAt: new Date().toISOString(),
     });
 
-    jest.spyOn(service as never, 'findConfigByServerName' as never).mockResolvedValue({
-      type: 'http',
-      url: 'https://mcp.example.com',
-    });
+    jest
+      .spyOn(service as never, 'findConfigByServerName' as never)
+      .mockResolvedValue({
+        type: 'http',
+        url: 'https://mcp.example.com',
+      });
     runtimeService.startMcpAuthFlow.mockResolvedValue(
       'https://auth.example.com/authorize?client_id=claude-code&state=pending',
     );
@@ -226,10 +234,12 @@ describe('ClaudeMcpService', () => {
       lastUpdatedAt: new Date().toISOString(),
     });
 
-    jest.spyOn(service as never, 'findConfigByServerName' as never).mockResolvedValue({
-      type: 'claudeai-proxy',
-      url: 'https://claude.ai/api/mcp/github',
-    });
+    jest
+      .spyOn(service as never, 'findConfigByServerName' as never)
+      .mockResolvedValue({
+        type: 'claudeai-proxy',
+        url: 'https://claude.ai/api/mcp/github',
+      });
 
     await expect(service.startAuth(7, 'claude.ai github')).resolves.toEqual(
       expect.objectContaining({
@@ -272,11 +282,15 @@ describe('ClaudeMcpService', () => {
       lastUpdatedAt: new Date().toISOString(),
     });
 
-    jest.spyOn(service as never, 'findConfigByServerName' as never).mockResolvedValue({
-      type: 'http',
-      url: 'https://mcp.example.com',
-    });
+    jest
+      .spyOn(service as never, 'findConfigByServerName' as never)
+      .mockResolvedValue({
+        type: 'http',
+        url: 'https://mcp.example.com',
+      });
 
-    await expect(service.startAuth(7, 'linear')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.startAuth(7, 'linear')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });

@@ -15,26 +15,36 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    this.hooksService.on('status-changed', (data: {
-      sessionId: number;
-      status: string;
-      activityStatus?: string;
-      actionKind?: string | null;
-      actionLabel?: string | null;
-    }) => {
-      this.broadcast({
-        type: 'status-changed',
-        sessionId: data.sessionId,
-        status: data.status,
-        activityStatus: data.activityStatus ?? data.status,
-        actionKind: data.actionKind ?? null,
-        actionLabel: data.actionLabel ?? null,
-      });
-    });
+    this.hooksService.on(
+      'status-changed',
+      (data: {
+        sessionId: number;
+        status: string;
+        activityStatus?: string;
+        actionKind?: string | null;
+        actionLabel?: string | null;
+      }) => {
+        this.broadcast({
+          type: 'status-changed',
+          sessionId: data.sessionId,
+          status: data.status,
+          activityStatus: data.activityStatus ?? data.status,
+          actionKind: data.actionKind ?? null,
+          actionLabel: data.actionLabel ?? null,
+        });
+      },
+    );
 
-    this.sessionsService.on('session-status-changed', (data: { sessionId: number; status: string }) => {
-      this.broadcast({ type: 'session-status-changed', sessionId: data.sessionId, status: data.status });
-    });
+    this.sessionsService.on(
+      'session-status-changed',
+      (data: { sessionId: number; status: string }) => {
+        this.broadcast({
+          type: 'session-status-changed',
+          sessionId: data.sessionId,
+          status: data.status,
+        });
+      },
+    );
 
     this.sessionsService.on(
       'session-completion-changed',
@@ -89,15 +99,20 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
       // broadcasts that arrive at this client during the DB fetch will be queued
       // before the init message; capturing statuses/activities after the await
       // ensures init reflects those updates and does not overwrite them.
-      const sessions = await this.sessionsService.findAllCompletionStates().catch(() => []);
+      const sessions = await this.sessionsService
+        .findAllCompletionStates()
+        .catch(() => []);
       const statuses = this.hooksService.getAllStatuses();
       const activities = this.hooksService.getAllActivities();
-      const completions: Record<number, {
-        hasUnreviewedCompletion: boolean;
-        lastCompletionAt: string | null;
-        lastCompletionKind: string | null;
-        lastStateChangeAt: string | null;
-      }> = {};
+      const completions: Record<
+        number,
+        {
+          hasUnreviewedCompletion: boolean;
+          lastCompletionAt: string | null;
+          lastCompletionKind: string | null;
+          lastStateChangeAt: string | null;
+        }
+      > = {};
       const worktreeContexts: Record<number, boolean> = {};
       for (const session of sessions) {
         completions[session.id] = {
@@ -108,13 +123,15 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
         };
         worktreeContexts[session.id] = session.hasInjectedWorktreeContext;
       }
-      ws.send(JSON.stringify({
-        type: 'init',
-        statuses,
-        activities,
-        completions,
-        worktreeContexts,
-      }));
+      ws.send(
+        JSON.stringify({
+          type: 'init',
+          statuses,
+          activities,
+          completions,
+          worktreeContexts,
+        }),
+      );
 
       ws.on('close', () => {
         this.clients.delete(ws);

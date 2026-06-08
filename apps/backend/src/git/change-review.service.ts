@@ -287,10 +287,14 @@ export class ChangeReviewService {
       worktreeState.fingerprint,
       Boolean(options.forceFileLoad),
     );
-    const fingerprintPromise = offset === 0
-      ? this.buildFileFingerprint(git, worktreePath, scope, base, summary)
-      : Promise.resolve(null);
-    const [full, fingerprintResult] = await Promise.all([rowsPromise, fingerprintPromise]);
+    const fingerprintPromise =
+      offset === 0
+        ? this.buildFileFingerprint(git, worktreePath, scope, base, summary)
+        : Promise.resolve(null);
+    const [full, fingerprintResult] = await Promise.all([
+      rowsPromise,
+      fingerprintPromise,
+    ]);
     const rows = full.rows.slice(offset, offset + limit);
 
     return {

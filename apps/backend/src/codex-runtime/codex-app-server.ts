@@ -229,7 +229,7 @@ export class CodexAppServerClient implements OnModuleDestroy {
         );
       }, timeoutMs);
       this.pending.set(id, {
-        resolve: resolve as (value: unknown) => void,
+        resolve: resolve,
         reject,
         method,
         timer,
@@ -247,7 +247,7 @@ export class CodexAppServerClient implements OnModuleDestroy {
     });
     this.child = child;
 
-    const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+    const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
     rl.on('line', (line) => this.handleLine(line));
 
     // stdin can EPIPE/error if the child dies mid-write; swallow it here so

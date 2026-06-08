@@ -69,10 +69,7 @@ describe('ReposService', () => {
     fs.mkdirSync(nonGitDir);
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ReposService,
-        { provide: DRIZZLE, useValue: db },
-      ],
+      providers: [ReposService, { provide: DRIZZLE, useValue: db }],
     }).compile();
 
     service = module.get<ReposService>(ReposService);
@@ -106,25 +103,25 @@ describe('ReposService', () => {
     });
 
     it('should throw BadRequestException for directory without .git', async () => {
-      await expect(
-        service.addRepo(projectId, nonGitDir),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.addRepo(projectId, nonGitDir)).rejects.toThrow(
+        BadRequestException,
+      );
 
-      await expect(
-        service.addRepo(projectId, nonGitDir),
-      ).rejects.toThrow('Not a git repository');
+      await expect(service.addRepo(projectId, nonGitDir)).rejects.toThrow(
+        'Not a git repository',
+      );
     });
 
     it('should throw ConflictException for duplicate path in same project', async () => {
       await service.addRepo(projectId, gitRepoDir);
 
-      await expect(
-        service.addRepo(projectId, gitRepoDir),
-      ).rejects.toThrow(ConflictException);
+      await expect(service.addRepo(projectId, gitRepoDir)).rejects.toThrow(
+        ConflictException,
+      );
 
-      await expect(
-        service.addRepo(projectId, gitRepoDir),
-      ).rejects.toThrow('already added');
+      await expect(service.addRepo(projectId, gitRepoDir)).rejects.toThrow(
+        'already added',
+      );
     });
   });
 
@@ -167,9 +164,7 @@ describe('ReposService', () => {
       await service.addRepo(projectId, gitRepoDir);
 
       // Delete the project directly via DB
-      await db
-        .delete(schema.projects)
-        .where(eq(schema.projects.id, projectId));
+      await db.delete(schema.projects).where(eq(schema.projects.id, projectId));
 
       // Verify repos are cascade-deleted
       const repos = await db.select().from(schema.repos);

@@ -44,17 +44,17 @@ describe('TodosController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [TodosController],
-      providers: [
-        TodosService,
-        { provide: DRIZZLE, useValue: db },
-      ],
+      providers: [TodosService, { provide: DRIZZLE, useValue: db }],
     }).compile();
 
     controller = module.get<TodosController>(TodosController);
     service = module.get<TodosService>(TodosService);
 
     // Create a test project
-    const result = await db.insert(schema.projects).values({ name: 'Test Project' }).returning();
+    const result = await db
+      .insert(schema.projects)
+      .values({ name: 'Test Project' })
+      .returning();
     projectId = result[0].id;
   });
 
@@ -112,7 +112,13 @@ describe('TodosController', () => {
     it('should update sort orders for multiple todos', async () => {
       const t1 = await service.create(projectId, 'Todo 1');
       const t2 = await service.create(projectId, 'Todo 2');
-      const dto = { projectId, orders: [{ id: t1.id, sortOrder: 1 }, { id: t2.id, sortOrder: 0 }] };
+      const dto = {
+        projectId,
+        orders: [
+          { id: t1.id, sortOrder: 1 },
+          { id: t2.id, sortOrder: 0 },
+        ],
+      };
 
       await controller.updateSortOrders(projectId, dto);
 
@@ -137,17 +143,17 @@ describe('TodosItemController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [TodosItemController],
-      providers: [
-        TodosService,
-        { provide: DRIZZLE, useValue: db },
-      ],
+      providers: [TodosService, { provide: DRIZZLE, useValue: db }],
     }).compile();
 
     controller = module.get<TodosItemController>(TodosItemController);
     service = module.get<TodosService>(TodosService);
 
     // Create a test project
-    const result = await db.insert(schema.projects).values({ name: 'Test Project' }).returning();
+    const result = await db
+      .insert(schema.projects)
+      .values({ name: 'Test Project' })
+      .returning();
     projectId = result[0].id;
   });
 

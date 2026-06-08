@@ -10,7 +10,9 @@ export const workspaces = sqliteTable(
       .references(() => repos.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     path: text('path').notNull(),
-    isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
+    isDefault: integer('is_default', { mode: 'boolean' })
+      .notNull()
+      .default(false),
     createdFromRef: text('created_from_ref'),
     createdAt: text('created_at')
       .notNull()

@@ -99,6 +99,10 @@ export class BranchesController {
     }
 
     const repo = repos[0];
-    return this.branchesService.createBranch(repo.path, body.name, body.startPoint);
+    return this.branchesService.createBranch(
+      repo.path,
+      body.name,
+      body.startPoint,
+    );
   }
 }

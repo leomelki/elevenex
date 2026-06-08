@@ -28,7 +28,14 @@ export class RepoContextResolverService {
 
     let upstream: string | null = null;
     try {
-      upstream = (await git.raw(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])).trim();
+      upstream = (
+        await git.raw([
+          'rev-parse',
+          '--abbrev-ref',
+          '--symbolic-full-name',
+          '@{u}',
+        ])
+      ).trim();
     } catch {
       upstream = null;
     }
@@ -37,7 +44,14 @@ export class RepoContextResolverService {
     let behind = 0;
     if (upstream) {
       try {
-        const counts = (await git.raw(['rev-list', '--left-right', '--count', `${branch}...${upstream}`])).trim();
+        const counts = (
+          await git.raw([
+            'rev-list',
+            '--left-right',
+            '--count',
+            `${branch}...${upstream}`,
+          ])
+        ).trim();
         const [aheadCount, behindCount] = counts.split(/\s+/);
         ahead = Number(aheadCount) || 0;
         behind = Number(behindCount) || 0;
@@ -48,14 +62,15 @@ export class RepoContextResolverService {
     }
 
     const remotes = await git.getRemotes(true);
-    const remoteName = upstream?.split('/')[0]
-      || remotes.find(remote => remote.name === 'origin')?.name
-      || remotes[0]?.name
-      || null;
+    const remoteName =
+      upstream?.split('/')[0] ||
+      remotes.find((remote) => remote.name === 'origin')?.name ||
+      remotes[0]?.name ||
+      null;
     const remoteUrl = remoteName
-      ? remotes.find(remote => remote.name === remoteName)?.refs.fetch
-        || remotes.find(remote => remote.name === remoteName)?.refs.push
-        || null
+      ? remotes.find((remote) => remote.name === remoteName)?.refs.fetch ||
+        remotes.find((remote) => remote.name === remoteName)?.refs.push ||
+        null
       : null;
     const parsedRemote = remoteUrl ? this.parseGitHubRemote(remoteUrl) : null;
 
@@ -73,7 +88,9 @@ export class RepoContextResolverService {
     };
   }
 
-  parseGitHubRemote(remoteUrl: string): { host: string; owner: string; repo: string } | null {
+  parseGitHubRemote(
+    remoteUrl: string,
+  ): { host: string; owner: string; repo: string } | null {
     const trimmed = remoteUrl.trim();
     const patterns = [
       /^git@(?<host>[^:]+):(?<owner>[^/]+)\/(?<repo>.+?)(?:\.git)?$/,

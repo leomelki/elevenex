@@ -11,17 +11,7 @@ import { ClaudeHooksModule } from '../claude-hooks/claude-hooks.module.js';
     forwardRef(() => SessionsModule),
     forwardRef(() => ClaudeHooksModule),
   ],
-  providers: [
-    TerminalService,
-    TerminalGateway,
-    PtyManager,
-    TmuxManager,
-  ],
-  exports: [
-    TerminalService,
-    TerminalGateway,
-    PtyManager,
-    TmuxManager,
-  ],
+  providers: [TerminalService, TerminalGateway, PtyManager, TmuxManager],
+  exports: [TerminalService, TerminalGateway, PtyManager, TmuxManager],
 })
 export class TerminalModule {}

@@ -38,7 +38,8 @@ describe('PlannotatorRegistryService', () => {
       ok: true,
       sessionId: 7,
       upstreamPort: 19432,
-      proxyUrl: '/api/plannotator/proxy/19432/?source=http%3A%2F%2F127.0.0.1%3A19432%2F%3Fmode%3Dreview',
+      proxyUrl:
+        '/api/plannotator/proxy/19432/?source=http%3A%2F%2F127.0.0.1%3A19432%2F%3Fmode%3Dreview',
     });
     expect(service.getActivePanels()[0]?.mode).toBe('review');
   });
@@ -58,7 +59,9 @@ describe('PlannotatorRegistryService', () => {
   it('rejects reopen after close in the same generation', () => {
     service.registerLaunch(11, '/tmp/worktree');
     service.registerOpen({ sessionId: 11, url: 'http://127.0.0.1:19432/' });
-    expect(service.registerClose({ sessionId: 11, upstreamPort: 19432 })).toBe(true);
+    expect(service.registerClose({ sessionId: 11, upstreamPort: 19432 })).toBe(
+      true,
+    );
 
     expect(
       service.registerOpen({

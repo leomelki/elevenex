@@ -62,7 +62,10 @@ describe('FileChangeGateway', () => {
       gateway.attachToServer(mockServer);
 
       expect(WebSocketServer).toHaveBeenCalledWith({ noServer: true });
-      expect(mockServer.on).toHaveBeenCalledWith('upgrade', expect.any(Function));
+      expect(mockServer.on).toHaveBeenCalledWith(
+        'upgrade',
+        expect.any(Function),
+      );
     });
 
     it('should handle upgrade requests for /file-changes path', () => {
@@ -403,7 +406,9 @@ describe('FileChangeGateway', () => {
         closeHandler();
       }
 
-      expect(mockFileWatcher.unwatchWorktree).toHaveBeenCalledWith('/test/worktree');
+      expect(mockFileWatcher.unwatchWorktree).toHaveBeenCalledWith(
+        '/test/worktree',
+      );
     });
 
     it('should not unwatch worktree if other clients remain', () => {

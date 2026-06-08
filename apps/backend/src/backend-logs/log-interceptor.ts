@@ -138,8 +138,8 @@ export function interceptProcessStreams(): void {
     emitLog('log', chunk);
     return typeof encodingOrCb === 'function'
       ? origStdoutWrite(chunk, encodingOrCb)
-      : origStdoutWrite(chunk, encodingOrCb as BufferEncoding | undefined, cb);
-  } as typeof process.stdout.write;
+      : origStdoutWrite(chunk, encodingOrCb, cb);
+  };
 
   (process.stderr as NodeJS.WriteStream).write = function (
     chunk: Uint8Array | string,
@@ -149,6 +149,6 @@ export function interceptProcessStreams(): void {
     emitLog('error', chunk);
     return typeof encodingOrCb === 'function'
       ? origStderrWrite(chunk, encodingOrCb)
-      : origStderrWrite(chunk, encodingOrCb as BufferEncoding | undefined, cb);
-  } as typeof process.stderr.write;
+      : origStderrWrite(chunk, encodingOrCb, cb);
+  };
 }

@@ -238,8 +238,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly pendingPrompts = signal<ClaudePendingPrompt[]>([]);
   private readonly cancelledPendingPromptIds = new Set<string>();
   private readonly autoApprovedPermissionRequestIds = new Set<string>();
-  private interruptedRunShouldRestorePrompt = false;
-  private currentRunHadSubstantiveOutput = false;
   private bootstrappedProvider: AgentProviderId | null = null;
   private deferredContextGenerationTimer: number | null = null;
   private composerDraftRevision = 0;
@@ -830,8 +828,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (isIdle && this.submitting()) return;
     const now = new Date().toISOString();
     if (isIdle) {
-      this.currentRunHadSubstantiveOutput = false;
-      this.interruptedRunShouldRestorePrompt = false;
       this.submitting.set(true);
       const optimisticContent = images.length
         ? [promptWithMentions, ...images.map(() => '[image]')].filter(Boolean).join('\n')
@@ -1019,7 +1015,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   interrupt(): void {
     if (this.isTranscriptReadOnly()) return;
-    this.interruptedRunShouldRestorePrompt = true;
     this.sendRuntimeAction({ type: 'interrupt' });
   }
 
@@ -1857,10 +1852,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         ]);
         return;
       case 'run_state':
-        if (event.payload.runPhase === 'running' && this.runPhase() !== 'running') {
-          this.currentRunHadSubstantiveOutput = false;
-          this.interruptedRunShouldRestorePrompt = false;
-        }
         this.runPhase.set(event.payload.runPhase);
         this.sessionState.set(event.payload.sessionState);
         this.canInterrupt.set(event.payload.canInterrupt);
@@ -1897,18 +1888,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         return;
       case 'tool_use':
       case 'tool_result':
-        this.currentRunHadSubstantiveOutput = true;
-        this.interruptedRunShouldRestorePrompt = false;
         this.upsertLiveItem(event.payload.item);
         return;
       case 'thinking_start':
         this.upsertLiveItem(event.payload.item);
         return;
       case 'message_delta':
-        if (event.payload.delta.trim()) {
-          this.currentRunHadSubstantiveOutput = true;
-          this.interruptedRunShouldRestorePrompt = false;
-        }
         this.enqueueDelta(event.payload.itemId, event.payload.delta);
         return;
       case 'thinking_delta':
@@ -1975,7 +1960,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     await this.syncHistoryAfterCompletion();
     if (version !== this.bootstrapVersion) return;
 
-    await this.restoreInterruptedPromptIfNothingSubstantiveHappened();
     this.scheduleDeferredContextGeneration();
   }
 
@@ -1984,28 +1968,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       ...items.filter((existing) => existing.id !== item.id),
       item,
     ]);
-  }
-
-  private async restoreInterruptedPromptIfNothingSubstantiveHappened(): Promise<boolean> {
-    if (!this.interruptedRunShouldRestorePrompt) return false;
-    this.interruptedRunShouldRestorePrompt = false;
-    if (this.currentRunHadSubstantiveOutput) return false;
-
-    const transcriptItems = this.transcriptItems();
-    const lastUser = findLastTopLevelUserMessage(transcriptItems);
-    if (!lastUser?.sourceMessageId) return false;
-
-    if (hasSubstantiveOutputAfterMessage(transcriptItems, lastUser.id)) {
-      return false;
-    }
-
-    try {
-      await this.restorePromptFromMessage(lastUser);
-      return true;
-    } catch (error) {
-      toast.error(this.getHttpErrorMessage(error, 'Could not restore the interrupted prompt.'));
-      return false;
-    }
   }
 
   private async syncHistoryAfterCompletion(): Promise<void> {
@@ -2246,8 +2208,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.forks.set([]);
     this.expandedForkAnchors.set({});
     this.forkingAnchorId.set(null);
-    this.interruptedRunShouldRestorePrompt = false;
-    this.currentRunHadSubstantiveOutput = false;
     this.closeAgentInspector();
     this.agentHistoryById.set({});
     this.shouldAutoScrollTranscript = true;
@@ -2418,27 +2378,6 @@ function findLastAssistantIndex(units: PairedTranscriptUnit[]): number {
     if (isAssistantMessageUnit(units[i])) return i;
   }
   return -1;
-}
-
-function findLastTopLevelUserMessage(items: ClaudeTranscriptItem[]): ClaudeTranscriptItem | null {
-  for (let i = items.length - 1; i >= 0; i--) {
-    const item = items[i];
-    if (item.kind === 'user' && !item.parentToolUseId) return item;
-  }
-  return null;
-}
-
-function hasSubstantiveOutputAfterMessage(
-  items: ClaudeTranscriptItem[],
-  messageId: string,
-): boolean {
-  const index = items.findIndex((item) => item.id === messageId);
-  if (index === -1) return true;
-
-  return items.slice(index + 1).some((item) => {
-    if (item.kind === 'assistant') return !!item.content?.trim();
-    return item.kind === 'tool_use' || item.kind === 'tool_result';
-  });
 }
 
 function formatTurnDuration(startedAt: string, completedAt: string): string {

@@ -337,12 +337,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     session.pty.resize(cols, rows);
 
     if (session.useTmux) {
-      this.queueTmuxResize(
-        terminalId,
-        session.tmuxSessionName,
-        cols,
-        rows,
-      );
+      this.queueTmuxResize(terminalId, session.tmuxSessionName, cols, rows);
     }
   }
 

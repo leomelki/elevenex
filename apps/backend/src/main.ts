@@ -73,17 +73,26 @@ async function bootstrap() {
   // (WebSocket upgrades bypass express middleware; HTTP traffic from the
   // frontend keeps the cache fresh enough for them.)
   const shellEnvService = app.get(ShellEnvService);
-  app.use((_req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    shellEnvService.refresh();
-    next();
-  });
+  app.use(
+    (
+      _req: express.Request,
+      _res: express.Response,
+      next: express.NextFunction,
+    ) => {
+      shellEnvService.refresh();
+      next();
+    },
+  );
 
   // Serve a stable launcher in both dev and packaged modes.
-  app.use('/vscode-static/index.html', (_req: express.Request, res: express.Response) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(buildVSCodeWebLauncherHtml());
-  });
+  app.use(
+    '/vscode-static/index.html',
+    (_req: express.Request, res: express.Response) => {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(buildVSCodeWebLauncherHtml());
+    },
+  );
 
   const vscodeStaticPath = getBackendVSCodeStaticPath();
 
@@ -109,33 +118,60 @@ async function bootstrap() {
 
   app.use(
     '/vscode-static/out/vs/code/browser/workbench/workbench.html',
-    (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    (
+      req: express.Request,
+      res: express.Response,
+      next: express.NextFunction,
+    ) => {
       renderWorkbench(
         req,
         res,
         next,
-        join(vscodeStaticPath, 'out', 'vs', 'code', 'browser', 'workbench', 'workbench.html'),
+        join(
+          vscodeStaticPath,
+          'out',
+          'vs',
+          'code',
+          'browser',
+          'workbench',
+          'workbench.html',
+        ),
       );
     },
   );
 
   app.use(
     '/vscode-static/out/vs/code/browser/workbench/workbench-dev.html',
-    (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    (
+      req: express.Request,
+      res: express.Response,
+      next: express.NextFunction,
+    ) => {
       renderWorkbench(
         req,
         res,
         next,
-        join(vscodeStaticPath, 'out', 'vs', 'code', 'browser', 'workbench', 'workbench-dev.html'),
+        join(
+          vscodeStaticPath,
+          'out',
+          'vs',
+          'code',
+          'browser',
+          'workbench',
+          'workbench-dev.html',
+        ),
       );
     },
   );
 
-  app.use('/vscode-static', express.static(vscodeStaticPath, {
-    setHeaders: (res) => {
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    },
-  }));
+  app.use(
+    '/vscode-static',
+    express.static(vscodeStaticPath, {
+      setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      },
+    }),
+  );
 
   // Serve FileSystemProvider extension bundle
   const ext1Path = join(runtimeRoot, 'vscode-filesystem-provider');
@@ -149,14 +185,28 @@ async function bootstrap() {
   // Proxies localhost MCP auth servers for SSH/remote access: /api/mcp-auth-proxy/:port/*
   app.use('/api/mcp-auth-proxy', (req: any, res: any) => {
     const parsedProxyUrl = parseMcpAuthProxyRequestUrl(req.url as string);
-    if (!parsedProxyUrl) { res.writeHead(404); res.end('Invalid proxy path'); return; }
+    if (!parsedProxyUrl) {
+      res.writeHead(404);
+      res.end('Invalid proxy path');
+      return;
+    }
     const { port, upstreamPath } = parsedProxyUrl;
     const proxyReq = http.request(
-      { hostname: '127.0.0.1', port, path: upstreamPath, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${port}` } },
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: upstreamPath,
+        method: req.method,
+        headers: { ...req.headers, host: `127.0.0.1:${port}` },
+      },
       (proxyRes) => {
         const headers = { ...proxyRes.headers };
         if (typeof headers.location === 'string') {
-          headers.location = rewriteMcpAuthLocationHeader(headers.location, port, upstreamPath);
+          headers.location = rewriteMcpAuthLocationHeader(
+            headers.location,
+            port,
+            upstreamPath,
+          );
         }
         res.writeHead(proxyRes.statusCode || 200, headers);
         proxyRes.pipe(res);
@@ -176,24 +226,48 @@ async function bootstrap() {
 
   app.use('/api/plannotator/proxy', (req: any, res: any) => {
     const match = req.url.match(/^\/(\d+)(\/.*)?$/);
-    if (!match) { res.writeHead(404); res.end('Invalid proxy path'); return; }
+    if (!match) {
+      res.writeHead(404);
+      res.end('Invalid proxy path');
+      return;
+    }
     const upstreamPort = parseInt(match[1], 10);
     const upstreamPath = match[2] || '/';
     const parsedUrl = new URL(req.originalUrl, 'http://localhost');
-    cookieProxy.handleProxyRequest(req, res, upstreamPort, upstreamPath, parsedUrl.search);
+    cookieProxy.handleProxyRequest(
+      req,
+      res,
+      upstreamPort,
+      upstreamPath,
+      parsedUrl.search,
+    );
   });
 
   app.use('/api/plannotator/___ext/cookies', (req: any, res: any) => {
     const parsedUrl = new URL(req.originalUrl, 'http://localhost');
-    const upstreamPort = parseInt(parsedUrl.searchParams.get('upstreamPort') || '0', 10);
-    if (!upstreamPort) { res.writeHead(400); res.end('Missing upstreamPort'); return; }
+    const upstreamPort = parseInt(
+      parsedUrl.searchParams.get('upstreamPort') || '0',
+      10,
+    );
+    if (!upstreamPort) {
+      res.writeHead(400);
+      res.end('Missing upstreamPort');
+      return;
+    }
     cookieProxy.handleSaveCookies(req, res, upstreamPort);
   });
 
   app.use('/api/plannotator/___ext/close', (req: any, res: any) => {
     const parsedUrl = new URL(req.originalUrl, 'http://localhost');
-    const upstreamPort = parseInt(parsedUrl.searchParams.get('upstreamPort') || '0', 10);
-    if (!upstreamPort) { res.writeHead(400); res.end('Missing upstreamPort'); return; }
+    const upstreamPort = parseInt(
+      parsedUrl.searchParams.get('upstreamPort') || '0',
+      10,
+    );
+    if (!upstreamPort) {
+      res.writeHead(400);
+      res.end('Missing upstreamPort');
+      return;
+    }
     cookieProxy.handleClose(req, res, upstreamPort);
   });
   app.useGlobalPipes(

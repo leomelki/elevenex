@@ -3,7 +3,10 @@ import Database from 'better-sqlite3';
 import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { WorkspacesService } from './workspaces.service.js';
 import * as schema from '../database/schema/index.js';
-import { WorktreesService, WorktreeInfo } from '../worktrees/worktrees.service.js';
+import {
+  WorktreesService,
+  WorktreeInfo,
+} from '../worktrees/worktrees.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 
 function createTestDb() {
@@ -68,8 +71,12 @@ describe('WorkspacesService', () => {
   let sqliteConn: InstanceType<typeof Database>;
   let service: WorkspacesService;
   let repo: typeof schema.repos.$inferSelect;
-  let worktreesServiceMock: jest.Mocked<Pick<WorktreesService, 'listWorktrees' | 'removeWorktree'>>;
-  let sessionsServiceMock: jest.Mocked<Pick<SessionsService, 'findByRepo' | 'deleteByRepoAndWorktreePath'>>;
+  let worktreesServiceMock: jest.Mocked<
+    Pick<WorktreesService, 'listWorktrees' | 'removeWorktree'>
+  >;
+  let sessionsServiceMock: jest.Mocked<
+    Pick<SessionsService, 'findByRepo' | 'deleteByRepoAndWorktreePath'>
+  >;
 
   const mainWorktree: WorktreeInfo = {
     path: '/tmp/repo',
@@ -95,14 +102,19 @@ describe('WorkspacesService', () => {
     db = testDb.db;
     sqliteConn = testDb.sqlite;
 
-    const [project] = await db.insert(schema.projects).values({ name: 'Project' }).returning();
+    const [project] = await db
+      .insert(schema.projects)
+      .values({ name: 'Project' })
+      .returning();
     [repo] = await db
       .insert(schema.repos)
       .values({ projectId: project.id, name: 'repo', path: '/tmp/repo' })
       .returning();
 
     worktreesServiceMock = {
-      listWorktrees: jest.fn().mockResolvedValue([mainWorktree, featureWorktree]),
+      listWorktrees: jest
+        .fn()
+        .mockResolvedValue([mainWorktree, featureWorktree]),
       removeWorktree: jest.fn().mockResolvedValue(undefined),
     };
     sessionsServiceMock = {

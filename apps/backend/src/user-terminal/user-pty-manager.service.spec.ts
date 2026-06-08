@@ -187,21 +187,9 @@ describe('UserPtyManager', () => {
 
     expect(mockExecFileQuiet.mock.calls.map((call) => call[1])).toEqual([
       ['set-option', '-t', 'elevenex-uterm-3', 'window-size', 'latest'],
-      [
-        'set-option',
-        '-t',
-        'elevenex-uterm-3',
-        'default-size',
-        '100x20',
-      ],
+      ['set-option', '-t', 'elevenex-uterm-3', 'default-size', '100x20'],
       ['set-option', '-t', 'elevenex-uterm-3', 'window-size', 'latest'],
-      [
-        'set-option',
-        '-t',
-        'elevenex-uterm-3',
-        'default-size',
-        '120x30',
-      ],
+      ['set-option', '-t', 'elevenex-uterm-3', 'default-size', '120x30'],
     ]);
   });
 });

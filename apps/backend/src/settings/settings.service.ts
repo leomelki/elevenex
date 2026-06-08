@@ -99,8 +99,8 @@ export class SettingsService {
 
     const defaultClaudeSessionSurface =
       input.defaultAgentProvider === 'claude'
-        ? (input.defaultClaudeSessionSurface
-          ?? current.defaultClaudeSessionSurface)
+        ? (input.defaultClaudeSessionSurface ??
+          current.defaultClaudeSessionSurface)
         : current.defaultClaudeSessionSurface;
     this.assertDefaultClaudeSessionSurface(defaultClaudeSessionSurface);
 

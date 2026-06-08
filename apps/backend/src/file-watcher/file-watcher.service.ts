@@ -109,7 +109,10 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
    * @param worktreePath - Absolute path to the worktree root
    * @param onEvent - Callback function invoked when a file change occurs
    */
-  watchWorktree(worktreePath: string, onEvent: (event: FileChangeEvent) => void): void {
+  watchWorktree(
+    worktreePath: string,
+    onEvent: (event: FileChangeEvent) => void,
+  ): void {
     // Don't create duplicate watchers for the same worktree
     if (this.watchers.has(worktreePath)) {
       return;
