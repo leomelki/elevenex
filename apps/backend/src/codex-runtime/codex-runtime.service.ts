@@ -1172,15 +1172,10 @@ export class CodexRuntimeService extends EventEmitter {
     }
     const previousDefault = this.codexDefaultModel;
     this.codexModels = models.map((model) => this.toModelOption(model));
-    this.codexDefaultModel =
-      this.codexModels.find((model) =>
-        models.some(
-          (source) =>
-            source.isDefault === true && this.modelId(source) === model.id,
-        ),
-      )?.id ??
-      this.codexModels[0]?.id ??
-      DEFAULT_CODEX_MODEL;
+    this.codexDefaultModel = this.resolveCodexDefaultModel(
+      models,
+      previousDefault,
+    );
 
     for (const [sessionId, state] of this.runtimeStates.entries()) {
       state.availableModels = [...this.codexModels];
@@ -1249,6 +1244,28 @@ export class CodexRuntimeService extends EventEmitter {
       supportsEffort,
       ...(supportsFastMode ? { supportsFastMode: true } : {}),
     };
+  }
+
+  private resolveCodexDefaultModel(
+    models: CodexAppServerModel[],
+    previousDefault: string,
+  ): string {
+    const remoteDefault = this.codexModels.find((model) =>
+      models.some(
+        (source) =>
+          source.isDefault === true && this.modelId(source) === model.id,
+      ),
+    )?.id;
+    if (remoteDefault) {
+      return remoteDefault;
+    }
+    if (this.codexModels.some((model) => model.id === DEFAULT_CODEX_MODEL)) {
+      return DEFAULT_CODEX_MODEL;
+    }
+    if (this.codexModels.some((model) => model.id === previousDefault)) {
+      return previousDefault;
+    }
+    return this.codexModels[0]?.id ?? DEFAULT_CODEX_MODEL;
   }
 
   private modelId(model: CodexAppServerModel): string {

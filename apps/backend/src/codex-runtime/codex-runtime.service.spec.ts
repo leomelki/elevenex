@@ -206,6 +206,36 @@ describe('CodexRuntimeService', () => {
     expect(models).toEqual([{ id: 'gpt-test', displayName: 'GPT Test' }]);
   });
 
+  it('does not treat remote Codex model list order as the default', async () => {
+    const { service, appServer } = createService();
+    appServer.request.mockResolvedValueOnce({
+      data: [
+        { id: 'gpt-5.3-codex', displayName: 'GPT-5.3 Codex' },
+        { id: 'gpt-5.5', displayName: 'GPT-5.5' },
+      ],
+    });
+
+    await (service as any).refreshModelCatalog();
+
+    const state = await service.getRuntimeState(7);
+    expect(state.selectedModel).toBe('gpt-5.5');
+  });
+
+  it('honors an explicit remote Codex default model flag', async () => {
+    const { service, appServer } = createService();
+    appServer.request.mockResolvedValueOnce({
+      data: [
+        { id: 'gpt-5.5', displayName: 'GPT-5.5' },
+        { id: 'gpt-test', displayName: 'GPT Test', isDefault: true },
+      ],
+    });
+
+    await (service as any).refreshModelCatalog();
+
+    const state = await service.getRuntimeState(7);
+    expect(state.selectedModel).toBe('gpt-test');
+  });
+
   it('preserves Codex parsed command actions on command execution tool calls', () => {
     const { service } = createService();
     const commandActions = [
