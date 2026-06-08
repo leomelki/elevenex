@@ -61,6 +61,39 @@ function findSdkRealDir(): string | null {
   }
 }
 
+function findPackageRealDir(packageName: string): string | null {
+  let dir = path.dirname(__filename);
+  while (true) {
+    const candidate = path.join(
+      dir,
+      'node_modules',
+      ...packageName.split('/'),
+    );
+    if (existsSync(candidate)) {
+      try {
+        return realpathSync(candidate);
+      } catch {
+        return null;
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function vendorBinaryPath(packageDir: string, triple: string): string | null {
+  const binaryName = process.platform === 'win32' ? 'codex.exe' : 'codex';
+  const binPath = path.join(
+    packageDir,
+    'vendor',
+    triple,
+    'codex',
+    binaryName,
+  );
+  return existsSync(binPath) ? binPath : null;
+}
+
 let cachedBundled: string | null | undefined;
 let cachedResolved: string | undefined;
 
@@ -89,6 +122,11 @@ function resolveBundledOnce(): string | null {
   if (!triple) return null;
   const platformPackage = PLATFORM_PACKAGE_BY_TARGET[triple];
   if (!platformPackage) return null;
+  const stagedPlatformPackageDir = findPackageRealDir(platformPackage);
+  if (stagedPlatformPackageDir) {
+    const stagedBinPath = vendorBinaryPath(stagedPlatformPackageDir, triple);
+    if (stagedBinPath) return stagedBinPath;
+  }
   // We can't directly `require.resolve('@openai/codex/package.json')` from
   // our own __filename because:
   //   1. pnpm doesn't hoist transitive deps into the top-level node_modules,
@@ -117,15 +155,7 @@ function resolveBundledOnce(): string | null {
     const platformPackageJsonPath = codexRequire.resolve(
       `${platformPackage}/package.json`,
     );
-    const binaryName = process.platform === 'win32' ? 'codex.exe' : 'codex';
-    const binPath = path.join(
-      path.dirname(platformPackageJsonPath),
-      'vendor',
-      triple,
-      'codex',
-      binaryName,
-    );
-    return existsSync(binPath) ? binPath : null;
+    return vendorBinaryPath(path.dirname(platformPackageJsonPath), triple);
   } catch {
     return null;
   }

@@ -1,4 +1,4 @@
-const { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } = require('fs');
+const { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } = require('fs');
 const { execSync } = require('child_process');
 const path = require('path');
 const {
@@ -15,6 +15,14 @@ const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const backendPackageJson = require(path.join(backendRoot, 'package.json'));
 const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty'];
+const CODEX_PLATFORM_PACKAGE_BY_TARGET = {
+  'x86_64-unknown-linux-musl': '@openai/codex-linux-x64',
+  'aarch64-unknown-linux-musl': '@openai/codex-linux-arm64',
+  'x86_64-apple-darwin': '@openai/codex-darwin-x64',
+  'aarch64-apple-darwin': '@openai/codex-darwin-arm64',
+  'x86_64-pc-windows-msvc': '@openai/codex-win32-x64',
+  'aarch64-pc-windows-msvc': '@openai/codex-win32-arm64',
+};
 const STAGE_COPY_PLANS = {
   'better-sqlite3': {
     files: ['package.json', 'binding.gyp', 'LICENSE'],
@@ -26,7 +34,59 @@ const STAGE_COPY_PLANS = {
     directories: ['lib', 'scripts', 'src', 'deps', 'third_party', 'typings'],
     optionalDirectories: ['build', 'prebuilds', 'compiled'],
   },
+  '@openai/codex-sdk': {
+    files: ['package.json', 'LICENSE'],
+    directories: ['dist'],
+  },
+  '@openai/codex': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@openai/codex-darwin-arm64': {
+    files: ['package.json'],
+    directories: ['vendor'],
+  },
+  '@openai/codex-darwin-x64': {
+    files: ['package.json'],
+    directories: ['vendor'],
+  },
+  '@openai/codex-linux-arm64': {
+    files: ['package.json'],
+    directories: ['vendor'],
+  },
+  '@openai/codex-linux-x64': {
+    files: ['package.json'],
+    directories: ['vendor'],
+  },
+  '@openai/codex-win32-arm64': {
+    files: ['package.json'],
+    directories: ['vendor'],
+  },
+  '@openai/codex-win32-x64': {
+    files: ['package.json'],
+    directories: ['vendor'],
+  },
 };
+
+function codexTargetTriple() {
+  const { platform, arch } = process;
+  if (platform === 'linux' || platform === 'android') {
+    if (arch === 'x64') return 'x86_64-unknown-linux-musl';
+    if (arch === 'arm64') return 'aarch64-unknown-linux-musl';
+    return null;
+  }
+  if (platform === 'darwin') {
+    if (arch === 'x64') return 'x86_64-apple-darwin';
+    if (arch === 'arm64') return 'aarch64-apple-darwin';
+    return null;
+  }
+  if (platform === 'win32') {
+    if (arch === 'x64') return 'x86_64-pc-windows-msvc';
+    if (arch === 'arm64') return 'aarch64-pc-windows-msvc';
+    return null;
+  }
+  return null;
+}
 
 function ensureDir(dirPath) {
   mkdirSync(dirPath, { recursive: true });
@@ -60,6 +120,20 @@ function copyDependencyTree(packageName, searchPaths) {
 }
 
 function resolveInstalledPackagePath(packageName, searchPaths = [backendRoot, repoRoot]) {
+  const packageParts = packageName.split('/');
+  for (const searchPath of searchPaths) {
+    let dir = path.resolve(searchPath);
+    while (true) {
+      const candidate = path.join(dir, 'node_modules', ...packageParts);
+      if (existsSync(path.join(candidate, 'package.json'))) {
+        return realpathSync(candidate);
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+
   const manifestPath = require.resolve(`${packageName}/package.json`, {
     paths: searchPaths,
   });
@@ -185,6 +259,22 @@ function stageNativePackageTree(packageName, seen = new Set(), searchPaths = [ba
   }
 }
 
+function stageCodexRuntime() {
+  const triple = codexTargetTriple();
+  const platformPackage = triple ? CODEX_PLATFORM_PACKAGE_BY_TARGET[triple] : null;
+  if (!platformPackage) {
+    console.warn(`Skipping embedded Codex binary for unsupported platform ${process.platform}/${process.arch}`);
+    return;
+  }
+
+  const sdkRoot = resolveInstalledPackagePath('@openai/codex-sdk', [backendRoot, repoRoot]);
+  copyDependencyTree('@openai/codex-sdk', [backendRoot, repoRoot]);
+
+  const codexRoot = resolveInstalledPackagePath('@openai/codex', [sdkRoot, backendRoot, repoRoot]);
+  copyDependencyTree('@openai/codex', [sdkRoot, backendRoot, repoRoot]);
+  copyDependencyTree(platformPackage, [codexRoot, sdkRoot, backendRoot, repoRoot]);
+}
+
 function main() {
   resetStageRoot();
   assembleRuntime();
@@ -197,6 +287,7 @@ function main() {
   for (const packageName of NATIVE_RUNTIME_DEPENDENCIES) {
     stageNativePackageTree(packageName, stagedNativePackages);
   }
+  stageCodexRuntime();
   stageBundledNodeRuntime();
   writeStagedBackendPackageJson();
   copyRequiredPath(path.join(repoRoot, 'apps', 'frontend', 'proxy.conf.json'), path.join(stageBackendRoot, 'proxy.conf.json'));
