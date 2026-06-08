@@ -105,9 +105,40 @@ function buildRuntimePackageJson(target) {
   };
 }
 
+function buildChildEnv(overrides = {}) {
+  const env = new Map();
+  for (const [key, value] of Object.entries({ ...process.env, ...overrides })) {
+    // Rebuilding a Windows env block can fail on hidden drive variables like =C:.
+    if (!key || key.includes('=') || value === undefined || value === null) {
+      continue;
+    }
+
+    const normalizedKey = process.platform === 'win32' ? key.toUpperCase() : key;
+    env.set(normalizedKey, [key, String(value)]);
+  }
+
+  return Object.fromEntries([...env.values()]);
+}
+
+function quotePowerShellArgument(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 function runCommand(command, args, options = {}) {
-  const executable = process.platform === 'win32' && command === 'pnpm' ? 'pnpm.cmd' : command;
-  const result = spawnSync(executable, args, {
+  const runViaPowerShell = process.platform === 'win32' && command === 'pnpm';
+  const executable = runViaPowerShell ? 'powershell' : command;
+  const commandArgs = runViaPowerShell
+    ? [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        `& pnpm ${args.map(quotePowerShellArgument).join(' ')}`,
+      ]
+    : args;
+  const displayCommand = `${command} ${args.join(' ')}`;
+  const result = spawnSync(executable, commandArgs, {
     stdio: 'inherit',
     ...options,
   });
@@ -117,7 +148,7 @@ function runCommand(command, args, options = {}) {
   }
 
   if (result.status !== 0) {
-    throw new Error(`${executable} ${args.join(' ')} failed with exit code ${result.status ?? 'unknown'}`);
+    throw new Error(`${displayCommand} failed with exit code ${result.status ?? 'unknown'}`);
   }
 }
 
@@ -231,8 +262,7 @@ function installRuntimeDependencies(targetRoot, target) {
     'utf8',
   );
 
-  const env = {
-    ...process.env,
+  const env = buildChildEnv({
     npm_config_platform: target.platform,
     npm_config_arch: target.arch,
     npm_config_target_platform: target.platform,
@@ -240,7 +270,7 @@ function installRuntimeDependencies(targetRoot, target) {
     npm_config_build_from_source: 'false',
     prebuild_install_platform: target.platform,
     prebuild_install_arch: target.arch,
-  };
+  });
 
   runCommand('pnpm', ['install', '--prod', '--ignore-workspace', '--no-lockfile'], {
     cwd: targetRoot,
