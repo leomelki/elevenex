@@ -1,9 +1,10 @@
 const { existsSync, readdirSync, rmSync, statSync } = require('fs');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const path = require('path');
 const { formatSize, getDirectorySize } = require('./prepare-vscode-web-runtime');
 
 const repoRoot = path.resolve(__dirname, '..');
+const electronAppRoot = path.join(repoRoot, 'apps', 'electron');
 const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const archivePath = path.join(stageBaseRoot, 'backend.tar.gz');
@@ -153,6 +154,63 @@ function validateNativeRuntimeArtifacts() {
   }
 }
 
+function resolveModule(request) {
+  return require.resolve(request, {
+    paths: [electronAppRoot, repoRoot, __dirname],
+  });
+}
+
+function getElectronExecutable() {
+  return require(resolveModule('electron'));
+}
+
+function getBundledNodeExecutable() {
+  const candidates = process.platform === 'win32'
+    ? [path.join(stageBackendRoot, 'node', 'node.exe')]
+    : [path.join(stageBackendRoot, 'node', 'bin', 'node')];
+
+  return candidates.find((candidate) => existsSync(candidate)) || null;
+}
+
+function validateNativeRuntimeLoad() {
+  const script = [
+    "const path = require('path');",
+    "const root = process.argv[1];",
+    "const Database = require(path.join(root, 'node_modules', 'better-sqlite3'));",
+    "const db = new Database(':memory:');",
+    "db.prepare('select 1 as ok').get();",
+    "db.close();",
+    "require(path.join(root, 'node_modules', 'node-pty'));",
+  ].join('');
+  const bundledNode = getBundledNodeExecutable();
+  const executable = bundledNode || getElectronExecutable();
+  const env = bundledNode
+    ? process.env
+    : { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+  const result = spawnSync(executable, ['-e', script, stageBackendRoot], {
+    cwd: stageBackendRoot,
+    env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    throw new Error(
+      [
+        `Staged backend native smoke test failed with exit code ${result.status ?? 'unknown'}.`,
+        result.stderr.trim(),
+        result.stdout.trim(),
+      ].filter(Boolean).join('\n'),
+    );
+  }
+
+  console.log(`Validated staged native modules with ${bundledNode ? 'bundled Node' : 'Electron-as-Node'}`);
+}
+
 function main() {
   if (!existsSync(stageBackendRoot)) {
     throw new Error(`Stage backend root is missing: ${stageBackendRoot}`);
@@ -160,6 +218,7 @@ function main() {
 
   validateNativeRuntimeArtifacts();
   pruneStagedNodeModules();
+  validateNativeRuntimeLoad();
   logStageSizeSummary();
 
   execFileSync('tar', ['-czf', archivePath, '-C', stageBaseRoot, 'backend'], {

@@ -330,6 +330,15 @@ function getEmbeddedBackendEntry() {
   return path.join(getEmbeddedBackendRoot(), 'main.cjs');
 }
 
+function getEmbeddedBackendNodeExecutable() {
+  const embeddedBackendRoot = getEmbeddedBackendRoot();
+  const candidates = process.platform === 'win32'
+    ? [path.join(embeddedBackendRoot, 'node', 'node.exe')]
+    : [path.join(embeddedBackendRoot, 'node', 'bin', 'node')];
+
+  return candidates.find((candidate) => existsSync(candidate)) || null;
+}
+
 function getPackagedDatabasePath() {
   return path.join(os.homedir(), '.elevenex', 'elevenex.db');
 }
@@ -681,7 +690,7 @@ function downloadToFile(url, destinationPath, onProgress, _redirectCount = 0) {
 }
 
 const NATIVE_BINARY_EXTENSIONS = ['.node', '.dylib'];
-const NATIVE_EXECUTABLE_NAMES = ['spawn-helper'];
+const NATIVE_EXECUTABLE_NAMES = ['node', 'spawn-helper'];
 
 function resignNativeBinaries(dir) {
   if (!existsSync(dir)) {
@@ -762,7 +771,7 @@ async function ensureEmbeddedBackendExtracted() {
 
     if (process.platform === 'darwin') {
       spawnSync('xattr', ['-dr', 'com.apple.quarantine', runtimeRoot], { stdio: 'ignore' });
-      resignNativeBinaries(path.join(runtimeRoot, 'backend', 'node_modules'));
+      resignNativeBinaries(path.join(runtimeRoot, 'backend'));
     }
 
     if (bundledVersion) {
@@ -857,16 +866,21 @@ async function startEmbeddedBackend(backendUrl) {
     status: 'Launching backend services...',
   });
 
+  const bundledNodeExecutable = getEmbeddedBackendNodeExecutable();
+  const backendExecutable = bundledNodeExecutable || process.execPath;
+  const backendArgs = [embeddedBackendEntry];
   const env = {
     ...process.env,
-    ELECTRON_RUN_AS_NODE: '1',
     ELEVENEX_BACKEND_RUNTIME_ROOT: embeddedBackendRoot,
     DB_PATH: packagedDatabasePath,
     ELEVENEX_PROXY_PORT: proxyPort,
     FRONTEND_PORT: proxyPort,
   };
+  if (!bundledNodeExecutable) {
+    env.ELECTRON_RUN_AS_NODE = '1';
+  }
 
-  const child = spawn(process.execPath, [embeddedBackendEntry], {
+  const child = spawn(backendExecutable, backendArgs, {
     cwd: embeddedBackendRoot,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],

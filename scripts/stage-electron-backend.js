@@ -1,4 +1,4 @@
-const { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } = require('fs');
+const { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } = require('fs');
 const { execSync } = require('child_process');
 const path = require('path');
 const {
@@ -128,6 +128,28 @@ function writeStagedBackendPackageJson() {
   );
 }
 
+function stageBundledNodeRuntime() {
+  const nodeRoot = path.join(stageBackendRoot, 'node');
+  rmSync(nodeRoot, { recursive: true, force: true });
+  ensureDir(nodeRoot);
+
+  if (process.platform === 'win32') {
+    const sourceDir = path.dirname(process.execPath);
+    copyRequiredPath(process.execPath, path.join(nodeRoot, 'node.exe'), { dereference: true });
+
+    for (const entry of readdirSync(sourceDir)) {
+      if (entry.toLowerCase().endsWith('.dll')) {
+        copyRequiredPath(path.join(sourceDir, entry), path.join(nodeRoot, entry), { dereference: true });
+      }
+    }
+    return;
+  }
+
+  const destination = path.join(nodeRoot, 'bin', 'node');
+  copyRequiredPath(process.execPath, destination, { dereference: true });
+  chmodSync(destination, 0o755);
+}
+
 function stageNativePackageTree(packageName, seen = new Set(), searchPaths = [backendRoot, repoRoot]) {
   if (seen.has(packageName)) {
     return;
@@ -161,6 +183,7 @@ function main() {
   for (const packageName of NATIVE_RUNTIME_DEPENDENCIES) {
     stageNativePackageTree(packageName, stagedNativePackages);
   }
+  stageBundledNodeRuntime();
   writeStagedBackendPackageJson();
   copyRequiredPath(path.join(repoRoot, 'apps', 'frontend', 'proxy.conf.json'), path.join(stageBackendRoot, 'proxy.conf.json'));
   copyRequiredPath(stagedVSCodeRoot, path.join(stageBackendRoot, 'vscode-web-dist'));
@@ -171,6 +194,7 @@ function main() {
 
   const componentSizes = {
     'main.cjs': getDirectorySize(path.join(stageBackendRoot, 'main.cjs')),
+    node: getDirectorySize(path.join(stageBackendRoot, 'node')),
     'node_modules': getDirectorySize(path.join(stageBackendRoot, 'node_modules')),
     'vscode-web-dist': getDirectorySize(path.join(stageBackendRoot, 'vscode-web-dist')),
     'vscode-filesystem-provider': getDirectorySize(path.join(stageBackendRoot, 'vscode-filesystem-provider')),
