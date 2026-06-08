@@ -62,4 +62,12 @@ describe('SessionTitleService', () => {
     );
     expect(close).toHaveBeenCalled();
   });
+
+  it('normalizes generated titles to five words without markdown or punctuation', () => {
+    expect(
+      (service as any).normalize(
+        '```text\n"Implement Auto Session Names Quickly Now Please!"\n```',
+      ),
+    ).toBe('Implement Auto Session Names Quickly');
+  });
 });

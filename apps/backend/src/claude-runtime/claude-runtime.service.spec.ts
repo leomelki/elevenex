@@ -24,6 +24,7 @@ import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { TerminalService } from '../terminal/terminal.service.js';
 import { DRIZZLE } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import { SessionTitleService } from '../session-title/session-title.service.js';
 
 function successfulResultMessage(sessionId = 'claude-session-1') {
   return {
@@ -79,6 +80,9 @@ describe('ClaudeRuntimeService', () => {
   };
   let terminalService: {
     startSession: jest.Mock;
+  };
+  let titleService: {
+    generate: jest.Mock;
   };
   let loggerLogSpy: jest.SpyInstance;
   let loggerWarnSpy: jest.SpyInstance;
@@ -149,6 +153,9 @@ describe('ClaudeRuntimeService', () => {
     terminalService = {
       startSession: jest.fn(),
     };
+    titleService = {
+      generate: jest.fn().mockResolvedValue(null),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -157,6 +164,7 @@ describe('ClaudeRuntimeService', () => {
         { provide: SessionsService, useValue: sessionsService },
         { provide: ClaudeHooksService, useValue: hooksService },
         { provide: TerminalService, useValue: terminalService },
+        { provide: SessionTitleService, useValue: titleService },
       ],
     }).compile();
 
@@ -1326,30 +1334,7 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('generates and saves a text-only Haiku session title', async () => {
-    const titleClose = jest.fn();
-    (query as jest.Mock).mockImplementationOnce(() => ({
-      close: titleClose,
-      [Symbol.asyncIterator]: () => {
-        let emitted = false;
-        return {
-          next: async () => {
-            if (emitted) {
-              return { done: true, value: undefined };
-            }
-            emitted = true;
-            return {
-              done: false,
-              value: {
-                type: 'assistant',
-                message: {
-                  content: [{ type: 'text', text: 'Implement Auto Names' }],
-                },
-              },
-            };
-          },
-        };
-      },
-    }));
+    titleService.generate.mockResolvedValue('Implement Auto Names');
 
     await (service as any).generateAndSaveSessionTitle(
       7,
@@ -1357,29 +1342,14 @@ describe('ClaudeRuntimeService', () => {
       'Please implement auto names',
     );
 
-    expect(query).toHaveBeenCalledTimes(1);
-    expect((query as jest.Mock).mock.calls[0][0]).toEqual(
-      expect.objectContaining({
-        options: expect.objectContaining({
-          model: 'haiku',
-          maxTurns: 1,
-          settingSources: [],
-          allowedTools: [],
-          systemPrompt:
-            'You generate concise session titles. Reply with only the title.',
-          tools: [],
-          cwd: '/tmp/project',
-        }),
-      }),
-    );
-    expect((query as jest.Mock).mock.calls[0][0].prompt).toContain(
-      'Respond immediately with a broad short title',
+    expect(titleService.generate).toHaveBeenCalledWith(
+      '/tmp/project',
+      'Please implement auto names',
     );
     expect(sessionsService.renameFromGeneratedTitle).toHaveBeenCalledWith(
       7,
       'Implement Auto Names',
     );
-    expect(titleClose).toHaveBeenCalled();
   });
 
   it('does not generate a title for resumed sessions', async () => {
@@ -1438,14 +1408,6 @@ describe('ClaudeRuntimeService', () => {
     expect(sessionsService.renameFromGeneratedTitle).not.toHaveBeenCalled();
   });
 
-  it('normalizes generated titles to five words without markdown or punctuation', () => {
-    expect(
-      (service as any).normalizeGeneratedSessionTitle(
-        '```text\n"Implement Auto Session Names Quickly Now Please!"\n```',
-      ),
-    ).toBe('Implement Auto Session Names Quickly');
-  });
-
   it('leaves the session name unchanged when Haiku title generation fails', async () => {
     sessionsService.findOne.mockResolvedValue({
       id: 7,
@@ -1453,40 +1415,22 @@ describe('ClaudeRuntimeService', () => {
       worktreePath: '/tmp/project',
       claudeSessionId: '-1',
     });
-    (query as jest.Mock).mockImplementation(({ prompt }) => {
-      const isTitleQuery = String(prompt).includes(
-        'Name this Claude Code session',
-      );
-      return {
-        supportedModels: jest.fn().mockResolvedValue([]),
-        getContextUsage: jest.fn().mockResolvedValue({
-          model: 'sonnet',
-          totalTokens: 0,
-          maxTokens: 0,
-          percentage: 0,
-          apiUsage: undefined,
-          autoCompactThreshold: 0,
-          isAutoCompactEnabled: false,
-          memoryFiles: [],
-          mcpTools: [],
-        }),
-        close: jest.fn(),
-        [Symbol.asyncIterator]: () => {
-          let emitted = false;
-          return {
-            next: async () => {
-              if (isTitleQuery) {
-                throw new Error('title failed');
-              }
-              if (emitted) {
-                return { done: true, value: undefined };
-              }
-              emitted = true;
-              return { done: false, value: successfulResultMessage() };
-            },
-          };
-        },
-      };
+    titleService.generate.mockRejectedValue(new Error('title failed'));
+    (query as jest.Mock).mockReturnValue({
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest.fn().mockResolvedValue({
+        model: 'sonnet',
+        totalTokens: 0,
+        maxTokens: 0,
+        percentage: 0,
+        apiUsage: undefined,
+        autoCompactThreshold: 0,
+        isAutoCompactEnabled: false,
+        memoryFiles: [],
+        mcpTools: [],
+      }),
+      close: jest.fn(),
+      [Symbol.asyncIterator]: () => successfulResultIterator(),
     });
 
     await service.submitPrompt(7, 'Start this');
