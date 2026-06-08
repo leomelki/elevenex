@@ -19,10 +19,12 @@ const STAGE_COPY_PLANS = {
   'better-sqlite3': {
     files: ['package.json', 'binding.gyp', 'LICENSE'],
     directories: ['lib', 'src', 'deps'],
+    optionalDirectories: ['build', 'prebuilds', 'compiled'],
   },
   'node-pty': {
     files: ['package.json', 'binding.gyp', 'LICENSE'],
     directories: ['lib', 'scripts', 'src', 'deps', 'third_party', 'typings'],
+    optionalDirectories: ['build', 'prebuilds', 'compiled'],
   },
 };
 
@@ -52,6 +54,9 @@ function copyDependencyTree(packageName, searchPaths) {
   for (const relativePath of copyPlan.directories) {
     copyRequiredPath(path.join(source, relativePath), path.join(destination, relativePath), { dereference: true });
   }
+  for (const relativePath of copyPlan.optionalDirectories || []) {
+    copyPathIfExists(path.join(source, relativePath), path.join(destination, relativePath), { dereference: true });
+  }
 }
 
 function resolveInstalledPackagePath(packageName, searchPaths = [backendRoot, repoRoot]) {
@@ -65,6 +70,15 @@ function resolveInstalledPackagePath(packageName, searchPaths = [backendRoot, re
 function copyRequiredPath(source, destination, options = {}) {
   if (!existsSync(source)) {
     throw new Error(`Required path is missing: ${source}`);
+  }
+
+  ensureDir(path.dirname(destination));
+  cpSync(source, destination, { recursive: true, ...options });
+}
+
+function copyPathIfExists(source, destination, options = {}) {
+  if (!existsSync(source)) {
+    return;
   }
 
   ensureDir(path.dirname(destination));

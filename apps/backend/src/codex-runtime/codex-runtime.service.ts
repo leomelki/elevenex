@@ -116,6 +116,12 @@ interface CodexModelListResult {
   data?: unknown;
 }
 
+interface CodexThreadStartResult {
+  thread?: {
+    id?: unknown;
+  };
+}
+
 @Injectable()
 export class CodexRuntimeService extends EventEmitter {
   private readonly logger = new Logger('CodexRuntimeService');
@@ -1617,10 +1623,15 @@ export class CodexRuntimeService extends EventEmitter {
       };
 
       const startFreshThread = async (): Promise<string> => {
-        const response = await this.appServer.request('thread/start', {
-          ...commonThreadParams,
-        });
-        const newId = response?.thread?.id ?? null;
+        const response =
+          await this.appServer.request<CodexThreadStartResult>(
+            'thread/start',
+            {
+              ...commonThreadParams,
+            },
+          );
+        const newId =
+          typeof response.thread?.id === 'string' ? response.thread.id : null;
         if (!newId) {
           throw new Error('codex app-server thread/start did not return an id');
         }

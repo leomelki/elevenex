@@ -10,9 +10,37 @@ const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const archivePath = path.join(stageBaseRoot, 'backend.tar.gz');
 const STAGED_NODE_MODULES_ROOT = path.join(stageBackendRoot, 'node_modules');
 const STAGED_BACKEND_WARN_THRESHOLD_BYTES = 110 * 1024 * 1024;
+const NODE_PTY_PLATFORM_PREBUILDS_ROOT = path.join(
+  STAGED_NODE_MODULES_ROOT,
+  'node-pty',
+  'prebuilds',
+  `${process.platform}-${process.arch}`,
+);
 const REQUIRED_NATIVE_RUNTIME_ARTIFACTS = [
-  path.join(STAGED_NODE_MODULES_ROOT, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'),
-  path.join(STAGED_NODE_MODULES_ROOT, 'node-pty', 'build', 'Release', 'pty.node'),
+  {
+    label: 'better-sqlite3',
+    alternatives: [
+      path.join(STAGED_NODE_MODULES_ROOT, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'),
+    ],
+  },
+  {
+    label: 'node-pty pty',
+    alternatives: [
+      path.join(STAGED_NODE_MODULES_ROOT, 'node-pty', 'build', 'Release', 'pty.node'),
+      path.join(NODE_PTY_PLATFORM_PREBUILDS_ROOT, 'pty.node'),
+    ],
+  },
+  ...(process.platform === 'win32'
+    ? [
+        {
+          label: 'node-pty conpty',
+          alternatives: [
+            path.join(STAGED_NODE_MODULES_ROOT, 'node-pty', 'build', 'Release', 'conpty.node'),
+            path.join(NODE_PTY_PLATFORM_PREBUILDS_ROOT, 'conpty.node'),
+          ],
+        },
+      ]
+    : []),
 ];
 const FINAL_RUNTIME_PACKAGE_PLANS = {
   'better-sqlite3': {
@@ -41,20 +69,23 @@ function keepOnly(packageRoot, plan) {
   }
 
   const keep = new Set();
+  const addKeep = (relativePath) => {
+    keep.add(path.normalize(relativePath));
+  };
   for (const relativePath of plan.files || []) {
-    keep.add(relativePath);
+    addKeep(relativePath);
   }
   for (const relativePath of plan.optionalFiles || []) {
     if (existsSync(path.join(packageRoot, relativePath))) {
-      keep.add(relativePath);
+      addKeep(relativePath);
     }
   }
   for (const relativePath of plan.directories || []) {
-    keep.add(relativePath);
+    addKeep(relativePath);
   }
   for (const relativePath of plan.optionalDirectories || []) {
     if (existsSync(path.join(packageRoot, relativePath))) {
-      keep.add(relativePath);
+      addKeep(relativePath);
     }
   }
 
@@ -142,12 +173,18 @@ function logStageSizeSummary() {
 }
 
 function validateNativeRuntimeArtifacts() {
-  const missingArtifacts = REQUIRED_NATIVE_RUNTIME_ARTIFACTS.filter((artifactPath) => !existsSync(artifactPath));
+  const missingArtifacts = REQUIRED_NATIVE_RUNTIME_ARTIFACTS.filter(
+    (artifact) =>
+      !artifact.alternatives.some((artifactPath) => existsSync(artifactPath)),
+  );
   if (missingArtifacts.length > 0) {
     throw new Error(
       [
         'Missing rebuilt native runtime artifacts in staged backend.',
-        ...missingArtifacts.map((artifactPath) => `- ${artifactPath}`),
+        ...missingArtifacts.map(
+          (artifact) =>
+            `- ${artifact.label}: expected one of ${artifact.alternatives.join(', ')}`,
+        ),
         'Run the Electron native rebuild step before archiving.',
       ].join('\n'),
     );
