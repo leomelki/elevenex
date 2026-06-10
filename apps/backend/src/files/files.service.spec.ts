@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -358,6 +359,91 @@ describe('FilesService', () => {
           isExactParent: true,
         }),
       ]);
+    });
+  });
+
+  describe('searchFiles', () => {
+    function initGitRepo(): void {
+      execFileSync('git', ['init'], { cwd: tmpDir, stdio: 'ignore' });
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+        cwd: tmpDir,
+        stdio: 'ignore',
+      });
+      execFileSync('git', ['config', 'user.name', 'Test User'], {
+        cwd: tmpDir,
+        stdio: 'ignore',
+      });
+    }
+
+    it('returns matching tracked and untracked files while excluding ignored and .git paths', async () => {
+      initGitRepo();
+      fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, '.gitignore'), 'ignored.txt\n');
+      fs.writeFileSync(path.join(tmpDir, 'src', 'tracked-file.ts'), 'tracked');
+      fs.writeFileSync(path.join(tmpDir, 'src', 'untracked-file.ts'), 'untracked');
+      fs.writeFileSync(path.join(tmpDir, 'ignored.txt'), 'ignored');
+      execFileSync('git', ['add', '.gitignore', 'src/tracked-file.ts'], {
+        cwd: tmpDir,
+        stdio: 'ignore',
+      });
+
+      const result = await service.searchFiles(tmpDir, 'file');
+
+      expect(result).toEqual([
+        { path: 'src/tracked-file.ts', name: 'tracked-file.ts' },
+        { path: 'src/untracked-file.ts', name: 'untracked-file.ts' },
+      ]);
+      expect(result.some((item) => item.path.includes('.git'))).toBe(false);
+      expect(result.some((item) => item.path === 'ignored.txt')).toBe(false);
+    });
+
+    it('limits and ranks basename prefix matches before basename substring matches', async () => {
+      initGitRepo();
+      fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, 'src', 'components'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'docs', 'my-search-target.md'), 'docs');
+      fs.writeFileSync(path.join(tmpDir, 'src', 'components', 'search-panel.ts'), 'panel');
+      fs.writeFileSync(path.join(tmpDir, 'src', 'other-search.ts'), 'other');
+      execFileSync('git', ['add', '.'], { cwd: tmpDir, stdio: 'ignore' });
+
+      const result = await service.searchFiles(tmpDir, 'search', 2);
+
+      expect(result).toEqual([
+        {
+          path: 'src/components/search-panel.ts',
+          name: 'search-panel.ts',
+        },
+        {
+          path: 'docs/my-search-target.md',
+          name: 'my-search-target.md',
+        },
+      ]);
+    });
+
+    it('falls back to an async directory walk outside Git repositories', async () => {
+      fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, '.hidden'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'src', 'plain-file.ts'), 'plain');
+      fs.writeFileSync(path.join(tmpDir, '.hidden', 'plain-hidden.ts'), 'hidden');
+
+      const result = await service.searchFiles(tmpDir, 'plain');
+
+      expect(result).toEqual([
+        { path: 'src/plain-file.ts', name: 'plain-file.ts' },
+      ]);
+    });
+
+    it('rejects missing or non-directory worktree paths', async () => {
+      await expect(
+        service.searchFiles(path.join(tmpDir, 'missing'), 'file'),
+      ).rejects.toThrow(BadRequestException);
+
+      const filePath = path.join(tmpDir, 'file.txt');
+      fs.writeFileSync(filePath, 'content');
+
+      await expect(service.searchFiles(filePath, 'file')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 

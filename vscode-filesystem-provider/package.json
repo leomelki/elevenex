@@ -10,6 +10,20 @@
   "extensionKind": ["web"],
   "browser": "./dist/extension.browser.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "elevenex.searchFiles",
+        "title": "ElevenEX: Search Files"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "elevenex.searchFiles",
+        "key": "ctrl+p",
+        "mac": "cmd+p",
+        "when": "workspaceFolderCount != 0"
+      }
+    ],
     "fileSystemProviders": [
       {
         "scheme": "workspace-vfs",

@@ -96,6 +96,23 @@ suite('BackendClient', () => {
     ]);
   });
 
+  test('searchFiles requests file-search endpoint and maps results', async () => {
+    stubFetch({
+      ok: true,
+      status: 200,
+      json: [{ path: 'src/app.ts', name: 'app.ts' }],
+    });
+    const client = new BackendClient(baseUrl);
+
+    const results = await client.searchFiles(worktreePath, 'app', 25);
+
+    assert.deepStrictEqual(results, [{ path: 'src/app.ts', name: 'app.ts' }]);
+    assert.strictEqual(
+      String(getLastCall().input),
+      `${baseUrl}/${encodeURIComponent(worktreePath)}/file-search?query=app&limit=25`,
+    );
+  });
+
   test('404 error mapped to FileNotFound', async () => {
     stubFetch({ ok: false, status: 404 });
     const client = new BackendClient(baseUrl);

@@ -77,6 +77,21 @@ export class FilesController {
     return this.filesService.listFiles(decodedWorktree, decodedDir);
   }
 
+  @Get(':worktreePath/file-search')
+  async searchFiles(
+    @Param('worktreePath') worktreePath: string,
+    @Query('query') query?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const decodedWorktree = decodeURIComponent(worktreePath);
+    const parsedLimit = limit === undefined ? undefined : Number(limit);
+    return this.filesService.searchFiles(
+      decodedWorktree,
+      query ?? '',
+      parsedLimit,
+    );
+  }
+
   /**
    * GET /worktrees/:worktreePath/files/*path
    * Returns file content and detected language.

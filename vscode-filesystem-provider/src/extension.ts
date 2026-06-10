@@ -1,5 +1,7 @@
 import {
+  commands,
   ExtensionContext,
+  QuickPickItem,
   Uri,
   window as vscodeWindow,
   workspace
@@ -29,8 +31,21 @@ interface ElevenExOpenFileMessage {
   preserveFocus?: boolean;
 }
 
+interface FileSearchQuickPickItem extends QuickPickItem {
+  path: string;
+}
+
 function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function toWorkspaceVfsUri(worktreePath: string, relativePath: string): Uri {
+  const normalizedRelativePath = normalizeRelativePath(relativePath);
+  return Uri.from({
+    scheme: 'workspace-vfs',
+    authority: encodeURIComponent(worktreePath),
+    path: normalizedRelativePath ? `/${normalizedRelativePath}` : '/',
+  });
 }
 
 async function openOrRevealFile(worktreePath: string, message: ElevenExOpenFileMessage): Promise<void> {
@@ -39,11 +54,7 @@ async function openOrRevealFile(worktreePath: string, message: ElevenExOpenFileM
     return;
   }
 
-  const uri = Uri.from({
-    scheme: 'workspace-vfs',
-    authority: encodeURIComponent(worktreePath),
-    path: `/${normalizedRelativePath}`,
-  });
+  const uri = toWorkspaceVfsUri(worktreePath, normalizedRelativePath);
 
   const preserveFocus = message.preserveFocus ?? true;
   const existingEditor = vscodeWindow.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
@@ -62,6 +73,99 @@ async function openOrRevealFile(worktreePath: string, message: ElevenExOpenFileM
     preserveFocus,
     preview: false,
   });
+}
+
+function toFileSearchItem(result: { path: string; name: string }): FileSearchQuickPickItem {
+  const normalizedPath = normalizeRelativePath(result.path);
+  const lastSlashIndex = normalizedPath.lastIndexOf('/');
+  const description = lastSlashIndex === -1
+    ? ''
+    : normalizedPath.slice(0, lastSlashIndex);
+
+  return {
+    label: result.name || normalizedPath,
+    description,
+    detail: normalizedPath,
+    path: normalizedPath,
+  };
+}
+
+async function openFileSearch(worktreePath: string, backendClient: BackendClient): Promise<void> {
+  const quickPick = vscodeWindow.createQuickPick<FileSearchQuickPickItem>();
+  quickPick.placeholder = 'Search files by name';
+  quickPick.matchOnDescription = true;
+  quickPick.matchOnDetail = true;
+  quickPick.ignoreFocusOut = false;
+  quickPick.busy = true;
+
+  let disposed = false;
+  let requestVersion = 0;
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const updateItems = async (query: string): Promise<void> => {
+    const version = ++requestVersion;
+    quickPick.busy = true;
+
+    try {
+      const results = await backendClient.searchFiles(worktreePath, query, 100);
+      if (disposed || version !== requestVersion) {
+        return;
+      }
+
+      quickPick.items = results.map(toFileSearchItem);
+    } catch (error) {
+      if (disposed || version !== requestVersion) {
+        return;
+      }
+
+      quickPick.items = [];
+      quickPick.placeholder = 'File search is unavailable';
+      console.error('Failed to search workspace files', error);
+    } finally {
+      if (!disposed && version === requestVersion) {
+        quickPick.busy = false;
+      }
+    }
+  };
+
+  const scheduleUpdate = (query: string): void => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+
+    debounceTimer = setTimeout(() => {
+      void updateItems(query);
+    }, 120);
+  };
+
+  quickPick.onDidChangeValue(scheduleUpdate);
+  quickPick.onDidAccept(() => {
+    const selected = quickPick.selectedItems[0];
+    if (!selected) {
+      return;
+    }
+
+    const uri = toWorkspaceVfsUri(worktreePath, selected.path);
+    quickPick.hide();
+    void (async () => {
+      try {
+        const document = await workspace.openTextDocument(uri);
+        await vscodeWindow.showTextDocument(document, { preview: true });
+      } catch (error) {
+        console.error('Failed to open file search selection', error);
+      }
+    })();
+  });
+  quickPick.onDidHide(() => {
+    disposed = true;
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+    quickPick.dispose();
+  });
+
+  quickPick.show();
+  await updateItems('');
 }
 
 /**
@@ -127,6 +231,11 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
   // Add registration to extension subscriptions (auto-cleanup on deactivate)
   context.subscriptions.push(registration);
   context.subscriptions.push(provider);
+  context.subscriptions.push(commands.registerCommand('elevenex.searchFiles', () => {
+    void openFileSearch(worktreePath, backendClient).catch(error => {
+      console.error('Failed to open ElevenEX file search', error);
+    });
+  }));
 
   // Connect WebSocket after registration
   // Backend file changes → WebSocket → provider._onDidChangeFile → VS Code cache invalidation

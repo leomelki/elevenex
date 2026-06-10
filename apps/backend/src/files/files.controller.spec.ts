@@ -18,6 +18,7 @@ describe('FilesController', () => {
           useValue: {
             stat: jest.fn(),
             suggestPaths: jest.fn(),
+            searchFiles: jest.fn(),
             listFiles: jest.fn(),
             readFile: jest.fn(),
             writeFile: jest.fn(),
@@ -81,6 +82,37 @@ describe('FilesController', () => {
       await expect(
         controller.createDirectory(encodeURIComponent('/tmp/worktree'), 'src'),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('searchFiles', () => {
+    it('delegates with decoded worktree path, query, and parsed limit', async () => {
+      const searchFiles = jest
+        .fn()
+        .mockResolvedValue([{ path: 'src/app.ts', name: 'app.ts' }]);
+      service.searchFiles = searchFiles;
+
+      const result = await controller.searchFiles(
+        encodeURIComponent('/tmp/worktree path'),
+        'app',
+        '25',
+      );
+
+      expect(result).toEqual([{ path: 'src/app.ts', name: 'app.ts' }]);
+      expect(searchFiles).toHaveBeenCalledWith(
+        '/tmp/worktree path',
+        'app',
+        25,
+      );
+    });
+
+    it('defaults missing query and limit', async () => {
+      const searchFiles = jest.fn().mockResolvedValue([]);
+      service.searchFiles = searchFiles;
+
+      await controller.searchFiles(encodeURIComponent('/tmp/worktree'));
+
+      expect(searchFiles).toHaveBeenCalledWith('/tmp/worktree', '', undefined);
     });
   });
 

@@ -35,3 +35,8 @@ export interface BackendDirectoryEntry {
 export interface BackendWriteRequest {
   content: string;
 }
+
+export interface BackendFileSearchResult {
+  path: string;
+  name: string;
+}

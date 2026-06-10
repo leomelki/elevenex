@@ -1,5 +1,10 @@
 import { Uri, FileType, FileSystemError } from 'vscode';
-import { BackendFileStat, BackendDirectoryEntry, BackendWriteRequest } from './types';
+import {
+  BackendFileSearchResult,
+  BackendFileStat,
+  BackendDirectoryEntry,
+  BackendWriteRequest,
+} from './types';
 
 type BrowserLocationLike = {
   origin?: string;
@@ -220,6 +225,29 @@ export class BackendClient {
       entry.label,
       entry.data.type === 'file' ? FileType.File : FileType.Directory
     ]);
+  }
+
+  async searchFiles(
+    worktreePath: string,
+    query: string = '',
+    limit: number = 100,
+  ): Promise<BackendFileSearchResult[]> {
+    const encodedWorktreePath = encodeURIComponent(worktreePath);
+    const params = new URLSearchParams();
+    if (query) {
+      params.set('query', query);
+    }
+    params.set('limit', String(limit));
+
+    const response = await fetch(
+      `${this.baseUrl}/${encodedWorktreePath}/file-search?${params.toString()}`,
+    );
+
+    if (!response.ok) {
+      throw this.mapHttpError(response.status, toWorkspaceUri(worktreePath, ''));
+    }
+
+    return response.json() as Promise<BackendFileSearchResult[]>;
   }
 
   /**

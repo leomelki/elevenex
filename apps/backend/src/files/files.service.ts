@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { spawn } from 'node:child_process';
 import { promises as fs, Dirent } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -21,6 +22,15 @@ export interface PathSuggestion {
   isExactParent: boolean;
   trailingSlashHint: boolean;
 }
+
+export interface FileSearchResult {
+  path: string;
+  name: string;
+}
+
+const DEFAULT_FILE_SEARCH_LIMIT = 100;
+const MAX_FILE_SEARCH_LIMIT = 500;
+const FALLBACK_WALK_MAX_FILES = 20_000;
 
 /**
  * Map file extensions to Monaco language IDs
@@ -97,6 +107,121 @@ async function isDirectory(targetPath: string): Promise<boolean> {
   }
 }
 
+function toPosixPath(inputPath: string): string {
+  return inputPath.split(path.sep).join('/');
+}
+
+function isSearchableRelativePath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, '/');
+  if (!normalized || normalized.startsWith('../') || normalized === '..') {
+    return false;
+  }
+
+  return !normalized.split('/').some((segment) => segment === '.git');
+}
+
+function normalizeFileSearchLimit(limit?: number): number {
+  if (!Number.isFinite(limit) || !limit) {
+    return DEFAULT_FILE_SEARCH_LIMIT;
+  }
+
+  return Math.max(1, Math.min(MAX_FILE_SEARCH_LIMIT, Math.floor(limit)));
+}
+
+function normalizeFileSearchQuery(query: string): string {
+  return query.trim().toLowerCase().replace(/\\/g, '/');
+}
+
+function isFuzzyMatch(candidate: string, query: string): boolean {
+  if (!query) {
+    return true;
+  }
+
+  let queryIndex = 0;
+  for (
+    let index = 0;
+    index < candidate.length && queryIndex < query.length;
+    index += 1
+  ) {
+    if (candidate[index] === query[queryIndex]) {
+      queryIndex += 1;
+    }
+  }
+
+  return queryIndex === query.length;
+}
+
+function rankSearchPath(relativePath: string, query: string): number | null {
+  const normalizedPath = relativePath.toLowerCase();
+  const basename = path.posix.basename(normalizedPath);
+
+  if (!query) {
+    return 0;
+  }
+
+  if (basename.startsWith(query)) {
+    return 0;
+  }
+
+  if (basename.includes(query)) {
+    return 1;
+  }
+
+  if (normalizedPath.includes(query)) {
+    return 2;
+  }
+
+  if (isFuzzyMatch(normalizedPath, query)) {
+    return 3;
+  }
+
+  return null;
+}
+
+function runGitLsFiles(worktreePath: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'git',
+      [
+        '-C',
+        worktreePath,
+        'ls-files',
+        '--cached',
+        '--others',
+        '--exclude-standard',
+        '-z',
+      ],
+      {
+        windowsHide: true,
+      },
+    );
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            Buffer.concat(stderr).toString('utf8') ||
+              `git ls-files exited with code ${code}`,
+          ),
+        );
+        return;
+      }
+
+      resolve(
+        Buffer.concat(stdout)
+          .toString('utf8')
+          .split('\0')
+          .filter(Boolean),
+      );
+    });
+  });
+}
+
 async function resolveExistingParentDirectory(
   targetDirectory: string,
 ): Promise<{
@@ -134,6 +259,121 @@ async function resolveExistingParentDirectory(
 
 @Injectable()
 export class FilesService {
+  async searchFiles(
+    worktreePath: string,
+    query: string = '',
+    limit?: number,
+  ): Promise<FileSearchResult[]> {
+    const resolvedWorktree = path.resolve(worktreePath);
+    let stat;
+    try {
+      stat = await fs.stat(resolvedWorktree);
+    } catch {
+      throw new BadRequestException(`Directory does not exist: ${worktreePath}`);
+    }
+
+    if (!stat.isDirectory()) {
+      throw new BadRequestException(`Path is not a directory: ${worktreePath}`);
+    }
+
+    const normalizedQuery = normalizeFileSearchQuery(query);
+    const normalizedLimit = normalizeFileSearchLimit(limit);
+    const candidates = await this.listSearchCandidatePaths(resolvedWorktree);
+
+    return candidates
+      .map((candidate) => {
+        const relativePath = candidate.replace(/\\/g, '/');
+        const rank = rankSearchPath(relativePath, normalizedQuery);
+        return rank === null
+          ? null
+          : {
+              rank,
+              path: relativePath,
+              name: path.posix.basename(relativePath),
+            };
+      })
+      .filter(
+        (item): item is FileSearchResult & { rank: number } => item !== null,
+      )
+      .sort((left, right) => {
+        if (left.rank !== right.rank) {
+          return left.rank - right.rank;
+        }
+
+        const leftName = left.name.toLowerCase();
+        const rightName = right.name.toLowerCase();
+        if (leftName !== rightName) {
+          return leftName.localeCompare(rightName);
+        }
+
+        return left.path.localeCompare(right.path);
+      })
+      .slice(0, normalizedLimit)
+      .map(({ path: resultPath, name }) => ({ path: resultPath, name }));
+  }
+
+  private async listSearchCandidatePaths(
+    worktreePath: string,
+  ): Promise<string[]> {
+    try {
+      const gitPaths = await runGitLsFiles(worktreePath);
+      return gitPaths
+        .map((item) => item.replace(/\\/g, '/'))
+        .filter(isSearchableRelativePath);
+    } catch {
+      return this.walkSearchCandidatePaths(worktreePath);
+    }
+  }
+
+  private async walkSearchCandidatePaths(
+    worktreePath: string,
+  ): Promise<string[]> {
+    const results: string[] = [];
+    const queue = [''];
+
+    while (queue.length > 0 && results.length < FALLBACK_WALK_MAX_FILES) {
+      const relativeDirectory = queue.shift()!;
+      const absoluteDirectory = relativeDirectory
+        ? path.join(worktreePath, relativeDirectory)
+        : worktreePath;
+
+      let entries: Dirent[];
+      try {
+        entries = await fs.readdir(absoluteDirectory, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (
+          entry.name === '.git' ||
+          entry.name === 'node_modules' ||
+          entry.name.startsWith('.')
+        ) {
+          continue;
+        }
+
+        const relativePath = relativeDirectory
+          ? `${toPosixPath(relativeDirectory)}/${entry.name}`
+          : entry.name;
+
+        if (entry.isDirectory()) {
+          queue.push(relativePath);
+          continue;
+        }
+
+        if (entry.isFile() && isSearchableRelativePath(relativePath)) {
+          results.push(relativePath);
+          if (results.length >= FALLBACK_WALK_MAX_FILES) {
+            break;
+          }
+        }
+      }
+    }
+
+    return results;
+  }
+
   async suggestPaths(
     rawInput: string,
     targetKind: PathSuggestionTargetKind = 'either',
