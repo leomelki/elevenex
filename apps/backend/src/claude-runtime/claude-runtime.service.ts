@@ -255,6 +255,7 @@ interface RuntimeState {
   lastHistoryLoadedAtMs: number | null;
   lastHistorySource: 'sdk' | 'transcript' | null;
   transcriptFallbackUsed: boolean;
+  llmRunCount: number;
   warmState: ClaudeRuntimeWarmState;
   lastWarmedAt: string | null;
   lastPromptTiming: ClaudeRuntimePromptTiming | null;
@@ -2490,6 +2491,19 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
 
     const state = this.ensureRuntimeState(sessionId);
+    state.llmRunCount += 1;
+    const resultUsage = (message as {
+      usage?: { total_tokens?: number | null };
+    }).usage;
+    const totalTokens =
+      resultUsage && typeof resultUsage.total_tokens === 'number'
+        ? resultUsage.total_tokens
+        : null;
+    const runId = run?.runId ?? 'unknown';
+    this.logger.log(
+      `Claude result complete session=${sessionId} run=${runId} totalTokens=${totalTokens ?? 'n/a'} runCount=${state.llmRunCount} isError=${Boolean(message.is_error)}`,
+    );
+
     if (message.is_error) {
       const errorMessage =
         ('errors' in message ? message.errors.join('\n') : '') ||
@@ -3440,7 +3454,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       lastHistoryItemCount: null,
       lastHistoryLoadedAtMs: null,
       lastHistorySource: null,
-      transcriptFallbackUsed: false,
+        transcriptFallbackUsed: false,
+      llmRunCount: 0,
       warmState: 'cold',
       lastWarmedAt: null,
       lastPromptTiming: null,
