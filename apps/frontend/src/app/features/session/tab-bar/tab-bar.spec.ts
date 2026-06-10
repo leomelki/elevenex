@@ -98,6 +98,37 @@ describe('TabBar', () => {
     expect(agentControl.context().kind).toBe('global');
   });
 
+  it('keys the commit button by git context instead of active session identity', () => {
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [
+      { ...baseTab, sessionId: 42, sessionName: 'Session 42', workspaceName: 'Main workspace' },
+      { ...baseTab, sessionId: 43, sessionName: 'Session 43', workspaceName: 'Second workspace' },
+    ]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.detectChanges();
+
+    const firstKey = fixture.componentInstance.commitContextKey();
+
+    fixture.componentRef.setInput('activeSessionId', 43);
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.commitContextKey()).toBe(firstKey);
+
+    fixture.componentRef.setInput('tabs', [
+      { ...baseTab, sessionId: 42, sessionName: 'Session 42', workspaceName: 'Main workspace' },
+      {
+        ...baseTab,
+        sessionId: 43,
+        sessionName: 'Session 43',
+        branchName: 'feature',
+        workspaceName: 'Second workspace',
+      },
+    ]);
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.commitContextKey()).not.toBe(firstKey);
+  });
+
   it('shows the completion badge when a tab has unreviewed completion', () => {
     const fixture = TestBed.createComponent(TabBar);
     fixture.componentRef.setInput('tabs', [{ ...baseTab, hasUnreviewedCompletion: true }]);
