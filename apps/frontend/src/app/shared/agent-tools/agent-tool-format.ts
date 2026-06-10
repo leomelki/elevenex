@@ -263,9 +263,9 @@ export function describeTool(
     return { kind: 'notebook_edit', icon: 'lucideFilePen', verb: 'Edit notebook', target: displayPath(p || '') };
   }
   // Bash / PowerShell
-  if (n === 'bash' || n === 'powershell') {
-    const cmd = String(data['command'] ?? '').trim();
-    const readPath = n === 'bash' ? codexReadActionPath(data) : null;
+  if (n === 'bash' || n === 'powershell' || n === 'execcommand') {
+    const cmd = String(data['command'] ?? data['cmd'] ?? '').trim();
+    const readPath = n === 'bash' || n === 'execcommand' ? codexReadActionPath(data) : null;
     if (readPath) {
       return { kind: 'read', icon: 'lucideFileText', verb: 'Read', target: displayPath(readPath) };
     }

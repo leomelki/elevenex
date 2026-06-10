@@ -77,6 +77,26 @@ describe('tool-format', () => {
     });
   });
 
+  it('treats restored Codex exec_command calls like Bash calls', () => {
+    const display = describeTool('exec_command', {
+      command: "sed -n '1,10p' apps/frontend/src/main.ts",
+      command_actions: [
+        {
+          type: 'read',
+          command: "sed -n '1,10p' apps/frontend/src/main.ts",
+          name: 'main.ts',
+          path: '/repo/apps/frontend/src/main.ts',
+        },
+      ],
+    });
+
+    expect(display).toMatchObject({
+      kind: 'read',
+      verb: 'Read',
+      target: 'â€¦/frontend/src/main.ts',
+    });
+  });
+
   it('uses the ask-user-question prompt text instead of a count label', () => {
     const display = describeTool('AskUserQuestion', {
       questions: [

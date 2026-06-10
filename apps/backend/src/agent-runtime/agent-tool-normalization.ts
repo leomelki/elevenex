@@ -99,7 +99,8 @@ export function canonicalizeAgentTool(
   if (
     normalized === 'bash' ||
     normalized === 'powershell' ||
-    normalized === 'shellcommand'
+    normalized === 'shellcommand' ||
+    normalized === 'execcommand'
   ) {
     const readPath = readActionPath(input);
     if (readPath) {

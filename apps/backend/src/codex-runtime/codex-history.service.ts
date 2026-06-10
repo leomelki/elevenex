@@ -422,7 +422,7 @@ export class CodexHistoryService {
   }
 
   private normalizeToolName(name: string): string {
-    if (name === 'shell_command') {
+    if (name === 'shell_command' || name === 'exec_command') {
       return 'Bash';
     }
     if (name === 'apply_patch') {
@@ -445,13 +445,16 @@ export class CodexHistoryService {
   private normalizeToolInput(toolName: string, value: unknown): unknown {
     const parsed = this.parseToolArguments(value);
     const args = asRecord(parsed);
-    if (toolName === 'shell_command') {
+    if (toolName === 'shell_command' || toolName === 'exec_command') {
+      const commandActions =
+        arrayValue(args?.commandActions) ?? arrayValue(args?.command_actions);
       return {
         command:
           stringValue(args?.command) ??
           stringValue(args?.cmd) ??
           stringValue(args?.input) ??
           (typeof value === 'string' ? value : ''),
+        ...(commandActions ? { commandActions } : {}),
       };
     }
     if (toolName === 'apply_patch') {
@@ -584,6 +587,10 @@ function asRecord(value: unknown): JsonRecord | null {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function arrayValue(value: unknown): unknown[] | undefined {
+  return Array.isArray(value) ? value : undefined;
 }
 
 function cloneJsonRecord(record: JsonRecord): JsonRecord {

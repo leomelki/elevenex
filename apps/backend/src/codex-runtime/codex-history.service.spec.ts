@@ -28,6 +28,91 @@ describe('CodexHistoryService', () => {
     });
   });
 
+  it('normalizes restored exec_command calls as Bash tool calls', () => {
+    const service = new CodexHistoryService();
+    const item = (
+      service as unknown as {
+        normalizeResponseItem: (
+          item: Record<string, unknown>,
+          timestamp: string,
+          index: number,
+        ) => unknown;
+      }
+    ).normalizeResponseItem(
+      {
+        id: 'call-1',
+        type: 'function_call',
+        name: 'exec_command',
+        call_id: 'tool-1',
+        arguments: JSON.stringify({ cmd: 'pnpm test' }),
+      },
+      '2026-05-22T10:00:00.000Z',
+      0,
+    );
+
+    expect(item).toMatchObject({
+      kind: 'tool_use',
+      toolUseId: 'tool-1',
+      toolName: 'Bash',
+      providerToolName: 'Bash',
+      toolKind: 'bash',
+      toolDisplayName: 'Bash',
+      toolInput: { command: 'pnpm test' },
+      providerToolInput: { command: 'pnpm test' },
+    });
+  });
+
+  it('keeps Codex parsed read actions when restoring exec_command history', () => {
+    const service = new CodexHistoryService();
+    const commandActions = [
+      {
+        type: 'read',
+        command: "sed -n '1,20p' package.json",
+        name: 'package.json',
+        path: '/repo/package.json',
+      },
+    ];
+    const item = (
+      service as unknown as {
+        normalizeResponseItem: (
+          item: Record<string, unknown>,
+          timestamp: string,
+          index: number,
+        ) => unknown;
+      }
+    ).normalizeResponseItem(
+      {
+        id: 'call-1',
+        type: 'function_call',
+        name: 'exec_command',
+        call_id: 'tool-1',
+        arguments: JSON.stringify({
+          cmd: "sed -n '1,20p' package.json",
+          command_actions: commandActions,
+        }),
+      },
+      '2026-05-22T10:00:00.000Z',
+      0,
+    );
+
+    expect(item).toMatchObject({
+      kind: 'tool_use',
+      toolName: 'Bash',
+      providerToolName: 'Bash',
+      toolKind: 'read',
+      toolDisplayName: 'Read',
+      toolInput: {
+        command: "sed -n '1,20p' package.json",
+        file_path: '/repo/package.json',
+        commandActions,
+      },
+      providerToolInput: {
+        command: "sed -n '1,20p' package.json",
+        commandActions,
+      },
+    });
+  });
+
   it('clones, slices, and rewrites a Codex JSONL thread for assistant anchors', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
     try {

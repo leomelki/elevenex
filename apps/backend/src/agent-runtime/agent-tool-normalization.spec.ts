@@ -27,6 +27,7 @@ describe('agent-tool-normalization', () => {
       { changes: [{ path: '/repo/file.ts', kind: 'update' }] },
       'file_changes',
     ],
+    ['exec_command', { command: 'pnpm test' }, 'bash'],
     ['mcp__server__tool', { server: 'server', arguments: {} }, 'mcp'],
   ])('maps %s to %s', (toolName, input, expectedKind) => {
     expect(canonicalizeAgentTool(toolName, input).toolKind).toBe(expectedKind);
