@@ -183,6 +183,7 @@
                 <button
                   class="sidebar-tree-row w-full text-left group"
                   [class.sidebar-tree-row--busy]="isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)"
+                  [class.opacity-60]="isWorkspaceUnlinked(workspace)"
                   [disabled]="openingWorkspaceRepoId() !== null || isSwitchingWorkspace(repo, workspace)"
                   [attr.data-workspace-row]="workspace.path"
                   [attr.title]="getWorkspaceTooltip(workspace)"
@@ -195,7 +196,7 @@
                   }
                   @if (isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)) {
                     <span class="inline-block w-4 h-4 shrink-0 rounded-full border-2 border-muted-foreground/50 border-t-transparent animate-spin"></span>
-                  } @else if (workspace.isMissing) {
+                  } @else if (workspace.isMissing || isWorkspaceUnlinked(workspace)) {
                     <ng-icon name="lucideAlertCircle" class="!w-4 !h-4 text-destructive shrink-0" />
                   } @else {
                     <ng-icon name="lucideFolderOpen" class="!w-4 !h-4 text-foreground shrink-0" />
@@ -203,6 +204,15 @@
                   <span class="text-sm truncate flex-1 sidebar-label--branch" [title]="getWorkspaceTooltip(workspace)">
                     {{ workspace.name }}
                     <span class="text-xs text-muted-foreground">{{ workspace.currentBranch || 'detached' }}</span>
+                    @if (isWorkspaceUnlinked(workspace)) {
+                      <span class="text-xs text-warning">Unlinked</span>
+                    }
+                    @if (workspace.hasConflicts) {
+                      <span class="text-xs text-destructive">Conflicts</span>
+                    }
+                    @if (workspace.pendingStashStatus === 'pending') {
+                      <span class="text-xs text-warning">Stash</span>
+                    }
                   </span>
                    <!-- Action buttons (visible on hover) -->
                    <span class="sidebar-actions">
@@ -210,12 +220,20 @@
                        <span class="text-xs text-muted-foreground">Opening…</span>
                      } @else if (isSwitchingWorkspace(repo, workspace)) {
                        <span class="text-xs text-muted-foreground">Switching…</span>
+                     } @else if (isWorkspaceUnlinked(workspace)) {
+                       <button
+                         class="sidebar-branch-action"
+                         title="Link back"
+                         aria-label="Link back"
+                         (click)="$event.stopPropagation(); openLinkWorkspaceBack(repo, workspace)">
+                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                       </button>
                      } @else {
                        <button
                          class="sidebar-branch-action"
                          title="Branches"
                          aria-label="Branches"
-                         [disabled]="workspace.isMissing"
+                         [disabled]="workspace.isMissing || isWorkspaceUnlinked(workspace)"
                          [attr.data-workspace-branch-trigger]="workspace.path"
                          (click)="$event.stopPropagation(); switchWorkspaceBranch(repo, workspace)">
                          <ng-icon name="lucideGitBranch" class="!w-3.5 !h-3.5" />
@@ -242,7 +260,7 @@
                          class="sidebar-branch-action"
                          title="Open in Cursor"
                          aria-label="Open in Cursor"
-                         [disabled]="workspace.isMissing"
+                         [disabled]="workspace.isMissing || isWorkspaceUnlinked(workspace)"
                          (click)="$event.stopPropagation(); openWorkspaceInCursor(repo, workspace)">
                          <ng-icon name="lucideSquareArrowOutUpRight" class="!w-3.5 !h-3.5" />
                        </button>
@@ -250,7 +268,7 @@
                          class="sidebar-branch-action"
                          title="New Session"
                          aria-label="New Session"
-                         [disabled]="workspace.isMissing"
+                         [disabled]="workspace.isMissing || isWorkspaceUnlinked(workspace)"
                          (click)="$event.stopPropagation(); createSessionOnWorkspace(repo, workspace)">
                          <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                        </button>
@@ -263,10 +281,11 @@
                       <!-- Session node -->
                       <div
                         class="sidebar-tree-row w-full cursor-pointer group"
+                        [class.opacity-60]="isWorkspaceUnlinked(workspace)"
                         [class.session-selected]="session.id === activeSessionId()"
                         [attr.data-session-row-id]="session.id"
                         [style.padding-left]="'64px'"
-                        (click)="onSessionClick(session)">
+                        (click)="isWorkspaceUnlinked(workspace) ? $event.stopPropagation() : onSessionClick(session)">
                         <div
                           class="flex items-center gap-1 flex-1 min-w-0">
                           <span class="sidebar-status-dot"
@@ -393,10 +412,11 @@
                        @for (session of workspace.archivedSessions ?? []; track session.id) {
                          <div
                            class="sidebar-tree-row sidebar-tree-row--archived w-full cursor-pointer group"
+                           [class.opacity-60]="isWorkspaceUnlinked(workspace)"
                            [class.session-selected]="session.id === activeSessionId()"
                            [attr.data-session-row-id]="session.id"
                            [style.padding-left]="'82px'"
-                           (click)="onSessionClick(session)">
+                           (click)="isWorkspaceUnlinked(workspace) ? $event.stopPropagation() : onSessionClick(session)">
                            <div class="flex items-center gap-1 flex-1 min-w-0">
                              @if (editingSessionTitleId() === session.id) {
                                <input

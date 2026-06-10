@@ -4,8 +4,10 @@ import { TestBed } from '@angular/core/testing';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { of, Subject } from 'rxjs';
 import { WorktreeSheet } from './worktree-sheet';
-import { WorkspacesService } from '../../../shared/services/workspaces.service';
-import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
+import { WorktreesService } from '@/shared/services/worktrees.service';
+import { SessionsService } from '@/shared/services/sessions.service';
+import { NavigationService } from '@/shared/services/navigation.service';
+import { WorktreePoolItem } from '@/shared/models/worktree.model';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -37,20 +39,53 @@ class MockPathAutocompleteInputComponent {
   readonly valueChange = output<string>();
 }
 
+function poolItem(patch: Partial<WorktreePoolItem> = {}): WorktreePoolItem {
+  return {
+    id: 11,
+    repoRootPath: '/tmp/repo',
+    path: '/tmp/repo-feature',
+    name: 'feature',
+    createdFromRef: 'feature',
+    currentBranch: 'feature',
+    head: 'abc',
+    isDetached: false,
+    isBare: false,
+    isLocked: false,
+    lockReason: null,
+    isMissing: false,
+    isDirty: false,
+    hasConflicts: false,
+    owner: null,
+    projectWorkspace: null,
+    ...patch,
+  };
+}
+
 describe('WorktreeSheet', () => {
-  const workspacesServiceMock = {
+  const worktreesServiceMock = {
+    getPoolByRepo: vi.fn(),
+    createPool: vi.fn(),
+    linkPool: vi.fn(),
+  };
+  const sessionsServiceMock = {
     create: vi.fn(),
   };
-  const pendingWorkspaceCreationsMock = {
-    register: vi.fn(),
-    hasPendingForRepoPath: vi.fn(() => false),
+  const navigationServiceMock = {
+    refreshTree: vi.fn(),
+    openSession: vi.fn(),
   };
 
   beforeEach(async () => {
-    workspacesServiceMock.create.mockReset();
-    pendingWorkspaceCreationsMock.register.mockReset();
-    pendingWorkspaceCreationsMock.hasPendingForRepoPath.mockReset();
-    pendingWorkspaceCreationsMock.hasPendingForRepoPath.mockReturnValue(false);
+    vi.restoreAllMocks();
+    worktreesServiceMock.getPoolByRepo.mockReset();
+    worktreesServiceMock.createPool.mockReset();
+    worktreesServiceMock.linkPool.mockReset();
+    sessionsServiceMock.create.mockReset();
+    navigationServiceMock.refreshTree.mockReset();
+    navigationServiceMock.openSession.mockReset();
+    worktreesServiceMock.getPoolByRepo.mockReturnValue(of([]));
+    worktreesServiceMock.linkPool.mockReturnValue(of({ id: 99, repoId: 7 }));
+    sessionsServiceMock.create.mockReturnValue(of({ id: 123 }));
 
     TestBed.resetTestingModule();
     TestBed.overrideComponent(WorktreeSheet, {
@@ -62,89 +97,15 @@ describe('WorktreeSheet', () => {
     await TestBed.configureTestingModule({
       imports: [WorktreeSheet],
       providers: [
-        { provide: WorkspacesService, useValue: workspacesServiceMock },
-        { provide: PendingWorkspaceCreationsService, useValue: pendingWorkspaceCreationsMock },
+        { provide: WorktreesService, useValue: worktreesServiceMock },
+        { provide: SessionsService, useValue: sessionsServiceMock },
+        { provide: NavigationService, useValue: navigationServiceMock },
       ],
     }).compileComponents();
   });
 
-  it('starts a workspace creation job from the selected branch and closes immediately', () => {
-    const job = {
-      jobId: 'job-1',
-      repoId: 7,
-      name: 'feature',
-      startPoint: 'feature',
-      worktreePath: '/tmp/repo/.worktrees/feature',
-      status: 'pending' as const,
-    };
-    workspacesServiceMock.create.mockReturnValue(of(job));
-
-    const fixture = TestBed.createComponent(WorktreeSheet);
-    const component = fixture.componentInstance;
-    fixture.detectChanges();
-
-    const dialog = component.dialogRef as unknown as MockTrackNativeModalDirective;
-    component.repoId.set(7);
-    component.branchName.set('feature');
-    component.workspaceName.set('feature');
-    component.worktreePath.set('/tmp/repo/.worktrees/feature');
-    component.autoCreateSession.set(true);
-
-    component.submit();
-
-    expect(workspacesServiceMock.create).toHaveBeenCalledWith(7, {
-      name: 'feature',
-      path: '/tmp/repo/.worktrees/feature',
-      startPoint: 'feature',
-    });
-    expect(pendingWorkspaceCreationsMock.register).toHaveBeenCalledWith(job, true);
-    expect(dialog.close).toHaveBeenCalledOnce();
-    expect(component.creating()).toBe(false);
-  });
-
-  it('ignores duplicate submits while creation is already in progress', () => {
-    const createSubject = new Subject<any>();
-    workspacesServiceMock.create.mockReturnValue(createSubject.asObservable());
-
-    const fixture = TestBed.createComponent(WorktreeSheet);
-    const component = fixture.componentInstance;
-    fixture.detectChanges();
-
-    component.repoId.set(7);
-    component.branchName.set('feature');
-    component.workspaceName.set('feature');
-    component.worktreePath.set('/tmp/repo/.worktrees/feature');
-
-    component.submit();
-    component.submit();
-
-    expect(workspacesServiceMock.create).toHaveBeenCalledOnce();
-    expect(pendingWorkspaceCreationsMock.register).not.toHaveBeenCalled();
-  });
-
-  it('ignores duplicate submits when the path is already pending', () => {
-    pendingWorkspaceCreationsMock.hasPendingForRepoPath.mockReturnValue(true);
-
-    const fixture = TestBed.createComponent(WorktreeSheet);
-    const component = fixture.componentInstance;
-    fixture.detectChanges();
-
-    component.repoId.set(7);
-    component.branchName.set('feature');
-    component.workspaceName.set('feature');
-    component.worktreePath.set('/tmp/repo/.worktrees/feature');
-
-    component.submit();
-
-    expect(pendingWorkspaceCreationsMock.hasPendingForRepoPath).toHaveBeenCalledWith(
-      7,
-      '/tmp/repo/.worktrees/feature',
-    );
-    expect(workspacesServiceMock.create).not.toHaveBeenCalled();
-    expect(pendingWorkspaceCreationsMock.register).not.toHaveBeenCalled();
-  });
-
-  it('prefills the default path with the supplied repo name segment', () => {
+  it('opens with a repo-scoped pool and default create path', () => {
+    worktreesServiceMock.getPoolByRepo.mockReturnValue(of([poolItem()]));
     const fixture = TestBed.createComponent(WorktreeSheet);
     const component = fixture.componentInstance;
     fixture.detectChanges();
@@ -152,7 +113,86 @@ describe('WorktreeSheet', () => {
     const dialog = component.dialogRef as unknown as MockTrackNativeModalDirective;
     component.open(7, 'feature', '/tmp/repos/path-basename', 'repo-one');
 
-    expect(component.worktreePath()).toBe('/tmp/repos/.worktrees/repo-one/feature');
+    expect(component.createPath()).toBe('/tmp/repos/.worktrees/repo-one/feature');
+    expect(component.pool()).toHaveLength(1);
+    expect(worktreesServiceMock.getPoolByRepo).toHaveBeenCalledWith(7);
     expect(dialog.open).toHaveBeenCalledOnce();
+  });
+
+  it('creates a pool worktree and links it to the current project', () => {
+    const created = poolItem({ id: 22 });
+    worktreesServiceMock.createPool.mockReturnValue(of(created));
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.branchName.set('feature');
+    component.createName.set('feature');
+    component.createPath.set('/tmp/repo-feature');
+
+    component.createAndLink();
+
+    expect(worktreesServiceMock.createPool).toHaveBeenCalledWith(7, {
+      name: 'feature',
+      path: '/tmp/repo-feature',
+      startPoint: 'feature',
+    });
+    expect(worktreesServiceMock.linkPool).toHaveBeenCalledWith(7, 22, {
+      workspaceName: 'feature',
+      branchName: 'feature',
+      confirmTakeover: false,
+      confirmStash: false,
+      applyPendingStash: false,
+    });
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
+  });
+
+  it('ignores duplicate creates while creation is in progress', () => {
+    const createSubject = new Subject<WorktreePoolItem>();
+    worktreesServiceMock.createPool.mockReturnValue(createSubject.asObservable());
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.branchName.set('feature');
+    component.createName.set('feature');
+    component.createPath.set('/tmp/repo-feature');
+
+    component.createAndLink();
+    component.createAndLink();
+
+    expect(worktreesServiceMock.createPool).toHaveBeenCalledOnce();
+  });
+
+  it('confirms takeover and dirty stashing before linking', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const item = poolItem({
+      isDirty: true,
+      owner: {
+        projectId: 2,
+        projectName: 'Other',
+        repoId: 8,
+        workspaceId: 55,
+        workspaceName: 'feature',
+        linkStatus: 'linked',
+      },
+    });
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.branchName.set('feature');
+    component.link(item);
+
+    expect(worktreesServiceMock.linkPool).toHaveBeenCalledWith(7, 11, {
+      workspaceName: 'feature',
+      branchName: 'feature',
+      confirmTakeover: true,
+      confirmStash: true,
+      applyPendingStash: false,
+    });
   });
 });

@@ -4,11 +4,12 @@ import { WorktreesService } from './worktrees.service.js';
 import { SessionsModule } from '../sessions/sessions.module.js';
 import { WorktreeCreationJobsService } from './worktree-creation-jobs.service.js';
 import { ProjectsModule } from '../projects/projects.module.js';
+import { WorktreePoolService } from './worktree-pool.service.js';
 
 @Module({
   imports: [ProjectsModule, SessionsModule],
   controllers: [WorktreesController],
-  providers: [WorktreesService, WorktreeCreationJobsService],
-  exports: [WorktreesService, WorktreeCreationJobsService],
+  providers: [WorktreesService, WorktreeCreationJobsService, WorktreePoolService],
+  exports: [WorktreesService, WorktreeCreationJobsService, WorktreePoolService],
 })
 export class WorktreesModule {}

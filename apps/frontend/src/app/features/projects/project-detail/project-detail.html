@@ -176,6 +176,10 @@
                   </div>
 
                   <div class="repo-row__actions">
+                    <button z-button zType="ghost" zSize="sm" type="button" [zDisabled]="isArchived()" [attr.aria-label]="'Manage worktrees for ' + repo.name" (click)="openRepoWorktrees(repo)">
+                      <ng-icon name="lucideGitBranch" size="14" />
+                      Worktrees
+                    </button>
                     <button z-button zType="ghost" zSize="sm" type="button" class="text-destructive" [zDisabled]="isArchived()" [attr.aria-label]="'Remove ' + repo.name" (click)="openRemoveRepoDialog(repo)">
                       <ng-icon name="lucideTrash2" size="14" />
                       Remove
@@ -600,4 +604,5 @@
       [isOpen]="true"
       (close)="toggleTodos()" />
   }
+  <app-worktree-sheet #worktreeSheet />
 }

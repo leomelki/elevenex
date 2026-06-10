@@ -370,6 +370,7 @@ export class Sidebar implements OnInit, OnDestroy {
     return [
       workspace.name,
       `Branch: ${workspace.currentBranch || 'detached'}`,
+      workspace.linkStatus === 'unlinked' ? 'Status: unlinked from worktree' : 'Status: linked',
       `Path: ${workspace.path}`,
     ].join('\n');
   }
@@ -569,7 +570,7 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   createSessionOnWorkspace(repo: NavigationRepo, workspace: NavigationWorkspace) {
-    if (this.openingWorkspaceRepoId() !== null || workspace.isMissing) {
+    if (this.openingWorkspaceRepoId() !== null || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) {
       return;
     }
 
@@ -597,7 +598,7 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   async openWorkspaceInCursor(repo: NavigationRepo, workspace: NavigationWorkspace) {
-    if (!workspace.path || workspace.isMissing) return;
+    if (!workspace.path || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) return;
 
     const snapshot = this.onboardingState.readSnapshot();
     const activeServer = snapshot.mode === 'ssh' && snapshot.remoteConnectionReady
@@ -975,6 +976,15 @@ export class Sidebar implements OnInit, OnDestroy {
       lockReason: null,
       isMissing: !branch.hasWorktree,
       isDirty: false,
+      hasConflicts: false,
+      linkStatus: 'linked',
+      desiredBranch: null,
+      unlinkedAt: null,
+      unlinkedByProjectId: null,
+      pendingStashCommit: null,
+      pendingStashMessage: null,
+      pendingStashCreatedAt: null,
+      pendingStashStatus: null,
       branchCheckedOutElsewhere: false,
       checkedOutElsewherePath: null,
       sessions: branch.sessions,
@@ -1006,7 +1016,13 @@ export class Sidebar implements OnInit, OnDestroy {
 
     if (target) {
       if (event.branch.hasWorktree) {
-        toast.error('That branch is already checked out in another worktree.');
+        this.worktreeSheet.open(
+          event.repo.id,
+          event.branch.name,
+          event.repo.path,
+          event.repo.name,
+          false,
+        );
         return;
       }
       this.checkoutWorkspaceBranch(target.repo, target.workspace, event.branch.name);
@@ -1041,11 +1057,6 @@ export class Sidebar implements OnInit, OnDestroy {
     this.openWorktreeTimer = window.setTimeout(() => {
       this.openWorktreeTimer = null;
       try {
-        const existingWorktreePath = this.getExistingWorktreePath(branch);
-        if (existingWorktreePath) {
-          this.attachExistingWorktree(repo, branch.name, existingWorktreePath);
-          return;
-        }
         this.worktreeSheet.open(repo.id, branch.name, repo.path, repo.name, true);
       } finally {
         this.openingWorktreeBranchKey.set(null);
@@ -1053,47 +1064,12 @@ export class Sidebar implements OnInit, OnDestroy {
     }, 0);
   }
 
-  private attachExistingWorktree(repo: NavigationRepo, branchName: string, worktreePath: string) {
-    this.workspacesService.attach(repo.id, {
-      path: worktreePath,
-      name: branchName,
-    }).subscribe({
-      next: (workspace) => {
-        this.sessionsService.create({
-          repoId: repo.id,
-          workspaceId: workspace.id,
-        }).subscribe({
-          next: (session) => {
-            this.navService.refreshTree();
-            this.navService.openSession(session.id);
-          },
-          error: (err) => {
-            const msg = err?.error?.message || 'Unknown error';
-            toast.error(`Worktree attached, but session could not be created. ${msg}`);
-            this.navService.refreshTree();
-          },
-        });
-      },
-      error: (err) => {
-        const msg = err?.error?.message || 'Unknown error';
-        toast.error(`Could not attach worktree. ${msg}`);
-      },
-    });
-  }
-
-  private getExistingWorktreePath(branch: NavigationBranch | BranchInfo | { name: string }): string | null {
-    if ('hasWorktree' in branch && branch.hasWorktree && branch.worktreePath) {
-      return branch.worktreePath;
-    }
-    return null;
-  }
-
   isOpeningWorktree(repo: NavigationRepo, branch: NavigationBranch | BranchInfo | { name: string }): boolean {
     return this.openingWorktreeBranchKey() === this.getWorktreeBranchKey(repo.id, branch.name);
   }
 
   switchWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace) {
-    if (this.isSwitchingWorkspace(repo, workspace)) {
+    if (this.isSwitchingWorkspace(repo, workspace) || this.isWorkspaceUnlinked(workspace)) {
       return;
     }
 
@@ -1124,6 +1100,20 @@ export class Sidebar implements OnInit, OnDestroy {
         toast.error(err?.error?.message || 'Could not switch branch');
       },
     });
+  }
+
+  openLinkWorkspaceBack(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    this.worktreeSheet.open(
+      repo.id,
+      workspace.desiredBranch || workspace.currentBranch || 'HEAD',
+      repo.path,
+      repo.name,
+      false,
+    );
+  }
+
+  isWorkspaceUnlinked(workspace: NavigationWorkspace): boolean {
+    return workspace.linkStatus === 'unlinked';
   }
 
   private getWorktreeBranchKey(repoId: number, branchName: string): string {

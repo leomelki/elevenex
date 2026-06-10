@@ -13,6 +13,15 @@ export interface Workspace {
   lockReason: string | null;
   isMissing: boolean;
   isDirty: boolean;
+  hasConflicts?: boolean;
+  linkStatus?: 'linked' | 'unlinked';
+  desiredBranch?: string | null;
+  unlinkedAt?: string | null;
+  unlinkedByProjectId?: number | null;
+  pendingStashCommit?: string | null;
+  pendingStashMessage?: string | null;
+  pendingStashCreatedAt?: string | null;
+  pendingStashStatus?: 'pending' | 'applied' | 'apply_conflicted' | null;
   branchCheckedOutElsewhere: boolean;
   checkedOutElsewherePath: string | null;
 }

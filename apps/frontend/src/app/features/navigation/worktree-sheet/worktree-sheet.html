@@ -1,48 +1,123 @@
-<dialog #worktreeDialog="trackedNativeModal" trackNativeModal class="fixed inset-0 m-auto w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg backdrop:bg-black/50">
-  <h2 class="text-xl font-semibold text-foreground mb-4">New workspace</h2>
-  <div class="space-y-4">
-    <div>
-      <div class="text-sm font-semibold text-foreground block mb-1">Branch</div>
-      <div class="flex items-center rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
-        {{ branchName() }}
+<dialog
+  #worktreeDialog="trackedNativeModal"
+  trackNativeModal
+  class="fixed inset-0 m-auto flex max-h-[86vh] w-[min(760px,calc(100vw-32px))] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-lg backdrop:bg-black/50">
+  <header class="border-b border-border px-5 py-4">
+    <div class="text-xs font-medium uppercase tracking-normal text-muted-foreground">{{ repoName() }}</div>
+    <h2 class="text-lg font-semibold text-foreground">Worktree pool</h2>
+    <p class="mt-1 text-sm text-muted-foreground">
+      Link an existing worktree to this project or create one for {{ branchName() }}.
+    </p>
+  </header>
+
+  <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+    <section class="rounded-md border border-border">
+      <div class="grid grid-cols-[1fr_auto_auto] gap-3 border-b border-border bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
+        <span>Worktree</span>
+        <span>State</span>
+        <span>Action</span>
       </div>
-    </div>
-    <div>
-      <label for="workspaceName" class="text-sm font-semibold text-foreground block mb-1">Workspace name</label>
-      <input
-        id="workspaceName"
-        type="text"
-        class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        placeholder="Feature review"
-        [ngModel]="workspaceName()"
-        (ngModelChange)="workspaceName.set($event); updatePathFromName()" />
-    </div>
-    <div>
-      <label for="worktreePath" class="text-sm font-semibold text-foreground block mb-1">Workspace path</label>
-      <app-path-autocomplete-input
-        inputId="worktreePath"
-        placeholder="/path/to/.worktrees/repo-name/workspace-name"
-        pathKind="directory"
-        [value]="worktreePath()"
-        [preferredStartDirectory]="preferredWorktreeStartDirectory()"
-        (valueChange)="worktreePath.set($event)" />
-    </div>
-    <div class="flex justify-end gap-2 pt-2">
-      <button
-        class="rounded-md px-4 py-2 text-sm text-foreground hover:bg-muted"
-        (click)="close()"
-        [disabled]="creating()">
-        Cancel
-      </button>
-      <button
-        class="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        (click)="submit()"
-        [disabled]="creating() || !worktreePath() || !workspaceName() || !branchName()">
-        @if (creating()) {
-          <span class="animate-spin inline-block w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full mr-2"></span>
+
+      @if (loading()) {
+        <div class="px-3 py-6 text-sm text-muted-foreground">Loading worktrees...</div>
+      } @else if (pool().length === 0) {
+        <div class="px-3 py-6 text-sm text-muted-foreground">No worktrees are in the pool yet.</div>
+      } @else {
+        @for (item of pool(); track item.id) {
+          <article class="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-border px-3 py-3 last:border-b-0">
+            <div class="min-w-0">
+              <div class="flex min-w-0 items-center gap-2">
+                <h3 class="truncate text-sm font-semibold text-foreground">{{ item.name }}</h3>
+                @if (item.projectWorkspace?.linkStatus === 'unlinked') {
+                  <span class="rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-xs text-warning">Unlinked here</span>
+                }
+                @if (item.projectWorkspace?.pendingStashStatus === 'pending') {
+                  <span class="rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-xs text-warning">Stash saved</span>
+                }
+              </div>
+              <p class="truncate text-xs text-muted-foreground">{{ item.path }}</p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                {{ ownerLabel(item) }} · {{ item.currentBranch || 'detached' }}
+              </p>
+            </div>
+
+            <div class="flex flex-col items-end gap-1 text-xs">
+              <span
+                class="rounded border px-1.5 py-0.5"
+                [class.border-destructive]="item.hasConflicts || item.isMissing"
+                [class.bg-destructive]="item.hasConflicts || item.isMissing"
+                [class.text-destructive-foreground]="item.hasConflicts || item.isMissing"
+                [class.border-warning]="item.isDirty && !item.hasConflicts && !item.isMissing"
+                [class.bg-warning]="item.isDirty && !item.hasConflicts && !item.isMissing"
+                [class.text-warning-foreground]="item.isDirty && !item.hasConflicts && !item.isMissing"
+                [class.border-success]="!item.isDirty && !item.hasConflicts && !item.isMissing"
+                [class.bg-success]="!item.isDirty && !item.hasConflicts && !item.isMissing"
+                [class.text-success-foreground]="!item.isDirty && !item.hasConflicts && !item.isMissing">
+                {{ statusLabel(item) }}
+              </span>
+              @if (item.isLocked) {
+                <span class="max-w-40 truncate text-muted-foreground">{{ item.lockReason || 'Locked' }}</span>
+              }
+            </div>
+
+            <button
+              type="button"
+              class="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              [disabled]="!canLink(item)"
+              (click)="link(item)">
+              @if (linkingId() === item.id) {
+                Linking...
+              } @else if (item.owner && item.owner.repoId !== repoId()) {
+                Take over
+              } @else if (item.projectWorkspace?.linkStatus === 'unlinked') {
+                Link back
+              } @else {
+                Link
+              }
+            </button>
+          </article>
         }
-        Create workspace
-      </button>
-    </div>
+      }
+    </section>
+
+    <section class="mt-4 rounded-md border border-border p-3">
+      <h3 class="text-sm font-semibold text-foreground">Create a new worktree</h3>
+      <div class="mt-3 grid gap-3 md:grid-cols-[220px_1fr]">
+        <label class="grid gap-1">
+          <span class="text-xs font-medium text-muted-foreground">Name</span>
+          <input
+            type="text"
+            class="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            [ngModel]="createName()"
+            (ngModelChange)="createName.set($event); updateCreatePathFromName()" />
+        </label>
+
+        <label class="grid gap-1">
+          <span class="text-xs font-medium text-muted-foreground">Path</span>
+          <app-path-autocomplete-input
+            placeholder="/path/to/.worktrees/repo-name/worktree-name"
+            pathKind="directory"
+            [value]="createPath()"
+            [preferredStartDirectory]="preferredWorktreeStartDirectory()"
+            (valueChange)="createPath.set($event)" />
+        </label>
+      </div>
+      <div class="mt-3 flex justify-end">
+        <button
+          type="button"
+          class="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+          [disabled]="creating() || linkingId() !== null || !createName().trim() || !createPath().trim()"
+          (click)="createAndLink()">
+          {{ creating() ? 'Creating...' : 'Create and link' }}
+        </button>
+      </div>
+    </section>
   </div>
+
+  <footer class="flex justify-between border-t border-border px-5 py-3">
+    <span class="text-xs text-muted-foreground">{{ availableCount() }} available</span>
+    <button type="button" class="rounded-md px-3 py-1.5 text-sm text-foreground hover:bg-muted" (click)="close()">
+      Close
+    </button>
+  </footer>
 </dialog>

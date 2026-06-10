@@ -111,6 +111,7 @@ export class SessionsService extends EventEmitter {
           `Workspace with id ${dto.workspaceId} not found`,
         );
       }
+      this.assertWorkspaceLinked(rows[0]);
 
       const branchName = await this.resolveCurrentBranch(rows[0].path);
       return {
@@ -130,6 +131,9 @@ export class SessionsService extends EventEmitter {
       dto.repoId,
       dto.worktreePath,
     );
+    if (workspace) {
+      this.assertWorkspaceLinked(workspace);
+    }
     return {
       workspaceId: workspace?.id ?? null,
       branchName: dto.branchName,
@@ -690,11 +694,36 @@ export class SessionsService extends EventEmitter {
       return this.withInferredActiveAgentProvider(session);
     }
 
-    const archived = await this.updateStatus(id, 'archived');
+    return this.archiveAndStop(id);
+  }
 
-    void this.cleanupArchivedSessionProcesses(id);
+  async archiveAndStop(id: number) {
+    const session = await this.findOne(id);
 
+    const archived =
+      session.status === 'archived'
+        ? this.withInferredActiveAgentProvider(session)
+        : await this.updateStatus(id, 'archived');
+
+    await this.cleanupArchivedSessionProcesses(id);
     return archived;
+  }
+
+  async archiveAndStopByRepoAndWorktreePath(
+    repoId: number,
+    worktreePath: string,
+  ) {
+    const sessions = await this.findByRepoAndWorktreePath(
+      repoId,
+      worktreePath,
+      { includeHidden: true },
+    );
+
+    await Promise.all(
+      sessions
+        .filter((session) => session.status !== 'archived')
+        .map((session) => this.archiveAndStop(session.id)),
+    );
   }
 
   private async cleanupArchivedSessionProcesses(id: number) {
@@ -735,12 +764,14 @@ export class SessionsService extends EventEmitter {
     if (session.status !== 'archived') {
       throw new BadRequestException('Only archived sessions can be unarchived');
     }
+    await this.assertSessionWorkspaceLinked(session.id);
 
     return this.updateStatus(id, 'stopped');
   }
 
   async reset(id: number) {
     const session = await this.findOne(id);
+    await this.assertSessionWorkspaceLinked(id);
 
     // 1. Archive current
     await this.archive(id);
@@ -764,6 +795,7 @@ export class SessionsService extends EventEmitter {
    */
   async fork(id: number, name?: string) {
     const session = await this.findOne(id);
+    await this.assertSessionWorkspaceLinked(id);
 
     // Generate fork name
     const forkName = name ?? `${session.name ?? 'Session'} (fork)`;
@@ -816,6 +848,7 @@ export class SessionsService extends EventEmitter {
     if (session.status === 'archived') {
       throw new BadRequestException('Archived sessions cannot be started');
     }
+    await this.assertSessionWorkspaceLinked(id);
 
     // Update status to indicate starting
     await this.updateStatus(id, 'active');
@@ -902,6 +935,30 @@ export class SessionsService extends EventEmitter {
         ),
       );
     return rows[0] ?? null;
+  }
+
+  private assertWorkspaceLinked(workspace: typeof schema.workspaces.$inferSelect) {
+    if (workspace.linkStatus === 'unlinked') {
+      throw new BadRequestException(
+        'This workspace is unlinked from its worktree. Link it back before using sessions.',
+      );
+    }
+  }
+
+  private async assertSessionWorkspaceLinked(sessionId: number) {
+    const rows = await this.db
+      .select({ workspace: schema.workspaces })
+      .from(schema.sessions)
+      .leftJoin(
+        schema.workspaces,
+        eq(schema.sessions.workspaceId, schema.workspaces.id),
+      )
+      .where(eq(schema.sessions.id, sessionId));
+
+    const workspace = rows[0]?.workspace ?? null;
+    if (workspace) {
+      this.assertWorkspaceLinked(workspace);
+    }
   }
 
   private async resolveCurrentBranch(

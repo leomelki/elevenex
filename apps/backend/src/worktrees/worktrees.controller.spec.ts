@@ -24,10 +24,13 @@ describe('WorktreesController', () => {
       startJob: jest.fn(),
       getJob: jest.fn(),
     };
+    const projectsServiceMock = { assertProjectIsActive: jest.fn() };
     const controller = new WorktreesController(
       worktreesServiceMock as any,
+      { listForRepo: jest.fn(), createForRepo: jest.fn(), linkToProject: jest.fn() } as any,
       jobsServiceMock as any,
       sessionsServiceMock as any,
+      projectsServiceMock as any,
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
@@ -55,10 +58,13 @@ describe('WorktreesController', () => {
       startJob: jest.fn(),
       getJob: jest.fn(),
     };
+    const projectsServiceMock = { assertProjectIsActive: jest.fn() };
     const controller = new WorktreesController(
       worktreesServiceMock as any,
+      { listForRepo: jest.fn(), createForRepo: jest.fn(), linkToProject: jest.fn() } as any,
       jobsServiceMock as any,
       sessionsServiceMock as any,
+      projectsServiceMock as any,
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
@@ -80,11 +86,13 @@ describe('WorktreesController', () => {
   it('throws when the repo does not exist for project removal', async () => {
     const controller = new WorktreesController(
       { removeWorktree: jest.fn() } as any,
+      { listForRepo: jest.fn(), createForRepo: jest.fn(), linkToProject: jest.fn() } as any,
       { startJob: jest.fn(), getJob: jest.fn() } as any,
       {
         deleteByWorktreePath: jest.fn(),
         deleteByRepoAndWorktreePath: jest.fn(),
       } as any,
+      { assertProjectIsActive: jest.fn() } as any,
       makeDb([]) as any,
     );
 
@@ -107,11 +115,13 @@ describe('WorktreesController', () => {
     };
     const controller = new WorktreesController(
       { removeWorktree: jest.fn() } as any,
+      { listForRepo: jest.fn(), createForRepo: jest.fn(), linkToProject: jest.fn() } as any,
       jobsServiceMock as any,
       {
         deleteByWorktreePath: jest.fn(),
         deleteByRepoAndWorktreePath: jest.fn(),
       } as any,
+      { assertProjectIsActive: jest.fn() } as any,
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
@@ -128,7 +138,7 @@ describe('WorktreesController', () => {
       7,
       '/tmp/test-repo',
       'feature',
-      '/tmp/.worktrees/test-repo/feature',
+      expect.stringMatching(/[\\/]tmp[\\/]\.worktrees[\\/]test-repo[\\/]feature$/),
     );
   });
 
@@ -146,11 +156,13 @@ describe('WorktreesController', () => {
     };
     const controller = new WorktreesController(
       { removeWorktree: jest.fn() } as any,
+      { listForRepo: jest.fn(), createForRepo: jest.fn(), linkToProject: jest.fn() } as any,
       jobsServiceMock as any,
       {
         deleteByWorktreePath: jest.fn(),
         deleteByRepoAndWorktreePath: jest.fn(),
       } as any,
+      { assertProjectIsActive: jest.fn() } as any,
       makeDb([{ id: 7, path: '/tmp/test-repo' }]) as any,
     );
 

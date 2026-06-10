@@ -30,6 +30,15 @@ export interface WorkspaceInTree {
   lockReason: string | null;
   isMissing: boolean;
   isDirty: boolean;
+  hasConflicts: boolean;
+  linkStatus: 'linked' | 'unlinked';
+  desiredBranch: string | null;
+  unlinkedAt: string | null;
+  unlinkedByProjectId: number | null;
+  pendingStashCommit: string | null;
+  pendingStashMessage: string | null;
+  pendingStashCreatedAt: string | null;
+  pendingStashStatus: 'pending' | 'applied' | 'apply_conflicted' | null;
   branchCheckedOutElsewhere: boolean;
   checkedOutElsewherePath: string | null;
   sessions: SessionInTree[];
@@ -271,6 +280,15 @@ export class NavigationService {
       lockReason: null,
       isMissing: false,
       isDirty: false,
+      hasConflicts: false,
+      linkStatus: 'linked',
+      desiredBranch: null,
+      unlinkedAt: null,
+      unlinkedByProjectId: null,
+      pendingStashCommit: null,
+      pendingStashMessage: null,
+      pendingStashCreatedAt: null,
+      pendingStashStatus: null,
       branchCheckedOutElsewhere: false,
       checkedOutElsewherePath: null,
       sessions: [],

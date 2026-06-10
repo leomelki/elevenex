@@ -1,6 +1,14 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { CreateWorktreeJob, CreateWorktreeJobStatus, WorktreeInfo } from '../models/worktree.model';
+import {
+  CreatePoolWorktreePayload,
+  CreateWorktreeJob,
+  CreateWorktreeJobStatus,
+  LinkPoolWorktreePayload,
+  WorktreeInfo,
+  WorktreePoolItem,
+} from '../models/worktree.model';
+import { Workspace } from '../models/workspace.model';
 
 @Injectable({ providedIn: 'root' })
 export class WorktreesService {
@@ -8,6 +16,18 @@ export class WorktreesService {
 
   getByRepo(repoId: number) {
     return this.http.get<WorktreeInfo[]>(`/api/repos/${repoId}/worktrees`);
+  }
+
+  getPoolByRepo(repoId: number) {
+    return this.http.get<WorktreePoolItem[]>(`/api/repos/${repoId}/worktree-pool`);
+  }
+
+  createPool(repoId: number, payload: CreatePoolWorktreePayload) {
+    return this.http.post<WorktreePoolItem>(`/api/repos/${repoId}/worktree-pool`, payload);
+  }
+
+  linkPool(repoId: number, worktreeId: number, payload: LinkPoolWorktreePayload) {
+    return this.http.post<Workspace>(`/api/repos/${repoId}/worktree-pool/${worktreeId}/link`, payload);
   }
 
   create(repoId: number, branchName: string, worktreePath?: string) {

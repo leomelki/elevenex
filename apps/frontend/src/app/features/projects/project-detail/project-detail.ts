@@ -26,6 +26,7 @@ import { ScratchpadPanelComponent } from '@/features/productivity/scratchpad-pan
 import { TodoPanelComponent } from '@/features/productivity/todo-panel/todo-panel';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
+import { WorktreeSheet } from '@/features/navigation/worktree-sheet/worktree-sheet';
 
 type ProjectDetailSection = 'repos' | 'ssh' | 'browser';
 
@@ -40,6 +41,7 @@ type ProjectDetailSection = 'repos' | 'ssh' | 'browser';
     ScratchpadPanelComponent,
     TodoPanelComponent,
     TrackNativeModalDirective,
+    WorktreeSheet,
   ],
   templateUrl: './project-detail.html',
   styleUrl: './project-detail.scss',
@@ -123,6 +125,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   private deleteProjectDialogRef = viewChild<TrackNativeModalDirective>('deleteProjectDialog');
   private removeRepoDialogRef = viewChild<TrackNativeModalDirective>('removeRepoDialog');
   private removeSshForwardDialogRef = viewChild<TrackNativeModalDirective>('removeSshForwardDialog');
+  private worktreeSheet = viewChild<WorktreeSheet>('worktreeSheet');
   private sshRefreshTimer: number | null = null;
   private routeSubscription: Subscription | null = null;
   private fragmentSubscription: Subscription | null = null;
@@ -437,6 +440,11 @@ export class ProjectDetail implements OnInit, OnDestroy {
   openRemoveRepoDialog(repo: Repo) {
     this.showRemoveRepoDialog.set(repo);
     setTimeout(() => this.removeRepoDialogRef()?.open());
+  }
+
+  openRepoWorktrees(repo: Repo) {
+    if (this.isArchived()) return;
+    this.worktreeSheet()?.open(repo.id, repo.preferredContextRootRef || 'HEAD', repo.path, repo.name, false);
   }
 
   closeRemoveRepoDialog() {

@@ -17,6 +17,11 @@ import {
 } from '../worktrees/worktrees.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
+import {
+  PendingStashStatus,
+  WorktreeLinkStatus,
+  WorktreePoolService,
+} from '../worktrees/worktree-pool.service.js';
 
 export interface WorkspaceSnapshot {
   id: number;
@@ -33,6 +38,15 @@ export interface WorkspaceSnapshot {
   lockReason: string | null;
   isMissing: boolean;
   isDirty: boolean;
+  hasConflicts: boolean;
+  linkStatus: WorktreeLinkStatus;
+  desiredBranch: string | null;
+  unlinkedAt: string | null;
+  unlinkedByProjectId: number | null;
+  pendingStashCommit: string | null;
+  pendingStashMessage: string | null;
+  pendingStashCreatedAt: string | null;
+  pendingStashStatus: PendingStashStatus | null;
   branchCheckedOutElsewhere: boolean;
   checkedOutElsewherePath: string | null;
 }
@@ -44,6 +58,7 @@ export class WorkspacesService {
     private readonly worktreesService: WorktreesService,
     private readonly sessionsService: SessionsService,
     private readonly projectsService: ProjectsService,
+    private readonly worktreePoolService: WorktreePoolService,
   ) {}
 
   async ensureDefaultWorkspace(repo: typeof schema.repos.$inferSelect) {
@@ -72,6 +87,7 @@ export class WorkspacesService {
   ): Promise<WorkspaceSnapshot[]> {
     await this.ensureDefaultWorkspace(repo);
     await this.reconcileSessionWorktrees(repo);
+    await this.worktreePoolService.reconcileRepo(repo);
 
     const rows = await this.db
       .select()
@@ -89,6 +105,8 @@ export class WorkspacesService {
         const currentBranch =
           gitInfo?.branch ?? (await this.getCurrentBranch(workspace.path));
         const isDirty = !isMissing && (await this.isDirty(workspace.path));
+        const hasConflicts =
+          !isMissing && (await this.hasConflicts(workspace.path));
         const checkedOutElsewhere = currentBranch
           ? await this.findBranchWorktreePath(
               repo.path,
@@ -112,6 +130,16 @@ export class WorkspacesService {
           lockReason: gitInfo?.lockReason ?? null,
           isMissing,
           isDirty,
+          hasConflicts,
+          linkStatus: workspace.linkStatus as WorktreeLinkStatus,
+          desiredBranch: workspace.desiredBranch,
+          unlinkedAt: workspace.unlinkedAt,
+          unlinkedByProjectId: workspace.unlinkedByProjectId,
+          pendingStashCommit: workspace.pendingStashCommit,
+          pendingStashMessage: workspace.pendingStashMessage,
+          pendingStashCreatedAt: workspace.pendingStashCreatedAt,
+          pendingStashStatus:
+            workspace.pendingStashStatus as PendingStashStatus | null,
           branchCheckedOutElsewhere: checkedOutElsewhere !== null,
           checkedOutElsewherePath: checkedOutElsewhere,
         };
@@ -128,6 +156,7 @@ export class WorkspacesService {
     repo: typeof schema.repos.$inferSelect,
   ): Promise<WorkspaceSnapshot[]> {
     await this.ensureDefaultWorkspace(repo);
+    await this.worktreePoolService.reconcileRepo(repo);
 
     const rows = await this.db
       .select()
@@ -294,6 +323,7 @@ export class WorkspacesService {
     const workspace = await this.findOneForRepo(id, repoId);
     const repo = await this.findRepo(workspace.repoId);
     await this.projectsService.assertProjectIsActive(repo.projectId);
+    this.assertLinked(workspace);
 
     const branch = branchName.trim();
     if (!branch) {
@@ -342,6 +372,7 @@ export class WorkspacesService {
     const workspace = await this.findOneForRepo(workspaceId, repoId);
     const repo = await this.findRepo(workspace.repoId);
     await this.projectsService.assertProjectIsActive(repo.projectId);
+    this.assertLinked(workspace);
 
     const branchName = input.branchName.trim();
     this.assertValidBranchName(branchName);
@@ -612,6 +643,18 @@ export class WorkspacesService {
     }
   }
 
+  private async hasConflicts(workspacePath: string): Promise<boolean> {
+    if (!(await this.pathExists(workspacePath))) {
+      return false;
+    }
+    try {
+      const status = await worktreeSimpleGit(workspacePath).status();
+      return status.conflicted.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   private async findBranchWorktreePath(
     repoPath: string,
     branchName: string,
@@ -638,6 +681,14 @@ export class WorkspacesService {
       throw new BadRequestException('Workspace name is required');
     }
     return normalized;
+  }
+
+  private assertLinked(workspace: typeof schema.workspaces.$inferSelect) {
+    if (workspace.linkStatus === 'unlinked') {
+      throw new BadRequestException(
+        'Workspace is unlinked from its worktree. Link it back before using it.',
+      );
+    }
   }
 
   private slugify(value: string): string {
@@ -694,6 +745,16 @@ export class WorkspacesService {
       lockReason: null,
       isMissing: false,
       isDirty: false,
+      hasConflicts: false,
+      linkStatus: workspace.linkStatus as WorktreeLinkStatus,
+      desiredBranch: workspace.desiredBranch,
+      unlinkedAt: workspace.unlinkedAt,
+      unlinkedByProjectId: workspace.unlinkedByProjectId,
+      pendingStashCommit: workspace.pendingStashCommit,
+      pendingStashMessage: workspace.pendingStashMessage,
+      pendingStashCreatedAt: workspace.pendingStashCreatedAt,
+      pendingStashStatus:
+        workspace.pendingStashStatus as PendingStashStatus | null,
       branchCheckedOutElsewhere: false,
       checkedOutElsewherePath: null,
     };

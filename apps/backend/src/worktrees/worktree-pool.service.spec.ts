@@ -1,15 +1,17 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { WorkspacesService } from './workspaces.service.js';
+import { eq } from 'drizzle-orm';
 import * as schema from '../database/schema/index.js';
-import {
-  WorktreesService,
-  WorktreeInfo,
-} from '../worktrees/worktrees.service.js';
-import { SessionsService } from '../sessions/sessions.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
-import { WorktreePoolService } from '../worktrees/worktree-pool.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
+import { WorktreesService, WorktreeInfo } from './worktrees.service.js';
+import { WorktreePoolService } from './worktree-pool.service.js';
+import { worktreeSimpleGit } from '../config/system-paths.js';
+
+jest.mock('../config/system-paths.js', () => ({
+  ...jest.requireActual('../config/system-paths.js'),
+  worktreeSimpleGit: jest.fn(),
+}));
 
 function createTestDb() {
   const sqlite = new Database(':memory:');
@@ -88,22 +90,25 @@ function createTestDb() {
   return { db: drizzle(sqlite, { schema }), sqlite };
 }
 
-describe('WorkspacesService', () => {
+describe('WorktreePoolService', () => {
   let db: BetterSQLite3Database<typeof schema>;
   let sqliteConn: InstanceType<typeof Database>;
-  let service: WorkspacesService;
+  let service: WorktreePoolService;
   let repo: typeof schema.repos.$inferSelect;
-  let worktreesServiceMock: jest.Mocked<
-    Pick<WorktreesService, 'listWorktrees' | 'removeWorktree'>
-  >;
+  let otherRepo: typeof schema.repos.$inferSelect;
+  let worktreesServiceMock: jest.Mocked<Pick<WorktreesService, 'listWorktrees'>>;
   let sessionsServiceMock: jest.Mocked<
-    Pick<SessionsService, 'findByRepo' | 'deleteByRepoAndWorktreePath'>
+    Pick<SessionsService, 'archiveAndStopByRepoAndWorktreePath'>
   >;
   let projectsServiceMock: jest.Mocked<Pick<ProjectsService, 'assertProjectIsActive'>>;
-  let worktreePoolServiceMock: jest.Mocked<Pick<WorktreePoolService, 'reconcileRepo'>>;
+  let gitMock: {
+    raw: jest.Mock;
+    status: jest.Mock;
+    revparse: jest.Mock;
+  };
 
   const mainWorktree: WorktreeInfo = {
-    path: '/tmp/repo',
+    path: 'C:\\repo',
     head: 'aaa',
     branch: 'main',
     isDetached: false,
@@ -112,7 +117,7 @@ describe('WorkspacesService', () => {
     lockReason: null,
   };
   const featureWorktree: WorktreeInfo = {
-    path: '/tmp/repo-feature',
+    path: 'C:\\repo-feature',
     head: 'bbb',
     branch: 'feature',
     isDetached: false,
@@ -125,81 +130,122 @@ describe('WorkspacesService', () => {
     const testDb = createTestDb();
     db = testDb.db;
     sqliteConn = testDb.sqlite;
-
-    const [project] = await db
-      .insert(schema.projects)
-      .values({ name: 'Project' })
-      .returning();
+    const [project] = await db.insert(schema.projects).values({ name: 'One' }).returning();
+    const [otherProject] = await db.insert(schema.projects).values({ name: 'Two' }).returning();
     [repo] = await db
       .insert(schema.repos)
-      .values({ projectId: project.id, name: 'repo', path: '/tmp/repo' })
+      .values({ projectId: project.id, name: 'repo', path: 'C:\\repo' })
+      .returning();
+    [otherRepo] = await db
+      .insert(schema.repos)
+      .values({ projectId: otherProject.id, name: 'repo', path: 'C:\\repo' })
       .returning();
 
     worktreesServiceMock = {
-      listWorktrees: jest
-        .fn()
-        .mockResolvedValue([mainWorktree, featureWorktree]),
-      removeWorktree: jest.fn().mockResolvedValue(undefined),
+      listWorktrees: jest.fn().mockResolvedValue([mainWorktree, featureWorktree]),
     };
     sessionsServiceMock = {
-      findByRepo: jest.fn().mockResolvedValue([]),
-      deleteByRepoAndWorktreePath: jest.fn().mockResolvedValue(undefined),
+      archiveAndStopByRepoAndWorktreePath: jest.fn().mockResolvedValue(undefined),
     };
     projectsServiceMock = {
       assertProjectIsActive: jest.fn().mockResolvedValue(undefined),
     };
-    worktreePoolServiceMock = {
-      reconcileRepo: jest.fn().mockResolvedValue(undefined),
+    gitMock = {
+      raw: jest.fn(async (args: string[]) => {
+        if (args[0] === 'rev-parse' && args[1] === 'stash@{0}') return 'stash-sha\n';
+        return '';
+      }),
+      status: jest.fn().mockResolvedValue({ isClean: () => true, conflicted: [] }),
+      revparse: jest.fn().mockResolvedValue('feature\n'),
     };
-    service = new WorkspacesService(
+    jest.mocked(worktreeSimpleGit).mockReturnValue(gitMock as never);
+
+    service = new WorktreePoolService(
       db,
       worktreesServiceMock as unknown as WorktreesService,
       sessionsServiceMock as unknown as SessionsService,
       projectsServiceMock as unknown as ProjectsService,
-      worktreePoolServiceMock as unknown as WorktreePoolService,
     );
   });
 
   afterEach(() => {
+    jest.clearAllMocks();
     sqliteConn.close();
   });
 
-  it('does not add existing git worktrees to the project during navigation listing', async () => {
-    const workspaces = await service.listForRepo(repo);
+  it('reconciles git worktrees into the pool and backfills workspace links', async () => {
+    const [workspace] = await db
+      .insert(schema.workspaces)
+      .values({
+        repoId: repo.id,
+        name: 'feature',
+        path: 'C:\\repo-feature',
+      })
+      .returning();
 
-    expect(workspaces).toHaveLength(1);
-    expect(workspaces[0].path).toBe('/tmp/repo');
-    expect(workspaces[0].isDefault).toBe(true);
-  });
+    await service.reconcileRepo(repo);
 
-  it('attaches an existing git worktree only when requested explicitly', async () => {
-    const attached = await service.attachExistingWorkspace(repo, {
-      path: '/tmp/repo-feature',
-    });
-
-    expect(attached.path).toBe('/tmp/repo-feature');
-    expect(attached.name).toBe('feature');
-
-    const workspaces = await service.listForRepo(repo);
-    expect(workspaces.map((workspace) => workspace.path)).toEqual([
-      '/tmp/repo',
-      '/tmp/repo-feature',
+    const poolRows = await db.select().from(schema.repoWorktrees);
+    expect(poolRows.map((row) => row.path).sort()).toEqual([
+      'C:\\repo',
+      'C:\\repo-feature',
     ]);
+    const [updated] = await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, workspace.id));
+    expect(updated.poolWorktreeId).toBeTruthy();
   });
 
-  it('rejects attach requests for paths outside the repo worktree list', async () => {
-    await expect(
-      service.attachExistingWorkspace(repo, { path: '/tmp/other' }),
-    ).rejects.toThrow(BadRequestException);
-  });
+  it('links an available pool worktree to the project', async () => {
+    await service.reconcileRepo(repo);
+    const pool = (await db.select().from(schema.repoWorktrees)).find(
+      (row) => row.path === 'C:\\repo-feature',
+    )!;
 
-  it('rejects workspace mutations through the wrong repo id', async () => {
-    const attached = await service.attachExistingWorkspace(repo, {
-      path: '/tmp/repo-feature',
+    const linked = await service.linkToProject(repo, pool.id, {
+      branchName: 'feature',
     });
 
-    await expect(
-      service.deleteWorkspace(attached.id, false, repo.id + 1),
-    ).rejects.toThrow(NotFoundException);
+    expect(linked.repoId).toBe(repo.id);
+    expect(linked.poolWorktreeId).toBe(pool.id);
+    expect(linked.linkStatus).toBe('linked');
+    expect(gitMock.raw).toHaveBeenCalledWith(['checkout', 'feature']);
+  });
+
+  it('takes over a dirty worktree, archives old sessions, and records the stash', async () => {
+    await service.reconcileRepo(repo);
+    const pool = (await db.select().from(schema.repoWorktrees)).find(
+      (row) => row.path === 'C:\\repo-feature',
+    )!;
+    const [oldWorkspace] = await db
+      .insert(schema.workspaces)
+      .values({
+        repoId: repo.id,
+        name: 'feature',
+        path: 'C:\\repo-feature',
+        poolWorktreeId: pool.id,
+        linkStatus: 'linked',
+      })
+      .returning();
+    gitMock.status.mockResolvedValue({ isClean: () => false, conflicted: [] });
+
+    await service.linkToProject(otherRepo, pool.id, {
+      branchName: 'feature',
+      confirmTakeover: true,
+      confirmStash: true,
+    });
+
+    const [unlinked] = await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, oldWorkspace.id));
+    expect(unlinked.linkStatus).toBe('unlinked');
+    expect(unlinked.pendingStashCommit).toBe('stash-sha');
+    expect(unlinked.pendingStashStatus).toBe('pending');
+    expect(sessionsServiceMock.archiveAndStopByRepoAndWorktreePath).toHaveBeenCalledWith(
+      repo.id,
+      'C:\\repo-feature',
+    );
   });
 });

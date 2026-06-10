@@ -13,9 +13,12 @@ import {
 import { eq } from 'drizzle-orm';
 import { WorktreesService } from './worktrees.service.js';
 import { CreateWorktreeDto } from './dto/create-worktree.dto.js';
+import { CreatePoolWorktreeDto } from './dto/create-pool-worktree.dto.js';
+import { LinkPoolWorktreeDto } from './dto/link-pool-worktree.dto.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreeCreationJobsService } from './worktree-creation-jobs.service.js';
+import { WorktreePoolService } from './worktree-pool.service.js';
 import * as schema from '../database/schema/index.js';
 import * as path from 'node:path';
 import { ProjectsService } from '../projects/projects.service.js';
@@ -24,11 +27,37 @@ import { ProjectsService } from '../projects/projects.service.js';
 export class WorktreesController {
   constructor(
     private readonly worktreesService: WorktreesService,
+    private readonly worktreePoolService: WorktreePoolService,
     private readonly worktreeCreationJobsService: WorktreeCreationJobsService,
     private readonly sessionsService: SessionsService,
     private readonly projectsService: ProjectsService,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
   ) {}
+
+  @Get('repos/:repoId/worktree-pool')
+  async listWorktreePool(@Param('repoId') repoId: string) {
+    const { repo } = await this.findRepo(repoId);
+    return this.worktreePoolService.listForRepo(repo);
+  }
+
+  @Post('repos/:repoId/worktree-pool')
+  async createPoolWorktree(
+    @Param('repoId') repoId: string,
+    @Body() dto: CreatePoolWorktreeDto,
+  ) {
+    const { repo } = await this.findRepo(repoId);
+    return this.worktreePoolService.createForRepo(repo, dto);
+  }
+
+  @Post('repos/:repoId/worktree-pool/:worktreeId/link')
+  async linkPoolWorktree(
+    @Param('repoId') repoId: string,
+    @Param('worktreeId') worktreeId: string,
+    @Body() dto: LinkPoolWorktreeDto,
+  ) {
+    const { repo } = await this.findRepo(repoId);
+    return this.worktreePoolService.linkToProject(repo, +worktreeId, dto);
+  }
 
   @Get('repos/:repoId/worktrees')
   async listWorktrees(@Param('repoId') repoId: string) {

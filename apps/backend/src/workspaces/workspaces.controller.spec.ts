@@ -27,6 +27,7 @@ describe('WorkspacesController', () => {
     const controller = new WorkspacesController(
       { listForRepo: jest.fn() } as any,
       jobsServiceMock as any,
+      { assertProjectIsActive: jest.fn() } as any,
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
@@ -76,6 +77,7 @@ describe('WorkspacesController', () => {
     const controller = new WorkspacesController(
       { listForRepo: jest.fn() } as any,
       jobsServiceMock as any,
+      { assertProjectIsActive: jest.fn() } as any,
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
@@ -107,6 +109,7 @@ describe('WorkspacesController', () => {
     const controller = new WorkspacesController(
       workspacesServiceMock as any,
       { startJob: jest.fn(), getJob: jest.fn() } as any,
+      { assertProjectIsActive: jest.fn() } as any,
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
@@ -129,6 +132,7 @@ describe('WorkspacesController', () => {
     const controller = new WorkspacesController(
       workspacesServiceMock as any,
       { startJob: jest.fn(), getJob: jest.fn() } as any,
+      { assertProjectIsActive: jest.fn() } as any,
       makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
     );
 
@@ -146,6 +150,7 @@ describe('WorkspacesController', () => {
     const controller = new WorkspacesController(
       { listForRepo: jest.fn() } as any,
       { startJob: jest.fn(), getJob: jest.fn() } as any,
+      { assertProjectIsActive: jest.fn() } as any,
       makeDb([]) as any,
     );
 
