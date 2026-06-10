@@ -116,7 +116,7 @@ export class WorktreeSheet {
     const confirmTakeover =
       item.owner !== null && item.owner.repoId !== this.repoId()
         ? window.confirm(
-            `This worktree is linked to ${item.owner.projectName}. Take it over and archive sessions in that project?`,
+            this.takeoverMessage(item),
           )
         : false;
     if (item.owner !== null && item.owner.repoId !== this.repoId() && !confirmTakeover) {
@@ -175,6 +175,10 @@ export class WorktreeSheet {
     return 'Clean';
   }
 
+  agentCountLabel(count: number) {
+    return count === 1 ? '1 agent running' : `${count} agents running`;
+  }
+
   canLink(item: WorktreePoolItem) {
     return !item.isMissing && !item.isLocked && this.linkingId() === null;
   }
@@ -204,6 +208,15 @@ export class WorktreeSheet {
     this.linkingId.set(null);
     this.navigationService.refreshTree();
     this.close();
+  }
+
+  private takeoverMessage(item: WorktreePoolItem) {
+    const ownerName = item.owner?.projectName ?? 'another project';
+    const runningAgents =
+      item.runningAgentCount > 0
+        ? `\n\n${this.agentCountLabel(item.runningAgentCount)} will be stopped.`
+        : '';
+    return `This worktree is linked to ${ownerName}. Take it over and archive sessions in that project?${runningAgents}`;
   }
 
   private parentDir(value: string) {

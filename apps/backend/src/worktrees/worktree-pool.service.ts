@@ -42,6 +42,7 @@ export interface WorktreePoolItem {
   isMissing: boolean;
   isDirty: boolean;
   hasConflicts: boolean;
+  runningAgentCount: number;
   owner: WorktreePoolOwner | null;
   projectWorkspace: {
     id: number;
@@ -83,6 +84,9 @@ export class WorktreePoolService {
         const realPath = await this.realPathOrRaw(pool.path);
         const gitInfo = gitByRealPath.get(realPath) ?? null;
         const owner = await this.findLinkedOwner(pool.id);
+        const runningAgentCount = owner
+          ? await this.countRunningAgents(owner.workspaceId)
+          : 0;
         const projectWorkspace = await this.findProjectWorkspace(
           repo.id,
           pool.id,
@@ -111,6 +115,7 @@ export class WorktreePoolService {
           isMissing: !gitInfo && !exists,
           isDirty,
           hasConflicts,
+          runningAgentCount,
           owner,
           projectWorkspace,
         } satisfies WorktreePoolItem;
@@ -580,6 +585,20 @@ export class WorktreePoolService {
       workspaceName: row.workspace.name,
       linkStatus: row.workspace.linkStatus as WorktreeLinkStatus,
     };
+  }
+
+  private async countRunningAgents(workspaceId: number): Promise<number> {
+    const rows = await this.db
+      .select({ id: schema.sessions.id })
+      .from(schema.sessions)
+      .where(
+        and(
+          eq(schema.sessions.workspaceId, workspaceId),
+          eq(schema.sessions.surface, 'session'),
+          eq(schema.sessions.status, 'active'),
+        ),
+      );
+    return rows.length;
   }
 
   private async findReposForRoot(root: string) {

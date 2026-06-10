@@ -213,6 +213,45 @@ describe('WorktreePoolService', () => {
     expect(gitMock.raw).toHaveBeenCalledWith(['checkout', 'feature']);
   });
 
+  it('surfaces the number of active agents on a linked worktree', async () => {
+    await service.reconcileRepo(repo);
+    const pool = (await db.select().from(schema.repoWorktrees)).find(
+      (row) => row.path === 'C:\\repo-feature',
+    )!;
+    const [workspace] = await db
+      .insert(schema.workspaces)
+      .values({
+        repoId: repo.id,
+        name: 'feature',
+        path: 'C:\\repo-feature',
+        poolWorktreeId: pool.id,
+        linkStatus: 'linked',
+      })
+      .returning();
+    await db.insert(schema.sessions).values([
+      {
+        repoId: repo.id,
+        workspaceId: workspace.id,
+        branchName: 'feature',
+        worktreePath: 'C:\\repo-feature',
+        status: 'active',
+      },
+      {
+        repoId: repo.id,
+        workspaceId: workspace.id,
+        branchName: 'feature',
+        worktreePath: 'C:\\repo-feature',
+        status: 'created',
+      },
+    ]);
+
+    const item = (await service.listForRepo(repo)).find(
+      (candidate) => candidate.id === pool.id,
+    );
+
+    expect(item?.runningAgentCount).toBe(1);
+  });
+
   it('takes over a dirty worktree, archives old sessions, and records the stash', async () => {
     await service.reconcileRepo(repo);
     const pool = (await db.select().from(schema.repoWorktrees)).find(

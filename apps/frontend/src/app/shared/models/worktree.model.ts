@@ -60,6 +60,7 @@ export interface WorktreePoolItem {
   isMissing: boolean;
   isDirty: boolean;
   hasConflicts: boolean;
+  runningAgentCount: number;
   owner: WorktreePoolOwner | null;
   projectWorkspace: WorktreePoolProjectWorkspace | null;
 }

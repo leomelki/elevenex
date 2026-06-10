@@ -55,6 +55,7 @@ function poolItem(patch: Partial<WorktreePoolItem> = {}): WorktreePoolItem {
     isMissing: false,
     isDirty: false,
     hasConflicts: false,
+    runningAgentCount: 0,
     owner: null,
     projectWorkspace: null,
     ...patch,
@@ -170,6 +171,7 @@ describe('WorktreeSheet', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const item = poolItem({
       isDirty: true,
+      runningAgentCount: 2,
       owner: {
         projectId: 2,
         projectName: 'Other',
@@ -194,5 +196,8 @@ describe('WorktreeSheet', () => {
       confirmStash: true,
       applyPendingStash: false,
     });
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('2 agents running will be stopped.'),
+    );
   });
 });
