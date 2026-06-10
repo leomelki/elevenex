@@ -117,6 +117,12 @@ Electron packaging now stages two runtime layers:
 
 - the local packaged Electron backend/runtime used by the desktop app itself
 
+The local runtime keeps Node out by default and runs through Electron's Node
+mode, while still embedding the tested Codex binary. Set
+`ELEVENEX_EMBED_LOCAL_NODE=1` only when a fully self-contained Node runtime is
+explicitly required, or `ELEVENEX_EMBED_LOCAL_CODEX=0` to build the smallest
+runtime and resolve `codex` from the user's PATH.
+
 ## Remote Servers
 
 Elevenex can connect to remote servers over SSH and automatically prepare a remote backend when one is missing or out of date.

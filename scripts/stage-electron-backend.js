@@ -15,6 +15,8 @@ const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const backendPackageJson = require(path.join(backendRoot, 'package.json'));
 const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty'];
+const EMBED_LOCAL_CODEX_BINARY = process.env.ELEVENEX_EMBED_LOCAL_CODEX !== '0';
+const EMBED_LOCAL_NODE_RUNTIME = process.env.ELEVENEX_EMBED_LOCAL_NODE === '1';
 const CODEX_PLATFORM_PACKAGE_BY_TARGET = {
   'x86_64-unknown-linux-musl': '@openai/codex-linux-x64',
   'aarch64-unknown-linux-musl': '@openai/codex-linux-arm64',
@@ -287,8 +289,16 @@ function main() {
   for (const packageName of NATIVE_RUNTIME_DEPENDENCIES) {
     stageNativePackageTree(packageName, stagedNativePackages);
   }
-  stageCodexRuntime();
-  stageBundledNodeRuntime();
+  if (EMBED_LOCAL_CODEX_BINARY) {
+    stageCodexRuntime();
+  } else {
+    console.log('Skipping embedded Codex binary for local runtime (set ELEVENEX_EMBED_LOCAL_CODEX=0 to exclude it)');
+  }
+  if (EMBED_LOCAL_NODE_RUNTIME) {
+    stageBundledNodeRuntime();
+  } else {
+    console.log('Skipping bundled Node for local runtime; packaged app will use Electron-as-Node');
+  }
   writeStagedBackendPackageJson();
   copyRequiredPath(path.join(repoRoot, 'apps', 'frontend', 'proxy.conf.json'), path.join(stageBackendRoot, 'proxy.conf.json'));
   copyRequiredPath(stagedVSCodeRoot, path.join(stageBackendRoot, 'vscode-web-dist'));
