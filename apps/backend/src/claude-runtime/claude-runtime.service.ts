@@ -803,12 +803,17 @@ export class ClaudeRuntimeService extends EventEmitter {
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
-    state.selectedModel = model;
+    const selectedModel = model ?? null;
+    state.selectedModel = selectedModel;
 
     const runtime = this.sessionRuntimes.get(sessionId);
     if (runtime) {
-      await runtime.setModel(model ?? undefined);
+      await runtime.setModel(selectedModel ?? undefined);
+      this.restartIdleRuntimeForOptionChange(sessionId);
       await this.refreshRuntimeMetadata(sessionId);
+      // Keep the user's explicit model selection even if runtime metadata reports a
+      // different value during a pre/post-change refresh cycle.
+      state.selectedModel = selectedModel;
       this.emitRunState(sessionId);
     }
 
