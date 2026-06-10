@@ -16,7 +16,7 @@ import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
 import { SessionTitleService } from './session-title.service.js';
 
 interface QueryPayload {
-  prompt: string;
+  prompt: unknown;
   options: {
     pathToClaudeCodeExecutable?: string;
     [key: string]: unknown;
@@ -115,20 +115,25 @@ describe('SessionTitleService', () => {
       cwd: '/tmp/project',
       model: 'haiku',
       maxTurns: 1,
-      settingSources: [],
+      persistSession: false,
+      permissionMode: 'plan',
+      settingSources: ['project', 'user', 'local'],
       allowedTools: [],
       env: {
         PATH: '/mock/bin',
         HOME: '/home/test-user',
       },
       pathToClaudeCodeExecutable: '/usr/bin/claude',
-      systemPrompt:
-        'You generate concise session titles. Reply with only the title.',
-      tools: [],
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+      },
+      tools: {
+        type: 'preset',
+        preset: 'claude_code',
+      },
     });
-    expect(firstQuery.prompt).toContain(
-      'Respond immediately with a broad short title',
-    );
+    expect(firstQuery.prompt).not.toEqual(expect.any(String));
     expect(buildAugmentedEnvAsync).toHaveBeenCalledWith(
       process.env,
       '/tmp/project',
@@ -136,7 +141,31 @@ describe('SessionTitleService', () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it('honors ELEVENEX_CLAUDE_BIN before the SDK bundled binary', async () => {
+  it('prefers the installed Claude CLI before the SDK bundled binary', async () => {
+    const close = jest.fn<void, []>();
+    const sdk: SdkMock = {
+      query: jest
+        .fn<RuntimeQuery, [QueryPayload]>()
+        .mockReturnValue(createRuntimeQuery('Installed Claude Title', close)),
+    };
+    jest
+      .spyOn(serviceInternals(service), 'loadClaudeSdk')
+      .mockResolvedValue(sdk);
+    const sdkPathSpy = jest
+      .spyOn(serviceInternals(service), 'resolveSdkClaudePath')
+      .mockReturnValue('/sdk/claude');
+
+    await service.generate('/tmp/project', 'Use installed claude');
+
+    const firstQuery = sdk.query.mock.calls[0]?.[0];
+    expect(firstQuery?.options.pathToClaudeCodeExecutable).toBe(
+      '/usr/bin/claude',
+    );
+    expect(findBinary).toHaveBeenCalledWith('claude');
+    expect(sdkPathSpy).not.toHaveBeenCalled();
+  });
+
+  it('honors ELEVENEX_CLAUDE_BIN before installed and SDK bundled binaries', async () => {
     process.env.ELEVENEX_CLAUDE_BIN = '/custom/bin/claude';
     const close = jest.fn<void, []>();
     const sdk: SdkMock = {

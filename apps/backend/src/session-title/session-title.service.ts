@@ -5,6 +5,7 @@ import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
 const MAX_PROMPT_CHARS = 4000;
 type SDKAssistantMessage =
   import('@anthropic-ai/claude-agent-sdk').SDKAssistantMessage;
+type SDKUserMessage = import('@anthropic-ai/claude-agent-sdk').SDKUserMessage;
 
 @Injectable()
 export class SessionTitleService {
@@ -44,26 +45,34 @@ export class SessionTitleService {
       `Session title query starting worktreePath=${JSON.stringify(worktreePath)} promptLength=${promptLength} claudeExecutable=${JSON.stringify(pathToClaudeCodeExecutable ?? null)} envPathPresent=${Boolean(env.PATH)}`,
     );
 
+    const titlePrompt = [
+      "Name this session based on the user's first message.",
+      'Respond immediately with a broad short title from the first message only.',
+      'Do not use tools, investigate, browse, inspect files, or dig into details.',
+      'Return only the session name, with no quotes, markdown, or commentary.',
+      'Rules:',
+      '- 3 to 5 words maximum',
+      '- summarize the likely overall task broadly',
+      '- use title case or compact sentence case',
+      '- do not include trailing punctuation',
+      '',
+      'First message:',
+      prompt.slice(0, MAX_PROMPT_CHARS),
+    ].join('\n');
+
     const runtimeQuery = sdk.query({
-      prompt: [
-        "Name this session based on the user's first message.",
-        'Respond immediately with a broad short title from the first message only.',
-        'Do not use tools, investigate, browse, inspect files, or dig into details.',
-        'Return only the session name, with no quotes, markdown, or commentary.',
-        'Rules:',
-        '- 3 to 5 words maximum',
-        '- summarize the likely overall task broadly',
-        '- use title case or compact sentence case',
-        '- do not include trailing punctuation',
-        '',
-        'First message:',
-        prompt.slice(0, MAX_PROMPT_CHARS),
-      ].join('\n'),
+      // Use the SDK streaming prompt mode even for this single-message helper.
+      // The main agent UI uses this path successfully, while the SDK one-shot
+      // `prompt: string` path can take a different Claude Code auth route and
+      // incorrectly report "Not logged in" despite the interactive UI working.
+      prompt: this.createPromptIterable(titlePrompt),
       options: {
         cwd: worktreePath,
         model: 'haiku',
         maxTurns: 1,
-        settingSources: [],
+        persistSession: false,
+        permissionMode: 'plan',
+        settingSources: ['project', 'user', 'local'],
         allowedTools: [],
         canUseTool: () =>
           Promise.resolve({
@@ -71,9 +80,14 @@ export class SessionTitleService {
             message: 'Tool use disabled for session title generation',
           }),
         ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-        systemPrompt:
-          'You generate concise session titles. Reply with only the title.',
-        tools: [],
+        systemPrompt: {
+          type: 'preset' as const,
+          preset: 'claude_code' as const,
+        },
+        tools: {
+          type: 'preset' as const,
+          preset: 'claude_code' as const,
+        },
         env,
       },
     });
@@ -83,6 +97,9 @@ export class SessionTitleService {
       for await (const message of runtimeQuery) {
         if (message.type === 'assistant') {
           assistantText += this.extractText(message);
+        }
+        if (message.type === 'result') {
+          break;
         }
       }
     } catch (error) {
@@ -176,6 +193,22 @@ export class SessionTitleService {
       return findBinary(configuredPath) ?? configuredPath;
     }
 
-    return this.resolveSdkClaudePath() ?? findBinary('claude');
+    // Title generation is an opportunistic background helper. Prefer the same
+    // user-installed Claude CLI that the TUI/PTY path runs, because that is the
+    // binary whose auth state users actually interactively maintain. The SDK
+    // bundle remains a fallback for installs without a standalone `claude`.
+    return findBinary('claude') ?? this.resolveSdkClaudePath();
+  }
+
+  private async *createPromptIterable(
+    prompt: string,
+  ): AsyncIterable<SDKUserMessage> {
+    yield {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: prompt,
+      },
+    } as SDKUserMessage;
   }
 }
