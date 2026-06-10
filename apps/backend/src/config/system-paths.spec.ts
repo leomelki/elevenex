@@ -5,8 +5,11 @@ import * as path from 'node:path';
 import { execSync, spawn } from 'child_process';
 import {
   buildAugmentedEnv,
+  buildAugmentedEnvAsync,
+  buildAugmentedPath,
   buildTmuxInlineEnvPrefix,
   findBinary,
+  refreshLoginShellEnv,
 } from './system-paths.js';
 
 jest.mock('child_process', () => ({
@@ -22,6 +25,8 @@ type MockShellProcess = EventEmitter & {
 const mockExecSync = jest.mocked(execSync);
 const mockSpawn = jest.mocked(spawn);
 const envBoundary = '>>>ELEVENEX_ENV_BOUNDARY<<<';
+const describePosix = process.platform === 'win32' ? describe.skip : describe;
+const describeWindows = process.platform === 'win32' ? describe : describe.skip;
 
 function envOutput(binPath: string): string {
   return `${envBoundary}PATH=${binPath}\nELEVENEX_TEST_ENV=1\n`;
@@ -44,7 +49,7 @@ async function closeShellProcess(
   await Promise.resolve();
 }
 
-describe('system-paths per-cwd env cache', () => {
+describePosix('system-paths per-cwd env cache', () => {
   let nowSpy: jest.SpyInstance<number, []>;
 
   beforeEach(() => {
@@ -165,6 +170,42 @@ describe('system-paths per-cwd env cache', () => {
       process.env.PATH = originalPath;
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+});
+
+describeWindows('system-paths Windows env handling', () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it('does not spawn a POSIX login shell when refreshing env', async () => {
+    await refreshLoginShellEnv(true);
+
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('uses the inherited Windows path without shell-env refreshes', async () => {
+    const baseEnv = {
+      Path: 'C:\\Windows\\System32;C:\\Program Files\\Git\\cmd',
+    };
+
+    const syncEnv = buildAugmentedEnv(baseEnv, 'C:\\repo');
+    const asyncEnv = await buildAugmentedEnvAsync(baseEnv, 'C:\\repo');
+
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(syncEnv.Path).toBe(baseEnv.Path);
+    expect(syncEnv.PATH).toBeUndefined();
+    expect(asyncEnv.Path).toBe(baseEnv.Path);
+    expect(asyncEnv.PATH).toBeUndefined();
+  });
+
+  it('splits and joins PATH with the Windows delimiter', () => {
+    const pathValue = buildAugmentedPath(
+      'C:\\Windows\\System32;C:\\Tools',
+      'C:\\Tools;D:\\bin',
+    );
+
+    expect(pathValue).toBe('C:\\Windows\\System32;C:\\Tools;D:\\bin');
   });
 });
 

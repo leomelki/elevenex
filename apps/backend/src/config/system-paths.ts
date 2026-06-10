@@ -1,11 +1,17 @@
 import { accessSync, constants } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { extname, join } from 'path';
 import { spawn } from 'child_process';
 import { Logger } from '@nestjs/common';
 import simpleGit, { SimpleGit } from 'simple-git';
 
 const logger = new Logger('SystemPaths');
+const IS_WINDOWS = process.platform === 'win32';
+const PATH_DELIMITER = IS_WINDOWS ? ';' : ':';
+
+export function isLoginShellEnvRefreshEnabled(): boolean {
+  return !IS_WINDOWS;
+}
 
 // When the packaged Electron app is launched from Finder/DMG, macOS hands it
 // a stripped PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) because no shell rc files
@@ -15,6 +21,7 @@ const logger = new Logger('SystemPaths');
 // processes or resolve external binaries.
 export const COMMON_BINARY_PATHS: readonly string[] = (() => {
   const paths: string[] = [];
+  if (IS_WINDOWS) return paths;
   if (process.platform === 'darwin') paths.push('/opt/homebrew/bin');
   paths.push(
     '/usr/local/bin',
@@ -61,7 +68,33 @@ const _cwdRefreshInFlight = new Map<string, Promise<void>>();
 function getMinimalBootPath(): string {
   const parts = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin'];
   if (process.platform === 'darwin') parts.push('/opt/homebrew/bin');
-  return parts.join(':');
+  return parts.join(PATH_DELIMITER);
+}
+
+function getPathEnvKey(env: NodeJS.ProcessEnv): string {
+  if (!IS_WINDOWS) return 'PATH';
+  if (env.PATH !== undefined) return 'PATH';
+  if (env.Path !== undefined) return 'Path';
+  if (env.path !== undefined) return 'path';
+  return 'PATH';
+}
+
+function getPathEnvValue(env: NodeJS.ProcessEnv): string {
+  return env[getPathEnvKey(env)] || '';
+}
+
+function withNormalizedPathEnv(
+  env: NodeJS.ProcessEnv,
+  combinedPath: string,
+  pathKey = getPathEnvKey(env),
+): NodeJS.ProcessEnv {
+  const normalized = { ...env, [pathKey]: combinedPath };
+  if (IS_WINDOWS) {
+    for (const key of ['PATH', 'Path', 'path']) {
+      if (key !== pathKey) delete normalized[key];
+    }
+  }
+  return normalized;
 }
 
 // Vars that describe the shell's own runtime state — they should not leak
@@ -305,6 +338,10 @@ function refreshCwdEnvAsync(
 // global PATH, but it prevents one slow rc file from freezing websocket
 // heartbeats and unrelated requests.
 function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
+  if (IS_WINDOWS) {
+    return getCachedShellEnv();
+  }
+
   const existing = _cwdEnvCache.get(cwd);
   const now = Date.now();
   if (existing) {
@@ -335,6 +372,10 @@ function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
 //
 // `force=true` bypasses the throttle (used by service bootstrap).
 export function refreshLoginShellEnv(force = false): Promise<void> {
+  if (!isLoginShellEnvRefreshEnabled()) {
+    return Promise.resolve();
+  }
+
   const now = Date.now();
   if (!force && now - _lastRefreshAt < REFRESH_THROTTLE_MS) {
     return Promise.resolve();
@@ -368,33 +409,53 @@ export function findBinary(name: string): string | null {
   }
 
   for (const dir of COMMON_BINARY_PATHS) {
-    const candidate = join(dir, name);
-    try {
-      accessSync(candidate, constants.X_OK);
-      binaryPathCache.set(name, candidate);
-      return candidate;
-    } catch {
-      // Try next
+    for (const candidateName of getExecutableCandidateNames(name)) {
+      const candidate = join(dir, candidateName);
+      try {
+        accessSync(candidate, constants.X_OK);
+        binaryPathCache.set(name, candidate);
+        return candidate;
+      } catch {
+        // Try next
+      }
     }
   }
 
-  for (const dir of buildAugmentedPath().split(':')) {
+  for (const dir of buildAugmentedPath().split(PATH_DELIMITER)) {
     if (!dir) continue;
-    const candidate = join(dir, name);
-    try {
-      accessSync(candidate, constants.X_OK);
-      binaryPathCache.set(name, candidate);
-      return candidate;
-    } catch {
-      // Try next
+    for (const candidateName of getExecutableCandidateNames(name)) {
+      const candidate = join(dir, candidateName);
+      try {
+        accessSync(candidate, constants.X_OK);
+        binaryPathCache.set(name, candidate);
+        return candidate;
+      } catch {
+        // Try next
+      }
     }
   }
 
   return null;
 }
 
+function getExecutableCandidateNames(name: string): string[] {
+  if (!IS_WINDOWS || extname(name)) {
+    return [name];
+  }
+
+  const pathext = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
+  return [
+    name,
+    ...pathext
+      .split(';')
+      .map((extension) => extension.trim())
+      .filter(Boolean)
+      .map((extension) => `${name}${extension}`),
+  ];
+}
+
 export function buildAugmentedPath(
-  basePath: string = process.env.PATH || '',
+  basePath: string = getPathEnvValue(process.env),
   ...extraPaths: string[]
 ): string {
   const seen = new Set<string>();
@@ -408,7 +469,7 @@ export function buildAugmentedPath(
   };
 
   for (const source of [basePath, ...extraPaths]) {
-    for (const part of source.split(':')) {
+    for (const part of source.split(PATH_DELIMITER)) {
       addPart(part);
     }
   }
@@ -416,7 +477,7 @@ export function buildAugmentedPath(
     addPart(part);
   }
 
-  return parts.join(':');
+  return parts.join(PATH_DELIMITER);
 }
 
 // macOS Electron apps launched from Finder/DMG inherit no shell env, so
@@ -523,9 +584,10 @@ export function buildAugmentedEnv(
   // we start a background refresh and still augment PATH from process.env, just
   // without rc-file additions.
   const shellEnv = cwd ? getCwdEnv(cwd) : getCachedShellEnv();
-  if (!cwd && !_shellEnvCache && !_refreshInFlight) {
+  if (!IS_WINDOWS && !cwd && !_shellEnvCache && !_refreshInFlight) {
     void refreshLoginShellEnv(true);
   }
+  const pathKey = getPathEnvKey(base);
   const merged = { ...shellEnv, ...base };
   // PATH ordering matters because dedup keeps the first occurrence: whichever
   // version-manager bin appears first wins for `node`/`python`/etc lookups.
@@ -540,23 +602,20 @@ export function buildAugmentedEnv(
   //   the host explicitly set via systemd/launchd/CLI continue to take
   //   precedence over the rc-file baseline.
   const combinedPath = cwd
-    ? buildAugmentedPath(shellEnv.PATH || '', base.PATH || '')
-    : buildAugmentedPath(base.PATH || '', shellEnv.PATH || '');
-  return ensureUtf8Locale({
-    ...merged,
-    PATH: combinedPath,
-  });
+    ? buildAugmentedPath(getPathEnvValue(shellEnv), getPathEnvValue(base))
+    : buildAugmentedPath(getPathEnvValue(base), getPathEnvValue(shellEnv));
+  return ensureUtf8Locale(withNormalizedPathEnv(merged, combinedPath, pathKey));
 }
 
 export async function buildAugmentedEnvAsync(
   base: NodeJS.ProcessEnv = process.env,
   cwd?: string,
 ): Promise<NodeJS.ProcessEnv> {
-  if (!_shellEnvCache) {
+  if (!IS_WINDOWS && !_shellEnvCache) {
     await refreshLoginShellEnv(true).catch(() => undefined);
   }
 
-  if (cwd) {
+  if (!IS_WINDOWS && cwd) {
     const cwdRefresh = _cwdRefreshInFlight.get(cwd);
     if (cwdRefresh) {
       await cwdRefresh.catch(() => undefined);
