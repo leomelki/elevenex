@@ -15,13 +15,34 @@ export class SessionTitleService {
   }
 
   async generate(worktreePath: string, prompt: string): Promise<string | null> {
+    const startedAtMs = Date.now();
+    const promptLength = prompt.length;
+    this.logger.log(
+      `Session title generation requested worktreePath=${JSON.stringify(worktreePath)} promptLength=${promptLength} promptTruncated=${promptLength > MAX_PROMPT_CHARS}`,
+    );
+
     const sdk = await this.loadClaudeSdk();
     if (!sdk) {
+      this.logger.warn(
+        `Session title generation skipped because Claude SDK is unavailable worktreePath=${JSON.stringify(worktreePath)} promptLength=${promptLength}`,
+      );
       return null;
     }
     const pathToClaudeCodeExecutable =
       this.resolveClaudeCodeExecutable() ?? undefined;
-    const env = await buildAugmentedEnvAsync(process.env, worktreePath);
+    let env: NodeJS.ProcessEnv;
+    try {
+      env = await buildAugmentedEnvAsync(process.env, worktreePath);
+    } catch (error) {
+      this.logger.warn(
+        `Session title environment setup failed worktreePath=${JSON.stringify(worktreePath)} elapsedMs=${Date.now() - startedAtMs} error=${String(error)}`,
+      );
+      throw error;
+    }
+
+    this.logger.debug(
+      `Session title query starting worktreePath=${JSON.stringify(worktreePath)} promptLength=${promptLength} claudeExecutable=${JSON.stringify(pathToClaudeCodeExecutable ?? null)} envPathPresent=${Boolean(env.PATH)}`,
+    );
 
     const runtimeQuery = sdk.query({
       prompt: [
@@ -66,7 +87,7 @@ export class SessionTitleService {
       }
     } catch (error) {
       this.logger.warn(
-        `Title query failed worktreePath=${worktreePath} error=${String(error)} rawReply=${JSON.stringify(assistantText)}`,
+        `Title query failed worktreePath=${JSON.stringify(worktreePath)} elapsedMs=${Date.now() - startedAtMs} error=${String(error)} rawReply=${JSON.stringify(assistantText)}`,
       );
       return null;
     } finally {
@@ -76,7 +97,11 @@ export class SessionTitleService {
     const title = this.normalize(assistantText);
     if (title === null) {
       this.logger.warn(
-        `Title normalization returned null worktreePath=${worktreePath} rawReply=${JSON.stringify(assistantText)}`,
+        `Title normalization returned null worktreePath=${JSON.stringify(worktreePath)} elapsedMs=${Date.now() - startedAtMs} rawReply=${JSON.stringify(assistantText)}`,
+      );
+    } else {
+      this.logger.log(
+        `Session title generated worktreePath=${JSON.stringify(worktreePath)} elapsedMs=${Date.now() - startedAtMs} rawReplyLength=${assistantText.length} title=${JSON.stringify(title)}`,
       );
     }
     return title;
@@ -116,7 +141,8 @@ export class SessionTitleService {
   } | null> {
     try {
       return await import('@anthropic-ai/claude-agent-sdk');
-    } catch {
+    } catch (error) {
+      this.logger.warn(`Failed to load Claude SDK: ${String(error)}`);
       return null;
     }
   }
