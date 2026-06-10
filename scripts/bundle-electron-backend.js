@@ -9,6 +9,7 @@ const backendBundleEntry = path.join(backendBundleRoot, 'main.cjs');
 const EXTERNAL_MODULES = [
   'better-sqlite3',
   'node-pty',
+  '@vscode/ripgrep',
   '@nestjs/microservices',
   '@nestjs/microservices/microservices-module',
 ];

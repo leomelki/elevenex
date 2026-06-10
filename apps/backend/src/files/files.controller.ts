@@ -19,6 +19,22 @@ type RenameRequest = {
   overwrite?: boolean;
 };
 
+function toBoolean(value: string | undefined): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return value === 'true';
+}
+
+function toArray(value: string | string[] | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return Array.isArray(value) ? value : [value];
+}
+
 @Controller('filesystem')
 export class FilesystemController {
   constructor(private readonly filesService: FilesService) {}
@@ -90,6 +106,34 @@ export class FilesController {
       query ?? '',
       parsedLimit,
     );
+  }
+
+  @Get(':worktreePath/text-search')
+  async searchText(
+    @Param('worktreePath') worktreePath: string,
+    @Query('query') query?: string,
+    @Query('isRegExp') isRegExp?: string,
+    @Query('isCaseSensitive') isCaseSensitive?: string,
+    @Query('isWordMatch') isWordMatch?: string,
+    @Query('include') include?: string | string[],
+    @Query('exclude') exclude?: string | string[],
+    @Query('useIgnoreFiles') useIgnoreFiles?: string,
+    @Query('maxResults') maxResults?: string,
+  ) {
+    const decodedWorktree = decodeURIComponent(worktreePath);
+    const parsedMaxResults =
+      maxResults === undefined ? undefined : Number(maxResults);
+
+    return this.filesService.searchText(decodedWorktree, {
+      query: query ?? '',
+      isRegExp: toBoolean(isRegExp),
+      isCaseSensitive: toBoolean(isCaseSensitive),
+      isWordMatch: toBoolean(isWordMatch),
+      includes: toArray(include),
+      excludes: toArray(exclude),
+      useIgnoreFiles: toBoolean(useIgnoreFiles),
+      maxResults: parsedMaxResults,
+    });
   }
 
   /**

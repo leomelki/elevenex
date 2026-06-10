@@ -8,6 +8,7 @@ import {
 } from 'vscode';
 import { BackendClient } from './backendClient';
 import { WorkspaceVfsProvider } from './fileSystemProvider';
+import { createWorkspaceTextSearchProvider } from './textSearchProvider';
 import { WebSocketClient } from './wsClient';
 
 type BrowserLocationLike = {
@@ -231,6 +232,19 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
   // Add registration to extension subscriptions (auto-cleanup on deactivate)
   context.subscriptions.push(registration);
   context.subscriptions.push(provider);
+  const registerTextSearchProvider = (workspace as any).registerTextSearchProvider as
+    | undefined
+    | ((scheme: string, provider: any) => { dispose(): void });
+  if (registerTextSearchProvider) {
+    context.subscriptions.push(
+      registerTextSearchProvider(
+        'workspace-vfs',
+        createWorkspaceTextSearchProvider(worktreePath, backendClient),
+      ),
+    );
+  } else {
+    console.warn('VS Code TextSearchProvider API is unavailable for workspace-vfs');
+  }
   context.subscriptions.push(commands.registerCommand('elevenex.searchFiles', () => {
     void openFileSearch(worktreePath, backendClient).catch(error => {
       console.error('Failed to open ElevenEX file search', error);

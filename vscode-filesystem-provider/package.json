@@ -32,7 +32,8 @@
     ]
   },
   "activationEvents": [
-    "onFileSystem:workspace-vfs"
+    "onFileSystem:workspace-vfs",
+    "onSearch:workspace-vfs"
   ],
   "scripts": {
     "build": "pnpm exec webpack --mode production",

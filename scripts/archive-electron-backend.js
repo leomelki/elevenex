@@ -62,6 +62,58 @@ const FINAL_RUNTIME_PACKAGE_PLANS = {
     directories: ['lib'],
     optionalDirectories: ['build/Release', `prebuilds/${process.platform}-${process.arch}`],
   },
+  '@vscode/ripgrep': {
+    files: ['package.json', 'LICENSE'],
+    directories: ['lib'],
+  },
+  '@vscode/ripgrep-darwin-arm64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-darwin-x64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-arm64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-arm': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-ia32': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-ppc64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-riscv64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-s390x': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-x64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-win32-arm64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-win32-ia32': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-win32-x64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
   bindings: {
     files: ['package.json', 'bindings.js', 'LICENSE.md'],
     optionalFiles: ['README.md'],

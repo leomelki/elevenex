@@ -14,7 +14,7 @@ const backendBundleRoot = path.join(backendRoot, 'bundle');
 const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const backendPackageJson = require(path.join(backendRoot, 'package.json'));
-const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty'];
+const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@vscode/ripgrep'];
 const EMBED_LOCAL_CODEX_BINARY = process.env.ELEVENEX_EMBED_LOCAL_CODEX === '1';
 const EMBED_LOCAL_NODE_RUNTIME = process.env.ELEVENEX_EMBED_LOCAL_NODE === '1';
 const CODEX_PLATFORM_PACKAGE_BY_TARGET = {
@@ -35,6 +35,58 @@ const STAGE_COPY_PLANS = {
     files: ['package.json', 'binding.gyp', 'LICENSE'],
     directories: ['lib', 'scripts', 'src', 'deps', 'third_party', 'typings'],
     optionalDirectories: ['build', 'prebuilds', 'compiled'],
+  },
+  '@vscode/ripgrep': {
+    files: ['package.json', 'LICENSE'],
+    directories: ['lib'],
+  },
+  '@vscode/ripgrep-darwin-arm64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-darwin-x64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-arm64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-arm': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-ia32': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-ppc64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-riscv64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-s390x': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-linux-x64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-win32-arm64': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-win32-ia32': {
+    files: ['package.json'],
+    directories: ['bin'],
+  },
+  '@vscode/ripgrep-win32-x64': {
+    files: ['package.json'],
+    directories: ['bin'],
   },
   '@openai/codex-sdk': {
     files: ['package.json', 'LICENSE'],
@@ -257,7 +309,14 @@ function stageNativePackageTree(packageName, seen = new Set(), searchPaths = [ba
   };
 
   for (const dependencyName of Object.keys(nestedDependencies)) {
-    stageNativePackageTree(dependencyName, seen, [packageRoot, backendRoot, repoRoot]);
+    try {
+      stageNativePackageTree(dependencyName, seen, [packageRoot, backendRoot, repoRoot]);
+    } catch (error) {
+      if ((manifest.optionalDependencies || {})[dependencyName]) {
+        continue;
+      }
+      throw error;
+    }
   }
 }
 

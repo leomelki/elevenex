@@ -447,6 +447,133 @@ describe('FilesService', () => {
     });
   });
 
+  describe('searchText', () => {
+    function initGitRepo(): void {
+      execFileSync('git', ['init'], { cwd: tmpDir, stdio: 'ignore' });
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+        cwd: tmpDir,
+        stdio: 'ignore',
+      });
+      execFileSync('git', ['config', 'user.name', 'Test User'], {
+        cwd: tmpDir,
+        stdio: 'ignore',
+      });
+    }
+
+    it('returns literal matches with path, line number, ranges, and preview text', async () => {
+      fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, 'src', 'app.ts'),
+        ['const alpha = 1;', 'const needle = alpha;', ''].join('\n'),
+      );
+
+      const result = await service.searchText(tmpDir, {
+        query: 'needle',
+        isRegExp: false,
+      });
+
+      expect(result).toEqual([
+        {
+          path: 'src/app.ts',
+          lineNumber: 1,
+          lineText: 'const needle = alpha;',
+          ranges: [{ start: 6, end: 12 }],
+        },
+      ]);
+    });
+
+    it('supports regular expressions', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'app.ts'), 'search_123\nsearch_abc\n');
+
+      const result = await service.searchText(tmpDir, {
+        query: 'search_\\d+',
+        isRegExp: true,
+      });
+
+      expect(result.map((item) => item.lineText)).toEqual(['search_123']);
+    });
+
+    it('honors case sensitivity and whole-word matching', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'app.ts'), 'Needle\nneedle\nneedles\n');
+
+      const caseSensitive = await service.searchText(tmpDir, {
+        query: 'needle',
+        isCaseSensitive: true,
+      });
+      const wholeWord = await service.searchText(tmpDir, {
+        query: 'needle',
+        isCaseSensitive: false,
+        isWordMatch: true,
+      });
+
+      expect(caseSensitive.map((item) => item.lineText)).toEqual([
+        'needle',
+        'needles',
+      ]);
+      expect(wholeWord.map((item) => item.lineText)).toEqual([
+        'Needle',
+        'needle',
+      ]);
+    });
+
+    it('respects include and exclude globs', async () => {
+      fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'src', 'app.ts'), 'needle\n');
+      fs.writeFileSync(path.join(tmpDir, 'src', 'skip.spec.ts'), 'needle\n');
+      fs.writeFileSync(path.join(tmpDir, 'docs', 'guide.md'), 'needle\n');
+
+      const result = await service.searchText(tmpDir, {
+        query: 'needle',
+        includes: ['src/**'],
+        excludes: ['**/*.spec.ts'],
+      });
+
+      expect(result.map((item) => item.path)).toEqual(['src/app.ts']);
+    });
+
+    it('respects ignore files and excludes .git content by default', async () => {
+      initGitRepo();
+      fs.writeFileSync(path.join(tmpDir, '.gitignore'), 'ignored.txt\n');
+      fs.writeFileSync(path.join(tmpDir, 'visible.txt'), 'needle\n');
+      fs.writeFileSync(path.join(tmpDir, 'ignored.txt'), 'needle\n');
+      fs.writeFileSync(path.join(tmpDir, '.git', 'hidden.txt'), 'needle\n');
+      execFileSync('git', ['add', '.gitignore', 'visible.txt'], {
+        cwd: tmpDir,
+        stdio: 'ignore',
+      });
+
+      const result = await service.searchText(tmpDir, { query: 'needle' });
+
+      expect(result.map((item) => item.path)).toEqual(['visible.txt']);
+    });
+
+    it('limits results globally', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'a.txt'), 'needle\nneedle\n');
+      fs.writeFileSync(path.join(tmpDir, 'b.txt'), 'needle\nneedle\n');
+
+      const result = await service.searchText(tmpDir, {
+        query: 'needle',
+        maxResults: 2,
+      });
+
+      expect(result).toHaveLength(2);
+    });
+
+    it('rejects missing or non-directory worktree paths', async () => {
+      await expect(
+        service.searchText(path.join(tmpDir, 'missing'), { query: 'needle' }),
+      ).rejects.toThrow(BadRequestException);
+
+      const filePath = path.join(tmpDir, 'file.txt');
+      fs.writeFileSync(filePath, 'needle');
+
+      await expect(
+        service.searchText(filePath, { query: 'needle' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
   describe('readFile', () => {
     it('should return content and language for valid file', async () => {
       const filePath = path.join(tmpDir, 'file.ts');

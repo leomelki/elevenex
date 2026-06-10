@@ -28,9 +28,48 @@ export interface FileSearchResult {
   name: string;
 }
 
+export interface TextSearchRange {
+  start: number;
+  end: number;
+}
+
+export interface TextSearchResult {
+  path: string;
+  lineNumber: number;
+  lineText: string;
+  ranges: TextSearchRange[];
+}
+
+export interface TextSearchOptions {
+  query: string;
+  isRegExp?: boolean;
+  isCaseSensitive?: boolean;
+  isWordMatch?: boolean;
+  includes?: string[];
+  excludes?: string[];
+  useIgnoreFiles?: boolean;
+  maxResults?: number;
+}
+
 const DEFAULT_FILE_SEARCH_LIMIT = 100;
 const MAX_FILE_SEARCH_LIMIT = 500;
 const FALLBACK_WALK_MAX_FILES = 20_000;
+const DEFAULT_TEXT_SEARCH_LIMIT = 250;
+const MAX_TEXT_SEARCH_LIMIT = 2_000;
+const RIPGREP_PLATFORM_PACKAGE_BY_TARGET: Record<string, string> = {
+  'darwin-arm64': '@vscode/ripgrep-darwin-arm64',
+  'darwin-x64': '@vscode/ripgrep-darwin-x64',
+  'linux-arm64': '@vscode/ripgrep-linux-arm64',
+  'linux-arm': '@vscode/ripgrep-linux-arm',
+  'linux-ia32': '@vscode/ripgrep-linux-ia32',
+  'linux-ppc64': '@vscode/ripgrep-linux-ppc64',
+  'linux-riscv64': '@vscode/ripgrep-linux-riscv64',
+  'linux-s390x': '@vscode/ripgrep-linux-s390x',
+  'linux-x64': '@vscode/ripgrep-linux-x64',
+  'win32-arm64': '@vscode/ripgrep-win32-arm64',
+  'win32-ia32': '@vscode/ripgrep-win32-ia32',
+  'win32-x64': '@vscode/ripgrep-win32-x64',
+};
 
 /**
  * Map file extensions to Monaco language IDs
@@ -128,8 +167,50 @@ function normalizeFileSearchLimit(limit?: number): number {
   return Math.max(1, Math.min(MAX_FILE_SEARCH_LIMIT, Math.floor(limit)));
 }
 
+function normalizeTextSearchLimit(limit?: number): number {
+  if (!Number.isFinite(limit) || !limit) {
+    return DEFAULT_TEXT_SEARCH_LIMIT;
+  }
+
+  return Math.max(1, Math.min(MAX_TEXT_SEARCH_LIMIT, Math.floor(limit)));
+}
+
 function normalizeFileSearchQuery(query: string): string {
   return query.trim().toLowerCase().replace(/\\/g, '/');
+}
+
+function normalizeGlobList(value?: string[]): string[] {
+  return (value ?? [])
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => item.replace(/\\/g, '/'));
+}
+
+function resolveRipgrepBinary(): string {
+  const packageName =
+    RIPGREP_PLATFORM_PACKAGE_BY_TARGET[`${process.platform}-${process.arch}`];
+
+  if (packageName) {
+    try {
+      const packageJsonPath = require.resolve(`${packageName}/package.json`);
+      const binaryName = process.platform === 'win32' ? 'rg.exe' : 'rg';
+      return path.join(path.dirname(packageJsonPath), 'bin', binaryName);
+    } catch {
+      // Fall through to PATH lookup for development environments.
+    }
+  }
+
+  return 'rg';
+}
+
+function byteOffsetToStringOffset(text: string, byteOffset: number): number {
+  if (byteOffset <= 0) {
+    return 0;
+  }
+
+  return Buffer.from(text, 'utf8')
+    .subarray(0, byteOffset)
+    .toString('utf8').length;
 }
 
 function isFuzzyMatch(candidate: string, query: string): boolean {
@@ -310,6 +391,189 @@ export class FilesService {
       })
       .slice(0, normalizedLimit)
       .map(({ path: resultPath, name }) => ({ path: resultPath, name }));
+  }
+
+  async searchText(
+    worktreePath: string,
+    options: TextSearchOptions,
+  ): Promise<TextSearchResult[]> {
+    const resolvedWorktree = path.resolve(worktreePath);
+    let stat;
+    try {
+      stat = await fs.stat(resolvedWorktree);
+    } catch {
+      throw new BadRequestException(`Directory does not exist: ${worktreePath}`);
+    }
+
+    if (!stat.isDirectory()) {
+      throw new BadRequestException(`Path is not a directory: ${worktreePath}`);
+    }
+
+    const query = options.query ?? '';
+    if (!query) {
+      return [];
+    }
+
+    const maxResults = normalizeTextSearchLimit(options.maxResults);
+    const args = this.buildRipgrepTextSearchArgs(options);
+
+    return new Promise((resolve, reject) => {
+      const child = spawn(resolveRipgrepBinary(), args, {
+        cwd: resolvedWorktree,
+        windowsHide: true,
+      });
+      const results: TextSearchResult[] = [];
+      let stdoutBuffer = '';
+      let stderr = '';
+      let didKillForLimit = false;
+      let settled = false;
+
+      const resolveOnce = (value: TextSearchResult[]): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(value);
+      };
+
+      const rejectOnce = (error: Error): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        reject(error);
+      };
+
+      const handleLine = (line: string): void => {
+        if (!line.trim()) {
+          return;
+        }
+
+        let event: any;
+        try {
+          event = JSON.parse(line);
+        } catch {
+          return;
+        }
+
+        if (event.type !== 'match') {
+          return;
+        }
+
+        const relativePath = String(event.data?.path?.text ?? '').replace(
+          /\\/g,
+          '/',
+        ).replace(/^\.\//, '');
+        const lineText = String(event.data?.lines?.text ?? '').replace(
+          /\r?\n$/,
+          '',
+        );
+        const lineNumber = Math.max(0, Number(event.data?.line_number ?? 1) - 1);
+        const submatches = Array.isArray(event.data?.submatches)
+          ? event.data.submatches
+          : [];
+        const ranges = submatches
+          .map((submatch: any) => ({
+            start: byteOffsetToStringOffset(
+              lineText,
+              Number(submatch.start ?? 0),
+            ),
+            end: byteOffsetToStringOffset(lineText, Number(submatch.end ?? 0)),
+          }))
+          .filter((range: TextSearchRange) => range.end >= range.start);
+
+        if (!relativePath || ranges.length === 0) {
+          return;
+        }
+
+        results.push({
+          path: relativePath,
+          lineNumber,
+          lineText,
+          ranges,
+        });
+
+        if (results.length >= maxResults && !didKillForLimit) {
+          didKillForLimit = true;
+          child.kill();
+        }
+      };
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdoutBuffer += chunk.toString('utf8');
+        const lines = stdoutBuffer.split(/\r?\n/);
+        stdoutBuffer = lines.pop() ?? '';
+        for (const line of lines) {
+          handleLine(line);
+        }
+      });
+
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8');
+      });
+
+      child.on('error', (error) => {
+        rejectOnce(error);
+      });
+
+      child.on('close', (code, signal) => {
+        if (stdoutBuffer) {
+          handleLine(stdoutBuffer);
+        }
+
+        if (didKillForLimit || code === 0 || code === 1) {
+          resolveOnce(results.slice(0, maxResults));
+          return;
+        }
+
+        rejectOnce(
+          new Error(
+            stderr.trim() ||
+              `ripgrep exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}`,
+          ),
+        );
+      });
+    });
+  }
+
+  private buildRipgrepTextSearchArgs(options: TextSearchOptions): string[] {
+    const args = [
+      '--json',
+      '--line-number',
+      '--with-filename',
+      '--no-heading',
+      '--color',
+      'never',
+    ];
+
+    if (!options.isRegExp) {
+      args.push('--fixed-strings');
+    }
+
+    if (options.isCaseSensitive === true) {
+      args.push('--case-sensitive');
+    } else if (options.isCaseSensitive === false) {
+      args.push('--ignore-case');
+    }
+
+    if (options.isWordMatch) {
+      args.push('--word-regexp');
+    }
+
+    if (options.useIgnoreFiles === false) {
+      args.push('--no-ignore');
+    }
+
+    for (const include of normalizeGlobList(options.includes)) {
+      args.push('--glob', include);
+    }
+
+    for (const exclude of normalizeGlobList(options.excludes)) {
+      args.push('--glob', `!${exclude}`);
+    }
+
+    args.push('--', options.query, '.');
+    return args;
   }
 
   private async listSearchCandidatePaths(

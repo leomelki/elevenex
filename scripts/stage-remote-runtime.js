@@ -25,7 +25,7 @@ const TARGETS = [
   { key: 'darwin-arm64', platform: 'darwin', arch: 'arm64', nodeArch: 'arm64' },
   { key: 'win32-x64', platform: 'win32', arch: 'x64', nodeArch: 'x64', nodePlatform: 'win', archiveExtension: 'zip' },
 ];
-const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@openai/codex-sdk'];
+const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@openai/codex-sdk', '@vscode/ripgrep'];
 
 function ensureDir(targetPath) {
   mkdirSync(targetPath, { recursive: true });

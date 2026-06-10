@@ -40,3 +40,26 @@ export interface BackendFileSearchResult {
   path: string;
   name: string;
 }
+
+export interface BackendTextSearchRange {
+  start: number;
+  end: number;
+}
+
+export interface BackendTextSearchResult {
+  path: string;
+  lineNumber: number;
+  lineText: string;
+  ranges: BackendTextSearchRange[];
+}
+
+export interface BackendTextSearchOptions {
+  query: string;
+  isRegExp?: boolean;
+  isCaseSensitive?: boolean;
+  isWordMatch?: boolean;
+  includes?: string[];
+  excludes?: string[];
+  useIgnoreFiles?: boolean;
+  maxResults?: number;
+}

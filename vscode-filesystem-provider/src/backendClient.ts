@@ -3,6 +3,8 @@ import {
   BackendFileSearchResult,
   BackendFileStat,
   BackendDirectoryEntry,
+  BackendTextSearchOptions,
+  BackendTextSearchResult,
   BackendWriteRequest,
 } from './types';
 
@@ -248,6 +250,48 @@ export class BackendClient {
     }
 
     return response.json() as Promise<BackendFileSearchResult[]>;
+  }
+
+  async searchText(
+    worktreePath: string,
+    options: BackendTextSearchOptions,
+    abortSignal?: AbortSignal,
+  ): Promise<BackendTextSearchResult[]> {
+    const encodedWorktreePath = encodeURIComponent(worktreePath);
+    const params = new URLSearchParams();
+    params.set('query', options.query);
+    if (options.isRegExp !== undefined) {
+      params.set('isRegExp', String(options.isRegExp));
+    }
+    if (options.isCaseSensitive !== undefined) {
+      params.set('isCaseSensitive', String(options.isCaseSensitive));
+    }
+    if (options.isWordMatch !== undefined) {
+      params.set('isWordMatch', String(options.isWordMatch));
+    }
+    if (options.useIgnoreFiles !== undefined) {
+      params.set('useIgnoreFiles', String(options.useIgnoreFiles));
+    }
+    if (options.maxResults !== undefined) {
+      params.set('maxResults', String(options.maxResults));
+    }
+    for (const include of options.includes ?? []) {
+      params.append('include', include);
+    }
+    for (const exclude of options.excludes ?? []) {
+      params.append('exclude', exclude);
+    }
+
+    const response = await fetch(
+      `${this.baseUrl}/${encodedWorktreePath}/text-search?${params.toString()}`,
+      { signal: abortSignal },
+    );
+
+    if (!response.ok) {
+      throw this.mapHttpError(response.status, toWorkspaceUri(worktreePath, ''));
+    }
+
+    return response.json() as Promise<BackendTextSearchResult[]>;
   }
 
   /**

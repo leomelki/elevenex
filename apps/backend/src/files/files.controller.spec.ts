@@ -19,6 +19,7 @@ describe('FilesController', () => {
             stat: jest.fn(),
             suggestPaths: jest.fn(),
             searchFiles: jest.fn(),
+            searchText: jest.fn(),
             listFiles: jest.fn(),
             readFile: jest.fn(),
             writeFile: jest.fn(),
@@ -113,6 +114,51 @@ describe('FilesController', () => {
       await controller.searchFiles(encodeURIComponent('/tmp/worktree'));
 
       expect(searchFiles).toHaveBeenCalledWith('/tmp/worktree', '', undefined);
+    });
+  });
+
+  describe('searchText', () => {
+    it('delegates with decoded worktree path and parsed search options', async () => {
+      const searchText = jest.fn().mockResolvedValue([
+        {
+          path: 'src/app.ts',
+          lineNumber: 2,
+          lineText: 'const needle = true;',
+          ranges: [{ start: 6, end: 12 }],
+        },
+      ]);
+      service.searchText = searchText;
+
+      const result = await controller.searchText(
+        encodeURIComponent('/tmp/worktree path'),
+        'needle',
+        'false',
+        'true',
+        'true',
+        ['src/**', 'docs/**'],
+        'dist/**',
+        'false',
+        '50',
+      );
+
+      expect(result).toEqual([
+        {
+          path: 'src/app.ts',
+          lineNumber: 2,
+          lineText: 'const needle = true;',
+          ranges: [{ start: 6, end: 12 }],
+        },
+      ]);
+      expect(searchText).toHaveBeenCalledWith('/tmp/worktree path', {
+        query: 'needle',
+        isRegExp: false,
+        isCaseSensitive: true,
+        isWordMatch: true,
+        includes: ['src/**', 'docs/**'],
+        excludes: ['dist/**'],
+        useIgnoreFiles: false,
+        maxResults: 50,
+      });
     });
   });
 

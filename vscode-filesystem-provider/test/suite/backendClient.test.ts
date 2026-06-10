@@ -113,6 +113,46 @@ suite('BackendClient', () => {
     );
   });
 
+  test('searchText requests text-search endpoint and maps results', async () => {
+    stubFetch({
+      ok: true,
+      status: 200,
+      json: [
+        {
+          path: 'src/app.ts',
+          lineNumber: 1,
+          lineText: 'const needle = true;',
+          ranges: [{ start: 6, end: 12 }],
+        },
+      ],
+    });
+    const client = new BackendClient(baseUrl);
+
+    const results = await client.searchText(worktreePath, {
+      query: 'needle',
+      isRegExp: false,
+      isCaseSensitive: true,
+      isWordMatch: true,
+      includes: ['src/**'],
+      excludes: ['**/*.spec.ts'],
+      useIgnoreFiles: false,
+      maxResults: 25,
+    });
+
+    assert.deepStrictEqual(results, [
+      {
+        path: 'src/app.ts',
+        lineNumber: 1,
+        lineText: 'const needle = true;',
+        ranges: [{ start: 6, end: 12 }],
+      },
+    ]);
+    assert.strictEqual(
+      String(getLastCall().input),
+      `${baseUrl}/${encodeURIComponent(worktreePath)}/text-search?query=needle&isRegExp=false&isCaseSensitive=true&isWordMatch=true&useIgnoreFiles=false&maxResults=25&include=src%2F**&exclude=**%2F*.spec.ts`,
+    );
+  });
+
   test('404 error mapped to FileNotFound', async () => {
     stubFetch({ ok: false, status: 404 });
     const client = new BackendClient(baseUrl);
