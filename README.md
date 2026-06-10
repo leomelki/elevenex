@@ -117,11 +117,10 @@ Electron packaging now stages two runtime layers:
 
 - the local packaged Electron backend/runtime used by the desktop app itself
 
-The local runtime keeps Node out by default and runs through Electron's Node
-mode, while still embedding the tested Codex binary. Set
-`ELEVENEX_EMBED_LOCAL_NODE=1` only when a fully self-contained Node runtime is
-explicitly required, or `ELEVENEX_EMBED_LOCAL_CODEX=0` to build the smallest
-runtime and resolve `codex` from the user's PATH.
+The local runtime is intentionally small by default: it runs through Electron's
+Node mode and resolves `codex` from the user's PATH. Set
+`ELEVENEX_EMBED_LOCAL_NODE=1` or `ELEVENEX_EMBED_LOCAL_CODEX=1` only when a
+fully self-contained local runtime is explicitly required.
 
 ## Remote Servers
 

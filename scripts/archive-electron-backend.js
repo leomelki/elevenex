@@ -10,7 +10,7 @@ const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const archivePath = path.join(stageBaseRoot, 'backend.tar.gz');
 const STAGED_NODE_MODULES_ROOT = path.join(stageBackendRoot, 'node_modules');
 const STAGED_BACKEND_WARN_THRESHOLD_BYTES = 110 * 1024 * 1024;
-const EMBED_LOCAL_CODEX_BINARY = process.env.ELEVENEX_EMBED_LOCAL_CODEX !== '0';
+const EMBED_LOCAL_CODEX_BINARY = process.env.ELEVENEX_EMBED_LOCAL_CODEX === '1';
 const CODEX_PLATFORM_PACKAGE_BY_TARGET = {
   'x86_64-unknown-linux-musl': '@openai/codex-linux-x64',
   'aarch64-unknown-linux-musl': '@openai/codex-linux-arm64',
@@ -367,7 +367,7 @@ function validateNativeRuntimeLoad() {
 
 function validateCodexRuntimeLoad() {
   if (!EMBED_LOCAL_CODEX_BINARY) {
-    console.log('Skipping Codex binary smoke test for local runtime (set ELEVENEX_EMBED_LOCAL_CODEX=0 to exclude it)');
+    console.log('Skipping Codex binary smoke test for local runtime (set ELEVENEX_EMBED_LOCAL_CODEX=1 to include it)');
     return;
   }
 

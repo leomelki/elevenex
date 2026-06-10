@@ -15,7 +15,7 @@ const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const backendPackageJson = require(path.join(backendRoot, 'package.json'));
 const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty'];
-const EMBED_LOCAL_CODEX_BINARY = process.env.ELEVENEX_EMBED_LOCAL_CODEX !== '0';
+const EMBED_LOCAL_CODEX_BINARY = process.env.ELEVENEX_EMBED_LOCAL_CODEX === '1';
 const EMBED_LOCAL_NODE_RUNTIME = process.env.ELEVENEX_EMBED_LOCAL_NODE === '1';
 const CODEX_PLATFORM_PACKAGE_BY_TARGET = {
   'x86_64-unknown-linux-musl': '@openai/codex-linux-x64',
@@ -292,7 +292,7 @@ function main() {
   if (EMBED_LOCAL_CODEX_BINARY) {
     stageCodexRuntime();
   } else {
-    console.log('Skipping embedded Codex binary for local runtime (set ELEVENEX_EMBED_LOCAL_CODEX=0 to exclude it)');
+    console.log('Skipping embedded Codex binary for local runtime (set ELEVENEX_EMBED_LOCAL_CODEX=1 to include it)');
   }
   if (EMBED_LOCAL_NODE_RUNTIME) {
     stageBundledNodeRuntime();
