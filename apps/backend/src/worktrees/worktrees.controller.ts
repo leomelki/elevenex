@@ -9,8 +9,10 @@ import {
   NotFoundException,
   Param,
   Post,
+  Sse,
 } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
+import { Observable } from 'rxjs';
 import { WorktreesService } from './worktrees.service.js';
 import { CreateWorktreeDto } from './dto/create-worktree.dto.js';
 import { CreatePoolWorktreeDto } from './dto/create-pool-worktree.dto.js';
@@ -18,10 +20,15 @@ import { LinkPoolWorktreeDto } from './dto/link-pool-worktree.dto.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreeCreationJobsService } from './worktree-creation-jobs.service.js';
-import { WorktreePoolService } from './worktree-pool.service.js';
+import { WorktreePoolItem, WorktreePoolService } from './worktree-pool.service.js';
 import * as schema from '../database/schema/index.js';
 import * as path from 'node:path';
 import { ProjectsService } from '../projects/projects.service.js';
+
+type WorktreeStreamEvent = {
+  type: string;
+  data: unknown;
+};
 
 @Controller()
 export class WorktreesController {
@@ -38,6 +45,44 @@ export class WorktreesController {
   async listWorktreePool(@Param('repoId') repoId: string) {
     const { repo } = await this.findRepo(repoId);
     return this.worktreePoolService.listForRepo(repo);
+  }
+
+  @Sse('repos/:repoId/worktree-pool/stream')
+  async streamListWorktreePool(
+    @Param('repoId') repoId: string,
+  ): Promise<Observable<WorktreeStreamEvent>> {
+    const { repo } = await this.findRepo(repoId);
+    return new Observable<WorktreeStreamEvent>((subscriber) => {
+      let closed = false;
+
+      const onItem = (item: WorktreePoolItem) => {
+        if (closed) return;
+        subscriber.next({
+          type: 'worktree',
+          data: item,
+        });
+      };
+
+      this.worktreePoolService
+        .streamForRepo(repo, onItem)
+        .then((total) => {
+          if (closed) return;
+          subscriber.next({
+            type: 'done',
+            data: { total },
+          });
+          subscriber.complete();
+        })
+        .catch((error) => {
+          if (closed) return;
+          closed = true;
+          subscriber.error(error);
+        });
+
+      return () => {
+        closed = true;
+      };
+    });
   }
 
   @Post('repos/:repoId/worktree-pool')

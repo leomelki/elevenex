@@ -66,16 +66,18 @@ export class WorktreeSheet {
   loadPool() {
     if (!this.repoId()) return;
     this.loading.set(true);
-    this.worktreesService.getPoolByRepo(this.repoId()).subscribe({
+    this.worktreesService.getPoolByRepoStream(this.repoId()).subscribe({
       next: (items) => {
         this.pool.set(items);
         if (!this.showCreateForm()) {
           this.prepareCreateDefaults(items);
         }
-        this.loading.set(false);
       },
       error: (err) => {
         toast.error(err?.error?.message || 'Could not load worktrees.');
+        this.loading.set(false);
+      },
+      complete: () => {
         this.loading.set(false);
       },
     });

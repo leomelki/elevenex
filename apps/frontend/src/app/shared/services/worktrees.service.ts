@@ -1,5 +1,6 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
 import {
   CreatePoolWorktreePayload,
   CreateWorktreeJob,
@@ -20,6 +21,49 @@ export class WorktreesService {
 
   getPoolByRepo(repoId: number) {
     return this.http.get<WorktreePoolItem[]>(`/api/repos/${repoId}/worktree-pool`);
+  }
+
+  getPoolByRepoStream(repoId: number) {
+    return new Observable<WorktreePoolItem[]>((subscriber) => {
+      const source = new EventSource(`/api/repos/${repoId}/worktree-pool/stream`);
+      const items: WorktreePoolItem[] = [];
+      let closed = false;
+
+      const onWorktree = (event: MessageEvent) => {
+        if (closed) return;
+        try {
+          items.push(JSON.parse(event.data));
+          subscriber.next([...items]);
+        } catch (error) {
+          closed = true;
+          source.close();
+          subscriber.error(error);
+        }
+      };
+
+      const onDone = () => {
+        if (closed) return;
+        closed = true;
+        source.close();
+        subscriber.complete();
+      };
+
+      const onError = (error: Event) => {
+        if (closed) return;
+        closed = true;
+        source.close();
+        subscriber.error(error);
+      };
+
+      source.addEventListener('worktree', onWorktree);
+      source.addEventListener('done', onDone);
+      source.addEventListener('error', onError);
+
+      return () => {
+        closed = true;
+        source.close();
+      };
+    });
   }
 
   createPool(repoId: number, payload: CreatePoolWorktreePayload) {

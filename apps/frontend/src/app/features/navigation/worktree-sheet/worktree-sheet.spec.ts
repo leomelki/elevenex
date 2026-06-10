@@ -66,6 +66,7 @@ function poolItem(patch: Partial<WorktreePoolItem> = {}): WorktreePoolItem {
 describe('WorktreeSheet', () => {
   const worktreesServiceMock = {
     getPoolByRepo: vi.fn(),
+    getPoolByRepoStream: vi.fn(),
     createPool: vi.fn(),
     linkPool: vi.fn(),
   };
@@ -80,12 +81,14 @@ describe('WorktreeSheet', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
     worktreesServiceMock.getPoolByRepo.mockReset();
+    worktreesServiceMock.getPoolByRepoStream.mockReset();
     worktreesServiceMock.createPool.mockReset();
     worktreesServiceMock.linkPool.mockReset();
     sessionsServiceMock.create.mockReset();
     navigationServiceMock.refreshTree.mockReset();
     navigationServiceMock.openSession.mockReset();
     worktreesServiceMock.getPoolByRepo.mockReturnValue(of([]));
+    worktreesServiceMock.getPoolByRepoStream.mockReturnValue(of([]));
     worktreesServiceMock.linkPool.mockReturnValue(of({ id: 99, repoId: 7 }));
     sessionsServiceMock.create.mockReturnValue(of({ id: 123 }));
 
@@ -112,7 +115,7 @@ describe('WorktreeSheet', () => {
   });
 
   it('opens with a repo-scoped pool and default create path', () => {
-    worktreesServiceMock.getPoolByRepo.mockReturnValue(of([poolItem()]));
+    worktreesServiceMock.getPoolByRepoStream.mockReturnValue(of([poolItem()]));
     const fixture = TestBed.createComponent(WorktreeSheet);
     const component = fixture.componentInstance;
     fixture.detectChanges();
@@ -124,12 +127,12 @@ describe('WorktreeSheet', () => {
     expect(component.createPath()).toBe('/tmp/repos/.worktrees/repo-one/repo-one-1');
     expect(component.showCreateForm()).toBe(false);
     expect(component.pool()).toHaveLength(1);
-    expect(worktreesServiceMock.getPoolByRepo).toHaveBeenCalledWith(7);
+    expect(worktreesServiceMock.getPoolByRepoStream).toHaveBeenCalledWith(7);
     expect(dialog.open).toHaveBeenCalledOnce();
   });
 
   it('opens the create form with the next available repo-numbered name', () => {
-    worktreesServiceMock.getPoolByRepo.mockReturnValue(of([
+    worktreesServiceMock.getPoolByRepoStream.mockReturnValue(of([
       poolItem({ name: 'repo-one 1', path: '/tmp/repos/.worktrees/repo-one/repo-one-1' }),
     ]));
     const fixture = TestBed.createComponent(WorktreeSheet);
