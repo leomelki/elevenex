@@ -1510,6 +1510,27 @@ export class ClaudeRuntimeService extends EventEmitter {
         });
       this.emitRunState(sessionId);
 
+      if (shouldGenerateSessionTitle && sessionTitlePrompt) {
+        this.logger.log(
+          `Claude session title generation scheduled session=${sessionId} timing=submit_start worktreePath=${JSON.stringify(session.worktreePath)} promptLength=${sessionTitlePrompt.length}`,
+        );
+        setImmediate(() => {
+          this.generateAndSaveSessionTitle(
+            sessionId,
+            session.worktreePath,
+            sessionTitlePrompt,
+          ).catch((error) => {
+            this.logger.warn(
+              `Session title generation failed session=${sessionId}: ${String(error)}`,
+            );
+          });
+        });
+      } else if (shouldGenerateSessionTitle) {
+        this.logger.warn(
+          `Claude session title generation skipped session=${sessionId} reason=empty_prompt`,
+        );
+      }
+
       let resolveCompletion = () => {};
       const completionPromise = new Promise<void>((resolve) => {
         resolveCompletion = resolve;
@@ -1604,14 +1625,12 @@ export class ClaudeRuntimeService extends EventEmitter {
       }
 
       this.emitRunState(sessionId);
-      let completedWithoutRuntimeError = false;
       try {
         const run = this.activeRuns.get(sessionId);
         if (!run?.interruptRequested) {
           await runtime.submitTurn(
             this.buildSdkUserMessage(trimmedPrompt, validatedImages),
           );
-          completedWithoutRuntimeError = true;
         }
       } catch (error) {
         const run = this.activeRuns.get(sessionId);
@@ -1647,28 +1666,6 @@ export class ClaudeRuntimeService extends EventEmitter {
         run?.resolveCompletion();
         if (interrupted) {
           this.finalizeInterruptedRun(sessionId);
-        }
-        if (
-          completedWithoutRuntimeError &&
-          !interrupted &&
-          !state.lastError &&
-          shouldGenerateSessionTitle &&
-          sessionTitlePrompt
-        ) {
-          this.logger.log(
-            `Claude session title generation scheduled session=${sessionId} worktreePath=${JSON.stringify(session.worktreePath)} promptLength=${sessionTitlePrompt.length}`,
-          );
-          setImmediate(() => {
-            this.generateAndSaveSessionTitle(
-              sessionId,
-              session.worktreePath,
-              sessionTitlePrompt,
-            ).catch((error) => {
-              this.logger.warn(
-                `Session title generation failed session=${sessionId}: ${String(error)}`,
-              );
-            });
-          });
         }
         if (
           !interrupted &&

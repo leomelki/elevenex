@@ -1352,6 +1352,50 @@ describe('ClaudeRuntimeService', () => {
     );
   });
 
+  it('starts first-prompt title generation before the Claude turn completes', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 7,
+      name: 'Session 7',
+      worktreePath: '/tmp/project',
+      claudeSessionId: '-1',
+    });
+    titleService.generate.mockResolvedValue('Implement Auto Names');
+    sessionsService.renameFromGeneratedTitle.mockResolvedValue({
+      name: 'Implement Auto Names',
+    });
+
+    let resolveTurn!: () => void;
+    const submitTurn = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTurn = resolve;
+        }),
+    );
+    jest.spyOn(service as any, 'ensureSessionRuntime').mockResolvedValue({
+      startedAtMs: null,
+      warmState: 'cold',
+      submitTurn,
+    });
+
+    const submitPromise = service.submitPrompt(7, 'Please implement auto names');
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    await Promise.resolve();
+
+    expect(submitTurn).toHaveBeenCalled();
+    expect(titleService.generate).toHaveBeenCalledWith(
+      '/tmp/project',
+      'Please implement auto names',
+    );
+    expect(sessionsService.renameFromGeneratedTitle).toHaveBeenCalledWith(
+      7,
+      'Implement Auto Names',
+    );
+
+    resolveTurn();
+    await submitPromise;
+  });
+
   it('does not generate a title for resumed sessions', async () => {
     (query as jest.Mock).mockReturnValue({
       supportedModels: jest.fn().mockResolvedValue([]),
