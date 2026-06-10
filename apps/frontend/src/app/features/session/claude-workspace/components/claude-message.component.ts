@@ -1085,51 +1085,66 @@ import { type TaskNotification, parseTaskNotifications } from '@/shared/utils/ta
         max-height: 14rem;
         overflow: auto;
       }
-      .cw-md :first-child {
+      :host ::ng-deep .cw-md > :first-child {
         margin-top: 0;
       }
-      .cw-md :last-child {
+      :host ::ng-deep .cw-md > :last-child {
         margin-bottom: 0;
       }
       .cw-md--streaming {
         word-break: break-word;
       }
-      .cw-md p {
+      :host ::ng-deep .cw-md p {
         margin: 0.5rem 0;
       }
-      .cw-md ul,
-      .cw-md ol {
+      :host ::ng-deep .cw-md ul,
+      :host ::ng-deep .cw-md ol {
         margin: 0.5rem 0;
         padding-left: 1.25rem;
       }
-      .cw-md li {
+      :host ::ng-deep .cw-md li {
         margin: 0.125rem 0;
       }
-      .cw-md h1,
-      .cw-md h2,
-      .cw-md h3 {
-        margin: 1rem 0 0.375rem;
-        font-weight: 600;
-        line-height: 1.3;
+      :host ::ng-deep .cw-md li > p {
+        margin: 0.125rem 0;
       }
-      .cw-md h1 {
+      :host ::ng-deep .cw-md strong {
+        color: var(--foreground);
+        font-weight: 700;
+      }
+      :host ::ng-deep .cw-md h1,
+      :host ::ng-deep .cw-md h2,
+      :host ::ng-deep .cw-md h3,
+      :host ::ng-deep .cw-md h4,
+      :host ::ng-deep .cw-md h5,
+      :host ::ng-deep .cw-md h6 {
+        margin: 1.05rem 0 0.4rem;
+        color: var(--foreground);
+        font-weight: 700;
+        line-height: 1.3;
+        letter-spacing: 0;
+      }
+      :host ::ng-deep .cw-md h1 {
         font-size: 1.125rem;
       }
-      .cw-md h2 {
+      :host ::ng-deep .cw-md h2 {
         font-size: 1rem;
       }
-      .cw-md h3 {
+      :host ::ng-deep .cw-md h3,
+      :host ::ng-deep .cw-md h4,
+      :host ::ng-deep .cw-md h5,
+      :host ::ng-deep .cw-md h6 {
         font-size: 0.9375rem;
       }
-      .cw-md code {
+      :host ::ng-deep .cw-md code {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 0.8125em;
         background: color-mix(in oklab, var(--foreground) 7%, transparent);
         padding: 0.0625rem 0.3125rem;
         border-radius: 0.25rem;
       }
-      .cw-md :global(pre.cw-code),
-      .cw-md pre {
+      :host ::ng-deep .cw-md pre.cw-code,
+      :host ::ng-deep .cw-md pre {
         margin: 0.5rem 0;
         padding: 0.625rem 0.75rem;
         background: color-mix(in oklab, var(--foreground) 5%, transparent);
@@ -1139,30 +1154,30 @@ import { type TaskNotification, parseTaskNotifications } from '@/shared/utils/ta
         font-size: 0.8125rem;
         line-height: 1.55;
       }
-      .cw-md pre code {
+      :host ::ng-deep .cw-md pre code {
         background: transparent;
         padding: 0;
         font-size: inherit;
       }
-      .cw-md blockquote {
+      :host ::ng-deep .cw-md blockquote {
         margin: 0.5rem 0;
         padding: 0.125rem 0.75rem;
         border-left: 3px solid var(--border);
         color: var(--muted-foreground);
       }
-      .cw-md a {
+      :host ::ng-deep .cw-md a {
         color: color-mix(in oklab, var(--primary) 90%, #3b82f6);
         text-decoration: underline;
         text-underline-offset: 2px;
       }
-      .cw-md table {
+      :host ::ng-deep .cw-md table {
         width: 100%;
         border-collapse: collapse;
         margin: 0.5rem 0;
         font-size: 0.8125rem;
       }
-      .cw-md th,
-      .cw-md td {
+      :host ::ng-deep .cw-md th,
+      :host ::ng-deep .cw-md td {
         border: 1px solid var(--border);
         padding: 0.25rem 0.5rem;
         text-align: left;

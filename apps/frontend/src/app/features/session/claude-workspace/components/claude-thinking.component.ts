@@ -111,34 +111,67 @@ import { MarkdownPipe } from '../pipes/markdown.pipe';
         white-space: pre-wrap;
         word-break: break-word;
       }
-      .cw-think__md :first-child {
+      :host ::ng-deep .cw-think__md > :first-child {
         margin-top: 0;
       }
-      .cw-think__md :last-child {
+      :host ::ng-deep .cw-think__md > :last-child {
         margin-bottom: 0;
       }
-      .cw-think__md p {
+      :host ::ng-deep .cw-think__md p {
         margin: 0.375rem 0;
       }
-      .cw-think__md ul,
-      .cw-think__md ol {
+      :host ::ng-deep .cw-think__md ul,
+      :host ::ng-deep .cw-think__md ol {
         margin: 0.375rem 0;
         padding-left: 1.25rem;
       }
-      .cw-think__md code {
+      :host ::ng-deep .cw-think__md li {
+        margin: 0.125rem 0;
+      }
+      :host ::ng-deep .cw-think__md li > p {
+        margin: 0;
+      }
+      :host ::ng-deep .cw-think__md h1,
+      :host ::ng-deep .cw-think__md h2,
+      :host ::ng-deep .cw-think__md h3,
+      :host ::ng-deep .cw-think__md h4,
+      :host ::ng-deep .cw-think__md h5,
+      :host ::ng-deep .cw-think__md h6 {
+        margin: 0.75rem 0 0.3rem;
+        color: var(--foreground);
+        font-weight: 700;
+        line-height: 1.3;
+        letter-spacing: 0;
+      }
+      :host ::ng-deep .cw-think__md h1 {
+        font-size: 1rem;
+      }
+      :host ::ng-deep .cw-think__md h2,
+      :host ::ng-deep .cw-think__md h3,
+      :host ::ng-deep .cw-think__md h4,
+      :host ::ng-deep .cw-think__md h5,
+      :host ::ng-deep .cw-think__md h6 {
+        font-size: 0.9rem;
+      }
+      :host ::ng-deep .cw-think__md code {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         background: color-mix(in oklab, var(--foreground) 6%, transparent);
         padding: 0.0625rem 0.25rem;
         border-radius: 0.25rem;
         font-size: 0.8125em;
       }
-      .cw-think__md pre {
+      :host ::ng-deep .cw-think__md pre {
         margin: 0.375rem 0;
         padding: 0.5rem 0.625rem;
         background: color-mix(in oklab, var(--foreground) 6%, transparent);
         border-radius: 0.375rem;
         font-size: 0.75rem;
         overflow: auto;
+      }
+      :host ::ng-deep .cw-think__md pre code {
+        background: transparent;
+        padding: 0;
+        font-size: inherit;
       }
     `,
   ],

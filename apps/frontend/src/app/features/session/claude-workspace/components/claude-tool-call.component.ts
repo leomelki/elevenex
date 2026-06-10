@@ -338,7 +338,7 @@ type Todo = ToolTodoItem;
                   </div>
                 }
                 @if (planMarkdown()) {
-                  <div class="cw-tool__plan" [innerHTML]="planMarkdown() | cwMarkdown"></div>
+                  <div class="cw-tool__plan cw-agent__markdown" [innerHTML]="planMarkdown() | cwMarkdown"></div>
                 }
               }
               @default {
@@ -635,44 +635,54 @@ type Todo = ToolTodoItem;
       .cw-agent__markdown {
         white-space: normal;
       }
-      .cw-agent__markdown > :first-child { margin-top: 0; }
-      .cw-agent__markdown > :last-child { margin-bottom: 0; }
-      .cw-agent__markdown p {
+      :host ::ng-deep .cw-agent__markdown > :first-child { margin-top: 0; }
+      :host ::ng-deep .cw-agent__markdown > :last-child { margin-bottom: 0; }
+      :host ::ng-deep .cw-agent__markdown p {
         margin: 0 0 0.5rem 0;
       }
-      .cw-agent__markdown p:last-child { margin-bottom: 0; }
-      .cw-agent__markdown h1,
-      .cw-agent__markdown h2,
-      .cw-agent__markdown h3,
-      .cw-agent__markdown h4 {
-        margin: 0.75rem 0 0.375rem;
-        font-weight: 600;
-        line-height: 1.3;
+      :host ::ng-deep .cw-agent__markdown p:last-child { margin-bottom: 0; }
+      :host ::ng-deep .cw-agent__markdown strong {
+        color: var(--foreground);
+        font-weight: 700;
       }
-      .cw-agent__markdown h1 { font-size: 1rem; }
-      .cw-agent__markdown h2 { font-size: 0.9375rem; }
-      .cw-agent__markdown h3,
-      .cw-agent__markdown h4 { font-size: 0.875rem; }
-      .cw-agent__markdown ul,
-      .cw-agent__markdown ol {
+      :host ::ng-deep .cw-agent__markdown h1,
+      :host ::ng-deep .cw-agent__markdown h2,
+      :host ::ng-deep .cw-agent__markdown h3,
+      :host ::ng-deep .cw-agent__markdown h4,
+      :host ::ng-deep .cw-agent__markdown h5,
+      :host ::ng-deep .cw-agent__markdown h6 {
+        margin: 0.75rem 0 0.375rem;
+        color: var(--foreground);
+        font-weight: 700;
+        line-height: 1.3;
+        letter-spacing: 0;
+      }
+      :host ::ng-deep .cw-agent__markdown h1 { font-size: 1rem; }
+      :host ::ng-deep .cw-agent__markdown h2 { font-size: 0.9375rem; }
+      :host ::ng-deep .cw-agent__markdown h3,
+      :host ::ng-deep .cw-agent__markdown h4,
+      :host ::ng-deep .cw-agent__markdown h5,
+      :host ::ng-deep .cw-agent__markdown h6 { font-size: 0.875rem; }
+      :host ::ng-deep .cw-agent__markdown ul,
+      :host ::ng-deep .cw-agent__markdown ol {
         margin: 0 0 0.5rem;
         padding-left: 1.25rem;
       }
-      .cw-agent__markdown li {
+      :host ::ng-deep .cw-agent__markdown li {
         margin: 0.125rem 0;
       }
-      .cw-agent__markdown li > p {
+      :host ::ng-deep .cw-agent__markdown li > p {
         margin: 0;
       }
-      .cw-agent__markdown code {
+      :host ::ng-deep .cw-agent__markdown code {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 0.8125em;
         padding: 0.05rem 0.3rem;
         border-radius: 0.25rem;
         background: color-mix(in oklab, var(--foreground) 8%, transparent);
       }
-      .cw-agent__markdown pre.cw-code,
-      .cw-agent__markdown pre {
+      :host ::ng-deep .cw-agent__markdown pre.cw-code,
+      :host ::ng-deep .cw-agent__markdown pre {
         margin: 0.5rem 0;
         padding: 0.625rem 0.75rem;
         background: color-mix(in oklab, var(--foreground) 7%, var(--card));
@@ -682,43 +692,43 @@ type Todo = ToolTodoItem;
         font-size: 0.75rem;
         line-height: 1.5;
       }
-      .cw-agent__markdown pre code {
+      :host ::ng-deep .cw-agent__markdown pre code {
         background: transparent;
         padding: 0;
         border-radius: 0;
         font-size: inherit;
       }
-      .cw-agent__markdown blockquote {
+      :host ::ng-deep .cw-agent__markdown blockquote {
         margin: 0.5rem 0;
         padding: 0.125rem 0.75rem;
         border-left: 2px solid color-mix(in oklab, var(--primary) 40%, var(--border));
         color: var(--muted-foreground);
       }
-      .cw-agent__markdown a {
+      :host ::ng-deep .cw-agent__markdown a {
         color: color-mix(in oklab, var(--primary) 75%, var(--foreground));
         text-decoration: underline;
         text-underline-offset: 2px;
       }
-      .cw-agent__markdown a:hover {
+      :host ::ng-deep .cw-agent__markdown a:hover {
         text-decoration-thickness: 2px;
       }
-      .cw-agent__markdown hr {
+      :host ::ng-deep .cw-agent__markdown hr {
         margin: 0.75rem 0;
         border: 0;
         border-top: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
       }
-      .cw-agent__markdown table {
+      :host ::ng-deep .cw-agent__markdown table {
         border-collapse: collapse;
         margin: 0.5rem 0;
         font-size: 0.75rem;
       }
-      .cw-agent__markdown th,
-      .cw-agent__markdown td {
+      :host ::ng-deep .cw-agent__markdown th,
+      :host ::ng-deep .cw-agent__markdown td {
         padding: 0.25rem 0.5rem;
         border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
         text-align: left;
       }
-      .cw-agent__markdown th {
+      :host ::ng-deep .cw-agent__markdown th {
         background: color-mix(in oklab, var(--foreground) 5%, transparent);
         font-weight: 600;
       }
@@ -857,10 +867,10 @@ type Todo = ToolTodoItem;
         max-height: 26rem;
         overflow: auto;
       }
-      .cw-tool__plan :first-child {
+      :host ::ng-deep .cw-tool__plan > :first-child {
         margin-top: 0;
       }
-      .cw-tool__plan :last-child {
+      :host ::ng-deep .cw-tool__plan > :last-child {
         margin-bottom: 0;
       }
       .cw-todos {
