@@ -146,7 +146,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
   private currentWorktreePath: string | null = null;
   private readyTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private fileChangeSocket: WebSocket | null = null;
-  private pendingFileToReveal: string | null = null;
+  private pendingFileToReveal: { path: string; preserveFocus: boolean } | null = null;
   private readonly handleWindowMessage = (event: MessageEvent): void => {
     if (event.data?.type !== 'vscode-workbench-ready' || this.currentIframeKey === null) {
       return;
@@ -324,26 +324,30 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   private openOrRevealChangedFile(path: string): void {
+    this.openFile(path, true);
+  }
+
+  openFile(path: string, preserveFocus = false): void {
     const normalizedPath = path.replace(/^\/+/, '');
     if (!normalizedPath || this.currentIframeKey === null) {
       return;
     }
 
     if (!this.stateService.isReady(this.currentIframeKey)) {
-      this.pendingFileToReveal = normalizedPath;
+      this.pendingFileToReveal = { path: normalizedPath, preserveFocus };
       return;
     }
 
     const iframe = this.stateService.getIframe(this.currentIframeKey);
     if (!iframe?.contentWindow) {
-      this.pendingFileToReveal = normalizedPath;
+      this.pendingFileToReveal = { path: normalizedPath, preserveFocus };
       return;
     }
 
     iframe.contentWindow.postMessage({
       type: 'elevenex-open-file',
       path: normalizedPath,
-      preserveFocus: true,
+      preserveFocus,
     }, '*');
   }
 
@@ -352,9 +356,9 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    const pendingPath = this.pendingFileToReveal;
+    const pending = this.pendingFileToReveal;
     this.pendingFileToReveal = null;
-    this.openOrRevealChangedFile(pendingPath);
+    this.openFile(pending.path, pending.preserveFocus);
   }
 
   ngOnDestroy(): void {

@@ -172,6 +172,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   claudeTerminals = viewChildren(ClaudeTerminalComponent);
   claudeWorkspaces = viewChildren(ClaudeWorkspaceComponent);
   private readonly browserPanel = viewChild(BrowserPanelComponent);
+  private readonly vscodePanel = viewChild(VSCodeWebPanelComponent);
 
   tabs = this.tabService.tabs;
   activeSessionId = this.tabService.activeSessionId;
@@ -601,6 +602,24 @@ export class SessionContainer implements OnInit, OnDestroy {
     const sessionId = this.activeSessionId();
     if (!sessionId || !mentions.length) return;
     this.workspaceForSession(sessionId)?.addDiffMentions(mentions);
+  }
+
+  openDiffFileInEditor(path: string): void {
+    const wt = this.worktreePath();
+    const normalizedPath = path.replace(/^\/+/, '');
+    if (!wt || !normalizedPath) return;
+
+    const changesOpen = new Map(this.changesOpenByWorktree());
+    changesOpen.set(wt, false);
+    this.changesOpenByWorktree.set(changesOpen);
+    this.saveChangesPanelState(changesOpen);
+
+    this.sidePanelMode.set('files');
+    this.saveSidePanelPreference('files');
+
+    afterNextRender(() => {
+      this.vscodePanel()?.openFile(normalizedPath, false);
+    }, { injector: this.injector });
   }
 
   onPlanReviewClosed(review: PlanReviewRequest): void {

@@ -142,6 +142,7 @@
                     [worktreePath]="worktreePath()!"
                     [highlightedMentions]="activePendingDiffMentions()"
                     (mentionSelection)="mentionDiffSelection($event)"
+                    (openFileInEditor)="openDiffFileInEditor($event)"
                     class="h-full"
                   />
                 } @else if (showPlanAnnotatorPanel() && activePlanReview()) {

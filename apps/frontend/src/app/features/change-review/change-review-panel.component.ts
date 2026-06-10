@@ -231,6 +231,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly worktreePath = input.required<string>();
   readonly highlightedMentions = input<readonly DiffSelectionMention[]>([]);
   readonly mentionSelection = output<DiffSelectionMention[]>();
+  readonly openFileInEditor = output<string>();
 
   private readonly changeReview = inject(ChangeReviewService);
   private readonly gitService = inject(GitService);
@@ -641,6 +642,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   prefetchFile(file: ChangeReviewFileSummary): void {
     this.enqueueWindow(file.path, 0, true);
+  }
+
+  openFileInEditorPanel(file: ChangeReviewFileSummary): void {
+    this.openFileInEditor.emit(file.path);
   }
 
   toggleFileCollapsed(file: ChangeReviewFileSummary): void {

@@ -485,6 +485,19 @@ describe('ChangeReviewPanelComponent', () => {
     expect(headers.join(' ')).toContain('src/b.ts');
   });
 
+  it('emits the selected file path when opening a diff file in the editor', async () => {
+    const emitted: string[] = [];
+    fixture.componentInstance.openFileInEditor.subscribe((path) => emitted.push(path));
+    await flushSummary(summary([file('src/a.ts')]));
+
+    const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      'button[aria-label="Open in editor"]',
+    );
+    button?.click();
+
+    expect(emitted).toEqual(['src/a.ts']);
+  });
+
   it('uses the sidebar as navigation into the continuous scroller', async () => {
     const files = [file('src/a.ts'), file('src/b.ts')];
     const viewport = await flushSummary(summary(files));

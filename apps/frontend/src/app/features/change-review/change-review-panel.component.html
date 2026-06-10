@@ -518,6 +518,18 @@
                     <span class="text-destructive">-{{ file.deletions }}</span>
                   }
                 </span>
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="sm"
+                  type="button"
+                  class="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+                  aria-label="Open in editor"
+                  title="Open in editor"
+                  (click)="openFileInEditorPanel(file)"
+                >
+                  <ng-icon name="lucideExternalLink" size="13" />
+                </button>
                 <label
                   class="cr-viewed-control"
                   [class.cr-viewed-control--checked]="isFileViewed(file)"
@@ -586,6 +598,18 @@
                         <span class="text-destructive">-{{ renderRow.file.deletions }}</span>
                       }
                     </span>
+                    <button
+                      z-button
+                      zType="ghost"
+                      zSize="sm"
+                      type="button"
+                      class="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+                      aria-label="Open in editor"
+                      title="Open in editor"
+                      (click)="openFileInEditorPanel(renderRow.file)"
+                    >
+                      <ng-icon name="lucideExternalLink" size="13" />
+                    </button>
                     <label
                       class="cr-viewed-control"
                       [class.cr-viewed-control--checked]="isFileViewed(renderRow.file)"
