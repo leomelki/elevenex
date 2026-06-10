@@ -1127,7 +1127,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     ).catch(() => undefined);
     this.reset();
     this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
-    void this.bootstrap();
+    void this.bootstrap().then(() => this.restoreInitialComposerDraft());
   }
 
   openMcpDrawer(): void {

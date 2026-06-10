@@ -607,6 +607,36 @@ describe('ClaudeWorkspaceComponent', () => {
     });
   });
 
+  it('preserves composer input when switching providers', async () => {
+    const savedPrompt = 'Typed before switch';
+    composerDraftsMock.load.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      version: 1,
+      sessionId: 7,
+      text: savedPrompt,
+      diffMentions: [],
+      images: [],
+      updatedAt: '2026-04-24T08:00:00.000Z',
+    });
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.hasStartedAgentRuntime = false;
+    fixture.detectChanges();
+    await flushPromises();
+
+    fixture.componentInstance.onPromptChange(savedPrompt);
+    await flushPromises();
+
+    fixture.componentInstance.onProviderChange('codex');
+    await flushPromises();
+
+    expect(fixture.componentInstance.activeAgentProvider).toBe('codex');
+    expect(fixture.componentInstance.prompt()).toBe(savedPrompt);
+    expect(composerDraftsMock.load).toHaveBeenCalledTimes(2);
+    expect(composerDraftsMock.load).toHaveBeenLastCalledWith(7);
+    expect(fixture.componentInstance.runtimeStarted()).toBe(false);
+  });
+
   it('copies message content to the clipboard', async () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
