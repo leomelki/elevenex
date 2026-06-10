@@ -1,7 +1,7 @@
 <dialog
   #worktreeDialog="trackedNativeModal"
   trackNativeModal
-  class="fixed inset-0 m-auto flex max-h-[86vh] w-[min(760px,calc(100vw-32px))] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-lg backdrop:bg-black/50">
+  class="fixed inset-0 m-auto max-h-[86vh] w-[min(760px,calc(100vw-32px))] overflow-hidden rounded-lg border border-border bg-background p-0 shadow-lg backdrop:bg-black/50">
   <header class="border-b border-border px-5 py-4">
     <div class="text-xs font-medium uppercase tracking-normal text-muted-foreground">{{ repoName() }}</div>
     <h2 class="text-lg font-semibold text-foreground">Worktree pool</h2>
@@ -10,7 +10,7 @@
     </p>
   </header>
 
-  <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+  <div class="max-h-[calc(86vh-132px)] overflow-y-auto px-5 py-4">
     <section class="rounded-md border border-border">
       <div class="grid grid-cols-[1fr_auto_auto] gap-3 border-b border-border bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
         <span>Worktree</span>
