@@ -460,6 +460,7 @@ export class ClaudeHooksService extends EventEmitter {
       const title = await this.sessionTitleService.generate(
         session.worktreePath,
         prompt,
+        'claude',
       );
       if (!title) {
         this.logger.warn(

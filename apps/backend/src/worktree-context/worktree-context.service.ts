@@ -7,26 +7,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import { existsSync } from 'fs';
-import { createRequire } from 'module';
 import {
   type DefaultLogFields,
   type ListLogLine,
   type SimpleGit,
 } from 'simple-git';
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
-import {
-  buildAugmentedEnv,
-  findBinary,
-  worktreeSimpleGit,
-} from '../config/system-paths.js';
+import { worktreeSimpleGit } from '../config/system-paths.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
+import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 
-const CLAUDE_BIN = resolveSdkClaudePath() ?? findBinary('claude') ?? 'claude';
-const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const MAX_CHANGED_FILES = 40;
 const MAX_COMMITS = 20;
 const MAX_DIFF_CHARS = 18_000;
@@ -73,31 +66,6 @@ interface CachedSnapshotEntry {
   snapshot: WorktreeContextSnapshot;
 }
 
-function resolveSdkClaudePath(): string | null {
-  const ext = process.platform === 'win32' ? '.exe' : '';
-  const candidates =
-    process.platform === 'linux'
-      ? [
-          `@anthropic-ai/claude-agent-sdk-linux-${process.arch}-musl/claude${ext}`,
-          `@anthropic-ai/claude-agent-sdk-linux-${process.arch}/claude${ext}`,
-        ]
-      : [
-          `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`,
-        ];
-  const scopedRequire = createRequire(__filename);
-  for (const candidate of candidates) {
-    try {
-      const resolved = scopedRequire.resolve(candidate);
-      if (existsSync(resolved)) {
-        return resolved;
-      }
-    } catch {
-      // Try next SDK-managed binary package.
-    }
-  }
-  return null;
-}
-
 @Injectable()
 export class WorktreeContextService {
   private readonly logger = new Logger(WorktreeContextService.name);
@@ -115,6 +83,7 @@ export class WorktreeContextService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     @Inject(forwardRef(() => SessionsService))
     private readonly sessionsService: SessionsService,
+    private readonly textAgentGenerationService: TextAgentGenerationService,
   ) {}
 
   async getSnapshot(
@@ -504,10 +473,18 @@ export class WorktreeContextService {
     );
 
     const llmStartedAt = Date.now();
+    const rawAssistantText =
+      (
+        await this.textAgentGenerationService.generate({
+          provider,
+          worktreePath: repoPath,
+          prompt,
+          taskName: 'worktree-context',
+          claude: { canUseTool },
+        })
+      )?.text.trim() ?? '';
     const assistantText =
-      provider === 'codex'
-        ? await this.generateSentenceWithCodex(repoPath, prompt)
-        : await this.generateSentenceWithClaude(repoPath, prompt, canUseTool);
+      this.extractGeneratedContextSentence(rawAssistantText);
 
     const llmDurationMs = Date.now() - llmStartedAt;
     this.logger.log(
@@ -529,103 +506,6 @@ export class WorktreeContextService {
     return normalized;
   }
 
-  private async generateSentenceWithCodex(
-    repoPath: string,
-    prompt: string,
-  ): Promise<string> {
-    try {
-      const { Codex } = await importCodexSdk('@openai/codex-sdk');
-      const codex = new Codex({
-        env: this.toStringEnv(buildAugmentedEnv(process.env, repoPath)),
-      });
-      const thread = codex.startThread({
-        workingDirectory: repoPath,
-        skipGitRepoCheck: true,
-        model: DEFAULT_CODEX_MODEL,
-        sandboxMode: 'read-only',
-        approvalPolicy: 'never',
-      });
-      const result = await thread.run(prompt);
-      return result.finalResponse.trim();
-    } catch (error) {
-      this.logger.debug(
-        `[worktree-context] Codex generation unavailable: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return '';
-    }
-  }
-
-  private async generateSentenceWithClaude(
-    repoPath: string,
-    prompt: string,
-    canUseTool: CanUseTool,
-  ): Promise<string> {
-    const sdk = await this.loadClaudeSdk();
-    if (!sdk) {
-      return '';
-    }
-
-    let assistantText = '';
-    const runtimeQuery = sdk.query({
-      prompt,
-      options: {
-        cwd: repoPath,
-        model: 'haiku',
-        permissionMode: 'plan',
-        canUseTool,
-        pathToClaudeCodeExecutable: CLAUDE_BIN,
-        systemPrompt: {
-          type: 'preset',
-          preset: 'claude_code',
-        },
-        tools: {
-          type: 'preset',
-          preset: 'claude_code',
-        },
-        env: buildAugmentedEnv(process.env, repoPath),
-      },
-    });
-
-    try {
-      for await (const message of runtimeQuery) {
-        if (message.type !== 'assistant') continue;
-        const turnText = message.message.content
-          .filter((block) => block.type === 'text')
-          .map((block) => block.text)
-          .join('')
-          .trim();
-        if (!turnText) continue;
-        // Keep the first turn that looks like the requested sentence. After a
-        // denied tool call the model often produces a follow-up turn like
-        // "the hand-off sentence has been written above" which would otherwise
-        // overwrite the real answer.
-        if (/^["'\s]*We are\b/i.test(turnText)) {
-          assistantText = turnText;
-          break;
-        }
-        if (!assistantText) {
-          assistantText = turnText;
-        }
-      }
-    } finally {
-      runtimeQuery.close();
-    }
-
-    return assistantText;
-  }
-
-  private async loadClaudeSdk(): Promise<{
-    query: (typeof import('@anthropic-ai/claude-agent-sdk'))['query'];
-  } | null> {
-    try {
-      return await import('@anthropic-ai/claude-agent-sdk');
-    } catch {
-      return null;
-    }
-  }
-
   private normalizeGeneratedSentence(input: string): string {
     let collapsed = input
       .replace(/\s+/g, ' ')
@@ -640,6 +520,21 @@ export class WorktreeContextService {
       collapsed = `We are ${collapsed.charAt(0).toLowerCase()}${collapsed.slice(1)}`;
     }
     return collapsed.endsWith('.') ? collapsed : `${collapsed}.`;
+  }
+
+  private extractGeneratedContextSentence(input: string): string {
+    const trimmed = input.trim();
+    if (!trimmed) return '';
+
+    const firstWeAreLine = trimmed
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => /^["'\s]*We are\b/i.test(line));
+    if (firstWeAreLine) {
+      return firstWeAreLine;
+    }
+
+    return trimmed;
   }
 
   private async collectBranchContext(
@@ -1072,19 +967,4 @@ export class WorktreeContextService {
         : 'Worktree context generation requires an active provider.',
     );
   }
-
-  private toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-    return Object.fromEntries(
-      Object.entries(env).filter(
-        (entry): entry is [string, string] => typeof entry[1] === 'string',
-      ),
-    );
-  }
 }
-
-type CodexSdkModule = typeof import('@openai/codex-sdk');
-
-const importCodexSdk = new Function(
-  'specifier',
-  'return import(specifier)',
-) as (specifier: string) => Promise<CodexSdkModule>;

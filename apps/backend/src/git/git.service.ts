@@ -7,19 +7,16 @@ import { SimpleGit, StatusResult, LogResult } from 'simple-git';
 
 import {
   buildAugmentedEnv,
-  findBinary,
   worktreeSimpleGit,
 } from '../config/system-paths.js';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
-import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
+import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 import {
   clearWorktreeFingerprintCache,
   readWorktreeStatusSnapshot,
 } from './git-worktree-fingerprint.js';
 
 const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
-const CLAUDE_BIN = findBinary('claude') ?? 'claude';
-const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const MAX_COMMIT_MESSAGE_DIFF_CHARS = 24_000;
 const MAX_COMMIT_MESSAGE_LOG_ENTRIES = 8;
 const MAX_COMMIT_MESSAGE_STATUS_FILES = 16;
@@ -34,13 +31,6 @@ export function isValidGitRef(ref: string): boolean {
   if (ref.includes('..')) return false;
   return SAFE_REF_PATTERN.test(ref);
 }
-
-type CodexSdkModule = typeof import('@openai/codex-sdk');
-
-const importCodexSdk = new Function(
-  'specifier',
-  'return import(specifier)',
-) as (specifier: string) => Promise<CodexSdkModule>;
 
 export interface FileStatus {
   path: string;
@@ -111,6 +101,10 @@ export interface CommitResult {
 @Injectable()
 export class GitService {
   private readonly logger = new Logger(GitService.name);
+
+  constructor(
+    private readonly textAgentGenerationService: TextAgentGenerationService,
+  ) {}
 
   async getStatus(worktreePath: string): Promise<FileStatus[]> {
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
@@ -873,54 +867,23 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    const sdk = await this.loadClaudeSdk();
-    if (!sdk) {
-      this.logger.warn('[commit-message] claude SDK not available, skipping');
-      return null;
-    }
-
-    let assistantText = '';
-    const runtimeQuery = sdk.query({
+    const result = await this.textAgentGenerationService.generate({
+      provider: 'claude',
+      worktreePath: input.worktreePath,
       prompt: this.buildCommitMessagePrompt(input),
-      options: {
-        cwd: input.worktreePath,
-        model: 'haiku',
-        permissionMode: 'plan',
+      taskName: 'commit-message',
+      claude: {
         canUseTool: async () => ({
           behavior: 'deny' as const,
           message: 'Tool use disabled',
         }),
-        pathToClaudeCodeExecutable: CLAUDE_BIN,
-        systemPrompt: {
-          type: 'preset',
-          preset: 'claude_code',
-        },
-        tools: {
-          type: 'preset',
-          preset: 'claude_code',
-        },
-        env: buildAugmentedEnv(process.env, input.worktreePath),
       },
     });
 
-    try {
-      for await (const message of runtimeQuery) {
-        if (message.type !== 'assistant') continue;
-        assistantText += this.extractAssistantText(message);
-      }
-    } catch (error: any) {
+    const suggestion = this.parseCommitSuggestion(result?.text ?? '');
+    if (!suggestion && result?.text.trim()) {
       this.logger.warn(
-        `[commit-message] claude query failed: ${error?.message ?? String(error)}`,
-      );
-      return null;
-    } finally {
-      runtimeQuery.close();
-    }
-
-    const suggestion = this.parseCommitSuggestion(assistantText);
-    if (!suggestion && assistantText.trim()) {
-      this.logger.warn(
-        `[commit-message] claude response could not be parsed: ${assistantText.trim()}`,
+        `[commit-message] claude response could not be parsed: ${result.text.trim()}`,
       );
     }
     return suggestion;
@@ -934,37 +897,19 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    try {
-      const { Codex } = await importCodexSdk('@openai/codex-sdk');
-      const codex = new Codex({
-        env: this.toStringEnv(
-          buildAugmentedEnv(process.env, input.worktreePath),
-        ),
-      });
-      const thread = codex.startThread({
-        workingDirectory: input.worktreePath,
-        skipGitRepoCheck: true,
-        model: DEFAULT_CODEX_MODEL,
-        sandboxMode: 'read-only',
-        approvalPolicy: 'never',
-      });
-      const result = await thread.run(this.buildCommitMessagePrompt(input));
-      const suggestion = this.parseCommitSuggestion(
-        result.finalResponse,
-        'codex',
-      );
-      if (!suggestion && result.finalResponse?.trim()) {
-        this.logger.warn(
-          `[commit-message] codex response could not be parsed: ${result.finalResponse.trim()}`,
-        );
-      }
-      return suggestion;
-    } catch (error: any) {
+    const result = await this.textAgentGenerationService.generate({
+      provider: 'codex',
+      worktreePath: input.worktreePath,
+      prompt: this.buildCommitMessagePrompt(input),
+      taskName: 'commit-message',
+    });
+    const suggestion = this.parseCommitSuggestion(result?.text ?? '', 'codex');
+    if (!suggestion && result?.text.trim()) {
       this.logger.warn(
-        `[commit-message] codex query failed: ${error?.message ?? String(error)}`,
+        `[commit-message] codex response could not be parsed: ${result.text.trim()}`,
       );
-      return null;
     }
+    return suggestion;
   }
 
   private async generateCommitMessageWithPi(input: {
@@ -975,89 +920,13 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    const runtime = new PiSessionRuntime({
-      cwd: input.worktreePath,
-      timeoutMs: 60_000,
+    const result = await this.textAgentGenerationService.generate({
+      provider: 'pi',
+      worktreePath: input.worktreePath,
+      prompt: this.buildCommitMessagePrompt(input),
+      taskName: 'commit-message',
     });
-    let assistantDeltaText = '';
-    let assistantFinalText = '';
-    let cleanupCompletion = () => {};
-
-    const completionPromise = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        cleanupCompletion();
-        reject(new Error('Pi commit message generation timed out.'));
-      }, 60_000);
-
-      const onEvent = (event: Record<string, unknown>) => {
-        if (event.type === 'agent_end') {
-          cleanupCompletion();
-          resolve();
-          return;
-        }
-        if (event.type === 'error') {
-          cleanupCompletion();
-          reject(new Error(String(event.message ?? 'Pi runtime error')));
-          return;
-        }
-        if (event.type === 'message_update') {
-          const update = event.assistantMessageEvent as
-            | Record<string, unknown>
-            | undefined;
-          if (
-            update?.type === 'text_delta' &&
-            typeof update.delta === 'string'
-          ) {
-            assistantDeltaText += update.delta;
-          }
-          return;
-        }
-        if (event.type === 'message_end') {
-          const message = event.message as Record<string, unknown> | undefined;
-          if (message?.role === 'assistant') {
-            const text = this.extractPiMessageText(message);
-            if (text) assistantFinalText = text;
-          }
-        }
-      };
-
-      const onExit = (details: { message?: string; stderr?: string }) => {
-        cleanupCompletion();
-        reject(
-          new Error(
-            details.stderr?.trim() ||
-              details.message ||
-              'Pi RPC process exited.',
-          ),
-        );
-      };
-
-      cleanupCompletion = () => {
-        clearTimeout(timer);
-        runtime.off('event', onEvent);
-        runtime.off('exit', onExit);
-      };
-
-      runtime.on('event', onEvent);
-      runtime.on('exit', onExit);
-    });
-
-    try {
-      await runtime.send({
-        type: 'prompt',
-        message: this.buildCommitMessagePrompt(input),
-      });
-      await completionPromise;
-      return this.parseCommitSuggestion(
-        assistantFinalText || assistantDeltaText,
-        'pi',
-      );
-    } catch {
-      cleanupCompletion();
-      return null;
-    } finally {
-      await runtime.stop().catch(() => undefined);
-    }
+    return this.parseCommitSuggestion(result?.text ?? '', 'pi');
   }
 
   private generateCommitMessageWithProvider(
@@ -1128,58 +997,6 @@ export class GitService {
       'Unified diff:',
       input.diff || '[empty diff]',
     ].join('\n');
-  }
-
-  private async loadClaudeSdk(): Promise<{
-    query: (typeof import('@anthropic-ai/claude-agent-sdk'))['query'];
-  } | null> {
-    try {
-      return await import('@anthropic-ai/claude-agent-sdk');
-    } catch {
-      return null;
-    }
-  }
-
-  private extractAssistantText(message: any): string {
-    if (message?.type !== 'assistant') {
-      return '';
-    }
-
-    const content = Array.isArray(message.message?.content)
-      ? message.message.content
-      : [];
-    return content
-      .map((part: unknown) => {
-        if (
-          typeof part === 'object' &&
-          part &&
-          'type' in part &&
-          part.type === 'text' &&
-          'text' in part &&
-          typeof part.text === 'string'
-        ) {
-          return part.text;
-        }
-        return '';
-      })
-      .join('');
-  }
-
-  private extractPiMessageText(message: Record<string, unknown>): string {
-    const content = Array.isArray(message.content) ? message.content : [];
-    return content
-      .map((part) => {
-        if (
-          part &&
-          typeof part === 'object' &&
-          (part as Record<string, unknown>).type === 'text' &&
-          typeof (part as Record<string, unknown>).text === 'string'
-        ) {
-          return (part as Record<string, string>).text;
-        }
-        return '';
-      })
-      .join('');
   }
 
   private parseCommitSuggestion(
@@ -1485,14 +1302,6 @@ export class GitService {
 
     const uniqueScopes = new Set(scopes);
     return uniqueScopes.size === 1 ? scopes[0] : '';
-  }
-
-  private toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-    return Object.fromEntries(
-      Object.entries(env).filter(
-        (entry): entry is [string, string] => typeof entry[1] === 'string',
-      ),
-    );
   }
 
   private normalizeCommitMessageProvider(

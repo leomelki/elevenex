@@ -81,24 +81,20 @@ export class WorktreePoolService {
 
     const items = await Promise.all(
       poolRows.map(async (pool) => {
-        const realPath = await this.realPathOrRaw(pool.path);
+        const [realPath, owner, projectWorkspace, exists] = await Promise.all([
+          this.realPathOrRaw(pool.path),
+          this.findLinkedOwner(pool.id),
+          this.findProjectWorkspace(repo.id, pool.id),
+          this.pathExists(pool.path),
+        ]);
         const gitInfo = gitByRealPath.get(realPath) ?? null;
-        const owner = await this.findLinkedOwner(pool.id);
         const runningAgentCount = owner
           ? await this.countRunningAgents(owner.workspaceId)
           : 0;
-        const projectWorkspace = await this.findProjectWorkspace(
-          repo.id,
-          pool.id,
-        );
-        const exists = await this.pathExists(pool.path);
-        const [currentBranch, isDirty, hasConflicts] = exists
-          ? await Promise.all([
-              this.getCurrentBranch(pool.path),
-              this.isDirty(pool.path),
-              this.hasConflicts(pool.path),
-            ])
-          : [null, false, false];
+        const statusSnapshot = exists
+          ? await this.getWorktreeStatusSnapshot(pool.path)
+          : { currentBranch: null, isDirty: false, hasConflicts: false };
+        const currentBranch = statusSnapshot.currentBranch ?? gitInfo?.branch ?? null;
 
         return {
           id: pool.id,
@@ -106,15 +102,15 @@ export class WorktreePoolService {
           path: pool.path,
           name: pool.name,
           createdFromRef: pool.createdFromRef,
-          currentBranch: gitInfo?.branch ?? currentBranch,
+          currentBranch,
           head: gitInfo?.head ?? null,
           isDetached: gitInfo?.isDetached ?? currentBranch === null,
           isBare: gitInfo?.isBare ?? false,
           isLocked: gitInfo?.isLocked ?? false,
           lockReason: gitInfo?.lockReason ?? null,
           isMissing: !gitInfo && !exists,
-          isDirty,
-          hasConflicts,
+          isDirty: statusSnapshot.isDirty,
+          hasConflicts: statusSnapshot.hasConflicts,
           runningAgentCount,
           owner,
           projectWorkspace,
@@ -213,8 +209,8 @@ export class WorktreePoolService {
 
     const activeWorkspace = projectWorkspace ?? owner?.workspace ?? null;
     if (activeWorkspace && activeWorkspace.linkStatus !== 'unlinked') {
-      const currentBranch = await this.getCurrentBranch(pool.path);
-      if (currentBranch !== branchName && (await this.isDirty(pool.path))) {
+      const status = await this.getWorktreeStatusSnapshot(pool.path);
+      if (status.currentBranch !== branchName && status.isDirty) {
         if (!input.confirmStash) {
           throw new ConflictException(
             'This worktree has uncommitted changes. Confirm before stashing and switching branches.',
@@ -284,16 +280,17 @@ export class WorktreePoolService {
     unlinkedByProjectId: number,
     confirmStash?: boolean,
   ) {
-    if ((await this.isDirty(owner.workspace.path)) && !confirmStash) {
+    const status = await this.getWorktreeStatusSnapshot(owner.workspace.path);
+    if (status.isDirty && !confirmStash) {
       throw new ConflictException(
         'This worktree has uncommitted changes. Confirm before stashing and taking it over.',
       );
     }
 
-    const stash = (await this.isDirty(owner.workspace.path))
+    const stash = status.isDirty
       ? await this.stashChanges(owner.workspace.path, owner.workspace.name)
       : null;
-    const currentBranch = await this.getCurrentBranch(owner.workspace.path);
+    const currentBranch = status.currentBranch;
     await this.sessionsService.archiveAndStopByRepoAndWorktreePath(
       owner.repo.id,
       owner.workspace.path,
@@ -339,11 +336,11 @@ export class WorktreePoolService {
         })
         .where(eq(schema.workspaces.id, workspace.id));
     } catch (error) {
-      const hasConflicts = await this.hasConflicts(worktreePath);
+      const status = await this.getWorktreeStatusSnapshot(worktreePath);
       await this.db
         .update(schema.workspaces)
         .set({
-          pendingStashStatus: hasConflicts ? 'apply_conflicted' : 'pending',
+          pendingStashStatus: status.hasConflicts ? 'apply_conflicted' : 'pending',
           updatedAt: new Date().toISOString(),
         })
         .where(eq(schema.workspaces.id, workspace.id));
@@ -649,33 +646,25 @@ export class WorktreePoolService {
     return null;
   }
 
-  private async getCurrentBranch(worktreePath: string): Promise<string | null> {
-    try {
-      const branch = await worktreeSimpleGit(worktreePath).revparse([
-        '--abbrev-ref',
-        'HEAD',
-      ]);
-      return branch.trim() === 'HEAD' ? null : branch.trim();
-    } catch {
-      return null;
-    }
-  }
-
-  private async isDirty(worktreePath: string): Promise<boolean> {
+  private async getWorktreeStatusSnapshot(worktreePath: string): Promise<{
+    currentBranch: string | null;
+    isDirty: boolean;
+    hasConflicts: boolean;
+  }> {
     try {
       const status = await worktreeSimpleGit(worktreePath).status();
-      return !status.isClean();
+      const currentBranch = status.current && status.current !== 'HEAD' ? status.current : null;
+      return {
+        currentBranch,
+        isDirty: !status.isClean(),
+        hasConflicts: status.conflicted.length > 0,
+      };
     } catch {
-      return false;
-    }
-  }
-
-  private async hasConflicts(worktreePath: string): Promise<boolean> {
-    try {
-      const status = await worktreeSimpleGit(worktreePath).status();
-      return status.conflicted.length > 0;
-    } catch {
-      return false;
+      return {
+        currentBranch: null,
+        isDirty: false,
+        hasConflicts: false,
+      };
     }
   }
 

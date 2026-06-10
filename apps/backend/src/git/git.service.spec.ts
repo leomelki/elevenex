@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import { execSync } from 'node:child_process';
 import { GitService, isValidGitRef } from './git.service.js';
 import { BadRequestException } from '@nestjs/common';
+import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 
 describe('GitService', () => {
   let service: GitService;
@@ -44,7 +45,13 @@ describe('GitService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [GitService],
+      providers: [
+        GitService,
+        {
+          provide: TextAgentGenerationService,
+          useValue: { generate: jest.fn() },
+        },
+      ],
     }).compile();
 
     service = module.get<GitService>(GitService);
@@ -726,7 +733,13 @@ describe('GitService.getDiff with validation', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [GitService],
+      providers: [
+        GitService,
+        {
+          provide: TextAgentGenerationService,
+          useValue: { generate: jest.fn() },
+        },
+      ],
     }).compile();
 
     service = module.get<GitService>(GitService);
@@ -778,7 +791,13 @@ describe('GitService.show', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [GitService],
+      providers: [
+        GitService,
+        {
+          provide: TextAgentGenerationService,
+          useValue: { generate: jest.fn() },
+        },
+      ],
     }).compile();
 
     service = module.get<GitService>(GitService);

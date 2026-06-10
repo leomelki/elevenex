@@ -579,7 +579,11 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       this.logger.log(
         `Pi session title generation started session=${sessionId} worktreePath=${JSON.stringify(worktreePath)} promptLength=${prompt.length}`,
       );
-      const title = await this.titleService.generate(worktreePath, prompt);
+      const title = await this.titleService.generate(
+        worktreePath,
+        prompt,
+        'pi',
+      );
       if (!title) {
         this.logger.warn(
           `Pi session title generation produced no title session=${sessionId}`,

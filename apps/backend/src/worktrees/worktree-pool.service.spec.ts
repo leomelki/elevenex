@@ -155,7 +155,11 @@ describe('WorktreePoolService', () => {
         if (args[0] === 'rev-parse' && args[1] === 'stash@{0}') return 'stash-sha\n';
         return '';
       }),
-      status: jest.fn().mockResolvedValue({ isClean: () => true, conflicted: [] }),
+      status: jest.fn().mockResolvedValue({
+        current: null,
+        isClean: () => true,
+        conflicted: [],
+      }),
       revparse: jest.fn().mockResolvedValue('feature\n'),
     };
     jest.mocked(worktreeSimpleGit).mockReturnValue(gitMock as never);
@@ -211,6 +215,81 @@ describe('WorktreePoolService', () => {
     expect(linked.poolWorktreeId).toBe(pool.id);
     expect(linked.linkStatus).toBe('linked');
     expect(gitMock.raw).toHaveBeenCalledWith(['checkout', 'feature']);
+  });
+
+  it('uses one status call per worktree to populate branch, dirty, and conflict fields', async () => {
+    const pathExists = jest.spyOn(service as any, 'pathExists').mockResolvedValue(true);
+    await service.reconcileRepo(repo);
+    const featurePath = 'C:\\repo-feature';
+    gitMock.status
+      .mockReset()
+      .mockResolvedValueOnce({ current: 'main', isClean: () => true, conflicted: [] })
+      .mockResolvedValueOnce({ current: 'feature', isClean: () => false, conflicted: ['src/x.ts'] });
+
+    const items = await service.listForRepo(repo);
+    pathExists.mockRestore();
+
+    expect(gitMock.status).toHaveBeenCalledTimes(2);
+    const mainItem = items.find((item) => item.path === 'C:\\repo');
+    const featureItem = items.find((item) => item.path === featurePath);
+    expect(mainItem?.currentBranch).toBe('main');
+    expect(mainItem?.isDirty).toBe(false);
+    expect(mainItem?.hasConflicts).toBe(false);
+    expect(featureItem?.currentBranch).toBe('feature');
+    expect(featureItem?.isDirty).toBe(true);
+    expect(featureItem?.hasConflicts).toBe(true);
+  });
+
+  it('uses status.current as branch and treats null as detached', async () => {
+    const detachedWorktree: WorktreeInfo = {
+      path: 'C:\\repo-detached',
+      head: 'detached-head',
+      branch: null,
+      isDetached: true,
+      isBare: false,
+      isLocked: false,
+      lockReason: null,
+    };
+    const pathExists = jest
+      .spyOn(service as any, 'pathExists')
+      .mockResolvedValue(true);
+    worktreesServiceMock.listWorktrees.mockResolvedValue([
+      detachedWorktree,
+      featureWorktree,
+    ]);
+
+    gitMock.status.mockReset().mockResolvedValue({
+      current: null,
+      isClean: () => true,
+      conflicted: [],
+    });
+    await service.reconcileRepo(repo);
+
+    const items = await service.listForRepo(repo);
+    pathExists.mockRestore();
+
+    const detached = items.find((item) => item.path === 'C:\\repo-detached');
+    expect(detached).toBeTruthy();
+    expect(detached?.currentBranch).toBeNull();
+    expect(detached?.isDirty).toBe(false);
+    expect(detached?.hasConflicts).toBe(false);
+    expect(detached?.isDetached).toBe(true);
+  });
+
+  it('does not call status for missing worktrees', async () => {
+    const pathExists = jest
+      .spyOn(service as any, 'pathExists')
+      .mockResolvedValue(false);
+
+    await service.reconcileRepo(repo);
+    gitMock.status.mockClear();
+
+    const items = await service.listForRepo(repo);
+    pathExists.mockRestore();
+
+    expect(gitMock.status).not.toHaveBeenCalled();
+    expect(items.every((item) => !item.isDirty)).toBe(true);
+    expect(items.every((item) => !item.hasConflicts)).toBe(true);
   });
 
   it('surfaces the number of active agents on a linked worktree', async () => {

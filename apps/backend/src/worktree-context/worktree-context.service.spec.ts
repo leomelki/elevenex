@@ -4,6 +4,7 @@ import simpleGit from 'simple-git';
 import { WorktreeContextService } from './worktree-context.service.js';
 import { DRIZZLE } from '../database/database.provider.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 
 jest.mock('simple-git', () => ({
   __esModule: true,
@@ -56,6 +57,10 @@ describe('WorktreeContextService', () => {
         {
           provide: SessionsService,
           useValue: sessionsServiceMock,
+        },
+        {
+          provide: TextAgentGenerationService,
+          useValue: { generate: jest.fn() },
         },
       ],
     }).compile();

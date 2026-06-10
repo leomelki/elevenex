@@ -2492,9 +2492,11 @@ export class ClaudeRuntimeService extends EventEmitter {
 
     const state = this.ensureRuntimeState(sessionId);
     state.llmRunCount += 1;
-    const resultUsage = (message as {
-      usage?: { total_tokens?: number | null };
-    }).usage;
+    const resultUsage = (
+      message as {
+        usage?: { total_tokens?: number | null };
+      }
+    ).usage;
     const totalTokens =
       resultUsage && typeof resultUsage.total_tokens === 'number'
         ? resultUsage.total_tokens
@@ -3454,7 +3456,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       lastHistoryItemCount: null,
       lastHistoryLoadedAtMs: null,
       lastHistorySource: null,
-        transcriptFallbackUsed: false,
+      transcriptFallbackUsed: false,
       llmRunCount: 0,
       warmState: 'cold',
       lastWarmedAt: null,
@@ -3954,7 +3956,11 @@ export class ClaudeRuntimeService extends EventEmitter {
     this.logger.log(
       `Claude session title generation started session=${sessionId} worktreePath=${JSON.stringify(worktreePath)} promptLength=${prompt.length}`,
     );
-    const title = await this.titleService.generate(worktreePath, prompt);
+    const title = await this.titleService.generate(
+      worktreePath,
+      prompt,
+      'claude',
+    );
     if (!title) {
       this.logger.warn(
         `Claude session title generation produced no title session=${sessionId}`,

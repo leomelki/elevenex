@@ -923,7 +923,11 @@ export class CodexRuntimeService extends EventEmitter {
       this.logger.log(
         `Codex session title generation started session=${sessionId} worktreePath=${JSON.stringify(worktreePath)} promptLength=${prompt.length}`,
       );
-      const title = await this.titleService.generate(worktreePath, prompt);
+      const title = await this.titleService.generate(
+        worktreePath,
+        prompt,
+        'codex',
+      );
       if (!title) {
         this.logger.warn(
           `Codex session title generation produced no title session=${sessionId}`,
@@ -1677,13 +1681,12 @@ export class CodexRuntimeService extends EventEmitter {
       };
 
       const startFreshThread = async (): Promise<string> => {
-        const response =
-          await this.appServer.request<CodexThreadStartResult>(
-            'thread/start',
-            {
-              ...commonThreadParams,
-            },
-          );
+        const response = await this.appServer.request<CodexThreadStartResult>(
+          'thread/start',
+          {
+            ...commonThreadParams,
+          },
+        );
         const newId =
           typeof response.thread?.id === 'string' ? response.thread.id : null;
         if (!newId) {
