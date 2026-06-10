@@ -83,39 +83,66 @@
           </article>
         }
       }
-    </section>
 
-    <section class="mt-4 rounded-md border border-border p-3">
-      <h3 class="text-sm font-semibold text-foreground">Create a new worktree</h3>
-      <div class="mt-3 grid gap-3 md:grid-cols-[220px_1fr]">
-        <label class="grid gap-1">
-          <span class="text-xs font-medium text-muted-foreground">Name</span>
-          <input
-            type="text"
-            class="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            [ngModel]="createName()"
-            (ngModelChange)="createName.set($event); updateCreatePathFromName()" />
-        </label>
+      <button
+        type="button"
+        class="grid w-full grid-cols-[1fr_auto] items-center gap-3 border-t border-border px-3 py-3 text-left hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        [class.bg-accent]="showCreateForm()"
+        [disabled]="creating() || linkingId() !== null"
+        (click)="openCreateForm()">
+        <span class="flex min-w-0 items-center gap-2">
+          <ng-icon name="lucidePlus" class="!h-4 !w-4 shrink-0 text-primary" />
+          <span class="min-w-0">
+            <span class="block text-sm font-semibold text-primary">Create new worktree</span>
+            <span class="block truncate text-xs text-muted-foreground">
+              {{ createName() }} · {{ branchName() }}
+            </span>
+          </span>
+        </span>
+        <span class="text-sm font-medium text-primary">Create</span>
+      </button>
 
-        <label class="grid gap-1">
-          <span class="text-xs font-medium text-muted-foreground">Path</span>
-          <app-path-autocomplete-input
-            placeholder="/path/to/.worktrees/repo-name/worktree-name"
-            pathKind="directory"
-            [value]="createPath()"
-            [preferredStartDirectory]="preferredWorktreeStartDirectory()"
-            (valueChange)="createPath.set($event)" />
-        </label>
-      </div>
-      <div class="mt-3 flex justify-end">
-        <button
-          type="button"
-          class="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-          [disabled]="creating() || linkingId() !== null || !createName().trim() || !createPath().trim()"
-          (click)="createAndLink()">
-          {{ creating() ? 'Creating...' : 'Create and link' }}
-        </button>
-      </div>
+      @if (showCreateForm()) {
+        <div class="border-t border-border bg-muted/20 p-3">
+          <h3 class="text-sm font-semibold text-foreground">Create a new worktree</h3>
+          <div class="mt-3 grid gap-3 md:grid-cols-[220px_1fr]">
+            <label class="grid gap-1">
+              <span class="text-xs font-medium text-muted-foreground">Name</span>
+              <input
+                type="text"
+                class="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                [ngModel]="createName()"
+                (ngModelChange)="createName.set($event); updateCreatePathFromName()" />
+            </label>
+
+            <label class="grid gap-1">
+              <span class="text-xs font-medium text-muted-foreground">Path</span>
+              <app-path-autocomplete-input
+                placeholder="/path/to/.worktrees/repo-name/worktree-name"
+                pathKind="directory"
+                [value]="createPath()"
+                [preferredStartDirectory]="preferredWorktreeStartDirectory()"
+                (valueChange)="createPath.set($event)" />
+            </label>
+          </div>
+          <div class="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              class="rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              [disabled]="creating()"
+              (click)="cancelCreateForm()">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              [disabled]="creating() || linkingId() !== null || !createName().trim() || !createPath().trim()"
+              (click)="createAndLink()">
+              {{ creating() ? 'Creating...' : 'Create and link' }}
+            </button>
+          </div>
+        </div>
+      }
     </section>
   </div>
 

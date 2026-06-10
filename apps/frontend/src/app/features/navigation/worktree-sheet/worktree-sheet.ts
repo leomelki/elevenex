@@ -1,5 +1,7 @@
 import { Component, computed, inject, signal, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucidePlus } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
@@ -10,8 +12,9 @@ import { WorktreesService } from '@/shared/services/worktrees.service';
 
 @Component({
   selector: 'app-worktree-sheet',
-  imports: [FormsModule, TrackNativeModalDirective, PathAutocompleteInputComponent],
+  imports: [FormsModule, NgIcon, TrackNativeModalDirective, PathAutocompleteInputComponent],
   templateUrl: './worktree-sheet.html',
+  viewProviders: [provideIcons({ lucidePlus })],
 })
 export class WorktreeSheet {
   private worktreesService = inject(WorktreesService);
@@ -29,6 +32,7 @@ export class WorktreeSheet {
   loading = signal(false);
   creating = signal(false);
   linkingId = signal<number | null>(null);
+  showCreateForm = signal(false);
   createName = signal('');
   createPath = signal('');
 
@@ -48,9 +52,8 @@ export class WorktreeSheet {
     this.repoName.set(repoName);
     this.branchName.set(branchName || 'HEAD');
     this.autoCreateSession.set(autoCreateSession);
-    const defaultName = this.branchName() === 'HEAD' ? 'Workspace' : this.branchName();
-    this.createName.set(defaultName);
-    this.createPath.set(`${this.parentDir(repoPath)}/.worktrees/${repoName}/${this.slugify(defaultName)}`);
+    this.showCreateForm.set(false);
+    this.prepareCreateDefaults([]);
     this.pool.set([]);
     this.dialogRef.open();
     this.loadPool();
@@ -66,6 +69,9 @@ export class WorktreeSheet {
     this.worktreesService.getPoolByRepo(this.repoId()).subscribe({
       next: (items) => {
         this.pool.set(items);
+        if (!this.showCreateForm()) {
+          this.prepareCreateDefaults(items);
+        }
         this.loading.set(false);
       },
       error: (err) => {
@@ -84,6 +90,17 @@ export class WorktreeSheet {
     return this.parentDir(repoPath);
   }
 
+  openCreateForm() {
+    if (this.creating() || this.linkingId() !== null) return;
+    this.prepareCreateDefaults(this.pool());
+    this.showCreateForm.set(true);
+  }
+
+  cancelCreateForm() {
+    if (this.creating()) return;
+    this.showCreateForm.set(false);
+  }
+
   createAndLink() {
     if (this.creating()) return;
     const name = this.createName().trim();
@@ -99,6 +116,7 @@ export class WorktreeSheet {
     }).subscribe({
       next: (created) => {
         this.creating.set(false);
+        this.showCreateForm.set(false);
         this.link(created);
       },
       error: (err) => {
@@ -156,9 +174,7 @@ export class WorktreeSheet {
   }
 
   updateCreatePathFromName() {
-    this.createPath.set(
-      `${this.parentDir(this.repoPath())}/.worktrees/${this.repoName()}/${this.slugify(this.createName())}`,
-    );
+    this.createPath.set(this.createPathForName(this.createName()));
   }
 
   ownerLabel(item: WorktreePoolItem) {
@@ -210,6 +226,38 @@ export class WorktreeSheet {
     this.close();
   }
 
+  private prepareCreateDefaults(items: WorktreePoolItem[]) {
+    const defaultName = this.nextDefaultWorktreeName(items);
+    this.createName.set(defaultName);
+    this.createPath.set(this.createPathForName(defaultName));
+  }
+
+  private createPathForName(name: string) {
+    return `${this.parentDir(this.repoPath())}/.worktrees/${this.repoName()}/${this.slugify(name)}`;
+  }
+
+  private nextDefaultWorktreeName(items: WorktreePoolItem[]) {
+    const baseName = this.repoName().trim() || 'worktree';
+    const existingNames = new Set(
+      items.map((item) => item.name.trim().toLowerCase()),
+    );
+    const existingPaths = new Set(
+      items.map((item) => this.normalizePath(item.path)),
+    );
+
+    let index = 1;
+    while (true) {
+      const name = `${baseName} ${index}`;
+      if (
+        !existingNames.has(name.toLowerCase()) &&
+        !existingPaths.has(this.normalizePath(this.createPathForName(name)))
+      ) {
+        return name;
+      }
+      index += 1;
+    }
+  }
+
   private takeoverMessage(item: WorktreePoolItem) {
     const ownerName = item.owner?.projectName ?? 'another project';
     const runningAgents =
@@ -223,6 +271,10 @@ export class WorktreeSheet {
     const normalized = value.replace(/\\/g, '/');
     const index = normalized.lastIndexOf('/');
     return index >= 0 ? normalized.slice(0, index) : normalized;
+  }
+
+  private normalizePath(value: string) {
+    return value.replace(/\\/g, '/').toLowerCase();
   }
 
   private slugify(value: string): string {

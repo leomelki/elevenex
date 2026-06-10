@@ -1,6 +1,7 @@
 import { Component, Directive, input, output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TestBed } from '@angular/core/testing';
+import { NgIcon } from '@ng-icons/core';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { of, Subject } from 'rxjs';
 import { WorktreeSheet } from './worktree-sheet';
@@ -91,7 +92,12 @@ describe('WorktreeSheet', () => {
     TestBed.resetTestingModule();
     TestBed.overrideComponent(WorktreeSheet, {
       set: {
-        imports: [FormsModule, MockTrackNativeModalDirective, MockPathAutocompleteInputComponent],
+        imports: [
+          FormsModule,
+          NgIcon,
+          MockTrackNativeModalDirective,
+          MockPathAutocompleteInputComponent,
+        ],
       },
     });
 
@@ -114,10 +120,28 @@ describe('WorktreeSheet', () => {
     const dialog = component.dialogRef as unknown as MockTrackNativeModalDirective;
     component.open(7, 'feature', '/tmp/repos/path-basename', 'repo-one');
 
-    expect(component.createPath()).toBe('/tmp/repos/.worktrees/repo-one/feature');
+    expect(component.createName()).toBe('repo-one 1');
+    expect(component.createPath()).toBe('/tmp/repos/.worktrees/repo-one/repo-one-1');
+    expect(component.showCreateForm()).toBe(false);
     expect(component.pool()).toHaveLength(1);
     expect(worktreesServiceMock.getPoolByRepo).toHaveBeenCalledWith(7);
     expect(dialog.open).toHaveBeenCalledOnce();
+  });
+
+  it('opens the create form with the next available repo-numbered name', () => {
+    worktreesServiceMock.getPoolByRepo.mockReturnValue(of([
+      poolItem({ name: 'repo-one 1', path: '/tmp/repos/.worktrees/repo-one/repo-one-1' }),
+    ]));
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.open(7, 'feature', '/tmp/repos/path-basename', 'repo-one');
+    component.openCreateForm();
+
+    expect(component.showCreateForm()).toBe(true);
+    expect(component.createName()).toBe('repo-one 2');
+    expect(component.createPath()).toBe('/tmp/repos/.worktrees/repo-one/repo-one-2');
   });
 
   it('creates a pool worktree and links it to the current project', () => {
