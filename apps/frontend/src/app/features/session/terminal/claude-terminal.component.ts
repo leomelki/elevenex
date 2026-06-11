@@ -78,6 +78,12 @@ export class ClaudeTerminalComponent implements AfterViewInit, OnChanges, OnDest
     if (changes['isVisible'] && this.socketInitialized) {
       this.syncRetryVisibility();
     }
+    if (changes['sessionId'] && !changes['sessionId'].firstChange && this.socketInitialized) {
+      this.disconnectWebSocket(changes['sessionId'].previousValue as number);
+      this.terminal?.reset();
+      this.connectWebSocket();
+      this.syncRetryVisibility();
+    }
   }
 
   private initTerminal(): void {
@@ -247,10 +253,10 @@ export class ClaudeTerminalComponent implements AfterViewInit, OnChanges, OnDest
     );
   }
 
-  private disconnectWebSocket(): void {
+  private disconnectWebSocket(sessionId?: number): void {
     this.subscriptions.forEach(sub => sub.unsubscribe());
     this.subscriptions = [];
-    this.wsService.disconnect(this.sessionId);
+    this.wsService.disconnect(sessionId ?? this.sessionId);
     this.connectionPhase.set('disconnected');
     this.retryMsUntilNext.set(null);
     this.retryActive.set(false);
