@@ -93,7 +93,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private static readonly SESSION_DELETE_CONFIRM_DELAY_MS = 300;
   private static readonly SESSION_DELETE_AUTO_DISMISS_MS = 3000;
   private static readonly SESSION_TIME_TICK_MS = 60_000;
-  static readonly SESSION_LIST_MAX_VISIBLE = 3;
+  static readonly SESSION_LIST_MAX_VISIBLE = 8;
   readonly SESSION_LIST_MAX_VISIBLE = Sidebar.SESSION_LIST_MAX_VISIBLE;
 
   desktopMode = input(false);
