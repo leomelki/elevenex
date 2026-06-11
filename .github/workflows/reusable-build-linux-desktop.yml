@@ -14,6 +14,7 @@ jobs:
 
       - name: Install native build and packaging toolchain
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google.list
           sudo apt-get update
           sudo apt-get install -y python3 make g++ fakeroot rpm
 
