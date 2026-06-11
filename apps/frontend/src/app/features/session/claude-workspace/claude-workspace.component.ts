@@ -368,7 +368,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     const ctx = this.worktreeContext();
     if (!ctx) return null;
     if (this.contextPinState() === 'failed') return { text: 'Failed', variant: 'warn' };
-    if (this.hasInjectedContext()) return { text: 'Used', variant: 'muted' };
+    if (this.hasInjectedContext() && this.firstPromptContextEnabled()) return { text: 'Used', variant: 'muted' };
     if (!ctx.contextSentence) return null;
     if (this.promptIsCommand() && this.firstPromptContextEnabled())
       return { text: 'Skip', variant: 'muted' };
@@ -383,7 +383,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
 
   readonly firstMessageContext = computed(() => {
-    if (!this.hasInjectedContext()) return null;
+    if (!this.hasInjectedContext() || !this.firstPromptContextEnabled()) return null;
     const ctx = this.worktreeContext();
     const sentence = ctx?.contextSentence?.trim();
     if (!sentence) return null;
@@ -406,6 +406,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       return;
     }
     if (this.terminalTranscriptMirror) {
+      this.firstPromptContextEnabled.set(false);
       void firstValueFrom(
         this.worktreeContextService.consume(this.sessionId, false),
       ).catch((err) => {
