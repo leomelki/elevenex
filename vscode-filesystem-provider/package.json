@@ -33,7 +33,8 @@
   },
   "activationEvents": [
     "onFileSystem:workspace-vfs",
-    "onSearch:workspace-vfs"
+    "onSearch:workspace-vfs",
+    "onCommand:elevenex.searchFiles"
   ],
   "scripts": {
     "build": "pnpm exec webpack --mode production",

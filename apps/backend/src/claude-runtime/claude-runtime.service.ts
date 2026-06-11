@@ -3365,26 +3365,30 @@ export class ClaudeRuntimeService extends EventEmitter {
     // Guard: the runtime reported a session ID that differs from the one we
     // asked it to resume.  This means Claude Code silently started a fresh
     // session instead of resuming the existing one (e.g. because a PTY
-    // already held the session open when the SDK process started).  The
-    // orphan session must not be persisted — doing so would break the
-    // session for the user by pointing the DB at a session with no
-    // transcript.
+    // already held the session open when the SDK process started, or because
+    // the session file is not accessible on this machine).
     //
     // • No active run (prewarm): close the mismatched runtime immediately so
     //   it cannot be picked up by a subsequent user turn.
-    // • Active run: the turn is already in flight so we cannot interrupt it,
-    //   but we still refuse to overwrite the stored session ID.
+    // • Active run: the turn already executed against the new session ID, so
+    //   the transcript is stored there.  We must update the stored ID so that
+    //   getHistory can find it — leaving the DB pointing at the old ID would
+    //   cause the history load to return empty results after the run.
     if (state.claudeSessionId && state.claudeSessionId !== claudeSessionId) {
-      this.logger.warn(
-        `Claude started session ${claudeSessionId} instead of resuming ${state.claudeSessionId} for session ${sessionId} — discarding mismatched runtime`,
-      );
       if (!this.activeRuns.has(sessionId)) {
+        this.logger.warn(
+          `Claude started session ${claudeSessionId} instead of resuming ${state.claudeSessionId} for session ${sessionId} — discarding mismatched runtime`,
+        );
         const runtime = this.sessionRuntimes.get(sessionId);
         if (runtime) {
           void runtime.close().catch(() => {});
         }
+        return;
       }
-      return;
+      this.logger.warn(
+        `Claude started session ${claudeSessionId} instead of resuming ${state.claudeSessionId} for session ${sessionId} — updating stored session id to match active run`,
+      );
+      // Fall through: let the normal capture path below update state and DB.
     }
 
     if (!this.activeRuns.has(sessionId)) {
