@@ -292,6 +292,13 @@ export class TmuxManager implements OnModuleDestroy {
       'status',
       'off',
     ]);
+    await execFileQuiet(this.tmuxBin, [
+      'set-option',
+      '-t',
+      sessionName,
+      'focus-events',
+      'on',
+    ]);
   }
 
   private async resizeWindow(

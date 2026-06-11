@@ -479,6 +479,11 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
         env,
       },
     );
+    await execFileQuiet(
+      this.tmuxBin,
+      ['set-option', '-t', tmuxSessionName, 'focus-events', 'on'],
+      { env },
+    );
     await this.setTmuxWindowSizeModeLatest(tmuxSessionName);
   }
 
