@@ -147,11 +147,11 @@ export class Sidebar implements OnInit, OnDestroy {
 
   private readonly sessionTitleEffect = effect(() => {
     const sessionTitles = this.claudeStatus.sessionTitles();
-    if (sessionTitles.size === 0) {
-      return;
-    }
-
-    untracked(() => this.navService.refreshTree());
+    untracked(() => {
+      for (const [sessionId, name] of sessionTitles) {
+        this.navService.patchSessionName(sessionId, name);
+      }
+    });
   });
 
   private readonly projectRevealEffect = effect(() => {

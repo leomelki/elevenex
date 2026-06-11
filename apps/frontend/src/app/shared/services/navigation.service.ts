@@ -97,6 +97,26 @@ export class NavigationService {
     this.router.navigate(['/sessions', sessionId]);
   }
 
+  patchSessionName(sessionId: number, name: string): void {
+    this.tree.update((projects) =>
+      projects.map((project) => ({
+        ...project,
+        repos: project.repos.map((repo) => ({
+          ...repo,
+          workspaces: (repo.workspaces ?? []).map((workspace) => ({
+            ...workspace,
+            sessions: workspace.sessions.map((session) =>
+              session.id === sessionId ? { ...session, name } : session,
+            ),
+            archivedSessions: workspace.archivedSessions?.map((session) =>
+              session.id === sessionId ? { ...session, name } : session,
+            ),
+          })),
+        })),
+      })),
+    );
+  }
+
   patchSessionCompletion(sessionId: number, completion: SessionCompletionPatch): void {
     this.tree.update((projects) =>
       projects.map((project) => ({
