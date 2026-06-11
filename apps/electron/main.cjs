@@ -1186,6 +1186,36 @@ function createSshAskPassRuntime(forward) {
   }
 
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'elevenex-ssh-askpass-'));
+
+  if (process.platform === 'win32') {
+    // Windows OpenSSH cannot execute Unix shell scripts (CreateProcessW fails with
+    // ERROR_BAD_EXE_FORMAT / error 193), and .bat files have the same problem.
+    // Use the Electron binary itself as the askpass helper via ELECTRON_RUN_AS_NODE.
+    // A small --require script writes the secret to stdout and exits before Node.js
+    // tries to run SSH's prompt string as a JS file.
+    const helperScript = path.join(tempDir, 'askpass.cjs');
+    writeFileSync(
+      helperScript,
+      'process.stdout.write((process.env.ELEVENEX_SSH_ASKPASS_SECRET||"")+"\n");process.exit(0);\n',
+      'utf8',
+    );
+    const helperScriptFwd = helperScript.replace(/\\/g, '/');
+    const baseNodeOptions = process.env.NODE_OPTIONS || '';
+    const nodeOptions = `${baseNodeOptions} --require "${helperScriptFwd}"`.trim();
+    return {
+      tempDir,
+      scriptPath: process.execPath,
+      env: {
+        ...process.env,
+        SSH_ASKPASS: process.execPath,
+        SSH_ASKPASS_REQUIRE: 'force',
+        ELEVENEX_SSH_ASKPASS_SECRET: secret,
+        ELECTRON_RUN_AS_NODE: '1',
+        NODE_OPTIONS: nodeOptions,
+      },
+    };
+  }
+
   const scriptPath = path.join(tempDir, 'askpass.sh');
   writeFileSync(
     scriptPath,

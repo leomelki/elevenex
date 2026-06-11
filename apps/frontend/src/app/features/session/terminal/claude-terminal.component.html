@@ -1,17 +1,17 @@
-<div class="terminal-wrapper h-full w-full relative bg-[#1a1b26] overflow-hidden">
-  @if (connecting()) {
-    <div class="absolute inset-0 flex items-center justify-center bg-[#1a1b26] z-10">
-      <div class="flex items-center gap-2.5">
+<div class="flex h-full flex-col">
+  <!-- Header: identifies this pane as Claude's terminal -->
+  <div class="flex h-9 min-h-9 shrink-0 items-center justify-between gap-2 border-b border-[#292e42] bg-[#16161e] px-3">
+    <span class="text-xs font-semibold tracking-wide text-[#bb9af7]">Claude</span>
+    @if (connecting()) {
+      <div class="flex items-center gap-1.5">
         <span class="inline-block h-1.5 w-1.5 rounded-full bg-[#7aa2f7] animate-pulse"></span>
-        <span class="text-[#565f89] text-xs font-medium tracking-wide">Connecting</span>
+        <span class="text-[#565f89] text-xs">Connecting</span>
       </div>
-    </div>
-  }
-  @if (!connected() && !connecting()) {
-    <div class="absolute inset-0 flex items-center justify-center bg-[#1a1b26] z-10">
-      <div class="flex items-center gap-2.5">
+    }
+    @if (!connected() && !connecting()) {
+      <div class="flex items-center gap-1.5">
         <span class="inline-block h-1.5 w-1.5 rounded-full bg-[#f7768e]"></span>
-        <span class="text-[#565f89] text-xs font-medium tracking-wide">
+        <span class="text-[#565f89] text-xs">
           @if (retryActive() && retryLabel(); as retryLabel) {
             Retrying in {{ retryLabel }}
           } @else {
@@ -19,7 +19,11 @@
           }
         </span>
       </div>
-    </div>
-  }
-  <div #terminalContainer class="h-full w-full"></div>
+    }
+  </div>
+
+  <!-- Terminal area -->
+  <div class="terminal-wrapper flex-1 min-h-0 relative bg-[#1a1b26] overflow-hidden">
+    <div #terminalContainer class="h-full w-full"></div>
+  </div>
 </div>
