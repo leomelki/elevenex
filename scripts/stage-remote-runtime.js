@@ -47,6 +47,26 @@ function copyRequiredPath(source, destination, options = {}) {
   cpSync(source, destination, { recursive: true, ...options });
 }
 
+// node-pty's prebuilt darwin/linux spawn-helper ships without the executable
+// bit set when extracted through pnpm/prebuild-install on a foreign-arch host
+// (CI builds the darwin bundle on Linux). Without +x every pty.spawn fails
+// with `posix_spawnp failed`. Walk the staged tree and restore it.
+function restoreSpawnHelperPermissions(rootDir) {
+  if (!existsSync(rootDir)) {
+    return;
+  }
+
+  for (const entry of readdirSync(rootDir)) {
+    const fullPath = path.join(rootDir, entry);
+    const stats = statSync(fullPath);
+    if (stats.isDirectory()) {
+      restoreSpawnHelperPermissions(fullPath);
+    } else if (entry === 'spawn-helper' && (stats.mode & 0o111) === 0) {
+      chmodSync(fullPath, 0o755);
+    }
+  }
+}
+
 function removeSourceMaps(rootDir) {
   if (!existsSync(rootDir)) {
     return;
@@ -374,6 +394,7 @@ async function stageTarget(target, commitSha, nodeVersion) {
 
   removeSourceMaps(targetRoot);
   removeGitArtifacts(targetRoot);
+  restoreSpawnHelperPermissions(targetRoot);
   archiveTarget(targetRoot, target);
 }
 

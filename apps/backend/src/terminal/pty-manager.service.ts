@@ -7,7 +7,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import * as pty from 'node-pty';
-import { promises as fs } from 'fs';
+import { promises as fs, chmodSync, statSync } from 'fs';
+import { createRequire } from 'module';
 import * as os from 'os';
 import * as path from 'path';
 import { TerminalGateway } from './terminal.gateway.js';
@@ -40,6 +41,42 @@ interface TmuxResizeState {
   };
   running: boolean;
 }
+
+// node-pty's prebuilt darwin spawn-helper ships from the registry without the
+// executable bit set (the bit is lost somewhere in the pnpm/prebuild-install
+// path). When the binary isn't executable, every pty.spawn fails with
+// `posix_spawnp failed`. Heal it in-place at startup so existing installs
+// recover without a reinstall. Runs once per process.
+function ensureSpawnHelperExecutable(): void {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
+  try {
+    const req = createRequire(__filename);
+    const pkgPath = req.resolve('node-pty/package.json');
+    const ptyRoot = path.dirname(pkgPath);
+    const candidates = [
+      path.join(ptyRoot, 'build', 'Release', 'spawn-helper'),
+      path.join(
+        ptyRoot,
+        'prebuilds',
+        `${process.platform}-${process.arch}`,
+        'spawn-helper',
+      ),
+    ];
+    for (const candidate of candidates) {
+      try {
+        const stat = statSync(candidate);
+        if ((stat.mode & 0o111) === 0) {
+          chmodSync(candidate, 0o755);
+        }
+      } catch {
+        // Missing candidate path is fine — try the next.
+      }
+    }
+  } catch {
+    // node-pty unresolvable here — bail; pty.spawn will surface a clearer error.
+  }
+}
+ensureSpawnHelperExecutable();
 
 const CLAUDE_BIN = findBinary('claude') ?? 'claude';
 const HOOK_EVENTS = [
