@@ -60,6 +60,7 @@ import {
   type SessionMessage,
   type EffortLevel,
 } from '@anthropic-ai/claude-agent-sdk';
+import { isLoopbackHostname } from '../proxy/mcp-auth-proxy.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { SessionTitleService } from '../session-title/session-title.service.js';
 import {
@@ -191,6 +192,21 @@ type McpAuthControlQuery = Query & {
     requiresUserAction?: boolean;
   }>;
 };
+
+// How long to keep the Claude CLI subprocess (and its loopback OAuth callback
+// server) alive after we hand the authorize URL back to the browser. Long
+// enough for a real interactive provider login + any MFA, short enough that an
+// abandoned flow does not pin the subprocess forever.
+const MCP_AUTH_FLOW_TIMEOUT_MS = 10 * 60 * 1000;
+
+interface PendingMcpAuthFlow {
+  sessionId: number;
+  serverName: string;
+  port: number;
+  runtimeQuery: McpAuthControlQuery;
+  abortController: AbortController;
+  teardownTimer: NodeJS.Timeout;
+}
 
 export interface ClaudeTranscriptRecord {
   type?: unknown;
@@ -387,6 +403,12 @@ export class ClaudeRuntimeService extends EventEmitter {
   private readonly lastPrewarmAt = new Map<number, number>();
   private readonly runtimeStates = new Map<number, RuntimeState>();
   private readonly invalidatedSessions = new Set<number>();
+  // Active MCP OAuth flows whose underlying Claude CLI subprocess (and loopback
+  // callback server) must be kept alive until the browser redirect returns.
+  // Keyed by `${sessionId}:${serverName}`, with a parallel port→key index so
+  // the proxy can look up a flow by its ephemeral callback port.
+  private readonly pendingMcpAuthFlows = new Map<string, PendingMcpAuthFlow>();
+  private readonly pendingMcpAuthFlowsByPort = new Map<number, string>();
   // Tracks runs that are still initializing (before activeRuns.set is called).
   // Maps sessionId → runId so that an interrupt() arriving in this window can be
   // recorded and honored the moment the run is registered.
@@ -582,6 +604,7 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   async cleanupSession(sessionId: number): Promise<void> {
     this.invalidatedSessions.add(sessionId);
+    this.cancelMcpAuthFlowsForSession(sessionId);
     this.initializingRuns.delete(sessionId);
     this.pendingInterrupts.delete(sessionId);
     const run = this.activeRuns.get(sessionId);
@@ -1984,6 +2007,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       return pendingUrl;
     }
 
+    // If the caller re-clicks "Authenticate" before finishing a prior flow for
+    // the same (session, server), kill the old subprocess first so we don't
+    // leak it and so the new one owns the next callback port.
+    this.teardownMcpAuthFlow(this.mcpAuthFlowKey(sessionId, serverName));
+
     const session = await this.sessionsService.findOne(sessionId);
     const abortController = new AbortController();
     const runtimeQuery = query({
@@ -1996,6 +2024,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       ),
     }) as McpAuthControlQuery;
 
+    let authUrl: string | null = null;
     try {
       await withTimeout(
         runtimeQuery.initializationResult(),
@@ -2008,12 +2037,104 @@ export class ClaudeRuntimeService extends EventEmitter {
         `Timed out starting MCP auth for "${serverName}".`,
       );
 
-      return typeof result.authUrl === 'string' && result.authUrl.trim()
-        ? result.authUrl
-        : null;
-    } finally {
+      authUrl =
+        typeof result.authUrl === 'string' && result.authUrl.trim()
+          ? result.authUrl
+          : null;
+    } catch (error) {
       abortController.abort();
       runtimeQuery.close();
+      throw error;
+    }
+
+    // The Claude CLI subprocess owns the loopback OAuth callback server (e.g.
+    // 127.0.0.1:58846). It MUST stay alive until the browser redirects back —
+    // tearing it down here would make the provider's later redirect hit a dead
+    // port and render the "callback unavailable" page. Park the runtime in
+    // `pendingMcpAuthFlows`; teardown happens on callback hit, restart,
+    // session cleanup, or the safety timeout below.
+    const callbackPort = authUrl ? this.parseLoopbackPort(authUrl) : null;
+    if (!authUrl || callbackPort === null) {
+      abortController.abort();
+      runtimeQuery.close();
+      return authUrl;
+    }
+
+    const key = this.mcpAuthFlowKey(sessionId, serverName);
+    const teardownTimer = setTimeout(() => {
+      this.teardownMcpAuthFlow(key);
+    }, MCP_AUTH_FLOW_TIMEOUT_MS);
+    // Don't keep the process alive solely for an unfinished auth flow.
+    teardownTimer.unref?.();
+
+    this.pendingMcpAuthFlows.set(key, {
+      sessionId,
+      serverName,
+      port: callbackPort,
+      runtimeQuery,
+      abortController,
+      teardownTimer,
+    });
+    this.pendingMcpAuthFlowsByPort.set(callbackPort, key);
+
+    return authUrl;
+  }
+
+  /**
+   * Called by the `/api/mcp-auth-proxy/:port` handler when the loopback OAuth
+   * callback server actually answers a request. That is the only thing that
+   * server serves, so a successful response means the SDK has consumed the
+   * provider's redirect and the CLI subprocess can be retired.
+   */
+  notifyMcpAuthCallback(port: number): void {
+    const key = this.pendingMcpAuthFlowsByPort.get(port);
+    if (!key) {
+      return;
+    }
+    this.teardownMcpAuthFlow(key);
+  }
+
+  cancelMcpAuthFlowsForSession(sessionId: number): void {
+    for (const [key, flow] of this.pendingMcpAuthFlows) {
+      if (flow.sessionId === sessionId) {
+        this.teardownMcpAuthFlow(key);
+      }
+    }
+  }
+
+  private mcpAuthFlowKey(sessionId: number, serverName: string): string {
+    return `${sessionId}:${serverName}`;
+  }
+
+  private parseLoopbackPort(url: string): number | null {
+    try {
+      const parsed = new URL(url);
+      if (!isLoopbackHostname(parsed.hostname) || !parsed.port) {
+        return null;
+      }
+      const port = Number.parseInt(parsed.port, 10);
+      return Number.isInteger(port) && port > 0 && port <= 65535
+        ? port
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private teardownMcpAuthFlow(key: string): void {
+    const flow = this.pendingMcpAuthFlows.get(key);
+    if (!flow) {
+      return;
+    }
+    this.pendingMcpAuthFlows.delete(key);
+    this.pendingMcpAuthFlowsByPort.delete(flow.port);
+    clearTimeout(flow.teardownTimer);
+    flow.abortController.abort();
+    try {
+      flow.runtimeQuery.close();
+    } catch {
+      // The SDK occasionally throws if close() races with the aborted prompt;
+      // we've already aborted, so the subprocess is going away regardless.
     }
   }
 

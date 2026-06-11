@@ -21,6 +21,7 @@ import { ClaudeTerminalTranscriptMirrorGateway } from './claude-runtime/claude-t
 import { AgentRuntimeGateway } from './agent-runtime/agent-runtime.gateway.js';
 import { BackendLogsGateway } from './backend-logs/backend-logs.gateway.js';
 import { ServerConnectionGateway } from './server-connection/server-connection.gateway.js';
+import { ClaudeRuntimeService } from './claude-runtime/claude-runtime.service.js';
 import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
 import { join } from 'path';
 import * as http from 'http';
@@ -183,6 +184,7 @@ async function bootstrap() {
 
   // Register MCP auth proxy BEFORE body-parser so req stream is readable
   // Proxies localhost MCP auth servers for SSH/remote access: /api/mcp-auth-proxy/:port/*
+  const claudeRuntimeService = app.get(ClaudeRuntimeService);
   app.use('/api/mcp-auth-proxy', (req: any, res: any) => {
     const parsedProxyUrl = parseMcpAuthProxyRequestUrl(req.url as string);
     if (!parsedProxyUrl) {
@@ -210,6 +212,13 @@ async function bootstrap() {
         }
         res.writeHead(proxyRes.statusCode || 200, headers);
         proxyRes.pipe(res);
+        // The loopback callback server only serves the OAuth redirect. Any
+        // real response (2xx/3xx) means the SDK consumed the redirect — we
+        // can let the underlying Claude CLI subprocess go.
+        const status = proxyRes.statusCode ?? 0;
+        if (status >= 200 && status < 400) {
+          claudeRuntimeService.notifyMcpAuthCallback(port);
+        }
       },
     );
     proxyReq.on('error', () => {
