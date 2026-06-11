@@ -182,6 +182,8 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     }
     const args = [
       '--enable-auto-mode',
+      '--permission-mode',
+      'auto',
       ...hooksArgs,
       ...(resumeSessionId ? ['--resume', resumeSessionId] : []),
     ];
