@@ -1097,10 +1097,23 @@ import { type TaskNotification, parseTaskNotifications } from '@/shared/utils/ta
       :host ::ng-deep .cw-md p {
         margin: 0.5rem 0;
       }
-      :host ::ng-deep .cw-md ul,
+      :host ::ng-deep .cw-md ul {
+        margin: 0.5rem 0;
+        padding-left: 1.25rem;
+        list-style-type: disc;
+      }
       :host ::ng-deep .cw-md ol {
         margin: 0.5rem 0;
         padding-left: 1.25rem;
+        list-style-type: decimal;
+      }
+      :host ::ng-deep .cw-md ul ul,
+      :host ::ng-deep .cw-md ol ul {
+        list-style-type: circle;
+      }
+      :host ::ng-deep .cw-md ul ul ul,
+      :host ::ng-deep .cw-md ol ul ul {
+        list-style-type: square;
       }
       :host ::ng-deep .cw-md li {
         margin: 0.125rem 0;
