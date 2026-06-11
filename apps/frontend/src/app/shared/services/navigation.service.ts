@@ -25,6 +25,7 @@ export class NavigationService {
   private loadVersion = 0;
   private fullRefreshInFlight = false;
   private fullRefreshQueued = false;
+  private cachedSessionNames = new Map<number, string>();
 
   loadTree() {
     const version = ++this.loadVersion;
@@ -38,10 +39,11 @@ export class NavigationService {
         if (version !== this.loadVersion) {
           return;
         }
+        const patched = this.applyCachedSessionNames(data);
         if (hasData) {
-          this.expandNewTreeItems(this.tree(), data);
+          this.expandNewTreeItems(this.tree(), patched);
         }
-        this.tree.set(data);
+        this.tree.set(patched);
         this.loading.set(false);
         this.refreshFullTree(version);
       },
@@ -98,6 +100,11 @@ export class NavigationService {
   }
 
   patchSessionName(sessionId: number, name: string): void {
+    this.cachedSessionNames.set(sessionId, name);
+    this.applySessionNamePatch(sessionId, name);
+  }
+
+  private applySessionNamePatch(sessionId: number, name: string): void {
     this.tree.update((projects) =>
       projects.map((project) => ({
         ...project,
@@ -115,6 +122,29 @@ export class NavigationService {
         })),
       })),
     );
+  }
+
+  private applyCachedSessionNames(data: NavigationProject[]): NavigationProject[] {
+    if (this.cachedSessionNames.size === 0) {
+      return data;
+    }
+    return data.map((project) => ({
+      ...project,
+      repos: project.repos.map((repo) => ({
+        ...repo,
+        workspaces: (repo.workspaces ?? []).map((workspace) => ({
+          ...workspace,
+          sessions: workspace.sessions.map((session) => {
+            const cached = this.cachedSessionNames.get(session.id);
+            return cached !== undefined ? { ...session, name: cached } : session;
+          }),
+          archivedSessions: workspace.archivedSessions?.map((session) => {
+            const cached = this.cachedSessionNames.get(session.id);
+            return cached !== undefined ? { ...session, name: cached } : session;
+          }),
+        })),
+      })),
+    }));
   }
 
   patchSessionCompletion(sessionId: number, completion: SessionCompletionPatch): void {
@@ -164,8 +194,9 @@ export class NavigationService {
           if (version !== this.loadVersion) {
             return;
           }
-          this.expandNewTreeItems(this.tree(), data);
-          this.tree.set(data);
+          const patched = this.applyCachedSessionNames(data);
+          this.expandNewTreeItems(this.tree(), patched);
+          this.tree.set(patched);
         },
         error: () => {
           // The light tree is already rendered; keep it if git reconciliation fails.

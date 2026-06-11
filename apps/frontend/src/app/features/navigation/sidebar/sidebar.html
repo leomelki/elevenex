@@ -279,7 +279,32 @@
                 </button>
 
                  @if (isExpanded('workspace-' + repo.id + '-' + workspace.id)) {
-                   @for (session of workspace.sessions; track session.id) {
+                   @let hiddenCount = getHiddenSessionCount(workspace.sessions, repo.id, workspace.id);
+                   @if (hiddenCount > 0) {
+                     <div class="session-overflow-row" [style.padding-left]="'64px'">
+                       <button
+                         class="session-show-more-btn"
+                         (click)="$event.stopPropagation(); toggleSessionListExpanded(repo.id, workspace.id)"
+                         [title]="'Show ' + hiddenCount + ' older session' + (hiddenCount === 1 ? '' : 's')"
+                         [attr.aria-label]="'Show ' + hiddenCount + ' older session' + (hiddenCount === 1 ? '' : 's')">
+                         <ng-icon name="lucideChevronDown" class="!w-3 !h-3 shrink-0" />
+                         <span>{{ hiddenCount }} older</span>
+                       </button>
+                       <div class="session-overflow-fade" aria-hidden="true"></div>
+                     </div>
+                   }
+                   @if (isSessionListExpanded(repo.id, workspace.id) && workspace.sessions.length > SESSION_LIST_MAX_VISIBLE) {
+                     <button
+                       class="session-collapse-btn"
+                       [style.padding-left]="'64px'"
+                       (click)="$event.stopPropagation(); toggleSessionListExpanded(repo.id, workspace.id)"
+                       title="Show fewer sessions"
+                       aria-label="Show fewer sessions">
+                       <ng-icon name="lucideChevronUp" class="!w-3 !h-3 shrink-0" />
+                       <span>Show less</span>
+                     </button>
+                   }
+                   @for (session of getVisibleSessions(workspace.sessions, repo.id, workspace.id); track session.id) {
                       <!-- Session node -->
                       <div
                         class="sidebar-tree-row w-full cursor-pointer group"

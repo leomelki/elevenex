@@ -10,6 +10,7 @@ import {
   lucideAlertCircle,
   lucideChevronRight,
   lucideChevronDown,
+  lucideChevronUp,
   lucidePlus,
   lucideRefreshCw,
   lucideTrash2,
@@ -71,6 +72,7 @@ import { AgentControlStateService } from '@/features/agent-control/agent-control
       lucideAlertCircle,
       lucideChevronRight,
       lucideChevronDown,
+      lucideChevronUp,
       lucidePlus,
       lucideRefreshCw,
       lucideTrash2,
@@ -91,6 +93,8 @@ export class Sidebar implements OnInit, OnDestroy {
   private static readonly SESSION_DELETE_CONFIRM_DELAY_MS = 300;
   private static readonly SESSION_DELETE_AUTO_DISMISS_MS = 3000;
   private static readonly SESSION_TIME_TICK_MS = 60_000;
+  static readonly SESSION_LIST_MAX_VISIBLE = 3;
+  readonly SESSION_LIST_MAX_VISIBLE = Sidebar.SESSION_LIST_MAX_VISIBLE;
 
   desktopMode = input(false);
   macNativeChrome = input(false);
@@ -199,6 +203,7 @@ export class Sidebar implements OnInit, OnDestroy {
   deletingSessionId = signal<number | null>(null);
   archivingSessionId = signal<number | null>(null);
   unarchivingSessionId = signal<number | null>(null);
+  expandedSessionLists = signal<Set<string>>(new Set());
   private sessionDeleteEnableTimer: number | null = null;
   private sessionDeleteDismissTimer: number | null = null;
   private projectRevealTimer: number | null = null;
@@ -403,6 +408,35 @@ export class Sidebar implements OnInit, OnDestroy {
 
   isExpanded(key: string): boolean {
     return this.navService.isExpanded(key);
+  }
+
+  isSessionListExpanded(repoId: number, workspaceId: number): boolean {
+    return this.expandedSessionLists().has(`${repoId}-${workspaceId}`);
+  }
+
+  toggleSessionListExpanded(repoId: number, workspaceId: number): void {
+    const key = `${repoId}-${workspaceId}`;
+    const next = new Set(this.expandedSessionLists());
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    this.expandedSessionLists.set(next);
+  }
+
+  getVisibleSessions(sessions: SessionInTree[], repoId: number, workspaceId: number): SessionInTree[] {
+    if (sessions.length <= Sidebar.SESSION_LIST_MAX_VISIBLE || this.isSessionListExpanded(repoId, workspaceId)) {
+      return sessions;
+    }
+    return sessions.slice(sessions.length - Sidebar.SESSION_LIST_MAX_VISIBLE);
+  }
+
+  getHiddenSessionCount(sessions: SessionInTree[], repoId: number, workspaceId: number): number {
+    if (sessions.length <= Sidebar.SESSION_LIST_MAX_VISIBLE || this.isSessionListExpanded(repoId, workspaceId)) {
+      return 0;
+    }
+    return sessions.length - Sidebar.SESSION_LIST_MAX_VISIBLE;
   }
 
   getProjectSshStats(projectId: number) {
