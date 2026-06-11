@@ -502,7 +502,7 @@ export class WorkspacesService {
       const first = pathSessions[0];
       const name = await this.uniqueWorkspaceName(
         repo.id,
-        first.branchName || path.basename(worktreePath),
+        path.basename(worktreePath) || first.branchName || 'workspace',
       );
       const rows = await this.insertWorkspace({
         repoId: repo.id,
@@ -719,7 +719,7 @@ export class WorkspacesService {
     worktree: WorktreeInfo,
   ): string {
     if (worktree.path === repo.path) return 'Default';
-    return worktree.branch ?? path.basename(worktree.path);
+    return path.basename(worktree.path) || worktree.branch || 'workspace';
   }
 
   private toCachedSnapshot(

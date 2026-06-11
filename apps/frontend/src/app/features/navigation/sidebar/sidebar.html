@@ -203,7 +203,9 @@
                   }
                   <span class="text-sm truncate flex-1 sidebar-label--branch" [title]="getWorkspaceTooltip(workspace)">
                     {{ workspace.name }}
-                    <span class="text-xs text-muted-foreground">{{ workspace.currentBranch || 'detached' }}</span>
+                    @if (workspace.currentBranch !== workspace.name) {
+                      <span class="text-xs text-muted-foreground">{{ workspace.currentBranch || 'detached' }}</span>
+                    }
                     @if (isWorkspaceUnlinked(workspace)) {
                       <span class="text-xs text-warning">Unlinked</span>
                     }
