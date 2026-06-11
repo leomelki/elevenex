@@ -73,11 +73,12 @@
 
 .session-overflow-fade {
   height: 1.5rem;
-  width: 100%;
   background: linear-gradient(to bottom, var(--sidebar) 0%, transparent 100%);
   pointer-events: none;
-  margin-bottom: -1.5rem;
-  position: relative;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1.5rem;
   z-index: 1;
 }
 
