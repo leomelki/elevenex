@@ -558,6 +558,34 @@ export function stripInheritedTmuxEnv(
   return rest;
 }
 
+// Default interactive shell for a brand-new user terminal. POSIX systems honour
+// $SHELL (set by login) and fall back to zsh. Windows has no $SHELL and no
+// /bin/zsh — prefer PowerShell (pwsh if installed, else Windows PowerShell),
+// then cmd.exe as a last resort.
+export function getDefaultUserShell(): string {
+  if (IS_WINDOWS) {
+    return (
+      process.env.SHELL ||
+      findBinary('pwsh') ||
+      findBinary('powershell') ||
+      process.env.ComSpec ||
+      'powershell.exe'
+    );
+  }
+  return process.env.SHELL || '/bin/zsh';
+}
+
+// Map a persisted shell to one that can actually run on this platform. User
+// terminals store their shell in the database; rows created on macOS/Linux (or
+// before Windows support existed) hold POSIX paths like `/bin/zsh` that Windows
+// cannot launch. Substitute the platform default for those so existing
+// terminals still open.
+export function normalizeShellForPlatform(shell: string): string {
+  if (!IS_WINDOWS) return shell;
+  if (!shell || shell.startsWith('/')) return getDefaultUserShell();
+  return shell;
+}
+
 // Build a `KEY1='val' KEY2='val' ...` prefix string suitable for inlining in
 // the shell command passed to `tmux new-session`. The default mode inlines only
 // critical tmux-stale vars; `mode: 'full'` is for generic user commands where

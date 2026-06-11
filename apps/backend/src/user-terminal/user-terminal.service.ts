@@ -9,13 +9,14 @@ import { eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { UserPtyManager } from './user-pty-manager.service.js';
+import { getDefaultUserShell } from '../config/system-paths.js';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 
 @Injectable()
 export class UserTerminalService {
   private readonly logger = new Logger('UserTerminalService');
-  private readonly defaultShell = process.env.SHELL || '/bin/zsh';
+  private readonly defaultShell = getDefaultUserShell();
   private readonly startInFlight = new Map<
     number,
     Promise<{ success: boolean; error?: string }>

@@ -78,6 +78,7 @@ function ensureSpawnHelperExecutable(): void {
 }
 ensureSpawnHelperExecutable();
 
+const IS_WINDOWS = process.platform === 'win32';
 const CLAUDE_BIN = findBinary('claude') ?? 'claude';
 const HOOK_EVENTS = [
   'PreToolUse',
@@ -298,20 +299,11 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
       // Inline critical env vars in the shell command inside tmux.
       // The env passed to the tmux client does not affect the tmux server
-      // the server which spawns the actual process — so PATH and
-      // version-manager hints must be inlined to reach claude.
-      const envPrefix = buildTmuxInlineEnvPrefix(env, [
-        'ELEVENEX_SESSION_ID',
-        'ELEVENEX_PORT',
-        'PLANNOTATOR_REMOTE',
-        'PLANNOTATOR_BROWSER',
-        'CLAUDE_CODE_NO_FLICKER',
-      ]);
-
-      const claudeArgv = [CLAUDE_BIN, ...args]
-        .map((arg) => this.shellEscape(arg))
-        .join(' ');
-      const claudeCmd = `unset SSH_TTY SSH_CONNECTION PLANNOTATOR_PORT && ${envPrefix} ${claudeArgv}`;
+      // which spawns the actual process — so PATH and version-manager hints
+      // must be inlined to reach claude. The command runs through tmux's
+      // default-shell: POSIX sh on macOS/Linux, but PowerShell under psmux on
+      // Windows, so the two need different syntax.
+      const claudeCmd = this.buildClaudeTmuxCommand(env, [CLAUDE_BIN, ...args]);
 
       await execFileQuiet(
         tmuxBin,
@@ -628,6 +620,58 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
   private shellEscape(value: string): string {
     return `'${value.replace(/'/g, "'\\''")}'`;
+  }
+
+  // PowerShell single-quote escape: wrap in '...' and double any embedded
+  // single quote. Inside single quotes PowerShell performs no interpolation, so
+  // this is safe for paths and arbitrary values.
+  private psSingleQuote(value: string): string {
+    return `'${value.replace(/'/g, "''")}'`;
+  }
+
+  // Env vars that must reach claude regardless of stale tmux-server env.
+  private static readonly TMUX_INLINE_ENV_KEYS = [
+    'PATH',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    'ELEVENEX_SESSION_ID',
+    'ELEVENEX_PORT',
+    'PLANNOTATOR_REMOTE',
+    'PLANNOTATOR_BROWSER',
+    'CLAUDE_CODE_NO_FLICKER',
+  ] as const;
+
+  // Build the command string handed to `tmux new-session`. tmux runs it through
+  // its default-shell, which is POSIX sh on macOS/Linux and PowerShell under
+  // psmux on Windows — these require different env-setup and quoting syntax.
+  private buildClaudeTmuxCommand(
+    env: NodeJS.ProcessEnv,
+    argv: string[],
+  ): string {
+    if (IS_WINDOWS) {
+      const clears = ['SSH_TTY', 'SSH_CONNECTION', 'PLANNOTATOR_PORT']
+        .map((key) => `$env:${key}=$null`)
+        .join(';');
+      const sets = PtyManager.TMUX_INLINE_ENV_KEYS.filter(
+        (key) => typeof env[key] === 'string' && env[key] !== '',
+      )
+        .map((key) => `$env:${key}=${this.psSingleQuote(env[key] as string)}`)
+        .join(';');
+      const command = argv.map((arg) => this.psSingleQuote(arg)).join(' ');
+      // `&` is PowerShell's call operator — required to execute a quoted path.
+      return [clears, sets, `& ${command}`].filter(Boolean).join(';');
+    }
+
+    const envPrefix = buildTmuxInlineEnvPrefix(env, [
+      'ELEVENEX_SESSION_ID',
+      'ELEVENEX_PORT',
+      'PLANNOTATOR_REMOTE',
+      'PLANNOTATOR_BROWSER',
+      'CLAUDE_CODE_NO_FLICKER',
+    ]);
+    const command = argv.map((arg) => this.shellEscape(arg)).join(' ');
+    return `unset SSH_TTY SSH_CONNECTION PLANNOTATOR_PORT && ${envPrefix} ${command}`;
   }
 
   private async configureTmuxSession(

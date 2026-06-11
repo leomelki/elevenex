@@ -15,6 +15,7 @@ import { generateTmuxScrollConfig } from '../terminal/tmux-scroll-config.js';
 import {
   buildAugmentedEnvAsync,
   findBinary,
+  normalizeShellForPlatform,
   stripInheritedTmuxEnv,
 } from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
@@ -121,8 +122,12 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private async spawnInternal(
     terminalId: number,
     worktreePath: string,
-    shell: string,
+    rawShell: string,
   ): Promise<pty.IPty | null> {
+    // Persisted shells may be POSIX paths (e.g. /bin/zsh) that cannot launch on
+    // Windows; fall back to the platform default so the terminal still opens.
+    const shell = normalizeShellForPlatform(rawShell);
+
     // Kill existing PTY attachment if any
     if (this.processes.has(terminalId)) {
       this.killProcess(terminalId);
