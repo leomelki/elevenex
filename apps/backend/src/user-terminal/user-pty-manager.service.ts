@@ -12,7 +12,11 @@ import * as os from 'os';
 import * as path from 'path';
 import { UserTerminalGateway } from './user-terminal.gateway.js';
 import { generateTmuxScrollConfig } from '../terminal/tmux-scroll-config.js';
-import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
+import {
+  buildAugmentedEnvAsync,
+  findBinary,
+  stripInheritedTmuxEnv,
+} from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
 
 const TMUX_SESSION_PREFIX = 'elevenex-uterm';
@@ -125,7 +129,9 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     }
 
     const env: NodeJS.ProcessEnv = {
-      ...(await buildAugmentedEnvAsync(process.env, worktreePath)),
+      ...stripInheritedTmuxEnv(
+        await buildAugmentedEnvAsync(process.env, worktreePath),
+      ),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     };

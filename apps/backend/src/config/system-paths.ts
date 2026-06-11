@@ -545,6 +545,19 @@ function isTmuxInlineEnvKeyList(
   return Array.isArray(options);
 }
 
+// Strip env vars that tmux uses to detect it is being invoked from inside an
+// existing tmux client. When the backend itself runs inside a tmux session
+// (e.g. the remote-SSH backend launched via `tmux new-session -d -s elevenex-backend`),
+// child tmux invocations inherit `TMUX`/`TMUX_PANE` and refuse to attach with
+// "sessions should be nested with care, unset $TMUX to force". Use this on every
+// env passed to a tmux subprocess (new-session, attach, set-environment, …).
+export function stripInheritedTmuxEnv(
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const { TMUX: _tmux, TMUX_PANE: _tmuxPane, ...rest } = env;
+  return rest;
+}
+
 // Build a `KEY1='val' KEY2='val' ...` prefix string suitable for inlining in
 // the shell command passed to `tmux new-session`. The default mode inlines only
 // critical tmux-stale vars; `mode: 'full'` is for generic user commands where

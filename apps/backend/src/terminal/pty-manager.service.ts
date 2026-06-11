@@ -18,6 +18,7 @@ import {
   buildAugmentedEnvAsync,
   buildTmuxInlineEnvPrefix,
   findBinary,
+  stripInheritedTmuxEnv,
 } from '../config/system-paths.js';
 import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
 import { execFileQuiet } from './async-process.js';
@@ -153,7 +154,9 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     });
 
     const env = buildManagedPlannotatorEnv(sessionId, this.wrapperScriptPath, {
-      ...(await buildAugmentedEnvAsync(process.env, worktreePath)),
+      ...stripInheritedTmuxEnv(
+        await buildAugmentedEnvAsync(process.env, worktreePath),
+      ),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       CLAUDE_CODE_NO_FLICKER: '1',
