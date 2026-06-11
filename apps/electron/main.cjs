@@ -183,6 +183,18 @@ function findExistingPath(candidates) {
 }
 
 function getAppIconPath() {
+  if (process.platform === 'win32') {
+    // Windows renders the taskbar/title-bar icon best from a multi-resolution
+    // .ico; fall back to the PNG logo if the icon file is unavailable.
+    return findExistingPath([
+      path.join(__dirname, 'assets', 'icon.ico'),
+      path.join(process.resourcesPath, 'assets', 'icon.ico'),
+      path.join(__dirname, '..', '..', '11x.png'),
+      path.join(__dirname, '11x.png'),
+      path.join(process.resourcesPath, '11x.png'),
+    ]);
+  }
+
   return findExistingPath([
     path.join(__dirname, '..', '..', '11x.png'),
     path.join(__dirname, '11x.png'),
@@ -483,6 +495,7 @@ function openInstallWindow({
     return installWindow;
   }
 
+  const installIconPath = getAppIconPath();
   installWindow = new BrowserWindow({
     width: 420,
     height: 240,
@@ -494,6 +507,9 @@ function openInstallWindow({
     show: false,
     center: true,
     backgroundColor: '#0d1117',
+    ...(process.platform !== 'darwin' && existsSync(installIconPath)
+      ? { icon: installIconPath }
+      : {}),
     title,
     webPreferences: {
       contextIsolation: true,
@@ -3569,6 +3585,13 @@ ipcMain.handle('elevenex-cursor:open', async (_event, payload) => {
 
 app.whenReady().then(async () => {
   app.setName('Elevenex');
+
+  if (process.platform === 'win32') {
+    // Associate the taskbar button (and its icon) with the app rather than the
+    // host electron.exe, so Windows shows the Elevenex icon in the taskbar,
+    // window list, and search results.
+    app.setAppUserModelId('fr.leomelki.elevenex');
+  }
 
   if (process.platform === 'darwin' && app.dock) {
     const macAppIcon = getMacAppIcon();
