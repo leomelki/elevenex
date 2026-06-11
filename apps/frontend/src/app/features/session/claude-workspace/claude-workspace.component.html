@@ -436,6 +436,7 @@
       }
     </div>
 
+    @if (showContextPin() || !isTranscriptReadOnly()) {
     <div
       class="shrink-0 px-[clamp(0.75rem,4vw,2rem)] pt-2 pb-[0.625rem] flex flex-col gap-2 bg-background border-t border-border/60"
     >
@@ -742,6 +743,7 @@
         />
       }
     </div>
+    }
   }
 
   @if (!isTranscriptReadOnly()) {

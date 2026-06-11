@@ -759,7 +759,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
         void this.bootstrapForMode();
         this.restoreInitialComposerDraft();
-      } else if (!this.archived && !this.readOnlyTranscript) {
+      } else if (!this.archived && (!this.readOnlyTranscript || this.terminalTranscriptMirror)) {
         void this.loadWorktreeContext(false);
       }
     }
@@ -1537,6 +1537,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (!this.readOnlyTranscript) {
       void this.loadWorktreeContext(false);
       void this.loadProviders();
+    } else if (this.terminalTranscriptMirror) {
+      void this.loadWorktreeContext(false);
     }
 
     this.activeTranscriptSocket()
