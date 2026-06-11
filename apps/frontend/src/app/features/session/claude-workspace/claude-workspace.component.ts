@@ -321,7 +321,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
 
   readonly showContextPin = computed(() => {
-    if (this.readOnlyTranscript) return false;
+    if (this.readOnlyTranscript && !this.terminalTranscriptMirror) return false;
     if (this.archived) return false;
     const hasTranscript = this.transcriptItems().length > 0 || this.submitting();
     if (hasTranscript) return false;
@@ -403,6 +403,14 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   toggleContextEnabled(): void {
     if (!this.canToggleContextEnabled()) {
       this.toggleContextExpanded();
+      return;
+    }
+    if (this.terminalTranscriptMirror) {
+      void firstValueFrom(
+        this.worktreeContextService.consume(this.sessionId, false),
+      ).catch((err) => {
+        console.warn('[worktree-context] failed to skip TUI context injection', err);
+      });
       return;
     }
     this.firstPromptContextEnabled.update((v) => !v);

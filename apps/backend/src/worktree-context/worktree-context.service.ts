@@ -281,7 +281,12 @@ export class WorktreeContextService {
   ): Promise<{ shouldInject: boolean; contextSentence: string | null }> {
     const session = await this.sessionsService.findOne(sessionId);
 
-    if (!enabled || session.hasInjectedWorktreeContext) {
+    if (session.hasInjectedWorktreeContext) {
+      return { shouldInject: false, contextSentence: null };
+    }
+
+    if (!enabled) {
+      await this.sessionsService.markWorktreeContextInjected(sessionId);
       return { shouldInject: false, contextSentence: null };
     }
 
