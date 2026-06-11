@@ -1086,8 +1086,12 @@ export class SessionContainer implements OnInit, OnDestroy {
     saved: { sessionIds: number[]; activeSessionId: number | null },
     urlSessionId: number | null,
   ): void {
+    const idsToLoad = [...saved.sessionIds];
+    if (urlSessionId && !idsToLoad.includes(urlSessionId)) {
+      idsToLoad.push(urlSessionId);
+    }
     forkJoin(
-      saved.sessionIds.map((id) =>
+      idsToLoad.map((id) =>
         this.sessionsService.getOne(id).pipe(catchError(() => of(null))),
       ),
     ).subscribe((sessions) => {
