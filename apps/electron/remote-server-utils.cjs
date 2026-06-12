@@ -1,3 +1,9 @@
+// Home-relative directory the remote runtime is installed into. Kept separate
+// from the local/embedded runtime's `.elevenex` so a remote backend reached over
+// SSH-to-localhost never shares a tree (runtime, logs, pid, DB) with the local
+// embedded backend. Single source of truth for every generated remote script.
+const REMOTE_HOME_DIRNAME = '.elevenex-remote';
+
 const REMOTE_RUNTIME_TARGETS = Object.freeze({
   'linux-x64': {
     platform: 'linux',
@@ -208,7 +214,7 @@ function buildWindowsRemotePreflightScript(remotePort) {
   const probeInfoScript = `const http=require('http');const req=http.get({host:'127.0.0.1',port:${port},path:'/api/info',timeout:1200},(res)=>{let body='';res.setEncoding('utf8');res.on('data',(chunk)=>body+=chunk);res.on('end',()=>{try{const data=JSON.parse(body);process.stdout.write(typeof data.backendSha==='string'?data.backendSha:'')}catch{process.exit(1)}})});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));`;
   return [
     '$ErrorActionPreference = "Stop"',
-    '$root = Join-Path $HOME ".elevenex"',
+    `$root = Join-Path $HOME "${REMOTE_HOME_DIRNAME}"`,
     '$logRoot = Join-Path $root "logs"',
     'New-Item -ItemType Directory -Force -Path $logRoot | Out-Null',
     '$installLog = Join-Path $logRoot "install.log"',
@@ -254,8 +260,8 @@ function buildRemotePreflightScript(remotePort) {
   const safePort = Number(remotePort);
   return [
     'set -eu',
-    'mkdir -p "$HOME/.elevenex/logs"',
-    'INSTALL_LOG="$HOME/.elevenex/logs/install.log"',
+    `mkdir -p "$HOME/${REMOTE_HOME_DIRNAME}/logs"`,
+    `INSTALL_LOG="$HOME/${REMOTE_HOME_DIRNAME}/logs/install.log"`,
     'log() { printf "%s %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$INSTALL_LOG"; }',
     `log "preflight: checking remote runtime on port ${Number.isFinite(safePort) ? safePort : 11111}"`,
     'UNAME_S="$(uname -s 2>/dev/null || printf unknown)"',
@@ -267,8 +273,8 @@ function buildRemotePreflightScript(remotePort) {
     'if command -v claude >/dev/null 2>&1; then HAS_CLAUDE=1; else HAS_CLAUDE=0; fi',
     'if command -v tmux >/dev/null 2>&1; then HAS_TMUX=1; else HAS_TMUX=0; fi',
     'CURRENT_VERSION=""',
-    'if [ -r "$HOME/.elevenex/current/version" ]; then',
-    '  CURRENT_VERSION="$(tr -d \'\\r\\n\' < "$HOME/.elevenex/current/version")"',
+    `if [ -r "$HOME/${REMOTE_HOME_DIRNAME}/current/version" ]; then`,
+    `  CURRENT_VERSION="$(tr -d '\\r\\n' < "$HOME/${REMOTE_HOME_DIRNAME}/current/version")"`,
     'fi',
     'TMUX_PRESENT=0',
     'if [ "$HAS_TMUX" = "1" ] && tmux has-session -t elevenex-backend 2>/dev/null; then',
@@ -276,11 +282,11 @@ function buildRemotePreflightScript(remotePort) {
     'fi',
     'BACKEND_REACHABLE=0',
     'RUNNING_BACKEND_VERSION=""',
-    'if [ -x "$HOME/.elevenex/current/node/bin/node" ]; then',
-    `  if "$HOME/.elevenex/current/node/bin/node" -e "const http=require('http');const req=http.get({host:'127.0.0.1',port:${Number.isFinite(safePort) ? safePort : 11111},path:'/api/projects',timeout:1200},(res)=>{process.exit(res.statusCode&&res.statusCode<500?0:1)});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));" >/dev/null 2>&1; then`,
+    `if [ -x "$HOME/${REMOTE_HOME_DIRNAME}/current/node/bin/node" ]; then`,
+    `  if "$HOME/${REMOTE_HOME_DIRNAME}/current/node/bin/node" -e "const http=require('http');const req=http.get({host:'127.0.0.1',port:${Number.isFinite(safePort) ? safePort : 11111},path:'/api/projects',timeout:1200},(res)=>{process.exit(res.statusCode&&res.statusCode<500?0:1)});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));" >/dev/null 2>&1; then`,
     '    BACKEND_REACHABLE=1',
     '  fi',
-    `  RUNNING_BACKEND_VERSION="$("$HOME/.elevenex/current/node/bin/node" -e "const http=require('http');const req=http.get({host:'127.0.0.1',port:${Number.isFinite(safePort) ? safePort : 11111},path:'/api/info',timeout:1200},(res)=>{let body='';res.setEncoding('utf8');res.on('data',(chunk)=>body+=chunk);res.on('end',()=>{try{const data=JSON.parse(body);process.stdout.write(typeof data.backendSha==='string'?data.backendSha:'')}catch{process.exit(1)}})});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));" 2>/dev/null || true)"`,
+    `  RUNNING_BACKEND_VERSION="$("$HOME/${REMOTE_HOME_DIRNAME}/current/node/bin/node" -e "const http=require('http');const req=http.get({host:'127.0.0.1',port:${Number.isFinite(safePort) ? safePort : 11111},path:'/api/info',timeout:1200},(res)=>{let body='';res.setEncoding('utf8');res.on('data',(chunk)=>body+=chunk);res.on('end',()=>{try{const data=JSON.parse(body);process.stdout.write(typeof data.backendSha==='string'?data.backendSha:'')}catch{process.exit(1)}})});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));" 2>/dev/null || true)"`,
     'fi',
     'printf "uname_s=%s\\n" "$UNAME_S"',
     'printf "uname_m=%s\\n" "$UNAME_M"',
@@ -301,7 +307,7 @@ function buildWindowsRemoteInstallCommand({ remoteArchivePath, remoteReleaseDir,
     `$archivePath = ${powershellPathExpression(remoteArchivePath)}`,
     `$releaseDir = ${powershellPathExpression(remoteReleaseDir)}`,
     `$currentLink = ${powershellPathExpression(remoteCurrentLink)}`,
-    '$root = Join-Path $HOME ".elevenex"',
+    `$root = Join-Path $HOME "${REMOTE_HOME_DIRNAME}"`,
     '$releasesRoot = Join-Path $root "releases"',
     '$tmpRoot = Join-Path $root "tmp"',
     '$logRoot = Join-Path $root "logs"',
@@ -335,8 +341,8 @@ function buildRemoteInstallCommand({ remoteArchivePath, remoteReleaseDir, remote
   const releaseDir = shellPathQuote(remoteReleaseDir);
   return [
     'set -eu',
-    'mkdir -p "$HOME/.elevenex/releases" "$HOME/.elevenex/tmp" "$HOME/.elevenex/logs"',
-    'INSTALL_LOG="$HOME/.elevenex/logs/install.log"',
+    `mkdir -p "$HOME/${REMOTE_HOME_DIRNAME}/releases" "$HOME/${REMOTE_HOME_DIRNAME}/tmp" "$HOME/${REMOTE_HOME_DIRNAME}/logs"`,
+    `INSTALL_LOG="$HOME/${REMOTE_HOME_DIRNAME}/logs/install.log"`,
     'log() { printf "%s %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$INSTALL_LOG"; }',
     `log "install: extracting ${remoteArchivePath} to ${remoteReleaseDir}"`,
     `rm -rf ${releaseDir}`,
@@ -362,8 +368,8 @@ function buildRemoteInstallCommand({ remoteArchivePath, remoteReleaseDir, remote
     `ln -sfn ${releaseDir} ${shellPathQuote(remoteCurrentLink)}`,
     `rm -f ${shellPathQuote(remoteArchivePath)}`,
     'log "install: current symlink updated to $RELEASE_DIR"',
-    'if [ -d "$HOME/.elevenex/releases" ]; then',
-    '  ls -1dt "$HOME/.elevenex/releases"/* 2>/dev/null | tail -n +3 | xargs rm -rf -- 2>/dev/null || true',
+    `if [ -d "$HOME/${REMOTE_HOME_DIRNAME}/releases" ]; then`,
+    `  ls -1dt "$HOME/${REMOTE_HOME_DIRNAME}/releases"/* 2>/dev/null | tail -n +3 | xargs rm -rf -- 2>/dev/null || true`,
     'fi',
     'log "install: complete"',
   ].join('\n');
@@ -376,7 +382,7 @@ function buildWindowsRemoteStartCommand({ remoteRoot, remotePort, forcePortClean
     `$port = ${safePort}`,
     `$forcePortCleanup = ${forcePortCleanup ? '$true' : '$false'}`,
     `$remoteRoot = ${powershellPathExpression(remoteRoot)}`,
-    '$root = Join-Path $HOME ".elevenex"',
+    `$root = Join-Path $HOME "${REMOTE_HOME_DIRNAME}"`,
     '$logRoot = Join-Path $root "logs"',
     'New-Item -ItemType Directory -Force -Path $logRoot | Out-Null',
     '$installLog = Join-Path $logRoot "install.log"',
@@ -417,13 +423,13 @@ function buildRemoteStartCommand({ remoteRoot, remotePort, forcePortCleanup }) {
     `PORT=${safePort}`,
     `FORCE_PORT_CLEANUP=${forcePortCleanup ? '1' : '0'}`,
     `REMOTE_ROOT=${shellPathQuote(remoteRoot)}`,
-    'INSTALL_LOG="$HOME/.elevenex/logs/install.log"',
+    `INSTALL_LOG="$HOME/${REMOTE_HOME_DIRNAME}/logs/install.log"`,
     'log() { printf "%s %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$INSTALL_LOG"; }',
     'if ! command -v tmux >/dev/null 2>&1; then',
     '  echo "tmux is required to start the Elevenex backend" >&2',
     '  exit 1',
     'fi',
-    'mkdir -p "$HOME/.elevenex/logs"',
+    `mkdir -p "$HOME/${REMOTE_HOME_DIRNAME}/logs"`,
     'log "start: requested for $REMOTE_ROOT on port $PORT force_cleanup=$FORCE_PORT_CLEANUP"',
     'tmux kill-session -t elevenex-backend 2>/dev/null || true',
     'sleep 1',
@@ -445,15 +451,15 @@ function buildRemoteStartCommand({ remoteRoot, remotePort, forcePortCleanup }) {
     '    log "start: no fuser/lsof available for port cleanup"',
     '  fi',
     'fi',
-    'printf "\\n[%s] Starting Elevenex backend from %s on port %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REMOTE_ROOT" "$PORT" >> "$HOME/.elevenex/logs/backend.log"',
+    `printf "\\n[%s] Starting Elevenex backend from %s on port %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REMOTE_ROOT" "$PORT" >> "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log"`,
     'tmux new-session -d -s elevenex-backend "$REMOTE_ROOT/bin/start-backend.sh $PORT"',
     'sleep 1',
     'if tmux has-session -t elevenex-backend 2>/dev/null; then',
     '  log "start: tmux session is running"',
     'else',
     '  log "start: tmux session exited quickly"',
-    '  echo "--- ~/.elevenex/logs/backend.log (last 80 lines) ---" >&2',
-    '  tail -n 80 "$HOME/.elevenex/logs/backend.log" >&2 || true',
+    `  echo "--- ~/${REMOTE_HOME_DIRNAME}/logs/backend.log (last 80 lines) ---" >&2`,
+    `  tail -n 80 "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log" >&2 || true`,
     '  exit 1',
     'fi',
   ].join('\n');
@@ -483,7 +489,7 @@ function buildWindowsRemoteWaitForReadyCommand({ remoteRoot, remotePort, expecte
   return [
     '$ErrorActionPreference = "Stop"',
     `$remoteRoot = ${powershellPathExpression(remoteRoot)}`,
-    '$logRoot = Join-Path $HOME ".elevenex\\logs"',
+    `$logRoot = Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\logs"`,
     'New-Item -ItemType Directory -Force -Path $logRoot | Out-Null',
     '$installLog = Join-Path $logRoot "install.log"',
     'function Log([string]$Message) { "$((Get-Date).ToUniversalTime().ToString("o")) $Message" | Add-Content -LiteralPath $installLog }',
@@ -538,7 +544,7 @@ function buildRemoteWaitForReadyCommand({ remoteRoot, remotePort, expectedVersio
   ].join('');
   return [
     'set -eu',
-    'INSTALL_LOG="$HOME/.elevenex/logs/install.log"',
+    `INSTALL_LOG="$HOME/${REMOTE_HOME_DIRNAME}/logs/install.log"`,
     'log() { printf "%s %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$INSTALL_LOG"; }',
     `cd ${shellPathQuote(remoteRoot)}`,
     'if [ ! -x "./node/bin/node" ]; then',
@@ -567,13 +573,13 @@ function buildRemoteWaitForReadyCommand({ remoteRoot, remotePort, expectedVersio
     'else',
     '  echo "--- tmux elevenex-backend session not found (backend exited) ---" >&2',
     'fi',
-    'if [ -r "$HOME/.elevenex/logs/backend.log" ]; then',
-    '  echo "--- ~/.elevenex/logs/backend.log (last 120 lines) ---" >&2',
-    '  tail -n 120 "$HOME/.elevenex/logs/backend.log" >&2 || true',
+    `if [ -r "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log" ]; then`,
+    `  echo "--- ~/${REMOTE_HOME_DIRNAME}/logs/backend.log (last 120 lines) ---" >&2`,
+    `  tail -n 120 "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log" >&2 || true`,
     'fi',
-    'if [ -r "$HOME/.elevenex/logs/install.log" ]; then',
-    '  echo "--- ~/.elevenex/logs/install.log (last 160 lines) ---" >&2',
-    '  tail -n 160 "$HOME/.elevenex/logs/install.log" >&2 || true',
+    `if [ -r "$HOME/${REMOTE_HOME_DIRNAME}/logs/install.log" ]; then`,
+    `  echo "--- ~/${REMOTE_HOME_DIRNAME}/logs/install.log (last 160 lines) ---" >&2`,
+    `  tail -n 160 "$HOME/${REMOTE_HOME_DIRNAME}/logs/install.log" >&2 || true`,
     'fi',
     'exit 1',
   ].join('\n');
@@ -612,6 +618,7 @@ function getSuggestedInstallCommands(osRelease, platform = 'linux') {
 }
 
 module.exports = {
+  REMOTE_HOME_DIRNAME,
   REMOTE_INSTALL_PHASES,
   REMOTE_RUNTIME_TARGETS,
   buildWindowsRemoteInstallCommand,

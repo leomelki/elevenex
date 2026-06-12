@@ -6,6 +6,9 @@ function getArgumentValue(name) {
   return arg ? arg.slice(prefix.length) : '';
 }
 
+// The embedded backend runs on a random port, so the main process is the source
+// of truth: it always passes --elevenex-backend-origin. The env/11111 fallbacks
+// only apply to dev/non-embedded runs where the port is fixed.
 const proxyPort = process.env.ELEVENEX_PROXY_PORT || process.env.FRONTEND_PORT || '11111';
 const backendOrigin =
   getArgumentValue('elevenex-backend-origin') ||

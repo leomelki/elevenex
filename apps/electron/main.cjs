@@ -8,6 +8,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { EventEmitter } = require('events');
 const {
+  REMOTE_HOME_DIRNAME,
   REMOTE_RUNTIME_TARGETS,
   buildRemoteInstallCommand,
   buildRemotePreflightScript,
@@ -148,10 +149,15 @@ process.env.PATH = mergedPath(loginShellEnv.PATH);
 ensureUtf8Locale(loginShellEnv);
 dropStaleSshAuthSock();
 
-const proxyPort = process.env.ELEVENEX_PROXY_PORT || process.env.FRONTEND_PORT || '11111';
-const defaultBackendUrl = process.env.ELECTRON_BACKEND_URL || `http://127.0.0.1:${proxyPort}`;
+// Explicit port override (dev / CI). When unset, the embedded backend is given a
+// random free loopback port at launch (see ensureEmbeddedBackendPort) so it can
+// never collide with another elevenex backend on the same machine — e.g. a remote
+// SSH-to-localhost runtime, which binds 11111.
+const explicitProxyPort = process.env.ELEVENEX_PROXY_PORT || process.env.FRONTEND_PORT || '';
+const FALLBACK_BACKEND_PORT = '11111';
+let embeddedBackendPort = explicitProxyPort || null;
 const defaultFrontendUrl = process.env.ELECTRON_FRONTEND_URL || '';
-let currentBackendUrl = defaultBackendUrl;
+let currentBackendUrl = getDefaultBackendUrl();
 const debugFrontend = process.env.ELECTRON_DEBUG_FRONTEND === '1';
 const EMBEDDED_BACKEND_READY_TIMEOUT_MS = 20000;
 const EMBEDDED_BACKEND_READY_POLL_INTERVAL_MS = 250;
@@ -160,6 +166,27 @@ const SHUTDOWN_FORCE_EXIT_TIMEOUT_MS = 4000;
 const RUNTIME_RELEASE_BASE = process.env.ELEVENEX_RUNTIME_RELEASE_BASE
   || 'https://github.com/leomelki/elevenex/releases/download';
 const CHILD_PROCESS_KILL_TIMEOUT_MS = 1500;
+
+// Backend origin the renderer/preload should talk to. Reflects the resolved
+// embedded port once allocated; falls back to 11111 only before allocation /
+// in non-embedded dev modes. An explicit ELECTRON_BACKEND_URL always wins.
+function getDefaultBackendUrl() {
+  if (process.env.ELECTRON_BACKEND_URL) {
+    return process.env.ELECTRON_BACKEND_URL;
+  }
+  return `http://127.0.0.1:${embeddedBackendPort || FALLBACK_BACKEND_PORT}`;
+}
+
+// Allocate the embedded backend's port once per process. Honors an explicit
+// override; otherwise grabs a random free loopback port. Must be awaited before
+// getFrontendTarget()/startEmbeddedBackend() so the backend URL handed to the
+// renderer matches the port the backend actually binds.
+async function ensureEmbeddedBackendPort() {
+  if (!embeddedBackendPort) {
+    embeddedBackendPort = String(await getFreePort());
+  }
+  return embeddedBackendPort;
+}
 
 let mainWindow = null;
 let settingsWindow = null;
@@ -266,6 +293,120 @@ function getLocalFrontendEntry() {
 
 function getPackagedRuntimeRoot() {
   return path.join(os.homedir(), '.elevenex', 'runtime');
+}
+
+// Kept outside the runtime directory so it survives runtime wipes and lets the
+// next launch clean up a backend left running by a previous (possibly crashed)
+// session.
+function getEmbeddedBackendPidPath() {
+  return path.join(os.homedir(), '.elevenex', 'embedded-backend.pid');
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but we are not allowed to signal it.
+    return error.code === 'EPERM';
+  }
+}
+
+// The embedded backend spawns descendants (PTY/conpty agents, helper node
+// processes) whose executables and native modules live under runtime/backend.
+// Terminating only the direct child orphans those descendants, and on Windows a
+// running executable keeps its directory locked — which is what makes the next
+// launch's `rmdir runtime\backend` fail with EBUSY. Kill the whole tree while the
+// parent is still alive so the tree relationship can be walked.
+function killProcessTree(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    // taskkill /T walks and kills the entire descendant tree; /F forces it.
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    return;
+  }
+
+  // POSIX: the backend is spawned detached (its own process group), so a negative
+  // pid signals the whole group. Fall back to the lone pid if that fails.
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Best effort — the process may already be gone.
+    }
+  }
+}
+
+// Last-resort cleanup for descendants that were orphaned by a crash (so the
+// parent pid is already dead and taskkill /T can no longer find the tree). Find
+// and kill anything still running from inside the runtime directory by image
+// path. Scoped to the runtime subtree so a remote/SSH backend running from
+// ~/.elevenex-remote/current is never touched. Windows-only; on POSIX a locked
+// exe does not block removing its directory.
+function killProcessesUnderRuntimeDir() {
+  if (process.platform !== 'win32') {
+    return;
+  }
+
+  const prefix = `${path.resolve(getPackagedRuntimeRoot())}\\`.replace(/'/g, "''");
+  const script =
+    'Get-CimInstance Win32_Process | '
+    + `Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${prefix}', `
+    + '[System.StringComparison]::OrdinalIgnoreCase) } | '
+    + 'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }';
+
+  spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: 'ignore' });
+}
+
+// A backend left running by a previous Elevenex session keeps runtime/backend
+// locked on Windows, which makes the next startup's runtime cleanup fail with
+// EBUSY. Kill any recorded leftover process tree before we touch the runtime
+// directory or bind the backend port.
+function terminateStaleEmbeddedBackend() {
+  const pidPath = getEmbeddedBackendPidPath();
+  let pid = null;
+  try {
+    pid = Number.parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+  } catch {
+    return;
+  }
+
+  if (pid !== process.pid && isProcessAlive(pid)) {
+    killProcessTree(pid);
+  }
+
+  try {
+    rmSync(pidPath, { force: true });
+  } catch {
+    // Non-fatal: the stale pid file is harmless once the process is gone.
+  }
+}
+
+// On Windows a freshly-terminated backend can hold file handles for a short
+// window, so retry the removal and, on persistent locking, kill the recorded
+// backend plus any process still running from the runtime tree before trying
+// once more with a longer window for the OS to release handles.
+function removeRuntimeDir(runtimeRoot) {
+  try {
+    rmSync(runtimeRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    return;
+  } catch (error) {
+    if (error.code !== 'EBUSY' && error.code !== 'EPERM' && error.code !== 'ENOTEMPTY') {
+      throw error;
+    }
+  }
+
+  terminateStaleEmbeddedBackend();
+  killProcessesUnderRuntimeDir();
+  rmSync(runtimeRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 }
 
 function getRemoteRuntimeVersion() {
@@ -751,7 +892,7 @@ async function ensureEmbeddedBackendExtracted() {
   }
 
   if (existsSync(runtimeRoot) && (needsVersionUpdate || !hasRuntimeMarker || !existsSync(embeddedBackendEntry))) {
-    rmSync(runtimeRoot, { recursive: true, force: true });
+    removeRuntimeDir(runtimeRoot);
   }
 
   mkdirSync(runtimeRoot, { recursive: true });
@@ -796,7 +937,7 @@ async function ensureEmbeddedBackendExtracted() {
 
     writeFileSync(runtimeMarkerPath, `${new Date().toISOString()}\n`, 'utf8');
   } catch (error) {
-    rmSync(runtimeRoot, { recursive: true, force: true });
+    removeRuntimeDir(runtimeRoot);
     throw error;
   } finally {
     rmSync(archivePath, { force: true });
@@ -859,12 +1000,83 @@ async function waitForBackendReady(backendUrl, timeoutMs) {
   throw new Error(`Embedded backend did not become ready within ${timeoutMs}ms`);
 }
 
-async function startEmbeddedBackend(backendUrl) {
+function isAddressInUseError(message) {
+  return /EADDRINUSE|address already in use/i.test(message || '');
+}
+
+// Spawn the backend process, wire logging/pid/exit tracking, and return a promise
+// that resolves once it reports ready (or rejects with the captured stderr; the
+// rejection carries `.addressInUse` so the caller can decide whether to retry on
+// a different port).
+function launchEmbeddedBackend({ backendExecutable, backendArgs, env, cwd, backendUrl }) {
+  const child = spawn(backendExecutable, backendArgs, {
+    cwd,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // POSIX: give the backend its own process group so we can signal the whole
+    // tree (PTY agents, helper node processes) on shutdown instead of orphaning
+    // descendants. Windows uses taskkill /T for the same effect.
+    detached: process.platform !== 'win32',
+  });
+
+  let stderrBuffer = '';
+
+  child.stdout.on('data', (chunk) => {
+    process.stdout.write(`[embedded-backend] ${chunk}`);
+  });
+  child.stderr.on('data', (chunk) => {
+    const text = chunk.toString();
+    stderrBuffer = `${stderrBuffer}${text}`.slice(-4000);
+    process.stderr.write(`[embedded-backend] ${text}`);
+  });
+
+  const ready = waitForBackendReady(backendUrl, EMBEDDED_BACKEND_READY_TIMEOUT_MS).then(
+    () => undefined,
+    (error) => {
+      terminateChildProcess(child);
+      const details = stderrBuffer.trim();
+      const wrapped = new Error(details ? `${error.message}\n\n${details}` : error.message);
+      wrapped.addressInUse = isAddressInUseError(stderrBuffer);
+      throw wrapped;
+    },
+  );
+
+  embeddedBackendRuntime = { child, ready, backendUrl };
+
+  try {
+    writeFileSync(getEmbeddedBackendPidPath(), `${child.pid}\n`, 'utf8');
+  } catch {
+    // Non-fatal: the pid file only helps clean up a stale backend on next launch.
+  }
+
+  child.once('exit', () => {
+    // Guard against a superseded launch (e.g. a retry already replaced the
+    // runtime) clobbering the live one when this older child finally exits.
+    if (embeddedBackendRuntime?.child !== child) {
+      return;
+    }
+    embeddedBackendRuntime = null;
+    try {
+      rmSync(getEmbeddedBackendPidPath(), { force: true });
+    } catch {
+      // Non-fatal.
+    }
+  });
+
+  return ready;
+}
+
+// Starts the embedded backend and returns the backend origin it actually bound.
+async function startEmbeddedBackend() {
   if (embeddedBackendRuntime) {
-    return embeddedBackendRuntime.ready;
+    await embeddedBackendRuntime.ready;
+    return embeddedBackendRuntime.backendUrl;
   }
 
   const embeddedBackendRoot = getEmbeddedBackendRoot();
+  // Clear out a backend orphaned by a previous/crashed session before it can
+  // lock the runtime directory or hold the backend port.
+  terminateStaleEmbeddedBackend();
   await ensureEmbeddedBackendExtracted();
   const embeddedBackendEntry = getEmbeddedBackendEntry();
 
@@ -885,57 +1097,72 @@ async function startEmbeddedBackend(backendUrl) {
   const bundledNodeExecutable = getEmbeddedBackendNodeExecutable();
   const backendExecutable = bundledNodeExecutable || process.execPath;
   const backendArgs = [embeddedBackendEntry];
-  const env = {
-    ...process.env,
-    ELEVENEX_BACKEND_RUNTIME_ROOT: embeddedBackendRoot,
-    DB_PATH: packagedDatabasePath,
-    ELEVENEX_PROXY_PORT: proxyPort,
-    FRONTEND_PORT: proxyPort,
-  };
-  if (!bundledNodeExecutable) {
-    env.ELECTRON_RUN_AS_NODE = '1';
+
+  // A random free port can, in theory, be grabbed between getFreePort() releasing
+  // the probe socket and the backend binding it. On EADDRINUSE — and only when the
+  // port wasn't explicitly pinned — reallocate a fresh port and retry.
+  const maxAttempts = explicitProxyPort ? 1 : 3;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const resolvedPort = await ensureEmbeddedBackendPort();
+    const backendUrl = getDefaultBackendUrl();
+    const env = {
+      ...process.env,
+      ELEVENEX_BACKEND_RUNTIME_ROOT: embeddedBackendRoot,
+      DB_PATH: packagedDatabasePath,
+      ELEVENEX_PROXY_PORT: resolvedPort,
+      FRONTEND_PORT: resolvedPort,
+    };
+    if (!bundledNodeExecutable) {
+      env.ELECTRON_RUN_AS_NODE = '1';
+    }
+
+    try {
+      await launchEmbeddedBackend({
+        backendExecutable,
+        backendArgs,
+        env,
+        cwd: embeddedBackendRoot,
+        backendUrl,
+      });
+      return backendUrl;
+    } catch (error) {
+      lastError = error;
+      if (!error.addressInUse || attempt === maxAttempts) {
+        break;
+      }
+      // Drop the contested port so the next attempt allocates a fresh one.
+      embeddedBackendPort = null;
+    }
   }
 
-  const child = spawn(backendExecutable, backendArgs, {
-    cwd: embeddedBackendRoot,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let stderrBuffer = '';
-
-  child.stdout.on('data', (chunk) => {
-    process.stdout.write(`[embedded-backend] ${chunk}`);
-  });
-  child.stderr.on('data', (chunk) => {
-    const text = chunk.toString();
-    stderrBuffer = `${stderrBuffer}${text}`.slice(-4000);
-    process.stderr.write(`[embedded-backend] ${text}`);
-  });
-
-  const ready = waitForBackendReady(backendUrl, EMBEDDED_BACKEND_READY_TIMEOUT_MS).catch((error) => {
-    terminateChildProcess(child);
-    closeInstallWindow();
-
-    const details = stderrBuffer.trim();
-    throw new Error(details ? `${error.message}\n\n${details}` : error.message);
-  });
-
-  embeddedBackendRuntime = { child, ready };
-
-  child.once('exit', () => {
-    embeddedBackendRuntime = null;
-  });
-
-  return ready;
+  closeInstallWindow();
+  throw lastError || new Error('Embedded backend failed to start');
 }
 
 function stopEmbeddedBackend() {
-  if (!embeddedBackendRuntime?.child || embeddedBackendRuntime.child.killed) {
+  const child = embeddedBackendRuntime?.child;
+  if (!child) {
     return;
   }
 
-  terminateChildProcess(embeddedBackendRuntime.child);
+  // Kill the whole process tree, not just the direct child — orphaned
+  // descendants keep the runtime directory locked on Windows and cause the next
+  // launch to fail with EBUSY. Done while the parent is still alive so the tree
+  // can be walked.
+  if (typeof child.pid === 'number') {
+    killProcessTree(child.pid);
+  }
+
+  // Backstop for the parent itself (and platforms where the tree kill missed it).
+  terminateChildProcess(child);
+
+  try {
+    rmSync(getEmbeddedBackendPidPath(), { force: true });
+  } catch {
+    // Non-fatal.
+  }
 }
 
 function getSettingsPath() {
@@ -977,7 +1204,7 @@ function writeSettings(nextSettings) {
 function resolveAppTargets() {
   const settings = readSettings();
   const useEmbeddedBackend = shouldUseEmbeddedBackend(settings);
-  const backendUrl = settings.backendUrl || defaultBackendUrl;
+  const backendUrl = settings.backendUrl || getDefaultBackendUrl();
   const frontendUrl = settings.frontendUrl || defaultFrontendUrl;
 
   return {
@@ -1682,10 +1909,10 @@ async function ensureRemoteServerReady(forward) {
     || !preflight.backendReachable
     || runningVersionMismatch;
   const remoteArchiveExtension = REMOTE_RUNTIME_TARGETS[preflight.remoteTarget]?.archiveExtension || 'tar.gz';
-  const remoteArchivePath = `~/.elevenex/tmp/elevenex-${bundledVersion}-${preflight.remoteTarget}.${remoteArchiveExtension}`;
-  const remoteReleaseDir = `~/.elevenex/releases/${bundledVersion}-${preflight.remoteTarget}`;
-  const remoteCurrentLink = '~/.elevenex/current';
-  const remoteCurrentRoot = '~/.elevenex/current';
+  const remoteArchivePath = `~/${REMOTE_HOME_DIRNAME}/tmp/elevenex-${bundledVersion}-${preflight.remoteTarget}.${remoteArchiveExtension}`;
+  const remoteReleaseDir = `~/${REMOTE_HOME_DIRNAME}/releases/${bundledVersion}-${preflight.remoteTarget}`;
+  const remoteCurrentLink = `~/${REMOTE_HOME_DIRNAME}/current`;
+  const remoteCurrentRoot = `~/${REMOTE_HOME_DIRNAME}/current`;
   const remoteCommandOptions = { remotePlatform: preflight.remotePlatform };
   const installCommand = preflight.remotePlatform === 'win32'
     ? buildWindowsRemoteInstallCommand
@@ -1702,8 +1929,8 @@ async function ensureRemoteServerReady(forward) {
     await runSshCommandAsync(
       forward,
       preflight.remotePlatform === 'win32'
-        ? 'New-Item -ItemType Directory -Force -Path (Join-Path $HOME ".elevenex\\tmp"), (Join-Path $HOME ".elevenex\\releases"), (Join-Path $HOME ".elevenex\\logs") | Out-Null'
-        : 'mkdir -p "$HOME/.elevenex/tmp" "$HOME/.elevenex/releases" "$HOME/.elevenex/logs"',
+        ? `New-Item -ItemType Directory -Force -Path (Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\tmp"), (Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\releases"), (Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\logs") | Out-Null`
+        : `mkdir -p "$HOME/${REMOTE_HOME_DIRNAME}/tmp" "$HOME/${REMOTE_HOME_DIRNAME}/releases" "$HOME/${REMOTE_HOME_DIRNAME}/logs"`,
       remoteCommandOptions,
     );
 
@@ -2719,6 +2946,12 @@ function destroyBrowserView(browserKey) {
 }
 
 async function createMainWindow() {
+  // Allocate the embedded backend's port before resolving the frontend target so
+  // the backend URL handed to the renderer/preload reflects the real (random) port.
+  if (shouldUseEmbeddedBackend()) {
+    await ensureEmbeddedBackendPort();
+  }
+
   const frontendTarget = getFrontendTarget();
   currentBackendUrl = frontendTarget.backendUrl;
   const isMac = process.platform === 'darwin';
@@ -2730,7 +2963,11 @@ async function createMainWindow() {
 
   if (frontendTarget.useEmbeddedBackend) {
     try {
-      await startEmbeddedBackend(frontendTarget.backendUrl);
+      // The backend may bind a different port than first computed (retry on
+      // EADDRINUSE), so adopt the origin it actually bound for the renderer.
+      const boundBackendUrl = await startEmbeddedBackend();
+      frontendTarget.backendUrl = boundBackendUrl;
+      currentBackendUrl = boundBackendUrl;
     } catch (error) {
       dialog.showErrorBox(
         'Embedded Backend Failed to Start',
@@ -2895,12 +3132,12 @@ function buildSettingsHtml() {
       <form id="settings-form">
         <label>
           Backend URL
-          <input id="backendUrl" type="url" placeholder="${defaultBackendUrl}" />
+          <input id="backendUrl" type="url" placeholder="${getDefaultBackendUrl()}" />
           <span class="hint">Used for API, WebSocket, and socket.io traffic.</span>
         </label>
         <label>
           Frontend URL
-          <input id="frontendUrl" type="url" placeholder="${debugFrontend ? defaultBackendUrl : 'Use built local frontend if available'}" />
+          <input id="frontendUrl" type="url" placeholder="${debugFrontend ? getDefaultBackendUrl() : 'Use built local frontend if available'}" />
           <span class="hint">Optional remote renderer override. Empty = built frontend or backend debug target.</span>
         </label>
         <div id="error" class="error"></div>
