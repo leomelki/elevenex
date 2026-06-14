@@ -1004,6 +1004,21 @@ function isAddressInUseError(message) {
   return /EADDRINUSE|address already in use/i.test(message || '');
 }
 
+// A freshly-extracted node.exe is often briefly locked on Windows: real-time AV
+// scans the new executable, and the tar/file handles may not be fully released
+// yet. Spawning during that window fails with one of these codes. The lock is
+// transient, so the right response is a short backoff and retry rather than
+// surfacing a fatal "backend failed to start" — which is why simply relaunching
+// Elevenex (after the scan settles) currently works around it.
+const TRANSIENT_SPAWN_LOCK_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'ETXTBSY', 'UNKNOWN', 'ENOENT']);
+
+function isTransientSpawnLockError(error) {
+  if (process.platform !== 'win32' || !error) {
+    return false;
+  }
+  return TRANSIENT_SPAWN_LOCK_CODES.has(error.code);
+}
+
 // Spawn the backend process, wire logging/pid/exit tracking, and return a promise
 // that resolves once it reports ready (or rejects with the captured stderr; the
 // rejection carries `.addressInUse` so the caller can decide whether to retry on
@@ -1030,13 +1045,30 @@ function launchEmbeddedBackend({ backendExecutable, backendArgs, env, cwd, backe
     process.stderr.write(`[embedded-backend] ${text}`);
   });
 
-  const ready = waitForBackendReady(backendUrl, EMBEDDED_BACKEND_READY_TIMEOUT_MS).then(
+  // spawn() reports a failure to launch the executable (e.g. the freshly
+  // extracted node.exe is still locked by AV on Windows) via an asynchronous
+  // 'error' event, not by throwing. Without this listener Node would rethrow it
+  // as an uncaught exception in the main process — escaping the try/catch in
+  // createMainWindow and breaking startup until the next relaunch.
+  const spawnFailed = new Promise((_resolve, reject) => {
+    child.once('error', (error) => {
+      const wrapped = new Error(`Failed to launch embedded backend: ${error.message}`);
+      wrapped.transientLock = isTransientSpawnLockError(error);
+      reject(wrapped);
+    });
+  });
+
+  const ready = Promise.race([
+    waitForBackendReady(backendUrl, EMBEDDED_BACKEND_READY_TIMEOUT_MS),
+    spawnFailed,
+  ]).then(
     () => undefined,
     (error) => {
       terminateChildProcess(child);
       const details = stderrBuffer.trim();
       const wrapped = new Error(details ? `${error.message}\n\n${details}` : error.message);
-      wrapped.addressInUse = isAddressInUseError(stderrBuffer);
+      wrapped.addressInUse = error.addressInUse || isAddressInUseError(stderrBuffer);
+      wrapped.transientLock = Boolean(error.transientLock);
       throw wrapped;
     },
   );
@@ -1098,10 +1130,14 @@ async function startEmbeddedBackend() {
   const backendExecutable = bundledNodeExecutable || process.execPath;
   const backendArgs = [embeddedBackendEntry];
 
-  // A random free port can, in theory, be grabbed between getFreePort() releasing
-  // the probe socket and the backend binding it. On EADDRINUSE — and only when the
-  // port wasn't explicitly pinned — reallocate a fresh port and retry.
-  const maxAttempts = explicitProxyPort ? 1 : 3;
+  // Two transient failures justify a retry here:
+  //  - EADDRINUSE: a random free port can be grabbed between getFreePort()
+  //    releasing the probe socket and the backend binding it. Reallocate a fresh
+  //    port and retry (only when the port wasn't explicitly pinned).
+  //  - A Windows file lock on a freshly-extracted node.exe (AV scan / unreleased
+  //    tar handles). Back off briefly and retry the same port so the very first
+  //    launch after a download/update succeeds instead of requiring a relaunch.
+  const maxAttempts = explicitProxyPort ? 1 : 5;
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1129,11 +1165,19 @@ async function startEmbeddedBackend() {
       return backendUrl;
     } catch (error) {
       lastError = error;
-      if (!error.addressInUse || attempt === maxAttempts) {
+      const canRetry = attempt < maxAttempts && (error.addressInUse || error.transientLock);
+      if (!canRetry) {
         break;
       }
-      // Drop the contested port so the next attempt allocates a fresh one.
-      embeddedBackendPort = null;
+      if (error.addressInUse) {
+        // Drop the contested port so the next attempt allocates a fresh one.
+        embeddedBackendPort = null;
+      } else {
+        // Give Windows time to finish scanning/releasing the new executable
+        // before retrying on the same port.
+        updateInstallProgress({ status: 'Preparing backend… finalizing files' });
+        await wait(750 * attempt);
+      }
     }
   }
 
