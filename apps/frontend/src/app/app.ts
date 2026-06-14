@@ -28,8 +28,6 @@ import { OnboardingStartupService } from './shared/services/onboarding-startup.s
 import { CONNECTING_PHASES, SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
 import { BackendLogsWebsocketService } from './shared/services/backend-logs-websocket.service';
 import { EnvironmentConnectionManagerService } from './shared/services/environment-connection-manager.service';
-import { PlannotatorInstallPromptService } from './features/plannotator/plannotator-install-prompt.service';
-import { PlannotatorInstallPromptComponent } from './features/plannotator/plannotator-install-prompt.component';
 import { ThemeService } from './shared/services/theme.service';
 import { ServerConnectionService } from './shared/services/server-connection.service';
 import { AgentControlDrawerComponent } from './features/agent-control/agent-control-drawer.component';
@@ -50,7 +48,7 @@ function readSidebarWidth(): number {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, PlannotatorInstallPromptComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, ZardInputDirective],
+  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, ZardInputDirective],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   viewProviders: [
@@ -76,7 +74,6 @@ export class App implements OnInit, OnDestroy {
   private readonly connectionManager = inject(EnvironmentConnectionManagerService);
   private readonly backendLogs = inject(BackendLogsWebsocketService);
   private readonly serverConnection = inject(ServerConnectionService);
-  private readonly plannotatorInstallPrompt = inject(PlannotatorInstallPromptService);
   private readonly theme = inject(ThemeService);
   private readonly windowControls = getElectronWindowControlsApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
@@ -92,7 +89,6 @@ export class App implements OnInit, OnDestroy {
   isOnboardingRoute = signal(this.router.url.startsWith('/onboarding'));
   switchingEnvironment = this.connectionManager.switching;
   readonly startupPortForwardPrompt = this.startupService.startupPortForwardPrompt;
-  readonly showPlannotatorInstallPrompt = this.plannotatorInstallPrompt.show;
   readonly disconnectedForwardsBanner = this.sshRuntimeRecovery.disconnectedForwardsBanner;
   readonly remoteDisconnect = this.sshRuntimeRecovery.remoteDisconnect;
   readonly remoteConnecting = this.sshRuntimeRecovery.remoteConnecting;
@@ -113,8 +109,6 @@ export class App implements OnInit, OnDestroy {
     this.theme.mode();
     this.serverConnection.start();
     this.backendLogs.start();
-    this.plannotatorInstallPrompt.initialize();
-
     const subscription = this.router.events.subscribe((event) => {
       if (event instanceof NavigationEnd) {
         const url = event.urlAfterRedirects;

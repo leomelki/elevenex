@@ -8,7 +8,6 @@ import { RemoteInstallFlowService } from './shared/services/remote-install-flow.
 import { SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
 import { EnvironmentConnectionManagerService } from './shared/services/environment-connection-manager.service';
 import { ServerConnectionService, ServerConnectionState } from './shared/services/server-connection.service';
-import { PlannotatorInstallPromptService } from './features/plannotator/plannotator-install-prompt.service';
 import { AgentControlStateService } from './features/agent-control/agent-control-state.service';
 
 describe('App', () => {
@@ -17,7 +16,6 @@ describe('App', () => {
   const remoteDisconnect = signal<any>(null);
   const remoteConnecting = signal<any>(null);
   const remoteInstallState = signal<any>(null);
-  const showPlannotatorInstallPrompt = signal(false);
   const switching = signal(false);
   const serverConnectionState = signal<ServerConnectionState>({
     phase: 'connected',
@@ -68,12 +66,6 @@ describe('App', () => {
     cancel: vi.fn(() => Promise.resolve()),
     sendInput: vi.fn(() => Promise.resolve()),
     resize: vi.fn(() => Promise.resolve()),
-  };
-  const plannotatorInstallPromptMock = {
-    show: showPlannotatorInstallPrompt.asReadonly(),
-    initialize: vi.fn(),
-    dismiss: vi.fn(),
-    install: vi.fn(),
   };
   const serverConnectionServiceMock = {
     state: serverConnectionState.asReadonly(),
@@ -130,7 +122,6 @@ describe('App', () => {
     remoteDisconnect.set(null);
     remoteConnecting.set(null);
     remoteInstallState.set(null);
-    showPlannotatorInstallPrompt.set(false);
     switching.set(false);
     serverConnectionState.set({
       phase: 'connected',
@@ -173,7 +164,6 @@ describe('App', () => {
         { provide: SshRuntimeRecoveryService, useValue: runtimeRecoveryServiceMock },
         { provide: EnvironmentConnectionManagerService, useValue: connectionManagerMock },
         { provide: ServerConnectionService, useValue: serverConnectionServiceMock },
-        { provide: PlannotatorInstallPromptService, useValue: plannotatorInstallPromptMock },
       ],
     }).compileComponents();
   });
