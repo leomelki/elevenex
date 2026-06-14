@@ -1031,7 +1031,7 @@ export class CodexRuntimeService extends EventEmitter {
       selectedModel: this.codexDefaultModel,
       reasoningEffort: null,
       fastMode: false,
-      selectedPermissionMode: 'default',
+      selectedPermissionMode: 'auto',
       planMode: false,
       availableModels: [...this.codexModels],
       contextUsage: null,

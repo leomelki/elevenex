@@ -401,7 +401,7 @@ describe('CodexRuntimeService', () => {
 
     const state = await service.setPermissionMode(7, 'plan');
 
-    expect(state.permissionMode).toBe('default');
+    expect(state.permissionMode).toBe('auto');
     expect(state.planMode).toBe(true);
   });
 

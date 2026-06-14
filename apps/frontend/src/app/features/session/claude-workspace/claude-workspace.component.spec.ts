@@ -1783,8 +1783,8 @@ describe('ClaudeWorkspaceComponent', () => {
       createdAt: '2026-04-24T08:00:00.000Z',
     });
 
+    expect(apiMock.setPermissionMode).toHaveBeenCalledWith(7, 'bypassPermissions');
     expect(apiMock.setPlanMode).toHaveBeenCalledWith(7, false);
-    expect(apiMock.setPermissionMode).not.toHaveBeenCalled();
     expect(fixture.componentInstance.permissionMode()).toBe('bypassPermissions');
     expect(fixture.componentInstance.planMode()).toBe(false);
     expect(wsMock.send).toHaveBeenCalledWith(7, {

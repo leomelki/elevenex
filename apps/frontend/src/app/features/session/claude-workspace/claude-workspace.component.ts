@@ -919,6 +919,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (review.provider !== 'codex' || this.runPhase() !== 'idle' || this.submitting()) return;
 
     try {
+      const selectedMode = this.permissionMode();
+      await firstValueFrom(this.api.setPermissionMode(this.sessionId, selectedMode));
       const next = await firstValueFrom(this.api.setPlanMode(this.sessionId, false));
       this.applyRuntimeState(next);
       await this.submitPrompt({ text: 'implement plan', images: [] });
