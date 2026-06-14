@@ -2,11 +2,13 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
   computed,
   effect,
   inject,
   input,
   signal,
+  viewChild,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -64,7 +66,7 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
   template: `
     @if (review(); as activeReview) {
       <section class="pc-panel" aria-label="Ask about plan">
-        <div class="pc-head">
+        <header class="pc-head">
           <div class="pc-head__copy">
             <span class="pc-eyebrow">Plan Q&A</span>
             <h3>Ask about this plan</h3>
@@ -81,14 +83,22 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
               <ng-icon name="lucideRefreshCw" size="13" />
             </button>
           }
-        </div>
+        </header>
 
         @if (!canAsk(activeReview)) {
-          <p class="pc-empty">
-            Questions are available for transcript plans after the plan message is saved.
-          </p>
+          <div class="pc-body">
+            <p class="pc-empty pc-empty--center">
+              Questions are available for transcript plans after the plan message is saved.
+            </p>
+          </div>
         } @else {
-          <div class="pc-messages" aria-live="polite">
+          <div
+            #messagesRef
+            class="pc-messages"
+            aria-live="polite"
+            aria-label="Plan questions"
+            (scroll)="onMessagesScroll()"
+          >
             @if (loading()) {
               <div class="pc-skeleton" aria-label="Loading plan questions">
                 <span></span>
@@ -98,63 +108,72 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
             } @else if (!visibleItems().length) {
               <div class="pc-empty pc-empty--center">
                 <span class="pc-empty__icon" aria-hidden="true">
-                  <ng-icon name="lucideMessageSquare" size="15" />
+                  <ng-icon name="lucideMessageSquare" size="16" />
                 </span>
                 <p>Ask a focused question about the reviewed plan.</p>
               </div>
-            }
+            } @else {
+              @for (item of visibleItems(); track item.id) {
+                <article class="pc-message" [attr.data-kind]="item.kind">
+                  @if (item.kind === 'assistant') {
+                    <div class="pc-md" [innerHTML]="itemContent(item) | cwMarkdown"></div>
+                  } @else {
+                    <p>{{ itemContent(item) }}</p>
+                  }
+                </article>
+              }
 
-            @for (item of visibleItems(); track item.id) {
-              <article class="pc-message" [attr.data-kind]="item.kind">
-                @if (item.kind === 'user') {
-                  <p>{{ itemContent(item) }}</p>
-                } @else if (item.kind === 'assistant') {
-                  <div class="pc-md" [innerHTML]="itemContent(item) | cwMarkdown"></div>
-                } @else {
-                  <p>{{ itemContent(item) }}</p>
-                }
-              </article>
-            }
-
-            @if (runPhase() === 'running' || sending()) {
-              <div class="pc-running">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
+              @if (runPhase() === 'running' || sending()) {
+                <div class="pc-running" aria-label="Generating response">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              }
             }
           </div>
 
-          @if (lastError(); as error) {
-            <p class="pc-error">{{ error }}</p>
-          }
+          <div class="pc-footer">
+            @if (lastError(); as error) {
+              <p class="pc-error" role="alert">{{ error }}</p>
+            }
 
-          <form class="pc-compose" (submit)="$event.preventDefault(); sendQuestion(activeReview)">
-            <textarea
-              rows="3"
-              placeholder="Ask a question about the plan"
-              [disabled]="sending() || resetting()"
-              [ngModel]="draft()"
-              name="plan-chat-question"
-              (ngModelChange)="draft.set($event)"
-            ></textarea>
-            <div class="pc-compose__actions">
-              @if (canInterrupt()) {
-                <button type="button" class="pc-btn pc-btn--ghost" (click)="interrupt()">
-                  <ng-icon name="lucideSquare" size="12" />
-                  Stop
-                </button>
-              }
-              <button
-                type="submit"
-                class="pc-btn pc-btn--primary"
-                [disabled]="!draft().trim() || sending() || resetting()"
-              >
-                <ng-icon name="lucideSend" size="13" />
-                Ask
-              </button>
-            </div>
-          </form>
+            <form
+              class="pc-compose"
+              (submit)="$event.preventDefault(); sendQuestion(activeReview)"
+            >
+              <div class="pc-field">
+                <textarea
+                  rows="2"
+                  placeholder="Ask a question about the plan…"
+                  [disabled]="sending() || resetting()"
+                  [ngModel]="draft()"
+                  name="plan-chat-question"
+                  (ngModelChange)="draft.set($event)"
+                  (keydown)="onComposeKeydown($event, activeReview)"
+                ></textarea>
+                <div class="pc-compose__actions">
+                  @if (canInterrupt()) {
+                    <button type="button" class="pc-btn pc-btn--ghost" (click)="interrupt()">
+                      <ng-icon name="lucideSquare" size="12" />
+                      Stop
+                    </button>
+                  }
+                  <button
+                    type="submit"
+                    class="pc-btn pc-btn--primary"
+                    [disabled]="!draft().trim() || sending() || resetting()"
+                  >
+                    <ng-icon name="lucideSend" size="13" />
+                    Ask
+                  </button>
+                </div>
+              </div>
+              <p class="pc-hint">
+                <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line
+              </p>
+            </form>
+          </div>
         }
       </section>
     }
@@ -162,8 +181,9 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
   styles: [
     `
       :host {
-        display: block;
+        display: flex;
         min-height: 0;
+        flex-direction: column;
       }
 
       .pc-panel {
@@ -171,15 +191,16 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
         min-height: 0;
         flex: 1;
         flex-direction: column;
-        gap: 0.75rem;
       }
 
-      .pc-head,
-      .pc-compose__actions {
+      .pc-head {
         display: flex;
+        flex-shrink: 0;
         align-items: center;
         justify-content: space-between;
         gap: 0.6rem;
+        padding: 0.6rem 0.75rem;
+        border-bottom: 1px solid color-mix(in oklab, var(--border) 62%, transparent);
       }
 
       .pc-head__copy {
@@ -189,8 +210,9 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
       .pc-eyebrow {
         display: block;
         color: var(--muted-foreground);
-        font-size: 0.66rem;
+        font-size: 0.62rem;
         font-weight: 700;
+        letter-spacing: 0.04em;
         line-height: 1.2;
         text-transform: uppercase;
       }
@@ -202,42 +224,59 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
 
       h3 {
         color: var(--foreground);
-        font-size: 0.86rem;
+        font-size: 0.85rem;
+        font-weight: 700;
         line-height: 1.25;
+      }
+
+      .pc-body {
+        display: flex;
+        min-height: 0;
+        flex: 1;
+        flex-direction: column;
+        padding: 0.75rem;
       }
 
       .pc-messages {
         display: flex;
-        min-height: 11rem;
+        min-height: 0;
         flex: 1;
         flex-direction: column;
         gap: 0.55rem;
-        overflow: auto;
-        padding-right: 0.1rem;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 0.75rem;
+        scroll-behavior: smooth;
       }
 
       .pc-message {
-        max-width: 100%;
+        max-width: 90%;
         border: 1px solid var(--border);
-        border-radius: 0.55rem;
-        padding: 0.58rem 0.65rem;
+        border-radius: 0.7rem;
+        padding: 0.55rem 0.7rem;
         color: var(--foreground);
         font-size: 0.8rem;
         line-height: 1.5;
+        overflow-wrap: anywhere;
       }
 
       .pc-message[data-kind='user'] {
         align-self: flex-end;
-        max-width: 88%;
-        border-color: color-mix(in oklab, var(--primary) 24%, var(--border));
-        background: color-mix(in oklab, var(--primary) 9%, var(--card));
+        border-color: color-mix(in oklab, var(--primary) 26%, var(--border));
+        border-bottom-right-radius: 0.2rem;
+        background: color-mix(in oklab, var(--primary) 10%, var(--card));
+        white-space: pre-wrap;
       }
 
       .pc-message[data-kind='assistant'] {
-        background: var(--background);
+        align-self: flex-start;
+        border-bottom-left-radius: 0.2rem;
+        background: var(--card);
       }
 
       .pc-message[data-kind='error'] {
+        align-self: stretch;
+        max-width: 100%;
         border-color: color-mix(in oklab, var(--destructive) 38%, var(--border));
         background: color-mix(in oklab, var(--destructive) 8%, var(--background));
         color: var(--destructive);
@@ -264,12 +303,10 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
 
       .pc-empty,
       .pc-error {
-        border: 1px dashed var(--border);
         border-radius: 0.55rem;
         color: var(--muted-foreground);
         font-size: 0.78rem;
         line-height: 1.45;
-        padding: 0.7rem;
       }
 
       .pc-empty--center {
@@ -279,52 +316,112 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 0.45rem;
+        gap: 0.5rem;
+        margin: auto 0;
+        color: var(--muted-foreground);
         text-align: center;
+      }
+
+      .pc-empty--center p {
+        max-width: 15rem;
       }
 
       .pc-empty__icon {
         display: inline-flex;
-        width: 2rem;
-        height: 2rem;
+        width: 2.25rem;
+        height: 2.25rem;
         align-items: center;
         justify-content: center;
-        border: 1px solid var(--border);
-        border-radius: 0.55rem;
-        background: var(--background);
+        border-radius: 999px;
+        background: color-mix(in oklab, var(--muted) 58%, transparent);
         color: var(--primary);
       }
 
+      .pc-footer {
+        display: flex;
+        flex-shrink: 0;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.65rem 0.75rem 0.75rem;
+        border-top: 1px solid color-mix(in oklab, var(--border) 62%, transparent);
+        background: color-mix(in oklab, var(--card) 38%, transparent);
+      }
+
       .pc-error {
-        border-style: solid;
-        border-color: color-mix(in oklab, var(--destructive) 36%, var(--border));
+        border: 1px solid color-mix(in oklab, var(--destructive) 36%, var(--border));
         background: color-mix(in oklab, var(--destructive) 8%, var(--background));
         color: var(--destructive);
+        padding: 0.5rem 0.6rem;
       }
 
       .pc-compose {
         display: flex;
         flex-direction: column;
+        gap: 0.4rem;
+      }
+
+      .pc-field {
+        display: flex;
+        flex-direction: column;
         gap: 0.5rem;
+        border: 1px solid var(--input);
+        border-radius: 0.65rem;
+        background: var(--background);
+        padding: 0.5rem;
+        transition:
+          border-color 140ms ease,
+          box-shadow 140ms ease;
+      }
+
+      .pc-field:focus-within {
+        border-color: color-mix(in oklab, var(--primary) 66%, var(--input));
+        box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 16%, transparent);
       }
 
       textarea {
         width: 100%;
-        resize: vertical;
-        border: 1px solid var(--input);
-        border-radius: 0.5rem;
-        background: var(--background);
+        max-height: 9rem;
+        min-height: 2.6rem;
+        resize: none;
+        border: 0;
+        background: transparent;
         color: var(--foreground);
         font: inherit;
         font-size: 0.8rem;
-        line-height: 1.45;
-        padding: 0.58rem 0.65rem;
+        line-height: 1.5;
+        padding: 0.15rem 0.2rem;
       }
 
       textarea:focus {
         outline: none;
-        border-color: color-mix(in oklab, var(--primary) 66%, var(--input));
-        box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 18%, transparent);
+      }
+
+      textarea::placeholder {
+        color: var(--muted-foreground);
+      }
+
+      .pc-compose__actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.5rem;
+      }
+
+      .pc-hint {
+        color: var(--muted-foreground);
+        font-size: 0.66rem;
+        line-height: 1.2;
+        text-align: right;
+      }
+
+      .pc-hint kbd {
+        border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+        border-radius: 0.25rem;
+        background: color-mix(in oklab, var(--muted) 48%, transparent);
+        color: var(--muted-foreground);
+        font-family: inherit;
+        font-size: 0.62rem;
+        padding: 0.02rem 0.28rem;
       }
 
       .pc-btn,
@@ -347,8 +444,8 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
       .pc-btn {
         gap: 0.38rem;
         min-height: 2rem;
-        border-radius: 0.45rem;
-        padding: 0 0.72rem;
+        border-radius: 0.5rem;
+        padding: 0 0.85rem;
         font-size: 0.78rem;
         font-weight: 700;
       }
@@ -359,6 +456,7 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
         flex-shrink: 0;
         border-radius: 0.45rem;
         padding: 0;
+        color: var(--muted-foreground);
       }
 
       .pc-btn--primary {
@@ -374,12 +472,18 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
         outline: none;
         border-color: color-mix(in oklab, var(--primary) 42%, var(--border));
         background: color-mix(in oklab, var(--primary) 8%, var(--background));
+        color: var(--foreground);
       }
 
       .pc-btn--primary:hover:not(:disabled),
       .pc-btn--primary:focus-visible {
         outline: none;
         background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+      }
+
+      .pc-btn:focus-visible,
+      .pc-icon-btn:focus-visible {
+        box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 18%, transparent);
       }
 
       button:disabled,
@@ -391,6 +495,7 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
       .pc-skeleton,
       .pc-running {
         display: flex;
+        flex-shrink: 0;
         gap: 0.28rem;
         padding: 0.35rem 0.2rem;
       }
@@ -416,6 +521,10 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
 
       .pc-skeleton span:nth-child(3) {
         width: 48%;
+      }
+
+      .pc-running {
+        align-self: flex-start;
       }
 
       .pc-running span {
@@ -446,11 +555,24 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
           opacity: 0.45;
         }
       }
+
+      @media (prefers-reduced-motion: reduce) {
+        .pc-messages {
+          scroll-behavior: auto;
+        }
+
+        .pc-skeleton span,
+        .pc-running span {
+          animation: none;
+        }
+      }
     `,
   ],
 })
 export class PlanChatPanelComponent {
   readonly review = input<PlanReviewRequest | null>(null);
+
+  private readonly messagesRef = viewChild<ElementRef<HTMLElement>>('messagesRef');
 
   private readonly planChats = inject(PlanChatService);
   private readonly ws = inject(AgentRuntimeWebsocketService);
@@ -474,11 +596,18 @@ export class PlanChatPanelComponent {
       ...this.historyItems(),
       ...this.optimisticUserItems(),
       ...this.liveItems(),
-    ].filter(
-      (item): item is PlanChatVisibleItem =>
-        item.kind === 'user' || item.kind === 'assistant' || item.kind === 'error',
-    );
-    return items.sort((left, right) => (left.timestamp || '').localeCompare(right.timestamp || ''));
+    ]
+      .filter(
+        (item): item is PlanChatVisibleItem =>
+          item.kind === 'user' || item.kind === 'assistant' || item.kind === 'error',
+      )
+      .sort((left, right) => (left.timestamp || '').localeCompare(right.timestamp || ''));
+
+    // The forked child session carries the entire original plan conversation as
+    // history. Only the Q&A exchange belongs in this panel, so drop everything
+    // before the first asked question (optimistic or wrapped-in-history).
+    const firstQuestion = items.findIndex((item) => this.isPlanQuestion(item));
+    return firstQuestion < 0 ? [] : items.slice(firstQuestion);
   });
 
   private loadedReviewKey = '';
@@ -497,7 +626,45 @@ export class PlanChatPanelComponent {
       }
     });
 
+    // Keep the conversation pinned to the latest message as content streams in,
+    // but only when the user is already at the bottom so reading history is not
+    // interrupted.
+    effect(() => {
+      this.visibleItems();
+      this.runPhase();
+      this.sending();
+      if (!this.stickToBottom) return;
+      const el = this.messagesRef()?.nativeElement;
+      if (!el) return;
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    });
+
     this.destroyRef.onDestroy(() => this.disconnectCurrent());
+  }
+
+  private stickToBottom = true;
+
+  onMessagesScroll(): void {
+    const el = this.messagesRef()?.nativeElement;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    this.stickToBottom = distanceFromBottom < 48;
+  }
+
+  private isPlanQuestion(item: PlanChatVisibleItem): boolean {
+    return (
+      item.kind === 'user' &&
+      (item.id.startsWith('plan-chat-opt-') || QUESTION_RE.test(item.content ?? ''))
+    );
+  }
+
+  onComposeKeydown(event: KeyboardEvent, review: PlanReviewRequest): void {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      void this.sendQuestion(review);
+    }
   }
 
   canAsk(review: PlanReviewRequest): boolean {
@@ -527,6 +694,7 @@ export class PlanChatPanelComponent {
       timestamp: new Date().toISOString(),
       authoredAt: new Date().toISOString(),
     };
+    this.stickToBottom = true;
     this.optimisticUserItems.update((items) => [...items, optimistic]);
     this.draft.set('');
     this.sending.set(true);

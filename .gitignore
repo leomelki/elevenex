@@ -17,3 +17,7 @@ apps/frontend/src/build-info.ts
 dev
 .DS_Store
 .worktrees/
+
+# Windows / PowerShell machine-local generated cache (appears in the repo when
+# PowerShell resolves %LOCALAPPDATA% relative to the working directory)
+Microsoft/
