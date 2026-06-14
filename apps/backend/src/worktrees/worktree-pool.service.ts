@@ -11,6 +11,7 @@ import * as path from 'node:path';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreeInfo, WorktreesService } from './worktrees.service.js';
@@ -63,6 +64,7 @@ export class WorktreePoolService {
     private readonly worktreesService: WorktreesService,
     private readonly sessionsService: SessionsService,
     private readonly projectsService: ProjectsService,
+    private readonly claudeHooksService: ClaudeHooksService,
   ) {}
 
   async listForRepo(repo: typeof schema.repos.$inferSelect) {
@@ -615,7 +617,9 @@ export class WorktreePoolService {
           eq(schema.sessions.status, 'active'),
         ),
       );
-    return rows.length;
+    return rows.filter(
+      (row) => this.claudeHooksService.getStatus(row.id) !== 'idle',
+    ).length;
   }
 
   private async findReposForRoot(root: string) {

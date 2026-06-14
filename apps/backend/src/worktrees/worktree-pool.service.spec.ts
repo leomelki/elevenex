@@ -6,6 +6,7 @@ import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreesService, WorktreeInfo } from './worktrees.service.js';
 import { WorktreePoolService } from './worktree-pool.service.js';
+import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 
 jest.mock('../config/system-paths.js', () => ({
@@ -101,6 +102,7 @@ describe('WorktreePoolService', () => {
     Pick<SessionsService, 'archiveAndStopByRepoAndWorktreePath'>
   >;
   let projectsServiceMock: jest.Mocked<Pick<ProjectsService, 'assertProjectIsActive'>>;
+  let claudeHooksServiceMock: jest.Mocked<Pick<ClaudeHooksService, 'getStatus'>>;
   let gitMock: {
     raw: jest.Mock;
     status: jest.Mock;
@@ -150,6 +152,9 @@ describe('WorktreePoolService', () => {
     projectsServiceMock = {
       assertProjectIsActive: jest.fn().mockResolvedValue(undefined),
     };
+    claudeHooksServiceMock = {
+      getStatus: jest.fn().mockReturnValue('running'),
+    };
     gitMock = {
       raw: jest.fn(async (args: string[]) => {
         if (args[0] === 'rev-parse' && args[1] === 'stash@{0}') return 'stash-sha\n';
@@ -169,6 +174,7 @@ describe('WorktreePoolService', () => {
       worktreesServiceMock as unknown as WorktreesService,
       sessionsServiceMock as unknown as SessionsService,
       projectsServiceMock as unknown as ProjectsService,
+      claudeHooksServiceMock as unknown as ClaudeHooksService,
     );
   });
 
@@ -329,6 +335,40 @@ describe('WorktreePoolService', () => {
     );
 
     expect(item?.runningAgentCount).toBe(1);
+  });
+
+  it('does not count active-but-idle sessions as running agents', async () => {
+    await service.reconcileRepo(repo);
+    const pool = (await db.select().from(schema.repoWorktrees)).find(
+      (row) => row.path === 'C:\\repo-feature',
+    )!;
+    const [workspace] = await db
+      .insert(schema.workspaces)
+      .values({
+        repoId: repo.id,
+        name: 'feature',
+        path: 'C:\\repo-feature',
+        poolWorktreeId: pool.id,
+        linkStatus: 'linked',
+      })
+      .returning();
+    await db.insert(schema.sessions).values([
+      {
+        repoId: repo.id,
+        workspaceId: workspace.id,
+        branchName: 'feature',
+        worktreePath: 'C:\\repo-feature',
+        status: 'active',
+      },
+    ]);
+
+    claudeHooksServiceMock.getStatus.mockReturnValue('idle');
+
+    const item = (await service.listForRepo(repo)).find(
+      (candidate) => candidate.id === pool.id,
+    );
+
+    expect(item?.runningAgentCount).toBe(0);
   });
 
   it('takes over a dirty worktree, archives old sessions, and records the stash', async () => {
