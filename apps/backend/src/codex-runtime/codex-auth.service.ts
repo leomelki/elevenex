@@ -10,7 +10,7 @@ import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
-import { buildAugmentedEnv } from '../config/system-paths.js';
+import { buildAugmentedEnv, buildSpawnCommand } from '../config/system-paths.js';
 import { findBundledCodexPath, resolveCodexBinary } from './codex-binary.js';
 import type {
   CodexAuthStatus,
@@ -200,9 +200,11 @@ export class CodexAuthService extends EventEmitter {
     // user's browser being able to reach the backend's localhost callback —
     // this is the only path that works for remote/SSH installs and it also
     // works locally.
-    const child = spawn(codexBin, ['login', '--device-auth'], {
+    const { command, shell } = buildSpawnCommand(codexBin);
+    const child = spawn(command, ['login', '--device-auth'], {
       env: { ...buildAugmentedEnv(), BROWSER: '/bin/true', DISPLAY: '' },
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell,
     });
     const active: ActiveLogin = {
       mode: 'oauth',
@@ -320,9 +322,11 @@ export class CodexAuthService extends EventEmitter {
     codexBin: string,
     apiKey: string,
   ): Promise<CodexLoginStartResult> {
-    const child = spawn(codexBin, ['login', '--with-api-key'], {
+    const { command, shell } = buildSpawnCommand(codexBin);
+    const child = spawn(command, ['login', '--with-api-key'], {
       env: buildAugmentedEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell,
     });
     const active: ActiveLogin = {
       mode: 'api_key',
@@ -414,10 +418,12 @@ export class CodexAuthService extends EventEmitter {
     const inflight = (async () => {
       const codexBin = resolveCodexBinary();
       try {
-        const { stdout } = await execFile(codexBin, ['--version'], {
+        const { command, shell } = buildSpawnCommand(codexBin);
+        const { stdout } = await execFile(command, ['--version'], {
           encoding: 'utf-8',
           env: buildAugmentedEnv(),
           timeout: 5000,
+          shell,
         });
         return stdout.trim() || null;
       } catch {

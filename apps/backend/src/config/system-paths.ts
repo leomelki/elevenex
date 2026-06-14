@@ -438,19 +438,46 @@ export function findBinary(name: string): string | null {
   return null;
 }
 
+// Node >= 18.20 / 20.12 refuses to spawn `.cmd`/`.bat` files unless
+// `shell: true` is set (the CVE-2024-27980 mitigation). Version managers ship
+// CLIs as batch shims on Windows — Volta, scoop, and npm all install `foo.cmd`
+// rather than a `foo.exe` — so a binary resolved from PATH is frequently a
+// batch file. For those we must spawn through the shell, and we pre-quote the
+// command so a path containing spaces still launches (Node adds the outer
+// quoting cmd.exe needs when `shell` is set).
+//
+// Returns the command string to pass to `spawn`/`execFile` plus the `shell`
+// value to merge into their options. Callers keep their options object literal
+// inline so contextual typing of `stdio`/`encoding` is preserved. Non-Windows
+// callers and real executables get the command unchanged with `shell: false`.
+export function buildSpawnCommand(command: string): {
+  command: string;
+  shell: boolean;
+} {
+  if (IS_WINDOWS && /\.(cmd|bat)$/i.test(command)) {
+    return { command: `"${command}"`, shell: true };
+  }
+  return { command, shell: false };
+}
+
 function getExecutableCandidateNames(name: string): string[] {
   if (!IS_WINDOWS || extname(name)) {
     return [name];
   }
 
   const pathext = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
+  // Try PATHEXT variants (codex.cmd, codex.exe, …) BEFORE the bare name.
+  // On Windows the extensionless file is frequently a POSIX shim — e.g. Volta
+  // installs `codex` as a `#!/bin/bash` launcher next to the real `codex.cmd`
+  // — which CreateProcess cannot execute, so preferring it yields a path that
+  // spawns with ENOENT. The bare name stays as a last-resort fallback.
   return [
-    name,
     ...pathext
       .split(';')
       .map((extension) => extension.trim())
       .filter(Boolean)
       .map((extension) => `${name}${extension}`),
+    name,
   ];
 }
 
