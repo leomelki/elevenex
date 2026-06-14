@@ -44,7 +44,7 @@ function targetTriple(): string | null {
  * into `.pnpm/`, where the SDK's transitive deps live as siblings; following
  * the symlink puts us where Node's resolver can see `@openai/codex`.
  */
-function findSdkRealDir(): string | null {
+export function findSdkRealDir(): string | null {
   let dir = path.dirname(__filename);
   while (true) {
     const candidate = path.join(dir, 'node_modules', '@openai', 'codex-sdk');

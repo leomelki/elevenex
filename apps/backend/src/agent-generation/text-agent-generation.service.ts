@@ -1,11 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createRequire } from 'module';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type {
   CanUseTool,
   SDKAssistantMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
+import { findSdkRealDir } from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
 
 export type TextAgentProvider = 'claude' | 'codex' | 'pi';
@@ -17,10 +21,24 @@ export const DEFAULT_TEXT_AGENT_MODELS = {
 
 type CodexSdkModule = typeof import('@openai/codex-sdk');
 
-const importCodexSdk = new Function(
+const _dynamicImport = new Function(
   'specifier',
   'return import(specifier)',
 ) as (specifier: string) => Promise<CodexSdkModule>;
+
+async function importCodexSdk(): Promise<CodexSdkModule> {
+  // In the bundled runtime, `import('@openai/codex-sdk')` resolves relative to
+  // main.cjs which has no node_modules sibling. Resolve the SDK to an absolute
+  // file URL so Node can find it regardless of where main.cjs lives.
+  const sdkDir = findSdkRealDir();
+  if (sdkDir) {
+    const entryPoint = path.join(sdkDir, 'dist', 'index.js');
+    if (existsSync(entryPoint)) {
+      return _dynamicImport(pathToFileURL(entryPoint).href);
+    }
+  }
+  return _dynamicImport('@openai/codex-sdk');
+}
 
 export interface GenerateTextWithAgentRequest {
   provider: TextAgentProvider;
@@ -156,7 +174,7 @@ export class TextAgentGenerationService {
         process.env,
         request.worktreePath,
       );
-      const { Codex } = await importCodexSdk('@openai/codex-sdk');
+      const { Codex } = await importCodexSdk();
       const codex = new Codex({
         env: this.toStringEnv(env),
       });
