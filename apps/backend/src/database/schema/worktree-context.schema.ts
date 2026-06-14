@@ -17,6 +17,9 @@ export const worktreeContexts = sqliteTable(
     rootRef: text('root_ref'),
     contextSentence: text('context_sentence'),
     generationStatus: text('generation_status').notNull().default('idle'),
+    contextEnabled: integer('context_enabled', { mode: 'boolean' })
+      .notNull()
+      .default(true),
     generatedAt: text('generated_at'),
     lastUsedAt: text('last_used_at'),
     createdAt: text('created_at')

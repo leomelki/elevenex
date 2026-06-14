@@ -1,0 +1,1 @@
+ALTER TABLE `worktree_contexts` ADD `context_enabled` integer DEFAULT true NOT NULL;

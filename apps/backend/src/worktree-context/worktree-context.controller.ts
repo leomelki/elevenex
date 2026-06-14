@@ -10,6 +10,7 @@ import {
 import { ConsumeWorktreeContextDto } from './dto/consume-worktree-context.dto.js';
 import { GenerateWorktreeContextDto } from './dto/generate-worktree-context.dto.js';
 import { GetWorktreeContextDto } from './dto/get-worktree-context.dto.js';
+import { UpdateWorktreeContextEnabledDto } from './dto/update-worktree-context-enabled.dto.js';
 import { UpdateWorktreeRootRefDto } from './dto/update-worktree-root-ref.dto.js';
 import { WorktreeContextService } from './worktree-context.service.js';
 
@@ -59,6 +60,18 @@ export class WorktreeContextController {
       dto.repoId,
       dto.worktreePath,
       dto.rootRef ?? null,
+    );
+  }
+
+  @Put('enabled')
+  updateEnabled(@Body() dto: UpdateWorktreeContextEnabledDto) {
+    this.logger.log(
+      `PUT /enabled repo=${dto.repoId} path=${dto.worktreePath} enabled=${dto.contextEnabled}`,
+    );
+    return this.worktreeContextService.updateContextEnabled(
+      dto.repoId,
+      dto.worktreePath,
+      dto.contextEnabled,
     );
   }
 

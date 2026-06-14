@@ -47,6 +47,7 @@ export interface WorktreeContextSnapshot {
   usingRepoDefaultRootRef: boolean;
   errorMessage: string | null;
   hasRecord: boolean;
+  contextEnabled: boolean;
 }
 
 interface BranchContextInput {
@@ -187,6 +188,7 @@ export class WorktreeContextService {
       usingRepoDefaultRootRef: !this.normalizeOptionalText(record.rootRef),
       errorMessage: null,
       hasRecord: true,
+      contextEnabled: record.contextEnabled,
     };
   }
 
@@ -210,6 +212,7 @@ export class WorktreeContextService {
       usingRepoDefaultRootRef: !this.normalizeOptionalText(record?.rootRef),
       errorMessage: null,
       hasRecord: Boolean(record),
+      contextEnabled: record?.contextEnabled ?? true,
     };
   }
 
@@ -236,6 +239,27 @@ export class WorktreeContextService {
     });
 
     return this.getSnapshot(repoId, worktreePath);
+  }
+
+  async updateContextEnabled(
+    repoId: number,
+    worktreePath: string,
+    contextEnabled: boolean,
+  ): Promise<WorktreeContextSnapshot> {
+    await this.getRepo(repoId);
+    const existing = await this.findRecord(repoId, worktreePath);
+    const now = new Date().toISOString();
+    await this.upsertRecord(repoId, worktreePath, {
+      rootRef: existing?.rootRef ?? null,
+      contextSentence: existing?.contextSentence ?? null,
+      generationStatus: this.normalizeGenerationStatus(existing?.generationStatus),
+      generatedAt: existing?.generatedAt ?? null,
+      lastUsedAt: existing?.lastUsedAt ?? null,
+      updatedAt: now,
+      createdAt: existing?.createdAt ?? now,
+      contextEnabled,
+    });
+    return this.getCachedSnapshot(repoId, worktreePath);
   }
 
   async generate(
@@ -829,6 +853,7 @@ export class WorktreeContextService {
       lastUsedAt: string | null;
       updatedAt: string;
       createdAt: string;
+      contextEnabled?: boolean;
     },
   ): Promise<void> {
     const existing = await this.findRecord(repoId, worktreePath);
@@ -842,6 +867,9 @@ export class WorktreeContextService {
           generatedAt: input.generatedAt,
           lastUsedAt: input.lastUsedAt,
           updatedAt: input.updatedAt,
+          ...(input.contextEnabled !== undefined && {
+            contextEnabled: input.contextEnabled,
+          }),
         })
         .where(eq(schema.worktreeContexts.id, existing.id));
       return;
@@ -857,6 +885,7 @@ export class WorktreeContextService {
       lastUsedAt: input.lastUsedAt,
       createdAt: input.createdAt,
       updatedAt: input.updatedAt,
+      contextEnabled: input.contextEnabled ?? true,
     });
   }
 
@@ -886,6 +915,7 @@ export class WorktreeContextService {
       hasChanges: branchContext.hasChanges,
       usingRepoDefaultRootRef: branchContext.usingRepoDefaultRootRef,
       hasRecord: !!record,
+      contextEnabled: record?.contextEnabled ?? true,
     };
   }
 

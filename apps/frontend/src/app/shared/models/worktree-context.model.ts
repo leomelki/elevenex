@@ -13,6 +13,7 @@ export interface WorktreeContextSnapshot {
   usingRepoDefaultRootRef: boolean;
   errorMessage: string | null;
   hasRecord: boolean;
+  contextEnabled: boolean;
 }
 
 export interface ConsumeWorktreeContextResult {

@@ -412,9 +412,23 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       ).catch((err) => {
         console.warn('[worktree-context] failed to skip TUI context injection', err);
       });
+      void firstValueFrom(
+        this.worktreeContextService.updateEnabled(this.repoId, this.worktreePath, false),
+      ).catch((err) => {
+        console.warn('[worktree-context] failed to persist context enabled state', err);
+      });
       return;
     }
     this.firstPromptContextEnabled.update((v) => !v);
+    void firstValueFrom(
+      this.worktreeContextService.updateEnabled(
+        this.repoId,
+        this.worktreePath,
+        this.firstPromptContextEnabled(),
+      ),
+    ).catch((err) => {
+      console.warn('[worktree-context] failed to persist context enabled state', err);
+    });
   }
 
   readonly messageActionsDisabled = computed(
@@ -1730,6 +1744,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       );
       this.worktreeContext.set(snapshot);
       this.draftRootRef.set(snapshot.rootRef ?? '');
+      if (!this.hasInjectedContext()) {
+        this.firstPromptContextEnabled.set(snapshot.contextEnabled);
+      }
 
       const shouldAutoGenerate =
         triggerGenerate &&

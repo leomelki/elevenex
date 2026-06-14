@@ -87,6 +87,14 @@ export class WorktreeContextService {
     });
   }
 
+  updateEnabled(repoId: number, worktreePath: string, contextEnabled: boolean) {
+    return this.http.put<WorktreeContextSnapshot>('/api/worktree-context/enabled', {
+      repoId,
+      worktreePath,
+      contextEnabled,
+    });
+  }
+
   consume(sessionId: number, enabled: boolean, contextSentence?: string) {
     return this.http.post<ConsumeWorktreeContextResult>('/api/worktree-context/consume', {
       sessionId,
