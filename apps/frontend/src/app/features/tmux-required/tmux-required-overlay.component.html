@@ -1,0 +1,73 @@
+<section
+  class="tmux-overlay"
+  role="alertdialog"
+  aria-modal="true"
+  aria-label="tmux is required to use Elevenex"
+>
+  <div class="tmux-overlay__backdrop"></div>
+
+  <div class="tmux-overlay__panel">
+    <div class="tmux-overlay__icon">
+      <ng-icon name="lucideTerminal" size="26" />
+    </div>
+
+    <div class="tmux-overlay__eyebrow">tmux required</div>
+    <h1 class="tmux-overlay__title">Install tmux to use Elevenex</h1>
+
+    <p class="tmux-overlay__message">
+      @if (mode() === 'remote') {
+        Elevenex relies on tmux on your remote server to keep terminal sessions alive
+        across reconnects. tmux isn't installed there yet — install it on the remote
+        machine, then reconnect.
+      } @else {
+        Elevenex relies on tmux to keep terminal sessions alive across reconnects.
+        tmux isn't installed on this machine — install it, then restart Elevenex.
+      }
+    </p>
+
+    <div class="tmux-overlay__install">
+      @if (isWindows()) {
+        <p class="tmux-overlay__install-lead">
+          Windows has no native tmux, but <strong>psmux</strong> is a drop-in tmux for
+          PowerShell and Windows Terminal. It provides the <code>tmux</code> command
+          Elevenex needs — no WSL or Cygwin required.
+        </p>
+      }
+
+      <ul class="tmux-overlay__commands">
+        @for (option of installOptions(); track option.command) {
+          <li class="tmux-overlay__command-row">
+            <span class="tmux-overlay__command-label">{{ option.label }}</span>
+            <code class="tmux-overlay__command">{{ option.command }}</code>
+            <button
+              type="button"
+              class="tmux-overlay__copy"
+              [attr.aria-label]="'Copy command: ' + option.command"
+              (click)="copyCommand(option.command)"
+            >
+              <ng-icon [name]="isCopied(option.command) ? 'lucideCheck' : 'lucideCopy'" size="14" />
+            </button>
+          </li>
+        }
+      </ul>
+    </div>
+
+    <button
+      type="button"
+      class="tmux-overlay__button"
+      [disabled]="busy()"
+      (click)="emitAction()"
+    >
+      <ng-icon [name]="mode() === 'remote' ? 'lucideRefreshCw' : 'lucideRotateCcw'" size="16" />
+      {{ actionLabel() }}
+    </button>
+
+    <p class="tmux-overlay__hint">
+      @if (mode() === 'remote') {
+        Elevenex stays disconnected from this server until tmux is available.
+      } @else {
+        Elevenex re-checks for tmux once it restarts.
+      }
+    </p>
+  </div>
+</section>

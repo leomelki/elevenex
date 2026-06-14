@@ -1,0 +1,228 @@
+:host {
+  display: contents;
+}
+
+.tmux-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  pointer-events: auto;
+}
+
+.tmux-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top, color-mix(in oklch, var(--warning) 12%, transparent), transparent 34%),
+    color-mix(in oklch, var(--background) 72%, var(--surface-shade) 52%);
+  backdrop-filter: blur(20px) saturate(0.9);
+}
+
+.tmux-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 520px);
+  padding: 36px;
+  border-radius: 28px;
+  border: 1px solid color-mix(in oklch, var(--border) 76%, var(--surface-tint) 10%);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--background) 88%, var(--surface-tint) 12%),
+      color-mix(in oklch, var(--background) 94%, transparent)
+    );
+  box-shadow:
+    0 16px 42px color-mix(in oklch, var(--surface-shade) 18%, transparent),
+    0 40px 96px color-mix(in oklch, var(--surface-shade) 24%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.tmux-overlay__icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--warning);
+  background: color-mix(in oklch, var(--warning) 12%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--warning) 24%, var(--background));
+  margin-bottom: 22px;
+}
+
+.tmux-overlay__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--warning) 62%, var(--foreground));
+}
+
+.tmux-overlay__title {
+  margin: 10px 0 0;
+  font-size: 1.75rem;
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.tmux-overlay__message {
+  margin: 14px 0 0;
+  max-width: 42ch;
+  color: var(--muted-foreground);
+  line-height: 1.58;
+}
+
+.tmux-overlay__install {
+  width: 100%;
+  margin-top: 24px;
+  border-radius: 20px;
+  padding: 18px;
+  background: color-mix(in oklch, var(--muted) 48%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--border) 76%, var(--surface-tint) 10%);
+  text-align: left;
+}
+
+.tmux-overlay__install-lead {
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+
+  strong {
+    color: var(--foreground);
+    font-weight: 600;
+  }
+
+  code {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.82em;
+    padding: 0.1em 0.35em;
+    border-radius: 6px;
+    background: color-mix(in oklch, var(--surface-shade) 14%, transparent);
+  }
+}
+
+.tmux-overlay__commands {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tmux-overlay__command-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  border-radius: 14px;
+  background: color-mix(in oklch, var(--background) 70%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+}
+
+.tmux-overlay__command-label {
+  flex: 0 0 auto;
+  min-width: 6.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.tmux-overlay__command {
+  flex: 1 1 auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.82rem;
+  color: var(--foreground);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.tmux-overlay__copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--muted-foreground);
+  border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    color: var(--foreground);
+    background: color-mix(in oklch, var(--muted) 50%, transparent);
+    border-color: color-mix(in oklch, var(--border) 100%, transparent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--ring, var(--primary));
+    outline-offset: 2px;
+  }
+}
+
+.tmux-overlay__button {
+  margin-top: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 13px 20px;
+  border-radius: 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border: 1px solid color-mix(in oklch, var(--primary) 100%, var(--surface-shade) 12%);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  box-shadow: 0 12px 30px color-mix(in oklch, var(--primary) 28%, transparent);
+
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 16px 36px color-mix(in oklch, var(--primary) 34%, transparent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--ring, var(--primary));
+    outline-offset: 3px;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: progress;
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+.tmux-overlay__hint {
+  margin: 14px 0 0;
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+}
+
+@media (max-width: 640px) {
+  .tmux-overlay {
+    padding: 20px;
+  }
+
+  .tmux-overlay__panel {
+    padding: 26px;
+  }
+
+  .tmux-overlay__command-label {
+    min-width: 5rem;
+  }
+}

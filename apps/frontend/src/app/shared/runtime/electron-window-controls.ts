@@ -1,5 +1,6 @@
 declare global {
   interface ElevenexElectronBridge {
+    app?: ElectronAppApi;
     windowControls?: ElectronWindowControlsApi;
   }
 
@@ -9,6 +10,11 @@ declare global {
 }
 
 export {};
+
+export interface ElectronAppApi {
+  /** Relaunch the desktop app (and its embedded backend). */
+  restart(): Promise<void>;
+}
 
 export type DesktopPlatform = 'darwin' | 'linux' | 'win32' | 'unknown';
 
@@ -41,4 +47,12 @@ export function getElectronWindowControlsApi(): ElectronWindowControlsApi | null
   }
 
   return window.__ELEVENEX_ELECTRON__?.windowControls ?? null;
+}
+
+export function getElectronAppApi(): ElectronAppApi | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return window.__ELEVENEX_ELECTRON__?.app ?? null;
 }

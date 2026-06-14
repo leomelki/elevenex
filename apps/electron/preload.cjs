@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('__ELEVENEX_RUNTIME__', {
 });
 
 contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
+  app: {
+    restart: () => ipcRenderer.invoke('elevenex-app:restart'),
+  },
   windowControls: {
     getEnvironment: () => ipcRenderer.invoke('elevenex-window:get-environment'),
     minimize: () => ipcRenderer.invoke('elevenex-window:minimize'),

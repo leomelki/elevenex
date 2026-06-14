@@ -1,12 +1,21 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { TmuxManager } from '../terminal/tmux-manager.service.js';
 
 type ServerConnectionMessageType = 'ready' | 'heartbeat';
+
+interface ServerCapabilities {
+  /** Whether tmux is available on the machine running the backend. */
+  tmuxAvailable: boolean;
+  /** Node platform of the backend host, used to tailor install guidance. */
+  platform: NodeJS.Platform;
+}
 
 interface ServerConnectionMessage {
   type: ServerConnectionMessageType;
   serverTime: string;
+  capabilities?: ServerCapabilities;
 }
 
 @Injectable()
@@ -16,6 +25,8 @@ export class ServerConnectionGateway implements OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private readonly clients = new Set<WebSocket>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(private readonly tmuxManager: TmuxManager) {}
 
   attachToServer(server: HttpServer): void {
     this.wss = new WebSocketServer({
@@ -81,6 +92,16 @@ export class ServerConnectionGateway implements OnModuleDestroy {
       type,
       serverTime: new Date().toISOString(),
     };
+
+    // Advertise host capabilities on the initial handshake so the client can
+    // block the workspace when a hard requirement such as tmux is missing.
+    if (type === 'ready') {
+      message.capabilities = {
+        tmuxAvailable: this.tmuxManager.isTmuxAvailable(),
+        platform: process.platform,
+      };
+    }
+
     client.send(JSON.stringify(message));
   }
 

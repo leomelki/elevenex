@@ -3474,6 +3474,14 @@ ipcMain.handle('elevenex-window:is-maximized', () => ({
   isFocused: mainWindow?.isFocused() ?? false,
 }));
 
+ipcMain.handle('elevenex-app:restart', () => {
+  // Relaunch a fresh instance, then quit the current one through the normal
+  // shutdown path so the embedded backend child is terminated cleanly. On the
+  // next launch the backend re-detects tmux.
+  app.relaunch();
+  requestAppQuit();
+});
+
 ipcMain.handle('elevenex-browser:is-supported', () => true);
 
 ipcMain.handle('elevenex-external-links:open', async (_event, url) => {

@@ -3,6 +3,13 @@ import { getWebSocketUrl } from '../runtime/runtime-config';
 
 export type ServerConnectionPhase = 'connecting' | 'connected' | 'disconnected' | 'restored';
 
+export interface ServerCapabilities {
+  /** Whether tmux is available on the machine running the backend. */
+  tmuxAvailable: boolean;
+  /** Node platform of the backend host (e.g. 'win32', 'darwin', 'linux'). */
+  platform: string;
+}
+
 export interface ServerConnectionState {
   phase: ServerConnectionPhase;
   lastConnectedAt: number | null;
@@ -33,9 +40,16 @@ export class ServerConnectionService implements OnDestroy {
     reconnectAttempt: 0,
   });
   private readonly _reconnectCount = signal(0);
+  private readonly _capabilities = signal<ServerCapabilities | null>(null);
 
   readonly state = this._state.asReadonly();
   readonly reconnectCount = this._reconnectCount.asReadonly();
+  readonly capabilities = this._capabilities.asReadonly();
+  /** True once the backend has reported that tmux is not available. */
+  readonly tmuxMissing = computed(() => {
+    const caps = this._capabilities();
+    return caps !== null && !caps.tmuxAvailable;
+  });
   readonly showOverlay = computed(() => {
     const phase = this._state().phase;
     return phase === 'disconnected' || phase === 'restored';
@@ -84,8 +98,17 @@ export class ServerConnectionService implements OnDestroy {
 
     ws.onmessage = (event) => {
       this.ngZone.run(() => {
-        if (this.ws !== ws || !this.isServerConnectionMessage(event.data)) {
+        if (this.ws !== ws) {
           return;
+        }
+
+        const message = this.parseServerMessage(event.data);
+        if (!message) {
+          return;
+        }
+
+        if (message.capabilities) {
+          this._capabilities.set(message.capabilities);
         }
 
         this.markConnected();
@@ -108,20 +131,72 @@ export class ServerConnectionService implements OnDestroy {
     };
   }
 
-  private isServerConnectionMessage(value: unknown): boolean {
+  private parseServerMessage(
+    value: unknown,
+  ): { type: 'ready' | 'heartbeat'; capabilities?: ServerCapabilities } | null {
     if (typeof value !== 'string') {
-      return false;
+      return null;
     }
 
     try {
-      const parsed = JSON.parse(value) as { type?: unknown; serverTime?: unknown };
-      return (
-        (parsed.type === 'ready' || parsed.type === 'heartbeat') &&
-        typeof parsed.serverTime === 'string'
-      );
+      const parsed = JSON.parse(value) as {
+        type?: unknown;
+        serverTime?: unknown;
+        capabilities?: unknown;
+      };
+      if (
+        (parsed.type !== 'ready' && parsed.type !== 'heartbeat') ||
+        typeof parsed.serverTime !== 'string'
+      ) {
+        return null;
+      }
+
+      return {
+        type: parsed.type,
+        capabilities: this.parseCapabilities(parsed.capabilities),
+      };
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  private parseCapabilities(value: unknown): ServerCapabilities | undefined {
+    if (typeof value !== 'object' || value === null) {
+      return undefined;
+    }
+
+    const caps = value as { tmuxAvailable?: unknown; platform?: unknown };
+    if (typeof caps.tmuxAvailable !== 'boolean') {
+      return undefined;
+    }
+
+    return {
+      tmuxAvailable: caps.tmuxAvailable,
+      platform: typeof caps.platform === 'string' ? caps.platform : 'unknown',
+    };
+  }
+
+  /**
+   * Tear down the current socket and immediately reconnect so the backend
+   * re-advertises its capabilities (e.g. after the user installs tmux).
+   */
+  recheck(): void {
+    if (!this.started) {
+      this.start();
+      return;
+    }
+
+    this.clearReconnectTimer();
+    const previous = this.ws;
+    this.ws = null;
+    if (previous) {
+      try {
+        previous.close();
+      } catch {
+        // Ignore sockets that are already closing.
+      }
+    }
+    this.openSocket();
   }
 
   private markConnected(): void {

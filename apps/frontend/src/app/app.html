@@ -68,7 +68,7 @@
     </section>
   }
 
-  <div class="app-shell__body" [attr.inert]="showServerBlockOverlay() ? '' : null">
+  <div class="app-shell__body" [attr.inert]="(showServerBlockOverlay() || tmuxRequired()) ? '' : null">
     @if (shouldShowWorkspaceSidebar) {
       <div
         class="app-shell__sidebar"
@@ -302,6 +302,16 @@
         </p>
       </div>
     </section>
+  }
+
+  @if (tmuxRequired(); as block) {
+    <app-tmux-required-overlay
+      [mode]="block.mode"
+      [platform]="block.platform"
+      [busy]="tmuxActionBusy()"
+      [actionLabel]="tmuxActionLabel()"
+      (action)="handleTmuxAction()"
+    />
   }
 </div>
 <ngx-sonner-toaster position="bottom-right" />

@@ -22,8 +22,11 @@ import { RemoteInstallModalComponent } from './features/remote-install/remote-in
 import { getRuntimeConfig } from './shared/runtime/runtime-config';
 import {
   ElectronWindowState,
+  getElectronAppApi,
   getElectronWindowControlsApi,
 } from './shared/runtime/electron-window-controls';
+import { TmuxRequiredOverlayComponent } from './features/tmux-required/tmux-required-overlay.component';
+import { OnboardingStateService } from './shared/services/onboarding-state.service';
 import { OnboardingStartupService } from './shared/services/onboarding-startup.service';
 import { CONNECTING_PHASES, SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
 import { BackendLogsWebsocketService } from './shared/services/backend-logs-websocket.service';
@@ -48,7 +51,7 @@ function readSidebarWidth(): number {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, ZardInputDirective],
+  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, ZardInputDirective, TmuxRequiredOverlayComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   viewProviders: [
@@ -74,8 +77,10 @@ export class App implements OnInit, OnDestroy {
   private readonly connectionManager = inject(EnvironmentConnectionManagerService);
   private readonly backendLogs = inject(BackendLogsWebsocketService);
   private readonly serverConnection = inject(ServerConnectionService);
+  private readonly onboardingState = inject(OnboardingStateService);
   private readonly theme = inject(ThemeService);
   private readonly windowControls = getElectronWindowControlsApi();
+  private readonly appControls = getElectronAppApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
 
   sidebarWidth = signal(readSidebarWidth());
@@ -85,6 +90,7 @@ export class App implements OnInit, OnDestroy {
   isFullScreen = signal(false);
   isFocused = signal(false);
   remoteReconnectPassword = signal('');
+  tmuxActionBusy = signal(false);
   windowEnvironmentReady = signal(false);
   isOnboardingRoute = signal(this.router.url.startsWith('/onboarding'));
   switchingEnvironment = this.connectionManager.switching;
@@ -101,6 +107,40 @@ export class App implements OnInit, OnDestroy {
     !this.sshRuntimeRecovery.remoteDisconnect() &&
     !this.isOnboardingRoute(),
   );
+  // tmux is a hard requirement: when the active backend reports it's missing we
+  // block the workspace entirely. Only surfaces for a determinate backend (local,
+  // or a remote that is actually connected) and never over onboarding/SSH overlays.
+  readonly tmuxRequired = computed<{ mode: 'local' | 'remote'; platform: string } | null>(() => {
+    if (this.isOnboardingRoute()) {
+      return null;
+    }
+    if (this.sshRuntimeRecovery.remoteConnecting() || this.sshRuntimeRecovery.remoteDisconnect()) {
+      return null;
+    }
+    const capabilities = this.serverConnection.capabilities();
+    if (!capabilities || capabilities.tmuxAvailable) {
+      return null;
+    }
+
+    const snapshot = this.onboardingState.snapshotState();
+    if (snapshot.mode === 'ssh') {
+      // Capabilities only reflect the remote host once the tunnel is active.
+      if (!snapshot.remoteConnectionReady) {
+        return null;
+      }
+      return { mode: 'remote', platform: capabilities.platform };
+    }
+
+    return { mode: 'local', platform: capabilities.platform };
+  });
+  readonly canRestartApp = computed(() => this.appControls !== null);
+  readonly tmuxActionLabel = computed(() => {
+    const block = this.tmuxRequired();
+    if (block?.mode === 'remote') {
+      return 'Reconnect';
+    }
+    return this.canRestartApp() ? 'Restart Elevenex' : 'Re-check';
+  });
 
   private removeWindowListener: (() => void) | null = null;
   private removeRouteListener: (() => void) | null = null;
@@ -264,6 +304,30 @@ export class App implements OnInit, OnDestroy {
   cancelRemoteConnection() {
     this.sshRuntimeRecovery.cancelRemoteConnection();
     this.clearRemoteReconnectCredentials();
+  }
+
+  async handleTmuxAction() {
+    const block = this.tmuxRequired();
+    if (!block || this.tmuxActionBusy()) {
+      return;
+    }
+
+    this.tmuxActionBusy.set(true);
+    try {
+      if (block.mode === 'local' && this.appControls) {
+        // Relaunches the desktop app; this process is replaced before we return.
+        await this.appControls.restart();
+        return;
+      }
+
+      // Remote, or local web/dev runtime without a relaunch bridge: reopen the
+      // server connection so the backend re-advertises whether tmux is present.
+      this.serverConnection.recheck();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not restart Elevenex.');
+    } finally {
+      this.tmuxActionBusy.set(false);
+    }
   }
 
   async switchToLocalFromOverlay() {
