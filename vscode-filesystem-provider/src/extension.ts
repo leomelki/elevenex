@@ -236,12 +236,20 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
     | undefined
     | ((scheme: string, provider: any) => { dispose(): void });
   if (registerTextSearchProvider) {
-    context.subscriptions.push(
-      registerTextSearchProvider(
-        'workspace-vfs',
-        createWorkspaceTextSearchProvider(worktreePath, backendClient),
-      ),
-    );
+    // registerTextSearchProvider is a proposed VS Code API. If the proposal is
+    // not granted to this extension the call throws synchronously; isolate it so
+    // a failure here never aborts activation (which would also drop the
+    // elevenex.searchFiles command registered below) and only disables text search.
+    try {
+      context.subscriptions.push(
+        registerTextSearchProvider(
+          'workspace-vfs',
+          createWorkspaceTextSearchProvider(worktreePath, backendClient),
+        ),
+      );
+    } catch (error) {
+      console.warn('Failed to register workspace-vfs TextSearchProvider', error);
+    }
   } else {
     console.warn('VS Code TextSearchProvider API is unavailable for workspace-vfs');
   }

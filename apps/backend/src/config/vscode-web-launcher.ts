@@ -44,7 +44,10 @@ const WORKBENCH_BOOTSTRAP_SCRIPT = `${WORKBENCH_BOOTSTRAP_MARKER}
       applicationName: 'code-oss',
       dataFolderName: '.vscode-oss',
       version: '1.91.1',
-      commit: 'f1e16e1e6214d7c44d078b1f0607b2388f29d729'
+      commit: 'f1e16e1e6214d7c44d078b1f0607b2388f29d729',
+      extensionEnabledApiProposals: {
+        'elevenex.elevenex-filesystem-provider': ['textSearchProvider']
+      }
     },
     additionalBuiltinExtensions: extensionPaths.map(toUri),
     settingsSyncOptions: { enabled: false }

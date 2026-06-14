@@ -9,6 +9,7 @@
   },
   "extensionKind": ["web"],
   "browser": "./dist/extension.browser.js",
+  "enabledApiProposals": ["textSearchProvider"],
   "contributes": {
     "commands": [
       {
