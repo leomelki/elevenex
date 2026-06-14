@@ -242,6 +242,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private deferredContextGenerationTimer: number | null = null;
   private composerDraftRevision = 0;
   private composerDraftRestoreVersion = 0;
+  private lastSubmittedPromptText = '';
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
   readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
@@ -857,6 +858,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       ]);
     }
     this.cancelArmedEdit();
+    this.lastSubmittedPromptText = normalized.text;
     this.prompt.set('');
     this.pendingDiffMentions.set([]);
     this.composerImages.set([]);
@@ -1951,6 +1953,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
             receivedAt: now,
           },
         ]);
+        if (this.lastSubmittedPromptText && !this.prompt()) {
+          this.prompt.set(this.lastSubmittedPromptText);
+          this.markComposerDraftChanged();
+          this.persistComposerDraft();
+        }
         this.submitting.set(false);
         return;
       }
