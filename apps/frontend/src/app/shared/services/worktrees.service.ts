@@ -10,6 +10,7 @@ import {
   WorktreePoolItem,
 } from '../models/worktree.model';
 import { Workspace } from '../models/workspace.model';
+import { getApiBaseUrl } from '../runtime/runtime-config';
 
 @Injectable({ providedIn: 'root' })
 export class WorktreesService {
@@ -25,7 +26,9 @@ export class WorktreesService {
 
   getPoolByRepoStream(repoId: number) {
     return new Observable<WorktreePoolItem[]>((subscriber) => {
-      const source = new EventSource(`/api/repos/${repoId}/worktree-pool/stream`);
+      const source = new EventSource(
+        `${getApiBaseUrl()}/repos/${repoId}/worktree-pool/stream`,
+      );
       const items: WorktreePoolItem[] = [];
       let closed = false;
 
