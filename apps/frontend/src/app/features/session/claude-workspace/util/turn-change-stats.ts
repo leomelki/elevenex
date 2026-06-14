@@ -1,3 +1,4 @@
+import { diffLines } from 'diff';
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import { PairedTranscriptUnit } from './paired-transcript';
 
@@ -62,9 +63,14 @@ function lineCount(text: string | undefined | null): number {
 }
 
 function countLineDiff(oldStr: string, newStr: string): { additions: number; deletions: number } {
-  const oldLines = splitLines(oldStr);
-  const newLines = splitLines(newStr);
-  return { additions: newLines.length, deletions: oldLines.length };
+  const changes = diffLines(oldStr || '', newStr || '');
+  let additions = 0;
+  let deletions = 0;
+  for (const change of changes) {
+    if (change.added) additions += change.count ?? 0;
+    else if (change.removed) deletions += change.count ?? 0;
+  }
+  return { additions, deletions };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

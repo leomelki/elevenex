@@ -21,6 +21,7 @@ const EXTENSION_TO_LANG: Record<string, string> = {
 const INLINE_CHANGE_SIMILARITY_THRESHOLD = 0.55;
 const INLINE_CHANGE_MAX_LINE_LENGTH = 2_000;
 const INLINE_CHANGE_MAX_EDIT_LENGTH = 512;
+const CONTEXT_WINDOW = 3;
 
 export function detectHljsLang(filePath: string): string | null {
   if (!filePath) return null;
@@ -256,6 +257,17 @@ function collapseModifiedLineDiffs(
   return collapsed;
 }
 
+function trimContextLines(diff: LineDiff[]): LineDiff[] {
+  const keep = new Set<number>();
+  for (let i = 0; i < diff.length; i++) {
+    if (diff[i].type === 'context') continue;
+    for (let j = Math.max(0, i - CONTEXT_WINDOW); j <= Math.min(diff.length - 1, i + CONTEXT_WINDOW); j++) {
+      keep.add(j);
+    }
+  }
+  return diff.filter((_, i) => keep.has(i));
+}
+
 function shouldCollapseInlineChange(oldContent: string, newContent: string): boolean {
   if (!oldContent || !newContent || oldContent === newContent) return false;
   if (!oldContent.trim() || !newContent.trim()) return false;
@@ -377,16 +389,11 @@ export function highlightedUnifiedDiffHtml(
   const newHl = highlightLines(newLines.join('\n'), lang);
   const oldStartLine = typeof options === 'number' ? options : options.oldStartLine ?? 1;
   const newStartLine = typeof options === 'number' ? options : options.newStartLine ?? 1;
-  const diff = collapseModifiedLineDiffs(
-    buildLineDiff(
-      oldLines,
-      newLines,
-      oldStartLine,
-      newStartLine,
-    ),
+  const diff = trimContextLines(collapseModifiedLineDiffs(
+    buildLineDiff(oldLines, newLines, oldStartLine, newStartLine),
     oldLines,
     newLines,
-  );
+  ));
 
   return diff.map((line) => {
     if (line.type === 'context') {
