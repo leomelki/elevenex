@@ -1,6 +1,6 @@
 import { accessSync, constants } from 'fs';
 import { homedir } from 'os';
-import { extname, join } from 'path';
+import { basename, extname, join } from 'path';
 import { spawn } from 'child_process';
 import { Logger } from '@nestjs/common';
 import simpleGit, { SimpleGit } from 'simple-git';
@@ -584,6 +584,18 @@ export function normalizeShellForPlatform(shell: string): string {
   if (!IS_WINDOWS) return shell;
   if (!shell || shell.startsWith('/')) return getDefaultUserShell();
   return shell;
+}
+
+// Return the shell flags needed to run `command` as a one-shot child process.
+// POSIX shells use `-lc`; PowerShell uses `-Command`; cmd.exe uses `/c`.
+export function buildShellCommandArgs(shell: string, command: string): string[] {
+  if (!IS_WINDOWS) return ['-lc', command];
+  const base = basename(shell).toLowerCase().replace(/\.exe$/, '');
+  if (base === 'pwsh' || base === 'powershell') {
+    return ['-Command', command];
+  }
+  // cmd.exe and fallback
+  return ['/c', command];
 }
 
 // Build a `KEY1='val' KEY2='val' ...` prefix string suitable for inlining in

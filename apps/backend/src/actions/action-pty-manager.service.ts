@@ -10,8 +10,11 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   buildAugmentedEnvAsync,
+  buildShellCommandArgs,
   buildTmuxInlineEnvPrefix,
   findBinary,
+  getDefaultUserShell,
+  normalizeShellForPlatform,
 } from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
 
@@ -70,7 +73,7 @@ export class ActionPtyManager
   private readonly logger = new Logger('ActionPtyManager');
   private readonly processes = new Map<number, RunningAction>();
   private readonly startingActions = new Set<number>();
-  private readonly defaultShell = process.env.SHELL || '/bin/zsh';
+  private readonly defaultShell = getDefaultUserShell();
   private gateway?: ActionGatewayLike;
   private persistence?: ActionPersistence;
   private tmuxBin: string;
@@ -367,7 +370,7 @@ export class ActionPtyManager
   }
 
   private resolveShell(env: NodeJS.ProcessEnv): string {
-    return env.SHELL || this.defaultShell;
+    return normalizeShellForPlatform(env.SHELL || this.defaultShell);
   }
 
   // --- spawn methods ---
@@ -499,9 +502,10 @@ export class ActionPtyManager
   }
 
   private spawnDirect(action: ActionRecord, env: NodeJS.ProcessEnv): pty.IPty {
+    const shell = this.resolveShell(env);
     const ptyProcess = pty.spawn(
-      this.resolveShell(env),
-      ['-lc', action.command],
+      shell,
+      buildShellCommandArgs(shell, action.command),
       {
         name: 'xterm-256color',
         cols: 120,
