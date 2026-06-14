@@ -505,7 +505,7 @@
 
               <span class="flex flex-row items-baseline gap-2 min-w-0 flex-1">
                 <span
-                  class="text-[0.72rem] font-semibold tracking-[0.02em] text-muted-foreground shrink-0 [text-decoration-thickness:1px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_35%,transparent)]"
+                  class="text-[0.72rem] font-semibold tracking-[0.02em] text-muted-foreground shrink-0 [text-decoration-thickness:1.5px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_70%,transparent)]"
                   [class.line-through]="
                     (!firstPromptContextEnabled() && canToggleContextEnabled()) ||
                     (promptIsCommand() && canToggleContextEnabled())
@@ -513,7 +513,7 @@
                   >{{ contextPinLabel() }}</span
                 >
                 <span
-                  class="text-[0.8rem] text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0 flex-1 [text-decoration-thickness:1px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_35%,transparent)] group-data-[expanded]/ctx:hidden"
+                  class="text-[0.8rem] whitespace-nowrap overflow-hidden text-ellipsis min-w-0 flex-1 [text-decoration-thickness:1.5px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_70%,transparent)] group-data-[expanded]/ctx:hidden transition-colors duration-[140ms] group-data-[ctx-mode=disabled]/ctx:text-muted-foreground group-data-[ctx-mode=enabled]/ctx:text-foreground text-foreground"
                   [class.line-through]="
                     (!firstPromptContextEnabled() && canToggleContextEnabled()) ||
                     (promptIsCommand() && canToggleContextEnabled())
