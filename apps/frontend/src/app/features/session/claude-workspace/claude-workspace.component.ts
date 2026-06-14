@@ -446,22 +446,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     () =>
       this.readOnlyTranscript ||
       this.loading() ||
-      this.submitting() ||
-      this.runPhase() !== 'idle' ||
-      !!this.pendingPermissionRequest() ||
-      !!this.pendingUserInputRequest() ||
       this.forkingAnchorId() !== null,
   );
   readonly forkDisabledReason = computed(() => {
     if (this.readOnlyTranscript) return 'Forks are not available in terminal mirror mode.';
     if (this.forkingAnchorId()) return 'A fork is already being created.';
     if (this.loading()) return 'Transcript is still loading.';
-    if (this.submitting() || this.runPhase() !== 'idle') {
-      return 'Forks are available when the session is idle.';
-    }
-    if (this.pendingPermissionRequest() || this.pendingUserInputRequest()) {
-      return 'Resolve the pending request before forking.';
-    }
     return '';
   });
   readonly forksByAnchor = computed(() => {

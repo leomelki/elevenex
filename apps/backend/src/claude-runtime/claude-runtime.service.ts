@@ -718,28 +718,6 @@ export class ClaudeRuntimeService extends EventEmitter {
       throw new BadRequestException('A messageId or toolUseId is required.');
     }
 
-    if (this.initializingRuns.has(request.parentSessionId)) {
-      throw new ConflictException(
-        'Cannot fork while Claude is actively running.',
-      );
-    }
-    const activeRun = this.activeRuns.get(request.parentSessionId);
-    if (activeRun) {
-      const state = this.ensureRuntimeState(request.parentSessionId);
-      const pending = state.pendingPermissionRequest;
-      const canForkFrozenPlanRequest =
-        Boolean(request.activePermissionRequestId) &&
-        pending !== null &&
-        pending.requestId === request.activePermissionRequestId &&
-        pending.toolUseId === anchorToolUseId &&
-        this.getInteractionKind(pending.toolName) === 'exit_plan_mode';
-      if (!canForkFrozenPlanRequest) {
-        throw new ConflictException(
-          'Cannot fork while Claude is actively running.',
-        );
-      }
-    }
-
     const session = await this.sessionsService.findOne(request.parentSessionId);
     if (!session.claudeSessionId || session.claudeSessionId === '-1') {
       throw new NotFoundException('Claude session not found.');

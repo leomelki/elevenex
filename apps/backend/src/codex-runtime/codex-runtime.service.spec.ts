@@ -40,6 +40,11 @@ describe('CodexRuntimeService', () => {
     };
     const historyService = {
       getHistory: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
+      forkHistory: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+        providerSessionId: 'forked-thread',
+        draft: null,
+        anchorExcerpt: 'answer',
+      }),
     };
     const hooksService = {
       updateRuntimeActivity: jest.fn(),
@@ -74,6 +79,7 @@ describe('CodexRuntimeService', () => {
       authService,
       appServer,
       hooksService,
+      historyService,
     };
   }
 
@@ -188,6 +194,32 @@ describe('CodexRuntimeService', () => {
 
     expect(authService.getFastStatus).toHaveBeenCalledTimes(1);
     expect(authService.getStatus).not.toHaveBeenCalled();
+  });
+
+  it('forks history while a Codex run is active', async () => {
+    const { service, historyService } = createService();
+    (service as any).activeRuns.set(7, {});
+
+    const result = await service.forkConversation({
+      parentSessionId: 7,
+      childSessionId: 8,
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      childSessionName: 'Fork',
+    });
+
+    expect(historyService.forkHistory).toHaveBeenCalledWith(
+      '-1',
+      expect.objectContaining({
+        parentSessionId: 7,
+        anchorMessageId: 'assistant-1',
+      }),
+    );
+    expect(result).toEqual({
+      providerSessionId: 'forked-thread',
+      draft: null,
+      anchorExcerpt: 'answer',
+    });
   });
 
   it('lists models through the shared app-server client', async () => {

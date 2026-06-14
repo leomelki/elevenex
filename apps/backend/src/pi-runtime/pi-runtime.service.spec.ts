@@ -297,6 +297,41 @@ describe('PiRuntimeService lifecycle', () => {
     }
   });
 
+  it('forks a Pi conversation while a run is active', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-fork-active-'));
+    try {
+      const sessionPath = join(root, 'session.jsonl');
+      await writeFile(
+        sessionPath,
+        JSON.stringify({
+          id: 'assistant-entry',
+          type: 'message',
+          message: {
+            role: 'assistant',
+            timestamp: Date.parse('2026-05-22T10:01:00.000Z'),
+            content: [{ type: 'text', text: 'hi' }],
+          },
+        }) + '\n',
+        'utf8',
+      );
+      const { service } = createService({ piSessionPath: sessionPath });
+      (service as any).activeRuns.set(1, {});
+
+      const result = await service.forkConversation({
+        parentSessionId: 1,
+        childSessionId: 2,
+        anchorMessageId: 'assistant-entry',
+        anchorMessageKind: 'assistant',
+        childSessionName: 'Fork',
+      });
+
+      expect(result.providerSessionId).toEqual(expect.any(String));
+      expect(result.anchorExcerpt).toBe('hi');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   afterEach(() => {
     if (originalIdleMs === undefined) delete process.env.PI_RUNTIME_IDLE_MS;
     else process.env.PI_RUNTIME_IDLE_MS = originalIdleMs;

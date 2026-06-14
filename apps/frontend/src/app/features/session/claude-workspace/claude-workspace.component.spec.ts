@@ -796,10 +796,42 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(emitted).toHaveLength(1);
   });
 
-  it('does not create a fork while the runtime is active', async () => {
+  it('creates a fork while the runtime is active', async () => {
     const sessions = TestBed.inject(SessionsService) as unknown as {
       createFork: ReturnType<typeof vi.fn>;
     };
+    sessions.createFork.mockReturnValueOnce(
+      of({
+        fork: {
+          id: 1,
+          parentSessionId: 7,
+          childSessionId: 8,
+          anchorMessageId: 'assistant-wrapper-1',
+          anchorMessageKind: 'assistant',
+          anchorExcerpt: 'Done',
+          createdAt: '2026-04-24T08:00:00.000Z',
+          childSession: null,
+        },
+        session: {
+          id: 8,
+          repoId: 1,
+          name: 'Parent (fork)',
+          branchName: 'main',
+          worktreePath: '/tmp/project',
+          status: 'created',
+          claudeSessionId: 'forked-claude',
+          provider: 'claude',
+          hasUnreadChanges: false,
+          hasUnreviewedCompletion: false,
+          lastCompletionAt: null,
+          lastCompletionKind: null,
+          lastStateChangeAt: null,
+          createdAt: '2026-04-24T08:00:00.000Z',
+          updatedAt: '2026-04-24T08:00:00.000Z',
+        },
+        draft: null,
+      }),
+    );
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
     fixture.detectChanges();
@@ -815,7 +847,11 @@ describe('ClaudeWorkspaceComponent', () => {
       timestamp: '2026-04-24T08:00:00.000Z',
     });
 
-    expect(sessions.createFork).not.toHaveBeenCalled();
+    expect(sessions.createFork).toHaveBeenCalledWith(7, {
+      anchorMessageId: 'assistant-wrapper-1',
+      anchorMessageKind: 'assistant',
+      anchorExcerpt: 'Done',
+    });
   });
 
   it('shows the waiting caret while Claude is still thinking', async () => {

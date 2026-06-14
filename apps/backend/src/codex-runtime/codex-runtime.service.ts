@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
 } from '@nestjs/common';
@@ -182,12 +181,6 @@ export class CodexRuntimeService extends EventEmitter {
   async forkConversation(
     request: AgentForkConversationRequest,
   ): Promise<AgentForkConversationResult> {
-    if (this.activeRuns.has(request.parentSessionId)) {
-      throw new ConflictException(
-        'Cannot fork while Codex is actively running.',
-      );
-    }
-
     const session = await this.sessionsService.findOne(request.parentSessionId);
     return this.historyService.forkHistory(session.codexSessionId, request);
   }

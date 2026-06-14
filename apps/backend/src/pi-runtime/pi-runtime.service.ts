@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -163,13 +162,6 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     }
     const anchorMessageId = request.anchorMessageId;
     const anchorMessageKind = request.anchorMessageKind;
-    if (
-      this.activeRuns.has(request.parentSessionId) ||
-      this.initializingRuns.has(request.parentSessionId)
-    ) {
-      throw new ConflictException('Cannot fork while Pi is actively running.');
-    }
-
     const session = await this.sessionsService.findOne(request.parentSessionId);
     const sessionPath = session.piSessionPath;
     if (!sessionPath || sessionPath === '-1') {
