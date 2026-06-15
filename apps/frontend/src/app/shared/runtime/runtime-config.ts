@@ -36,6 +36,15 @@ export function getRuntimeConfig(): ElevenexRuntimeConfig {
   return getWindowRuntime() ?? {};
 }
 
+export function getBackendServerId(): string {
+  const snapshot = readOnboardingStateSnapshot();
+  if (snapshot?.mode === 'ssh') {
+    const server = getActiveOnboardingServer(snapshot);
+    if (server) return `server-${server.id}`;
+  }
+  return 'local';
+}
+
 export function getBackendOrigin(): string {
   const onboardingOrigin = getOnboardingBackendOrigin(readOnboardingStateSnapshot());
   if (onboardingOrigin) {

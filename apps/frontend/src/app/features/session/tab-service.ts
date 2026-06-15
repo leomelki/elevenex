@@ -1,17 +1,21 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { Session } from '../../shared/models/session.model';
 import type { AgentProviderId } from '../../shared/models/agent-runtime.model';
+import { getBackendServerId } from '../../shared/runtime/runtime-config';
 
 export const LAST_OPENED_SESSION_STORAGE_KEY = 'elevenex-last-opened-session';
 export const OPEN_TABS_STORAGE_KEY = 'elevenex-open-tabs';
 
-export function readLastOpenedSessionId(storage: Pick<Storage, 'getItem'> | null = typeof localStorage === 'undefined' ? null : localStorage): number | null {
+export function readLastOpenedSessionId(
+  storage: Pick<Storage, 'getItem'> | null = typeof localStorage === 'undefined' ? null : localStorage,
+  key = LAST_OPENED_SESSION_STORAGE_KEY,
+): number | null {
   if (!storage) {
     return null;
   }
 
   try {
-    const stored = storage.getItem(LAST_OPENED_SESSION_STORAGE_KEY);
+    const stored = storage.getItem(key);
     if (!stored) {
       return null;
     }
@@ -48,7 +52,13 @@ export interface TabCloseResult {
 
 @Injectable({ providedIn: 'root' })
 export class TabService {
-  private static STORAGE_KEY = OPEN_TABS_STORAGE_KEY;
+  private get currentStorageKey(): string {
+    return `${OPEN_TABS_STORAGE_KEY}@${getBackendServerId()}`;
+  }
+
+  private get currentLastSessionKey(): string {
+    return `${LAST_OPENED_SESSION_STORAGE_KEY}@${getBackendServerId()}`;
+  }
 
   private _tabs = signal<Tab[]>([]);
   private _activeSessionId = signal<number | null>(null);
@@ -400,7 +410,7 @@ export class TabService {
 
   getSavedState(): { sessionIds: number[]; activeSessionId: number | null } | null {
     try {
-      const stored = localStorage.getItem(TabService.STORAGE_KEY);
+      const stored = localStorage.getItem(this.currentStorageKey);
       if (stored) {
         return JSON.parse(stored);
       }
@@ -411,21 +421,15 @@ export class TabService {
   }
 
   getLastOpenedSessionId(): number | null {
-    return readLastOpenedSessionId();
+    return readLastOpenedSessionId(undefined, this.currentLastSessionKey);
   }
 
   resetForEnvironmentChange(): TabCloseResult {
     const closedSessionIds = this._tabs().map(tab => tab.sessionId);
     this._tabs.set([]);
     this._activeSessionId.set(null);
-
-    try {
-      localStorage.removeItem(LAST_OPENED_SESSION_STORAGE_KEY);
-      localStorage.removeItem(TabService.STORAGE_KEY);
-    } catch {
-      // Ignore storage errors
-    }
-
+    // Scoped keys are per-backend — no need to clear localStorage; each backend
+    // retains its own tab history and the correct key is read on next init.
     return {
       activeSessionId: null,
       closedSessionIds,
@@ -455,7 +459,7 @@ export class TabService {
 
   private persistLastOpenedSession(sessionId: number): void {
     try {
-      localStorage.setItem(LAST_OPENED_SESSION_STORAGE_KEY, String(sessionId));
+      localStorage.setItem(this.currentLastSessionKey, String(sessionId));
     } catch {
       // Ignore storage errors
     }
@@ -467,7 +471,7 @@ export class TabService {
         sessionIds: this._tabs().map(t => t.sessionId),
         activeSessionId: this._activeSessionId(),
       };
-      localStorage.setItem(TabService.STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(this.currentStorageKey, JSON.stringify(state));
     } catch {
       // Ignore storage errors
     }

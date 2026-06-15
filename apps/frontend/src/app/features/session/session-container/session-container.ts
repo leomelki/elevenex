@@ -50,7 +50,7 @@ import {
   PlanReviewRailMode,
   PlanReviewRequest,
 } from '@/features/plan-annotator';
-import { getBackendOrigin } from '@/shared/runtime/runtime-config';
+import { getBackendOrigin, getBackendServerId } from '@/shared/runtime/runtime-config';
 import { ActionsPanelComponent, ActionsStateService } from '@/features/actions';
 import { UserTerminalPanelComponent, UserTerminalStateService } from '@/features/user-terminal';
 import {
@@ -135,6 +135,14 @@ export class SessionContainer implements OnInit, OnDestroy {
   private static readonly SIDEBAR_MODE_STORAGE_KEY = 'elevenex-layout-preferences';
   private static readonly CLAUDE_SURFACE_MODE_STORAGE_KEY = 'elevenex-claude-surface-modes';
   private static readonly CHANGES_PANEL_STATE_KEY = 'elevenex-changes-panel-state';
+
+  private get claudeSurfaceStorageKey(): string {
+    return `${SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY}@${getBackendServerId()}`;
+  }
+
+  private get changesPanelStorageKey(): string {
+    return `${SessionContainer.CHANGES_PANEL_STATE_KEY}@${getBackendServerId()}`;
+  }
 
   private route = inject(ActivatedRoute);
   private router = inject(Router);
@@ -389,7 +397,7 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   private loadChangesPanelState(): Map<string, boolean> {
     try {
-      const stored = localStorage.getItem(SessionContainer.CHANGES_PANEL_STATE_KEY);
+      const stored = localStorage.getItem(this.changesPanelStorageKey);
       if (stored) return new Map(Object.entries(JSON.parse(stored)));
     } catch {
       // Ignore storage errors
@@ -400,7 +408,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private saveChangesPanelState(map: Map<string, boolean>): void {
     try {
       localStorage.setItem(
-        SessionContainer.CHANGES_PANEL_STATE_KEY,
+        this.changesPanelStorageKey,
         JSON.stringify(Object.fromEntries(map)),
       );
     } catch {
@@ -411,7 +419,18 @@ export class SessionContainer implements OnInit, OnDestroy {
   private getClaudeSurfaceModePreference(): ReadonlyMap<number, ClaudeSurfaceMode> {
     const modes = new Map<number, ClaudeSurfaceMode>();
     try {
-      const stored = localStorage.getItem(SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY);
+      // One-time migration from unscoped key to per-backend scoped key.
+      const unscopedKey = SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY;
+      const scopedKey = this.claudeSurfaceStorageKey;
+      const legacy = localStorage.getItem(unscopedKey);
+      if (legacy) {
+        if (!localStorage.getItem(scopedKey)) {
+          localStorage.setItem(scopedKey, legacy);
+        }
+        localStorage.removeItem(unscopedKey);
+      }
+
+      const stored = localStorage.getItem(scopedKey);
       if (!stored) return modes;
       const parsed = JSON.parse(stored);
       const terminalSessionIds = Array.isArray(parsed)
@@ -438,7 +457,7 @@ export class SessionContainer implements OnInit, OnDestroy {
         .filter(([sessionId, mode]) => mode === 'terminal' && this.userSetTerminalSessions.has(sessionId))
         .map(([sessionId]) => sessionId);
       localStorage.setItem(
-        SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY,
+        this.claudeSurfaceStorageKey,
         JSON.stringify(terminalSessionIds),
       );
     } catch {
