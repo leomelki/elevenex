@@ -222,6 +222,9 @@ export class SessionContainer implements OnInit, OnDestroy {
   private claudeSurfaceModes = signal<ReadonlyMap<number, ClaudeSurfaceMode>>(
     this.getClaudeSurfaceModePreference(),
   );
+  // Tracks sessions where the user explicitly chose TUI (vs. auto-applied from the global default).
+  // Only these are persisted to localStorage so that changing the global default resets auto-applied sessions.
+  private userSetTerminalSessions = new Set<number>(this.claudeSurfaceModes().keys());
   private claudeTerminalMirrorModes = signal<ReadonlyMap<number, boolean>>(new Map());
   activeSessionArchived = computed(() => this.activeTab()?.status === 'archived');
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
@@ -432,7 +435,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private saveClaudeSurfaceModePreference(modes: ReadonlyMap<number, ClaudeSurfaceMode>): void {
     try {
       const terminalSessionIds = [...modes.entries()]
-        .filter(([, mode]) => mode === 'terminal')
+        .filter(([sessionId, mode]) => mode === 'terminal' && this.userSetTerminalSessions.has(sessionId))
         .map(([sessionId]) => sessionId);
       localStorage.setItem(
         SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY,
@@ -634,12 +637,16 @@ export class SessionContainer implements OnInit, OnDestroy {
     return this.claudeWorkspaces().find((workspace) => workspace.sessionId === sessionId) ?? null;
   }
 
-  private setClaudeSurfaceMode(sessionId: number, mode: ClaudeSurfaceMode): void {
+  private setClaudeSurfaceMode(sessionId: number, mode: ClaudeSurfaceMode, userExplicit = false): void {
     const next = new Map(this.claudeSurfaceModes());
     if (mode === 'workspace') {
       next.delete(sessionId);
+      this.userSetTerminalSessions.delete(sessionId);
     } else {
       next.set(sessionId, mode);
+      if (userExplicit) {
+        this.userSetTerminalSessions.add(sessionId);
+      }
       this.ensureClaudeTerminalMirrorDefault(sessionId);
     }
     this.claudeSurfaceModes.set(next);
@@ -669,7 +676,7 @@ export class SessionContainer implements OnInit, OnDestroy {
       this.setClaudeSurfaceMode(id, 'workspace');
       return;
     }
-    this.setClaudeSurfaceMode(id, 'terminal');
+    this.setClaudeSurfaceMode(id, 'terminal', true);
   }
 
   toggleClaudeTerminalTranscriptMirror(): void {
@@ -683,7 +690,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   showClaudeTerminal(): void {
     const id = this.activeSessionId();
     if (id === null) return;
-    this.setClaudeSurfaceMode(id, 'terminal');
+    this.setClaudeSurfaceMode(id, 'terminal', true);
   }
 
   private getClaudeActivityStatus(sessionId: number): ClaudeActivityStatus {
@@ -1169,12 +1176,17 @@ export class SessionContainer implements OnInit, OnDestroy {
       return;
     }
 
-    if (this.claudeSurfaceModes().has(sessionId)) {
+    // Respect the user's explicit per-session choice; never override it with the global default.
+    if (this.userSetTerminalSessions.has(sessionId)) {
       return;
     }
 
     if (this.appSettings.settings().defaultClaudeSessionSurface === 'tui') {
+      // Apply default TUI without marking as user-explicit, so changing the default resets it.
       this.setClaudeSurfaceMode(sessionId, 'terminal');
+    } else if (this.claudeSurfaceModes().has(sessionId)) {
+      // Clear any stale terminal mode left over from a previous 'tui' default.
+      this.setClaudeSurfaceMode(sessionId, 'workspace');
     }
   }
 
