@@ -1,5 +1,9 @@
 @if (review(); as activeReview) {
-  <section class="pa-panel" aria-label="Plan annotator">
+  <section
+    class="pa-panel"
+    aria-label="Plan annotator"
+    [class.pa-panel--ask-drawer]="activeRailMode() === 'ask'"
+  >
     <header class="pa-header">
       <div class="pa-header__title">
         <span class="pa-eyebrow">{{ providerLabel() }} plan review</span>
@@ -84,7 +88,27 @@
         </div>
       </main>
 
+      <button
+        type="button"
+        class="pa-rail-backdrop"
+        aria-label="Collapse Ask"
+        (click)="collapseAsk()"
+      ></button>
+
       <aside class="pa-rail" aria-label="Plan rail">
+        <div class="pa-rail-grabber">
+          <span class="pa-rail-grabber__handle" aria-hidden="true"></span>
+          <button
+            type="button"
+            class="pa-rail-grabber__close"
+            title="Collapse Ask"
+            aria-label="Collapse Ask"
+            (click)="collapseAsk()"
+          >
+            <ng-icon name="lucideChevronDown" size="16" />
+          </button>
+        </div>
+
         <div class="pa-rail-tabs" role="tablist" aria-label="Plan rail mode">
           <button
             type="button"

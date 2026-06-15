@@ -129,6 +129,82 @@ describe('PlanChatPanelComponent', () => {
     expect(websocketMock.send).toHaveBeenCalledWith(22, { type: 'hydrate' }, 'codex');
   });
 
+  it('keeps a streaming second answer visible when a stale history refresh completes', async () => {
+    const events$ = new Subject<any>();
+    const planChat = makePlanChat();
+
+    // First exchange: the question and its persisted answer (sourceMessageId m1).
+    const q1 = {
+      id: 'h-q1',
+      kind: 'user',
+      content: '<elevenex_plan_question>First?</elevenex_plan_question>',
+      timestamp: '2026-05-29T10:00:01.000Z',
+    };
+    const a1History = {
+      id: 'm1:assistant:0',
+      kind: 'assistant',
+      content: 'First answer',
+      timestamp: '2026-05-29T10:00:02.000Z',
+      sourceMessageId: 'm1',
+    };
+    // Live copies: the first answer (now persisted) and a second answer still
+    // streaming (sourceMessageId m2) that history does not know about yet.
+    const a1Live = { ...a1History, id: 'm1:0' };
+    const a2Live = {
+      id: 'm2:0',
+      kind: 'assistant',
+      content: 'Second answer',
+      timestamp: '2026-05-29T10:00:04.000Z',
+      sourceMessageId: 'm2',
+    };
+
+    const planChatsMock = {
+      getByReview: vi.fn(() => of([planChat])),
+      ensure: vi.fn(),
+      submitQuestion: vi.fn(),
+      delete: vi.fn(),
+    };
+    const websocketMock = {
+      connect: vi.fn(() => events$.asObservable()),
+      send: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    // The first run's refresh only sees the first answer — the second is unpersisted.
+    const agentApiMock = {
+      getHistory: vi.fn(() => of([q1, a1History])),
+    };
+
+    await TestBed.configureTestingModule({
+      imports: [PlanChatPanelComponent],
+      providers: [
+        { provide: PlanChatService, useValue: planChatsMock },
+        { provide: AgentRuntimeWebsocketService, useValue: websocketMock },
+        { provide: AgentRuntimeApiService, useValue: agentApiMock },
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(PlanChatPanelComponent);
+    fixture.componentRef.setInput('review', makeReview());
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const component = fixture.componentInstance;
+    // Both answers are present live when the first run's stale refresh fires.
+    component.historyItems.set([q1, a1History] as never);
+    component.liveItems.set([a1Live, a2Live] as never);
+
+    events$.next({ type: 'complete', payload: { sessionId: 22 } });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // The persisted first answer is dropped from live; the in-flight second answer survives.
+    expect(component.liveItems().map((item) => item.id)).toEqual(['m2:0']);
+
+    const assistants = component.visibleItems().filter((item) => item.kind === 'assistant');
+    expect(assistants.filter((item) => item.sourceMessageId === 'm1')).toHaveLength(1);
+    expect(assistants.some((item) => item.content === 'Second answer')).toBe(true);
+  });
+
   it('submits questions for a pending ExitPlanMode review without a saved transcript anchor', async () => {
     const events$ = new Subject<any>();
     const planChat = makePlanChat({

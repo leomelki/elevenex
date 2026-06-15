@@ -38,7 +38,7 @@ import { PlanChatService } from './plan-chat.service';
 
 type PlanChatVisibleItem = Pick<
   ClaudeTranscriptItem,
-  'id' | 'kind' | 'content' | 'timestamp' | 'authoredAt' | 'receivedAt'
+  'id' | 'kind' | 'content' | 'timestamp' | 'authoredAt' | 'receivedAt' | 'sourceMessageId'
 >;
 
 const QUESTION_RE = /<elevenex_plan_question>\s*([\s\S]*?)\s*<\/elevenex_plan_question>/i;
@@ -144,7 +144,8 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
             >
               <div class="pc-field">
                 <textarea
-                  rows="2"
+                  #composerRef
+                  rows="1"
                   placeholder="Ask a question about the plan…"
                   [disabled]="sending() || resetting()"
                   [ngModel]="draft()"
@@ -380,8 +381,8 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
 
       textarea {
         width: 100%;
-        max-height: 9rem;
-        min-height: 2.6rem;
+        max-height: 7rem;
+        min-height: 1.7rem;
         resize: none;
         border: 0;
         background: transparent;
@@ -573,6 +574,7 @@ export class PlanChatPanelComponent {
   readonly review = input<PlanReviewRequest | null>(null);
 
   private readonly messagesRef = viewChild<ElementRef<HTMLElement>>('messagesRef');
+  private readonly composerRef = viewChild<ElementRef<HTMLTextAreaElement>>('composerRef');
 
   private readonly planChats = inject(PlanChatService);
   private readonly ws = inject(AgentRuntimeWebsocketService);
@@ -592,11 +594,22 @@ export class PlanChatPanelComponent {
   readonly lastError = signal<string | null>(null);
 
   readonly visibleItems = computed<PlanChatVisibleItem[]>(() => {
-    const items = [
-      ...this.historyItems(),
-      ...this.optimisticUserItems(),
-      ...this.liveItems(),
-    ]
+    const history = this.historyItems();
+
+    // Live items and persisted-history items use different id formats, but share
+    // the same sourceMessageId (the provider message uuid). Hide a live item the
+    // moment its persisted counterpart appears so the same answer never shows
+    // twice and a stale history refresh cannot make an in-flight answer vanish.
+    const persistedKeys = new Set(
+      history
+        .filter((item) => item.sourceMessageId)
+        .map((item) => `${item.sourceMessageId}|${item.kind}`),
+    );
+    const liveItems = this.liveItems().filter(
+      (item) => !item.sourceMessageId || !persistedKeys.has(`${item.sourceMessageId}|${item.kind}`),
+    );
+
+    const items = [...history, ...this.optimisticUserItems(), ...liveItems]
       .filter(
         (item): item is PlanChatVisibleItem =>
           item.kind === 'user' || item.kind === 'assistant' || item.kind === 'error',
@@ -641,10 +654,24 @@ export class PlanChatPanelComponent {
       });
     });
 
+    // Auto-grow the composer from a single line as the draft changes — covers
+    // typing, clearing on send, and restoring the draft after a failed submit.
+    effect(() => {
+      this.draft();
+      requestAnimationFrame(() => this.autoGrow());
+    });
+
     this.destroyRef.onDestroy(() => this.disconnectCurrent());
   }
 
   private stickToBottom = true;
+
+  autoGrow(): void {
+    const el = this.composerRef()?.nativeElement;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 112)}px`;
+  }
 
   onMessagesScroll(): void {
     const el = this.messagesRef()?.nativeElement;
@@ -885,7 +912,21 @@ export class PlanChatPanelComponent {
     )) as ClaudeTranscriptItem[];
     this.historyItems.set(history);
     this.reconcileOptimistic(history);
-    this.liveItems.set([]);
+
+    // Only drop live items that are now persisted in history (matched by
+    // sourceMessageId + kind). A blind clear here would wipe a second answer
+    // that started streaming while this async refresh was in flight.
+    const persistedKeys = new Set(
+      history
+        .filter((item) => item.sourceMessageId)
+        .map((item) => `${item.sourceMessageId}|${item.kind}`),
+    );
+    this.liveItems.update((items) =>
+      items.filter(
+        (item) =>
+          !item.sourceMessageId || !persistedKeys.has(`${item.sourceMessageId}|${item.kind}`),
+      ),
+    );
   }
 
   private reconcileOptimistic(history: ClaudeTranscriptItem[]): void {

@@ -14,6 +14,7 @@ import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
+  lucideChevronDown,
   lucideChevronRight,
   lucideMessageSquarePlus,
   lucidePanelRightClose,
@@ -55,6 +56,7 @@ type DraftScope = 'selection' | 'document';
   viewProviders: [
     provideIcons({
       lucideCheck,
+      lucideChevronDown,
       lucideChevronRight,
       lucideMessageSquarePlus,
       lucidePanelRightClose,
@@ -301,6 +303,12 @@ export class PlanAnnotatorPanelComponent {
 
   selectRailMode(mode: PlanReviewRailMode): void {
     this.railModeChange.emit(mode);
+  }
+
+  // On narrow screens the Ask tab is shown as a bottom-sheet drawer; collapsing
+  // it returns the rail to the docked comments view.
+  collapseAsk(): void {
+    this.selectRailMode('comments');
   }
 }
 
