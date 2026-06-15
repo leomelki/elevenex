@@ -11,9 +11,19 @@ import { OnboardingConnectionService, OnboardingConnectionSuccess } from './onbo
 import { OnboardingStartupService } from './onboarding-startup.service';
 import { OnboardingStateService } from './onboarding-state.service';
 import { ProjectsService } from './projects.service';
+import { ServerConnectionPhase, ServerConnectionService } from './server-connection.service';
 import { SshForwardsService } from './ssh-forwards.service';
 
 const POLL_INTERVAL_MS = 3000;
+/**
+ * How long the backend websocket must stay disconnected (in SSH mode) before we
+ * treat the tunnel as the culprit and drive SSH recovery. The heartbeat timeout
+ * has already elapsed by the time we reach `disconnected`, so this only filters
+ * out fast, normal websocket reconnects (e.g. a quick backend restart).
+ */
+const SERVER_DISCONNECT_GRACE_MS = 4000;
+/** Upper bound on a silent reconnect attempt so a hung `ssh` spawn can't freeze recovery. */
+const RECONNECT_TIMEOUT_MS = 20000;
 
 export const CONNECTING_PHASES = [
   'Connecting via SSH',
@@ -132,6 +142,7 @@ export class SshRuntimeRecoveryService {
   private savedDisconnect: RemoteRuntimeDisconnectState | null = null;
   private lastAutoRetryAt = 0;
   private lastForwardAutoRetryAt = new Map<number, number>();
+  private serverDisconnectGraceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly sshForwardsService: SshForwardsService,
@@ -140,6 +151,7 @@ export class SshRuntimeRecoveryService {
     private readonly onboardingConnection: OnboardingConnectionService,
     private readonly onboardingStartup: OnboardingStartupService,
     private readonly navigationService: NavigationService,
+    private readonly serverConnection: ServerConnectionService,
   ) {
     effect(() => {
       const failure = this.onboardingStartup.startupFailure();
@@ -148,6 +160,115 @@ export class SshRuntimeRecoveryService {
       }
       this.setRemoteDisconnect(failure.server, failure.message);
     });
+
+    // The backend websocket is the fastest, most reliable "backend unreachable"
+    // signal. In SSH mode a dead tunnel keeps the forwarded local port open, so the
+    // tunnel status can read 'active' for ~90s while the websocket stalls — leaving
+    // the user stuck on the generic, non-actionable server overlay. React to the
+    // websocket loss directly to drive SSH recovery instead of waiting on the slow
+    // ssh-process-exit edge.
+    effect(() => {
+      const phase = this.serverConnection.state().phase;
+      this.handleServerPhaseChange(phase);
+    });
+  }
+
+  private handleServerPhaseChange(phase: ServerConnectionPhase): void {
+    if (phase === 'disconnected') {
+      if (this.serverDisconnectGraceTimer === null) {
+        this.serverDisconnectGraceTimer = setTimeout(() => {
+          this.serverDisconnectGraceTimer = null;
+          void this.handleBackendUnreachable();
+        }, SERVER_DISCONNECT_GRACE_MS);
+      }
+      return;
+    }
+    // 'connecting' (pre-first-connect), 'connected' or 'restored': cancel any pending
+    // recovery trigger — the websocket recovered on its own.
+    this.clearServerDisconnectGraceTimer();
+  }
+
+  private clearServerDisconnectGraceTimer(): void {
+    if (this.serverDisconnectGraceTimer !== null) {
+      clearTimeout(this.serverDisconnectGraceTimer);
+      this.serverDisconnectGraceTimer = null;
+    }
+  }
+
+  /**
+   * The backend has been unreachable past the grace window. In SSH mode this almost
+   * always means the tunnel (or the remote server) is down, so attempt a bounded
+   * silent reconnect and fall back to the actionable disconnect overlay.
+   */
+  private async handleBackendUnreachable(): Promise<void> {
+    if (this.serverConnection.state().phase !== 'disconnected') {
+      return;
+    }
+    if (this._remoteRetrying() || this.onboardingStartup.startupConnectingServer()) {
+      return;
+    }
+
+    const snapshot = this.onboardingState.readSnapshot();
+    if (snapshot.mode !== 'ssh' || !snapshot.remoteConnectionReady) {
+      return;
+    }
+
+    const activeServer = this.onboardingState.getActiveServer(snapshot);
+    if (!activeServer) {
+      return;
+    }
+
+    const disconnectMessage = `The Elevenex tunnel to ${activeServer.sshHost}:${ELEVENEX_REMOTE_PORT} disconnected.`;
+
+    // Password auth can't reconnect silently — surface the actionable overlay so the
+    // user can re-enter credentials.
+    if (activeServer.authMode === 'password') {
+      this.setRemoteDisconnect(activeServer, disconnectMessage);
+      return;
+    }
+
+    const token = ++this.cancelToken;
+    this._remoteRetrying.set({ server: activeServer, localPort: activeServer.localPort, phaseOverride: null });
+
+    try {
+      const result = await this.withTimeout(
+        this.onboardingConnection.reconnect(activeServer, { interactive: false }),
+        RECONNECT_TIMEOUT_MS,
+      );
+
+      if (this.cancelToken !== token) {
+        return;
+      }
+
+      if (result?.kind === 'success') {
+        await this.handleReconnectionSuccess(activeServer, result, token);
+        return;
+      }
+
+      this._remoteRetrying.set(null);
+      this._remoteDisconnect.set({
+        server: activeServer,
+        localPort: activeServer.localPort,
+        message: result?.message || disconnectMessage,
+      });
+    } catch {
+      if (this.cancelToken !== token) {
+        return;
+      }
+      this._remoteRetrying.set(null);
+      this._remoteDisconnect.set({
+        server: activeServer,
+        localPort: activeServer.localPort,
+        message: disconnectMessage,
+      });
+    }
+  }
+
+  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+    return Promise.race([
+      promise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+    ]);
   }
 
   setRemoteDisconnect(server: SavedServer, message: string): void {
@@ -193,6 +314,7 @@ export class SshRuntimeRecoveryService {
       window.clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    this.clearServerDisconnectGraceTimer();
   }
 
   async refreshNow(): Promise<void> {
@@ -470,7 +592,13 @@ export class SshRuntimeRecoveryService {
           || `The Elevenex tunnel to ${activeServer.sshHost}:${ELEVENEX_REMOTE_PORT} disconnected.`,
       });
     } else if (currentStatus === 'active') {
-      this._remoteDisconnect.set(null);
+      // Only trust an 'active' status to clear the overlay once the backend is
+      // actually reachable again. A dead tunnel keeps the forwarded port (and thus
+      // this status) 'active' for ~90s while the websocket stays down, so clearing
+      // here unconditionally would wipe a websocket-driven recovery overlay.
+      if (this.serverConnection.isInteractive()) {
+        this._remoteDisconnect.set(null);
+      }
     } else {
       const current = this._remoteDisconnect();
       if (current?.server.id === activeServer.id && runtime?.lastError) {

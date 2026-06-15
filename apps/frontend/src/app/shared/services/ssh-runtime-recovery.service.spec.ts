@@ -52,10 +52,15 @@ describe('SshRuntimeRecoveryService', () => {
     start: vi.fn(),
   };
 
+  const projectsServiceMock = {
+    getAll: vi.fn(),
+  };
+
   const onboardingStateMock = {
     readSnapshot: vi.fn(),
     getActiveServer: vi.fn(),
     saveServer: vi.fn(),
+    setRemoteConnectionReady: vi.fn(),
   };
 
   const onboardingConnectionMock = {
@@ -73,16 +78,26 @@ describe('SshRuntimeRecoveryService', () => {
     refreshTree: vi.fn(),
   };
 
+  const serverConnectionMock = {
+    state: vi.fn().mockReturnValue({ phase: 'connected' }),
+    isInteractive: vi.fn().mockReturnValue(true),
+  };
+
   const createService = () => TestBed.runInInjectionContext(() => new SshRuntimeRecoveryService(
     sshForwardsServiceMock as never,
+    projectsServiceMock as never,
     onboardingStateMock as never,
     onboardingConnectionMock as never,
     onboardingStartupMock as never,
     navigationServiceMock as never,
+    serverConnectionMock as never,
   ));
 
   beforeEach(() => {
     vi.clearAllMocks();
+    serverConnectionMock.state.mockReturnValue({ phase: 'connected' });
+    serverConnectionMock.isInteractive.mockReturnValue(true);
+    projectsServiceMock.getAll.mockReturnValue(of([{ id: 5 }]));
     sshForwardsServiceMock.isSupported.mockResolvedValue(true);
     sshForwardsServiceMock.getAllOnce.mockResolvedValue([]);
     sshForwardsServiceMock.start.mockReturnValue(of(makeForward({ status: 'active', pid: 123 })));
@@ -278,5 +293,48 @@ describe('SshRuntimeRecoveryService', () => {
 
     expect(failures).toHaveLength(1);
     expect(service.disconnectedForwardsBanner()?.totalCount).toBe(1);
+  });
+
+  it('silently reconnects when the backend websocket is unreachable in SSH mode', async () => {
+    serverConnectionMock.state.mockReturnValue({ phase: 'disconnected' });
+    const service = createService();
+
+    await (service as any).handleBackendUnreachable();
+
+    expect(onboardingConnectionMock.reconnect).toHaveBeenCalledWith(server, { interactive: false });
+    expect(service.remoteDisconnect()).toBeNull();
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
+  });
+
+  it('surfaces the actionable overlay when the silent reconnect fails', async () => {
+    serverConnectionMock.state.mockReturnValue({ phase: 'disconnected' });
+    onboardingConnectionMock.reconnect.mockResolvedValue({ kind: 'error', message: 'Still offline' });
+    const service = createService();
+
+    await (service as any).handleBackendUnreachable();
+
+    expect(service.remoteDisconnect()?.message).toBe('Still offline');
+    expect(service.remoteConnecting()).toBeNull();
+  });
+
+  it('surfaces the actionable overlay without a silent reconnect for password auth', async () => {
+    const passwordServer = { ...server, authMode: 'password' as const };
+    serverConnectionMock.state.mockReturnValue({ phase: 'disconnected' });
+    onboardingStateMock.getActiveServer.mockReturnValue(passwordServer);
+    const service = createService();
+
+    await (service as any).handleBackendUnreachable();
+
+    expect(onboardingConnectionMock.reconnect).not.toHaveBeenCalled();
+    expect(service.remoteDisconnect()?.server.authMode).toBe('password');
+  });
+
+  it('does not drive SSH recovery when the backend reconnects within the grace window', () => {
+    const service = createService();
+    (service as any).handleServerPhaseChange('disconnected');
+    expect((service as any).serverDisconnectGraceTimer).not.toBeNull();
+
+    (service as any).handleServerPhaseChange('restored');
+    expect((service as any).serverDisconnectGraceTimer).toBeNull();
   });
 });

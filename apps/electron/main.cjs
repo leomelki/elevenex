@@ -2208,10 +2208,16 @@ async function startSshForwardRuntime(forward) {
     'ExitOnForwardFailure=no',
     '-o',
     `BatchMode=${batchMode}`,
+    // Fail fast when the host is unreachable so reconnect attempts don't hang on a
+    // dead network (the frontend bounds the attempt too, but this returns sooner).
     '-o',
-    'ServerAliveInterval=30',
+    'ConnectTimeout=10',
+    // Detect a silently-dropped connection within ~30s and exit, which flips the
+    // tunnel runtime status so recovery can react (backstop to the websocket signal).
     '-o',
-    'ServerAliveCountMax=3',
+    'ServerAliveInterval=15',
+    '-o',
+    'ServerAliveCountMax=2',
     '-o',
     'ControlMaster=no',
     '-o',
