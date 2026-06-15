@@ -4,7 +4,7 @@
     role="complementary"
     aria-label="Elevenex agent"
   >
-    <header class="agent-control-header">
+    <header class="agent-control-header" inert>
       <div class="agent-control-header__identity">
         <span class="agent-control-header__icon">
           <ng-icon name="lucideSparkles" size="16" />
@@ -34,7 +34,7 @@
       </div>
     </header>
 
-    <section class="agent-control-chat" aria-label="Agent chat preview">
+    <section class="agent-control-chat" aria-label="Agent chat preview" inert>
       <div class="agent-control-chat__topbar" aria-label="Recent preview missions">
         <div class="agent-control-recent-pills">
           @if (state.missions().length > 0) {
@@ -217,5 +217,72 @@
         </div>
       </form>
     </section>
+
+    <div
+      class="agent-coming-soon"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="agent-coming-soon-title"
+      aria-describedby="agent-coming-soon-copy"
+    >
+      <button
+        z-button
+        zType="ghost"
+        zSize="icon-sm"
+        type="button"
+        class="agent-coming-soon__dismiss"
+        aria-label="Close agent drawer"
+        (click)="close()"
+      >
+        <ng-icon name="lucideX" size="16" />
+      </button>
+
+      <div class="agent-coming-soon__card">
+        <span class="agent-coming-soon__halo" aria-hidden="true"></span>
+
+        <span class="agent-coming-soon__icon">
+          <ng-icon name="lucideSparkles" size="26" />
+        </span>
+
+        <span class="agent-coming-soon__badge">Coming soon</span>
+
+        <h3 id="agent-coming-soon-title" class="agent-coming-soon__title">
+          The Elevenex agent is on its way
+        </h3>
+
+        <p id="agent-coming-soon-copy" class="agent-coming-soon__copy">
+          One prompt to drive your whole workspace — create projects, spin up worktrees, run
+          agent sessions, and review the results. We're putting the finishing touches on it.
+        </p>
+
+        <ul class="agent-coming-soon__features">
+          <li>
+            <ng-icon name="lucideFolder" size="14" />
+            <span>Create projects &amp; repos</span>
+          </li>
+          <li>
+            <ng-icon name="lucideGitBranch" size="14" />
+            <span>Spin up worktrees</span>
+          </li>
+          <li>
+            <ng-icon name="lucidePlay" size="14" />
+            <span>Run agent sessions</span>
+          </li>
+          <li>
+            <ng-icon name="lucideClipboardList" size="14" />
+            <span>Review the work</span>
+          </li>
+        </ul>
+
+        <button
+          z-button
+          type="button"
+          class="agent-coming-soon__action"
+          (click)="close()"
+        >
+          Got it
+        </button>
+      </div>
+    </div>
   </aside>
 }
