@@ -194,8 +194,7 @@ describe('WorktreeSheet', () => {
     expect(worktreesServiceMock.createPool).toHaveBeenCalledOnce();
   });
 
-  it('confirms takeover and dirty stashing before linking', () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  it('derives takeover and stash flags when linking a stolen, dirty worktree', () => {
     const item = poolItem({
       isDirty: true,
       runningAgentCount: 2,
@@ -223,8 +222,67 @@ describe('WorktreeSheet', () => {
       confirmStash: true,
       applyPendingStash: false,
     });
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('2 agents running will be stopped.'),
-    );
+  });
+
+  it('opens an inline confirmation before linking a worktree with side effects', () => {
+    const item = poolItem({
+      isDirty: true,
+      owner: {
+        projectId: 2,
+        projectName: 'Other',
+        repoId: 8,
+        workspaceId: 55,
+        workspaceName: 'feature',
+        linkStatus: 'linked',
+      },
+    });
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.branchName.set('feature');
+    component.pool.set([item]);
+
+    const entry = component.visiblePool()[0];
+    component.requestAction(entry);
+
+    // First click only opens the confirmation panel, it does not link yet.
+    expect(component.confirmingId()).toBe(item.id);
+    expect(worktreesServiceMock.linkPool).not.toHaveBeenCalled();
+
+    component.confirmLink(item);
+
+    expect(component.confirmingId()).toBeNull();
+    expect(worktreesServiceMock.linkPool).toHaveBeenCalledWith(7, 11, {
+      workspaceName: 'feature',
+      branchName: 'feature',
+      confirmTakeover: true,
+      confirmStash: true,
+      applyPendingStash: false,
+    });
+  });
+
+  it('links a clean, available worktree immediately without confirmation', () => {
+    const item = poolItem();
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.branchName.set('feature');
+    component.pool.set([item]);
+
+    const entry = component.visiblePool()[0];
+    component.requestAction(entry);
+
+    expect(component.confirmingId()).toBeNull();
+    expect(worktreesServiceMock.linkPool).toHaveBeenCalledWith(7, 11, {
+      workspaceName: 'feature',
+      branchName: 'feature',
+      confirmTakeover: false,
+      confirmStash: false,
+      applyPendingStash: false,
+    });
   });
 });

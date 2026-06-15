@@ -1,116 +1,255 @@
 <dialog
   #worktreeDialog="trackedNativeModal"
   trackNativeModal
-  class="fixed inset-0 m-auto max-h-[86vh] w-[min(760px,calc(100vw-32px))] overflow-hidden rounded-lg border border-border bg-background p-0 shadow-lg backdrop:bg-black/50">
-  <header class="border-b border-border px-5 py-4">
-    <div class="text-xs font-medium uppercase tracking-normal text-muted-foreground">{{ repoName() }}</div>
-    <h2 class="text-lg font-semibold text-foreground">Worktree pool</h2>
-    <p class="mt-1 text-sm text-muted-foreground">
-      Link an existing worktree to this project or create one for {{ branchName() }}.
-    </p>
+  class="fixed inset-0 m-auto flex max-h-[88vh] w-[min(840px,calc(100vw-32px))] flex-col overflow-hidden rounded-xl border border-border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 backdrop:backdrop-blur-sm">
+  <!-- Header -->
+  <header class="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+    <div class="min-w-0">
+      <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <ng-icon name="lucideFolderGit2" class="!h-3.5 !w-3.5 text-primary" />
+        <span class="truncate">{{ repoName() }}</span>
+      </div>
+      <h2 class="mt-0.5 text-lg font-semibold text-foreground">Choose a worktree</h2>
+      <p class="mt-1 text-sm text-muted-foreground">
+        Reuse one from the pool — even from another project — or create a fresh one for
+        <span class="font-medium text-foreground">{{ branchName() }}</span>.
+      </p>
+    </div>
+    <button
+      z-button
+      zType="ghost"
+      zSize="icon-sm"
+      type="button"
+      aria-label="Close"
+      (click)="close()">
+      <ng-icon name="lucideX" />
+    </button>
   </header>
 
-  <div class="max-h-[calc(86vh-132px)] overflow-y-auto px-5 py-4">
-    <section class="rounded-md border border-border">
-      <div class="grid grid-cols-[1fr_auto_auto] gap-3 border-b border-border bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
-        <span>Worktree</span>
-        <span>State</span>
-        <span>Action</span>
-      </div>
+  <!-- Toolbar: search + filters -->
+  <div class="flex flex-col gap-3 border-b border-border px-5 py-3">
+    <div class="relative">
+      <ng-icon
+        name="lucideSearch"
+        class="pointer-events-none absolute left-3 top-1/2 !h-4 !w-4 -translate-y-1/2 text-muted-foreground" />
+      <input
+        z-input
+        type="text"
+        class="pl-9"
+        placeholder="Search by name, branch, path or project…"
+        [ngModel]="search()"
+        (ngModelChange)="search.set($event)" />
+    </div>
 
-      @if (loading()) {
-        <div class="px-3 py-6 text-sm text-muted-foreground">Loading worktrees...</div>
-      } @else if (pool().length === 0) {
-        <div class="px-3 py-6 text-sm text-muted-foreground">No worktrees are in the pool yet.</div>
-      } @else {
-        @for (item of pool(); track item.id) {
-          <article class="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-border px-3 py-3 last:border-b-0">
-            <div class="min-w-0">
-              <div class="flex min-w-0 items-center gap-2">
-                <h3 class="truncate text-sm font-semibold text-foreground">{{ item.name }}</h3>
-                @if (item.projectWorkspace?.linkStatus === 'unlinked') {
-                  <span class="rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-xs text-warning">Unlinked here</span>
-                }
-                @if (item.projectWorkspace?.pendingStashStatus === 'pending') {
-                  <span class="rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-xs text-warning">Stash saved</span>
-                }
-              </div>
-              <p class="truncate text-xs text-muted-foreground">{{ item.path }}</p>
-              <p class="mt-1 text-xs text-muted-foreground">
-                {{ ownerLabel(item) }} · {{ item.currentBranch || 'detached' }}
-              </p>
-            </div>
-
-            <div class="flex flex-col items-end gap-1 text-xs">
-              @if (item.runningAgentCount > 0) {
-                <span class="rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-warning">
-                  {{ agentCountLabel(item.runningAgentCount) }}
-                </span>
-              }
-              <span
-                class="rounded border px-1.5 py-0.5"
-                [class.border-destructive]="item.hasConflicts || item.isMissing"
-                [class.bg-destructive]="item.hasConflicts || item.isMissing"
-                [class.text-destructive-foreground]="item.hasConflicts || item.isMissing"
-                [class.border-warning]="item.isDirty && !item.hasConflicts && !item.isMissing"
-                [class.bg-warning]="item.isDirty && !item.hasConflicts && !item.isMissing"
-                [class.text-warning-foreground]="item.isDirty && !item.hasConflicts && !item.isMissing"
-                [class.border-success]="!item.isDirty && !item.hasConflicts && !item.isMissing"
-                [class.bg-success]="!item.isDirty && !item.hasConflicts && !item.isMissing"
-                [class.text-success-foreground]="!item.isDirty && !item.hasConflicts && !item.isMissing">
-                {{ statusLabel(item) }}
-              </span>
-              @if (item.isLocked) {
-                <span class="max-w-40 truncate text-muted-foreground">{{ item.lockReason || 'Locked' }}</span>
-              }
-            </div>
-
-            <button
-              type="button"
-              class="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-              [disabled]="!canLink(item)"
-              (click)="link(item)">
-              @if (linkingId() === item.id) {
-                Linking...
-              } @else if (item.owner && item.owner.repoId !== repoId()) {
-                Take over
-              } @else if (item.projectWorkspace?.linkStatus === 'unlinked') {
-                Link back
-              } @else {
-                Link
-              }
-            </button>
-          </article>
-        }
+    <div class="flex flex-wrap items-center gap-1.5">
+      @for (tab of [
+        { key: 'all', label: 'All' },
+        { key: 'available', label: 'Available' },
+        { key: 'others', label: 'Other projects' },
+        { key: 'yours', label: 'Yours' },
+        { key: 'unusable', label: 'Unusable' }
+      ]; track tab.key) {
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors"
+          [class.border-primary]="filter() === tab.key"
+          [class.bg-primary]="filter() === tab.key"
+          [class.text-primary-foreground]="filter() === tab.key"
+          [class.border-border]="filter() !== tab.key"
+          [class.text-muted-foreground]="filter() !== tab.key"
+          [class.hover:bg-muted]="filter() !== tab.key"
+          (click)="filter.set($any(tab.key))">
+          {{ tab.label }}
+          <span
+            class="rounded-full px-1.5 text-[0.65rem] tabular-nums"
+            [class]="filter() === tab.key ? 'bg-background/25' : 'bg-muted'">
+            {{ filterCount($any(tab.key)) }}
+          </span>
+        </button>
       }
+    </div>
+  </div>
 
-      <button
-        type="button"
-        class="grid w-full grid-cols-[1fr_auto] items-center gap-3 border-t border-border px-3 py-3 text-left hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-        [class.bg-accent]="showCreateForm()"
-        [disabled]="creating() || linkingId() !== null"
-        (click)="openCreateForm()">
-        <span class="flex min-w-0 items-center gap-2">
-          <ng-icon name="lucidePlus" class="!h-4 !w-4 shrink-0 text-primary" />
-          <span class="min-w-0">
-            <span class="block text-sm font-semibold text-primary">Create new worktree</span>
+  <!-- List -->
+  <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+    @if (loading() && pool().length === 0) {
+      <div class="space-y-2">
+        @for (n of [1, 2, 3]; track n) {
+          <div class="h-[68px] animate-pulse rounded-lg border border-border bg-muted/40"></div>
+        }
+      </div>
+    } @else if (pool().length === 0) {
+      <div class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border px-4 py-10 text-center">
+        <ng-icon name="lucideFolderGit2" class="!h-6 !w-6 text-muted-foreground" />
+        <p class="text-sm font-medium text-foreground">No worktrees in the pool yet</p>
+        <p class="text-xs text-muted-foreground">Create the first one below to get started.</p>
+      </div>
+    } @else if (visiblePool().length === 0) {
+      <div class="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border px-4 py-10 text-center">
+        <p class="text-sm font-medium text-foreground">No matching worktrees</p>
+        <p class="text-xs text-muted-foreground">Try a different search or filter.</p>
+      </div>
+    } @else {
+      <ul class="space-y-2">
+        @for (entry of visiblePool(); track entry.item.id) {
+          <li
+            class="overflow-hidden rounded-lg border bg-card transition-colors"
+            [class]="entry.recommended ? 'border-primary/60 ring-1 ring-primary/30' : 'border-border'"
+            [class.opacity-70]="!entry.assessment.usable">
+            <div class="flex items-start gap-3 p-3">
+              <!-- Category avatar -->
+              <div
+                class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border"
+                [class]="chipClass(entry.assessment.stateTone)">
+                <ng-icon
+                  [name]="entry.assessment.usable ? 'lucideGitBranch' : entry.assessment.stateIcon"
+                  class="!h-4 !w-4" />
+              </div>
+
+              <!-- Main info -->
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <h3 class="truncate text-sm font-semibold text-foreground">{{ entry.item.name }}</h3>
+                  @if (entry.recommended) {
+                    <span class="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[0.65rem] font-medium text-primary">
+                      <ng-icon name="lucideSparkles" class="!h-3 !w-3" />
+                      Recommended
+                    </span>
+                  }
+                  <span
+                    class="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[0.65rem] font-medium"
+                    [class]="chipClass(entry.assessment.stateTone)">
+                    <ng-icon [name]="entry.assessment.stateIcon" class="!h-3 !w-3" />
+                    {{ entry.assessment.stateLabel }}
+                  </span>
+                  @if (entry.item.runningAgentCount > 0) {
+                    <span class="inline-flex items-center gap-1 rounded-full border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[0.65rem] font-medium text-warning">
+                      <ng-icon name="lucideBot" class="!h-3 !w-3" />
+                      {{ agentCountLabel(entry.item.runningAgentCount) }}
+                    </span>
+                  }
+                </div>
+
+                <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                  <span class="inline-flex items-center gap-1">
+                    <ng-icon name="lucideGitBranch" class="!h-3 !w-3" />
+                    {{ entry.item.currentBranch || 'detached HEAD' }}
+                  </span>
+                  <span>·</span>
+                  <span>{{ ownerLabel(entry.item) }}</span>
+                </div>
+                <p class="mt-0.5 truncate text-xs text-muted-foreground/80" [title]="entry.item.path">{{ entry.item.path }}</p>
+
+                <!-- Collapsed risk/benefit summary -->
+                <div class="mt-1.5 flex items-start gap-1.5 text-xs text-muted-foreground">
+                  <ng-icon
+                    [name]="toneIcon(entry.assessment.summaryTone)"
+                    class="!h-3.5 !w-3.5 shrink-0 translate-y-px"
+                    [class]="toneTextClass(entry.assessment.summaryTone)" />
+                  <span class="min-w-0">{{ entry.assessment.summary }}</span>
+                </div>
+              </div>
+
+              <!-- Action -->
+              <div class="shrink-0">
+                <button
+                  z-button
+                  type="button"
+                  [zType]="entry.assessment.actionTone === 'destructive' ? 'destructive' : (entry.recommended ? 'default' : 'outline')"
+                  zSize="sm"
+                  [zLoading]="linkingId() === entry.item.id"
+                  [zDisabled]="!entry.assessment.usable || (linkingId() !== null && linkingId() !== entry.item.id) || creating()"
+                  (click)="requestAction(entry)">
+                  @if (linkingId() === entry.item.id) {
+                    Linking…
+                  } @else if (confirmingId() === entry.item.id) {
+                    Review…
+                  } @else {
+                    @if (entry.assessment.category === 'others') {
+                      <ng-icon name="lucideArrowRightLeft" />
+                    }
+                    {{ entry.assessment.actionLabel }}
+                  }
+                </button>
+              </div>
+            </div>
+
+            <!-- Inline confirmation panel -->
+            @if (confirmingId() === entry.item.id) {
+              <div class="border-t border-border bg-muted/30 px-3 py-3">
+                <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Before you link, this will happen
+                </p>
+                <ul class="space-y-1.5">
+                  @for (consequence of entry.assessment.consequences; track $index) {
+                    <li class="flex items-start gap-2 text-xs">
+                      <ng-icon
+                        [name]="consequence.icon"
+                        class="!h-3.5 !w-3.5 shrink-0 translate-y-px"
+                        [class]="toneTextClass(consequence.tone)" />
+                      <span class="min-w-0 text-foreground/90">{{ consequence.text }}</span>
+                    </li>
+                  }
+                </ul>
+
+                @if (entry.item.projectWorkspace?.pendingStashStatus === 'pending') {
+                  <label class="mt-2.5 flex items-center gap-2 text-xs text-foreground">
+                    <input
+                      type="checkbox"
+                      class="h-3.5 w-3.5 rounded border-input accent-primary"
+                      [checked]="applyStashChoice()"
+                      (change)="applyStashChoice.set($any($event.target).checked)" />
+                    Restore the saved stash from this project after linking
+                  </label>
+                }
+
+                <div class="mt-3 flex justify-end gap-2">
+                  <button z-button zType="ghost" zSize="sm" type="button" (click)="cancelConfirm()">Cancel</button>
+                  <button
+                    z-button
+                    zSize="sm"
+                    type="button"
+                    [zType]="entry.assessment.actionTone === 'destructive' ? 'destructive' : 'default'"
+                    [zDisabled]="linkingId() !== null"
+                    (click)="confirmLink(entry.item)">
+                    {{ entry.assessment.actionLabel }}
+                  </button>
+                </div>
+              </div>
+            }
+          </li>
+        }
+      </ul>
+    }
+
+    <!-- Create new worktree -->
+    <div class="mt-3 rounded-lg border border-dashed border-border">
+      @if (!showCreateForm()) {
+        <button
+          type="button"
+          class="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          [disabled]="creating() || linkingId() !== null"
+          (click)="openCreateForm()">
+          <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-primary">
+            <ng-icon name="lucidePlus" class="!h-4 !w-4" />
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-semibold text-foreground">Create a new worktree</span>
             <span class="block truncate text-xs text-muted-foreground">
-              {{ createName() }} · {{ branchName() }}
+              A clean checkout of <span class="font-medium text-foreground/80">{{ branchName() }}</span> with no side effects
             </span>
           </span>
-        </span>
-        <span class="text-sm font-medium text-primary">Create</span>
-      </button>
-
-      @if (showCreateForm()) {
-        <div class="border-t border-border bg-muted/20 p-3">
+          <span class="text-xs font-medium text-primary">New</span>
+        </button>
+      } @else {
+        <div class="p-3">
           <h3 class="text-sm font-semibold text-foreground">Create a new worktree</h3>
           <div class="mt-3 grid gap-3 md:grid-cols-[220px_1fr]">
             <label class="grid gap-1">
               <span class="text-xs font-medium text-muted-foreground">Name</span>
               <input
+                z-input
                 type="text"
-                class="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 [ngModel]="createName()"
                 (ngModelChange)="createName.set($event); updateCreatePathFromName()" />
             </label>
@@ -126,30 +265,30 @@
             </label>
           </div>
           <div class="mt-3 flex justify-end gap-2">
-            <button
-              type="button"
-              class="rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-              [disabled]="creating()"
-              (click)="cancelCreateForm()">
+            <button z-button zType="ghost" zSize="sm" type="button" [zDisabled]="creating()" (click)="cancelCreateForm()">
               Cancel
             </button>
             <button
+              z-button
+              zSize="sm"
               type="button"
-              class="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              [disabled]="creating() || linkingId() !== null || !createName().trim() || !createPath().trim()"
+              [zLoading]="creating()"
+              [zDisabled]="creating() || linkingId() !== null || !createName().trim() || !createPath().trim()"
               (click)="createAndLink()">
-              {{ creating() ? 'Creating...' : 'Create and link' }}
+              {{ creating() ? 'Creating…' : 'Create and link' }}
             </button>
           </div>
         </div>
       }
-    </section>
+    </div>
   </div>
 
-  <footer class="flex justify-between border-t border-border px-5 py-3">
-    <span class="text-xs text-muted-foreground">{{ availableCount() }} available</span>
-    <button type="button" class="rounded-md px-3 py-1.5 text-sm text-foreground hover:bg-muted" (click)="close()">
-      Close
-    </button>
+  <!-- Footer -->
+  <footer class="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
+    <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <ng-icon name="lucideCircleCheck" class="!h-3.5 !w-3.5 text-success" />
+      {{ availableCount() }} ready to use · {{ counts().all }} total
+    </span>
+    <button z-button zType="ghost" zSize="sm" type="button" (click)="close()">Close</button>
   </footer>
 </dialog>
