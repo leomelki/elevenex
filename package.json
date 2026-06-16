@@ -22,6 +22,7 @@
     "electron:backend:prepare": "pnpm electron:backend:stage && pnpm electron:backend:rebuild-natives && pnpm electron:backend:archive",
     "electron:remote-runtime:stage": "node scripts/stage-remote-runtime.js",
     "electron:dev": "ELECTRON_FRONTEND_URL=http://127.0.0.1:4200 ELECTRON_BACKEND_URL=http://127.0.0.1:11111 pnpm electron:start",
+    "start:prod": "sh scripts/start-prod.sh",
     "dev:tmux": "sh scripts/dev-tmux.sh",
     "electron:start": "pnpm --dir apps/electron start",
     "electron:debug": "pnpm --dir apps/electron start:debug",
