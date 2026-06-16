@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import {
   BadRequestException,
   forwardRef,
@@ -55,6 +57,7 @@ interface BranchContextInput {
   resolvedRootRef: string | null;
   usingRepoDefaultRootRef: boolean;
   hasChanges: boolean;
+  isOnRootBranch: boolean;
   commits: Array<{ hash: string; message: string }>;
   changedFiles: string[];
   diffSummary: string;
@@ -124,21 +127,57 @@ export class WorktreeContextService {
   ): Promise<WorktreeContextSnapshot> {
     const repo = await this.getRepo(repoId);
     const existing = await this.findRecord(repoId, worktreePath);
-    const fingerprint = this.snapshotFingerprint(
-      existing,
-      repo.preferredContextRootRef ?? null,
-    );
 
-    // Fast path: a previously generated sentence is cached. Return it without
-    // running any git commands. The user can click Recompute to refresh.
+    // Fast path 1: previously generated sentence — skip all git ops.
     if (existing?.generationStatus === 'ready' && existing.contextSentence) {
       this.clearEmptySnapshotCache(repoId, worktreePath);
       this.logger.log(
-        `[worktree-context] snapshot fast-path for ${worktreePath} (cached sentence, skipping git)`,
+        `[worktree-context] snapshot fast-path (cached sentence) for ${worktreePath}`,
       );
       return this.toCachedSnapshot(repoId, worktreePath, existing);
     }
 
+    // Fast path 2: known root ref + HEAD file read (no git subprocess).
+    // If we already stored rootRef from a previous computation, compare it
+    // against the current branch (two filesystem reads) to detect main branch
+    // without spawning any git processes.
+    const knownRootRef =
+      existing?.rootRef ?? repo.preferredContextRootRef ?? null;
+    const currentBranch = await this.readCurrentBranch(worktreePath);
+    if (knownRootRef && this.isCurrentBranchTheRootRef(currentBranch, knownRootRef)) {
+      if (existing) {
+        this.logger.log(
+          `[worktree-context] snapshot fast-path (main branch, stored rootRef) for ${worktreePath}`,
+        );
+        return this.toRecordOnlySnapshot(repoId, worktreePath, existing);
+      }
+      // First visit on main branch with a known root ref (from repo config).
+      // Persist a stub so future calls never need to run resolveRootRef again.
+      const now = new Date().toISOString();
+      await this.upsertRecord(repoId, worktreePath, {
+        rootRef: knownRootRef,
+        contextSentence: null,
+        generationStatus: 'idle',
+        generatedAt: null,
+        lastUsedAt: null,
+        updatedAt: now,
+        createdAt: now,
+        contextEnabled: false,
+      });
+      this.logger.log(
+        `[worktree-context] snapshot fast-path (main branch, repo rootRef) for ${worktreePath} — stub persisted`,
+      );
+      return this.toRecordOnlySnapshot(
+        repoId,
+        worktreePath,
+        await this.findRecord(repoId, worktreePath),
+      );
+    }
+
+    const fingerprint = this.snapshotFingerprint(
+      existing,
+      repo.preferredContextRootRef ?? null,
+    );
     const cachedEmptySnapshot = this.getCachedEmptySnapshot(
       repoId,
       worktreePath,
@@ -151,10 +190,12 @@ export class WorktreeContextService {
       return cachedEmptySnapshot;
     }
 
+    // Full computation — pass currentBranch so collectBranchContext doesn't re-read HEAD.
     const branchContext = await this.collectBranchContext(
       worktreePath,
       existing?.rootRef ?? null,
       repo.preferredContextRootRef ?? null,
+      currentBranch,
     );
     this.logger.log(
       `[worktree-context] snapshot for ${worktreePath} hasRecord=${!!existing} status=${existing?.generationStatus ?? 'none'} hasSentence=${!!existing?.contextSentence} hasChanges=${branchContext.hasChanges}`,
@@ -167,6 +208,23 @@ export class WorktreeContextService {
       branchContext,
     );
     this.storeEmptySnapshotCache(repoId, worktreePath, fingerprint, snapshot);
+
+    // On first detection of a main-branch worktree, persist a stub with the
+    // resolved rootRef so future calls can use fast path 2 without git ops.
+    if (branchContext.isOnRootBranch && !existing && branchContext.resolvedRootRef) {
+      const now = new Date().toISOString();
+      await this.upsertRecord(repoId, worktreePath, {
+        rootRef: branchContext.rootRef ?? branchContext.resolvedRootRef,
+        contextSentence: null,
+        generationStatus: 'idle',
+        generatedAt: null,
+        lastUsedAt: null,
+        updatedAt: now,
+        createdAt: now,
+        contextEnabled: false,
+      });
+    }
+
     return snapshot;
   }
 
@@ -351,10 +409,13 @@ export class WorktreeContextService {
       options.rootRef !== undefined
         ? this.normalizeOptionalText(options.rootRef)
         : (existing?.rootRef ?? null);
+    // Read current branch once here; pass it through to avoid re-reading HEAD.
+    const currentBranch = await this.readCurrentBranch(worktreePath);
     const branchContext = await this.collectBranchContext(
       worktreePath,
       requestedRootRef,
       repo.preferredContextRootRef ?? null,
+      currentBranch,
     );
 
     if (
@@ -370,8 +431,25 @@ export class WorktreeContextService {
 
     if (!branchContext.hasChanges || !branchContext.resolvedRootRef) {
       this.logger.log(
-        `[worktree-context] no branch-specific changes for ${worktreePath} (root=${branchContext.resolvedRootRef ?? 'unresolved'}); skipping LLM call and not persisting`,
+        `[worktree-context] no branch-specific changes for ${worktreePath} (root=${branchContext.resolvedRootRef ?? 'unresolved'}); skipping LLM call`,
       );
+      // Persist a stub with the resolved rootRef so getSnapshot can fast-path
+      // future calls for this worktree without re-running resolveRootRef.
+      if (branchContext.resolvedRootRef) {
+        const now = new Date().toISOString();
+        await this.upsertRecord(repoId, worktreePath, {
+          rootRef: branchContext.rootRef ?? branchContext.resolvedRootRef,
+          contextSentence: existing?.contextSentence ?? null,
+          generationStatus: existing?.generationStatus
+            ? this.normalizeGenerationStatus(existing.generationStatus)
+            : 'idle',
+          generatedAt: existing?.generatedAt ?? null,
+          lastUsedAt: existing?.lastUsedAt ?? null,
+          updatedAt: now,
+          createdAt: existing?.createdAt ?? now,
+          contextEnabled: existing?.contextEnabled ?? !branchContext.hasChanges,
+        });
+      }
       return this.toSnapshot(
         repoId,
         worktreePath,
@@ -570,10 +648,14 @@ export class WorktreeContextService {
     repoPath: string,
     worktreeRootRef: string | null,
     repoPreferredRootRef: string | null,
+    currentBranch?: string,
   ): Promise<BranchContextInput> {
     const git = worktreeSimpleGit(repoPath);
     const usingRepoDefaultRootRef =
       !this.normalizeOptionalText(worktreeRootRef);
+
+    // Reuse a pre-read value when the caller already read the HEAD file.
+    const branch = currentBranch ?? (await this.readCurrentBranch(repoPath));
 
     let resolvedRootRef: string | null;
     let resolutionError: string | undefined;
@@ -597,12 +679,15 @@ export class WorktreeContextService {
         resolvedRootRef: null,
         usingRepoDefaultRootRef,
         hasChanges: false,
+        isOnRootBranch: false,
         commits: [],
         changedFiles: [],
         diffSummary: '',
         errorMessage: resolutionError,
       };
     }
+
+    const isOnRootBranch = this.isCurrentBranchTheRootRef(branch, resolvedRootRef);
 
     const mergeBase = (
       await git.raw(['merge-base', 'HEAD', resolvedRootRef])
@@ -624,6 +709,7 @@ export class WorktreeContextService {
         resolvedRootRef,
         usingRepoDefaultRootRef,
         hasChanges: false,
+        isOnRootBranch,
         commits: [],
         changedFiles: [],
         diffSummary: '',
@@ -699,6 +785,7 @@ export class WorktreeContextService {
       resolvedRootRef,
       usingRepoDefaultRootRef,
       hasChanges,
+      isOnRootBranch,
       commits: commits.all.map((commit: DefaultLogFields & ListLogLine) => ({
         hash: commit.hash.slice(0, 7),
         message: commit.message,
@@ -706,6 +793,43 @@ export class WorktreeContextService {
       changedFiles,
       diffSummary,
     };
+  }
+
+  private async readCurrentBranch(worktreePath: string): Promise<string> {
+    try {
+      // .git is a file for linked worktrees ("gitdir: <path>"), a directory for the main worktree
+      const gitFilePath = join(worktreePath, '.git');
+      const gitFileContent = await readFile(gitFilePath, 'utf-8').catch(() => null);
+
+      let headPath: string;
+      if (gitFileContent !== null) {
+        const match = gitFileContent.match(/^gitdir:\s*(.+)$/m);
+        if (!match) return '';
+        const gitDir = match[1].trim();
+        const absGitDir = gitDir.startsWith('/') ? gitDir : resolve(worktreePath, gitDir);
+        headPath = join(absGitDir, 'HEAD');
+      } else {
+        headPath = join(gitFilePath, 'HEAD');
+      }
+
+      const headContent = await readFile(headPath, 'utf-8');
+      const ref = headContent.match(/^ref: refs\/heads\/(.+)$/m);
+      return ref ? ref[1].trim() : '';
+    } catch {
+      return '';
+    }
+  }
+
+  private isCurrentBranchTheRootRef(
+    currentBranch: string,
+    resolvedRootRef: string,
+  ): boolean {
+    if (!currentBranch) return false;
+    // Strip remote prefix: "origin/main" → "main"
+    const localName = resolvedRootRef.includes('/')
+      ? resolvedRootRef.slice(resolvedRootRef.indexOf('/') + 1)
+      : resolvedRootRef;
+    return currentBranch === localName;
   }
 
   private async resolveRootRef(
@@ -915,7 +1039,7 @@ export class WorktreeContextService {
       hasChanges: branchContext.hasChanges,
       usingRepoDefaultRootRef: branchContext.usingRepoDefaultRootRef,
       hasRecord: !!record,
-      contextEnabled: record?.contextEnabled ?? true,
+      contextEnabled: record?.contextEnabled ?? !branchContext.isOnRootBranch,
     };
   }
 
