@@ -399,7 +399,7 @@ describe('SessionContainer modal browser gating', () => {
     fixture.componentInstance.toggleClaudeTerminalFallback();
 
     expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(false);
-    expect(localStorageStore.get('elevenex-claude-surface-modes')).toBe('[]');
+    expect(localStorageStore.get('elevenex-claude-surface-modes@local')).toBe('{"v":2,"explicitIds":[]}');
   });
 
   it('blocks returning from terminal mode while the session is running', () => {
@@ -494,7 +494,8 @@ describe('SessionContainer modal browser gating', () => {
     (fixture.componentInstance as any).loadAndOpenSession(42);
 
     expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(true);
-    expect(localStorageStore.get('elevenex-claude-surface-modes')).toBe('[42]');
+    // Auto-applied TUI (from global default) is not saved as user-explicit.
+    expect(localStorageStore.get('elevenex-claude-surface-modes@local')).toBe('{"v":2,"explicitIds":[]}');
   });
 
   it('keeps a new Claude tab in workspace mode when the backend default is Claude UI', () => {
@@ -515,7 +516,7 @@ describe('SessionContainer modal browser gating', () => {
     (fixture.componentInstance as any).loadAndOpenSession(42);
 
     expect(fixture.componentInstance.showClaudeTerminalFallback()).toBe(false);
-    expect(localStorageStore.get('elevenex-claude-surface-modes')).toBeUndefined();
+    expect(localStorageStore.get('elevenex-claude-surface-modes@local')).toBeUndefined();
   });
 
   it('does not move an already-open tab when the backend default is TUI', () => {

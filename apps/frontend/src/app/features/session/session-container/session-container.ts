@@ -227,12 +227,13 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   sidePanelMode = signal<SidePanelMode>(this.getSidePanelPreference());
   private changesOpenByWorktree = signal<Map<string, boolean>>(this.loadChangesPanelState());
-  private claudeSurfaceModes = signal<ReadonlyMap<number, ClaudeSurfaceMode>>(
-    this.getClaudeSurfaceModePreference(),
-  );
   // Tracks sessions where the user explicitly chose TUI (vs. auto-applied from the global default).
   // Only these are persisted to localStorage so that changing the global default resets auto-applied sessions.
-  private userSetTerminalSessions = new Set<number>(this.claudeSurfaceModes().keys());
+  private readonly _initialSurfacePrefs = this.loadClaudeSurfacePreferences();
+  private claudeSurfaceModes = signal<ReadonlyMap<number, ClaudeSurfaceMode>>(
+    this._initialSurfacePrefs.modes,
+  );
+  private userSetTerminalSessions = new Set<number>(this._initialSurfacePrefs.explicitIds);
   private claudeTerminalMirrorModes = signal<ReadonlyMap<number, boolean>>(new Map());
   activeSessionArchived = computed(() => this.activeTab()?.status === 'archived');
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
@@ -416,8 +417,9 @@ export class SessionContainer implements OnInit, OnDestroy {
     }
   }
 
-  private getClaudeSurfaceModePreference(): ReadonlyMap<number, ClaudeSurfaceMode> {
+  private loadClaudeSurfacePreferences(): { modes: ReadonlyMap<number, ClaudeSurfaceMode>; explicitIds: number[] } {
     const modes = new Map<number, ClaudeSurfaceMode>();
+    const explicitIds: number[] = [];
     try {
       // One-time migration from unscoped key to per-backend scoped key.
       const unscopedKey = SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY;
@@ -431,34 +433,46 @@ export class SessionContainer implements OnInit, OnDestroy {
       }
 
       const stored = localStorage.getItem(scopedKey);
-      if (!stored) return modes;
+      if (!stored) return { modes, explicitIds };
       const parsed = JSON.parse(stored);
-      const terminalSessionIds = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed?.terminalSessionIds)
-          ? parsed.terminalSessionIds
-          : [];
+
+      // v2 format: { v: 2, explicitIds: number[] } — only user-explicit TUI sessions.
+      // Legacy formats (plain array or { terminalSessionIds }) were written before user-explicit
+      // tracking existed and may contain auto-applied TUI sessions. Load them into the modes map
+      // for display continuity, but do NOT add them to explicitIds so applyDefaultClaudeSurface
+      // can still clear them when the global default is 'claude-ui'.
+      const isV2 = parsed?.v === 2 && Array.isArray(parsed?.explicitIds);
+      const terminalSessionIds: unknown[] = isV2
+        ? parsed.explicitIds
+        : Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed?.terminalSessionIds)
+            ? parsed.terminalSessionIds
+            : [];
 
       for (const value of terminalSessionIds) {
         const sessionId = Number(value);
         if (Number.isInteger(sessionId) && sessionId > 0) {
           modes.set(sessionId, 'terminal');
+          if (isV2) {
+            explicitIds.push(sessionId);
+          }
         }
       }
     } catch {
       // Ignore storage errors
     }
-    return modes;
+    return { modes, explicitIds };
   }
 
   private saveClaudeSurfaceModePreference(modes: ReadonlyMap<number, ClaudeSurfaceMode>): void {
     try {
-      const terminalSessionIds = [...modes.entries()]
+      const explicitIds = [...modes.entries()]
         .filter(([sessionId, mode]) => mode === 'terminal' && this.userSetTerminalSessions.has(sessionId))
         .map(([sessionId]) => sessionId);
       localStorage.setItem(
         this.claudeSurfaceStorageKey,
-        JSON.stringify(terminalSessionIds),
+        JSON.stringify({ v: 2, explicitIds }),
       );
     } catch {
       // Ignore storage errors
