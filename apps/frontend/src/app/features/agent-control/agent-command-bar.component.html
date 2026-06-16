@@ -1,0 +1,67 @@
+@if (isOpen()) {
+  <div
+    class="command-bar"
+    role="presentation"
+    (pointerdown)="onBackdropPointerDown($event)"
+  >
+    <div
+      class="command-bar__panel"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Ask the Elevenex agent"
+    >
+      <div class="command-bar__glow" aria-hidden="true"></div>
+
+      <div class="command-bar__field">
+        <span class="command-bar__leading" aria-hidden="true">
+          <ng-icon name="lucideSparkles" size="20" />
+        </span>
+
+        <textarea
+          #input
+          class="command-bar__input"
+          rows="1"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="Ask the Elevenex agent anything…"
+          aria-label="Your question for the Elevenex agent"
+          [value]="query()"
+          [disabled]="submitting()"
+          (input)="query.set($any($event.target).value); autoGrow($any($event.target))"
+          (keydown)="onTextareaKeydown($event)"
+        ></textarea>
+
+        <button
+          type="button"
+          class="command-bar__send"
+          aria-label="Ask the agent"
+          [disabled]="!query().trim() || submitting()"
+          (click)="submit()"
+        >
+          @if (submitting()) {
+            <ng-icon name="lucideLoader2" size="18" class="command-bar__spin" />
+          } @else {
+            <ng-icon name="lucideArrowUp" size="18" />
+          }
+        </button>
+      </div>
+
+      <div class="command-bar__footer">
+        <span class="command-bar__hint command-bar__hint--brand">
+          <ng-icon name="lucideSparkles" size="13" />
+          Elevenex agent · runs in its own workspace
+        </span>
+
+        <span class="command-bar__keys">
+          <kbd class="command-bar__kbd">↵</kbd>
+          <span>to ask</span>
+          <span class="command-bar__sep">·</span>
+          <kbd class="command-bar__kbd">esc</kbd>
+          <span>to close</span>
+        </span>
+      </div>
+    </div>
+  </div>
+}

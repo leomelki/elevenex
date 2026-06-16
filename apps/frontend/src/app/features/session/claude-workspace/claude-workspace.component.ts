@@ -58,6 +58,7 @@ import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.serv
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { SessionsService } from '@/shared/services/sessions.service';
 import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
+import { PendingAgentPromptService } from '@/features/agent-control/pending-agent-prompt.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { ClaudeMessageComponent } from './components/claude-message.component';
@@ -200,6 +201,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly claudeStatusService = inject(ClaudeStatusService);
   private readonly worktreeContextService = inject(WorktreeContextService);
   private readonly composerDrafts = inject(ComposerDraftService);
+  private readonly pendingAgentPrompt = inject(PendingAgentPromptService);
+
+  // Guards the one-shot auto-send of a prompt queued by the Cmd/Ctrl+K agent
+  // command bar, so it fires once after the freshly created session hydrates.
+  private pendingPromptConsumed = false;
 
   readonly loading = signal(true);
   readonly hydrated = signal(false);
@@ -720,6 +726,21 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       void firstValueFrom(this.agentApi.getAuthStatus('pi'))
         .then((status) => this.piAuthStatus.set(status))
         .catch(() => undefined);
+    });
+
+    // Once a session opened from the Cmd/Ctrl+K command bar is hydrated and
+    // ready, auto-send the question the user typed there so it starts working
+    // immediately. Keyed by session id and fired at most once per workspace.
+    effect(() => {
+      if (!this.hydrated()) return;
+      untracked(() => {
+        if (this.pendingPromptConsumed || this.isTranscriptReadOnly()) return;
+        this.pendingPromptConsumed = true;
+        const prompt = this.pendingAgentPrompt.take(this.sessionId);
+        if (prompt) {
+          void this.submitPrompt(prompt);
+        }
+      });
     });
 
     this.destroyRef.onDestroy(() => {
@@ -2197,6 +2218,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   private reset(): void {
     this.bootstrapVersion += 1;
+    this.pendingPromptConsumed = false;
     this.wsAutoReconnecting = false;
     this.wsConnected.set(false);
     if (this.flushRafId !== null) {
