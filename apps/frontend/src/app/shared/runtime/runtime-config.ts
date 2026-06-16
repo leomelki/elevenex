@@ -10,7 +10,7 @@ export interface ElevenexRuntimeConfig {
   mode?: 'browser' | 'electron-local' | 'electron-debug';
 }
 
-import { getOnboardingBackendOrigin, readOnboardingStateSnapshot } from '../services/onboarding-state.service';
+import { getActiveOnboardingServer, getOnboardingBackendOrigin, readOnboardingStateSnapshot } from '../services/onboarding-state.service';
 
 function normalizeBaseUrl(value: string | undefined): string {
   return value ? value.replace(/\/+$/, '') : '';
