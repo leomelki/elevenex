@@ -1,4 +1,5 @@
 import { existsSync } from 'fs';
+import { homedir } from 'os';
 import { dirname, join, resolve } from 'path';
 import { createRequire } from 'module';
 
@@ -148,4 +149,24 @@ export function getBackendVSCodeWorkbenchPath(): string {
 
 export function getBackendHelperPath(...segments: string[]): string {
   return join(getBackendRuntimeRoot(), ...segments);
+}
+
+// Root of the backend's persistent data tree. It is co-located with the SQLite
+// database so it tracks wherever this backend keeps its state: `~/.elevenex` for
+// the local/embedded backend and `~/.elevenex-remote` (or any other custom DB
+// location) for a backend reached over SSH. In development DB_PATH is usually
+// unset, so we fall back to `~/.elevenex`.
+export function getElevenexDataRoot(): string {
+  const dbPath = process.env.DB_PATH?.trim();
+  if (dbPath) {
+    return dirname(resolve(dbPath));
+  }
+  return join(homedir(), '.elevenex');
+}
+
+// Working directory for the Elevenex agent's own coding sessions. Lives next to
+// the database (e.g. `~/.elevenex/agent` or `~/.elevenex-remote/agent`) so the
+// agent always operates inside the same machine the backend runs on.
+export function getElevenexAgentRoot(): string {
+  return join(getElevenexDataRoot(), 'agent');
 }

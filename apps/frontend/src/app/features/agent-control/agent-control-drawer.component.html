@@ -4,22 +4,28 @@
     role="complementary"
     aria-label="Elevenex agent"
   >
-    <header class="agent-control-header" inert>
+    <header class="agent-control-header">
       <div class="agent-control-header__identity">
         <span class="agent-control-header__icon">
           <ng-icon name="lucideSparkles" size="16" />
         </span>
         <div class="agent-control-header__copy">
           <h2>Elevenex agent</h2>
-          <div class="agent-control-header__eyebrow">Global controller</div>
+          <div class="agent-control-header__eyebrow">Runs in its own workspace</div>
         </div>
       </div>
 
       <div class="agent-control-header__meta">
-        <span class="agent-control-badge agent-control-badge--preview">Preview mode</span>
-        <button type="button" class="agent-control-provider" disabled>
-          <span>Provider</span>
-          <strong>Agent preview</strong>
+        <button
+          z-button
+          zType="ghost"
+          zSize="icon-sm"
+          type="button"
+          aria-label="Refresh agent sessions"
+          [disabled]="loading()"
+          (click)="load()"
+        >
+          <ng-icon name="lucideRefreshCw" size="16" [class.is-spinning]="loading()" />
         </button>
         <button
           z-button
@@ -34,255 +40,92 @@
       </div>
     </header>
 
-    <section class="agent-control-chat" aria-label="Agent chat preview" inert>
-      <div class="agent-control-chat__topbar" aria-label="Recent preview missions">
-        <div class="agent-control-recent-pills">
-          @if (state.missions().length > 0) {
-            @for (mission of recentMissions(); track mission.id) {
-              <button
-                type="button"
-                class="agent-control-recent-pill"
-                [class.is-selected]="state.selectedMissionId() === mission.id"
-                [title]="mission.title"
-                (click)="selectMission(mission.id)"
-              >
-                <span
-                  class="agent-control-recent-pill__dot"
-                  [attr.data-status]="mission.status"
-                ></span>
-                <span class="agent-control-recent-pill__copy">
-                  <span>{{ mission.title }}</span>
-                  <small>{{ statusLabel(mission.status) }}</small>
-                </span>
-              </button>
-            }
-          } @else {
-            <div class="agent-control-recent-pill agent-control-recent-pill--placeholder">
-              <span class="agent-control-recent-pill__dot" data-status="draft"></span>
-              <span class="agent-control-recent-pill__copy">
-                <span>New preview</span>
-                <small>No preview missions</small>
-              </span>
-            </div>
-          }
-        </div>
-
-        @if (state.missions().length > 0) {
-          <button type="button" class="agent-control-link-button" (click)="resetMissions()">
-            Reset
-          </button>
-        }
-      </div>
-
-      <div class="agent-control-thread">
-        @if (state.selectedMission(); as mission) {
-          @for (message of mission.messages; track message.id) {
-            <article class="agent-control-message" [attr.data-role]="message.role">
-              @if (message.role === 'system') {
-                <div class="agent-control-message__system">
-                  <ng-icon name="lucideCircleDashed" size="13" />
-                  <span>{{ message.content }}</span>
-                  <small>{{ formatDate(message.createdAt) }}</small>
-                </div>
-              } @else {
-                @if (message.role === 'agent') {
-                  <span class="agent-control-message__avatar">
-                    <ng-icon name="lucideSparkles" size="14" />
-                  </span>
-                }
-                <div class="agent-control-message__body">
-                  <div class="agent-control-message__bubble">
-                    <p>{{ message.content }}</p>
-                  </div>
-                  <div class="agent-control-message__meta-row">
-                    <span>{{ message.role === 'user' ? 'You' : 'Agent preview' }}</span>
-                    <span>{{ formatDate(message.createdAt) }}</span>
-                  </div>
-                </div>
-              }
-            </article>
-          }
-
-          <article class="agent-control-message" data-role="agent">
-            <span class="agent-control-message__avatar">
-              <ng-icon name="lucideSparkles" size="14" />
-            </span>
-            <div class="agent-control-message__body agent-control-message__body--wide">
-              <div class="agent-control-message__bubble agent-control-message__bubble--wide">
-                <div class="agent-control-message__meta">
-                  <span>Preview plan</span>
-                  <span class="agent-control-status" [attr.data-status]="mission.status">
-                    {{ statusLabel(mission.status) }}
-                  </span>
-                </div>
-
-                <p>
-                  This is a local-only preview. Nothing is created, run, changed, or reviewed
-                  outside this chat.
-                </p>
-
-                <section class="agent-control-embed" aria-label="Mission plan">
-                  <header class="agent-control-embed__header">
-                    <div>
-                      <span>Mission</span>
-                      <strong>{{ mission.title }}</strong>
-                    </div>
-                    @if (nextActionLabel(mission); as actionLabel) {
-                      <button z-button zSize="sm" type="button" (click)="advanceMission(mission)">
-                        <ng-icon name="lucidePlay" size="14" />
-                        {{ actionLabel }}
-                      </button>
-                    }
-                  </header>
-
-                  @if (mission.approvals[0]; as approval) {
-                    <div class="agent-control-approval" aria-label="Preview approvals">
-                      <div>
-                        <span>Preview-only approval</span>
-                        <strong>{{ approval.label }}</strong>
-                        <p>{{ approval.summary }}</p>
-                      </div>
-                      <span
-                        class="agent-control-approval__state"
-                        [attr.data-state]="approval.status"
-                      >
-                        {{ approval.status }}
-                      </span>
-                    </div>
-                  }
-
-                  <div class="agent-control-step-list">
-                    @for (step of mission.steps; track step.id) {
-                      <div class="agent-control-step" [attr.data-status]="step.status">
-                        <span class="agent-control-step__icon">
-                          <ng-icon [name]="stepIcon(step)" size="14" />
-                        </span>
-                        <div>
-                          <span>{{ step.label }}</span>
-                          <small>{{ step.targetSummary }}</small>
-                        </div>
-                        <span class="agent-control-step__status">{{ step.status }}</span>
-                      </div>
-                    }
-                  </div>
-
-                  <div class="agent-control-artifacts" aria-label="Preview artifacts">
-                    @for (artifact of mission.artifacts; track artifact.id) {
-                      <span>{{ artifact.label }}</span>
-                    }
-                  </div>
-                </section>
-              </div>
-            </div>
-          </article>
-        } @else {
-          <article class="agent-control-message" data-role="agent">
-            <span class="agent-control-message__avatar">
-              <ng-icon name="lucideSparkles" size="14" />
-            </span>
-            <div class="agent-control-message__body agent-control-message__body--wide">
-              <div class="agent-control-message__bubble agent-control-message__bubble--wide">
-                <div class="agent-control-message__meta">
-                  <span>Agent preview</span>
-                  <span>No preview missions</span>
-                </div>
-                <p>
-                  Tell the Elevenex agent what you want to do. For now this creates a local preview
-                  plan in chat only.
-                </p>
-              </div>
-            </div>
-          </article>
-        }
-      </div>
-
+    <section class="agent-panel" aria-label="Elevenex agent sessions">
       <form
-        class="agent-control-composer"
-        (submit)="$event.preventDefault(); createMissionFromPrompt()"
+        class="agent-composer"
+        (submit)="$event.preventDefault(); startSession()"
       >
-        <textarea
+        <label class="agent-composer__label" for="agent-session-name">
+          Start an agent session
+        </label>
+        <input
           z-input
-          rows="3"
-          placeholder="Message the Elevenex agent..."
-          [value]="promptDraft()"
-          (input)="promptDraft.set($any($event.target).value)"
+          id="agent-session-name"
+          type="text"
+          autocomplete="off"
+          placeholder="Optional name (e.g. Triage open PRs)"
+          [value]="nameDraft()"
+          (input)="nameDraft.set($any($event.target).value)"
           (keydown)="onComposerKeydown($event)"
-        ></textarea>
-        <div class="agent-control-composer__actions">
-          <span>Preview-only. Press Cmd/Ctrl+Enter to send.</span>
-          <button z-button type="submit" [disabled]="!promptDraft().trim()">
-            <ng-icon name="lucideSparkles" size="14" />
-            Generate preview
-          </button>
-        </div>
-      </form>
-    </section>
-
-    <div
-      class="agent-coming-soon"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="agent-coming-soon-title"
-      aria-describedby="agent-coming-soon-copy"
-    >
-      <button
-        z-button
-        zType="ghost"
-        zSize="icon-sm"
-        type="button"
-        class="agent-coming-soon__dismiss"
-        aria-label="Close agent drawer"
-        (click)="close()"
-      >
-        <ng-icon name="lucideX" size="16" />
-      </button>
-
-      <div class="agent-coming-soon__card">
-        <span class="agent-coming-soon__halo" aria-hidden="true"></span>
-
-        <span class="agent-coming-soon__icon">
-          <ng-icon name="lucideSparkles" size="26" />
-        </span>
-
-        <span class="agent-coming-soon__badge">Coming soon</span>
-
-        <h3 id="agent-coming-soon-title" class="agent-coming-soon__title">
-          The Elevenex agent is on its way
-        </h3>
-
-        <p id="agent-coming-soon-copy" class="agent-coming-soon__copy">
-          One prompt to drive your whole workspace — create projects, spin up worktrees, run
-          agent sessions, and review the results. We're putting the finishing touches on it.
-        </p>
-
-        <ul class="agent-coming-soon__features">
-          <li>
-            <ng-icon name="lucideFolder" size="14" />
-            <span>Create projects &amp; repos</span>
-          </li>
-          <li>
-            <ng-icon name="lucideGitBranch" size="14" />
-            <span>Spin up worktrees</span>
-          </li>
-          <li>
-            <ng-icon name="lucidePlay" size="14" />
-            <span>Run agent sessions</span>
-          </li>
-          <li>
-            <ng-icon name="lucideClipboardList" size="14" />
-            <span>Review the work</span>
-          </li>
-        </ul>
-
+        />
         <button
           z-button
-          type="button"
-          class="agent-coming-soon__action"
-          (click)="close()"
+          type="submit"
+          class="agent-composer__submit"
+          [disabled]="creating()"
         >
-          Got it
+          <ng-icon name="lucideSparkles" size="14" />
+          {{ creating() ? 'Starting…' : 'New session' }}
         </button>
+      </form>
+
+      <div class="agent-panel__list" aria-label="Agent sessions">
+        @if (loading() && sessions().length === 0) {
+          <div class="agent-panel__placeholder">Loading agent sessions…</div>
+        } @else if (sessions().length === 0) {
+          <div class="agent-panel__empty">
+            <span class="agent-panel__empty-icon">
+              <ng-icon name="lucideTerminal" size="20" />
+            </span>
+            <p>No agent sessions yet.</p>
+            <small>
+              Start one above. It runs in a dedicated workspace, just like a
+              worktree session.
+            </small>
+          </div>
+        } @else {
+          @for (session of sessions(); track session.id) {
+            <button
+              type="button"
+              class="agent-session"
+              (click)="openSession(session.id)"
+            >
+              <span
+                class="agent-session__dot"
+                [attr.data-status]="session.status"
+              ></span>
+              <span class="agent-session__body">
+                <span class="agent-session__title">
+                  {{ session.name || 'Session ' + session.id }}
+                </span>
+                <span class="agent-session__meta">
+                  <span class="agent-session__status">
+                    {{ statusLabel(session.status) }}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>{{ formatDate(session.updatedAt) }}</span>
+                  @if (session.hasUnreviewedCompletion) {
+                    <span class="agent-session__badge">Needs review</span>
+                  }
+                </span>
+              </span>
+              <ng-icon
+                class="agent-session__open"
+                name="lucideArrowUpRight"
+                size="15"
+              />
+            </button>
+          }
+        }
       </div>
-    </div>
+
+      @if (workspace(); as ws) {
+        <footer class="agent-panel__footer" [title]="ws.path">
+          <ng-icon name="lucideTerminal" size="13" />
+          <span class="agent-panel__footer-path">{{ ws.path }}</span>
+          <span class="agent-panel__footer-branch">{{ ws.branch }}</span>
+        </footer>
+      }
+    </section>
   </aside>
 }

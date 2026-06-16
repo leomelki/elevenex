@@ -1,54 +1,60 @@
+import { provideHttpClient } from '@angular/common/http';
+import {
+  HttpTestingController,
+  provideHttpClientTesting,
+} from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { describe, beforeEach, afterEach, expect, it, vi } from 'vitest';
+import { describe, beforeEach, afterEach, expect, it } from 'vitest';
 import { AgentControlDrawerComponent } from './agent-control-drawer.component';
 import { AgentControlStateService } from './agent-control-state.service';
 
-function installLocalStorage() {
-  const values = new Map<string, string>();
-  Object.defineProperty(globalThis, 'localStorage', {
-    configurable: true,
-    value: {
-      getItem: vi.fn((key: string) => values.get(key) ?? null),
-      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
-      removeItem: vi.fn((key: string) => values.delete(key)),
-      clear: vi.fn(() => values.clear()),
-    },
-  });
-}
+const OVERVIEW = {
+  workspace: {
+    projectId: 1,
+    repoId: 2,
+    path: '/home/dev/.elevenex/agent',
+    branch: 'main',
+  },
+  sessions: [],
+};
 
 describe('AgentControlDrawerComponent', () => {
-  let originalLocalStorage: Storage | undefined;
+  let httpMock: HttpTestingController;
 
   beforeEach(async () => {
-    originalLocalStorage = globalThis.localStorage;
-    installLocalStorage();
     TestBed.resetTestingModule();
     await TestBed.configureTestingModule({
       imports: [AgentControlDrawerComponent],
-      providers: [provideRouter([])],
+      providers: [
+        provideRouter([]),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+      ],
     }).compileComponents();
+    httpMock = TestBed.inject(HttpTestingController);
   });
 
   afterEach(() => {
-    Object.defineProperty(globalThis, 'localStorage', {
-      configurable: true,
-      value: originalLocalStorage,
-    });
+    httpMock.verify();
   });
 
-  it('renders the preview drawer empty state when opened', () => {
+  it('loads the workspace and renders the empty state when opened', () => {
     const service = TestBed.inject(AgentControlStateService);
     service.openGlobal();
 
     const fixture = TestBed.createComponent(AgentControlDrawerComponent);
     fixture.detectChanges();
 
+    const request = httpMock.expectOne('/api/agent');
+    expect(request.request.method).toBe('GET');
+    request.flush(OVERVIEW);
+    fixture.detectChanges();
+
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
     expect(text).toContain('Elevenex agent');
-    expect(text).toContain('Preview mode');
-    expect(text).toContain('No preview missions');
-    expect((fixture.nativeElement as HTMLElement).querySelector('.agent-control-backdrop')).toBeNull();
+    expect(text).toContain('No agent sessions yet.');
+    expect(text).toContain('/home/dev/.elevenex/agent');
     expect(
       (fixture.nativeElement as HTMLElement)
         .querySelector('.agent-control-drawer')
@@ -56,62 +62,55 @@ describe('AgentControlDrawerComponent', () => {
     ).toBe('complementary');
   });
 
-  it('creates a local mission from the composer', () => {
+  it('creates an agent session from the composer', () => {
     const service = TestBed.inject(AgentControlStateService);
     service.openGlobal();
 
     const fixture = TestBed.createComponent(AgentControlDrawerComponent);
     fixture.detectChanges();
+    httpMock.expectOne('/api/agent').flush(OVERVIEW);
+    fixture.detectChanges();
 
-    const textarea = (fixture.nativeElement as HTMLElement).querySelector(
-      'textarea',
-    ) as HTMLTextAreaElement;
-    textarea.value = 'Run the agent and review the changes';
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    const input = (fixture.nativeElement as HTMLElement).querySelector(
+      'input',
+    ) as HTMLInputElement;
+    input.value = 'Triage open PRs';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
     fixture.detectChanges();
 
     const submit = Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
-    ).find((button) => button.textContent?.includes('Generate preview')) as HTMLButtonElement;
+    ).find((button) =>
+      button.textContent?.includes('New session'),
+    ) as HTMLButtonElement;
     submit.click();
     fixture.detectChanges();
 
-    expect(service.missions()).toHaveLength(1);
-    expect((fixture.nativeElement as HTMLElement).textContent).toContain(
-      'Run the agent and review the changes',
-    );
-    expect((fixture.nativeElement as HTMLElement).textContent).not.toContain('Create worktree');
-  });
+    const request = httpMock.expectOne('/api/agent/sessions');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({ name: 'Triage open PRs' });
 
-  it('advances a composer-created preview locally', () => {
-    const service = TestBed.inject(AgentControlStateService);
-    service.openGlobal();
+    request.flush({
+      id: 42,
+      repoId: 2,
+      projectId: 1,
+      branchName: 'main',
+      worktreePath: '/home/dev/.elevenex/agent',
+      name: 'Triage open PRs',
+      status: 'created',
+      activeAgentProvider: 'claude',
+      claudeSessionId: '-1',
+      codexSessionId: '-1',
+      hasInjectedWorktreeContext: false,
+      hasUnreviewedCompletion: false,
+      lastCompletionAt: null,
+      lastCompletionKind: null,
+      lastStateChangeAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
 
-    const fixture = TestBed.createComponent(AgentControlDrawerComponent);
-    fixture.detectChanges();
-
-    const textarea = (fixture.nativeElement as HTMLElement).querySelector(
-      'textarea',
-    ) as HTMLTextAreaElement;
-    textarea.value = 'Create a focused worktree from the best base ref';
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    fixture.detectChanges();
-
-    const submit = Array.from(
-      (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
-    ).find((button) => button.textContent?.includes('Generate preview')) as HTMLButtonElement;
-    submit.click();
-    fixture.detectChanges();
-
-    expect(service.selectedMission()?.status).toBe('waiting_approval');
-
-    const approve = Array.from(
-      (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
-    ).find((button) => button.textContent?.includes('Approve preview')) as HTMLButtonElement;
-    approve.click();
-    fixture.detectChanges();
-
-    expect(service.selectedMission()?.status).toBe('planned');
-    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Preview-only approval');
+    // Opening the new session closes the drawer.
+    expect(service.isOpen()).toBe(false);
   });
 });

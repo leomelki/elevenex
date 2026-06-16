@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `is_system` integer DEFAULT false NOT NULL;
