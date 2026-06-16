@@ -1897,6 +1897,12 @@ export class ClaudeRuntimeService extends EventEmitter {
       this.emitRunState(sessionId);
     } else if (kind === 'exit_plan_mode') {
       state.planMode = false;
+      const runtime = this.sessionRuntimes.get(sessionId);
+      if (runtime) {
+        await runtime.setPermissionMode(
+          this.effectivePermissionMode(state) as PermissionMode,
+        );
+      }
       this.emitRunState(sessionId);
     }
 
