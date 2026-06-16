@@ -13,6 +13,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
   lucideChevronDown,
+  lucideDownload,
   lucideEllipsis,
   lucideGauge,
   lucideListTodo,
@@ -34,10 +35,7 @@ import {
   ClaudeRunPhase,
   ClaudeTaskState,
 } from '@/shared/models/claude-runtime.model';
-import {
-  AgentProviderId,
-  AgentRuntimeProviderInfo,
-} from '@/shared/models/agent-runtime.model';
+import { AgentProviderId, AgentRuntimeProviderInfo } from '@/shared/models/agent-runtime.model';
 
 interface PermissionModeOption {
   id: ClaudePermissionMode;
@@ -80,6 +78,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
     provideIcons({
       lucideCheck,
       lucideChevronDown,
+      lucideDownload,
       lucideEllipsis,
       lucideGauge,
       lucideListTodo,
@@ -116,7 +115,9 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
           class="cw-sb__link"
           [class.cw-sb__link--disabled]="providerLocked()"
           [disabled]="providerLocked()"
-          [title]="providerLocked() ? 'Provider is locked after a session starts' : 'Change provider'"
+          [title]="
+            providerLocked() ? 'Provider is locked after a session starts' : 'Change provider'
+          "
           (click)="toggleMenu('provider')"
         >
           {{ activeProviderLabel() }}
@@ -304,11 +305,23 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
         @if (menuOpen()) {
           <div class="cw-sb__menu cw-sb__menu--right" (mousedown)="$event.stopPropagation()">
             @if (currentProviderCapabilities()?.terminalFallback) {
-              <button type="button" class="cw-sb__menu-item" (click)="menuOpen.set(false); openTerminal.emit()">
+              <button
+                type="button"
+                class="cw-sb__menu-item"
+                (click)="menuOpen.set(false); openTerminal.emit()"
+              >
                 <ng-icon name="lucideTerminal" size="12" />
                 Raw terminal
               </button>
             }
+            <button
+              type="button"
+              class="cw-sb__menu-item"
+              (click)="menuOpen.set(false); export.emit()"
+            >
+              <ng-icon name="lucideDownload" size="12" />
+              Export conversation…
+            </button>
           </div>
         }
       </div>
@@ -486,6 +499,7 @@ export class ClaudeStatusBarComponent {
   readonly openTerminal = output<void>();
   readonly openTasks = output<void>();
   readonly openMcp = output<void>();
+  readonly export = output<void>();
 
   readonly modelOpen = signal(false);
   readonly effortOpen = signal(false);
@@ -496,7 +510,14 @@ export class ClaudeStatusBarComponent {
   private readonly host = inject(ElementRef<HTMLElement>);
 
   onDocumentMousedown(event: MouseEvent): void {
-    if (!this.modelOpen() && !this.effortOpen() && !this.providerOpen() && !this.permissionOpen() && !this.menuOpen()) return;
+    if (
+      !this.modelOpen() &&
+      !this.effortOpen() &&
+      !this.providerOpen() &&
+      !this.permissionOpen() &&
+      !this.menuOpen()
+    )
+      return;
     const target = event.target as Node | null;
     if (target && this.host.nativeElement.contains(target)) return;
     this.closeAllMenus();
@@ -544,7 +565,9 @@ export class ClaudeStatusBarComponent {
     const effectiveModel = modelId ? models.find((m) => m.id === modelId) : models[0];
     const supportsAuto = effectiveModel?.supportsAutoMode ?? false;
     const current = this.permissionMode();
-    return PERMISSION_MODES.filter((opt) => opt.id !== 'auto' || supportsAuto || current === 'auto');
+    return PERMISSION_MODES.filter(
+      (opt) => opt.id !== 'auto' || supportsAuto || current === 'auto',
+    );
   });
   readonly activePermissionLabel = computed(() => {
     const mode = this.permissionMode();
@@ -579,8 +602,12 @@ export class ClaudeStatusBarComponent {
     const models = this.availableModels();
     return id ? models.find((m) => m.id === id) : models[0];
   });
-  readonly selectedModelSupportsEffort = computed(() => this.selectedModelOption()?.supportsEffort ?? false);
-  readonly selectedModelSupportsFastMode = computed(() => this.selectedModelOption()?.supportsFastMode ?? false);
+  readonly selectedModelSupportsEffort = computed(
+    () => this.selectedModelOption()?.supportsEffort ?? false,
+  );
+  readonly selectedModelSupportsFastMode = computed(
+    () => this.selectedModelOption()?.supportsFastMode ?? false,
+  );
   readonly reasoningEffortOptions = computed(() => {
     const effort = this.reasoningEffort();
     return effort && !REASONING_EFFORTS.some((option) => option.id === effort)
@@ -595,13 +622,14 @@ export class ClaudeStatusBarComponent {
 
   readonly activeProviderLabel = computed(() => {
     return (
-      this.providers().find((provider) => provider.id === this.currentProvider())
-        ?.displayName ?? this.currentProvider()
+      this.providers().find((provider) => provider.id === this.currentProvider())?.displayName ??
+      this.currentProvider()
     );
   });
-  readonly currentProviderCapabilities = computed(() =>
-    this.providers().find((provider) => provider.id === this.currentProvider())
-      ?.capabilities ?? null,
+  readonly currentProviderCapabilities = computed(
+    () =>
+      this.providers().find((provider) => provider.id === this.currentProvider())?.capabilities ??
+      null,
   );
 
   pickModel(id: string): void {

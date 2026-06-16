@@ -71,6 +71,10 @@ import {
   ComposerSendPayload,
 } from './components/claude-composer.component';
 import { ClaudeStatusBarComponent } from './components/claude-status-bar.component';
+import {
+  ClaudeExportDialogComponent,
+  type ExportRequest,
+} from './components/claude-export-dialog.component';
 import { ClaudeTasksDrawerComponent } from './components/claude-tasks-drawer.component';
 import { ClaudeMcpDrawerComponent } from './components/claude-mcp-drawer.component';
 import { CodexLoginCardComponent } from './components/codex-login-card.component';
@@ -133,6 +137,7 @@ type TranscriptRenderItem =
     ClaudeUserInputComponent,
     ClaudeComposerComponent,
     ClaudeStatusBarComponent,
+    ClaudeExportDialogComponent,
     ClaudeTasksDrawerComponent,
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
@@ -248,6 +253,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
   readonly tasksDrawerOpen = signal(false);
   readonly mcpDrawerOpen = signal(false);
+  readonly exportDialogOpen = signal(false);
+  readonly exportBusy = signal(false);
   readonly mcpLoading = signal(false);
   readonly mcpSnapshot = signal<ClaudeMcpSnapshot | null>(null);
   readonly mcpBusyServerName = signal<string | null>(null);
@@ -369,7 +376,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     const ctx = this.worktreeContext();
     if (!ctx) return null;
     if (this.contextPinState() === 'failed') return { text: 'Failed', variant: 'warn' };
-    if (this.hasInjectedContext() && this.firstPromptContextEnabled()) return { text: 'Used', variant: 'muted' };
+    if (this.hasInjectedContext() && this.firstPromptContextEnabled())
+      return { text: 'Used', variant: 'muted' };
     if (!ctx.contextSentence) return null;
     if (this.promptIsCommand() && this.firstPromptContextEnabled())
       return { text: 'Skip', variant: 'muted' };
@@ -408,11 +416,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     }
     if (this.terminalTranscriptMirror) {
       this.firstPromptContextEnabled.set(false);
-      void firstValueFrom(
-        this.worktreeContextService.consume(this.sessionId, false),
-      ).catch((err) => {
-        console.warn('[worktree-context] failed to skip TUI context injection', err);
-      });
+      void firstValueFrom(this.worktreeContextService.consume(this.sessionId, false)).catch(
+        (err) => {
+          console.warn('[worktree-context] failed to skip TUI context injection', err);
+        },
+      );
       void firstValueFrom(
         this.worktreeContextService.updateEnabled(this.repoId, this.worktreePath, false),
       ).catch((err) => {
@@ -444,10 +452,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.rewindingMessageId() !== null,
   );
   readonly forkActionsDisabled = computed(
-    () =>
-      this.readOnlyTranscript ||
-      this.loading() ||
-      this.forkingAnchorId() !== null,
+    () => this.readOnlyTranscript || this.loading() || this.forkingAnchorId() !== null,
   );
   readonly forkDisabledReason = computed(() => {
     if (this.readOnlyTranscript) return 'Forks are not available in terminal mirror mode.';
@@ -778,8 +783,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     }
     const transcriptModeChanged =
       (changes['readOnlyTranscript'] && !changes['readOnlyTranscript'].firstChange) ||
-      (changes['terminalTranscriptMirror'] &&
-        !changes['terminalTranscriptMirror'].firstChange);
+      (changes['terminalTranscriptMirror'] && !changes['terminalTranscriptMirror'].firstChange);
     if (transcriptModeChanged && this.isVisible) {
       this.disconnectTranscriptSocket(this.sessionId);
       this.reset();
@@ -913,7 +917,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   async approvePlanReview(review: PlanReviewRequest): Promise<void> {
-    if (this.isTranscriptReadOnly() || review.sessionId !== this.sessionId || review.readonly) return;
+    if (this.isTranscriptReadOnly() || review.sessionId !== this.sessionId || review.readonly)
+      return;
     if (review.source === 'exit-plan-permission') {
       this.approvePlanPermissionReview(review);
       return;
@@ -935,7 +940,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   async sendPlanReviewFeedback(payload: PlanFeedbackPayload): Promise<void> {
     const message = payload.message.trim();
     const review = payload.review;
-    if (!message || this.isTranscriptReadOnly() || review.sessionId !== this.sessionId || review.readonly) return;
+    if (
+      !message ||
+      this.isTranscriptReadOnly() ||
+      review.sessionId !== this.sessionId ||
+      review.readonly
+    )
+      return;
 
     if (review.source === 'exit-plan-permission') {
       this.denyPlanPermissionReview(review, message);
@@ -950,7 +961,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   async rejectPlanReview(payload: PlanFeedbackPayload): Promise<void> {
     const review = payload.review;
-    if (this.isTranscriptReadOnly() || review.sessionId !== this.sessionId || review.readonly) return;
+    if (this.isTranscriptReadOnly() || review.sessionId !== this.sessionId || review.readonly)
+      return;
 
     if (review.source === 'exit-plan-permission') {
       this.denyPlanPermissionReview(review, payload.message);
@@ -1103,17 +1115,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   async onPermissionModeChange(mode: ClaudePermissionMode): Promise<void> {
     if (this.readOnlyTranscript) return;
-    const next = await firstValueFrom(
-      this.api.setPermissionMode(this.sessionId, mode || null),
-    );
+    const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, mode || null));
     this.applyRuntimeState(next);
   }
 
   async onPlanModeChange(enabled: boolean): Promise<void> {
     if (this.readOnlyTranscript) return;
-    const next = await firstValueFrom(
-      this.api.setPlanMode(this.sessionId, enabled),
-    );
+    const next = await firstValueFrom(this.api.setPlanMode(this.sessionId, enabled));
     this.applyRuntimeState(next);
   }
 
@@ -1150,6 +1158,27 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   openMcpDrawer(): void {
     this.mcpDrawerOpen.set(true);
     void this.loadMcpSnapshot();
+  }
+
+  openExportDialog(): void {
+    this.exportDialogOpen.set(true);
+  }
+
+  async onExportCopy(request: ExportRequest): Promise<void> {
+    if (this.exportBusy()) return;
+    this.exportBusy.set(true);
+    try {
+      const markdown = await firstValueFrom(
+        this.agentApi.exportConversation(this.sessionId, request, this.activeAgentProvider),
+      );
+      await navigator.clipboard.writeText(markdown);
+      this.exportDialogOpen.set(false);
+      toast.success('Conversation copied to clipboard');
+    } catch {
+      toast.error('Failed to export conversation');
+    } finally {
+      this.exportBusy.set(false);
+    }
   }
 
   closeMcpDrawer(): void {

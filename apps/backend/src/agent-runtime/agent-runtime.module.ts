@@ -10,6 +10,7 @@ import { AgentRuntimeController } from './agent-runtime.controller.js';
 import { AgentRuntimeCleanupService } from './agent-runtime-cleanup.service.js';
 import { AgentRuntimeGateway } from './agent-runtime.gateway.js';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
+import { ConversationExportService } from './conversation-export.service.js';
 import { ClaudeAgentRuntimeProvider } from './claude-agent-runtime.provider.js';
 import { SessionsModule } from '../sessions/sessions.module.js';
 import {
@@ -41,6 +42,7 @@ import {
       ],
     },
     AgentRuntimeRegistryService,
+    ConversationExportService,
     AgentRuntimeCleanupService,
     {
       provide: AGENT_RUNTIME_CLEANUP_SERVICE,

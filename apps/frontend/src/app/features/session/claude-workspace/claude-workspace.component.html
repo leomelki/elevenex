@@ -437,312 +437,313 @@
     </div>
 
     @if (showContextPin() || !isTranscriptReadOnly()) {
-    <div
-      class="shrink-0 px-[clamp(0.75rem,4vw,2rem)] pt-2 pb-[0.625rem] flex flex-col gap-2 bg-background border-t border-border/60"
-    >
-      @if (showContextPin()) {
-        <div
-          [attr.data-state]="contextPinState()"
-          [attr.data-expanded]="contextExpanded() || null"
-          [attr.data-ctx-mode]="
-            firstPromptContextEnabled() && canToggleContextEnabled() && !promptIsCommand()
-              ? 'enabled'
-              : (!firstPromptContextEnabled() && canToggleContextEnabled()) ||
-                  (promptIsCommand() && canToggleContextEnabled())
-                ? 'disabled'
-                : null
-          "
-          class="group/ctx max-w-[52rem] w-[calc(100%-1.5rem)] mx-auto mb-0 rounded-xl border overflow-hidden transition-[border-color,box-shadow,background-color] duration-[150ms] ease-in-out border-border/90 bg-[color-mix(in_oklab,var(--card)_92%,var(--background))] hover:border-[color-mix(in_oklab,var(--border)_60%,var(--foreground)_20%)] data-[state=failed]:border-destructive/40 data-[state=failed]:bg-destructive/5 data-[state=loading]:border-primary/25 data-[state=generating]:border-primary/25 data-[ctx-mode=enabled]:border-[color-mix(in_oklab,var(--primary)_28%,var(--border))] data-[expanded]:shadow-[0_8px_24px_-18px_color-mix(in_oklab,var(--foreground)_40%,transparent)]"
-        >
-          <div class="flex items-stretch w-full">
-            <button
-              type="button"
-              class="flex items-center gap-[0.6rem] flex-1 min-w-0 px-[0.75rem] py-[0.5rem] border-0 bg-transparent text-foreground font-[inherit] text-left cursor-pointer transition-[background-color] duration-[140ms] hover:bg-foreground/3 focus-visible:outline-none"
-              [attr.aria-pressed]="canToggleContextEnabled() ? firstPromptContextEnabled() : null"
-              [attr.aria-label]="
-                canToggleContextEnabled()
-                  ? promptIsCommand() && firstPromptContextEnabled()
-                    ? 'Context skipped for commands'
-                    : firstPromptContextEnabled()
-                      ? 'Disable context for next prompt'
-                      : 'Enable context for next prompt'
-                  : 'Show context details'
-              "
-              [title]="
-                canToggleContextEnabled()
-                  ? promptIsCommand() && firstPromptContextEnabled()
-                    ? 'Context is not sent with commands'
-                    : firstPromptContextEnabled()
-                      ? 'Click to disable'
-                      : 'Click to enable'
-                  : ''
-              "
-              (click)="toggleContextEnabled()"
-            >
-              <span
-                class="inline-flex items-center justify-center w-4 h-4 shrink-0 text-muted-foreground transition-[color] duration-[140ms] group-data-[ctx-mode=enabled]/ctx:text-[color-mix(in_oklab,var(--primary)_80%,var(--foreground))] group-data-[state=failed]/ctx:text-destructive"
-                aria-hidden="true"
+      <div
+        class="shrink-0 px-[clamp(0.75rem,4vw,2rem)] pt-2 pb-[0.625rem] flex flex-col gap-2 bg-background border-t border-border/60"
+      >
+        @if (showContextPin()) {
+          <div
+            [attr.data-state]="contextPinState()"
+            [attr.data-expanded]="contextExpanded() || null"
+            [attr.data-ctx-mode]="
+              firstPromptContextEnabled() && canToggleContextEnabled() && !promptIsCommand()
+                ? 'enabled'
+                : (!firstPromptContextEnabled() && canToggleContextEnabled()) ||
+                    (promptIsCommand() && canToggleContextEnabled())
+                  ? 'disabled'
+                  : null
+            "
+            class="group/ctx max-w-[52rem] w-[calc(100%-1.5rem)] mx-auto mb-0 rounded-xl border overflow-hidden transition-[border-color,box-shadow,background-color] duration-[150ms] ease-in-out border-border/90 bg-[color-mix(in_oklab,var(--card)_92%,var(--background))] hover:border-[color-mix(in_oklab,var(--border)_60%,var(--foreground)_20%)] data-[state=failed]:border-destructive/40 data-[state=failed]:bg-destructive/5 data-[state=loading]:border-primary/25 data-[state=generating]:border-primary/25 data-[ctx-mode=enabled]:border-[color-mix(in_oklab,var(--primary)_28%,var(--border))] data-[expanded]:shadow-[0_8px_24px_-18px_color-mix(in_oklab,var(--foreground)_40%,transparent)]"
+          >
+            <div class="flex items-stretch w-full">
+              <button
+                type="button"
+                class="flex items-center gap-[0.6rem] flex-1 min-w-0 px-[0.75rem] py-[0.5rem] border-0 bg-transparent text-foreground font-[inherit] text-left cursor-pointer transition-[background-color] duration-[140ms] hover:bg-foreground/3 focus-visible:outline-none"
+                [attr.aria-pressed]="canToggleContextEnabled() ? firstPromptContextEnabled() : null"
+                [attr.aria-label]="
+                  canToggleContextEnabled()
+                    ? promptIsCommand() && firstPromptContextEnabled()
+                      ? 'Context skipped for commands'
+                      : firstPromptContextEnabled()
+                        ? 'Disable context for next prompt'
+                        : 'Enable context for next prompt'
+                    : 'Show context details'
+                "
+                [title]="
+                  canToggleContextEnabled()
+                    ? promptIsCommand() && firstPromptContextEnabled()
+                      ? 'Context is not sent with commands'
+                      : firstPromptContextEnabled()
+                        ? 'Click to disable'
+                        : 'Click to enable'
+                    : ''
+                "
+                (click)="toggleContextEnabled()"
               >
-                @switch (contextPinState()) {
-                  @case ('loading') {
-                    <span
-                      class="size-[0.9rem] rounded-full border-2 border-primary/40 border-t-primary animate-spin [animation-duration:650ms]"
-                    ></span>
-                  }
-                  @case ('generating') {
-                    <span
-                      class="size-[0.9rem] rounded-full border-2 border-primary/40 border-t-primary animate-spin [animation-duration:650ms]"
-                    ></span>
-                  }
-                  @case ('failed') {
-                    <ng-icon name="lucideTriangleAlert" size="14" />
-                  }
-                  @default {
-                    <ng-icon name="lucideWandSparkles" size="14" aria-hidden="true" />
-                  }
-                }
-              </span>
-
-              <span class="flex flex-row items-baseline gap-2 min-w-0 flex-1">
                 <span
-                  class="text-[0.72rem] font-semibold tracking-[0.02em] text-muted-foreground shrink-0 [text-decoration-thickness:1.5px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_70%,transparent)]"
-                  [class.line-through]="
-                    (!firstPromptContextEnabled() && canToggleContextEnabled()) ||
-                    (promptIsCommand() && canToggleContextEnabled())
-                  "
-                  >{{ contextPinLabel() }}</span
+                  class="inline-flex items-center justify-center w-4 h-4 shrink-0 text-muted-foreground transition-[color] duration-[140ms] group-data-[ctx-mode=enabled]/ctx:text-[color-mix(in_oklab,var(--primary)_80%,var(--foreground))] group-data-[state=failed]/ctx:text-destructive"
+                  aria-hidden="true"
                 >
-                <span
-                  class="text-[0.8rem] whitespace-nowrap overflow-hidden text-ellipsis min-w-0 flex-1 [text-decoration-thickness:1.5px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_70%,transparent)] group-data-[expanded]/ctx:hidden transition-colors duration-[140ms] group-data-[ctx-mode=disabled]/ctx:text-muted-foreground group-data-[ctx-mode=enabled]/ctx:text-foreground text-foreground"
-                  [class.line-through]="
-                    (!firstPromptContextEnabled() && canToggleContextEnabled()) ||
-                    (promptIsCommand() && canToggleContextEnabled())
-                  "
-                  >{{ contextPinSummary() }}</span
-                >
-              </span>
+                  @switch (contextPinState()) {
+                    @case ('loading') {
+                      <span
+                        class="size-[0.9rem] rounded-full border-2 border-primary/40 border-t-primary animate-spin [animation-duration:650ms]"
+                      ></span>
+                    }
+                    @case ('generating') {
+                      <span
+                        class="size-[0.9rem] rounded-full border-2 border-primary/40 border-t-primary animate-spin [animation-duration:650ms]"
+                      ></span>
+                    }
+                    @case ('failed') {
+                      <ng-icon name="lucideTriangleAlert" size="14" />
+                    }
+                    @default {
+                      <ng-icon name="lucideWandSparkles" size="14" aria-hidden="true" />
+                    }
+                  }
+                </span>
 
-              @if (contextPinBadge(); as badge) {
-                <span
-                  [attr.data-variant]="badge.variant"
-                  class="inline-flex items-center px-[0.45rem] py-[0.1rem] rounded-full text-[0.65rem] font-semibold tracking-[0.03em] shrink-0 border border-transparent data-[variant=accent]:bg-primary/14 data-[variant=accent]:text-[color-mix(in_oklab,var(--primary)_85%,var(--foreground))] data-[variant=accent]:border-primary/25 data-[variant=muted]:bg-foreground/6 data-[variant=muted]:text-muted-foreground data-[variant=warn]:bg-destructive/14 data-[variant=warn]:text-destructive data-[variant=warn]:border-destructive/28"
-                  >{{ badge.text }}</span
-                >
-              }
-            </button>
-
-            <button
-              type="button"
-              class="inline-flex items-center justify-center px-[0.55rem] border-0 border-l border-border/80 bg-transparent text-muted-foreground cursor-pointer transition-[background-color,color] duration-[140ms] hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none"
-              [attr.aria-expanded]="contextExpanded()"
-              [attr.aria-label]="contextExpanded() ? 'Hide details' : 'Show full context'"
-              [title]="contextExpanded() ? 'Hide details' : 'Show full context'"
-              (click)="toggleContextExpanded()"
-            >
-              <ng-icon
-                name="lucideChevronDown"
-                size="12"
-                class="transition-transform duration-[180ms] group-data-[expanded]/ctx:rotate-180"
-              />
-            </button>
-          </div>
-
-          @if (contextExpanded() && worktreeContext(); as context) {
-            <div
-              class="flex flex-col gap-[0.65rem] px-[0.85rem] pt-3 pb-[0.85rem] border-t border-dashed border-border/80 mt-[0.25rem]"
-            >
-              @if (context.contextSentence) {
-                <p class="m-0 text-[0.82rem] leading-[1.5] text-foreground">
-                  {{ context.contextSentence }}
-                </p>
-              } @else if (context.errorMessage) {
-                <p
-                  class="m-0 text-[0.78rem] text-destructive px-[0.55rem] py-[0.35rem] border border-destructive/30 rounded-lg bg-destructive/8"
-                >
-                  {{ context.errorMessage }}
-                </p>
-              } @else if (context.generationStatus === 'failed') {
-                <p class="m-0 text-[0.82rem] leading-[1.5] text-muted-foreground">
-                  Context generation failed.
-                </p>
-              } @else if (context.generationStatus === 'generating') {
-                <p class="m-0 text-[0.82rem] leading-[1.5] text-muted-foreground">
-                  Generating a one-line summary…
-                </p>
-              } @else if (!context.hasChanges) {
-                <p class="m-0 text-[0.82rem] leading-[1.5] text-muted-foreground">
-                  No branch-specific changes compared to
-                  <code
-                    class="font-mono text-[0.78rem] px-[0.3rem] py-[0.05rem] rounded-[0.3rem] bg-foreground/6"
-                    >{{ context.rootRef || 'auto' }}</code
+                <span class="flex flex-row items-baseline gap-2 min-w-0 flex-1">
+                  <span
+                    class="text-[0.72rem] font-semibold tracking-[0.02em] text-muted-foreground shrink-0 [text-decoration-thickness:1.5px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_70%,transparent)]"
+                    [class.line-through]="
+                      (!firstPromptContextEnabled() && canToggleContextEnabled()) ||
+                      (promptIsCommand() && canToggleContextEnabled())
+                    "
+                    >{{ contextPinLabel() }}</span
                   >
-                  yet.
-                </p>
-              }
+                  <span
+                    class="text-[0.8rem] whitespace-nowrap overflow-hidden text-ellipsis min-w-0 flex-1 [text-decoration-thickness:1.5px] [text-decoration-color:color-mix(in_oklab,var(--muted-foreground)_70%,transparent)] group-data-[expanded]/ctx:hidden transition-colors duration-[140ms] group-data-[ctx-mode=disabled]/ctx:text-muted-foreground group-data-[ctx-mode=enabled]/ctx:text-foreground text-foreground"
+                    [class.line-through]="
+                      (!firstPromptContextEnabled() && canToggleContextEnabled()) ||
+                      (promptIsCommand() && canToggleContextEnabled())
+                    "
+                    >{{ contextPinSummary() }}</span
+                  >
+                </span>
 
-              @if (context.contextSentence && context.errorMessage) {
-                <p
-                  class="m-0 text-[0.78rem] text-destructive px-[0.55rem] py-[0.35rem] border border-destructive/30 rounded-lg bg-destructive/8"
-                >
-                  {{ context.errorMessage }}
-                </p>
-              }
+                @if (contextPinBadge(); as badge) {
+                  <span
+                    [attr.data-variant]="badge.variant"
+                    class="inline-flex items-center px-[0.45rem] py-[0.1rem] rounded-full text-[0.65rem] font-semibold tracking-[0.03em] shrink-0 border border-transparent data-[variant=accent]:bg-primary/14 data-[variant=accent]:text-[color-mix(in_oklab,var(--primary)_85%,var(--foreground))] data-[variant=accent]:border-primary/25 data-[variant=muted]:bg-foreground/6 data-[variant=muted]:text-muted-foreground data-[variant=warn]:bg-destructive/14 data-[variant=warn]:text-destructive data-[variant=warn]:border-destructive/28"
+                    >{{ badge.text }}</span
+                  >
+                }
+              </button>
 
-              <dl class="m-0 flex flex-wrap gap-x-4 gap-y-[0.35rem]">
-                <div class="flex items-center gap-2 text-[0.74rem]">
-                  <dt class="text-muted-foreground font-medium">Comparing against</dt>
-                  <dd class="m-0">
-                    @if (worktreeRootEditorOpen()) {
-                      <form
-                        class="inline-flex items-center gap-[0.3rem]"
-                        (submit)="$event.preventDefault(); saveRootRef()"
-                      >
-                        <input
-                          class="h-7 px-[0.55rem] rounded-[0.45rem] border border-input bg-background text-foreground font-[inherit] text-[0.76rem] min-w-40 focus:outline-none focus:border-primary/60 focus:ring-3 focus:ring-primary/18"
-                          [value]="draftRootRef()"
-                          placeholder="origin/main"
-                          autofocus
-                          (input)="onRootRefInput($any($event.target).value)"
-                        />
-                        <button
-                          z-button
-                          zType="default"
-                          zSize="xs"
-                          type="submit"
-                          [zDisabled]="worktreeContextBusy()"
+              <button
+                type="button"
+                class="inline-flex items-center justify-center px-[0.55rem] border-0 border-l border-border/80 bg-transparent text-muted-foreground cursor-pointer transition-[background-color,color] duration-[140ms] hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none"
+                [attr.aria-expanded]="contextExpanded()"
+                [attr.aria-label]="contextExpanded() ? 'Hide details' : 'Show full context'"
+                [title]="contextExpanded() ? 'Hide details' : 'Show full context'"
+                (click)="toggleContextExpanded()"
+              >
+                <ng-icon
+                  name="lucideChevronDown"
+                  size="12"
+                  class="transition-transform duration-[180ms] group-data-[expanded]/ctx:rotate-180"
+                />
+              </button>
+            </div>
+
+            @if (contextExpanded() && worktreeContext(); as context) {
+              <div
+                class="flex flex-col gap-[0.65rem] px-[0.85rem] pt-3 pb-[0.85rem] border-t border-dashed border-border/80 mt-[0.25rem]"
+              >
+                @if (context.contextSentence) {
+                  <p class="m-0 text-[0.82rem] leading-[1.5] text-foreground">
+                    {{ context.contextSentence }}
+                  </p>
+                } @else if (context.errorMessage) {
+                  <p
+                    class="m-0 text-[0.78rem] text-destructive px-[0.55rem] py-[0.35rem] border border-destructive/30 rounded-lg bg-destructive/8"
+                  >
+                    {{ context.errorMessage }}
+                  </p>
+                } @else if (context.generationStatus === 'failed') {
+                  <p class="m-0 text-[0.82rem] leading-[1.5] text-muted-foreground">
+                    Context generation failed.
+                  </p>
+                } @else if (context.generationStatus === 'generating') {
+                  <p class="m-0 text-[0.82rem] leading-[1.5] text-muted-foreground">
+                    Generating a one-line summary…
+                  </p>
+                } @else if (!context.hasChanges) {
+                  <p class="m-0 text-[0.82rem] leading-[1.5] text-muted-foreground">
+                    No branch-specific changes compared to
+                    <code
+                      class="font-mono text-[0.78rem] px-[0.3rem] py-[0.05rem] rounded-[0.3rem] bg-foreground/6"
+                      >{{ context.rootRef || 'auto' }}</code
+                    >
+                    yet.
+                  </p>
+                }
+
+                @if (context.contextSentence && context.errorMessage) {
+                  <p
+                    class="m-0 text-[0.78rem] text-destructive px-[0.55rem] py-[0.35rem] border border-destructive/30 rounded-lg bg-destructive/8"
+                  >
+                    {{ context.errorMessage }}
+                  </p>
+                }
+
+                <dl class="m-0 flex flex-wrap gap-x-4 gap-y-[0.35rem]">
+                  <div class="flex items-center gap-2 text-[0.74rem]">
+                    <dt class="text-muted-foreground font-medium">Comparing against</dt>
+                    <dd class="m-0">
+                      @if (worktreeRootEditorOpen()) {
+                        <form
+                          class="inline-flex items-center gap-[0.3rem]"
+                          (submit)="$event.preventDefault(); saveRootRef()"
                         >
-                          Save
-                        </button>
+                          <input
+                            class="h-7 px-[0.55rem] rounded-[0.45rem] border border-input bg-background text-foreground font-[inherit] text-[0.76rem] min-w-40 focus:outline-none focus:border-primary/60 focus:ring-3 focus:ring-primary/18"
+                            [value]="draftRootRef()"
+                            placeholder="origin/main"
+                            autofocus
+                            (input)="onRootRefInput($any($event.target).value)"
+                          />
+                          <button
+                            z-button
+                            zType="default"
+                            zSize="xs"
+                            type="submit"
+                            [zDisabled]="worktreeContextBusy()"
+                          >
+                            Save
+                          </button>
+                          <button
+                            z-button
+                            zType="ghost"
+                            zSize="xs"
+                            type="button"
+                            [zDisabled]="worktreeContextBusy()"
+                            (click)="cancelRootRefEditor()"
+                          >
+                            Cancel
+                          </button>
+                        </form>
+                      } @else {
                         <button
                           z-button
-                          zType="ghost"
+                          zType="outline"
                           zSize="xs"
                           type="button"
                           [zDisabled]="worktreeContextBusy()"
-                          (click)="cancelRootRefEditor()"
+                          (click)="openRootRefEditor()"
+                          title="Change comparison root"
                         >
-                          Cancel
+                          <code class="font-mono text-[0.74rem]">{{
+                            context.rootRef || 'auto'
+                          }}</code>
+                          <span class="text-muted-foreground text-[0.68rem]">Change</span>
                         </button>
-                      </form>
+                      }
+                    </dd>
+                  </div>
+                </dl>
+
+                <div class="flex flex-wrap gap-[0.4rem] justify-end">
+                  <button
+                    z-button
+                    zType="ghost"
+                    zSize="xs"
+                    type="button"
+                    [zDisabled]="worktreeContextBusy()"
+                    (click)="recomputeWorktreeContext()"
+                  >
+                    @if (worktreeContextBusy()) {
+                      <span
+                        class="size-[0.7rem] rounded-full border-[1.5px] border-primary/40 border-t-primary animate-spin [animation-duration:650ms]"
+                      ></span>
                     } @else {
-                      <button
-                        z-button
-                        zType="outline"
-                        zSize="xs"
-                        type="button"
-                        [zDisabled]="worktreeContextBusy()"
-                        (click)="openRootRefEditor()"
-                        title="Change comparison root"
-                      >
-                        <code class="font-mono text-[0.74rem]">{{
-                          context.rootRef || 'auto'
-                        }}</code>
-                        <span class="text-muted-foreground text-[0.68rem]">Change</span>
-                      </button>
+                      <ng-icon name="lucideRefreshCw" size="12" />
                     }
-                  </dd>
+                    Recompute
+                  </button>
                 </div>
-              </dl>
-
-              <div class="flex flex-wrap gap-[0.4rem] justify-end">
-                <button
-                  z-button
-                  zType="ghost"
-                  zSize="xs"
-                  type="button"
-                  [zDisabled]="worktreeContextBusy()"
-                  (click)="recomputeWorktreeContext()"
-                >
-                  @if (worktreeContextBusy()) {
-                    <span
-                      class="size-[0.7rem] rounded-full border-[1.5px] border-primary/40 border-t-primary animate-spin [animation-duration:650ms]"
-                    ></span>
-                  } @else {
-                    <ng-icon name="lucideRefreshCw" size="12" />
-                  }
-                  Recompute
-                </button>
               </div>
-            </div>
-          }
-        </div>
-      }
-
-      @if (!isTranscriptReadOnly()) {
-        @if (pendingUserInputRequest(); as req) {
-          <cw-user-input
-            class="block max-w-[52rem] w-full mx-auto"
-            [request]="req"
-            (answer)="answerUserInput($event)"
-          />
+            }
+          </div>
         }
-      }
 
-      @if (!isTranscriptReadOnly()) {
-        <div class="max-w-[52rem] w-full mx-auto flex flex-col">
-          @if (pendingPermissionRequest(); as req) {
-            <cw-permission-inline
-              class="cw-compose-shell__permission block w-full"
+        @if (!isTranscriptReadOnly()) {
+          @if (pendingUserInputRequest(); as req) {
+            <cw-user-input
+              class="block max-w-[52rem] w-full mx-auto"
               [request]="req"
-              [appearance]="'dock'"
-              [planReviewAvailable]="!!planReviewForPermission(req)"
-              (approve)="approvePermission($event)"
-              (deny)="denyPermission($event)"
-              (openPlanReview)="openPermissionPlanReview(req)"
+              (answer)="answerUserInput($event)"
             />
           }
+        }
 
-          <cw-composer
-            [value]="prompt()"
-            [submitting]="submitting()"
-            [running]="runPhase() === 'running'"
-            [canInterrupt]="canInterrupt()"
-            [blockedByPermission]="!!pendingPermissionRequest()"
-            [sendDisabledReason]="composerPermissionDisabledReason()"
-            [attachedPanelOpen]="!!pendingPermissionRequest()"
-            [placeholderText]="composerPlaceholder()"
-            [allowImages]="currentProviderSupportsImages()"
-            [autocompleteItems]="autocompleteItems()"
-            [pendingPrompts]="pendingPrompts()"
-            [diffMentions]="pendingDiffMentions()"
-            [imageAttachments]="composerImages()"
-            [disconnected]="hydrated() && !wsConnected()"
-            (valueChange)="onPromptChange($event)"
-            (imageAttachmentsChange)="onComposerImagesChange($event)"
-            (send)="submitPrompt($event)"
-            (interrupt)="interrupt()"
-            (cancelPending)="cancelPendingPrompt($event)"
-            (removeDiffMention)="removeDiffMention($event)"
+        @if (!isTranscriptReadOnly()) {
+          <div class="max-w-[52rem] w-full mx-auto flex flex-col">
+            @if (pendingPermissionRequest(); as req) {
+              <cw-permission-inline
+                class="cw-compose-shell__permission block w-full"
+                [request]="req"
+                [appearance]="'dock'"
+                [planReviewAvailable]="!!planReviewForPermission(req)"
+                (approve)="approvePermission($event)"
+                (deny)="denyPermission($event)"
+                (openPlanReview)="openPermissionPlanReview(req)"
+              />
+            }
+
+            <cw-composer
+              [value]="prompt()"
+              [submitting]="submitting()"
+              [running]="runPhase() === 'running'"
+              [canInterrupt]="canInterrupt()"
+              [blockedByPermission]="!!pendingPermissionRequest()"
+              [sendDisabledReason]="composerPermissionDisabledReason()"
+              [attachedPanelOpen]="!!pendingPermissionRequest()"
+              [placeholderText]="composerPlaceholder()"
+              [allowImages]="currentProviderSupportsImages()"
+              [autocompleteItems]="autocompleteItems()"
+              [pendingPrompts]="pendingPrompts()"
+              [diffMentions]="pendingDiffMentions()"
+              [imageAttachments]="composerImages()"
+              [disconnected]="hydrated() && !wsConnected()"
+              (valueChange)="onPromptChange($event)"
+              (imageAttachmentsChange)="onComposerImagesChange($event)"
+              (send)="submitPrompt($event)"
+              (interrupt)="interrupt()"
+              (cancelPending)="cancelPendingPrompt($event)"
+              (removeDiffMention)="removeDiffMention($event)"
+            />
+          </div>
+
+          <cw-status-bar
+            class="block max-w-[52rem] w-full mx-auto"
+            [phase]="runPhase()"
+            [providers]="providers()"
+            [currentProvider]="currentProvider()"
+            [selectedModel]="selectedModel()"
+            [reasoningEffort]="reasoningEffort()"
+            [fastMode]="fastMode()"
+            [availableModels]="availableModels()"
+            [contextUsage]="contextUsage()"
+            [tasks]="tasks()"
+            [permissionMode]="permissionMode()"
+            [planMode]="planMode()"
+            [mcpSnapshot]="mcpSnapshot()"
+            [providerLocked]="runtimeStarted()"
+            (providerChange)="onProviderChange($event)"
+            (modelChange)="onModelChange($event)"
+            (reasoningEffortChange)="onReasoningEffortChange($event)"
+            (fastModeChange)="onFastModeChange($event)"
+            (permissionModeChange)="onPermissionModeChange($event)"
+            (planModeChange)="onPlanModeChange($event)"
+            (openTerminal)="openTerminal()"
+            (openTasks)="tasksDrawerOpen.set(true)"
+            (openMcp)="openMcpDrawer()"
+            (export)="openExportDialog()"
           />
-        </div>
-
-        <cw-status-bar
-          class="block max-w-[52rem] w-full mx-auto"
-          [phase]="runPhase()"
-          [providers]="providers()"
-          [currentProvider]="currentProvider()"
-          [selectedModel]="selectedModel()"
-          [reasoningEffort]="reasoningEffort()"
-          [fastMode]="fastMode()"
-          [availableModels]="availableModels()"
-          [contextUsage]="contextUsage()"
-          [tasks]="tasks()"
-          [permissionMode]="permissionMode()"
-          [planMode]="planMode()"
-          [mcpSnapshot]="mcpSnapshot()"
-          [providerLocked]="runtimeStarted()"
-          (providerChange)="onProviderChange($event)"
-          (modelChange)="onModelChange($event)"
-          (reasoningEffortChange)="onReasoningEffortChange($event)"
-          (fastModeChange)="onFastModeChange($event)"
-          (permissionModeChange)="onPermissionModeChange($event)"
-          (planModeChange)="onPlanModeChange($event)"
-          (openTerminal)="openTerminal()"
-          (openTasks)="tasksDrawerOpen.set(true)"
-          (openMcp)="openMcpDrawer()"
-        />
-      }
-    </div>
+        }
+      </div>
     }
   }
 
@@ -774,5 +775,12 @@
     [hookEvents]="recentHookEvents()"
     (selectAgent)="selectAgentInspectorAgent($event)"
     (close)="closeAgentInspector()"
+  />
+
+  <cw-export-dialog
+    [open]="exportDialogOpen()"
+    [busy]="exportBusy()"
+    (close)="exportDialogOpen.set(false)"
+    (copy)="onExportCopy($event)"
   />
 </div>

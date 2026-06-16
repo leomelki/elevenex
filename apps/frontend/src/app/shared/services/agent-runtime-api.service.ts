@@ -31,7 +31,12 @@ export class AgentRuntimeApiService {
   }
 
   startLogin(
-    body: { mode: AgentLoginMode; apiKey?: string; oauthProvider?: string; apiKeyProvider?: string },
+    body: {
+      mode: AgentLoginMode;
+      apiKey?: string;
+      oauthProvider?: string;
+      apiKeyProvider?: string;
+    },
     provider = this.currentProvider(),
   ) {
     return this.http.post<AgentLoginStartResult>(
@@ -56,6 +61,25 @@ export class AgentRuntimeApiService {
 
   getHistory(sessionId: number, provider = this.currentProvider()) {
     return this.http.get<AgentTranscriptItem[]>(`${this.basePath(sessionId, provider)}/history`);
+  }
+
+  exportConversation(
+    sessionId: number,
+    opts: {
+      precision: 'full' | 'medium' | 'small';
+      includeChanges: boolean;
+      includeIds: boolean;
+    },
+    provider = this.currentProvider(),
+  ) {
+    const params =
+      `precision=${opts.precision}` +
+      `&includeChanges=${opts.includeChanges ? 1 : 0}` +
+      `&includeIds=${opts.includeIds ? 1 : 0}`;
+    // Markdown text, not JSON — request and return the raw string.
+    return this.http.get(`${this.basePath(sessionId, provider)}/export?${params}`, {
+      responseType: 'text',
+    });
   }
 
   getRuntimeState(sessionId: number, provider = this.currentProvider()) {
@@ -115,10 +139,9 @@ export class AgentRuntimeApiService {
   }
 
   setPlanMode(sessionId: number, enabled: boolean, provider = this.currentProvider()) {
-    return this.http.post<AgentRuntimeState>(
-      `${this.basePath(sessionId, provider)}/plan-mode`,
-      { enabled },
-    );
+    return this.http.post<AgentRuntimeState>(`${this.basePath(sessionId, provider)}/plan-mode`, {
+      enabled,
+    });
   }
 
   setReasoningEffort(sessionId: number, effort: string | null, provider = this.currentProvider()) {
@@ -129,10 +152,9 @@ export class AgentRuntimeApiService {
   }
 
   setFastMode(sessionId: number, enabled: boolean, provider = this.currentProvider()) {
-    return this.http.post<AgentRuntimeState>(
-      `${this.basePath(sessionId, provider)}/fast-mode`,
-      { enabled },
-    );
+    return this.http.post<AgentRuntimeState>(`${this.basePath(sessionId, provider)}/fast-mode`, {
+      enabled,
+    });
   }
 
   openTerminalFallback(sessionId: number, provider = this.currentProvider()) {

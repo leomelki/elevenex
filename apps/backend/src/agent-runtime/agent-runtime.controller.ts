@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Header,
   Inject,
   Get,
   Param,
@@ -11,17 +12,15 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
+import { ConversationExportService } from './conversation-export.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
-import type {
-  AgentLoginMode,
-  AgentPermissionMode,
-  AgentReasoningEffort,
-} from './agent-runtime.types.js';
+import type { AgentLoginMode } from './agent-runtime.types.js';
 
 @Controller()
 export class AgentRuntimeController {
   constructor(
     private readonly registry: AgentRuntimeRegistryService,
+    private readonly exportService: ConversationExportService,
     @Inject(forwardRef(() => SessionsService))
     private readonly sessionsService: SessionsService,
   ) {}
@@ -80,6 +79,25 @@ export class AgentRuntimeController {
     @Param('provider') provider: string,
   ) {
     return this.registry.getProvider(provider).getHistory(sessionId);
+  }
+
+  @Get('sessions/:sessionId/agents/:provider/export')
+  @Header('Content-Type', 'text/markdown; charset=utf-8')
+  exportConversation(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Query('precision') precision?: string,
+    @Query('includeChanges') includeChanges?: string,
+    @Query('includeIds') includeIds?: string,
+  ): Promise<string> {
+    const flag = (value?: string) =>
+      value == null || value === '1' || value === 'true'; // default on
+    return this.exportService.export(sessionId, provider, {
+      precision:
+        precision === 'full' || precision === 'small' ? precision : 'medium',
+      includeChanges: flag(includeChanges),
+      includeIds: flag(includeIds),
+    });
   }
 
   @Get('sessions/:sessionId/agents/:provider/runtime-state')
