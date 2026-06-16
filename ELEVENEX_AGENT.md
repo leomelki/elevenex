@@ -60,8 +60,8 @@ Selectable per mission (default = Review destructive):
 - **Projects** — create / archive / list; add & remove repos; discover repos on disk by name.
 - **Worktrees** — create / link / **steal** (reads the pool's Available/Yours/Others/Unusable
   categorization to decide and escalate).
-- **Sessions** — create, start, **trigger with prompt**, fork, archive, reset, switch
-  provider, interrupt.
+- **Sessions** — create, start, **trigger with prompt**, fork, **ask** (read-only hidden fork,
+  see below), archive, reset, switch provider, interrupt.
 - **Drive inner sessions** — send follow-up prompts, answer or escalate permission requests,
   inject worktree context, feed diffs back in.
 - **Git / GitHub** — status, commit (suggested message), push, get/comment/review PRs, read
@@ -75,6 +75,90 @@ Selectable per mission (default = Review destructive):
 - Git change-review diffs, conflicts.
 - PR status, checks, conversation.
 - Worktree context (AI codebase summary), action output.
+
+## Reading sessions (transcripts)
+
+Wraps the existing export (`GET /sessions/:id/agents/:provider/export` — precision
+`full|medium|small`, `includeIds`, `includeChanges`, markdown with `{#id}` per message) but
+adds running-awareness, incremental delta, and id-targeted zoom so the agent can inspect long
+histories cheaply. This is how the agent "sees what a session has done".
+
+**Tools**
+
+- **`session_status(sessionId)`** — cheap poll, no transcript. Returns execution state
+  (`idle | running | requires_action | stale`), provider, branch, turn count, last-activity
+  time, aggregate change stats (files, +/−), and whether new items exist since the agent last
+  read it. Use this to decide *whether/when* to pull a transcript instead of re-reading one.
+
+- **`read_session(sessionId, { detail, since, ids, includeChanges })`** — the workhorse.
+  - `detail`: `low | medium | full` → export precision `small | medium | full`. Default
+    `medium`.
+  - **Running guard** — if the session is actively running and *not stale*, returns status
+    only (`{ running: true, … }`), never a transcript of an in-flight turn. Only
+    idle / stopped / stale-running sessions are transcribed; stale-running (the `running`
+    flag set but no activity past the threshold — likely a dead process) renders but is
+    flagged so the agent knows the capture may be partial.
+  - **Incremental by default** — returns only items added since the agent's last read of this
+    session. Cursor = last message id, remembered per MCP connection and also returned so
+    stateless clients can pass it back. A second call on an unchanged session ⇒ "no new items".
+    Pass `since: 'start'` to force a full re-read.
+  - **IDs always on** (`{#id}` per message) — cheap, and they power both the cursor and zoom.
+  - `ids: string[]` — **zoom**: return just those messages at `full` detail (tool
+    input/output + change hunks) instead of the whole full transcript. This is the optimized
+    form of "grep the full transcript by id": pull a `low`/`medium` overview first, then zoom
+    only the steps that matter.
+  - `includeChanges`: default true; per-step file changes (+/−, hunks at `full`).
+
+**Token discipline (the defaults encode this)**
+- `medium` + delta + ids-on is the default read.
+- poll with `session_status` (tiny) rather than re-reading transcripts.
+- zoom by id rather than dumping `full`.
+- running sessions never spend tokens on a throwaway transcript.
+
+**Backend work to add (export today is full-only, no guards)**
+- export: accept `sinceMessageId` (slice items; render the partial turn as a continuation)
+  and an `ids` filter.
+- export: consult the agent-runtime execution state (`idle | running | requires_action`) +
+  last-activity timestamp to apply the running/stale guard; staleness threshold configurable.
+- add a lightweight `session_status` path (state + counts + change summary, no rendering).
+- MCP server: per-connection cursor memory keyed by sessionId, with `since: 'start'` reset.
+
+## Asking a session a question (ephemeral read-only fork)
+
+The agent can *interrogate* a session without touching it: "did you handle the timeout case?",
+"why approach X?", "what's left to do?". This forks the session into a hidden, read-only
+branch that inherits the parent's full conversation + worktree, runs the question, and returns
+the final answer. Reuses the existing **plan-chat-fork** machinery (hidden surface + forced
+plan mode + write-blocking guard prompt + anchor + reuse-by-id).
+
+**Tool**
+
+- **`ask_session(sessionId, question, { forkId?, provider? })`**
+  - Forks the parent at its latest point into a **hidden fork** (new surface `agent_query` —
+    not in the normal sidebar; visible only in the elevenex agent UI, grouped under the
+    originating session/mission so you can audit what was asked and answered).
+  - The fork runs in **plan / read-only mode** (same mechanism plan-chat uses:
+    `setPlanMode(true)` ⇒ effective permission mode `plan` ⇒ no writes/edits), and the
+    question is wrapped in the write-blocking guard prompt — it answers, it does not
+    implement or continue the task.
+  - **Returns the final assistant message synchronously** (await `executionState: idle`,
+    with timeout). The agent gets just the answer — not a transcript — keeping it cheap.
+  - **Follow-ups:** pass `forkId` to continue the same hidden side-conversation instead of
+    re-forking, so the agent can interrogate iteratively (reuse-by-id, like plan-chat).
+  - Because the fork is a real (hidden) session, `read_session(forkId)` works on it too if
+    the agent wants the full reasoning behind an answer.
+  - **Parent-must-be-idle guard:** forking a running session captures an in-flight context;
+    `ask_session` reuses the running/stale guard and refuses (or waits) if the parent is
+    actively running.
+
+**Backend work to add**
+- New `surface` value `agent_query` — hidden from the nav tree (like `embedded_plan_chat`),
+  listed via an agent-panel query.
+- Synchronous ask path: generalize plan-chat-forks to an `agent_query` variant that creates/
+  reuses a hidden plan-mode fork, submits the guarded question, **awaits run completion**, and
+  returns the final assistant message (today's `submitQuestion` is fire-and-forget; add an
+  await-until-idle variant with timeout + cancellation).
+- Apply the parent-idle guard before forking.
 
 ## Flagship use cases
 
