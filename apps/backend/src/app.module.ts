@@ -28,6 +28,7 @@ import { WorktreeContextModule } from './worktree-context/worktree-context.modul
 import { BackendLogsModule } from './backend-logs/backend-logs.module.js';
 import { ServerConnectionModule } from './server-connection/server-connection.module.js';
 import { SettingsModule } from './settings/settings.module.js';
+import { ElevenexMcpModule } from './mcp/elevenex-mcp.module.js';
 import { ShellEnvService } from './config/shell-env.service.js';
 
 @Module({
@@ -59,6 +60,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     BackendLogsModule,
     ServerConnectionModule,
     SettingsModule,
+    ElevenexMcpModule,
   ],
   controllers: [AppController],
   providers: [AppService, ShellEnvService],

@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.131",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
@@ -43,6 +44,7 @@
     "smol-toml": "^1.6.1",
     "socket.io": "^4.8.3",
     "ws": "^8.20.0",
+    "zod": "^3.25.76",
     "chokidar": "^5.0.0",
     "vscode-web": "^1.91.1"
   },

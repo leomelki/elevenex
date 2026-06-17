@@ -15,6 +15,11 @@ export const sessions = sqliteTable('sessions', {
   name: text('name'),
   surface: text('surface').notNull().default('session'),
   status: text('status').notNull().default('created'),
+  // Bearer token minted for "agent" sessions (the meta-agent that operates
+  // elevenex). Injected as ELEVENEX_AGENT_TOKEN into the inner process env and
+  // presented by the Elevenex MCP server to resolve this session's identity so
+  // human-channel tools route to its panel. Null for ordinary coding sessions.
+  mcpAgentToken: text('mcp_agent_token'),
   activeAgentProvider: text('active_agent_provider')
     .notNull()
     .default('claude'),

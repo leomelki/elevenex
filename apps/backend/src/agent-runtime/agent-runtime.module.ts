@@ -54,6 +54,7 @@ import {
   exports: [
     AGENT_RUNTIME_CLEANUP_SERVICE,
     AgentRuntimeRegistryService,
+    ConversationExportService,
     AgentRuntimeGateway,
     ClaudeRuntimeGateway,
   ],

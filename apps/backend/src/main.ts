@@ -22,6 +22,7 @@ import { AgentRuntimeGateway } from './agent-runtime/agent-runtime.gateway.js';
 import { BackendLogsGateway } from './backend-logs/backend-logs.gateway.js';
 import { ServerConnectionGateway } from './server-connection/server-connection.gateway.js';
 import { ClaudeRuntimeService } from './claude-runtime/claude-runtime.service.js';
+import { ElevenexMcpHttpTransport } from './mcp/transport/elevenex-mcp-http.transport.js';
 import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
 import { join } from 'path';
 import * as http from 'http';
@@ -279,6 +280,14 @@ async function bootstrap() {
     }
     cookieProxy.handleClose(req, res, upstreamPort);
   });
+  // Register the Elevenex MCP server BEFORE body-parser so the Streamable-HTTP
+  // transport can read the raw request stream itself. One server+transport per
+  // Mcp-Session-Id; GET is the SSE notify channel, DELETE tears a session down.
+  const elevenexMcpTransport = app.get(ElevenexMcpHttpTransport);
+  app.use('/api/mcp', (req: any, res: any) => {
+    void elevenexMcpTransport.handle(req, res);
+  });
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
