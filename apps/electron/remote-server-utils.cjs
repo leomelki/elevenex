@@ -613,11 +613,9 @@ function buildRemoteWaitForReadyCommand({ remoteRoot, remotePort, expectedVersio
   ].join('\n');
 }
 
-function getSuggestedInstallCommands(osRelease, platform = 'linux') {
-  if (platform === 'win32') {
-    return ['Install Claude Code for Windows and make sure `claude` is available in PATH.'];
-  }
-
+// Platform-aware `tmux` install commands. tmux is only required on POSIX
+// remotes (the Windows runtime uses a pid file instead of a tmux session).
+function getTmuxInstallCommands(osRelease, platform = 'linux') {
   if (platform === 'darwin') {
     return ['brew install tmux'];
   }
@@ -642,7 +640,41 @@ function getSuggestedInstallCommands(osRelease, platform = 'linux') {
     return ['sudo pacman -Sy tmux'];
   }
 
-  return ['Install tmux using your distro package manager.'];
+  return ['# Install tmux with your distro package manager'];
+}
+
+// The native Claude Code installer drops `claude` into ~/.local/bin, which the
+// backend's findBinary() already searches — so this is the install path that
+// matches how the runtime later resolves the binary.
+function getClaudeInstallCommands(platform = 'linux') {
+  if (platform === 'win32') {
+    return ['irm https://claude.ai/install.ps1 | iex'];
+  }
+  return ['curl -fsSL https://claude.ai/install.sh | bash'];
+}
+
+// Build install guidance keyed to each *missing* dependency, so the UI can show
+// commands next to the dependency they actually fix instead of one ambiguous
+// list. Returns an entry per missing dependency in a stable order.
+function getInstallGuidance(osRelease, platform = 'linux', missingDependencies = []) {
+  const missing = new Set(missingDependencies);
+  const guidance = [];
+
+  if (missing.has('claude')) {
+    guidance.push({
+      dependency: 'claude',
+      commands: getClaudeInstallCommands(platform),
+    });
+  }
+
+  if (missing.has('tmux')) {
+    guidance.push({
+      dependency: 'tmux',
+      commands: getTmuxInstallCommands(osRelease, platform),
+    });
+  }
+
+  return guidance;
 }
 
 module.exports = {
@@ -657,7 +689,7 @@ module.exports = {
   buildRemotePreflightScript,
   buildRemoteStartCommand,
   buildRemoteWaitForReadyCommand,
-  getSuggestedInstallCommands,
+  getInstallGuidance,
   normalizeRemoteArch,
   normalizeRemotePlatform,
   parseOsRelease,

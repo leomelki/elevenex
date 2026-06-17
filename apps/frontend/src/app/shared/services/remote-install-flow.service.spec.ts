@@ -44,7 +44,7 @@ describe('RemoteInstallFlowService', () => {
       localPort: null,
       sessionId: 77,
       osRelease: { ID: 'ubuntu' },
-      suggestedCommands: ['sudo apt install -y tmux'],
+      installGuidance: [{ dependency: 'tmux', commands: ['sudo apt install -y tmux'] }],
       version: 'abc123',
     });
     remoteServerApi.recheck.mockResolvedValue({
@@ -58,7 +58,7 @@ describe('RemoteInstallFlowService', () => {
       localPort: 4310,
       sessionId: null,
       osRelease: { ID: 'ubuntu' },
-      suggestedCommands: [],
+      installGuidance: [],
       version: 'abc123',
     });
 
@@ -100,7 +100,7 @@ describe('RemoteInstallFlowService', () => {
         localPort: null,
         sessionId: 77,
         osRelease: { ID: 'ubuntu' },
-        suggestedCommands: ['sudo apt install -y tmux'],
+        installGuidance: [{ dependency: 'tmux', commands: ['sudo apt install -y tmux'] }],
         version: 'abc123',
       })
       .mockResolvedValueOnce({
@@ -114,7 +114,7 @@ describe('RemoteInstallFlowService', () => {
         localPort: 4310,
         sessionId: null,
         osRelease: { ID: 'ubuntu' },
-        suggestedCommands: [],
+        installGuidance: [],
         version: 'abc123',
       });
 

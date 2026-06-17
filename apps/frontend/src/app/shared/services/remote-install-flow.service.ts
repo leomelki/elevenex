@@ -75,7 +75,7 @@ export class RemoteInstallFlowService {
         localPort: null,
         sessionId: null,
         osRelease: {},
-        suggestedCommands: [],
+        installGuidance: [],
         version: null,
       };
     }

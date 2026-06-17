@@ -464,7 +464,7 @@ describe('App', () => {
         localPort: null,
         sessionId: 5,
         osRelease: { ID: 'ubuntu' },
-        suggestedCommands: ['sudo apt install -y tmux'],
+        installGuidance: [{ dependency: 'tmux', commands: ['sudo apt install -y tmux'] }],
         version: 'abc123',
       },
       terminalOutput: [],

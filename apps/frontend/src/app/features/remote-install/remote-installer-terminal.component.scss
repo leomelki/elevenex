@@ -1,0 +1,80 @@
+@import '@xterm/xterm/css/xterm.css';
+
+:host {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+:host ::ng-deep .xterm {
+  padding: 8px;
+}
+
+:host ::ng-deep .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+:host ::ng-deep .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:host ::ng-deep .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #414868;
+  border-radius: 4px;
+}
+
+:host ::ng-deep .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #565f89;
+}
+
+:host ::ng-deep .xterm-char-measure-element {
+  visibility: hidden !important;
+}
+
+:host ::ng-deep .xterm-helpers {
+  position: absolute !important;
+  top: 0 !important;
+  z-index: 5 !important;
+}
+
+:host ::ng-deep .xterm-helper-textarea {
+  position: absolute !important;
+  left: -9999em !important;
+  top: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  opacity: 0 !important;
+  border: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  z-index: -5 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  resize: none !important;
+}
+
+:host ::ng-deep .xterm-accessibility,
+:host ::ng-deep .xterm-accessibility-tree,
+:host ::ng-deep .xterm-message {
+  position: absolute !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+:host ::ng-deep .live-region {
+  position: absolute !important;
+  left: -9999px !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+}
+
+:host ::ng-deep .composition-view {
+  display: none !important;
+}
+
+:host ::ng-deep .xterm-decoration-top,
+:host ::ng-deep .xterm-decoration-overview-ruler {
+  display: none !important;
+}

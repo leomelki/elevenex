@@ -18,7 +18,7 @@ const {
   buildWindowsRemotePreflightScript,
   buildWindowsRemoteStartCommand,
   buildWindowsRemoteWaitForReadyCommand,
-  getSuggestedInstallCommands,
+  getInstallGuidance,
   parseRemotePreflight,
   resolveRemoteRuntimeTarget,
   shellPathQuote,
@@ -1779,9 +1779,10 @@ function toRemoteEnsureReadyResult(forward, preflight, overrides = {}) {
     ? overrides.bundledVersion
     : getRemoteRuntimeVersion();
   const installStatus = overrides.installStatus || getRemoteInstallStatus(preflight, bundledVersion);
-  const suggestedCommands = getSuggestedInstallCommands(
+  const installGuidance = getInstallGuidance(
     preflight.osRelease || {},
     preflight.remotePlatform,
+    preflight.missingDependencies || [],
   );
   return {
     status: overrides.status || 'error',
@@ -1794,7 +1795,7 @@ function toRemoteEnsureReadyResult(forward, preflight, overrides = {}) {
     localPort: overrides.localPort ?? null,
     sessionId: overrides.sessionId ?? null,
     osRelease: preflight.osRelease || {},
-    suggestedCommands,
+    installGuidance,
     version: bundledVersion || null,
   };
 }
@@ -3801,7 +3802,7 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (_event, payload) =>
       localPort: null,
       sessionId: null,
       osRelease: {},
-      suggestedCommands: [],
+      installGuidance: [],
       version: getRemoteRuntimeVersion(),
     };
   }
@@ -3837,7 +3838,7 @@ ipcMain.handle('elevenex-remote-server:recheck', async (_event, payload) => {
       localPort: null,
       sessionId,
       osRelease: {},
-      suggestedCommands: [],
+      installGuidance: [],
       version: getRemoteRuntimeVersion(),
     };
   }

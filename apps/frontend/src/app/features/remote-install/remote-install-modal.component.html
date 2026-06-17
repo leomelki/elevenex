@@ -1,21 +1,30 @@
 @if (state(); as install) {
-  <section class="remote-install-overlay fixed inset-0 z-[80] grid place-items-center" aria-label="Remote server setup">
-    <div class="absolute inset-0 bg-[rgba(5,10,16,0.74)] backdrop-blur-[10px]"></div>
+  <section class="fixed inset-0 z-[80] grid place-items-center p-4 sm:p-6" aria-label="Remote server setup">
+    <button
+      type="button"
+      class="absolute inset-0 cursor-default bg-black/60 backdrop-blur-sm"
+      aria-label="Dismiss remote setup"
+      (click)="cancel()"
+    ></button>
 
     <div
-      class="relative grid max-h-[calc(100vh-48px)] w-[min(1080px,calc(100vw-48px))] grid-rows-[auto_auto_1fr_auto_auto] overflow-hidden rounded-3xl border border-[rgba(145,169,194,0.18)] bg-[linear-gradient(180deg,rgba(13,20,29,0.98)_0%,rgba(9,14,21,0.98)_100%)] text-[#edf4ff] shadow-[0_34px_90px_rgba(0,0,0,0.44)] max-[980px]:w-[min(calc(100vw-20px),1000px)]"
+      class="relative flex max-h-[calc(100vh-32px)] w-[min(960px,100%)] flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl"
     >
-      <header class="flex items-start justify-between gap-[18px] px-6 pt-[22px]">
-        <div>
-          <div class="text-[0.72rem] tracking-[0.18em] text-[#86d6ff] uppercase">Remote setup required</div>
-          <h2 class="my-1.5 mb-2 text-[1.45rem] font-bold">Finish preparing the remote server</h2>
-          <p class="m-0 leading-[1.55] text-[rgba(228,236,247,0.8)]">
-            Elevenex connected over SSH but still needs the remote machine to be prepared before the backend can start.
-          </p>
+      <header class="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+        <div class="flex items-start gap-3">
+          <span class="mt-0.5 flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <ng-icon name="lucideServer" size="18" />
+          </span>
+          <div>
+            <h2 class="text-lg font-semibold leading-tight">Finish setting up the remote server</h2>
+            <p class="mt-1 max-w-prose text-sm text-muted-foreground">
+              Elevenex connected over SSH, but the remote machine is missing something it needs before the backend can start.
+            </p>
+          </div>
         </div>
 
         <button
-          class="flex size-[34px] items-center justify-center rounded-full border-0 bg-white/[0.08] text-inherit hover:bg-white/[0.12]"
+          class="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           type="button"
           aria-label="Close remote setup"
           (click)="cancel()"
@@ -24,64 +33,112 @@
         </button>
       </header>
 
-      <div class="mt-[18px] grid grid-cols-3 gap-3 px-6 max-[980px]:grid-cols-1">
-        <div class="rounded-[14px] border border-[rgba(134,214,255,0.12)] bg-[rgba(134,214,255,0.08)] px-3.5 py-3">
-          <span class="mb-1 block text-[0.72rem] tracking-[0.08em] text-[rgba(186,203,223,0.74)] uppercase">Platform</span>
-          <strong>{{ install.result.remotePlatform }} / {{ install.result.remoteArch }}</strong>
+      <div class="grid grid-cols-3 gap-3 px-6 py-4 max-[760px]:grid-cols-1">
+        <div class="rounded-xl border border-border bg-muted/40 px-3.5 py-2.5">
+          <span class="block text-[0.68rem] font-medium tracking-wide text-muted-foreground uppercase">Platform</span>
+          <strong class="mt-0.5 block text-sm">{{ install.result.remotePlatform }} / {{ install.result.remoteArch }}</strong>
         </div>
-        <div class="rounded-[14px] border border-[rgba(134,214,255,0.12)] bg-[rgba(134,214,255,0.08)] px-3.5 py-3">
-          <span class="mb-1 block text-[0.72rem] tracking-[0.08em] text-[rgba(186,203,223,0.74)] uppercase">Missing</span>
-          <strong>{{ install.result.missingDependencies.join(', ') || 'none' }}</strong>
+        <div class="rounded-xl border border-border bg-muted/40 px-3.5 py-2.5">
+          <span class="block text-[0.68rem] font-medium tracking-wide text-muted-foreground uppercase">Missing</span>
+          <div class="mt-1 flex flex-wrap gap-1.5">
+            @for (dep of install.result.missingDependencies; track dep) {
+              <span class="rounded-md border border-warning/30 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">
+                {{ metaFor(dep).label }}
+              </span>
+            } @empty {
+              <span class="text-sm font-semibold text-success">None</span>
+            }
+          </div>
         </div>
-        <div class="rounded-[14px] border border-[rgba(134,214,255,0.12)] bg-[rgba(134,214,255,0.08)] px-3.5 py-3">
-          <span class="mb-1 block text-[0.72rem] tracking-[0.08em] text-[rgba(186,203,223,0.74)] uppercase">Target version</span>
-          <strong>{{ install.result.version || 'unknown' }}</strong>
+        <div class="rounded-xl border border-border bg-muted/40 px-3.5 py-2.5">
+          <span class="block text-[0.68rem] font-medium tracking-wide text-muted-foreground uppercase">Target version</span>
+          <strong class="mt-0.5 block truncate font-mono text-sm">{{ install.result.version || 'unknown' }}</strong>
         </div>
       </div>
 
-      <div class="grid min-h-0 grid-cols-[minmax(270px,0.38fr)_minmax(0,1fr)] gap-[18px] px-6 pt-5 pb-[18px] max-[980px]:max-h-[calc(100vh-260px)] max-[980px]:grid-cols-1 max-[980px]:overflow-auto">
-        <div class="flex flex-col gap-3.5">
-          <div class="flex items-start gap-2.5 rounded-[14px] bg-[rgba(255,185,79,0.1)] px-3.5 py-3 text-[#ffd9ab]">
-            <ng-icon name="lucideTriangleAlert" size="16" />
-            <span>{{ install.result.message }}</span>
-          </div>
-
-          @if (install.result.suggestedCommands.length > 0) {
-            <div class="flex flex-col gap-2 rounded-[14px] border border-white/[0.08] bg-white/[0.04] p-3.5">
-              <div class="text-[0.84rem] text-[#d4e9ff]">Suggested `tmux` install commands</div>
-              @for (command of install.result.suggestedCommands; track command) {
-                <code class="block whitespace-pre-wrap break-words rounded-[10px] bg-[rgba(5,8,12,0.54)] px-[11px] py-2.5 text-[#9ff0ce]">{{ command }}</code>
-              }
+      <div
+        class="grid min-h-0 flex-1 grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-5 overflow-hidden px-6 pb-5 max-[860px]:grid-cols-1 max-[860px]:overflow-auto"
+      >
+        <div class="flex min-h-0 flex-col gap-3 overflow-auto pr-1">
+          @if (install.result.message) {
+            <div class="flex items-start gap-2.5 rounded-xl border border-warning/25 bg-warning/10 px-3.5 py-3">
+              <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 shrink-0 text-warning" />
+              <span class="text-sm leading-relaxed text-foreground/90">{{ install.result.message }}</span>
             </div>
           }
 
-          <div class="rounded-[14px] bg-white/[0.04] p-3.5 leading-[1.55] text-[rgba(228,236,247,0.82)]">
-            <strong class="text-[0.84rem] text-[#d4e9ff]">`claude` note:</strong> if `claude` is missing, install it using your normal remote workflow, then use the terminal below to verify it is on the remote `PATH`.
-          </div>
+          @for (guidance of install.result.installGuidance; track guidance.dependency) {
+            <div class="rounded-xl border border-border bg-muted/40 p-4">
+              <div class="flex items-center gap-2">
+                <ng-icon name="lucidePackage" size="15" class="text-muted-foreground" />
+                <strong class="text-sm">Install {{ metaFor(guidance.dependency).label }}</strong>
+              </div>
+              <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                {{ metaFor(guidance.dependency).description }}
+              </p>
+              <div class="mt-3 flex flex-col gap-1.5">
+                @for (command of guidance.commands; track command) {
+                  <div class="flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2">
+                    <code class="min-w-0 flex-1 overflow-x-auto font-mono text-[0.8rem] whitespace-pre text-foreground">{{ command }}</code>
+                    <button
+                      type="button"
+                      class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      [attr.aria-label]="'Copy command: ' + command"
+                      (click)="copy(command)"
+                    >
+                      @if (copiedCommand() === command) {
+                        <ng-icon name="lucideCheck" size="14" class="text-success" />
+                      } @else {
+                        <ng-icon name="lucideCopy" size="14" />
+                      }
+                    </button>
+                  </div>
+                }
+              </div>
+            </div>
+          } @empty {
+            <div class="rounded-xl border border-border bg-muted/40 p-4 text-sm leading-relaxed text-muted-foreground">
+              Install the missing requirements on the remote host using your usual workflow, then re-check.
+            </div>
+          }
+
+          <p class="px-1 text-xs leading-relaxed text-muted-foreground">
+            Run the commands in the terminal on the right (or your own shell on the remote), then choose
+            <span class="font-medium text-foreground">Re-check</span>. Elevenex verifies each tool on your login shell’s PATH.
+          </p>
         </div>
 
-        <div class="grid min-h-[360px] min-w-0 grid-rows-[auto_1fr] overflow-hidden rounded-2xl border border-[rgba(130,155,184,0.18)] bg-[#0d141b]">
-          <div class="flex items-center gap-2 bg-white/[0.04] px-3.5 py-3 text-[rgba(230,238,248,0.84)]">
-            <ng-icon name="lucideTerminalSquare" size="14" />
+        <div class="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-xl border border-border">
+          <div class="flex items-center gap-2 border-b border-border bg-muted/60 px-3 py-2 text-xs font-medium text-muted-foreground">
+            <ng-icon name="lucideTerminal" size="14" />
             <span>Remote installer terminal</span>
+            @if (install.terminalExited) {
+              <span class="ml-auto rounded-md bg-muted px-2 py-0.5 text-[0.7rem] text-muted-foreground">session ended</span>
+            }
           </div>
-          <div #terminalContainer class="min-h-0 p-2.5"></div>
+          <div class="min-h-0 flex-1 bg-[#1a1b26]">
+            <app-remote-installer-terminal class="block h-full w-full" />
+          </div>
         </div>
       </div>
 
       @if (install.terminalError) {
-        <div class="mx-6 flex items-start gap-2.5 rounded-[14px] bg-[rgba(255,185,79,0.1)] px-3.5 py-3 text-[#ffd9ab]">
-          <ng-icon name="lucideTriangleAlert" size="14" />
-          <span>{{ install.terminalError }}</span>
+        <div class="mx-6 mb-2 flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-3">
+          <ng-icon name="lucideTriangleAlert" size="14" class="mt-0.5 shrink-0 text-destructive" />
+          <span class="text-sm text-foreground/90">{{ install.terminalError }}</span>
         </div>
       }
 
-      <footer class="flex justify-end gap-3 px-6 pt-[18px] pb-[22px]">
-        <button class="h-10 rounded-xl border-0 bg-white/[0.08] px-4 font-semibold text-[#edf4ff] hover:bg-white/[0.12]" type="button" (click)="cancel()">
+      <footer class="flex justify-end gap-3 border-t border-border px-6 py-4">
+        <button
+          class="h-10 rounded-lg border border-border bg-muted px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+          type="button"
+          (click)="cancel()"
+        >
           Cancel
         </button>
         <button
-          class="flex h-10 items-center gap-2 rounded-xl border-0 bg-[linear-gradient(135deg,#7de8ff_0%,#8ff0c0_100%)] px-4 font-semibold text-[#09242f] disabled:opacity-[0.62]"
+          class="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           type="button"
           [disabled]="!canRetry()"
           (click)="recheck()"
@@ -90,7 +147,7 @@
             <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
             <span>Checking…</span>
           } @else {
-            <span>I installed them, re-check</span>
+            <span>Re-check</span>
           }
         </button>
       </footer>

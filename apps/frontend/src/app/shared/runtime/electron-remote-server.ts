@@ -27,18 +27,27 @@ export type RemoteInstallPhase =
   | 'probing'
   | 'ready';
 
+export type RemoteDependency = 'claude' | 'tmux';
+
+// Install commands keyed to a single missing dependency, so the UI can render
+// each command set next to the dependency it actually fixes.
+export interface RemoteInstallGuidance {
+  dependency: RemoteDependency;
+  commands: string[];
+}
+
 export interface ElectronRemoteServerEnsureReadyResult {
   status: 'ready' | 'waiting-for-user' | 'unsupported' | 'error';
   installPhase: RemoteInstallPhase;
   installStatus: RemoteInstallStatus;
   remotePlatform: string;
   remoteArch: string;
-  missingDependencies: Array<'claude' | 'tmux'>;
+  missingDependencies: RemoteDependency[];
   message: string;
   localPort: number | null;
   sessionId: number | null;
   osRelease: Record<string, string>;
-  suggestedCommands: string[];
+  installGuidance: RemoteInstallGuidance[];
   version: string | null;
 }
 
