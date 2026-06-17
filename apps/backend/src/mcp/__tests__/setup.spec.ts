@@ -11,6 +11,7 @@ import { createWorktreeTool } from '../tools/setup/create-worktree.tool.js';
 import { getWorktreeJobTool } from '../tools/setup/get-worktree-job.tool.js';
 import { linkWorktreeTool } from '../tools/setup/link-worktree.tool.js';
 import { stealWorktreeTool } from '../tools/setup/steal-worktree.tool.js';
+import { createSessionTool } from '../tools/setup/create-session.tool.js';
 import { generateWorktreeContextTool } from '../tools/setup/generate-worktree-context.tool.js';
 import { setTodoTool } from '../tools/setup/set-todo.tool.js';
 import { setScratchpadTool } from '../tools/setup/set-scratchpad.tool.js';
@@ -59,8 +60,8 @@ function poolItem(overrides: Record<string, unknown> = {}) {
 }
 
 describe('setup tool group', () => {
-  it('registers all 11 setup tools', () => {
-    expect(SETUP_TOOLS).toHaveLength(11);
+  it('registers all 12 setup tools', () => {
+    expect(SETUP_TOOLS).toHaveLength(12);
     expect(SETUP_TOOLS.map((t) => t.name)).toEqual(
       expect.arrayContaining([
         'find_or_create_project',
@@ -71,12 +72,92 @@ describe('setup tool group', () => {
         'get_worktree_job',
         'link_worktree',
         'steal_worktree',
+        'create_session',
         'generate_worktree_context',
         'set_todo',
         'set_scratchpad',
       ]),
     );
     expect(stealWorktreeTool.destructive).toBe(true);
+  });
+
+  describe('create_session', () => {
+    it('creates a session from a workspaceId and returns a handle', async () => {
+      const create = jest.fn().mockResolvedValue({
+        id: 55,
+        name: 'Session 1',
+        repoId: 5,
+        branchName: 'feat/x',
+        worktreePath: '/wt/x',
+        status: 'created',
+        activeAgentProvider: 'claude',
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 5, path: '/repos/api' }) },
+        sessions: { create },
+      });
+
+      const res = await createSessionTool.handler(
+        { repoId: 5, workspaceId: 9, provider: 'claude' } as never,
+        ctx,
+      );
+
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoId: 5,
+          workspaceId: 9,
+          surface: 'session',
+          activeAgentProvider: 'claude',
+        }),
+      );
+      expect(res.data).toMatchObject({ sessionId: 55, provider: 'claude' });
+      expect(res.touched).toEqual({ sessionId: 55 });
+      expect(res.deepLink).toBe('/sessions/55');
+    });
+
+    it('creates a session from worktreePath + branchName', async () => {
+      const create = jest.fn().mockResolvedValue({
+        id: 7,
+        name: 'Session 2',
+        repoId: 5,
+        branchName: 'main',
+        worktreePath: '/wt/main',
+        status: 'created',
+        activeAgentProvider: 'codex',
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 5 }) },
+        sessions: { create },
+      });
+
+      await createSessionTool.handler(
+        { repoId: 5, worktreePath: '/wt/main', branchName: 'main', provider: 'codex' } as never,
+        ctx,
+      );
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreePath: '/wt/main', branchName: 'main' }),
+      );
+    });
+
+    it('rejects when neither workspaceId nor worktreePath+branchName is given', async () => {
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 5 }) },
+        sessions: { create: jest.fn() },
+      });
+      await expect(
+        createSessionTool.handler({ repoId: 5 } as never, ctx),
+      ).rejects.toMatchObject({ code: 'scope_required' });
+    });
+
+    it('errors cleanly when the repo does not exist', async () => {
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockRejectedValue(new Error('not found')) },
+        sessions: { create: jest.fn() },
+      });
+      await expect(
+        createSessionTool.handler({ repoId: 999, workspaceId: 1 } as never, ctx),
+      ).rejects.toMatchObject({ code: 'repo_not_found' });
+    });
   });
 
   describe('find_or_create_project', () => {

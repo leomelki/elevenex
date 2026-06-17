@@ -51,13 +51,14 @@ guarantees so individual tools can't regress them:
   `prompt_session`, `ask_session`, `generate_worktree_context`, `await_session_event`) return a
   handle/state immediately and never block.
 
-## Tools (36)
+## Tools (37)
 
 - **Observe**: `project_overview`, `find_sessions`, `session_status`, `read_session`, `text_search`,
   `file_search`, `read_file`, `change_review`, `get_worktree_context`, `await_session_event`.
 - **Setup**: `find_or_create_project`, `add_repo`, `remove_repo`, `assess_worktree_pool`,
-  `create_worktree`, `get_worktree_job`, `link_worktree`, `steal_worktree`,
-  `generate_worktree_context`, `set_todo`, `set_scratchpad`.
+  `create_worktree`, `get_worktree_job`, `link_worktree`, `steal_worktree`, `create_session`
+  (bridges worktree → session, ready for `prompt_session`), `generate_worktree_context`, `set_todo`,
+  `set_scratchpad`.
 - **Drive**: `prompt_session`, `interrupt_session`, `fork_session`, `archive_session`,
   `reset_session`, `get_pending_action`, `resolve_action`, `set_provider`, `set_model`,
   `set_permission_mode`.

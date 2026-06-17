@@ -7,6 +7,7 @@ import { createWorktreeTool } from './create-worktree.tool.js';
 import { getWorktreeJobTool } from './get-worktree-job.tool.js';
 import { linkWorktreeTool } from './link-worktree.tool.js';
 import { stealWorktreeTool } from './steal-worktree.tool.js';
+import { createSessionTool } from './create-session.tool.js';
 import { generateWorktreeContextTool } from './generate-worktree-context.tool.js';
 import { setTodoTool } from './set-todo.tool.js';
 import { setScratchpadTool } from './set-scratchpad.tool.js';
@@ -28,6 +29,7 @@ export const SETUP_TOOLS: ToolDefinition[] = [
   getWorktreeJobTool,
   linkWorktreeTool,
   stealWorktreeTool,
+  createSessionTool,
   generateWorktreeContextTool,
   setTodoTool,
   setScratchpadTool,
