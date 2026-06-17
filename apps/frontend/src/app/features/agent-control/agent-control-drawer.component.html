@@ -63,20 +63,7 @@
     </header>
 
     @if (activeSession(); as session) {
-      <div class="agent-chat">
-        <app-claude-workspace
-          [sessionId]="session.id"
-          [repoId]="session.repoId"
-          [worktreePath]="session.worktreePath"
-          [hasInjectedWorktreeContext]="session.hasInjectedWorktreeContext"
-          [activeAgentProvider]="providerOf(session)"
-          [isVisible]="true"
-          [archived]="session.status === 'archived'"
-          [sessionName]="session.name"
-          (activeAgentProviderChange)="onProviderChange(session.id, $event)"
-          class="h-full block"
-        />
-      </div>
+      <app-agent-chat [session]="session" class="agent-chat" />
     } @else {
       <section class="agent-panel" aria-label="Elevenex agent sessions">
         <button

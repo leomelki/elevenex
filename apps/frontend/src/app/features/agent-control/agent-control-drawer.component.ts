@@ -13,9 +13,7 @@ import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
 import { Session } from '@/shared/models/session.model';
-import { AgentProviderId } from '@/shared/models/agent-runtime.model';
-import { SessionsService } from '@/shared/services/sessions.service';
-import { ClaudeWorkspaceComponent } from '@/features/session/claude-workspace/claude-workspace.component';
+import { AgentChatComponent } from './agent-chat/agent-chat.component';
 import { AgentControlStateService } from './agent-control-state.service';
 import {
   AgentWorkspace,
@@ -25,7 +23,7 @@ import {
 @Component({
   selector: 'app-agent-control-drawer',
   standalone: true,
-  imports: [CommonModule, NgIcon, ZardButtonComponent, ClaudeWorkspaceComponent],
+  imports: [CommonModule, NgIcon, ZardButtonComponent, AgentChatComponent],
   templateUrl: './agent-control-drawer.component.html',
   styleUrl: './agent-control-drawer.component.scss',
   viewProviders: [
@@ -42,7 +40,6 @@ import {
 export class AgentControlDrawerComponent {
   readonly state = inject(AgentControlStateService);
   private readonly agentService = inject(ElevenexAgentService);
-  private readonly sessionsService = inject(SessionsService);
 
   readonly workspace = signal<AgentWorkspace | null>(null);
   readonly sessions = signal<Session[]>([]);
@@ -119,19 +116,6 @@ export class AgentControlDrawerComponent {
     this.load();
   }
 
-  onProviderChange(sessionId: number, provider: AgentProviderId): void {
-    this.sessions.update((current) =>
-      current.map((session) =>
-        session.id === sessionId
-          ? { ...session, activeAgentProvider: provider }
-          : session,
-      ),
-    );
-    this.sessionsService
-      .updateActiveAgentProvider(sessionId, provider)
-      .subscribe({ error: () => undefined });
-  }
-
   statusLabel(status: Session['status']): string {
     switch (status) {
       case 'active':
@@ -162,10 +146,6 @@ export class AgentControlDrawerComponent {
 
   sessionTitle(session: Session): string {
     return session.name || `Session ${session.id}`;
-  }
-
-  providerOf(session: Session): AgentProviderId {
-    return session.activeAgentProvider as AgentProviderId;
   }
 
   private sortSessions(sessions: Session[]): Session[] {

@@ -1,0 +1,126 @@
+<div
+  #messagesRef
+  class="ac-messages"
+  aria-live="polite"
+  aria-label="Agent conversation"
+  (scroll)="onMessagesScroll()"
+>
+  @if (!rows().length && !isRunning()) {
+    <div class="ac-empty">
+      <span class="ac-empty__icon" aria-hidden="true">
+        <ng-icon name="lucideSparkles" size="18" />
+      </span>
+      <p>Tell the agent what to do.</p>
+      <small>
+        It operates Elevenex for you — setting up work and running sessions in its
+        own workspace.
+      </small>
+    </div>
+  } @else {
+    @for (row of rows(); track row.id) {
+      @switch (row.type) {
+        @case ('message') {
+          <article class="ac-msg" [attr.data-role]="row.kind">
+            @if (row.kind === 'assistant') {
+              <div class="ac-md" [innerHTML]="row.content | cwMarkdown"></div>
+            } @else {
+              <p class="ac-msg__text">{{ row.content }}</p>
+            }
+          </article>
+        }
+        @case ('thinking') {
+          <div class="ac-thinking">
+            <ng-icon name="lucideSparkles" size="12" />
+            <span>{{ row.content }}</span>
+          </div>
+        }
+        @case ('activity') {
+          <div class="ac-activity" [attr.data-status]="row.status">
+            <span class="ac-activity__icon">
+              <ng-icon [name]="row.icon || 'lucideTerminal'" size="13" />
+            </span>
+            <span class="ac-activity__verb">{{ row.verb }}</span>
+            @if (row.target) {
+              <span class="ac-activity__target">{{ row.target }}</span>
+            }
+          </div>
+        }
+        @case ('error') {
+          <div class="ac-error" role="alert">{{ row.content }}</div>
+        }
+      }
+    }
+
+    @if (pendingPermission(); as request) {
+      <cw-permission-inline
+        [request]="request"
+        appearance="dock"
+        (approve)="approvePermission($event)"
+        (deny)="denyPermission($event)"
+      />
+    } @else if (pendingUserInput(); as request) {
+      <cw-user-input
+        [request]="request"
+        (answer)="answerUserInput($event)"
+      />
+    } @else if (isRunning()) {
+      <div class="ac-running" aria-label="Agent is working">
+        <span></span><span></span><span></span>
+      </div>
+    }
+  }
+</div>
+
+<div class="ac-footer">
+  @if (lastError(); as error) {
+    <p class="ac-footer__error" role="alert">{{ error }}</p>
+  }
+
+  <div class="ac-modes" role="group" aria-label="Autonomy mode">
+    @for (option of autonomyOptions; track option.mode) {
+      <button
+        type="button"
+        class="ac-mode"
+        [class.is-active]="autonomyMode() === option.mode"
+        [title]="option.hint"
+        [attr.aria-pressed]="autonomyMode() === option.mode"
+        (click)="setMode(option.mode)"
+      >
+        <ng-icon [name]="option.icon" size="13" />
+        <span>{{ option.label }}</span>
+      </button>
+    }
+  </div>
+  <p class="ac-modes__hint">{{ activeOption().hint }}</p>
+
+  <form class="ac-compose" (submit)="$event.preventDefault(); submit()">
+    <textarea
+      #composerRef
+      rows="1"
+      placeholder="Message the Elevenex agent…"
+      [ngModel]="draft()"
+      name="agent-chat-prompt"
+      (ngModelChange)="draft.set($event)"
+      (keydown)="onComposeKeydown($event)"
+    ></textarea>
+    <div class="ac-compose__actions">
+      <span class="ac-compose__hint">
+        <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for newline
+      </span>
+      @if (canInterrupt()) {
+        <button type="button" class="ac-btn ac-btn--ghost" (click)="interrupt()">
+          <ng-icon name="lucideCircleStop" size="13" />
+          Stop
+        </button>
+      }
+      <button
+        type="submit"
+        class="ac-btn ac-btn--primary"
+        [disabled]="!draft().trim() || submitting()"
+      >
+        <ng-icon name="lucideSend" size="13" />
+        Send
+      </button>
+    </div>
+  </form>
+</div>

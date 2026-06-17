@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import chokidar, { FSWatcher } from 'chokidar';
 import * as path from 'node:path';
 import { isWithinWorktree } from '../files/files.service.js';
@@ -91,6 +91,8 @@ function shouldIgnorePath(filePath: string): boolean {
  */
 @Injectable()
 export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(FileWatcherService.name);
+
   /** Map of worktree paths to their active FSWatcher instances */
   private watchers = new Map<string, FSWatcher>();
 
@@ -100,6 +102,41 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
    */
   onModuleInit(): void {
     // Service initialized, ready to accept watch requests
+  }
+
+  private createWatcher(
+    worktreePath: string,
+    onEvent: (event: FileChangeEvent) => void,
+    usePolling: boolean,
+  ): FSWatcher {
+    const watcher = chokidar.watch(worktreePath, {
+      ignored: shouldIgnorePath,
+      ...DEFAULT_WATCHER_OPTIONS,
+      usePolling,
+    });
+
+    watcher.on('all', (event: string, absolutePath: string) => {
+      if (!isWithinWorktree(worktreePath, absolutePath)) {
+        return;
+      }
+      const relativePath = path.relative(worktreePath, absolutePath);
+      onEvent({ event: event as FileEventType, path: relativePath, worktreePath });
+    });
+
+    watcher.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EMFILE' && !usePolling) {
+        this.logger.warn(
+          `EMFILE hit watching ${worktreePath} — falling back to polling`,
+        );
+        void watcher.close().catch(() => undefined);
+        const fallback = this.createWatcher(worktreePath, onEvent, true);
+        this.watchers.set(worktreePath, fallback);
+      } else {
+        this.logger.error(`Watcher error for ${worktreePath}: ${err.message}`);
+      }
+    });
+
+    return watcher;
   }
 
   /**
@@ -118,34 +155,7 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Create watcher with chokidar configuration
-    const watcher = chokidar.watch(worktreePath, {
-      ignored: shouldIgnorePath,
-      ...DEFAULT_WATCHER_OPTIONS,
-    });
-
-    // Handle all file system events
-    watcher.on('all', (event: string, absolutePath: string) => {
-      // Security: Validate path is within worktree (prevents traversal attacks)
-      if (!isWithinWorktree(worktreePath, absolutePath)) {
-        return;
-      }
-
-      // Compute relative path from worktree root
-      const relativePath = path.relative(worktreePath, absolutePath);
-
-      // Create and emit the file change event
-      const fileChangeEvent: FileChangeEvent = {
-        event: event as FileEventType,
-        path: relativePath,
-        worktreePath,
-      };
-
-      // Invoke the callback with the event
-      onEvent(fileChangeEvent);
-    });
-
-    // Store the watcher for later cleanup
+    const watcher = this.createWatcher(worktreePath, onEvent, false);
     this.watchers.set(worktreePath, watcher);
   }
 
