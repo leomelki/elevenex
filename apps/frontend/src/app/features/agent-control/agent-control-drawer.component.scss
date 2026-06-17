@@ -340,6 +340,21 @@
   color: color-mix(in oklch, var(--success) 78%, var(--foreground));
 }
 
+.mission-chip__dot[data-status='error'] {
+  background: var(--destructive);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--destructive) 22%, transparent);
+}
+
+.mission-chip__status[data-status='error'] {
+  color: var(--destructive);
+}
+
+.agent-drawer__missions-loading {
+  color: var(--muted-foreground);
+  font-size: 0.64rem;
+  font-weight: 650;
+}
+
 .mission-chip__time {
   overflow: hidden;
   color: color-mix(in oklch, var(--muted-foreground) 82%, transparent);
@@ -583,6 +598,144 @@
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---------- New-mission composer ---------- */
+.new-mission {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.new-mission__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 750;
+}
+
+.new-mission__hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.new-mission__textarea {
+  width: 100%;
+  min-height: 5rem;
+  max-height: 12rem;
+  resize: vertical;
+}
+
+.new-mission__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.new-mission__kbd {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.new-mission__buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* ---------- Selected mission live view ---------- */
+.mission-live {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mission-live__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--background) 96%, var(--surface-tint) 4%);
+  padding: 0.7rem 0.75rem;
+}
+
+.mission-live__title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.mission-live__title {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.92rem;
+  font-weight: 750;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+}
+
+.mission-live__title-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.mission-live__plan {
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+  background: color-mix(in oklch, var(--background) 98%, var(--surface-tint) 2%);
+  padding: 0.6rem 0.75rem 0.7rem;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.mission-live__plan-head {
+  margin-bottom: 0.45rem;
+}
+
+.mission-live__plan-label {
+  color: var(--muted-foreground);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mission-live__planning {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.mission-live__planning ng-icon {
+  animation: spin 1.4s linear infinite;
+}
+
+.mission-live__workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.mission-live__workspace app-claude-workspace {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes chip-pulse {

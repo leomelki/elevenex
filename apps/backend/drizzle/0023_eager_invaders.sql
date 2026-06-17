@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `agent_autonomy_mode` text;

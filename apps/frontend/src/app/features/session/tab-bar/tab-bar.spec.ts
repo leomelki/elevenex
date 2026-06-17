@@ -95,7 +95,6 @@ describe('TabBar', () => {
 
     const agentControl = TestBed.inject(AgentControlStateService);
     expect(agentControl.isOpen()).toBe(true);
-    expect(agentControl.context().kind).toBe('global');
   });
 
   it('keys the commit button by git context instead of active session identity', () => {

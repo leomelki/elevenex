@@ -20,6 +20,11 @@ export const sessions = sqliteTable('sessions', {
   // presented by the Elevenex MCP server to resolve this session's identity so
   // human-channel tools route to its panel. Null for ordinary coding sessions.
   mcpAgentToken: text('mcp_agent_token'),
+  // Autonomy mandate for "agent" sessions: 'full' | 'review' | 'plan'. Controls
+  // the permission policy the runtime enforces (auto-allow vs. ask vs. plan-mode)
+  // and which autonomy clause is substituted into the meta-agent system prompt.
+  // Null for ordinary coding sessions; defaults to 'review' when read.
+  agentAutonomyMode: text('agent_autonomy_mode'),
   activeAgentProvider: text('active_agent_provider')
     .notNull()
     .default('claude'),

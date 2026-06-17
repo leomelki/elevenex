@@ -20,8 +20,19 @@ import { SettingsService } from '../settings/settings.service.js';
 
 const VALID_STATUSES = ['created', 'active', 'archived', 'stopped'] as const;
 type SessionStatus = (typeof VALID_STATUSES)[number];
-const VALID_SURFACES = ['session', 'embedded_plan_chat', 'agent_query'] as const;
+const VALID_SURFACES = [
+  'session',
+  'embedded_plan_chat',
+  'agent_query',
+  // The meta-agent's own brain session ("a mission IS an agent session"). Hidden
+  // everywhere normal sessions are listed (visibleWhere keys on 'session').
+  'agent',
+] as const;
 export type SessionSurface = (typeof VALID_SURFACES)[number];
+
+export const AGENT_AUTONOMY_MODES = ['full', 'review', 'plan'] as const;
+export type AgentAutonomyMode = (typeof AGENT_AUTONOMY_MODES)[number];
+export const DEFAULT_AGENT_AUTONOMY_MODE: AgentAutonomyMode = 'review';
 const VALID_COMPLETION_KINDS = ['completed'] as const;
 type SessionCompletionKind = (typeof VALID_COMPLETION_KINDS)[number];
 
@@ -157,6 +168,30 @@ export class SessionsService extends EventEmitter {
           .from(schema.sessions)
           .where(eq(schema.sessions.surface, 'session'));
     return rows.map((session) => this.withInferredActiveAgentProvider(session));
+  }
+
+  /** All sessions for a given surface (e.g. 'agent' missions), newest first. */
+  async findBySurface(surface: SessionSurface) {
+    const rows = await this.db
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.surface, surface));
+    return rows.map((session) => this.withInferredActiveAgentProvider(session));
+  }
+
+  /** Persist the autonomy mandate for an agent (mission) session. */
+  async updateAgentAutonomyMode(id: number, mode: AgentAutonomyMode) {
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({ agentAutonomyMode: mode, updatedAt: new Date().toISOString() })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    return this.withInferredActiveAgentProvider(rows[0]);
   }
 
   async findAllCompletionStates() {

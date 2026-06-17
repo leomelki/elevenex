@@ -162,6 +162,13 @@
       "when": 1781701145696,
       "tag": "0022_goofy_firebrand",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1781712078058,
+      "tag": "0023_eager_invaders",
+      "breakpoints": true
     }
   ]
 }

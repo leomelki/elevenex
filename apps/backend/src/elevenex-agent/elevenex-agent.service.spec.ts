@@ -9,7 +9,12 @@ describe('ElevenexAgentService', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'evx-agent-'));
-    service = new ElevenexAgentService();
+    // ensureWorkspace() (the unit under test) only touches the filesystem, so the
+    // Projects/Repos deps can be stubbed — ensureAgentRepo is covered elsewhere.
+    service = new ElevenexAgentService(
+      {} as never, // ProjectsService
+      {} as never, // ReposService
+    );
     // Point the workspace at a temp dir.
     jest.spyOn(service, 'workspaceDir', 'get').mockReturnValue(dir);
   });

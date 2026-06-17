@@ -419,7 +419,6 @@ describe('Sidebar', () => {
 
     const agentControl = TestBed.inject(AgentControlStateService);
     expect(agentControl.isOpen()).toBe(true);
-    expect(agentControl.context().kind).toBe('global');
   });
 
   it('arms inline confirmation on the first click instead of deleting immediately', () => {

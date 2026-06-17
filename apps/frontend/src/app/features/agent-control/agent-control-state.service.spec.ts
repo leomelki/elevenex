@@ -1,128 +1,146 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { TestBed } from '@angular/core/testing';
+import { describe, beforeEach, expect, it, vi } from 'vitest';
+import { Subject, of } from 'rxjs';
+
+import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { AgentControlStateService } from './agent-control-state.service';
+import { AgentMissionsApiService } from './agent-missions-api.service';
+import { MissionSummary } from './agent-control.model';
 
-const STORAGE_KEY = 'elevenex-agent-control-state';
-
-function installLocalStorage() {
-  const values = new Map<string, string>();
-  Object.defineProperty(globalThis, 'localStorage', {
-    configurable: true,
-    value: {
-      getItem: vi.fn((key: string) => values.get(key) ?? null),
-      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
-      removeItem: vi.fn((key: string) => values.delete(key)),
-      clear: vi.fn(() => values.clear()),
-    },
-  });
-  return values;
+function mission(over: Partial<MissionSummary> = {}): MissionSummary {
+  return {
+    sessionId: 1,
+    title: 'Mission 1',
+    status: 'active',
+    runPhase: 'running',
+    awaitingApproval: false,
+    autonomyMode: 'review',
+    repoId: 7,
+    worktreePath: '/ws',
+    deepLink: '/sessions/1',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...over,
+  };
 }
 
 describe('AgentControlStateService', () => {
-  let storageValues: Map<string, string>;
-  let originalLocalStorage: Storage | undefined;
+  let api: {
+    list: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    setAutonomy: ReturnType<typeof vi.fn>;
+    interrupt: ReturnType<typeof vi.fn>;
+    archive: ReturnType<typeof vi.fn>;
+  };
+  let runtimeEvents: Subject<{ type: string; payload?: Record<string, unknown> }>;
+  let history: unknown[];
+
+  function makeService(): AgentControlStateService {
+    runtimeEvents = new Subject();
+    history = [];
+    api = {
+      list: vi.fn(() => of([mission()])),
+      create: vi.fn(() => of({ sessionId: 1, deepLink: '/sessions/1' })),
+      setAutonomy: vi.fn((id: number, mode: string) =>
+        of(mission({ sessionId: id, autonomyMode: mode as never })),
+      ),
+      interrupt: vi.fn(() => of({ ok: true })),
+      archive: vi.fn(() => of({ ok: true })),
+    };
+
+    TestBed.configureTestingModule({
+      providers: [
+        AgentControlStateService,
+        { provide: AgentMissionsApiService, useValue: api },
+        {
+          provide: AgentRuntimeWebsocketService,
+          useValue: { connect: () => runtimeEvents.asObservable() },
+        },
+        { provide: AgentRuntimeApiService, useValue: { getHistory: () => of(history) } },
+      ],
+    });
+    return TestBed.inject(AgentControlStateService);
+  }
 
   beforeEach(() => {
-    originalLocalStorage = globalThis.localStorage;
-    storageValues = installLocalStorage();
+    TestBed.resetTestingModule();
   });
 
-  afterEach(() => {
-    Object.defineProperty(globalThis, 'localStorage', {
-      configurable: true,
-      value: originalLocalStorage,
+  it('refresh loads missions and selects the first', async () => {
+    const service = makeService();
+    await service.refresh();
+    expect(api.list).toHaveBeenCalled();
+    expect(service.missions().length).toBe(1);
+    expect(service.selectedMissionId()).toBe(1);
+  });
+
+  it('createMission posts, refreshes, and selects the new mission', async () => {
+    const service = makeService();
+    const id = await service.createMission('Do a thing', 'plan');
+    expect(api.create).toHaveBeenCalledWith({ prompt: 'Do a thing', autonomyMode: 'plan' });
+    expect(id).toBe(1);
+    expect(service.selectedMissionId()).toBe(1);
+    expect(service.isOpen()).toBe(true);
+  });
+
+  it('createMission ignores blank prompts', async () => {
+    const service = makeService();
+    const id = await service.createMission('   ');
+    expect(id).toBeNull();
+    expect(api.create).not.toHaveBeenCalled();
+  });
+
+  it('setMissionAutonomy patches the mission in place', async () => {
+    const service = makeService();
+    await service.refresh();
+    await service.setMissionAutonomy(1, 'full');
+    expect(api.setAutonomy).toHaveBeenCalledWith(1, 'full');
+    expect(service.selectedMission()?.autonomyMode).toBe('full');
+  });
+
+  it('live run_state events update the mission row status', async () => {
+    const service = makeService();
+    await service.refresh();
+    runtimeEvents.next({
+      type: 'run_state',
+      payload: { runPhase: 'waiting', pendingPermissionRequest: { id: 'x' } },
     });
+    const m = service.selectedMission();
+    expect(m?.runPhase).toBe('waiting');
+    expect(m?.awaitingApproval).toBe(true);
   });
 
-  it('opens as a global controller and persists created preview missions', () => {
-    const service = new AgentControlStateService();
-    service.openProject({ id: 7, name: 'Platform' });
-
-    const mission = service.createMission('Review the current work before it ships');
-
-    expect(service.isOpen()).toBe(true);
-    expect(service.context()).toEqual({ kind: 'global', label: 'Elevenex' });
-    expect(mission?.status).toBe('waiting_approval');
-    expect(service.selectedMission()).toEqual(mission);
-
-    const persisted = JSON.parse(storageValues.get(STORAGE_KEY) ?? '{}');
-    expect(persisted.missions).toHaveLength(1);
-    expect(persisted.context).toEqual({ kind: 'global', label: 'Elevenex' });
-
-    const restored = new AgentControlStateService();
-    expect(restored.missions()[0].title).toBe(mission?.title);
-    expect(restored.selectedMissionId()).toBe(mission?.id);
+  it('derives the step tree from a TodoWrite tool_use event', async () => {
+    const service = makeService();
+    await service.refresh();
+    runtimeEvents.next({
+      type: 'tool_use',
+      payload: {
+        item: {
+          kind: 'tool_use',
+          toolName: 'TodoWrite',
+          toolInput: {
+            todos: [
+              { content: 'Set up project', status: 'completed' },
+              { content: 'Run session', activeForm: 'Running session', status: 'in_progress' },
+              { content: 'Verify', status: 'pending' },
+            ],
+          },
+        },
+      },
+    });
+    const steps = service.selectedSteps();
+    expect(steps.map((s) => s.status)).toEqual(['complete', 'active', 'pending']);
+    // in_progress todos render their activeForm.
+    expect(steps[1].label).toBe('Running session');
   });
 
-  it('advances preview-only missions through local statuses', () => {
-    const service = new AgentControlStateService();
-    const mission = service.createMission(
-      'Run an agent on the selected scope and summarize the result',
-    );
-    expect(mission).toBeTruthy();
-
-    service.approveMission(mission!.id);
-    expect(service.selectedMission()?.status).toBe('planned');
-
-    service.runMission(mission!.id);
-    expect(service.selectedMission()?.status).toBe('running');
-    expect(service.selectedMission()?.steps[0].status).toBe('active');
-
-    service.reviewMission(mission!.id);
-    expect(service.selectedMission()?.status).toBe('review');
-    expect(service.selectedMission()?.steps.at(-1)?.status).toBe('active');
-
-    service.completeMission(mission!.id);
-    expect(service.selectedMission()?.status).toBe('complete');
-    expect(service.selectedMission()?.steps.every((step) => step.status === 'complete')).toBe(true);
-  });
-
-  it('persists the autonomy mode and stamps it on new missions', () => {
-    const service = new AgentControlStateService();
-    expect(service.autonomyMode()).toBe('review');
-
-    service.setAutonomyMode('plan');
-    const mission = service.createMission('Plan a new worktree');
-    expect(mission?.autonomyMode).toBe('plan');
-
-    const restored = new AgentControlStateService();
-    expect(restored.autonomyMode()).toBe('plan');
-  });
-
-  it('starts full-autonomy missions planned with no pending approvals', () => {
-    const service = new AgentControlStateService();
-    service.setAutonomyMode('full');
-
-    const mission = service.createMission('Run the agent autonomously');
-    expect(mission?.status).toBe('planned');
-    expect(mission?.approvals).toHaveLength(0);
-  });
-
-  it('resolves approvals: approving advances, declining blocks', () => {
-    const approveService = new AgentControlStateService();
-    approveService.setAutonomyMode('review');
-    const approved = approveService.createMission('Review the changes before shipping');
-    const approval = approved!.approvals[0];
-    approveService.resolveApproval(approved!.id, approval.id, 'approve');
-    expect(approveService.selectedMission()?.status).toBe('planned');
-    expect(approveService.selectedMission()?.approvals[0].status).toBe('approved');
-
-    const declineService = new AgentControlStateService();
-    declineService.setAutonomyMode('review');
-    const declined = declineService.createMission('Review the risky changes');
-    declineService.resolveApproval(declined!.id, declined!.approvals[0].id, 'decline');
-    expect(declineService.selectedMission()?.status).toBe('blocked');
-    expect(declineService.selectedMission()?.approvals[0].status).toBe('skipped');
-  });
-
-  it('resets missions and selected state without closing the drawer', () => {
-    const service = new AgentControlStateService();
-    service.openGlobal();
-    service.createMission('Create a new Elevenex project and prepare an initial workspace');
-
-    service.reset();
-
-    expect(service.isOpen()).toBe(true);
-    expect(service.missions()).toEqual([]);
-    expect(service.selectedMission()).toBeNull();
+  it('archiveMission archives and refreshes', async () => {
+    const service = makeService();
+    await service.refresh();
+    await service.archiveMission(1);
+    expect(api.archive).toHaveBeenCalledWith(1);
+    expect(api.list).toHaveBeenCalledTimes(2);
   });
 });

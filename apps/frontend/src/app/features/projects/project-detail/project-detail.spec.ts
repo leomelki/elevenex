@@ -232,7 +232,6 @@ describe('ProjectDetail', () => {
 
     const agentControl = TestBed.inject(AgentControlStateService);
     expect(agentControl.isOpen()).toBe(true);
-    expect(agentControl.context().kind).toBe('global');
   });
 
   it('updates the fragment when switching sections', async () => {

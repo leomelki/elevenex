@@ -1,6 +1,6 @@
 @if (state.isOpen()) {
   <aside class="agent-drawer" role="complementary" aria-label="Elevenex agent">
-    <!-- Header: identity + context + active count -->
+    <!-- Header: identity + live channel + active count + new/close -->
     <header class="agent-drawer__header">
       <div class="agent-drawer__identity">
         <span class="agent-drawer__brand-icon" aria-hidden="true">
@@ -8,9 +8,7 @@
         </span>
         <div class="agent-drawer__brand-copy">
           <h2>Elevenex agent</h2>
-          <div class="agent-drawer__context" [title]="state.context().label">
-            {{ state.context().label }}
-          </div>
+          <div class="agent-drawer__context">Mission control</div>
         </div>
       </div>
 
@@ -18,22 +16,28 @@
         <span
           class="agent-drawer__conn"
           [class.is-connected]="channelWs.connected()"
-          [attr.aria-label]="channelWs.connected() ? 'Live channel connected' : 'Live channel disconnected'"
           [title]="channelWs.connected() ? 'Live channel connected' : 'Reconnecting to live channel…'"
         >
           <span class="agent-drawer__conn-dot" aria-hidden="true"></span>
           {{ channelWs.connected() ? 'Live' : 'Offline' }}
         </span>
         @if (state.activeMissionsCount() > 0) {
-          <span
-            class="agent-drawer__count"
-            [attr.aria-label]="state.activeMissionsCount() + ' active missions'"
-            title="Active missions"
-          >
+          <span class="agent-drawer__count" title="Active missions">
             <span class="agent-drawer__count-dot" aria-hidden="true"></span>
             {{ state.activeMissionsCount() }} active
           </span>
         }
+        <button
+          z-button
+          zType="ghost"
+          zSize="icon-sm"
+          type="button"
+          aria-label="New mission"
+          title="New mission"
+          (click)="startNewMission()"
+        >
+          <ng-icon name="lucidePlus" size="16" />
+        </button>
         <button
           z-button
           zType="ghost"
@@ -47,7 +51,7 @@
       </div>
     </header>
 
-    <!-- Live escalations from the meta-agent (blocking approvals) -->
+    <!-- Live escalations from the meta-agent (blocking approvals via /agent-channel) -->
     @if (channelWs.liveApprovals().length > 0) {
       <section class="agent-drawer__live" aria-label="Live escalations">
         <div class="agent-drawer__live-head">
@@ -66,173 +70,164 @@
       </section>
     }
 
-    <!-- Recent missions list -->
-    @if (hasMissions()) {
-      <nav class="agent-drawer__missions" aria-label="Recent missions">
+    <!-- Mission list -->
+    @if (state.missions().length > 0) {
+      <section class="agent-drawer__missions" aria-label="Missions">
         <div class="agent-drawer__missions-head">
           <span>Missions</span>
-          <button
-            z-button
-            zType="ghost"
-            zSize="xs"
-            type="button"
-            (click)="resetMissions()"
-          >
-            <ng-icon name="lucideRotateCcw" size="13" />
-            Clear
-          </button>
+          @if (state.loading()) {
+            <span class="agent-drawer__missions-loading">Refreshing…</span>
+          }
         </div>
         <ul class="agent-drawer__mission-list">
-          @for (mission of recentMissions(); track mission.id) {
+          @for (mission of state.missions(); track mission.sessionId) {
             <li>
               <button
                 type="button"
                 class="mission-chip"
-                [class.is-selected]="state.selectedMissionId() === mission.id"
-                [attr.aria-current]="state.selectedMissionId() === mission.id"
-                [title]="mission.title"
-                (click)="selectMission(mission.id)"
+                [class.is-selected]="!composing() && state.selectedMissionId() === mission.sessionId"
+                (click)="selectMission(mission.sessionId)"
               >
-                <span
-                  class="mission-chip__dot"
-                  [attr.data-status]="mission.status"
-                  aria-hidden="true"
-                ></span>
+                <span class="mission-chip__dot" [attr.data-status]="statusView(mission)"></span>
                 <span class="mission-chip__copy">
                   <span class="mission-chip__title">{{ mission.title }}</span>
                   <span class="mission-chip__meta">
-                    <span class="mission-chip__status" [attr.data-status]="mission.status">
-                      {{ statusLabel(mission.status) }}
+                    <span class="mission-chip__status" [attr.data-status]="statusView(mission)">
+                      {{ statusLabel(statusView(mission)) }}
                     </span>
-                    <span class="mission-chip__time">{{ relativeTime(mission.updatedAt) }}</span>
+                    @if (mission.updatedAt) {
+                      <span class="mission-chip__time">{{ relativeTime(mission.updatedAt) }}</span>
+                    }
                   </span>
                 </span>
               </button>
             </li>
           }
         </ul>
-      </nav>
+      </section>
     }
 
-    <!-- Mission detail / empty state -->
-    <div class="agent-drawer__body">
-      @if (state.selectedMission(); as mission) {
-        <article class="mission-detail" [attr.aria-label]="'Mission: ' + mission.title">
-          <header class="mission-detail__head">
-            <div class="mission-detail__title-row">
-              <h3 class="mission-detail__title">{{ mission.title }}</h3>
-              <span class="mission-detail__status" [attr.data-status]="mission.status">
-                {{ statusLabel(mission.status) }}
-              </span>
-            </div>
-            <p class="mission-detail__prompt">{{ mission.prompt }}</p>
-          </header>
-
-          <!-- Per-mission autonomy -->
-          <div class="mission-detail__section">
-            <span class="mission-detail__section-label">Autonomy</span>
-            <app-autonomy-selector
-              [mode]="mission.autonomyMode"
-              [disabled]="mission.status === 'complete' || mission.status === 'blocked'"
-              (modeChange)="setMissionAutonomyMode(mission.id, $event)"
-            />
-          </div>
-
-          <!-- Escalation / approvals -->
-          @if (mission.approvals.length > 0) {
-            <app-escalation-card
-              [approvals]="mission.approvals"
-              (resolve)="resolveApproval(mission.id, $event)"
-            />
-          }
-
-          <!-- Step tree -->
-          <div class="mission-detail__section">
-            <div class="mission-detail__section-head">
-              <span class="mission-detail__section-label">Steps</span>
-              @if (nextActionLabel(mission); as actionLabel) {
-                <button z-button zSize="sm" type="button" (click)="advanceMission(mission)">
-                  <ng-icon name="lucidePlay" size="13" />
-                  {{ actionLabel }}
+    <!-- Body: new-mission composer · selected mission · empty -->
+    @if (composing()) {
+      <div class="agent-drawer__body">
+        <form
+          class="new-mission"
+          (submit)="$event.preventDefault(); submitNewMission()"
+        >
+          <h3 class="new-mission__title">Start a mission</h3>
+          <p class="new-mission__hint">
+            Describe what you want the agent to do. It operates elevenex for you — setting up
+            projects, worktrees and sessions, driving them, and escalating when it needs you.
+          </p>
+          <app-autonomy-selector
+            [mode]="state.draftAutonomy()"
+            (modeChange)="setDraftAutonomy($event)"
+          />
+          <textarea
+            z-input
+            rows="4"
+            class="new-mission__textarea"
+            placeholder="e.g. Create a project called Demo, add the repo at ~/code/app, then summarize its codebase."
+            aria-label="Describe the mission"
+            [value]="promptDraft()"
+            (input)="onComposerInput($event)"
+            (keydown)="onComposerKeydown($event)"
+          ></textarea>
+          <div class="new-mission__actions">
+            <span class="new-mission__kbd">Cmd/Ctrl + Enter</span>
+            <div class="new-mission__buttons">
+              @if (state.missions().length > 0) {
+                <button z-button zType="ghost" zSize="sm" type="button" (click)="cancelNewMission()">
+                  Cancel
                 </button>
               }
+              <button z-button zSize="sm" type="submit" [disabled]="!canSubmit()">
+                <ng-icon name="lucideSparkles" size="14" />
+                Launch mission
+              </button>
             </div>
-            <app-mission-tree [steps]="mission.steps" />
           </div>
+        </form>
+      </div>
+    } @else if (state.selectedMission(); as mission) {
+      <div class="mission-live">
+        <div class="mission-live__head">
+          <div class="mission-live__title-row">
+            <h3 class="mission-live__title" [title]="mission.title">{{ mission.title }}</h3>
+            <div class="mission-live__title-actions">
+              @if (canInterrupt(mission)) {
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="icon-sm"
+                  type="button"
+                  aria-label="Interrupt mission"
+                  title="Interrupt"
+                  (click)="interrupt(mission.sessionId)"
+                >
+                  <ng-icon name="lucideSquare" size="14" />
+                </button>
+              }
+              <button
+                z-button
+                zType="ghost"
+                zSize="icon-sm"
+                type="button"
+                aria-label="Archive mission"
+                title="Archive"
+                (click)="archive(mission.sessionId)"
+              >
+                <ng-icon name="lucideArchive" size="14" />
+              </button>
+            </div>
+          </div>
+          <app-autonomy-selector
+            [mode]="mission.autonomyMode"
+            (modeChange)="setMissionAutonomy(mission.sessionId, $event)"
+          />
+        </div>
 
-          <!-- Artifacts -->
-          @if (mission.artifacts.length > 0) {
-            <div class="mission-detail__section">
-              <span class="mission-detail__section-label">Artifacts</span>
-              <div class="mission-detail__artifacts">
-                @for (artifact of mission.artifacts; track artifact.id) {
-                  <span class="mission-artifact" [title]="artifact.summary">
-                    <ng-icon name="lucideClipboardList" size="12" aria-hidden="true" />
-                    {{ artifact.label }}
-                  </span>
-                }
-              </div>
+        <!-- Step tree derived from the agent's real TodoWrite plan -->
+        <div class="mission-live__plan">
+          <div class="mission-live__plan-head">
+            <span class="mission-live__plan-label">Plan</span>
+          </div>
+          @if (state.selectedSteps().length > 0) {
+            <app-mission-tree [steps]="state.selectedSteps()" />
+          } @else {
+            <div class="mission-live__planning">
+              <ng-icon name="lucideCircleDashed" size="14" aria-hidden="true" />
+              <span>Planning…</span>
             </div>
           }
-        </article>
-      } @else {
+        </div>
+
+        <!-- Live session: transcript + composer + permissions + plan flow -->
+        <div class="mission-live__workspace">
+          <app-claude-workspace
+            [sessionId]="mission.sessionId"
+            [repoId]="mission.repoId"
+            [worktreePath]="mission.worktreePath"
+            [activeAgentProvider]="'claude'"
+            [sessionName]="mission.title"
+            [isVisible]="true"
+          />
+        </div>
+      </div>
+    } @else {
+      <div class="agent-drawer__body">
         <div class="agent-drawer__empty">
           <span class="agent-drawer__empty-icon" aria-hidden="true">
             <ng-icon name="lucideSparkles" size="24" />
           </span>
-          <h3>No missions yet</h3>
-          <p>
-            Describe what you want the agent to do. It will plan a mission you can review, approve,
-            and follow step by step.
-          </p>
-          <ul class="agent-drawer__empty-hints">
-            <li>
-              <ng-icon name="lucideFolder" size="14" aria-hidden="true" />
-              <span>Create a project &amp; attach repos</span>
-            </li>
-            <li>
-              <ng-icon name="lucideGitBranch" size="14" aria-hidden="true" />
-              <span>Spin up a worktree from a base ref</span>
-            </li>
-            <li>
-              <ng-icon name="lucidePlay" size="14" aria-hidden="true" />
-              <span>Run an agent session &amp; review it</span>
-            </li>
-          </ul>
+          <h3>No mission selected</h3>
+          <p>Pick a mission above, or start a new one to put the agent to work.</p>
+          <button z-button zSize="sm" type="button" (click)="startNewMission()">
+            <ng-icon name="lucidePlus" size="14" />
+            New mission
+          </button>
         </div>
-      }
-    </div>
-
-    <!-- Composer -->
-    <form
-      class="agent-composer"
-      (submit)="$event.preventDefault(); createMissionFromPrompt()"
-    >
-      <div class="agent-composer__autonomy">
-        <app-autonomy-selector
-          [mode]="state.autonomyMode()"
-          (modeChange)="setAutonomyMode($event)"
-        />
       </div>
-      <div class="agent-composer__field">
-        <textarea
-          z-input
-          rows="3"
-          class="agent-composer__textarea"
-          placeholder="Describe what you want the Elevenex agent to do…"
-          aria-label="Message the Elevenex agent"
-          [value]="promptDraft()"
-          (input)="onComposerInput($event)"
-          (keydown)="onComposerKeydown($event)"
-        ></textarea>
-      </div>
-      <div class="agent-composer__actions">
-        <span class="agent-composer__hint">Press Cmd/Ctrl + Enter to send</span>
-        <button z-button type="submit" zSize="sm" [disabled]="!canSubmit()">
-          <ng-icon name="lucideSparkles" size="14" />
-          Send to agent
-        </button>
-      </div>
-    </form>
+    }
   </aside>
 }

@@ -1,27 +1,28 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideArchive,
   lucideCircleDashed,
-  lucideClipboardList,
-  lucideFolder,
-  lucideGitBranch,
-  lucidePlay,
-  lucideRotateCcw,
+  lucideListChecks,
+  lucidePlus,
   lucideSparkles,
+  lucideSquare,
   lucideX,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
+import { ClaudeWorkspaceComponent } from '@/features/session/claude-workspace/claude-workspace.component';
 import { AgentChannelWebsocketService } from './agent-channel-websocket.service';
 import { AgentControlStateService } from './agent-control-state.service';
-import { AgentAutonomyMode, AgentMission, AgentMissionStatus } from './agent-control.model';
-import { AutonomySelectorComponent } from './components/autonomy-selector.component';
 import {
-  EscalationCardComponent,
-  EscalationResolution,
-} from './components/escalation-card.component';
+  AgentAutonomyMode,
+  MissionStatusView,
+  MissionSummary,
+  missionStatusView,
+} from './agent-control.model';
+import { AutonomySelectorComponent } from './components/autonomy-selector.component';
 import {
   LiveEscalationCardComponent,
   LiveEscalationResolution,
@@ -37,20 +38,19 @@ import { MissionTreeComponent } from './components/mission-tree.component';
     ZardInputDirective,
     AutonomySelectorComponent,
     MissionTreeComponent,
-    EscalationCardComponent,
     LiveEscalationCardComponent,
+    ClaudeWorkspaceComponent,
   ],
   templateUrl: './agent-control-drawer.component.html',
   styleUrl: './agent-control-drawer.component.scss',
   viewProviders: [
     provideIcons({
+      lucideArchive,
       lucideCircleDashed,
-      lucideClipboardList,
-      lucideFolder,
-      lucideGitBranch,
-      lucidePlay,
-      lucideRotateCcw,
+      lucideListChecks,
+      lucidePlus,
       lucideSparkles,
+      lucideSquare,
       lucideX,
     }),
   ],
@@ -59,63 +59,81 @@ export class AgentControlDrawerComponent {
   readonly state = inject(AgentControlStateService);
   readonly channelWs = inject(AgentChannelWebsocketService);
 
+  /** Draft text for the NEW-mission composer. */
+  readonly promptDraft = signal('');
+  /** When true (or there are no missions), show the new-mission composer. */
+  private readonly composingSignal = signal(false);
+
+  readonly composing = computed(
+    () => this.composingSignal() || this.state.missions().length === 0,
+  );
+  readonly canSubmit = computed(() => this.promptDraft().trim().length > 0);
+
   constructor() {
     // Open the live meta-agent channel as soon as the drawer mounts; idempotent.
     this.channelWs.connect();
+    // Refresh the mission list whenever the drawer becomes visible.
+    let wasOpen = false;
+    effect(() => {
+      const open = this.state.isOpen();
+      if (open && !wasOpen) {
+        void this.state.refresh();
+      }
+      wasOpen = open;
+    });
   }
-
-  readonly promptDraft = signal('');
-  readonly recentMissions = computed(() => this.state.missions().slice(0, 6));
-  readonly hasMissions = computed(() => this.state.missions().length > 0);
-  readonly canSubmit = computed(() => this.promptDraft().trim().length > 0);
 
   close(): void {
     this.state.close();
   }
 
-  selectMission(id: string): void {
-    this.state.selectMission(id);
+  selectMission(sessionId: number): void {
+    this.composingSignal.set(false);
+    this.state.selectMission(sessionId);
   }
 
-  setAutonomyMode(mode: AgentAutonomyMode): void {
-    this.state.setAutonomyMode(mode);
+  startNewMission(): void {
+    this.composingSignal.set(true);
   }
 
-  setMissionAutonomyMode(missionId: string, mode: AgentAutonomyMode): void {
-    this.state.setMissionAutonomyMode(missionId, mode);
+  cancelNewMission(): void {
+    this.composingSignal.set(false);
+    this.promptDraft.set('');
   }
 
-  createMissionFromPrompt(): void {
-    const mission = this.state.createMission(this.promptDraft());
-    if (mission) {
+  setDraftAutonomy(mode: AgentAutonomyMode): void {
+    this.state.setDraftAutonomy(mode);
+  }
+
+  async submitNewMission(): Promise<void> {
+    if (!this.canSubmit()) {
+      return;
+    }
+    const sessionId = await this.state.createMission(this.promptDraft());
+    if (sessionId != null) {
       this.promptDraft.set('');
-      toast.success('Mission created', { description: mission.title });
-    }
-  }
-
-  resetMissions(): void {
-    this.state.reset();
-    toast.info('Missions cleared');
-  }
-
-  onComposerInput(event: Event): void {
-    this.promptDraft.set((event.target as HTMLTextAreaElement).value);
-  }
-
-  onComposerKeydown(event: KeyboardEvent): void {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-      event.preventDefault();
-      this.createMissionFromPrompt();
-    }
-  }
-
-  resolveApproval(missionId: string, resolution: EscalationResolution): void {
-    this.state.resolveApproval(missionId, resolution.approvalId, resolution.decision);
-    if (resolution.decision === 'approve') {
-      toast.success('Approved');
+      this.composingSignal.set(false);
+      toast.success('Mission started');
     } else {
-      toast.error('Declined', { description: 'Mission blocked pending your direction.' });
+      toast.error('Could not start the mission');
     }
+  }
+
+  async setMissionAutonomy(
+    sessionId: number,
+    mode: AgentAutonomyMode,
+  ): Promise<void> {
+    await this.state.setMissionAutonomy(sessionId, mode);
+  }
+
+  async interrupt(sessionId: number): Promise<void> {
+    await this.state.interruptMission(sessionId);
+    toast.info('Interrupt sent');
+  }
+
+  async archive(sessionId: number): Promise<void> {
+    await this.state.archiveMission(sessionId);
+    toast.info('Mission archived');
   }
 
   resolveLiveApproval(resolution: LiveEscalationResolution): void {
@@ -127,65 +145,50 @@ export class AgentControlDrawerComponent {
     this.channelWs.openDeepLink(deepLink);
   }
 
-  nextActionLabel(mission: AgentMission): string | null {
-    switch (mission.status) {
-      case 'planned':
-        return 'Run mission';
-      case 'running':
-        return 'Move to review';
-      case 'review':
-        return 'Complete';
-      default:
-        return null;
+  onComposerInput(event: Event): void {
+    this.promptDraft.set((event.target as HTMLTextAreaElement).value);
+  }
+
+  onComposerKeydown(event: KeyboardEvent): void {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault();
+      void this.submitNewMission();
     }
   }
 
-  advanceMission(mission: AgentMission): void {
-    switch (mission.status) {
-      case 'planned':
-        this.state.runMission(mission.id);
-        toast.info('Mission running');
-        return;
-      case 'running':
-        this.state.reviewMission(mission.id);
-        toast.info('Mission in review');
-        return;
-      case 'review':
-        this.state.completeMission(mission.id);
-        toast.success('Mission complete');
-        return;
-      default:
-        return;
-    }
+  statusView(mission: MissionSummary): MissionStatusView {
+    return missionStatusView(mission);
   }
 
-  statusLabel(status: AgentMissionStatus): string {
-    switch (status) {
+  statusLabel(view: MissionStatusView): string {
+    switch (view) {
       case 'waiting_approval':
-        return 'Waiting approval';
-      case 'planned':
-        return 'Planned';
+        return 'Needs you';
       case 'running':
         return 'Running';
-      case 'review':
-        return 'Review';
       case 'complete':
-        return 'Complete';
-      case 'blocked':
-        return 'Blocked';
-      case 'draft':
-        return 'Draft';
+        return 'Archived';
+      case 'error':
+        return 'Error';
+      case 'idle':
+        return 'Idle';
     }
   }
 
-  relativeTime(value: string): string {
+  /** Whether interrupting makes sense (the agent is actively running). */
+  canInterrupt(mission: MissionSummary): boolean {
+    return mission.runPhase === 'running' || mission.runPhase === 'waiting';
+  }
+
+  relativeTime(value: string | null): string {
+    if (!value) {
+      return '';
+    }
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
-      return 'Unknown';
+      return '';
     }
-
-    const diffMs = Date.now() - date.getTime();
-    const diffSeconds = Math.round(diffMs / 1000);
+    const diffSeconds = Math.round((Date.now() - date.getTime()) / 1000);
     if (diffSeconds < 45) {
       return 'just now';
     }
@@ -201,6 +204,9 @@ export class AgentControlDrawerComponent {
     if (diffDays < 7) {
       return `${diffDays}d ago`;
     }
-    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+    }).format(date);
   }
 }

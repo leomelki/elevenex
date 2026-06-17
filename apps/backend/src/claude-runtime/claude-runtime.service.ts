@@ -79,6 +79,15 @@ import {
 import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import {
+  buildMetaAgentPrompt,
+  permissionModeForAutonomy,
+  normalizeAutonomyMode,
+} from '../elevenex-agent/meta-agent-prompt.js';
+import {
+  isElevenexTool,
+  isDestructiveElevenexTool,
+} from '../mcp/agent-tool-policy.js';
+import {
   ClaudeImageInput,
   ClaudeImageMediaType,
   ClaudePendingPrompt,
@@ -227,8 +236,23 @@ export interface ClaudeTranscriptFileRef {
   transcriptPath: string | null;
 }
 
+/** The session fields the Claude runtime needs to build/launch a runtime. */
+interface AgentRuntimeSession {
+  worktreePath: string;
+  claudeSessionId: string | null;
+  surface?: string;
+  agentAutonomyMode?: string | null;
+}
+
 interface RuntimeState {
   claudeSessionId: string | null;
+  // Session surface ('session' | 'agent' | …). For 'agent' (meta-agent) sessions
+  // the runtime injects the meta-agent system prompt and applies an autonomy-aware
+  // permission policy. Defaults to 'session'.
+  surface: string;
+  // Autonomy mandate for 'agent' sessions: 'full' | 'review' | 'plan' (null for
+  // ordinary sessions). Drives the permission policy in createCanUseTool.
+  agentAutonomyMode: string | null;
   runPhase: ClaudeRunPhase;
   sessionState: ClaudeSessionExecutionState;
   canInterrupt: boolean;
@@ -873,6 +897,39 @@ export class ClaudeRuntimeService extends EventEmitter {
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
+  /**
+   * Apply a meta-agent autonomy mandate to a session's runtime state, keeping the
+   * permission/plan-mode state coherent for the panel and any live runtime. The
+   * autonomy itself is persisted on the session row by the missions service; this
+   * mirrors it into the in-memory runtime policy.
+   */
+  async setAgentAutonomy(
+    sessionId: number,
+    mode: string,
+  ): Promise<ClaudeRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const normalized = normalizeAutonomyMode(mode);
+    const policy = permissionModeForAutonomy(normalized);
+    state.surface = 'agent';
+    state.agentAutonomyMode = normalized;
+    state.selectedPermissionMode = policy.permissionMode;
+    state.planMode = policy.planMode;
+
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (runtime) {
+      await runtime.setPermissionMode(
+        this.effectivePermissionMode(state) as PermissionMode,
+      );
+      // An idle runtime baked the old policy into its query options — rebuild it
+      // so the next turn launches with the new autonomy.
+      this.restartIdleRuntimeForOptionChange(sessionId);
+    }
+
+    this.emitRunState(sessionId);
+    return this.toRuntimeStatePayload(sessionId, state);
+  }
+
   private normalizePermissionModeSelection(
     mode: ClaudePermissionMode | null,
     current: ClaudePermissionMode | null,
@@ -1041,6 +1098,32 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   private createCanUseTool(sessionId: number, state: RuntimeState): CanUseTool {
     return async (toolName, input, options) => {
+      // Meta-agent autonomy policy. Runs before the human-approval path so the
+      // agent can operate elevenex within its mandate without prompting for every
+      // safe call. Guarded to 'agent' sessions so normal sessions are unaffected.
+      if (state.surface === 'agent') {
+        const autonomy = normalizeAutonomyMode(state.agentAutonomyMode);
+        const autoAllow =
+          // full → trust the agent end-to-end (also the bypassPermissions default,
+          // but canUseTool can still fire for some tools, so allow explicitly).
+          autonomy === 'full' ||
+          // review → run setup + driving freely; only destructive elevenex tools
+          // fall through to a human permission request below.
+          (autonomy === 'review' &&
+            isElevenexTool(toolName) &&
+            !isDestructiveElevenexTool(toolName));
+        if (autoAllow) {
+          return {
+            behavior: 'allow',
+            updatedInput: input ?? {},
+            toolUseID: options.toolUseID,
+          } satisfies PermissionResult;
+        }
+        // Otherwise (destructive elevenex tool in review, plan mode, or a
+        // non-elevenex tool) fall through to the normal human-approval path,
+        // which raises a permission_request that surfaces in the agent panel.
+      }
+
       const requestId = randomUUID();
       const canonicalTool = canonicalizeAgentTool(toolName, input);
       const request: ClaudePermissionRequest = {
@@ -1243,7 +1326,7 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   private async ensureSessionRuntime(
     sessionId: number,
-    session: { worktreePath: string; claudeSessionId: string | null },
+    session: AgentRuntimeSession,
     state: RuntimeState,
   ): Promise<ClaudeSessionRuntime> {
     const existing = this.sessionRuntimes.get(sessionId);
@@ -1269,13 +1352,19 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   private async createSessionRuntime(
     sessionId: number,
-    session: { worktreePath: string; claudeSessionId: string | null },
+    session: AgentRuntimeSession,
     state: RuntimeState,
   ): Promise<ClaudeSessionRuntime> {
     const existing = this.sessionRuntimes.get(sessionId);
     if (existing) {
       return existing;
     }
+
+    // Record the surface + autonomy on the runtime state so the permission policy
+    // (createCanUseTool) and system-prompt append (buildQueryOptions) can consult
+    // them without re-fetching the session row.
+    state.surface = session.surface ?? 'session';
+    state.agentAutonomyMode = session.agentAutonomyMode ?? null;
 
     const canUseTool = this.createCanUseTool(sessionId, state);
     const onElicitation = this.createOnElicitation(sessionId, state);
@@ -1290,6 +1379,8 @@ export class ClaudeRuntimeService extends EventEmitter {
       state.planMode,
       canUseTool,
       onElicitation,
+      state.surface,
+      state.agentAutonomyMode,
     );
     if (this.invalidatedSessions.has(sessionId)) {
       throw new Error(`Session ${sessionId} was invalidated before startup`);
@@ -3553,6 +3644,8 @@ export class ClaudeRuntimeService extends EventEmitter {
     const state: RuntimeState = {
       claudeSessionId:
         claudeSessionId && claudeSessionId !== '-1' ? claudeSessionId : null,
+      surface: 'session',
+      agentAutonomyMode: null,
       runPhase: 'idle',
       sessionState: 'idle',
       canInterrupt: false,
@@ -4035,7 +4128,21 @@ export class ClaudeRuntimeService extends EventEmitter {
     planMode: boolean,
     canUseTool: CanUseTool,
     onElicitation: (request: ElicitationRequest) => Promise<ElicitationResult>,
+    surface: string = 'session',
+    agentAutonomyMode: string | null = null,
   ): Promise<Options> {
+    const isAgentSession = surface === 'agent';
+    // For the meta-agent, autonomy drives the permission mode unless the human has
+    // explicitly toggled plan mode (the plan→review round trip flips state.planMode).
+    const autonomyPolicy = isAgentSession
+      ? permissionModeForAutonomy(agentAutonomyMode)
+      : null;
+    const effectivePlanMode = autonomyPolicy
+      ? planMode || autonomyPolicy.planMode
+      : planMode;
+    const effectivePermissionMode = autonomyPolicy
+      ? autonomyPolicy.permissionMode
+      : this.normalizeStoredPermissionMode(selectedPermissionMode);
     // Use the SDK-managed Claude Code binary by default so the query process
     // and SDK protocol stay in lockstep across prompt turns.
     const pathToClaudeCodeExecutable =
@@ -4052,11 +4159,9 @@ export class ClaudeRuntimeService extends EventEmitter {
       effort: (reasoningEffort as EffortLevel | null) ?? undefined,
       fastMode,
       fastModePerSessionOptIn: true,
-      permissionMode: (planMode
+      permissionMode: (effectivePlanMode
         ? 'plan'
-        : this.normalizeStoredPermissionMode(selectedPermissionMode)) as
-        | PermissionMode
-        | undefined,
+        : effectivePermissionMode) as PermissionMode | undefined,
       resume:
         claudeSessionId && claudeSessionId !== '-1'
           ? claudeSessionId
@@ -4072,6 +4177,11 @@ export class ClaudeRuntimeService extends EventEmitter {
       systemPrompt: {
         type: 'preset' as const,
         preset: 'claude_code' as const,
+        // Inject the meta-agent "brain" prompt for agent sessions; normal coding
+        // sessions keep the bare preset.
+        ...(isAgentSession
+          ? { append: buildMetaAgentPrompt(agentAutonomyMode) }
+          : {}),
       },
       tools: {
         type: 'preset' as const,
