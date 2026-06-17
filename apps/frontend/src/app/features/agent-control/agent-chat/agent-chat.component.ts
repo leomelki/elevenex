@@ -16,8 +16,12 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { firstValueFrom } from 'rxjs';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideArrowDown,
   lucideBraces,
+  lucideCheck,
+  lucideChevronDown,
   lucideCircleStop,
+  lucideCopy,
   lucideFilePen,
   lucideFilePlus,
   lucideFileText,
@@ -49,7 +53,9 @@ import type {
 } from '@/shared/models/claude-runtime.model';
 import type { Session } from '@/shared/models/session.model';
 import {
+  contentToString,
   describeAgentTool,
+  resultSummary,
   shouldHideToolCall,
 } from '@/shared/agent-tools/agent-tool-format';
 import { MarkdownPipe } from '@/features/session/claude-workspace/pipes/markdown.pipe';
@@ -69,7 +75,40 @@ interface AgentChatRow {
   verb?: string;
   target?: string;
   status?: 'pending' | 'ok' | 'error';
+  summary?: string;
+  summaryTone?: 'neutral' | 'ok' | 'warn' | 'error';
+  detail?: string;
+  output?: string;
   timestamp: string;
+}
+
+interface AgentSuggestion {
+  icon: string;
+  label: string;
+  prompt: string;
+}
+
+/** Cap expandable tool detail/output so a huge diff can't blow up the DOM. */
+const DETAIL_CAP = 4000;
+
+function capText(text: string): string {
+  return text.length > DETAIL_CAP ? `${text.slice(0, DETAIL_CAP)}\n…` : text;
+}
+
+function formatToolInput(input: unknown): string {
+  if (!input || typeof input !== 'object') {
+    return typeof input === 'string' ? input : '';
+  }
+  const record = input as Record<string, unknown>;
+  // A bash command reads best as the raw command rather than JSON.
+  if (typeof record['command'] === 'string') {
+    return capText(record['command'].trim());
+  }
+  try {
+    return capText(JSON.stringify(input, null, 2));
+  } catch {
+    return '';
+  }
 }
 
 interface AutonomyOption {
@@ -95,8 +134,12 @@ interface AutonomyOption {
   styleUrl: './agent-chat.component.scss',
   viewProviders: [
     provideIcons({
+      lucideArrowDown,
       lucideBraces,
+      lucideCheck,
+      lucideChevronDown,
       lucideCircleStop,
+      lucideCopy,
       lucideFilePen,
       lucideFilePlus,
       lucideFileText,
@@ -147,8 +190,35 @@ export class AgentChatComponent {
     },
   ];
 
+  readonly suggestions: AgentSuggestion[] = [
+    {
+      icon: 'lucideListTodo',
+      label: 'Plan a task',
+      prompt: 'Help me plan a change before writing any code.',
+    },
+    {
+      icon: 'lucideSearch',
+      label: 'Tour the codebase',
+      prompt: 'Give me a high-level tour of this codebase.',
+    },
+    {
+      icon: 'lucideGitBranch',
+      label: 'Review my changes',
+      prompt: 'Review my current uncommitted changes and suggest improvements.',
+    },
+    {
+      icon: 'lucideZap',
+      label: 'Fix failing tests',
+      prompt: 'Find the failing tests and fix them.',
+    },
+  ];
+
   readonly draft = signal('');
   readonly autonomyMode = signal<AgentAutonomyMode>('review');
+  readonly modeMenuOpen = signal(false);
+  readonly expandedRows = signal<ReadonlySet<string>>(new Set());
+  readonly copiedId = signal<string | null>(null);
+  readonly showJumpToLatest = signal(false);
   readonly historyItems = signal<ClaudeTranscriptItem[]>([]);
   readonly liveItems = signal<ClaudeTranscriptItem[]>([]);
   readonly optimisticUserItems = signal<ClaudeTranscriptItem[]>([]);
@@ -246,6 +316,15 @@ export class AgentChatComponent {
             : result.isError
               ? 'error'
               : 'ok';
+          const summary = result
+            ? resultSummary(
+                view.kind,
+                { content: result.content, isError: result.isError },
+                item.interaction,
+              )
+            : null;
+          const detail = formatToolInput(item.toolInput);
+          const output = result ? capText(contentToString(result.content).trim()) : '';
           rows.push({
             id: item.id,
             type: 'activity',
@@ -255,6 +334,10 @@ export class AgentChatComponent {
             verb: view.verb,
             target: view.target,
             status,
+            summary: summary?.text || undefined,
+            summaryTone: summary?.tone,
+            detail: detail || undefined,
+            output: output || undefined,
             timestamp: item.timestamp,
           });
           break;
@@ -271,6 +354,16 @@ export class AgentChatComponent {
       this.autonomyOptions.find((o) => o.mode === this.autonomyMode()) ??
       this.autonomyOptions[1],
   );
+
+  /** The id of the assistant message currently streaming, for the typing caret. */
+  readonly streamingId = computed<string | null>(() => {
+    if (this.runPhase() !== 'running') return null;
+    const live = this.liveItems();
+    for (let i = live.length - 1; i >= 0; i--) {
+      if (live[i].kind === 'assistant') return live[i].id;
+    }
+    return null;
+  });
 
   private connectedSessionId: number | null = null;
   private connectedProvider: AgentProviderId | null = null;
@@ -322,6 +415,49 @@ export class AgentChatComponent {
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     this.stickToBottom = distanceFromBottom < 56;
+    this.showJumpToLatest.set(distanceFromBottom > 120);
+  }
+
+  scrollToBottom(): void {
+    const el = this.messagesRef()?.nativeElement;
+    if (!el) return;
+    this.stickToBottom = true;
+    this.showJumpToLatest.set(false);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  toggleExpand(id: string): void {
+    this.expandedRows.update((set) => {
+      const next = new Set(set);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  isExpanded(id: string): boolean {
+    return this.expandedRows().has(id);
+  }
+
+  toggleModeMenu(): void {
+    this.modeMenuOpen.update((open) => !open);
+  }
+
+  async useSuggestion(suggestion: AgentSuggestion): Promise<void> {
+    this.draft.set(suggestion.prompt);
+    await this.submit();
+  }
+
+  async copyMessage(row: AgentChatRow): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(row.content);
+      this.copiedId.set(row.id);
+      setTimeout(() => {
+        if (this.copiedId() === row.id) this.copiedId.set(null);
+      }, 1500);
+    } catch {
+      // Clipboard unavailable (e.g. insecure context) — nothing actionable.
+    }
   }
 
   onComposeKeydown(event: KeyboardEvent): void {
@@ -355,6 +491,7 @@ export class AgentChatComponent {
   }
 
   async setMode(mode: AgentAutonomyMode): Promise<void> {
+    this.modeMenuOpen.set(false);
     if (mode === this.autonomyMode()) return;
     this.autonomyMode.set(mode);
     this.modeApplied = false;

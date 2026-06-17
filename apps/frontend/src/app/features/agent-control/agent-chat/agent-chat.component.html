@@ -15,18 +15,57 @@
         It operates Elevenex for you — setting up work and running sessions in its
         own workspace.
       </small>
+
+      <div class="ac-suggest">
+        @for (suggestion of suggestions; track suggestion.label) {
+          <button
+            type="button"
+            class="ac-suggest__chip"
+            [disabled]="submitting()"
+            (click)="useSuggestion(suggestion)"
+          >
+            <ng-icon [name]="suggestion.icon" size="13" />
+            <span>{{ suggestion.label }}</span>
+          </button>
+        }
+      </div>
     </div>
   } @else {
     @for (row of rows(); track row.id) {
       @switch (row.type) {
         @case ('message') {
-          <article class="ac-msg" [attr.data-role]="row.kind">
-            @if (row.kind === 'assistant') {
+          @if (row.kind === 'assistant') {
+            <article
+              class="ac-msg ac-msg--assistant"
+              [class.is-streaming]="row.id === streamingId()"
+            >
+              <div class="ac-msg__head">
+                <span class="ac-msg__avatar" aria-hidden="true">
+                  <ng-icon name="lucideSparkles" size="11" />
+                </span>
+                <span class="ac-msg__who">Agent</span>
+                <button
+                  type="button"
+                  class="ac-msg__copy"
+                  [attr.aria-label]="copiedId() === row.id ? 'Copied' : 'Copy message'"
+                  (click)="copyMessage(row)"
+                >
+                  <ng-icon
+                    [name]="copiedId() === row.id ? 'lucideCheck' : 'lucideCopy'"
+                    size="12"
+                  />
+                </button>
+              </div>
               <div class="ac-md" [innerHTML]="row.content | cwMarkdown"></div>
-            } @else {
+              @if (row.id === streamingId()) {
+                <span class="ac-caret" aria-hidden="true"></span>
+              }
+            </article>
+          } @else {
+            <article class="ac-msg ac-msg--user">
               <p class="ac-msg__text">{{ row.content }}</p>
-            }
-          </article>
+            </article>
+          }
         }
         @case ('thinking') {
           <div class="ac-thinking">
@@ -35,13 +74,47 @@
           </div>
         }
         @case ('activity') {
-          <div class="ac-activity" [attr.data-status]="row.status">
-            <span class="ac-activity__icon">
-              <ng-icon [name]="row.icon || 'lucideTerminal'" size="13" />
-            </span>
-            <span class="ac-activity__verb">{{ row.verb }}</span>
-            @if (row.target) {
-              <span class="ac-activity__target">{{ row.target }}</span>
+          <div
+            class="ac-activity"
+            [attr.data-status]="row.status"
+            [class.is-expandable]="row.detail || row.output"
+          >
+            <button
+              type="button"
+              class="ac-activity__head"
+              [disabled]="!row.detail && !row.output"
+              [attr.aria-expanded]="isExpanded(row.id)"
+              (click)="toggleExpand(row.id)"
+            >
+              <span class="ac-activity__icon">
+                <ng-icon [name]="row.icon || 'lucideTerminal'" size="13" />
+              </span>
+              <span class="ac-activity__verb">{{ row.verb }}</span>
+              @if (row.target) {
+                <span class="ac-activity__target">{{ row.target }}</span>
+              }
+              @if (row.summary) {
+                <span
+                  class="ac-activity__summary"
+                  [attr.data-tone]="row.summaryTone"
+                >
+                  {{ row.summary }}
+                </span>
+              }
+              @if (row.detail || row.output) {
+                <ng-icon class="ac-activity__chev" name="lucideChevronDown" size="13" />
+              }
+            </button>
+
+            @if (isExpanded(row.id)) {
+              <div class="ac-activity__detail">
+                @if (row.detail) {
+                  <pre class="ac-activity__pre">{{ row.detail }}</pre>
+                }
+                @if (row.output) {
+                  <pre class="ac-activity__pre ac-activity__pre--out">{{ row.output }}</pre>
+                }
+              </div>
             }
           </div>
         }
@@ -63,7 +136,7 @@
         [request]="request"
         (answer)="answerUserInput($event)"
       />
-    } @else if (isRunning()) {
+    } @else if (isRunning() && !streamingId()) {
       <div class="ac-running" aria-label="Agent is working">
         <span></span><span></span><span></span>
       </div>
@@ -72,26 +145,20 @@
 </div>
 
 <div class="ac-footer">
+  @if (showJumpToLatest()) {
+    <button
+      type="button"
+      class="ac-jump"
+      aria-label="Jump to latest"
+      (click)="scrollToBottom()"
+    >
+      <ng-icon name="lucideArrowDown" size="15" />
+    </button>
+  }
+
   @if (lastError(); as error) {
     <p class="ac-footer__error" role="alert">{{ error }}</p>
   }
-
-  <div class="ac-modes" role="group" aria-label="Autonomy mode">
-    @for (option of autonomyOptions; track option.mode) {
-      <button
-        type="button"
-        class="ac-mode"
-        [class.is-active]="autonomyMode() === option.mode"
-        [title]="option.hint"
-        [attr.aria-pressed]="autonomyMode() === option.mode"
-        (click)="setMode(option.mode)"
-      >
-        <ng-icon [name]="option.icon" size="13" />
-        <span>{{ option.label }}</span>
-      </button>
-    }
-  </div>
-  <p class="ac-modes__hint">{{ activeOption().hint }}</p>
 
   <form class="ac-compose" (submit)="$event.preventDefault(); submit()">
     <textarea
@@ -103,10 +170,54 @@
       (ngModelChange)="draft.set($event)"
       (keydown)="onComposeKeydown($event)"
     ></textarea>
+
     <div class="ac-compose__actions">
-      <span class="ac-compose__hint">
-        <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for newline
-      </span>
+      <div class="ac-mode-wrap">
+        @if (modeMenuOpen()) {
+          <button
+            type="button"
+            class="ac-modebackdrop"
+            aria-label="Close mode menu"
+            (click)="modeMenuOpen.set(false)"
+          ></button>
+          <div class="ac-modemenu" role="listbox" aria-label="Autonomy mode">
+            @for (option of autonomyOptions; track option.mode) {
+              <button
+                type="button"
+                role="option"
+                class="ac-modemenu__item"
+                [class.is-active]="autonomyMode() === option.mode"
+                [attr.aria-selected]="autonomyMode() === option.mode"
+                (click)="setMode(option.mode)"
+              >
+                <span class="ac-modemenu__icon">
+                  <ng-icon [name]="option.icon" size="14" />
+                </span>
+                <span class="ac-modemenu__text">
+                  <span class="ac-modemenu__label">{{ option.label }}</span>
+                  <span class="ac-modemenu__hint">{{ option.hint }}</span>
+                </span>
+                @if (autonomyMode() === option.mode) {
+                  <ng-icon class="ac-modemenu__check" name="lucideCheck" size="14" />
+                }
+              </button>
+            }
+          </div>
+        }
+        <button
+          type="button"
+          class="ac-modepill"
+          [class.is-open]="modeMenuOpen()"
+          [attr.aria-expanded]="modeMenuOpen()"
+          [title]="activeOption().hint"
+          (click)="toggleModeMenu()"
+        >
+          <ng-icon [name]="activeOption().icon" size="13" />
+          <span>{{ activeOption().label }}</span>
+          <ng-icon class="ac-modepill__chev" name="lucideChevronDown" size="12" />
+        </button>
+      </div>
+
       @if (canInterrupt()) {
         <button type="button" class="ac-btn ac-btn--ghost" (click)="interrupt()">
           <ng-icon name="lucideCircleStop" size="13" />
