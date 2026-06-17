@@ -184,38 +184,138 @@
   color: var(--foreground);
 }
 
+/*
+ * Markdown is injected via [innerHTML], so it lives outside this component's
+ * view encapsulation — descendant rules must use ::ng-deep or they never match
+ * the rendered nodes. Mirrors the session chat's .cw-md styling for parity.
+ */
 .ac-md {
   font-size: 0.86rem;
   line-height: 1.55;
   color: var(--foreground);
+  overflow-wrap: anywhere;
 }
 
-.ac-md :first-child {
+.ac-md--streaming {
+  word-break: break-word;
+}
+
+:host ::ng-deep .ac-md > :first-child {
   margin-top: 0;
 }
-.ac-md :last-child {
+:host ::ng-deep .ac-md > :last-child {
   margin-bottom: 0;
 }
-.ac-md p,
-.ac-md ul,
-.ac-md ol,
-.ac-md pre {
+:host ::ng-deep .ac-md p {
   margin: 0.5rem 0;
 }
-.ac-md ul,
-.ac-md ol {
-  padding-left: 1.1rem;
+:host ::ng-deep .ac-md ul,
+:host ::ng-deep .ac-md ol {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
 }
-.ac-md pre {
-  overflow-x: auto;
-  padding: 0.6rem 0.7rem;
+:host ::ng-deep .ac-md ul {
+  list-style-type: disc;
+}
+:host ::ng-deep .ac-md ol {
+  list-style-type: decimal;
+}
+:host ::ng-deep .ac-md ul ul,
+:host ::ng-deep .ac-md ol ul {
+  list-style-type: circle;
+}
+:host ::ng-deep .ac-md ul ul ul,
+:host ::ng-deep .ac-md ol ul ul {
+  list-style-type: square;
+}
+:host ::ng-deep .ac-md li {
+  margin: 0.125rem 0;
+}
+:host ::ng-deep .ac-md li > p {
+  margin: 0.125rem 0;
+}
+:host ::ng-deep .ac-md strong {
+  color: var(--foreground);
+  font-weight: 700;
+}
+:host ::ng-deep .ac-md h1,
+:host ::ng-deep .ac-md h2,
+:host ::ng-deep .ac-md h3,
+:host ::ng-deep .ac-md h4,
+:host ::ng-deep .ac-md h5,
+:host ::ng-deep .ac-md h6 {
+  margin: 1rem 0 0.4rem;
+  color: var(--foreground);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+:host ::ng-deep .ac-md h1 {
+  font-size: 1.05rem;
+}
+:host ::ng-deep .ac-md h2 {
+  font-size: 0.98rem;
+}
+:host ::ng-deep .ac-md h3,
+:host ::ng-deep .ac-md h4,
+:host ::ng-deep .ac-md h5,
+:host ::ng-deep .ac-md h6 {
+  font-size: 0.9rem;
+}
+:host ::ng-deep .ac-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82em;
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  padding: 0.0625rem 0.3125rem;
+  border-radius: 0.25rem;
+}
+:host ::ng-deep .ac-md pre.cw-code,
+:host ::ng-deep .ac-md pre {
+  margin: 0.5rem 0;
+  padding: 0.625rem 0.75rem;
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  border: 1px solid var(--border);
   border-radius: 0.5rem;
-  border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
-  background: color-mix(in oklch, var(--foreground) 6%, var(--card));
-  font-size: 0.76rem;
+  overflow: auto;
+  font-size: 0.78rem;
+  line-height: 1.55;
 }
-.ac-md code {
-  font-size: 0.8rem;
+:host ::ng-deep .ac-md pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+:host ::ng-deep .ac-md blockquote {
+  margin: 0.5rem 0;
+  padding: 0.125rem 0.75rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+}
+:host ::ng-deep .ac-md a {
+  color: color-mix(in oklab, var(--primary) 90%, #3b82f6);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+:host ::ng-deep .ac-md hr {
+  margin: 0.75rem 0;
+  border: 0;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+}
+:host ::ng-deep .ac-md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.78rem;
+}
+:host ::ng-deep .ac-md th,
+:host ::ng-deep .ac-md td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+:host ::ng-deep .ac-md th {
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  font-weight: 600;
 }
 
 /* Streaming caret */

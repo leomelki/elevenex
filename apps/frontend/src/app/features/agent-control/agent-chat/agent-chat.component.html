@@ -56,7 +56,11 @@
                   />
                 </button>
               </div>
-              <div class="ac-md" [innerHTML]="row.content | cwMarkdown"></div>
+              <div
+                class="ac-md"
+                [class.ac-md--streaming]="row.id === streamingId()"
+                [innerHTML]="row.content | cwMarkdown"
+              ></div>
               @if (row.id === streamingId()) {
                 <span class="ac-caret" aria-hidden="true"></span>
               }
