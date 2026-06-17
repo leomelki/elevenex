@@ -41,6 +41,44 @@ export interface ConversationExportModel {
   turns: ConversationExportTurn[];
 }
 
+/** Options for the token-economical delta read used by the `read_session` MCP tool. */
+export interface ConversationDeltaOptions {
+  /** Return only items strictly after this message id. Ignored when `ids` is set. */
+  sinceMessageId?: string;
+  /** Return only items whose id is in this list (a targeted "zoom"). */
+  ids?: string[];
+  /** Hard cap on returned items (applied after filtering). */
+  limit?: number;
+}
+
+/**
+ * A single transcript item flattened to the minimum the meta-agent needs to
+ * decide what to do next — never the raw block, so a poll stays cheap.
+ */
+export interface CompactItem {
+  id: string;
+  role: ClaudeTranscriptItem['kind'];
+  /** Short text/summary (truncated). For tool calls this summarises the target. */
+  text?: string;
+  /** Tool name when this item is a tool_use. */
+  tool?: string;
+  isError?: boolean;
+}
+
+export interface ConversationDeltaResult {
+  items: CompactItem[];
+  /** Id of the last item in the full history (for the caller's cursor), or null. */
+  lastMessageId: string | null;
+  /** True when the provider runtime is actively producing — more is coming. */
+  running: boolean;
+  /** Total items in history (so the caller can reason about how far behind it is). */
+  total: number;
+  /** True when the result was capped by `limit`. */
+  truncated: boolean;
+}
+
+const COMPACT_TEXT_LIMIT = 280;
+
 @Injectable()
 export class ConversationExportService {
   constructor(
@@ -69,6 +107,89 @@ export class ConversationExportService {
 
     return renderMarkdown(model, options);
   }
+
+  /**
+   * Token-economical transcript reader for the `read_session` MCP tool. Returns
+   * only the items the caller hasn't seen (after `sinceMessageId`) or only the
+   * specific `ids` requested, compacted to id/role/short-text — never the raw
+   * blocks. Also reports whether the provider runtime is still producing so the
+   * agent knows more output is on the way.
+   */
+  async readDelta(
+    sessionId: number,
+    provider: string,
+    options: ConversationDeltaOptions = {},
+  ): Promise<ConversationDeltaResult> {
+    const runtime = this.registry.getProvider(provider);
+    const items = await runtime.getHistory(sessionId);
+
+    const total = items.length;
+    const lastMessageId = total > 0 ? items[total - 1].id : null;
+
+    // Running-guard: if the runtime says the session is actively producing,
+    // flag it so the agent keeps polling/awaiting instead of assuming it's done.
+    let running = false;
+    try {
+      const state = (await runtime.getRuntimeState(sessionId)) as {
+        sessionState?: string | null;
+        runPhase?: string | null;
+      };
+      running =
+        state.sessionState === 'running' || state.runPhase === 'running';
+    } catch {
+      running = false;
+    }
+
+    let selected: ClaudeTranscriptItem[];
+    if (options.ids && options.ids.length > 0) {
+      const wanted = new Set(options.ids);
+      selected = items.filter((item) => wanted.has(item.id));
+    } else if (options.sinceMessageId) {
+      const index = items.findIndex((item) => item.id === options.sinceMessageId);
+      // Unknown cursor (e.g. history was compacted away): fall back to the full
+      // list so the caller still gets the latest items rather than nothing.
+      selected = index === -1 ? items : items.slice(index + 1);
+    } else {
+      selected = items;
+    }
+
+    const limit = options.limit;
+    let truncated = false;
+    if (typeof limit === 'number' && selected.length > limit) {
+      // Keep the most recent items when capping a forward delta.
+      selected = selected.slice(selected.length - limit);
+      truncated = true;
+    }
+
+    return {
+      items: selected.map(toCompactItem),
+      lastMessageId,
+      running,
+      total,
+      truncated,
+    };
+  }
+}
+
+/** Flattens a transcript item to the compact shape the meta-agent consumes. */
+function toCompactItem(item: ClaudeTranscriptItem): CompactItem {
+  const compact: CompactItem = { id: item.id, role: item.kind };
+  if (item.kind === 'tool_use') {
+    compact.tool = item.toolDisplayName || item.toolName || 'tool';
+    const target = toolTarget(item.toolInput);
+    if (target) compact.text = truncateText(target);
+  } else if (isContentful(item)) {
+    compact.text = truncateText(item.content!.trim());
+  }
+  if (item.isError) compact.isError = true;
+  return compact;
+}
+
+function truncateText(text: string): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim();
+  return collapsed.length > COMPACT_TEXT_LIMIT
+    ? `${collapsed.slice(0, COMPACT_TEXT_LIMIT)}…`
+    : collapsed;
 }
 
 // --- pure model building --------------------------------------------------

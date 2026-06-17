@@ -20,7 +20,7 @@ import { SettingsService } from '../settings/settings.service.js';
 
 const VALID_STATUSES = ['created', 'active', 'archived', 'stopped'] as const;
 type SessionStatus = (typeof VALID_STATUSES)[number];
-const VALID_SURFACES = ['session', 'embedded_plan_chat'] as const;
+const VALID_SURFACES = ['session', 'embedded_plan_chat', 'agent_query'] as const;
 export type SessionSurface = (typeof VALID_SURFACES)[number];
 const VALID_COMPLETION_KINDS = ['completed'] as const;
 type SessionCompletionKind = (typeof VALID_COMPLETION_KINDS)[number];

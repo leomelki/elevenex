@@ -4077,13 +4077,41 @@ export class ClaudeRuntimeService extends EventEmitter {
         type: 'preset' as const,
         preset: 'claude_code' as const,
       },
-      env: buildManagedPlannotatorEnv(
+      env: await this.withAgentToken(
         sessionId,
-        this.wrapperScriptPath,
-        await buildAugmentedEnvAsync(process.env, worktreePath),
+        buildManagedPlannotatorEnv(
+          sessionId,
+          this.wrapperScriptPath,
+          await buildAugmentedEnvAsync(process.env, worktreePath),
+        ),
       ),
     };
     return options;
+  }
+
+  /**
+   * For "agent" sessions (the meta-agent that operates elevenex), inject the
+   * per-session `ELEVENEX_AGENT_TOKEN` so the inner process authenticates to the
+   * Elevenex MCP server as this session — letting human-channel tools route to
+   * its panel. The shared `.mcp.json` expands `${ELEVENEX_AGENT_TOKEN}`. Plain
+   * coding sessions have no token and this is a no-op.
+   */
+  private async withAgentToken(
+    sessionId: number,
+    env: Record<string, string | undefined>,
+  ): Promise<Record<string, string | undefined>> {
+    try {
+      const session = (await this.sessionsService.findOne(sessionId)) as {
+        mcpAgentToken?: string | null;
+      };
+      const token = session.mcpAgentToken;
+      if (token) {
+        return { ...env, ELEVENEX_AGENT_TOKEN: token };
+      }
+    } catch {
+      // Session lookup failures here must never block a session from starting.
+    }
+    return env;
   }
 
   private async generateAndSaveSessionTitle(

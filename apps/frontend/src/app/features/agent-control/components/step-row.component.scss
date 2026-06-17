@@ -1,0 +1,219 @@
+:host {
+  display: block;
+}
+
+.step {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.4rem;
+  border-radius: 0.55rem;
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.step--interactive {
+  cursor: pointer;
+}
+
+.step--interactive:hover {
+  background: color-mix(in oklch, var(--primary) 7%, var(--background));
+}
+
+.step--interactive:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+/* Vertical rail with the node marker and the connector to the next step. */
+.step__rail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
+.step__node {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.step__connector {
+  flex: 1;
+  width: 2px;
+  margin: 0.1rem 0;
+  border-radius: 999px;
+  background: var(--border);
+  min-height: 0.4rem;
+}
+
+.step__spin {
+  animation: step-spin 1.1s linear infinite;
+}
+
+/* Status-driven node styling using semantic tokens. */
+.step[data-status='active'] .step__node {
+  border-color: color-mix(in oklch, var(--primary) 55%, var(--border));
+  background: color-mix(in oklch, var(--primary) 16%, var(--background));
+  color: var(--primary);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--primary) 12%, transparent);
+}
+
+.step[data-status='complete'] .step__node {
+  border-color: color-mix(in oklch, var(--success) 45%, var(--border));
+  background: color-mix(in oklch, var(--success) 18%, var(--background));
+  color: color-mix(in oklch, var(--success) 82%, var(--foreground));
+}
+
+.step[data-status='complete'] .step__connector {
+  background: color-mix(in oklch, var(--success) 40%, var(--border));
+}
+
+.step[data-status='blocked'] .step__node {
+  border-color: color-mix(in oklch, var(--destructive) 50%, var(--border));
+  background: color-mix(in oklch, var(--destructive) 16%, var(--background));
+  color: var(--destructive);
+}
+
+.step__body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding-top: 0.05rem;
+}
+
+.step__heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.step__label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.8rem;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step[data-status='pending'] .step__label {
+  color: var(--muted-foreground);
+}
+
+.step__status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.15rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.step__status[data-status='active'] {
+  background: color-mix(in oklch, var(--primary) 16%, var(--background));
+  color: var(--primary);
+}
+
+.step__status[data-status='complete'] {
+  background: color-mix(in oklch, var(--success) 18%, var(--background));
+  color: color-mix(in oklch, var(--success) 82%, var(--foreground));
+}
+
+.step__status[data-status='blocked'] {
+  background: color-mix(in oklch, var(--destructive) 16%, var(--background));
+  color: var(--destructive);
+}
+
+.step__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+
+.step__kind-icon {
+  flex-shrink: 0;
+}
+
+.step__target {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.7rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step__open {
+  flex-shrink: 0;
+  align-self: center;
+  color: var(--muted-foreground);
+  opacity: 0;
+  transform: translateX(-0.1rem);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    color 140ms ease;
+}
+
+.step__open ng-icon {
+  flex-shrink: 0;
+}
+
+.step--interactive:hover .step__open,
+.step--interactive:focus-within .step__open,
+.step--interactive:focus-visible .step__open {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--primary);
+}
+
+@keyframes step-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step__spin {
+    animation: none;
+  }
+}
+
+/* On touch / small surfaces, keep the Open button always visible. */
+@media (max-width: 760px), (hover: none) {
+  .step__open {
+    opacity: 1;
+    transform: none;
+  }
+}

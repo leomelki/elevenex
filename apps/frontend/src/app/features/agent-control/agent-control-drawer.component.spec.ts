@@ -37,8 +37,9 @@ describe('AgentControlDrawerComponent', () => {
     });
   });
 
-  it('renders the preview drawer empty state when opened', () => {
+  it('renders the empty state when opened with no missions', () => {
     const service = TestBed.inject(AgentControlStateService);
+    service.reset();
     service.openGlobal();
 
     const fixture = TestBed.createComponent(AgentControlDrawerComponent);
@@ -46,18 +47,15 @@ describe('AgentControlDrawerComponent', () => {
 
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
     expect(text).toContain('Elevenex agent');
-    expect(text).toContain('Preview mode');
-    expect(text).toContain('No preview missions');
-    expect((fixture.nativeElement as HTMLElement).querySelector('.agent-control-backdrop')).toBeNull();
+    expect(text).toContain('No missions yet');
     expect(
-      (fixture.nativeElement as HTMLElement)
-        .querySelector('.agent-control-drawer')
-        ?.getAttribute('role'),
+      (fixture.nativeElement as HTMLElement).querySelector('.agent-drawer')?.getAttribute('role'),
     ).toBe('complementary');
   });
 
-  it('creates a local mission from the composer', () => {
+  it('creates a mission from the composer', () => {
     const service = TestBed.inject(AgentControlStateService);
+    service.reset();
     service.openGlobal();
 
     const fixture = TestBed.createComponent(AgentControlDrawerComponent);
@@ -72,7 +70,7 @@ describe('AgentControlDrawerComponent', () => {
 
     const submit = Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
-    ).find((button) => button.textContent?.includes('Generate preview')) as HTMLButtonElement;
+    ).find((button) => button.textContent?.includes('Send to agent')) as HTMLButtonElement;
     submit.click();
     fixture.detectChanges();
 
@@ -80,11 +78,11 @@ describe('AgentControlDrawerComponent', () => {
     expect((fixture.nativeElement as HTMLElement).textContent).toContain(
       'Run the agent and review the changes',
     );
-    expect((fixture.nativeElement as HTMLElement).textContent).not.toContain('Create worktree');
   });
 
-  it('advances a composer-created preview locally', () => {
+  it('resolves a pending approval from the escalation card', () => {
     const service = TestBed.inject(AgentControlStateService);
+    service.reset();
     service.openGlobal();
 
     const fixture = TestBed.createComponent(AgentControlDrawerComponent);
@@ -99,19 +97,19 @@ describe('AgentControlDrawerComponent', () => {
 
     const submit = Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
-    ).find((button) => button.textContent?.includes('Generate preview')) as HTMLButtonElement;
+    ).find((button) => button.textContent?.includes('Send to agent')) as HTMLButtonElement;
     submit.click();
     fixture.detectChanges();
 
     expect(service.selectedMission()?.status).toBe('waiting_approval');
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Action needed');
 
     const approve = Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
-    ).find((button) => button.textContent?.includes('Approve preview')) as HTMLButtonElement;
+    ).find((button) => button.textContent?.includes('Approve')) as HTMLButtonElement;
     approve.click();
     fixture.detectChanges();
 
     expect(service.selectedMission()?.status).toBe('planned');
-    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Preview-only approval');
   });
 });

@@ -1,0 +1,54 @@
+<div
+  class="step"
+  [attr.data-status]="step().status"
+  [class.step--last]="last()"
+  [class.step--interactive]="hasTarget()"
+  [attr.role]="hasTarget() ? 'button' : null"
+  [attr.tabindex]="hasTarget() ? 0 : null"
+  [attr.aria-label]="hasTarget() ? 'Open ' + step().label : null"
+  (click)="activate()"
+  (keydown)="onKeydown($event)"
+>
+  <div class="step__rail" aria-hidden="true">
+    <span class="step__node">
+      @if (step().status === 'complete') {
+        <ng-icon name="lucideCheck" size="13" />
+      } @else if (step().status === 'active') {
+        <ng-icon name="lucideLoaderCircle" size="13" class="step__spin" />
+      } @else if (step().status === 'blocked') {
+        <ng-icon name="lucideTriangleAlert" size="13" />
+      } @else {
+        <ng-icon [name]="kindIcon()" size="13" />
+      }
+    </span>
+    @if (!last()) {
+      <span class="step__connector"></span>
+    }
+  </div>
+
+  <div class="step__body">
+    <div class="step__heading">
+      <span class="step__label">{{ step().label }}</span>
+      <span class="step__status" [attr.data-status]="step().status">{{ statusLabel() }}</span>
+    </div>
+    <div class="step__meta">
+      <ng-icon [name]="kindIcon()" size="11" class="step__kind-icon" aria-hidden="true" />
+      <span class="step__target">{{ step().targetSummary }}</span>
+    </div>
+  </div>
+
+  @if (hasTarget()) {
+    <button
+      z-button
+      type="button"
+      zType="ghost"
+      zSize="xs"
+      class="step__open"
+      (click)="onOpenClick($event)"
+      [attr.aria-label]="'Open ' + step().label"
+    >
+      <span>Open</span>
+      <ng-icon name="lucideArrowUpRight" size="13" />
+    </button>
+  }
+</div>

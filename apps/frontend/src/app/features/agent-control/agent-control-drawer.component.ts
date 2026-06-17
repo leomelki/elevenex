@@ -1,42 +1,49 @@
-import { CommonModule } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  lucideCheck,
   lucideCircleDashed,
   lucideClipboardList,
-  lucideFileText,
   lucideFolder,
   lucideGitBranch,
   lucidePlay,
+  lucideRotateCcw,
   lucideSparkles,
   lucideX,
 } from '@ng-icons/lucide';
+import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { AgentControlStateService } from './agent-control-state.service';
+import { AgentAutonomyMode, AgentMission, AgentMissionStatus } from './agent-control.model';
+import { AutonomySelectorComponent } from './components/autonomy-selector.component';
 import {
-  AgentMission,
-  AgentMissionStatus,
-  AgentMissionStep,
-} from './agent-control.model';
+  EscalationCardComponent,
+  EscalationResolution,
+} from './components/escalation-card.component';
+import { MissionTreeComponent } from './components/mission-tree.component';
 
 @Component({
   selector: 'app-agent-control-drawer',
   standalone: true,
-  imports: [CommonModule, NgIcon, ZardButtonComponent, ZardInputDirective],
+  imports: [
+    NgIcon,
+    ZardButtonComponent,
+    ZardInputDirective,
+    AutonomySelectorComponent,
+    MissionTreeComponent,
+    EscalationCardComponent,
+  ],
   templateUrl: './agent-control-drawer.component.html',
   styleUrl: './agent-control-drawer.component.scss',
   viewProviders: [
     provideIcons({
-      lucideCheck,
       lucideCircleDashed,
       lucideClipboardList,
-      lucideFileText,
       lucideFolder,
       lucideGitBranch,
       lucidePlay,
+      lucideRotateCcw,
       lucideSparkles,
       lucideX,
     }),
@@ -46,7 +53,9 @@ export class AgentControlDrawerComponent {
   readonly state = inject(AgentControlStateService);
 
   readonly promptDraft = signal('');
-  readonly recentMissions = computed(() => this.state.missions().slice(0, 5));
+  readonly recentMissions = computed(() => this.state.missions().slice(0, 6));
+  readonly hasMissions = computed(() => this.state.missions().length > 0);
+  readonly canSubmit = computed(() => this.promptDraft().trim().length > 0);
 
   close(): void {
     this.state.close();
@@ -56,15 +65,29 @@ export class AgentControlDrawerComponent {
     this.state.selectMission(id);
   }
 
+  setAutonomyMode(mode: AgentAutonomyMode): void {
+    this.state.setAutonomyMode(mode);
+  }
+
+  setMissionAutonomyMode(missionId: string, mode: AgentAutonomyMode): void {
+    this.state.setMissionAutonomyMode(missionId, mode);
+  }
+
   createMissionFromPrompt(): void {
     const mission = this.state.createMission(this.promptDraft());
     if (mission) {
       this.promptDraft.set('');
+      toast.success('Mission created', { description: mission.title });
     }
   }
 
   resetMissions(): void {
     this.state.reset();
+    toast.info('Missions cleared');
+  }
+
+  onComposerInput(event: Event): void {
+    this.promptDraft.set((event.target as HTMLTextAreaElement).value);
   }
 
   onComposerKeydown(event: KeyboardEvent): void {
@@ -74,16 +97,23 @@ export class AgentControlDrawerComponent {
     }
   }
 
+  resolveApproval(missionId: string, resolution: EscalationResolution): void {
+    this.state.resolveApproval(missionId, resolution.approvalId, resolution.decision);
+    if (resolution.decision === 'approve') {
+      toast.success('Approved');
+    } else {
+      toast.error('Declined', { description: 'Mission blocked pending your direction.' });
+    }
+  }
+
   nextActionLabel(mission: AgentMission): string | null {
     switch (mission.status) {
-      case 'waiting_approval':
-        return 'Approve preview';
       case 'planned':
-        return 'Run preview';
+        return 'Run mission';
       case 'running':
-        return 'Review preview';
+        return 'Move to review';
       case 'review':
-        return 'Complete preview';
+        return 'Complete';
       default:
         return null;
     }
@@ -91,17 +121,17 @@ export class AgentControlDrawerComponent {
 
   advanceMission(mission: AgentMission): void {
     switch (mission.status) {
-      case 'waiting_approval':
-        this.state.approveMission(mission.id);
-        return;
       case 'planned':
         this.state.runMission(mission.id);
+        toast.info('Mission running');
         return;
       case 'running':
         this.state.reviewMission(mission.id);
+        toast.info('Mission in review');
         return;
       case 'review':
         this.state.completeMission(mission.id);
+        toast.success('Mission complete');
         return;
       default:
         return;
@@ -127,40 +157,29 @@ export class AgentControlDrawerComponent {
     }
   }
 
-  stepIcon(step: AgentMissionStep): string {
-    if (step.status === 'complete') {
-      return 'lucideCheck';
-    }
-    if (step.status === 'active') {
-      return 'lucidePlay';
-    }
-    if (step.kind === 'project') {
-      return 'lucideFolder';
-    }
-    if (step.kind === 'repo' || step.kind === 'worktree') {
-      return 'lucideGitBranch';
-    }
-    if (step.kind === 'review') {
-      return 'lucideClipboardList';
-    }
-    if (step.kind === 'agent') {
-      return 'lucideSparkles';
-    }
-    return 'lucideCircleDashed';
-  }
-
-  formatDate(value: string): string {
+  relativeTime(value: string): string {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
       return 'Unknown';
     }
 
-    return new Intl.DateTimeFormat(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(date);
+    const diffMs = Date.now() - date.getTime();
+    const diffSeconds = Math.round(diffMs / 1000);
+    if (diffSeconds < 45) {
+      return 'just now';
+    }
+    const diffMinutes = Math.round(diffSeconds / 60);
+    if (diffMinutes < 60) {
+      return `${diffMinutes}m ago`;
+    }
+    const diffHours = Math.round(diffMinutes / 60);
+    if (diffHours < 24) {
+      return `${diffHours}h ago`;
+    }
+    const diffDays = Math.round(diffHours / 24);
+    if (diffDays < 7) {
+      return `${diffDays}d ago`;
+    }
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
   }
-
 }

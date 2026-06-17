@@ -1,0 +1,73 @@
+import { z } from 'zod';
+import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
+
+/**
+ * session_status — the cheap liveness poll that GATES heavier reads. ⚡instant:
+ * one DB row plus the runtime's live state, NO transcript. Tells you whether a
+ * session moved, needs review, or is blocked on a pending action so you only
+ * spend tokens on read_session / get_pending_action when there's something new.
+ */
+export const sessionStatusTool = defineTool({
+  name: 'session_status',
+  title: 'Session status',
+  costClass: 'instant',
+  description:
+    'Cheap liveness poll for one session (DB status + live runtime state, no transcript). ⚡instant. Gate before reading: call read_session when items advanced, get_pending_action when hasPendingAction, or await_session_event to block on a change.',
+  annotations: { readOnlyHint: true },
+  inputShape: {
+    sessionId: z
+      .number()
+      .int()
+      .positive()
+      .describe('Session id to poll. Get ids from project_overview / find_sessions.'),
+  },
+  handler: async (args, ctx) => {
+    const { sessions, agentRuntime } = ctx.services;
+
+    const session = await sessions.findOne(args.sessionId).catch(() => null);
+    if (!session) {
+      throw new ToolError({
+        code: 'session_not_found',
+        message: `No session with id ${args.sessionId}.`,
+        remediation: 'List valid ids with find_sessions or project_overview.',
+      });
+    }
+
+    // Live runtime state is best-effort: the runtime may not be started yet, in
+    // which case we fall back to the DB status and report no pending action.
+    let runtimeState: string | undefined;
+    let hasPendingAction = false;
+    try {
+      const provider = agentRuntime.getProvider(session.activeAgentProvider);
+      const state = (await provider.getRuntimeState(args.sessionId)) as {
+        sessionState?: string | null;
+        runPhase?: string | null;
+        pendingPermissionRequest?: unknown;
+        pendingUserInputRequest?: unknown;
+      };
+      runtimeState =
+        state.sessionState ??
+        (state.runPhase === 'running' ? 'running' : undefined) ??
+        undefined;
+      hasPendingAction =
+        !!state.pendingPermissionRequest || !!state.pendingUserInputRequest;
+    } catch {
+      runtimeState = undefined;
+    }
+
+    return {
+      data: {
+        sessionId: session.id,
+        status: session.status,
+        runtimeState: runtimeState ?? session.status,
+        needsReview: session.hasUnreviewedCompletion,
+        hasPendingAction,
+        lastActivityAt: session.lastStateChangeAt ?? undefined,
+      },
+      deepLink: ctx.deepLink.session(session.id),
+      nextStep: hasPendingAction
+        ? 'Blocked: inspect with get_pending_action, then resolve it.'
+        : 'If items advanced, read_session for the delta; else await_session_event to block on a change.',
+    };
+  },
+});

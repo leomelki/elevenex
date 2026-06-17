@@ -29,6 +29,7 @@ import { BackendLogsModule } from './backend-logs/backend-logs.module.js';
 import { ServerConnectionModule } from './server-connection/server-connection.module.js';
 import { SettingsModule } from './settings/settings.module.js';
 import { ElevenexMcpModule } from './mcp/elevenex-mcp.module.js';
+import { ElevenexAgentModule } from './elevenex-agent/elevenex-agent.module.js';
 import { ShellEnvService } from './config/shell-env.service.js';
 
 @Module({
@@ -61,6 +62,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     ServerConnectionModule,
     SettingsModule,
     ElevenexMcpModule,
+    ElevenexAgentModule,
   ],
   controllers: [AppController],
   providers: [AppService, ShellEnvService],

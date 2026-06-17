@@ -1,0 +1,43 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.autonomy {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.autonomy__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+  padding: 0.18rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--muted);
+}
+
+.autonomy__option {
+  gap: 0.32rem;
+}
+
+.autonomy__option ng-icon {
+  flex-shrink: 0;
+}
+
+.autonomy__hint {
+  margin: 0;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -154,7 +154,7 @@ export class ReposService {
     return rows[0];
   }
 
-  private async findOne(id: number) {
+  async findOne(id: number) {
     const rows = await this.db
       .select()
       .from(schema.repos)

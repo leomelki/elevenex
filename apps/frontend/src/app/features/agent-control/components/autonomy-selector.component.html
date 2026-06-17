@@ -1,0 +1,29 @@
+<div class="autonomy">
+  <div
+    class="autonomy__group"
+    role="radiogroup"
+    aria-label="Agent autonomy mode"
+    (keydown)="onKeydown($event)"
+  >
+    @for (option of modes; track option.id) {
+      <button
+        z-button
+        type="button"
+        zSize="sm"
+        [zType]="option.id === mode() ? 'default' : 'ghost'"
+        class="autonomy__option"
+        role="radio"
+        [attr.aria-checked]="option.id === mode()"
+        [attr.aria-label]="option.label + ' autonomy: ' + option.description"
+        [attr.tabindex]="option.id === mode() ? 0 : -1"
+        [disabled]="disabled()"
+        [title]="option.description"
+        (click)="select(option.id)"
+      >
+        <ng-icon [name]="option.icon" size="14" />
+        <span>{{ option.label }}</span>
+      </button>
+    }
+  </div>
+  <p class="autonomy__hint">{{ activeDescription() }}</p>
+</div>

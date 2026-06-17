@@ -1,15 +1,18 @@
 import type { ToolDefinition } from '../tool-registry/tool.types.js';
-import { projectOverviewTool } from './observe/project-overview.tool.js';
-import { findSessionsTool } from './observe/find-sessions.tool.js';
+import { OBSERVE_TOOLS } from './observe/index.js';
+import { DRIVE_TOOLS } from './drive/index.js';
+import { ASK_TOOLS } from './ask/index.js';
+import { SETUP_TOOLS } from './setup/index.js';
 
 /**
  * Barrel collecting every elevenex MCP tool. The registry registers exactly
- * this array. Tool groups (observe / drive / setup / human) append their
- * definitions here; keep them grouped and ordered the way the agent composes
- * them so the tool list reads like a workflow.
+ * this array. Ordered the way the agent composes a mission — observe to orient,
+ * set up the environment, drive sessions, ask quick questions — so the tool
+ * list reads like the workflow in the server instructions.
  */
 export const ALL_TOOLS: ToolDefinition[] = [
-  // --- Observe ---
-  projectOverviewTool,
-  findSessionsTool,
+  ...OBSERVE_TOOLS,
+  ...SETUP_TOOLS,
+  ...DRIVE_TOOLS,
+  ...ASK_TOOLS,
 ];

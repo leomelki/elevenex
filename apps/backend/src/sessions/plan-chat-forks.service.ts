@@ -15,7 +15,8 @@ import type {
   AgentForkConversationResult,
   AgentProviderId,
 } from '../agent-runtime/agent-runtime.types.js';
-import { SessionsService } from './sessions.service.js';
+import { SessionsService, type SessionSurface } from './sessions.service.js';
+import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 
 type PlanChatForkRow = typeof schema.planChatForks.$inferSelect;
 type PlanChatAnchorKind = 'user' | 'assistant';
@@ -35,6 +36,25 @@ export interface EnsurePlanChatForkDto {
 export interface SubmitPlanChatQuestionDto {
   question?: string;
 }
+
+export interface AskPlanChatForkDto {
+  question: string;
+  /** Surface for the hidden child fork. Defaults to `agent_query`. */
+  surface?: SessionSurface;
+  /** Max time to wait for an answer before returning a `running` handle. */
+  timeoutMs?: number;
+  /** Cancellation signal (e.g. the MCP request abort). */
+  signal?: AbortSignal;
+}
+
+export interface AskPlanChatForkResult {
+  forkId: number;
+  childSessionId: number;
+  answer: string | null;
+  running: boolean;
+}
+
+const DEFAULT_ASK_TIMEOUT_MS = 30_000;
 
 @Injectable()
 export class PlanChatForksService {
@@ -250,6 +270,119 @@ export class PlanChatForksService {
     };
   }
 
+  /**
+   * Fork the parent at its current conversation head onto a hidden surface
+   * (default `agent_query`), submit a question, and wait — event-driven, bounded
+   * by `timeoutMs` and cancellable via `signal` — for the fork to go idle and
+   * produce an answer. Reuses the same fork/submit machinery as the plan chat.
+   * Returns the trimmed answer when ready, or `{ answer: null, running: true }`
+   * with the fork handle so the caller can poll later.
+   */
+  async ask(
+    parentSessionId: number,
+    dto: AskPlanChatForkDto,
+  ): Promise<AskPlanChatForkResult> {
+    const parent = await this.sessionsService.findOne(parentSessionId);
+    if (parent.status === 'archived') {
+      throw new BadRequestException('Archived sessions are read-only.');
+    }
+
+    const question = dto.question?.trim();
+    if (!question) {
+      throw new BadRequestException('A question is required.');
+    }
+    if (question.length > 8_000) {
+      throw new BadRequestException('Question is too long.');
+    }
+
+    const provider = this.normalizeProvider(parent.activeAgentProvider);
+    const surface = dto.surface ?? 'agent_query';
+    const registry = this.moduleRef.get(AgentRuntimeRegistryService, {
+      strict: false,
+    });
+
+    // Parent-idle guard: a fork copies the parent's conversation head, so the
+    // parent must not be mid-run or the fork would race an in-flight turn.
+    if (await this.isRuntimeRunning(registry, provider, parentSessionId)) {
+      throw new BadRequestException(
+        'The session is busy producing a response; ask again once it is idle.',
+      );
+    }
+
+    const anchor = await this.resolveParentAnchor(
+      registry,
+      provider,
+      parentSessionId,
+    );
+
+    const childName = this.defaultAskName(parent.name);
+    let child: { id: number } | null = null;
+
+    try {
+      child = await this.sessionsService.create({
+        repoId: parent.repoId,
+        workspaceId: parent.workspaceId ?? undefined,
+        branchName: parent.branchName,
+        worktreePath: parent.worktreePath,
+        name: childName,
+        surface,
+        activeAgentProvider: provider,
+      });
+
+      const providerResult = await registry
+        .getProviderFeature(provider, 'forkConversation')
+        .forkConversation({
+          parentSessionId,
+          childSessionId: child.id,
+          anchorMessageId: anchor.id,
+          anchorMessageKind: anchor.kind,
+          childSessionName: childName,
+        });
+
+      const updatedChild = await this.applyProviderResult(
+        child.id,
+        provider,
+        providerResult,
+      );
+      await this.ensurePlanMode(registry, provider, updatedChild.id);
+
+      await registry
+        .getProvider(provider)
+        .submitPrompt(
+          updatedChild.id,
+          this.buildGuardedQuestionPrompt(question, null),
+          question,
+        );
+
+      const answer = await this.waitForAnswer(
+        registry,
+        provider,
+        updatedChild.id,
+        dto.timeoutMs ?? DEFAULT_ASK_TIMEOUT_MS,
+        dto.signal,
+      );
+
+      return {
+        forkId: updatedChild.id,
+        childSessionId: updatedChild.id,
+        answer,
+        running: answer === null,
+      };
+    } catch (error) {
+      // A setup/submit failure leaves a useless child — clean it up. A timeout
+      // does NOT throw (waitForAnswer returns null), so a still-producing fork
+      // is intentionally kept alive for the caller to poll later.
+      if (child) {
+        await this.sessionsService.delete(child.id).catch((cleanupError) => {
+          this.logger.warn(
+            `Failed to clean up agent query child session ${child?.id}: ${String(cleanupError)}`,
+          );
+        });
+      }
+      throw error;
+    }
+  }
+
   async delete(parentSessionId: number, planChatId: number) {
     const row = await this.findById(parentSessionId, planChatId);
     await this.sessionsService
@@ -388,6 +521,147 @@ export class PlanChatForksService {
 
   private defaultPlanChatName(parentName: string | null | undefined): string {
     return `${parentName?.trim() || 'Session'} plan Q&A`;
+  }
+
+  private defaultAskName(parentName: string | null | undefined): string {
+    return `${parentName?.trim() || 'Session'} agent Q&A`;
+  }
+
+  /** True when the provider runtime reports the session is actively producing. */
+  private async isRuntimeRunning(
+    registry: AgentRuntimeRegistryService,
+    provider: AgentProviderId,
+    sessionId: number,
+  ): Promise<boolean> {
+    try {
+      const state = (await registry
+        .getProvider(provider)
+        .getRuntimeState(sessionId)) as {
+        sessionState?: string | null;
+        runPhase?: string | null;
+      };
+      return state.sessionState === 'running' || state.runPhase === 'running';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Anchor a fork at the parent's current conversation head — the last
+   * message in its history. ask() guards that the parent is idle first, so the
+   * head is stable.
+   */
+  private async resolveParentAnchor(
+    registry: AgentRuntimeRegistryService,
+    provider: AgentProviderId,
+    parentSessionId: number,
+  ): Promise<{ id: string; kind: PlanChatAnchorKind }> {
+    const history = await registry
+      .getProvider(provider)
+      .getHistory(parentSessionId);
+    for (let i = history.length - 1; i >= 0; i--) {
+      const item = history[i];
+      if (item.kind === 'user' || item.kind === 'assistant') {
+        return { id: item.id, kind: item.kind };
+      }
+    }
+    throw new BadRequestException(
+      'The session has no conversation yet to ask about.',
+    );
+  }
+
+  /**
+   * Event-driven wait for the child fork to go idle and produce an assistant
+   * answer, bounded by `timeoutMs` and cancellable via `signal`. Returns the
+   * trimmed answer, or null on timeout/cancel (the fork keeps running).
+   */
+  private async waitForAnswer(
+    registry: AgentRuntimeRegistryService,
+    provider: AgentProviderId,
+    childSessionId: number,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+
+    const isIdleWithAnswer = async (): Promise<string | null> => {
+      if (await this.isRuntimeRunning(registry, provider, childSessionId)) {
+        return null;
+      }
+      const history = await registry
+        .getProvider(provider)
+        .getHistory(childSessionId);
+      return this.extractLastAssistantAnswer(history);
+    };
+
+    // Fast path: already idle with an answer.
+    const immediate = await isIdleWithAnswer();
+    if (immediate !== null) {
+      return immediate;
+    }
+
+    return new Promise<string | null>((resolve) => {
+      let settled = false;
+      let timer: NodeJS.Timeout | null = null;
+      let poll: NodeJS.Timeout | null = null;
+
+      const onStatus = (payload: { sessionId: number }) => {
+        if (payload.sessionId === childSessionId) check();
+      };
+      const onAbort = () => finish(null);
+
+      const finish = (value: string | null) => {
+        if (settled) return;
+        settled = true;
+        this.sessionsService.off('session-status-changed', onStatus);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        if (timer) clearTimeout(timer);
+        if (poll) clearInterval(poll);
+        resolve(value);
+      };
+
+      const check = () => {
+        if (settled) return;
+        void isIdleWithAnswer()
+          .then((answer) => {
+            if (answer !== null) finish(answer);
+            else if (Date.now() >= deadline) finish(null);
+          })
+          .catch(() => {
+            if (Date.now() >= deadline) finish(null);
+          });
+      };
+
+      this.sessionsService.on('session-status-changed', onStatus);
+      if (signal) {
+        if (signal.aborted) {
+          finish(null);
+          return;
+        }
+        signal.addEventListener('abort', onAbort);
+      }
+
+      timer = setTimeout(() => finish(null), Math.max(0, deadline - Date.now()));
+      // Poll fallback in case a status-changed event is missed.
+      poll = setInterval(check, 1_000);
+    });
+  }
+
+  /** Last contentful assistant message in a transcript, trimmed; null if none. */
+  private extractLastAssistantAnswer(
+    history: ClaudeTranscriptItem[],
+  ): string | null {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const item = history[i];
+      if (
+        item.kind === 'assistant' &&
+        typeof item.content === 'string' &&
+        item.content.trim().length > 0
+      ) {
+        return item.content.trim();
+      }
+    }
+    return null;
   }
 
   private truncateNullable(

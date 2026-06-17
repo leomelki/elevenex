@@ -76,6 +76,44 @@ describe('AgentControlStateService', () => {
     expect(service.selectedMission()?.steps.every((step) => step.status === 'complete')).toBe(true);
   });
 
+  it('persists the autonomy mode and stamps it on new missions', () => {
+    const service = new AgentControlStateService();
+    expect(service.autonomyMode()).toBe('review');
+
+    service.setAutonomyMode('plan');
+    const mission = service.createMission('Plan a new worktree');
+    expect(mission?.autonomyMode).toBe('plan');
+
+    const restored = new AgentControlStateService();
+    expect(restored.autonomyMode()).toBe('plan');
+  });
+
+  it('starts full-autonomy missions planned with no pending approvals', () => {
+    const service = new AgentControlStateService();
+    service.setAutonomyMode('full');
+
+    const mission = service.createMission('Run the agent autonomously');
+    expect(mission?.status).toBe('planned');
+    expect(mission?.approvals).toHaveLength(0);
+  });
+
+  it('resolves approvals: approving advances, declining blocks', () => {
+    const approveService = new AgentControlStateService();
+    approveService.setAutonomyMode('review');
+    const approved = approveService.createMission('Review the changes before shipping');
+    const approval = approved!.approvals[0];
+    approveService.resolveApproval(approved!.id, approval.id, 'approve');
+    expect(approveService.selectedMission()?.status).toBe('planned');
+    expect(approveService.selectedMission()?.approvals[0].status).toBe('approved');
+
+    const declineService = new AgentControlStateService();
+    declineService.setAutonomyMode('review');
+    const declined = declineService.createMission('Review the risky changes');
+    declineService.resolveApproval(declined!.id, declined!.approvals[0].id, 'decline');
+    expect(declineService.selectedMission()?.status).toBe('blocked');
+    expect(declineService.selectedMission()?.approvals[0].status).toBe('skipped');
+  });
+
   it('resets missions and selected state without closing the drawer', () => {
     const service = new AgentControlStateService();
     service.openGlobal();

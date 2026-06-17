@@ -1,0 +1,7 @@
+<ol class="mission-tree" aria-label="Mission steps">
+  @for (step of steps(); track step.id; let last = $last) {
+    <li>
+      <app-step-row [step]="step" [last]="last" (open)="openStep($event)" />
+    </li>
+  }
+</ol>
