@@ -12,7 +12,10 @@ importers:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.131
-        version: 0.2.131(zod@4.3.6)
+        version: 0.2.131(zod@3.25.76)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
       '@nestjs/common':
         specifier: ^11.0.1
         version: 11.1.17(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -79,6 +82,9 @@ importers:
       ws:
         specifier: ^8.20.0
         version: 8.20.0
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     devDependencies:
       '@eslint/eslintrc':
         specifier: ^3.2.0
@@ -923,15 +929,15 @@ packages:
     dev: false
     optional: true
 
-  /@anthropic-ai/claude-agent-sdk@0.2.131(zod@4.3.6):
+  /@anthropic-ai/claude-agent-sdk@0.2.131(zod@3.25.76):
     resolution: {integrity: sha512-4Xak+BlcxXuni5BvNeb0tnSapIoCBxE7cFnXvkUs0EwbY88FkmdJEtBXZbF7NRuN8bUwDeNxvy0Fs0dWnzpU+g==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       zod: ^4.0.0
     dependencies:
-      '@anthropic-ai/sdk': 0.81.0(zod@4.3.6)
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
-      zod: 4.3.6
+      '@anthropic-ai/sdk': 0.81.0(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
+      zod: 3.25.76
     optionalDependencies:
       '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.2.131
       '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.2.131
@@ -946,7 +952,7 @@ packages:
       - supports-color
     dev: false
 
-  /@anthropic-ai/sdk@0.81.0(zod@4.3.6):
+  /@anthropic-ai/sdk@0.81.0(zod@3.25.76):
     resolution: {integrity: sha512-D4K5PvEV6wPiRtVlVsJHIUhHAmOZ6IT/I9rKlTf84gR7GyyAurPJK7z9BOf/AZqC5d1DhYQGJNKRmV+q8dGhgw==}
     hasBin: true
     peerDependencies:
@@ -956,7 +962,7 @@ packages:
         optional: true
     dependencies:
       json-schema-to-ts: 3.1.1
-      zod: 4.3.6
+      zod: 3.25.76
     dev: false
 
   /@asamuzakjp/css-color@5.1.11:
@@ -3328,7 +3334,7 @@ packages:
       - supports-color
     dev: true
 
-  /@modelcontextprotocol/sdk@1.29.0(zod@4.3.6):
+  /@modelcontextprotocol/sdk@1.29.0(zod@3.25.76):
     resolution: {integrity: sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==}
     engines: {node: '>=18'}
     peerDependencies:
@@ -3353,8 +3359,8 @@ packages:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.3.6
-      zod-to-json-schema: 3.25.1(zod@4.3.6)
+      zod: 3.25.76
+      zod-to-json-schema: 3.25.1(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
     dev: false
@@ -12934,12 +12940,26 @@ packages:
     resolution: {integrity: sha512-CzhO+pFNo8ajLM2d2IW/R93ipy99LWjtwblvC1RsoSUMZgyLbYFr221TnSNT7GjGdYui6P459mw9JH/g/zW2ug==}
     engines: {node: '>=18'}
 
+  /zod-to-json-schema@3.25.1(zod@3.25.76):
+    resolution: {integrity: sha512-pM/SU9d3YAggzi6MtR4h7ruuQlqKtad8e9S0fmxcMi+ueAK5Korys/aWcV9LIIHTVbj01NdzxcnXSN+O74ZIVA==}
+    peerDependencies:
+      zod: ^3.25 || ^4
+    dependencies:
+      zod: 3.25.76
+    dev: false
+
   /zod-to-json-schema@3.25.1(zod@4.3.6):
     resolution: {integrity: sha512-pM/SU9d3YAggzi6MtR4h7ruuQlqKtad8e9S0fmxcMi+ueAK5Korys/aWcV9LIIHTVbj01NdzxcnXSN+O74ZIVA==}
     peerDependencies:
       zod: ^3.25 || ^4
     dependencies:
       zod: 4.3.6
+    dev: true
+
+  /zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+    dev: false
 
   /zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
+    dev: true
