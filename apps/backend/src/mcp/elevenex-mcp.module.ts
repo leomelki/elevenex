@@ -18,6 +18,7 @@ import { DeltaCursorStore } from './tool-registry/delta-cursor.store.js';
 import { ToolRegistryService } from './tool-registry/tool-registry.service.js';
 import { DeepLinkBuilder } from './deep-link/deep-link.builder.js';
 import { AgentHumanChannelService } from './human-channel/human-channel.js';
+import { AgentChannelGateway } from './human-channel/agent-channel.gateway.js';
 import { McpAgentTokenService } from './identity/mcp-agent-token.service.js';
 import { McpConnectionRegistryService } from './connection/mcp-connection-registry.service.js';
 import { McpServerFactory } from './transport/mcp-server.factory.js';
@@ -55,11 +56,14 @@ import { ElevenexMcpHttpTransport } from './transport/elevenex-mcp-http.transpor
     ToolRegistryService,
     McpServerFactory,
     ElevenexMcpHttpTransport,
+    AgentChannelGateway,
   ],
   exports: [
-    // main.ts mounts the transport; the token service is reused by the
-    // agent-session creation path to mint ELEVENEX_AGENT_TOKEN.
+    // main.ts mounts the transport + the agent-channel gateway; the token
+    // service is reused by the agent-session creation path to mint
+    // ELEVENEX_AGENT_TOKEN.
     ElevenexMcpHttpTransport,
+    AgentChannelGateway,
     McpAgentTokenService,
     AgentHumanChannelService,
     McpConnectionRegistryService,

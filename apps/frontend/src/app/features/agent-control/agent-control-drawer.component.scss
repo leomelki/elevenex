@@ -102,6 +102,82 @@
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--success) 22%, transparent);
 }
 
+/* ---------- Live channel connection indicator ---------- */
+.agent-drawer__conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  min-height: 1.55rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 50%, var(--background));
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.agent-drawer__conn.is-connected {
+  border-color: color-mix(in oklch, var(--success) 30%, var(--border));
+  background: color-mix(in oklch, var(--success) 12%, var(--background));
+  color: color-mix(in oklch, var(--success) 82%, var(--foreground));
+}
+
+.agent-drawer__conn-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+}
+
+.agent-drawer__conn.is-connected .agent-drawer__conn-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--success) 22%, transparent);
+}
+
+/* ---------- Live escalations ---------- */
+.agent-drawer__live {
+  border-bottom: 1px solid color-mix(in oklch, var(--warning) 24%, var(--border));
+  background: color-mix(in oklch, var(--warning) 7%, var(--background));
+  padding: 0.7rem 0.75rem 0.8rem;
+}
+
+.agent-drawer__live-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.agent-drawer__live-title {
+  color: color-mix(in oklch, var(--warning) 88%, var(--foreground));
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.agent-drawer__live-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.2rem;
+  height: 1.2rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--warning) 26%, var(--background));
+  color: color-mix(in oklch, var(--warning) 90%, var(--foreground));
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.agent-drawer__live-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
 /* ---------- Recent missions ---------- */
 .agent-drawer__missions {
   border-bottom: 1px solid var(--border);

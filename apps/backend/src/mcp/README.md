@@ -51,7 +51,7 @@ guarantees so individual tools can't regress them:
   `prompt_session`, `ask_session`, `generate_worktree_context`, `await_session_event`) return a
   handle/state immediately and never block.
 
-## Tools (32)
+## Tools (36)
 
 - **Observe**: `project_overview`, `find_sessions`, `session_status`, `read_session`, `text_search`,
   `file_search`, `read_file`, `change_review`, `get_worktree_context`, `await_session_event`.
@@ -63,6 +63,10 @@ guarantees so individual tools can't regress them:
   `set_permission_mode`.
 - **Ask**: `ask_session` (hidden `agent_query` fork → just the answer, or a `{running, forkId}`
   handle).
+- **Human channel** (all `requiresAgent`): `notify_user`, `show_user` (non-blocking FYIs),
+  `request_approval`, `escalate_to_user` (BLOCK on the human via the panel). Backed by
+  `AgentHumanChannelService`; `AgentChannelGateway` (`/agent-channel` WS) streams these to the panel
+  and accepts the human's decision to unblock the waiting tool call.
 
 ## Testing
 

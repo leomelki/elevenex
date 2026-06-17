@@ -114,7 +114,6 @@ export class AgentHumanChannelService extends EventEmitter {
     request: AgentApprovalRequest,
     timeoutMs: number,
   ): Promise<AgentApprovalResolution> {
-    this.emit('approval', request);
     return new Promise<AgentApprovalResolution>((resolve) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(request.id)) {
@@ -129,7 +128,10 @@ export class AgentHumanChannelService extends EventEmitter {
       }, timeoutMs);
       // Don't keep the event loop alive solely for a pending approval.
       timer.unref?.();
+      // Register BEFORE emitting so a synchronous listener (e.g. an
+      // immediately-answering panel/test) can resolve it without racing.
       this.pending.set(request.id, { resolve, timer, request });
+      this.emit('approval', request);
     });
   }
 

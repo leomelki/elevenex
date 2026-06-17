@@ -15,6 +15,15 @@
       </div>
 
       <div class="agent-drawer__header-actions">
+        <span
+          class="agent-drawer__conn"
+          [class.is-connected]="channelWs.connected()"
+          [attr.aria-label]="channelWs.connected() ? 'Live channel connected' : 'Live channel disconnected'"
+          [title]="channelWs.connected() ? 'Live channel connected' : 'Reconnecting to live channel…'"
+        >
+          <span class="agent-drawer__conn-dot" aria-hidden="true"></span>
+          {{ channelWs.connected() ? 'Live' : 'Offline' }}
+        </span>
         @if (state.activeMissionsCount() > 0) {
           <span
             class="agent-drawer__count"
@@ -37,6 +46,25 @@
         </button>
       </div>
     </header>
+
+    <!-- Live escalations from the meta-agent (blocking approvals) -->
+    @if (channelWs.liveApprovals().length > 0) {
+      <section class="agent-drawer__live" aria-label="Live escalations">
+        <div class="agent-drawer__live-head">
+          <span class="agent-drawer__live-title">Action needed</span>
+          <span class="agent-drawer__live-count">{{ channelWs.liveApprovals().length }}</span>
+        </div>
+        <div class="agent-drawer__live-list">
+          @for (approval of channelWs.liveApprovals(); track approval.id) {
+            <app-live-escalation-card
+              [approval]="approval"
+              (resolve)="resolveLiveApproval($event)"
+              (open)="openLiveDeepLink($event)"
+            />
+          }
+        </div>
+      </section>
+    }
 
     <!-- Recent missions list -->
     @if (hasMissions()) {

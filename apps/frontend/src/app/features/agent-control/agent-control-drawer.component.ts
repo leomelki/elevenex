@@ -14,6 +14,7 @@ import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
+import { AgentChannelWebsocketService } from './agent-channel-websocket.service';
 import { AgentControlStateService } from './agent-control-state.service';
 import { AgentAutonomyMode, AgentMission, AgentMissionStatus } from './agent-control.model';
 import { AutonomySelectorComponent } from './components/autonomy-selector.component';
@@ -21,6 +22,10 @@ import {
   EscalationCardComponent,
   EscalationResolution,
 } from './components/escalation-card.component';
+import {
+  LiveEscalationCardComponent,
+  LiveEscalationResolution,
+} from './components/live-escalation-card.component';
 import { MissionTreeComponent } from './components/mission-tree.component';
 
 @Component({
@@ -33,6 +38,7 @@ import { MissionTreeComponent } from './components/mission-tree.component';
     AutonomySelectorComponent,
     MissionTreeComponent,
     EscalationCardComponent,
+    LiveEscalationCardComponent,
   ],
   templateUrl: './agent-control-drawer.component.html',
   styleUrl: './agent-control-drawer.component.scss',
@@ -51,6 +57,12 @@ import { MissionTreeComponent } from './components/mission-tree.component';
 })
 export class AgentControlDrawerComponent {
   readonly state = inject(AgentControlStateService);
+  readonly channelWs = inject(AgentChannelWebsocketService);
+
+  constructor() {
+    // Open the live meta-agent channel as soon as the drawer mounts; idempotent.
+    this.channelWs.connect();
+  }
 
   readonly promptDraft = signal('');
   readonly recentMissions = computed(() => this.state.missions().slice(0, 6));
@@ -104,6 +116,15 @@ export class AgentControlDrawerComponent {
     } else {
       toast.error('Declined', { description: 'Mission blocked pending your direction.' });
     }
+  }
+
+  resolveLiveApproval(resolution: LiveEscalationResolution): void {
+    this.channelWs.resolveApproval(resolution.approvalId, resolution.decision);
+    toast.success('Decision sent', { description: resolution.decision });
+  }
+
+  openLiveDeepLink(deepLink: string): void {
+    this.channelWs.openDeepLink(deepLink);
   }
 
   nextActionLabel(mission: AgentMission): string | null {

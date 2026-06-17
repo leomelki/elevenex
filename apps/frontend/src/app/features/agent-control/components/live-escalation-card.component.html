@@ -1,0 +1,40 @@
+<section class="live-escalation" role="group" [attr.aria-label]="approval().title">
+  <header class="live-escalation__header">
+    <span class="live-escalation__icon" aria-hidden="true">
+      <ng-icon name="lucideTriangleAlert" size="15" />
+    </span>
+    <div class="live-escalation__title">
+      <strong>{{ approval().title }}</strong>
+      @if (approval().detail) {
+        <p class="live-escalation__detail">{{ approval().detail }}</p>
+      }
+    </div>
+  </header>
+
+  <div class="live-escalation__actions">
+    @if (approval().deepLink) {
+      <button
+        z-button
+        type="button"
+        zType="ghost"
+        zSize="sm"
+        class="live-escalation__open"
+        (click)="onOpen()"
+      >
+        <ng-icon name="lucideArrowUpRight" size="14" />
+        Open
+      </button>
+    }
+    @for (option of options(); track option.value) {
+      <button
+        z-button
+        type="button"
+        [zType]="option.zType"
+        zSize="sm"
+        (click)="onResolve(option.value)"
+      >
+        {{ option.label }}
+      </button>
+    }
+  </div>
+</section>
