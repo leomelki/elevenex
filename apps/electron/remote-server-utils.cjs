@@ -59,6 +59,26 @@ function shellPathQuote(value) {
   return `"${escape(raw)}"`;
 }
 
+// POSIX-sh helper injected into remote scripts. It resolves a binary the same
+// way the backend's findBinary() does. Remote commands run under `sh -lc`,
+// which sources neither ~/.zshrc nor ~/.bashrc, so PATH additions from the
+// claude native installer (~/.local/bin) or a version manager (nvm/fnm) are
+// invisible. When the bare lookup fails we re-run it through the user's own
+// login shell ("$SHELL" -ilc) so both detection and tmux invocation match an
+// interactive session. Prints the resolved absolute path (empty if not found);
+// `tail -n 1` drops any banner an rc file emits before the path, stderr is
+// discarded so shell warnings don't leak in, and `|| true` keeps `set -e`
+// scripts alive when the lookup comes up empty.
+const RESOLVE_REMOTE_BIN_SH = [
+  'resolve_remote_bin() {',
+  '  _rrb="$(command -v "$1" 2>/dev/null)" || true',
+  '  if [ -z "$_rrb" ]; then',
+  '    _rrb="$("${SHELL:-/bin/sh}" -ilc "command -v $1" 2>/dev/null | tail -n 1)" || true',
+  '  fi',
+  '  printf %s "$_rrb"',
+  '}',
+];
+
 function powershellSingleQuote(value) {
   return `'${`${value}`.replace(/'/g, "''")}'`;
 }
@@ -270,14 +290,18 @@ function buildRemotePreflightScript(remotePort) {
     'if [ -r /etc/os-release ]; then',
     '  OS_RELEASE_RAW="$(cat /etc/os-release)"',
     'fi',
-    'if command -v claude >/dev/null 2>&1; then HAS_CLAUDE=1; else HAS_CLAUDE=0; fi',
-    'if command -v tmux >/dev/null 2>&1; then HAS_TMUX=1; else HAS_TMUX=0; fi',
+    // Resolve claude/tmux through the user's login shell, not just the bare
+    // `sh -lc` PATH (see RESOLVE_REMOTE_BIN_SH).
+    ...RESOLVE_REMOTE_BIN_SH,
+    'if [ -n "$(resolve_remote_bin claude)" ]; then HAS_CLAUDE=1; else HAS_CLAUDE=0; fi',
+    'TMUX_BIN="$(resolve_remote_bin tmux)"',
+    'if [ -n "$TMUX_BIN" ]; then HAS_TMUX=1; else HAS_TMUX=0; fi',
     'CURRENT_VERSION=""',
     `if [ -r "$HOME/${REMOTE_HOME_DIRNAME}/current/version" ]; then`,
     `  CURRENT_VERSION="$(tr -d '\\r\\n' < "$HOME/${REMOTE_HOME_DIRNAME}/current/version")"`,
     'fi',
     'TMUX_PRESENT=0',
-    'if [ "$HAS_TMUX" = "1" ] && tmux has-session -t elevenex-backend 2>/dev/null; then',
+    'if [ "$HAS_TMUX" = "1" ] && "$TMUX_BIN" has-session -t elevenex-backend 2>/dev/null; then',
     '  TMUX_PRESENT=1',
     'fi',
     'BACKEND_REACHABLE=0',
@@ -425,13 +449,15 @@ function buildRemoteStartCommand({ remoteRoot, remotePort, forcePortCleanup }) {
     `REMOTE_ROOT=${shellPathQuote(remoteRoot)}`,
     `INSTALL_LOG="$HOME/${REMOTE_HOME_DIRNAME}/logs/install.log"`,
     'log() { printf "%s %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$INSTALL_LOG"; }',
-    'if ! command -v tmux >/dev/null 2>&1; then',
+    ...RESOLVE_REMOTE_BIN_SH,
+    'TMUX_BIN="$(resolve_remote_bin tmux)"',
+    'if [ -z "$TMUX_BIN" ]; then',
     '  echo "tmux is required to start the Elevenex backend" >&2',
     '  exit 1',
     'fi',
     `mkdir -p "$HOME/${REMOTE_HOME_DIRNAME}/logs"`,
     'log "start: requested for $REMOTE_ROOT on port $PORT force_cleanup=$FORCE_PORT_CLEANUP"',
-    'tmux kill-session -t elevenex-backend 2>/dev/null || true',
+    '"$TMUX_BIN" kill-session -t elevenex-backend 2>/dev/null || true',
     'sleep 1',
     'if [ "$FORCE_PORT_CLEANUP" = "1" ]; then',
     '  if command -v fuser >/dev/null 2>&1; then',
@@ -452,9 +478,9 @@ function buildRemoteStartCommand({ remoteRoot, remotePort, forcePortCleanup }) {
     '  fi',
     'fi',
     `printf "\\n[%s] Starting Elevenex backend from %s on port %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REMOTE_ROOT" "$PORT" >> "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log"`,
-    'tmux new-session -d -s elevenex-backend "$REMOTE_ROOT/bin/start-backend.sh $PORT"',
+    '"$TMUX_BIN" new-session -d -s elevenex-backend "$REMOTE_ROOT/bin/start-backend.sh $PORT"',
     'sleep 1',
-    'if tmux has-session -t elevenex-backend 2>/dev/null; then',
+    'if "$TMUX_BIN" has-session -t elevenex-backend 2>/dev/null; then',
     '  log "start: tmux session is running"',
     'else',
     '  log "start: tmux session exited quickly"',
@@ -546,6 +572,7 @@ function buildRemoteWaitForReadyCommand({ remoteRoot, remotePort, expectedVersio
     'set -eu',
     `INSTALL_LOG="$HOME/${REMOTE_HOME_DIRNAME}/logs/install.log"`,
     'log() { printf "%s %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$INSTALL_LOG"; }',
+    ...RESOLVE_REMOTE_BIN_SH,
     `cd ${shellPathQuote(remoteRoot)}`,
     'if [ ! -x "./node/bin/node" ]; then',
     '  echo "missing bundled node runtime" >&2',
@@ -567,9 +594,10 @@ function buildRemoteWaitForReadyCommand({ remoteRoot, remotePort, expectedVersio
     'echo "Elevenex backend did not become ready on the remote host" >&2',
     `echo "Expected backend version: ${expectedVersion || ''}" >&2`,
     'echo "Last readiness status: $LAST_STATUS" >&2',
-    'if tmux has-session -t elevenex-backend 2>/dev/null; then',
+    'TMUX_BIN="$(resolve_remote_bin tmux)"',
+    'if [ -n "$TMUX_BIN" ] && "$TMUX_BIN" has-session -t elevenex-backend 2>/dev/null; then',
     '  echo "--- tmux elevenex-backend pane (last 80 lines) ---" >&2',
-    '  tmux capture-pane -t elevenex-backend -p -S -80 2>&1 >&2 || true',
+    '  "$TMUX_BIN" capture-pane -t elevenex-backend -p -S -80 2>&1 >&2 || true',
     'else',
     '  echo "--- tmux elevenex-backend session not found (backend exited) ---" >&2',
     'fi',
