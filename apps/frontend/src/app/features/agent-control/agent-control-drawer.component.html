@@ -5,28 +5,50 @@
     aria-label="Elevenex agent"
   >
     <header class="agent-control-header">
-      <div class="agent-control-header__identity">
-        <span class="agent-control-header__icon">
-          <ng-icon name="lucideSparkles" size="16" />
-        </span>
-        <div class="agent-control-header__copy">
-          <h2>Elevenex agent</h2>
-          <div class="agent-control-header__eyebrow">Runs in its own workspace</div>
-        </div>
-      </div>
-
-      <div class="agent-control-header__meta">
+      @if (activeSession()) {
         <button
           z-button
           zType="ghost"
           zSize="icon-sm"
           type="button"
-          aria-label="Refresh agent sessions"
-          [disabled]="loading()"
-          (click)="load()"
+          aria-label="Back to agent sessions"
+          (click)="backToList()"
         >
-          <ng-icon name="lucideRefreshCw" size="16" [class.is-spinning]="loading()" />
+          <ng-icon name="lucideArrowLeft" size="16" />
         </button>
+      }
+
+      <div class="agent-control-header__identity">
+        <span class="agent-control-header__icon">
+          <ng-icon name="lucideSparkles" size="16" />
+        </span>
+        <div class="agent-control-header__copy">
+          @if (activeSession(); as session) {
+            <h2>{{ sessionTitle(session) }}</h2>
+            <div class="agent-control-header__eyebrow">
+              {{ statusLabel(session.status) }} · {{ session.branchName }}
+            </div>
+          } @else {
+            <h2>Elevenex agent</h2>
+            <div class="agent-control-header__eyebrow">Runs in its own workspace</div>
+          }
+        </div>
+      </div>
+
+      <div class="agent-control-header__meta">
+        @if (!activeSession()) {
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-sm"
+            type="button"
+            aria-label="Refresh agent sessions"
+            [disabled]="loading()"
+            (click)="load()"
+          >
+            <ng-icon name="lucideRefreshCw" size="16" [class.is-spinning]="loading()" />
+          </button>
+        }
         <button
           z-button
           zType="ghost"
@@ -40,92 +62,92 @@
       </div>
     </header>
 
-    <section class="agent-panel" aria-label="Elevenex agent sessions">
-      <form
-        class="agent-composer"
-        (submit)="$event.preventDefault(); startSession()"
-      >
-        <label class="agent-composer__label" for="agent-session-name">
-          Start an agent session
-        </label>
-        <input
-          z-input
-          id="agent-session-name"
-          type="text"
-          autocomplete="off"
-          placeholder="Optional name (e.g. Triage open PRs)"
-          [value]="nameDraft()"
-          (input)="nameDraft.set($any($event.target).value)"
-          (keydown)="onComposerKeydown($event)"
+    @if (activeSession(); as session) {
+      <div class="agent-chat">
+        <app-claude-workspace
+          [sessionId]="session.id"
+          [repoId]="session.repoId"
+          [worktreePath]="session.worktreePath"
+          [hasInjectedWorktreeContext]="session.hasInjectedWorktreeContext"
+          [activeAgentProvider]="providerOf(session)"
+          [isVisible]="true"
+          [archived]="session.status === 'archived'"
+          [sessionName]="session.name"
+          (activeAgentProviderChange)="onProviderChange(session.id, $event)"
+          class="h-full block"
         />
+      </div>
+    } @else {
+      <section class="agent-panel" aria-label="Elevenex agent sessions">
         <button
           z-button
-          type="submit"
-          class="agent-composer__submit"
+          type="button"
+          class="agent-panel__new"
           [disabled]="creating()"
+          (click)="startSession()"
         >
-          <ng-icon name="lucideSparkles" size="14" />
-          {{ creating() ? 'Starting…' : 'New session' }}
+          <ng-icon name="lucidePlus" size="15" />
+          {{ creating() ? 'Starting…' : 'New agent chat' }}
         </button>
-      </form>
 
-      <div class="agent-panel__list" aria-label="Agent sessions">
-        @if (loading() && sessions().length === 0) {
-          <div class="agent-panel__placeholder">Loading agent sessions…</div>
-        } @else if (sessions().length === 0) {
-          <div class="agent-panel__empty">
-            <span class="agent-panel__empty-icon">
-              <ng-icon name="lucideTerminal" size="20" />
-            </span>
-            <p>No agent sessions yet.</p>
-            <small>
-              Start one above. It runs in a dedicated workspace, just like a
-              worktree session.
-            </small>
-          </div>
-        } @else {
-          @for (session of sessions(); track session.id) {
-            <button
-              type="button"
-              class="agent-session"
-              (click)="openSession(session.id)"
-            >
-              <span
-                class="agent-session__dot"
-                [attr.data-status]="session.status"
-              ></span>
-              <span class="agent-session__body">
-                <span class="agent-session__title">
-                  {{ session.name || 'Session ' + session.id }}
-                </span>
-                <span class="agent-session__meta">
-                  <span class="agent-session__status">
-                    {{ statusLabel(session.status) }}
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>{{ formatDate(session.updatedAt) }}</span>
-                  @if (session.hasUnreviewedCompletion) {
-                    <span class="agent-session__badge">Needs review</span>
-                  }
-                </span>
+        <div class="agent-panel__list" aria-label="Agent sessions">
+          @if (loading() && sessions().length === 0) {
+            <div class="agent-panel__placeholder">Loading agent chats…</div>
+          } @else if (sessions().length === 0) {
+            <div class="agent-panel__empty">
+              <span class="agent-panel__empty-icon">
+                <ng-icon name="lucideTerminal" size="20" />
               </span>
-              <ng-icon
-                class="agent-session__open"
-                name="lucideArrowUpRight"
-                size="15"
-              />
-            </button>
+              <p>No agent chats yet.</p>
+              <small>
+                Start one above. The agent runs in a dedicated workspace and the
+                conversation stays right here in the sidebar.
+              </small>
+            </div>
+          } @else {
+            @for (session of sessions(); track session.id) {
+              <button
+                type="button"
+                class="agent-session"
+                (click)="openChat(session.id)"
+              >
+                <span
+                  class="agent-session__dot"
+                  [attr.data-status]="session.status"
+                ></span>
+                <span class="agent-session__body">
+                  <span class="agent-session__title">
+                    {{ sessionTitle(session) }}
+                  </span>
+                  <span class="agent-session__meta">
+                    <span class="agent-session__status">
+                      {{ statusLabel(session.status) }}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>{{ formatDate(session.updatedAt) }}</span>
+                    @if (session.hasUnreviewedCompletion) {
+                      <span class="agent-session__badge">Needs review</span>
+                    }
+                  </span>
+                </span>
+                <ng-icon
+                  class="agent-session__open"
+                  name="lucideSparkles"
+                  size="15"
+                />
+              </button>
+            }
           }
-        }
-      </div>
+        </div>
 
-      @if (workspace(); as ws) {
-        <footer class="agent-panel__footer" [title]="ws.path">
-          <ng-icon name="lucideTerminal" size="13" />
-          <span class="agent-panel__footer-path">{{ ws.path }}</span>
-          <span class="agent-panel__footer-branch">{{ ws.branch }}</span>
-        </footer>
-      }
-    </section>
+        @if (workspace(); as ws) {
+          <footer class="agent-panel__footer" [title]="ws.path">
+            <ng-icon name="lucideTerminal" size="13" />
+            <span class="agent-panel__footer-path">{{ ws.path }}</span>
+            <span class="agent-panel__footer-branch">{{ ws.branch }}</span>
+          </footer>
+        }
+      </section>
+    }
   </aside>
 }

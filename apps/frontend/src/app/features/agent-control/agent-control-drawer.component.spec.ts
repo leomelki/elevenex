@@ -53,7 +53,7 @@ describe('AgentControlDrawerComponent', () => {
 
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
     expect(text).toContain('Elevenex agent');
-    expect(text).toContain('No agent sessions yet.');
+    expect(text).toContain('No agent chats yet.');
     expect(text).toContain('/home/dev/.elevenex/agent');
     expect(
       (fixture.nativeElement as HTMLElement)
@@ -62,7 +62,7 @@ describe('AgentControlDrawerComponent', () => {
     ).toBe('complementary');
   });
 
-  it('creates an agent session from the composer', () => {
+  it('creates an agent chat from the "New agent chat" action', () => {
     const service = TestBed.inject(AgentControlStateService);
     service.openGlobal();
 
@@ -71,32 +71,23 @@ describe('AgentControlDrawerComponent', () => {
     httpMock.expectOne('/api/agent').flush(OVERVIEW);
     fixture.detectChanges();
 
-    const input = (fixture.nativeElement as HTMLElement).querySelector(
-      'input',
-    ) as HTMLInputElement;
-    input.value = 'Triage open PRs';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    fixture.detectChanges();
-
-    const submit = Array.from(
+    const button = Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
-    ).find((button) =>
-      button.textContent?.includes('New session'),
-    ) as HTMLButtonElement;
-    submit.click();
-    fixture.detectChanges();
+    ).find((b) => b.textContent?.includes('New agent chat')) as HTMLButtonElement;
+    button.click();
 
     const request = httpMock.expectOne('/api/agent/sessions');
     expect(request.request.method).toBe('POST');
-    expect(request.request.body).toEqual({ name: 'Triage open PRs' });
 
+    // Flush without re-rendering so the heavyweight chat workspace is not
+    // mounted in the unit test; we only assert the create flow + active state.
     request.flush({
       id: 42,
       repoId: 2,
       projectId: 1,
       branchName: 'main',
       worktreePath: '/home/dev/.elevenex/agent',
-      name: 'Triage open PRs',
+      name: null,
       status: 'created',
       activeAgentProvider: 'claude',
       claudeSessionId: '-1',
@@ -110,7 +101,6 @@ describe('AgentControlDrawerComponent', () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // Opening the new session closes the drawer.
-    expect(service.isOpen()).toBe(false);
+    expect(fixture.componentInstance.activeSessionId()).toBe(42);
   });
 });

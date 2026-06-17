@@ -1,8 +1,9 @@
 import { CommonModule } from '@angular/common';
-import { Component, effect, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  lucideArrowUpRight,
+  lucideArrowLeft,
+  lucidePlus,
   lucideRefreshCw,
   lucideSparkles,
   lucideTerminal,
@@ -11,9 +12,10 @@ import {
 import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
-import { ZardInputDirective } from '@/shared/components/input';
-import { NavigationService } from '@/shared/services/navigation.service';
 import { Session } from '@/shared/models/session.model';
+import { AgentProviderId } from '@/shared/models/agent-runtime.model';
+import { SessionsService } from '@/shared/services/sessions.service';
+import { ClaudeWorkspaceComponent } from '@/features/session/claude-workspace/claude-workspace.component';
 import { AgentControlStateService } from './agent-control-state.service';
 import {
   AgentWorkspace,
@@ -23,12 +25,13 @@ import {
 @Component({
   selector: 'app-agent-control-drawer',
   standalone: true,
-  imports: [CommonModule, NgIcon, ZardButtonComponent, ZardInputDirective],
+  imports: [CommonModule, NgIcon, ZardButtonComponent, ClaudeWorkspaceComponent],
   templateUrl: './agent-control-drawer.component.html',
   styleUrl: './agent-control-drawer.component.scss',
   viewProviders: [
     provideIcons({
-      lucideArrowUpRight,
+      lucideArrowLeft,
+      lucidePlus,
       lucideRefreshCw,
       lucideSparkles,
       lucideTerminal,
@@ -39,13 +42,18 @@ import {
 export class AgentControlDrawerComponent {
   readonly state = inject(AgentControlStateService);
   private readonly agentService = inject(ElevenexAgentService);
-  private readonly navigation = inject(NavigationService);
+  private readonly sessionsService = inject(SessionsService);
 
-  readonly nameDraft = signal('');
   readonly workspace = signal<AgentWorkspace | null>(null);
   readonly sessions = signal<Session[]>([]);
+  readonly activeSessionId = signal<number | null>(null);
   readonly loading = signal(false);
   readonly creating = signal(false);
+
+  readonly activeSession = computed(
+    () =>
+      this.sessions().find((s) => s.id === this.activeSessionId()) ?? null,
+  );
 
   constructor() {
     // Load the agent workspace + sessions whenever the drawer opens.
@@ -85,15 +93,13 @@ export class AgentControlDrawerComponent {
       return;
     }
     this.creating.set(true);
-    const name = this.nameDraft().trim() || undefined;
-    this.agentService.createSession(name).subscribe({
+    this.agentService.createSession().subscribe({
       next: (session) => {
         this.creating.set(false);
-        this.nameDraft.set('');
         this.sessions.update((current) =>
           this.sortSessions([session, ...current]),
         );
-        this.openSession(session.id);
+        this.openChat(session.id);
       },
       error: (err) => {
         this.creating.set(false);
@@ -104,16 +110,26 @@ export class AgentControlDrawerComponent {
     });
   }
 
-  openSession(sessionId: number): void {
-    this.navigation.openSession(sessionId);
-    this.state.close();
+  openChat(sessionId: number): void {
+    this.activeSessionId.set(sessionId);
   }
 
-  onComposerKeydown(event: KeyboardEvent): void {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-      event.preventDefault();
-      this.startSession();
-    }
+  backToList(): void {
+    this.activeSessionId.set(null);
+    this.load();
+  }
+
+  onProviderChange(sessionId: number, provider: AgentProviderId): void {
+    this.sessions.update((current) =>
+      current.map((session) =>
+        session.id === sessionId
+          ? { ...session, activeAgentProvider: provider }
+          : session,
+      ),
+    );
+    this.sessionsService
+      .updateActiveAgentProvider(sessionId, provider)
+      .subscribe({ error: () => undefined });
   }
 
   statusLabel(status: Session['status']): string {
@@ -142,6 +158,14 @@ export class AgentControlDrawerComponent {
       hour: '2-digit',
       minute: '2-digit',
     }).format(date);
+  }
+
+  sessionTitle(session: Session): string {
+    return session.name || `Session ${session.id}`;
+  }
+
+  providerOf(session: Session): AgentProviderId {
+    return session.activeAgentProvider as AgentProviderId;
   }
 
   private sortSessions(sessions: Session[]): Session[] {
