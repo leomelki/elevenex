@@ -13,7 +13,6 @@ import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
-import { ClaudeWorkspaceComponent } from '@/features/session/claude-workspace/claude-workspace.component';
 import { AgentChannelWebsocketService } from './agent-channel-websocket.service';
 import { AgentControlStateService } from './agent-control-state.service';
 import {
@@ -28,6 +27,7 @@ import {
   LiveEscalationResolution,
 } from './components/live-escalation-card.component';
 import { MissionTreeComponent } from './components/mission-tree.component';
+import { MissionConversationComponent } from './components/mission-conversation/mission-conversation.component';
 
 @Component({
   selector: 'app-agent-control-drawer',
@@ -38,8 +38,8 @@ import { MissionTreeComponent } from './components/mission-tree.component';
     ZardInputDirective,
     AutonomySelectorComponent,
     MissionTreeComponent,
+    MissionConversationComponent,
     LiveEscalationCardComponent,
-    ClaudeWorkspaceComponent,
   ],
   templateUrl: './agent-control-drawer.component.html',
   styleUrl: './agent-control-drawer.component.scss',

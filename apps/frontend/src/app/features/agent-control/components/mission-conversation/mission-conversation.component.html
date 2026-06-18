@@ -1,0 +1,212 @@
+<div
+  #scrollRef
+  class="mc-scroll"
+  aria-live="polite"
+  aria-label="Mission timeline"
+  (scroll)="onScroll()"
+>
+  @if (!rows().length && !isRunning()) {
+    <div class="mc-empty">
+      <span class="mc-empty__icon" aria-hidden="true">
+        <ng-icon name="lucideSparkles" size="18" />
+      </span>
+      <p>The agent is ready.</p>
+      <small>
+        It works elevenex for you — setting up projects, worktrees and sessions,
+        driving them, and checking in when it needs you. Every move shows up here.
+      </small>
+    </div>
+  } @else {
+    <div class="mc-timeline">
+      @for (row of rows(); track row.id) {
+        @switch (row.type) {
+          @case ('message') {
+            @if (row.kind === 'assistant') {
+              <article class="mc-say">
+                <span class="mc-say__avatar" aria-hidden="true">
+                  <ng-icon name="lucideSparkles" size="13" />
+                </span>
+                <div class="mc-say__body">
+                  <div
+                    class="mc-md"
+                    [class.mc-md--streaming]="row.id === streamingId()"
+                    [innerHTML]="row.content | cwMarkdown"
+                  ></div>
+                  @if (row.id === streamingId()) {
+                    <span class="mc-caret" aria-hidden="true"></span>
+                  }
+                </div>
+              </article>
+            } @else {
+              <div class="mc-you">
+                <p>{{ row.content }}</p>
+              </div>
+            }
+          }
+
+          @case ('thinking') {
+            <div class="mc-think">
+              <ng-icon name="lucideBrain" size="12" aria-hidden="true" />
+              <span>{{ row.content }}</span>
+            </div>
+          }
+
+          @case ('action') {
+            <div
+              class="mc-act"
+              [attr.data-category]="row.category"
+              [attr.data-status]="row.status"
+            >
+              <button
+                type="button"
+                class="mc-act__row"
+                [class.is-static]="!row.detail && !row.output"
+                [attr.aria-expanded]="isExpanded(row.id)"
+                (click)="(row.detail || row.output) && toggleExpand(row.id)"
+              >
+                <span class="mc-act__node" aria-hidden="true">
+                  <ng-icon [name]="row.icon || 'lucideSparkles'" size="13" />
+                </span>
+                <span class="mc-act__verb">{{ row.verb }}</span>
+                @if (row.target) {
+                  <span class="mc-act__target">{{ row.target }}</span>
+                }
+                <span class="mc-act__spacer"></span>
+                @if (row.status === 'pending') {
+                  <span class="mc-act__pending" aria-label="Running">
+                    <span></span><span></span><span></span>
+                  </span>
+                } @else if (row.result?.text) {
+                  <span class="mc-act__result" [attr.data-tone]="row.result?.tone">
+                    {{ row.result?.text }}
+                  </span>
+                }
+                @if (row.detail || row.output) {
+                  <ng-icon
+                    class="mc-act__chevron"
+                    name="lucideChevronRight"
+                    size="13"
+                    aria-hidden="true"
+                  />
+                }
+              </button>
+              @if (isExpanded(row.id)) {
+                <div class="mc-act__detail">
+                  @if (row.detail) {
+                    <div class="mc-act__detail-block">
+                      <span class="mc-act__detail-label">Input</span>
+                      <pre>{{ row.detail }}</pre>
+                    </div>
+                  }
+                  @if (row.output) {
+                    <div class="mc-act__detail-block">
+                      <span class="mc-act__detail-label">Result</span>
+                      <pre>{{ row.output }}</pre>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+
+          @case ('show') {
+            @if (row.show; as show) {
+              <div class="mc-show">
+                <div class="mc-show__head">
+                  <span class="mc-show__icon" aria-hidden="true">
+                    <ng-icon name="lucidePresentation" size="13" />
+                  </span>
+                  <span class="mc-show__title">{{ show.title }}</span>
+                  <button
+                    type="button"
+                    class="mc-show__dismiss"
+                    aria-label="Dismiss"
+                    (click)="dismissShow(show.id)"
+                  >
+                    <ng-icon name="lucideSquare" size="12" />
+                  </button>
+                </div>
+                @if (show.body) {
+                  <div class="mc-md mc-show__body" [innerHTML]="show.body | cwMarkdown"></div>
+                }
+                @if (show.deepLink) {
+                  <button type="button" class="mc-show__open" (click)="openShow(show)">
+                    Open
+                  </button>
+                }
+              </div>
+            }
+          }
+
+          @case ('error') {
+            <div class="mc-err" role="alert">
+              <ng-icon name="lucideTriangleAlert" size="13" aria-hidden="true" />
+              <span>{{ row.content }}</span>
+            </div>
+          }
+        }
+      }
+
+      @if (pendingPermission(); as request) {
+        <cw-permission-inline
+          [request]="request"
+          appearance="dock"
+          (approve)="approvePermission($event)"
+          (deny)="denyPermission($event)"
+        />
+      } @else if (pendingUserInput(); as request) {
+        <cw-user-input [request]="request" (answer)="answerUserInput($event)" />
+      } @else if (isRunning()) {
+        <div class="mc-working" aria-label="Agent is working">
+          <span class="mc-working__dots"><span></span><span></span><span></span></span>
+          <span class="mc-working__label">
+            Working@if (elapsedLabel()) { · {{ elapsedLabel() }} }
+          </span>
+        </div>
+      }
+    </div>
+  }
+</div>
+
+@if (!atBottom()) {
+  <button type="button" class="mc-jump" (click)="jumpToLatest()" aria-label="Jump to latest">
+    <ng-icon name="lucideArrowDown" size="15" />
+  </button>
+}
+
+<div class="mc-footer">
+  @if (lastError(); as error) {
+    <p class="mc-footer__error" role="alert">{{ error }}</p>
+  }
+
+  <form class="mc-compose" (submit)="$event.preventDefault(); submit()">
+    <textarea
+      #composerRef
+      rows="1"
+      placeholder="Message the agent…"
+      [ngModel]="draft()"
+      name="mission-prompt"
+      (ngModelChange)="draft.set($event)"
+      (keydown)="onComposeKeydown($event)"
+    ></textarea>
+    <div class="mc-compose__actions">
+      <span class="mc-compose__hint">
+        <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for newline
+      </span>
+      @if (canInterrupt()) {
+        <button type="button" class="mc-btn mc-btn--ghost" (click)="interrupt()">
+          <ng-icon name="lucideCircleStop" size="14" />
+          Stop
+        </button>
+      }
+      <button
+        type="submit"
+        class="mc-btn mc-btn--primary"
+        [disabled]="!draft().trim() || submitting()"
+      >
+        <ng-icon name="lucideSend" size="14" />
+        Send
+      </button>
+    </div>
+  </form>
+</div>

@@ -1,0 +1,725 @@
+:host {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------- scroll */
+.mc-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  padding: 0.85rem 0.8rem 0.4rem;
+}
+
+.mc-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* ---------------------------------------------------------------- empty */
+.mc-empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.45rem;
+  padding: 2rem 1rem;
+  color: var(--muted-foreground);
+}
+
+.mc-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 0.8rem;
+  border: 1px solid color-mix(in oklab, var(--primary) 22%, var(--border));
+  background: color-mix(in oklab, var(--primary) 10%, var(--background));
+  color: var(--primary);
+}
+
+.mc-empty p {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--foreground);
+}
+
+.mc-empty small {
+  max-width: 22rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+/* ---------------------------------------------------------------- agent prose */
+.mc-say {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+}
+
+.mc-say__avatar {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-top: 0.1rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--primary) 26%, var(--border));
+  background: color-mix(in oklab, var(--primary) 12%, var(--background));
+  color: var(--primary);
+}
+
+.mc-say__body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* streaming caret */
+.mc-caret {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.95rem;
+  margin-left: 0.1rem;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  background: var(--primary);
+  animation: mc-blink 1s steps(2, start) infinite;
+}
+
+/* ---------------------------------------------------------------- you */
+.mc-you {
+  align-self: flex-end;
+  max-width: 88%;
+  border: 1px solid color-mix(in oklab, var(--primary) 26%, var(--border));
+  background: color-mix(in oklab, var(--primary) 12%, var(--card));
+  border-radius: 0.8rem;
+  border-bottom-right-radius: 0.25rem;
+  padding: 0.5rem 0.7rem;
+}
+
+.mc-you p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+
+/* ---------------------------------------------------------------- thinking */
+.mc-think {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 0.05rem 0.1rem 0.05rem 1.9rem;
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  font-style: italic;
+  line-height: 1.45;
+}
+
+.mc-think ng-icon {
+  margin-top: 0.12rem;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.mc-think span {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- action */
+.mc-act {
+  --cat: var(--muted-foreground);
+  border-radius: 0.6rem;
+}
+
+.mc-act[data-category='setup'] {
+  --cat: var(--primary);
+}
+.mc-act[data-category='drive'] {
+  --cat: color-mix(in oklab, var(--primary) 55%, #8b5cf6);
+}
+.mc-act[data-category='observe'] {
+  --cat: color-mix(in oklab, var(--primary) 45%, #2563eb);
+}
+.mc-act[data-category='communicate'] {
+  --cat: var(--warning);
+}
+
+.mc-act__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.32rem 0.5rem 0.32rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.mc-act__row:not(.is-static):hover {
+  background: color-mix(in oklab, var(--cat) 7%, var(--background));
+  border-color: color-mix(in oklab, var(--cat) 18%, var(--border));
+}
+
+.mc-act__row.is-static {
+  cursor: default;
+}
+
+.mc-act__node {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--cat) 32%, var(--border));
+  background: color-mix(in oklab, var(--cat) 13%, var(--background));
+  color: var(--cat);
+}
+
+.mc-act__verb {
+  flex-shrink: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.mc-act__target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.mc-act__spacer {
+  flex: 1 1 auto;
+}
+
+.mc-act__result {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted) 60%, transparent);
+  color: var(--muted-foreground);
+}
+.mc-act__result[data-tone='ok'] {
+  background: color-mix(in oklab, var(--success) 14%, transparent);
+  color: color-mix(in oklab, var(--success) 80%, var(--foreground));
+}
+.mc-act__result[data-tone='warn'] {
+  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  color: color-mix(in oklab, var(--warning) 82%, var(--foreground));
+}
+.mc-act__result[data-tone='error'] {
+  background: color-mix(in oklab, var(--destructive) 14%, transparent);
+  color: color-mix(in oklab, var(--destructive) 82%, var(--foreground));
+}
+
+.mc-act__pending {
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 0.18rem;
+}
+.mc-act__pending span {
+  width: 0.28rem;
+  height: 0.28rem;
+  border-radius: 999px;
+  background: var(--cat);
+  animation: mc-bounce 0.8s ease-in-out infinite;
+}
+.mc-act__pending span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+.mc-act__pending span:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.mc-act__chevron {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  transition: transform 140ms ease;
+}
+.mc-act__row[aria-expanded='true'] .mc-act__chevron {
+  transform: rotate(90deg);
+}
+
+.mc-act[data-status='error'] .mc-act__node {
+  border-color: color-mix(in oklab, var(--destructive) 38%, var(--border));
+  background: color-mix(in oklab, var(--destructive) 12%, var(--background));
+  color: var(--destructive);
+}
+
+.mc-act__detail {
+  margin: 0.1rem 0 0.3rem 1.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.mc-act__detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.mc-act__detail-label {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.mc-act__detail pre {
+  margin: 0;
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--foreground) 5%, var(--card));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+}
+
+/* ---------------------------------------------------------------- show card */
+.mc-show {
+  border: 1px solid color-mix(in oklab, var(--primary) 24%, var(--border));
+  border-radius: 0.7rem;
+  background: color-mix(in oklab, var(--primary) 6%, var(--card));
+  padding: 0.55rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.mc-show__head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.mc-show__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  flex-shrink: 0;
+  border-radius: 0.45rem;
+  background: color-mix(in oklab, var(--primary) 16%, var(--background));
+  color: var(--primary);
+}
+
+.mc-show__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.mc-show__dismiss {
+  flex-shrink: 0;
+  display: inline-flex;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  border-radius: 0.35rem;
+  padding: 0.15rem;
+}
+.mc-show__dismiss:hover {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+.mc-show__open {
+  align-self: flex-start;
+  border: 1px solid color-mix(in oklab, var(--primary) 40%, var(--border));
+  background: color-mix(in oklab, var(--primary) 10%, var(--background));
+  color: var(--primary);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.2rem 0.6rem;
+  border-radius: 0.45rem;
+  cursor: pointer;
+}
+.mc-show__open:hover {
+  background: color-mix(in oklab, var(--primary) 18%, var(--background));
+}
+
+/* ---------------------------------------------------------------- error */
+.mc-err {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  border: 1px solid color-mix(in oklab, var(--destructive) 36%, var(--border));
+  background: color-mix(in oklab, var(--destructive) 8%, var(--background));
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  color: var(--destructive);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+.mc-err ng-icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+/* ---------------------------------------------------------------- working */
+.mc-working {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.1rem 0.3rem 1.9rem;
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+.mc-working__dots {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+.mc-working__dots span {
+  width: 0.36rem;
+  height: 0.36rem;
+  border-radius: 999px;
+  background: var(--primary);
+  animation: mc-bounce 0.8s ease-in-out infinite;
+}
+.mc-working__dots span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+.mc-working__dots span:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+/* ---------------------------------------------------------------- jump */
+.mc-jump {
+  position: absolute;
+  right: 0.8rem;
+  bottom: 6.2rem;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--foreground);
+  cursor: pointer;
+  box-shadow: 0 4px 14px color-mix(in oklab, var(--foreground) 16%, transparent);
+}
+.mc-jump:hover {
+  border-color: color-mix(in oklab, var(--primary) 42%, var(--border));
+  color: var(--primary);
+}
+
+/* ---------------------------------------------------------------- footer / composer */
+.mc-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.55rem 0.8rem 0.7rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklab, var(--card) 45%, transparent);
+}
+
+.mc-footer__error {
+  margin: 0;
+  border: 1px solid color-mix(in oklab, var(--destructive) 36%, var(--border));
+  background: color-mix(in oklab, var(--destructive) 8%, var(--background));
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  color: var(--destructive);
+  font-size: 0.74rem;
+}
+
+.mc-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  border: 1px solid var(--input);
+  border-radius: 0.7rem;
+  background: var(--background);
+  padding: 0.55rem;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+.mc-compose:focus-within {
+  border-color: color-mix(in oklab, var(--primary) 60%, var(--input));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 15%, transparent);
+}
+
+.mc-compose textarea {
+  width: 100%;
+  min-height: 1.6rem;
+  max-height: 10rem;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 0.1rem 0.15rem;
+}
+.mc-compose textarea:focus {
+  outline: none;
+}
+.mc-compose textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+.mc-compose__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mc-compose__hint {
+  margin-right: auto;
+  color: var(--muted-foreground);
+  font-size: 0.64rem;
+}
+.mc-compose__hint kbd {
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--muted) 50%, transparent);
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: 0.6rem;
+  padding: 0.02rem 0.26rem;
+}
+
+.mc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  padding: 0 0.8rem;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    opacity 140ms ease;
+}
+.mc-btn--ghost:hover {
+  border-color: color-mix(in oklab, var(--destructive) 42%, var(--border));
+  background: color-mix(in oklab, var(--destructive) 8%, var(--background));
+  color: var(--destructive);
+}
+.mc-btn--primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.mc-btn--primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+}
+.mc-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* ---------------------------------------------------------------- markdown
+   Rendered via [innerHTML], so it lives OUTSIDE view encapsulation — the
+   descendant rules must be ::ng-deep or they never match the injected nodes
+   (this is the markdown-scoping fix carried over from the session chat). */
+.mc-md {
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.mc-md--streaming {
+  word-break: break-word;
+}
+
+:host ::ng-deep .mc-md > :first-child {
+  margin-top: 0;
+}
+:host ::ng-deep .mc-md > :last-child {
+  margin-bottom: 0;
+}
+:host ::ng-deep .mc-md p {
+  margin: 0.5rem 0;
+}
+:host ::ng-deep .mc-md ul,
+:host ::ng-deep .mc-md ol {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+:host ::ng-deep .mc-md ul {
+  list-style-type: disc;
+}
+:host ::ng-deep .mc-md ol {
+  list-style-type: decimal;
+}
+:host ::ng-deep .mc-md ul ul,
+:host ::ng-deep .mc-md ol ul {
+  list-style-type: circle;
+}
+:host ::ng-deep .mc-md ul ul ul,
+:host ::ng-deep .mc-md ol ul ul {
+  list-style-type: square;
+}
+:host ::ng-deep .mc-md li {
+  margin: 0.125rem 0;
+}
+:host ::ng-deep .mc-md li > p {
+  margin: 0.125rem 0;
+}
+:host ::ng-deep .mc-md strong {
+  color: var(--foreground);
+  font-weight: 700;
+}
+:host ::ng-deep .mc-md h1,
+:host ::ng-deep .mc-md h2,
+:host ::ng-deep .mc-md h3,
+:host ::ng-deep .mc-md h4,
+:host ::ng-deep .mc-md h5,
+:host ::ng-deep .mc-md h6 {
+  margin: 1rem 0 0.4rem;
+  color: var(--foreground);
+  font-weight: 700;
+  line-height: 1.3;
+}
+:host ::ng-deep .mc-md h1 {
+  font-size: 1.05rem;
+}
+:host ::ng-deep .mc-md h2 {
+  font-size: 0.98rem;
+}
+:host ::ng-deep .mc-md h3,
+:host ::ng-deep .mc-md h4,
+:host ::ng-deep .mc-md h5,
+:host ::ng-deep .mc-md h6 {
+  font-size: 0.9rem;
+}
+:host ::ng-deep .mc-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82em;
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  padding: 0.0625rem 0.3125rem;
+  border-radius: 0.25rem;
+}
+:host ::ng-deep .mc-md pre.cw-code,
+:host ::ng-deep .mc-md pre {
+  margin: 0.5rem 0;
+  padding: 0.625rem 0.75rem;
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  overflow: auto;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+:host ::ng-deep .mc-md pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+:host ::ng-deep .mc-md blockquote {
+  margin: 0.5rem 0;
+  padding: 0.125rem 0.75rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+}
+:host ::ng-deep .mc-md a {
+  color: color-mix(in oklab, var(--primary) 90%, #3b82f6);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+:host ::ng-deep .mc-md hr {
+  margin: 0.75rem 0;
+  border: 0;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+}
+:host ::ng-deep .mc-md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.78rem;
+}
+:host ::ng-deep .mc-md th,
+:host ::ng-deep .mc-md td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+:host ::ng-deep .mc-md th {
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- motion */
+@keyframes mc-blink {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes mc-bounce {
+  50% {
+    transform: translateY(-0.18rem);
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mc-scroll {
+    scroll-behavior: auto;
+  }
+  .mc-caret,
+  .mc-act__pending span,
+  .mc-working__dots span {
+    animation: none;
+  }
+}

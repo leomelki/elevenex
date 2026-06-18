@@ -202,16 +202,9 @@
           }
         </div>
 
-        <!-- Live session: transcript + composer + permissions + plan flow -->
+        <!-- Elevenex-native mission timeline: prose, actions, shows, approvals -->
         <div class="mission-live__workspace">
-          <app-claude-workspace
-            [sessionId]="mission.sessionId"
-            [repoId]="mission.repoId"
-            [worktreePath]="mission.worktreePath"
-            [activeAgentProvider]="'claude'"
-            [sessionName]="mission.title"
-            [isVisible]="true"
-          />
+          <app-mission-conversation [mission]="mission" />
         </div>
       </div>
     } @else {
