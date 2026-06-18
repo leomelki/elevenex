@@ -10,4 +10,5 @@ export const projects = sqliteTable('projects', {
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
   archivedAt: text('archived_at'),
+  hidden: integer('hidden', { mode: 'boolean' }).notNull().default(false),
 });

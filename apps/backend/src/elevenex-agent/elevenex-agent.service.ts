@@ -171,18 +171,19 @@ export class ElevenexAgentService implements OnModuleInit {
 
   /** Find-or-create the hidden "Elevenex Agent" project. */
   private async ensureAgentProject(): Promise<number> {
-    const projects = await this.projectsService.findAll('all');
-    const existing = projects.find((p) => p.name === AGENT_PROJECT_NAME);
+    const existing = await this.projectsService.findByName(AGENT_PROJECT_NAME);
     if (existing) {
+      if (!existing.hidden) {
+        await this.projectsService.setHidden(existing.id, true);
+      }
       return existing.id;
     }
     try {
-      const created = await this.projectsService.create(AGENT_PROJECT_NAME);
+      const created = await this.projectsService.create(AGENT_PROJECT_NAME, true);
       return created.id;
     } catch {
       // Lost a create race — re-read and reuse.
-      const after = await this.projectsService.findAll('all');
-      const reused = after.find((p) => p.name === AGENT_PROJECT_NAME);
+      const reused = await this.projectsService.findByName(AGENT_PROJECT_NAME);
       if (!reused) {
         throw new Error('Failed to find-or-create the Elevenex Agent project');
       }

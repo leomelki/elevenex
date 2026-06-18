@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import {
@@ -27,18 +27,41 @@ export class ProjectsService {
   ) {}
 
   async findAll(state: ProjectListState = 'active') {
+    const notHidden = eq(schema.projects.hidden, false);
+
     if (state === 'all') {
-      return this.db.select().from(schema.projects);
+      return this.db
+        .select()
+        .from(schema.projects)
+        .where(notHidden);
     }
 
     return this.db
       .select()
       .from(schema.projects)
       .where(
-        state === 'archived'
-          ? isNotNull(schema.projects.archivedAt)
-          : isNull(schema.projects.archivedAt),
+        and(
+          notHidden,
+          state === 'archived'
+            ? isNotNull(schema.projects.archivedAt)
+            : isNull(schema.projects.archivedAt),
+        ),
       );
+  }
+
+  async findByName(name: string) {
+    const rows = await this.db
+      .select()
+      .from(schema.projects)
+      .where(eq(schema.projects.name, name));
+    return rows[0] ?? null;
+  }
+
+  async setHidden(id: number, hidden: boolean) {
+    await this.db
+      .update(schema.projects)
+      .set({ hidden, updatedAt: new Date().toISOString() })
+      .where(eq(schema.projects.id, id));
   }
 
   async findOne(id: number) {
@@ -53,12 +76,12 @@ export class ProjectsService {
     return rows[0];
   }
 
-  async create(name: string) {
+  async create(name: string, hidden = false) {
     try {
       return this.db.transaction((tx) => {
         const rows = tx
           .insert(schema.projects)
-          .values({ name })
+          .values({ name, hidden })
           .returning()
           .all();
         const project = rows[0];
