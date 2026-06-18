@@ -7,6 +7,7 @@ import {
   lucidePlus,
   lucideSparkles,
   lucideSquare,
+  lucideTrash2,
   lucideX,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
@@ -51,6 +52,7 @@ import { MissionConversationComponent } from './components/mission-conversation/
       lucidePlus,
       lucideSparkles,
       lucideSquare,
+      lucideTrash2,
       lucideX,
     }),
   ],

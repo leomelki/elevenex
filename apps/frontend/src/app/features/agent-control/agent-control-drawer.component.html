@@ -13,20 +13,6 @@
       </div>
 
       <div class="agent-drawer__header-actions">
-        <span
-          class="agent-drawer__conn"
-          [class.is-connected]="channelWs.connected()"
-          [title]="channelWs.connected() ? 'Live channel connected' : 'Reconnecting to live channel…'"
-        >
-          <span class="agent-drawer__conn-dot" aria-hidden="true"></span>
-          {{ channelWs.connected() ? 'Live' : 'Offline' }}
-        </span>
-        @if (state.activeMissionsCount() > 0) {
-          <span class="agent-drawer__count" title="Active missions">
-            <span class="agent-drawer__count-dot" aria-hidden="true"></span>
-            {{ state.activeMissionsCount() }} active
-          </span>
-        }
         <button
           z-button
           zType="ghost"
@@ -81,7 +67,7 @@
         </div>
         <ul class="agent-drawer__mission-list">
           @for (mission of state.missions(); track mission.sessionId) {
-            <li>
+            <li class="mission-chip-row">
               <button
                 type="button"
                 class="mission-chip"
@@ -100,6 +86,18 @@
                     }
                   </span>
                 </span>
+              </button>
+              <button
+                z-button
+                zType="ghost"
+                zSize="icon-sm"
+                type="button"
+                class="mission-chip-row__delete"
+                aria-label="Delete mission"
+                title="Delete mission"
+                (click)="archive(mission.sessionId)"
+              >
+                <ng-icon name="lucideTrash2" size="13" />
               </button>
             </li>
           }
