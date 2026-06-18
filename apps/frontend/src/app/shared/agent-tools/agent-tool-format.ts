@@ -93,6 +93,133 @@ function codexReadActionPath(data: Record<string, unknown>): string | null {
   return typeof name === 'string' && name.trim() ? name : null;
 }
 
+function describeElevenexTool(tool: string, data: Record<string, unknown>): { verb: string; target: string } {
+  const sessionId = data['sessionId'];
+  const repoId = data['repoId'];
+  const sessionRef = typeof sessionId === 'number' ? `session ${sessionId}` : '';
+
+  switch (tool) {
+    case 'prompt_session': {
+      const prompt = typeof data['prompt'] === 'string' ? truncate(data['prompt'], 60) : '';
+      return { verb: 'Prompt', target: sessionRef || prompt };
+    }
+    case 'ask_session':
+      return { verb: 'Ask', target: sessionRef };
+    case 'read_session':
+      return { verb: 'Read session', target: sessionRef };
+    case 'session_status':
+      return { verb: 'Session status', target: sessionRef };
+    case 'await_session_event':
+      return { verb: 'Await event', target: sessionRef };
+    case 'interrupt_session':
+      return { verb: 'Interrupt', target: sessionRef };
+    case 'reset_session':
+      return { verb: 'Reset session', target: sessionRef };
+    case 'archive_session':
+      return { verb: 'Archive session', target: sessionRef };
+    case 'fork_session': {
+      const name = typeof data['name'] === 'string' ? data['name'] : '';
+      return { verb: 'Fork session', target: name || sessionRef };
+    }
+    case 'get_pending_action':
+      return { verb: 'Pending action', target: sessionRef };
+    case 'resolve_action':
+      return { verb: 'Resolve action', target: sessionRef };
+    case 'set_model': {
+      const model = typeof data['model'] === 'string' ? data['model'] : '';
+      return { verb: 'Set model', target: model ? `${model} · ${sessionRef}` : sessionRef };
+    }
+    case 'set_permission_mode':
+      return { verb: 'Set permissions', target: sessionRef };
+    case 'set_provider':
+      return { verb: 'Set provider', target: sessionRef };
+    case 'text_search': {
+      const query = typeof data['query'] === 'string' ? `"${truncate(data['query'], 40)}"` : '';
+      return { verb: 'Search', target: query && sessionRef ? `${query} in ${sessionRef}` : query || sessionRef };
+    }
+    case 'file_search': {
+      const pattern = typeof data['pattern'] === 'string' ? data['pattern'] : '';
+      return { verb: 'File search', target: pattern && sessionRef ? `${pattern} in ${sessionRef}` : pattern || sessionRef };
+    }
+    case 'read_file': {
+      const path = typeof data['path'] === 'string' ? displayPath(data['path']) : '';
+      return { verb: 'Read file', target: path || sessionRef };
+    }
+    case 'change_review':
+      return { verb: 'Change review', target: sessionRef };
+    case 'get_worktree_context':
+      return { verb: 'Worktree context', target: sessionRef };
+    case 'find_sessions': {
+      const status = typeof data['status'] === 'string' ? data['status'] : '';
+      const scope = typeof repoId === 'number' ? `repo ${repoId}` : typeof data['projectId'] === 'number' ? `project ${data['projectId']}` : '';
+      return { verb: 'Find sessions', target: [status, scope].filter(Boolean).join(' · ') };
+    }
+    case 'create_session': {
+      const name = typeof data['name'] === 'string' ? data['name'] : '';
+      const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
+      return { verb: 'Create session', target: name || branch || (typeof repoId === 'number' ? `repo ${repoId}` : '') };
+    }
+    case 'create_worktree': {
+      const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
+      return { verb: 'Create worktree', target: branch };
+    }
+    case 'link_worktree': {
+      const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
+      return { verb: 'Link worktree', target: branch };
+    }
+    case 'steal_worktree':
+      return { verb: 'Steal worktree', target: '' };
+    case 'get_worktree_job': {
+      const jobId = typeof data['jobId'] === 'string' ? data['jobId'] : '';
+      return { verb: 'Worktree job', target: jobId };
+    }
+    case 'switch_branch': {
+      const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
+      return { verb: 'Switch branch', target: branch };
+    }
+    case 'generate_worktree_context':
+      return { verb: 'Worktree context', target: '' };
+    case 'assess_worktree_pool':
+      return { verb: 'Assess pool', target: '' };
+    case 'project_overview':
+      return { verb: 'Project overview', target: '' };
+    case 'find_or_create_project': {
+      const name = typeof data['name'] === 'string' ? data['name'] : '';
+      return { verb: 'Find/create project', target: name };
+    }
+    case 'add_repo': {
+      const path = typeof data['path'] === 'string' ? displayPath(data['path']) : '';
+      return { verb: 'Add repo', target: path };
+    }
+    case 'remove_repo':
+      return { verb: 'Remove repo', target: typeof repoId === 'number' ? `repo ${repoId}` : '' };
+    case 'escalate_to_user': {
+      const title = typeof data['title'] === 'string' ? truncate(data['title'], 60) : '';
+      return { verb: 'Escalate', target: title };
+    }
+    case 'notify_user': {
+      const message = typeof data['message'] === 'string' ? truncate(data['message'], 60) : '';
+      return { verb: 'Notify', target: message };
+    }
+    case 'request_approval': {
+      const title = typeof data['title'] === 'string' ? truncate(data['title'], 60) : '';
+      return { verb: 'Request approval', target: title };
+    }
+    case 'show_user': {
+      const title = typeof data['title'] === 'string' ? truncate(data['title'], 60) : '';
+      return { verb: 'Show', target: title };
+    }
+    case 'set_todo':
+      return { verb: 'Set todo', target: sessionRef };
+    case 'set_scratchpad': {
+      const name = typeof data['name'] === 'string' ? data['name'] : '';
+      return { verb: 'Set scratchpad', target: name || sessionRef };
+    }
+    default:
+      return { verb: tool.replace(/_/g, ' '), target: sessionRef };
+  }
+}
+
 function describeCanonicalTool(
   kind: AgentToolKind,
   displayName: string,
@@ -184,6 +311,10 @@ function describeCanonicalTool(
     case 'mcp': {
       const server = String(data['server'] ?? '');
       const tool = String(data['tool'] ?? data['name'] ?? displayName ?? '');
+      if (server === 'elevenex') {
+        const { verb, target } = describeElevenexTool(tool, data);
+        return { kind, icon: 'lucidePlugZap', verb, target };
+      }
       return { kind, icon: 'lucidePlugZap', verb: server || 'MCP', target: tool };
     }
     case 'unknown':
@@ -359,6 +490,10 @@ export function describeTool(
     const parts = name.split('__');
     const server = String(data['server'] ?? parts[1] ?? '');
     const tool = parts.length > 2 ? parts.slice(2).join('.') : name;
+    if (server === 'elevenex') {
+      const { verb, target } = describeElevenexTool(tool, data);
+      return { kind: 'mcp', icon: 'lucidePlugZap', verb, target };
+    }
     return { kind: 'mcp', icon: 'lucidePlugZap', verb: server || 'MCP', target: tool };
   }
 
