@@ -34,6 +34,7 @@ import { EnvironmentConnectionManagerService } from './shared/services/environme
 import { ThemeService } from './shared/services/theme.service';
 import { ServerConnectionService } from './shared/services/server-connection.service';
 import { AgentControlDrawerComponent } from './features/agent-control/agent-control-drawer.component';
+import { AgentCommandBarComponent } from './features/agent-control/agent-command-bar.component';
 import { ZardInputDirective } from './shared/components/input';
 
 const SIDEBAR_MIN = 250;
@@ -51,7 +52,7 @@ function readSidebarWidth(): number {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, ZardInputDirective, TmuxRequiredOverlayComponent],
+  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, AgentCommandBarComponent, ZardInputDirective, TmuxRequiredOverlayComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   viewProviders: [
