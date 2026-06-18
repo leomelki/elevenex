@@ -83,12 +83,6 @@ export interface MissionSummary {
   updatedAt: string | null;
 }
 
-/** Handle returned when a mission is created. */
-export interface MissionHandle {
-  sessionId: number;
-  deepLink: string;
-}
-
 /** A coarse, panel-facing status used to drive the mission row's pill. */
 export type MissionStatusView =
   | 'running'

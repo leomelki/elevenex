@@ -1,5 +1,8 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-import { ElevenexAgentMissionsService } from './elevenex-agent-missions.service.js';
+import {
+  ElevenexAgentMissionsService,
+  type MissionSummary,
+} from './elevenex-agent-missions.service.js';
 import { CreateMissionDto } from './dto/create-mission.dto.js';
 import { SetAutonomyDto } from './dto/set-autonomy.dto.js';
 
@@ -12,7 +15,7 @@ export class ElevenexAgentController {
   constructor(private readonly missions: ElevenexAgentMissionsService) {}
 
   @Post()
-  create(@Body() dto: CreateMissionDto) {
+  create(@Body() dto: CreateMissionDto): Promise<MissionSummary> {
     return this.missions.createMission({
       prompt: dto.prompt,
       autonomyMode: dto.autonomyMode,

@@ -144,13 +144,17 @@ export class AgentControlStateService {
     }
     this.errorSignal.set(null);
     try {
-      const handle = await firstValueFrom(
+      const mission = await firstValueFrom(
         this.missionsApi.create({ prompt: clean, autonomyMode }),
       );
       this.openSignal.set(true);
-      await this.refresh();
-      this.select(handle.sessionId);
-      return handle.sessionId;
+      // Optimistically add the new mission so the selection is immediate without
+      // waiting for a round-trip refresh. A background refresh follows to sync
+      // any server-side changes (e.g. runPhase updates).
+      this.missionsSignal.update((ms) => [mission, ...ms.filter((m) => m.sessionId !== mission.sessionId)]);
+      this.select(mission.sessionId);
+      void this.refresh();
+      return mission.sessionId;
     } catch {
       this.errorSignal.set('Could not start the mission.');
       return null;

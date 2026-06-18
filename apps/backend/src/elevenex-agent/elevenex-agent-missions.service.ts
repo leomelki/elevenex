@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ElevenexAgentService } from './elevenex-agent.service.js';
+import { AgentStandbyService, STANDBY_SESSION_NAME } from './agent-standby.service.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { ClaudeRuntimeService } from '../claude-runtime/claude-runtime.service.js';
 import {
@@ -8,12 +9,6 @@ import {
   DEFAULT_AGENT_AUTONOMY_MODE,
 } from '../sessions/sessions.service.js';
 import { normalizeAutonomyMode } from './meta-agent-prompt.js';
-
-/** Compact handle returned when a mission is created. */
-export interface MissionHandle {
-  sessionId: number;
-  deepLink: string;
-}
 
 /** Compact mission summary for the panel's mission list. */
 export interface MissionSummary {
@@ -44,6 +39,7 @@ export class ElevenexAgentMissionsService {
 
   constructor(
     private readonly agentService: ElevenexAgentService,
+    private readonly standby: AgentStandbyService,
     private readonly sessionsService: SessionsService,
     private readonly tokenService: McpAgentTokenService,
     private readonly claudeRuntime: ClaudeRuntimeService,
@@ -53,54 +49,69 @@ export class ElevenexAgentMissionsService {
     prompt: string;
     autonomyMode?: AgentAutonomyMode;
     model?: string | null;
-  }): Promise<MissionHandle> {
+  }): Promise<MissionSummary> {
     const prompt = input.prompt.trim();
     const autonomyMode = normalizeAutonomyMode(
       input.autonomyMode ?? DEFAULT_AGENT_AUTONOMY_MODE,
     );
 
-    const { repoId, worktreePath } = await this.agentService.ensureAgentRepo();
+    // Fast path: claim a pre-warmed standby session. The Claude Code process is
+    // already running and will accept the first turn with no startup delay.
+    const standbyId = this.standby.claimStandby(autonomyMode);
+    let sessionId: number;
 
-    const session = await this.sessionsService.create({
-      repoId,
-      worktreePath,
-      branchName: 'main',
-      surface: 'agent',
-      activeAgentProvider: 'claude',
-      name: this.deriveTitle(prompt),
-    });
-    const sessionId = session.id;
-
-    // Identity for the MCP server (routes human-channel tools to this mission's
-    // panel), persisted autonomy, optional model, then start + first prompt.
-    await this.tokenService.ensureToken(sessionId);
-    await this.sessionsService.updateAgentAutonomyMode(sessionId, autonomyMode);
-    await this.claudeRuntime.setAgentAutonomy(sessionId, autonomyMode);
-    if (input.model) {
-      await this.claudeRuntime.setSelectedModel(sessionId, input.model);
+    if (standbyId != null) {
+      sessionId = standbyId;
+      await this.sessionsService.update(sessionId, { name: this.deriveTitle(prompt) });
+      if (input.model) {
+        await this.claudeRuntime.setSelectedModel(sessionId, input.model);
+      }
+      await this.sessionsService.start(sessionId);
+      this.logger.log(`Mission warm-start session=${sessionId} autonomy=${autonomyMode}`);
+    } else {
+      // Cold path: create and wire up a fresh session.
+      const { repoId, worktreePath } = await this.agentService.ensureAgentRepo();
+      const session = await this.sessionsService.create({
+        repoId,
+        worktreePath,
+        branchName: 'main',
+        surface: 'agent',
+        activeAgentProvider: 'claude',
+        name: this.deriveTitle(prompt),
+      });
+      sessionId = session.id;
+      await this.tokenService.ensureToken(sessionId);
+      await this.sessionsService.updateAgentAutonomyMode(sessionId, autonomyMode);
+      await this.claudeRuntime.setAgentAutonomy(sessionId, autonomyMode);
+      if (input.model) {
+        await this.claudeRuntime.setSelectedModel(sessionId, input.model);
+      }
+      await this.sessionsService.start(sessionId);
+      this.logger.log(`Mission cold-start session=${sessionId} autonomy=${autonomyMode}`);
     }
-    await this.sessionsService.start(sessionId);
 
-    // Fire-and-forget: submitPrompt blocks on login-shell env capture (cold
-    // per-cwd cache) which can take several seconds. The session ID is already
-    // known, so return immediately and let the runtime start in the background.
-    // The WS stream will deliver run_state:'running' as soon as it begins.
+    // Submit the prompt. For warm starts the process is already running so this
+    // delivers the first turn immediately; for cold starts it is fire-and-forget
+    // to avoid blocking the HTTP response on process startup.
     void this.claudeRuntime.submitPrompt(sessionId, prompt).catch((err: unknown) => {
       this.logger.error(
         `Mission prompt submission failed session=${sessionId}: ${String(err)}`,
       );
     });
 
-    this.logger.log(
-      `Mission started session=${sessionId} autonomy=${autonomyMode}`,
-    );
-    return { sessionId, deepLink: this.deepLink(sessionId) };
+    // Immediately start warming the next standby for the same mode so the
+    // following mission launch is instant too.
+    this.standby.scheduleStandby(autonomyMode);
+
+    return this.getMission(sessionId);
   }
 
   async listMissions(): Promise<MissionSummary[]> {
     const sessions = await this.sessionsService.findBySurface('agent');
     const summaries = await Promise.all(
-      sessions.map((session) => this.toSummary(session)),
+      sessions
+        .filter((s) => s.name !== STANDBY_SESSION_NAME)
+        .map((session) => this.toSummary(session)),
     );
     // Newest first.
     return summaries.sort((a, b) =>

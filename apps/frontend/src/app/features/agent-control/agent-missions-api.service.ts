@@ -2,11 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 
-import {
-  AgentAutonomyMode,
-  MissionHandle,
-  MissionSummary,
-} from './agent-control.model';
+import { AgentAutonomyMode, MissionSummary } from './agent-control.model';
 
 /**
  * Thin HttpClient wrapper for the backend missions API (`/api/agent/missions`).
@@ -22,8 +18,8 @@ export class AgentMissionsApiService {
     prompt: string;
     autonomyMode?: AgentAutonomyMode;
     model?: string;
-  }): Observable<MissionHandle> {
-    return this.http.post<MissionHandle>(this.base, body);
+  }): Observable<MissionSummary> {
+    return this.http.post<MissionSummary>(this.base, body);
   }
 
   list(): Observable<MissionSummary[]> {

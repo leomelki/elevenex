@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ElevenexAgentService } from './elevenex-agent.service.js';
+import { AgentStandbyService } from './agent-standby.service.js';
 import { ElevenexAgentMissionsService } from './elevenex-agent-missions.service.js';
 import { ElevenexAgentController } from './elevenex-agent.controller.js';
 import { ProjectsModule } from '../projects/projects.module.js';
@@ -26,7 +27,7 @@ import { ElevenexMcpModule } from '../mcp/elevenex-mcp.module.js';
     ElevenexMcpModule,
   ],
   controllers: [ElevenexAgentController],
-  providers: [ElevenexAgentService, ElevenexAgentMissionsService],
+  providers: [ElevenexAgentService, AgentStandbyService, ElevenexAgentMissionsService],
   exports: [ElevenexAgentService],
 })
 export class ElevenexAgentModule {}

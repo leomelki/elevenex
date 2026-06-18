@@ -1303,6 +1303,11 @@ export class ClaudeRuntimeService extends EventEmitter {
     };
   }
 
+  /** True when the session has a warm Claude Code process ready to accept a turn. */
+  isSessionWarm(sessionId: number): boolean {
+    return this.sessionRuntimes.get(sessionId)?.warmState === 'warm';
+  }
+
   async prewarmSession(sessionId: number): Promise<void> {
     if (
       this.invalidatedSessions.has(sessionId) ||
