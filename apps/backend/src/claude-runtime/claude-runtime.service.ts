@@ -722,7 +722,36 @@ export class ClaudeRuntimeService extends EventEmitter {
     }
     this.sessionRuntimeCreateInFlight.delete(sessionId);
 
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    // Editing the first message truncates the transcript to nothing, so there is
+    // no conversation left to resume. Resuming with the now-stale claudeSessionId
+    // makes Claude Code return "No conversation found with session ID" and the
+    // edited message is lost. Clear the ID so the next submit starts a fresh
+    // session.
+    const hasRetainedConversation = retainedRecords.some(
+      (record) => record.type === 'user' || record.type === 'assistant',
+    );
+    if (!hasRetainedConversation) {
+      this.logger.log(
+        `Claude rewind emptied transcript, clearing stale session ID session=${sessionId} claudeSessionId=${session.claudeSessionId}`,
+      );
+      await this.sessionsService
+        .updateClaudeSessionId(sessionId, '-1')
+        .catch((e) => {
+          this.logger.warn(
+            `Failed to clear session ID after rewind session=${sessionId}: ${String(e)}`,
+          );
+        });
+    }
+
+    const state = this.ensureRuntimeState(
+      sessionId,
+      hasRetainedConversation ? session.claudeSessionId : '-1',
+    );
+    if (!hasRetainedConversation) {
+      state.claudeSessionId = null;
+      state.lastHistoryItemCount = 0;
+      state.lastHistorySource = null;
+    }
     this.resetEphemeralRuntimeState(state);
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
