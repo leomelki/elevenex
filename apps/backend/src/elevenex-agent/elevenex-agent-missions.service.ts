@@ -80,7 +80,16 @@ export class ElevenexAgentMissionsService {
       await this.claudeRuntime.setSelectedModel(sessionId, input.model);
     }
     await this.sessionsService.start(sessionId);
-    await this.claudeRuntime.submitPrompt(sessionId, prompt);
+
+    // Fire-and-forget: submitPrompt blocks on login-shell env capture (cold
+    // per-cwd cache) which can take several seconds. The session ID is already
+    // known, so return immediately and let the runtime start in the background.
+    // The WS stream will deliver run_state:'running' as soon as it begins.
+    void this.claudeRuntime.submitPrompt(sessionId, prompt).catch((err: unknown) => {
+      this.logger.error(
+        `Mission prompt submission failed session=${sessionId}: ${String(err)}`,
+      );
+    });
 
     this.logger.log(
       `Mission started session=${sessionId} autonomy=${autonomyMode}`,
