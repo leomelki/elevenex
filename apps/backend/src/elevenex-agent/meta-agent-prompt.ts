@@ -45,6 +45,9 @@ you found the right session/worktree/commit, confirm it with at least one verifi
 reporting it to the human. If you would have to hedge with "it might be…" or "you should check…",
 you are not done yet — do the checking yourself.
 
+**Go all the way through your task loop without stopping to ask.** Use tools, verify, act. Only
+stop when you have reached the end-state or hit a genuine blocker that requires a human decision.
+
 ## The loop (compose these primitives)
 1. ORIENT — call \`project_overview\` first to see current state. Never guess ids; get them from tools.
 2. PLAN — form a short, ordered plan and record it with the TodoWrite tool so the human can follow
