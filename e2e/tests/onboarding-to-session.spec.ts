@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 
-import { TEST_REPO_BRANCH, TEST_REPO_PATH } from '../fixtures/environment';
+import {
+  END_SCREEN_SCREENSHOT,
+  TEST_REPO_BRANCH,
+  TEST_REPO_PATH,
+} from '../fixtures/environment';
 
 const PROJECT_NAME = 'E2E Project';
 const WORKSPACE_BRANCH = 'e2e-workspace';
@@ -117,6 +121,14 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
     page.locator('[data-session-row-id]').first(),
     'session visible in sidebar',
   ).toBeVisible();
+
+  // Capture the win screen: save to a stable path that CI uploads as its own
+  // artifact, and attach it to the Playwright HTML report.
+  await page.screenshot({ path: END_SCREEN_SCREENSHOT });
+  await test.info().attach('end-screen', {
+    path: END_SCREEN_SCREENSHOT,
+    contentType: 'image/png',
+  });
 });
 
 /** Click the wizard's "Next" button and wait for it to advance. */

@@ -18,6 +18,10 @@ export const DB_PATH = path.join(TMP_DIR, 'elevenex-e2e.db');
 /** A real git repository the wizard can attach as the first project repo. */
 export const TEST_REPO_PATH = path.join(TMP_DIR, 'test-repo');
 
+/** Where the test drops the final "win screen" screenshot for CI to upload. */
+export const ARTIFACTS_DIR = path.join(E2E_ROOT, 'artifacts');
+export const END_SCREEN_SCREENSHOT = path.join(ARTIFACTS_DIR, 'end-screen.png');
+
 /** Default branch of the seeded repository (origin for the new workspace). */
 export const TEST_REPO_BRANCH = 'main';
 
@@ -51,7 +55,9 @@ function git(args: string[], cwd: string) {
  */
 export function prepareE2eEnvironment(): void {
   rmSync(TMP_DIR, { recursive: true, force: true });
+  rmSync(ARTIFACTS_DIR, { recursive: true, force: true });
   mkdirSync(TEST_REPO_PATH, { recursive: true });
+  mkdirSync(ARTIFACTS_DIR, { recursive: true });
 
   git(['-c', `init.defaultBranch=${TEST_REPO_BRANCH}`, 'init'], TEST_REPO_PATH);
   // Repo-local identity as well, so worktree operations never need global config.

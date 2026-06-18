@@ -45,6 +45,27 @@ jobs:
         # The Playwright config boots the backend + Angular dev servers itself.
         run: pnpm --dir e2e test
 
+      - name: Upload end-screen screenshot
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-end-screen
+          path: e2e/artifacts/end-screen.png
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Add end-screen screenshot to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f e2e/artifacts/end-screen.png ]; then
+            {
+              echo "## E2E end screen"
+              echo ""
+              echo "Final state after onboarding → project → worktree → session."
+              echo "Download the \`e2e-end-screen\` artifact above to view it."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
