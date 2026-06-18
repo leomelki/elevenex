@@ -25,6 +25,11 @@ describe('FileWatcherService', () => {
     }).compile();
 
     service = module.get<FileWatcherService>(FileWatcherService);
+
+    // Force the chokidar backend for the shared suite so behaviour is identical
+    // across platforms. The native recursive backend is covered separately.
+    (service as unknown as { useNativeRecursiveWatch: boolean }).useNativeRecursiveWatch =
+      false;
   });
 
   afterEach(() => {
@@ -131,6 +136,22 @@ describe('FileWatcherService', () => {
       expect(ignoredFn('/test/worktree/src/.hidden')).toBe(true);
     });
 
+    it('should exclude dependency and build output directories', () => {
+      const worktreePath = '/test/worktree';
+
+      service.watchWorktree(worktreePath, jest.fn());
+
+      const watchConfig = (chokidar.watch as jest.Mock).mock.calls[0][1];
+      const ignoredFn = watchConfig.ignored;
+
+      expect(ignoredFn('/test/worktree/vendor/github.com/pkg')).toBe(true);
+      expect(ignoredFn('/test/worktree/dist/main.js')).toBe(true);
+      expect(ignoredFn('/test/worktree/build/output')).toBe(true);
+      expect(ignoredFn('/test/worktree/target/debug')).toBe(true);
+      expect(ignoredFn('/test/worktree/out/bundle')).toBe(true);
+      expect(ignoredFn('/test/worktree/coverage/lcov.info')).toBe(true);
+    });
+
     it('should allow normal paths', () => {
       const worktreePath = '/test/worktree';
 
@@ -142,6 +163,131 @@ describe('FileWatcherService', () => {
       // Test normal paths are NOT ignored
       expect(ignoredFn('/test/worktree/src/file.ts')).toBe(false);
       expect(ignoredFn('/test/worktree/package.json')).toBe(false);
+    });
+
+    it('should match ignored names by segment, not substring', () => {
+      const worktreePath = '/test/worktree';
+
+      service.watchWorktree(worktreePath, jest.fn());
+
+      const watchConfig = (chokidar.watch as jest.Mock).mock.calls[0][1];
+      const ignoredFn = watchConfig.ignored;
+
+      // "out"/"build" appear as substrings but not as standalone segments
+      expect(ignoredFn('/test/worktree/src/checkout/file.ts')).toBe(false);
+      expect(ignoredFn('/test/worktree/src/build.ts')).toBe(false);
+    });
+  });
+
+  describe('error handling', () => {
+    it('should register an error listener on the watcher', () => {
+      service.watchWorktree('/test/worktree', jest.fn());
+
+      expect(mockWatcher.on).toHaveBeenCalledWith(
+        'error',
+        expect.any(Function),
+      );
+    });
+
+    it('should not throw when the watcher emits an EMFILE error', () => {
+      service.watchWorktree('/test/worktree', jest.fn());
+
+      const errorHandler = mockWatcher.on.mock.calls.find(
+        (call) => call[0] === 'error',
+      )?.[1];
+
+      const emfile = Object.assign(new Error('EMFILE: too many open files'), {
+        code: 'EMFILE',
+      });
+
+      expect(() => errorHandler?.(emfile)).not.toThrow();
+    });
+
+    it('should fall back to polling when the watcher hits EMFILE', () => {
+      service.watchWorktree('/test/worktree', jest.fn());
+
+      const errorHandler = mockWatcher.on.mock.calls.find(
+        (call) => call[0] === 'error',
+      )?.[1];
+
+      const emfile = Object.assign(new Error('EMFILE: too many open files'), {
+        code: 'EMFILE',
+      });
+      errorHandler?.(emfile);
+
+      // The exhausted watcher is closed and a second (polling) watcher created.
+      expect(mockWatcher.close).toHaveBeenCalled();
+      expect(chokidar.watch).toHaveBeenCalledTimes(2);
+      const pollingConfig = (chokidar.watch as jest.Mock).mock.calls[1][1];
+      expect(pollingConfig.usePolling).toBe(true);
+      expect(pollingConfig.interval).toBeGreaterThan(0);
+    });
+  });
+
+  describe('native recursive watch (macOS/Windows)', () => {
+    it('should classify an existing file as a change event', async () => {
+      const onEvent = jest.fn();
+      const worktreePath = '/test/worktree';
+
+      await (
+        service as unknown as {
+          emitNativeEvent: (
+            worktreePath: string,
+            absolutePath: string,
+            onEvent: (event: FileChangeEvent) => void,
+          ) => Promise<void>;
+        }
+      ).emitNativeEvent(worktreePath, __filename, onEvent);
+
+      expect(onEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'change', worktreePath }),
+      );
+    });
+
+    it('should classify a directory as an addDir event', async () => {
+      const onEvent = jest.fn();
+      const worktreePath = '/test/worktree';
+
+      await (
+        service as unknown as {
+          emitNativeEvent: (
+            worktreePath: string,
+            absolutePath: string,
+            onEvent: (event: FileChangeEvent) => void,
+          ) => Promise<void>;
+        }
+      ).emitNativeEvent(worktreePath, __dirname, onEvent);
+
+      expect(onEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'addDir', worktreePath }),
+      );
+    });
+
+    it('should classify a missing path as an unlink event', async () => {
+      const onEvent = jest.fn();
+      const worktreePath = '/test/worktree';
+
+      await (
+        service as unknown as {
+          emitNativeEvent: (
+            worktreePath: string,
+            absolutePath: string,
+            onEvent: (event: FileChangeEvent) => void,
+          ) => Promise<void>;
+        }
+      ).emitNativeEvent(
+        worktreePath,
+        '/test/worktree/does-not-exist.ts',
+        onEvent,
+      );
+
+      expect(onEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'unlink',
+          path: 'does-not-exist.ts',
+          worktreePath,
+        }),
+      );
     });
   });
 
