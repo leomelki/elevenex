@@ -103,6 +103,15 @@ export class AgentControlStateService {
     this.openSignal.set(false);
   }
 
+  /** Toggle the drawer; opening refreshes the mission list (via `open`). */
+  toggle(): void {
+    if (this.openSignal()) {
+      this.close();
+    } else {
+      this.open();
+    }
+  }
+
   // --- Mission list ----------------------------------------------------------
 
   /** Reload the mission list from the backend. */

@@ -1,4 +1,5 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, HostListener, computed, effect, inject, signal } from '@angular/core';
+import { Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideArchive,
@@ -58,6 +59,7 @@ import { MissionTreeComponent } from './components/mission-tree.component';
 export class AgentControlDrawerComponent {
   readonly state = inject(AgentControlStateService);
   readonly channelWs = inject(AgentChannelWebsocketService);
+  private readonly router = inject(Router);
 
   /** Draft text for the NEW-mission composer. */
   readonly promptDraft = signal('');
@@ -81,6 +83,33 @@ export class AgentControlDrawerComponent {
       }
       wasOpen = open;
     });
+  }
+
+  /**
+   * Global Cmd/Ctrl+K toggles the agent command drawer from anywhere in the app
+   * (the drawer is always mounted at the app root, so this listener is live even
+   * with no panel open). Escape closes it while open. We never hijack the
+   * shortcut during onboarding — there is no workspace for the agent to act in.
+   */
+  @HostListener('document:keydown', ['$event'])
+  onDocumentKeydown(event: KeyboardEvent): void {
+    const isToggle =
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      (event.key === 'k' || event.key === 'K');
+    if (isToggle) {
+      if (this.router.url.startsWith('/onboarding')) {
+        return;
+      }
+      event.preventDefault();
+      this.state.toggle();
+      return;
+    }
+
+    if (event.key === 'Escape' && this.state.isOpen()) {
+      event.preventDefault();
+      this.close();
+    }
   }
 
   close(): void {
