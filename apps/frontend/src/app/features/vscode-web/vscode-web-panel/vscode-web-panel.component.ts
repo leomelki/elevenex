@@ -264,7 +264,6 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
 
   private connectFileChangeSocket(worktreePath: string): void {
     this.disconnectFileChangeSocket();
-    this.pendingFileToReveal = null;
 
     const socketUrl = getWebSocketUrl('/file-changes', new URLSearchParams({
       worktreePath,
@@ -329,7 +328,12 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
 
   openFile(path: string, preserveFocus = false): void {
     const normalizedPath = path.replace(/^\/+/, '');
-    if (!normalizedPath || this.currentIframeKey === null) {
+    if (!normalizedPath) {
+      return;
+    }
+
+    if (this.currentIframeKey === null) {
+      this.pendingFileToReveal = { path: normalizedPath, preserveFocus };
       return;
     }
 
