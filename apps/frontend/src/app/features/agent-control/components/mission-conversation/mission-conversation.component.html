@@ -18,132 +18,58 @@
     </div>
   } @else {
     <div class="mc-timeline">
-      @for (row of rows(); track row.id) {
-        @switch (row.type) {
-          @case ('message') {
-            @if (row.kind === 'assistant') {
-              <article class="mc-say">
-                <span class="mc-say__avatar" aria-hidden="true">
-                  <ng-icon name="lucideSparkles" size="13" />
-                </span>
-                <div class="mc-say__body">
-                  <div
-                    class="mc-md"
-                    [class.mc-md--streaming]="row.id === streamingId()"
-                    [innerHTML]="row.content | cwMarkdown"
-                  ></div>
-                  @if (row.id === streamingId()) {
-                    <span class="mc-caret" aria-hidden="true"></span>
-                  }
-                </div>
-              </article>
-            } @else {
-              <div class="mc-you">
-                <p>{{ row.content }}</p>
-              </div>
-            }
-          }
-
-          @case ('thinking') {
-            <div class="mc-think">
-              <ng-icon name="lucideBrain" size="12" aria-hidden="true" />
-              <span>{{ row.content }}</span>
-            </div>
-          }
-
-          @case ('action') {
-            <div
-              class="mc-act"
-              [attr.data-category]="row.category"
-              [attr.data-status]="row.status"
-            >
+      @for (group of groups(); track group.id) {
+        @if (group.type === 'single') {
+          <ng-container *ngTemplateOutlet="rowTpl; context: { $implicit: group.row }" />
+        } @else if (isClusterOpen(group)) {
+          <div class="mc-cluster is-open">
+            @if (!isLiveCluster(group)) {
               <button
                 type="button"
-                class="mc-act__row"
-                [class.is-static]="!row.detail && !row.output"
-                [attr.aria-expanded]="isExpanded(row.id)"
-                (click)="(row.detail || row.output) && toggleExpand(row.id)"
+                class="mc-cluster__toggle"
+                aria-expanded="true"
+                (click)="toggleCluster(group.id)"
               >
-                <span class="mc-act__node" aria-hidden="true">
-                  <ng-icon [name]="row.icon || 'lucideSparkles'" size="13" />
-                </span>
-                <span class="mc-act__verb">{{ row.verb }}</span>
-                @if (row.target) {
-                  <span class="mc-act__target">{{ row.target }}</span>
-                }
-                <span class="mc-act__spacer"></span>
-                @if (row.status === 'pending') {
-                  <span class="mc-act__pending" aria-label="Running">
-                    <span></span><span></span><span></span>
-                  </span>
-                } @else if (row.result?.text) {
-                  <span class="mc-act__result" [attr.data-tone]="row.result?.tone">
-                    {{ row.result?.text }}
-                  </span>
-                }
-                @if (row.detail || row.output) {
-                  <ng-icon
-                    class="mc-act__chevron"
-                    name="lucideChevronRight"
-                    size="13"
-                    aria-hidden="true"
-                  />
-                }
+                <ng-icon class="mc-cluster__chevron is-open" name="lucideChevronRight" size="13" />
+                <span>Hide steps</span>
               </button>
-              @if (isExpanded(row.id)) {
-                <div class="mc-act__detail">
-                  @if (row.detail) {
-                    <div class="mc-act__detail-block">
-                      <span class="mc-act__detail-label">Input</span>
-                      <pre>{{ row.detail }}</pre>
-                    </div>
-                  }
-                  @if (row.output) {
-                    <div class="mc-act__detail-block">
-                      <span class="mc-act__detail-label">Result</span>
-                      <pre>{{ row.output }}</pre>
-                    </div>
-                  }
-                </div>
+            }
+            <div class="mc-cluster__rows">
+              @for (row of group.rows; track row.id) {
+                <ng-container *ngTemplateOutlet="rowTpl; context: { $implicit: row }" />
               }
             </div>
-          }
-
-          @case ('show') {
-            @if (row.show; as show) {
-              <div class="mc-show">
-                <div class="mc-show__head">
-                  <span class="mc-show__icon" aria-hidden="true">
-                    <ng-icon name="lucidePresentation" size="13" />
-                  </span>
-                  <span class="mc-show__title">{{ show.title }}</span>
-                  <button
-                    type="button"
-                    class="mc-show__dismiss"
-                    aria-label="Dismiss"
-                    (click)="dismissShow(show.id)"
-                  >
-                    <ng-icon name="lucideSquare" size="12" />
-                  </button>
-                </div>
-                @if (show.body) {
-                  <div class="mc-md mc-show__body" [innerHTML]="show.body | cwMarkdown"></div>
-                }
-                @if (show.deepLink) {
-                  <button type="button" class="mc-show__open" (click)="openShow(show)">
-                    Open
-                  </button>
-                }
-              </div>
-            }
-          }
-
-          @case ('error') {
-            <div class="mc-err" role="alert">
-              <ng-icon name="lucideTriangleAlert" size="13" aria-hidden="true" />
-              <span>{{ row.content }}</span>
-            </div>
-          }
+          </div>
+        } @else {
+          <button
+            type="button"
+            class="mc-cluster__pill"
+            aria-expanded="false"
+            (click)="toggleCluster(group.id)"
+          >
+            <span class="mc-cluster__icon" aria-hidden="true">
+              <ng-icon name="lucideListChecks" size="13" />
+            </span>
+            <span class="mc-cluster__label">
+              {{
+                group.summary ||
+                  (group.actionCount
+                    ? 'Worked through ' +
+                      group.actionCount +
+                      (group.actionCount === 1 ? ' step' : ' steps')
+                    : 'Thought it through')
+              }}
+            </span>
+            <span class="mc-cluster__meta">
+              @if (group.summary && group.actionCount) {
+                {{ group.actionCount }}&nbsp;{{ group.actionCount === 1 ? 'step' : 'steps' }}
+              }
+              @if (group.durationLabel) {
+                <span class="mc-cluster__dot">·</span>{{ group.durationLabel }}
+              }
+            </span>
+            <ng-icon class="mc-cluster__chevron" name="lucideChevronRight" size="13" aria-hidden="true" />
+          </button>
         }
       }
 
@@ -210,3 +136,127 @@
     </div>
   </form>
 </div>
+
+<!-- One row, reused for standalone rows and inside expanded clusters. -->
+<ng-template #rowTpl let-row>
+  @switch (row.type) {
+    @case ('message') {
+      @if (row.kind === 'assistant') {
+        <article class="mc-say">
+          <span class="mc-say__avatar" aria-hidden="true">
+            <ng-icon name="lucideSparkles" size="13" />
+          </span>
+          <div class="mc-say__body">
+            <div
+              class="mc-md"
+              [class.mc-md--streaming]="row.id === streamingId()"
+              [innerHTML]="row.content | cwMarkdown"
+            ></div>
+            @if (row.id === streamingId()) {
+              <span class="mc-caret" aria-hidden="true"></span>
+            }
+          </div>
+        </article>
+      } @else {
+        <div class="mc-you">
+          <p>{{ row.content }}</p>
+        </div>
+      }
+    }
+
+    @case ('thinking') {
+      <div class="mc-think">
+        <ng-icon name="lucideBrain" size="12" aria-hidden="true" />
+        <span>{{ row.content }}</span>
+      </div>
+    }
+
+    @case ('action') {
+      <div class="mc-act" [attr.data-category]="row.category" [attr.data-status]="row.status">
+        <button
+          type="button"
+          class="mc-act__row"
+          [class.is-static]="!row.detail && !row.output"
+          [attr.aria-expanded]="isExpanded(row.id)"
+          (click)="(row.detail || row.output) && toggleExpand(row.id)"
+        >
+          <span class="mc-act__node" aria-hidden="true">
+            <ng-icon [name]="row.icon || 'lucideSparkles'" size="13" />
+          </span>
+          <span class="mc-act__verb">{{ row.verb }}</span>
+          @if (row.target) {
+            <span class="mc-act__target">{{ row.target }}</span>
+          }
+          <span class="mc-act__spacer"></span>
+          @if (row.status === 'pending') {
+            <span class="mc-act__pending" aria-label="Running">
+              <span></span><span></span><span></span>
+            </span>
+          } @else if (row.result?.text) {
+            <span class="mc-act__result" [attr.data-tone]="row.result?.tone">
+              {{ row.result?.text }}
+            </span>
+          }
+          @if (row.detail || row.output) {
+            <ng-icon
+              class="mc-act__chevron"
+              name="lucideChevronRight"
+              size="13"
+              aria-hidden="true"
+            />
+          }
+        </button>
+        @if (isExpanded(row.id)) {
+          <div class="mc-act__detail">
+            @if (row.detail) {
+              <div class="mc-act__detail-block">
+                <span class="mc-act__detail-label">Input</span>
+                <pre>{{ row.detail }}</pre>
+              </div>
+            }
+            @if (row.output) {
+              <div class="mc-act__detail-block">
+                <span class="mc-act__detail-label">Result</span>
+                <pre>{{ row.output }}</pre>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+
+    @case ('show') {
+      @if (row.show; as show) {
+        <div class="mc-show">
+          <div class="mc-show__head">
+            <span class="mc-show__icon" aria-hidden="true">
+              <ng-icon name="lucidePresentation" size="13" />
+            </span>
+            <span class="mc-show__title">{{ show.title }}</span>
+            <button
+              type="button"
+              class="mc-show__dismiss"
+              aria-label="Dismiss"
+              (click)="dismissShow(show.id)"
+            >
+              <ng-icon name="lucideSquare" size="12" />
+            </button>
+          </div>
+          @if (show.body) {
+            <div class="mc-md mc-show__body" [innerHTML]="show.body | cwMarkdown"></div>
+          }
+          @if (show.deepLink) {
+            <button type="button" class="mc-show__open" (click)="openShow(show)">Open</button>
+          }
+        </div>
+      }
+    }
+
+    @case ('error') {
+      <div class="mc-err" role="alert">
+        <ng-icon name="lucideTriangleAlert" size="13" aria-hidden="true" />
+        <span>{{ row.content }}</span>
+      </div>
+    }
+  }
+</ng-template>

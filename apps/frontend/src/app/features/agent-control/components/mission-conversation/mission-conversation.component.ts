@@ -61,6 +61,7 @@ import type {
   ClaudeRunPhase,
   ClaudeRuntimeEvent,
   ClaudeRuntimeState,
+  ClaudeToolUseSummary,
   ClaudeTranscriptItem,
   ClaudeUserInputRequest,
 } from '@/shared/models/claude-runtime.model';
@@ -139,10 +140,30 @@ interface ConversationRow {
   result?: ResultSummary | null;
   detail?: string;
   output?: string;
+  toolUseId?: string;
   // show
   show?: AgentShow;
   timestamp: string;
 }
+
+/** A run of consecutive work (actions + thinking) that collapses when idle. */
+interface ClusterGroup {
+  type: 'cluster';
+  id: string;
+  rows: ConversationRow[];
+  actionCount: number;
+  durationLabel: string;
+  /** LLM-authored one-liner describing what the agent did, when available. */
+  summary: string | null;
+}
+
+interface SingleGroup {
+  type: 'single';
+  id: string;
+  row: ConversationRow;
+}
+
+type TimelineGroup = ClusterGroup | SingleGroup;
 
 /**
  * The elevenex-native mission timeline. Unlike the embedded coding-session
@@ -229,6 +250,8 @@ export class MissionConversationComponent {
   readonly pendingPermission = signal<ClaudePermissionRequest | null>(null);
   readonly pendingUserInput = signal<ClaudeUserInputRequest | null>(null);
   readonly expanded = signal<ReadonlySet<string>>(new Set());
+  readonly expandedClusters = signal<ReadonlySet<string>>(new Set());
+  readonly toolSummaries = signal<ClaudeToolUseSummary[]>([]);
   readonly elapsedLabel = signal('');
   readonly atBottom = signal(true);
 
@@ -332,6 +355,7 @@ export class MissionConversationComponent {
               : null,
             detail,
             output,
+            toolUseId: item.toolUseId,
             timestamp: item.timestamp,
           });
           break;
@@ -352,6 +376,57 @@ export class MissionConversationComponent {
 
     rows.sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
     return rows;
+  });
+
+  /**
+   * The timeline as render groups: messages/shows/errors stay standalone, while
+   * consecutive work (actions + thinking) folds into a cluster that collapses
+   * once the agent is idle — leaving the final message and any agent-provided
+   * cards in view, with the steps one click away.
+   */
+  readonly groups = computed<TimelineGroup[]>(() => {
+    const rows = this.rows();
+    const summaries = this.toolSummaries();
+    const out: TimelineGroup[] = [];
+    let cluster: ClusterGroup | null = null;
+    const toolIds: string[] = [];
+
+    const flush = () => {
+      if (!cluster) return;
+      cluster.summary = this.summaryFor(toolIds, summaries);
+      cluster.durationLabel = this.spanLabel(
+        cluster.rows[0]?.timestamp,
+        cluster.rows[cluster.rows.length - 1]?.timestamp,
+      );
+      out.push(cluster);
+      cluster = null;
+      toolIds.length = 0;
+    };
+
+    for (const row of rows) {
+      if (row.type === 'action' || row.type === 'thinking') {
+        if (!cluster) {
+          cluster = {
+            type: 'cluster',
+            id: `cluster-${row.id}`,
+            rows: [],
+            actionCount: 0,
+            durationLabel: '',
+            summary: null,
+          };
+        }
+        cluster.rows.push(row);
+        if (row.type === 'action') {
+          cluster.actionCount += 1;
+          if (row.toolUseId) toolIds.push(row.toolUseId);
+        }
+      } else {
+        flush();
+        out.push({ type: 'single', id: row.id, row });
+      }
+    }
+    flush();
+    return out;
   });
 
   /** Id of the assistant row currently streaming, for the caret. */
@@ -464,6 +539,30 @@ export class MissionConversationComponent {
 
   isExpanded(id: string): boolean {
     return this.expanded().has(id);
+  }
+
+  toggleCluster(id: string): void {
+    this.expandedClusters.update((set) => {
+      const next = new Set(set);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  /** The trailing cluster while the agent is actively running (auto-open). */
+  isLiveCluster(group: ClusterGroup): boolean {
+    if (!this.isRunning()) return false;
+    const groups = this.groups();
+    return groups[groups.length - 1]?.id === group.id;
+  }
+
+  /** A cluster shows its steps live while the agent runs, or when expanded. */
+  isClusterOpen(group: ClusterGroup): boolean {
+    return this.expandedClusters().has(group.id) || this.isLiveCluster(group);
   }
 
   // --- actions --------------------------------------------------------------
@@ -592,6 +691,9 @@ export class MissionConversationComponent {
       case 'thinking_delta':
         this.appendDelta(event.payload.itemId, event.payload.delta);
         return;
+      case 'tool_summary':
+        this.toolSummaries.update((items) => [...items, event.payload.summary]);
+        return;
       case 'permission_request':
         this.pendingPermission.set(event.payload.request);
         return;
@@ -659,6 +761,8 @@ export class MissionConversationComponent {
     this.historyItems.set([]);
     this.liveItems.set([]);
     this.optimisticUserItems.set([]);
+    this.toolSummaries.set([]);
+    this.expandedClusters.set(new Set());
     this.runPhase.set('idle');
     this.canInterrupt.set(false);
     this.lastError.set(null);
@@ -694,6 +798,34 @@ export class MissionConversationComponent {
       return data['tool'];
     }
     return null;
+  }
+
+  /** Latest LLM tool-use summary that covers any of the cluster's tool ids. */
+  private summaryFor(
+    toolIds: string[],
+    summaries: ClaudeToolUseSummary[],
+  ): string | null {
+    if (!toolIds.length || !summaries.length) return null;
+    const set = new Set(toolIds);
+    for (let i = summaries.length - 1; i >= 0; i--) {
+      const s = summaries[i];
+      if (s.precedingToolUseIds?.some((id) => set.has(id))) {
+        return s.summary?.trim() || null;
+      }
+    }
+    return null;
+  }
+
+  /** Human label for the elapsed span between two ISO timestamps. */
+  private spanLabel(start?: string, end?: string): string {
+    if (!start || !end) return '';
+    const ms = Date.parse(end) - Date.parse(start);
+    if (Number.isNaN(ms) || ms < 1000) return '';
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return s ? `${m}m ${s}s` : `${m}m`;
   }
 
   /** A compact, readable summary of the tool input for the expanded view. */
