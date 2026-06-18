@@ -118,6 +118,45 @@ describe('WorktreesService', () => {
       expect(fs.existsSync(customPath)).toBe(true);
     });
 
+    it('should create a new branch when it does not exist yet (from HEAD)', async () => {
+      const result = await service.createWorktree(mainRepoPath, 'brand-new');
+
+      expect(result.branch).toBe('brand-new');
+      // The new branch should now exist as a local ref.
+      const branches = execSync('git branch --list brand-new', {
+        cwd: mainRepoPath,
+      }).toString();
+      expect(branches).toContain('brand-new');
+    });
+
+    it('should create a new branch from an explicit start point', async () => {
+      // Add a second commit on main so HEAD and the start point differ.
+      fs.writeFileSync(path.join(mainRepoPath, 'file.txt'), 'second');
+      execSync('git add .', { cwd: mainRepoPath });
+      execSync('git commit -m "second commit"', { cwd: mainRepoPath });
+
+      const result = await service.createWorktree(
+        mainRepoPath,
+        'from-feature',
+        undefined,
+        'feature-branch',
+      );
+
+      expect(result.branch).toBe('from-feature');
+      // The new branch should point at feature-branch's tip, not main's.
+      const featureSha = execSync('git rev-parse feature-branch', {
+        cwd: mainRepoPath,
+      })
+        .toString()
+        .trim();
+      const newSha = execSync('git rev-parse from-feature', {
+        cwd: mainRepoPath,
+      })
+        .toString()
+        .trim();
+      expect(newSha).toBe(featureSha);
+    });
+
     it('should throw BadRequestException when branch is already checked out', async () => {
       // Create first worktree
       await service.createWorktree(mainRepoPath, 'feature-branch');

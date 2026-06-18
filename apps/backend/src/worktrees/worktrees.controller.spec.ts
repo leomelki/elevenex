@@ -159,6 +159,7 @@ describe('WorktreesController', () => {
       '/tmp/test-repo',
       'feature',
       expect.stringMatching(/[\\/]tmp[\\/]\.worktrees[\\/]test-repo[\\/]feature$/),
+      undefined,
     );
   });
 

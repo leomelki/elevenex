@@ -142,6 +142,7 @@ export class WorktreesController {
       repo.path,
       dto.branchName,
       worktreePath,
+      dto.startPoint,
     );
 
     return {

@@ -14,7 +14,7 @@ export const createWorktreeTool = defineTool({
   costClass: 'heavy',
   mutates: true,
   description:
-    'Start a background job to create a new git worktree for a branch and return a jobId immediately (never blocks). 🔴heavy. The job dedupes on repo+branch+path. Next: poll get_worktree_job until succeeded, then link_worktree.',
+    'Start a background job to create a new git worktree for a branch and return a jobId immediately (never blocks). 🔴heavy. The branch does NOT need to exist yet: if branchName has no local branch, it is created automatically from startPoint (or the repo HEAD when startPoint is omitted), so pass the branch you want and, for a new branch, the base ref to fork from (e.g. origin/main). The job dedupes on repo+branch+path. Next: poll get_worktree_job until succeeded, then link_worktree.',
   annotations: { idempotentHint: true },
   inputShape: {
     repoId: z
@@ -25,11 +25,15 @@ export const createWorktreeTool = defineTool({
     branchName: z
       .string()
       .min(1)
-      .describe('Branch to create/check out in the new worktree (e.g. feature/foo).'),
+      .describe(
+        'Branch to check out in the new worktree (e.g. feature/foo). It is created automatically if no local branch with this name exists yet.',
+      ),
     startPoint: z
       .string()
       .optional()
-      .describe("Base ref to branch from (e.g. main, origin/main). Defaults to the repo's HEAD."),
+      .describe(
+        "Base ref to fork a NEW branch from (e.g. main, origin/main). Used only when branchName does not exist yet; defaults to the repo's HEAD. Ignored when branchName already exists.",
+      ),
     worktreePath: z
       .string()
       .optional()
@@ -54,7 +58,13 @@ export const createWorktreeTool = defineTool({
 
     // startJob runs `git worktree add` asynchronously and returns a pending
     // handle — we return it straight away so the agent polls instead of blocking.
-    const job = worktreeJobs.startJob(repo.id, repo.path, branchName, worktreePath);
+    const job = worktreeJobs.startJob(
+      repo.id,
+      repo.path,
+      branchName,
+      worktreePath,
+      args.startPoint?.trim() || undefined,
+    );
 
     return {
       data: {

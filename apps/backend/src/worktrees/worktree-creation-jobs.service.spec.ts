@@ -41,9 +41,43 @@ describe('WorktreeCreationJobsService', () => {
       '/tmp/repo',
       'feature',
       '/tmp/repo/.worktrees/feature',
+      undefined,
     );
     expect(updated.status).toBe('succeeded');
     expect(updated.result?.branch).toBe('feature');
+  });
+
+  it('forwards the start point when creating a new branch', async () => {
+    const createWorktree = jest.fn().mockResolvedValue({
+      path: '/tmp/repo/.worktrees/feature',
+      head: 'abc123',
+      branch: 'feature',
+      isDetached: false,
+      isBare: false,
+      isLocked: false,
+      lockReason: null,
+    });
+    const service = new WorktreeCreationJobsService({ createWorktree } as any);
+
+    const job = service.startJob(
+      7,
+      '/tmp/repo',
+      'feature',
+      '/tmp/repo/.worktrees/feature',
+      'origin/main',
+    );
+
+    expect(job.startPoint).toBe('origin/main');
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(createWorktree).toHaveBeenCalledWith(
+      '/tmp/repo',
+      'feature',
+      '/tmp/repo/.worktrees/feature',
+      'origin/main',
+    );
   });
 
   it('marks a failed job with the surfaced error', async () => {

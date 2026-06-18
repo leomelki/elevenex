@@ -13,6 +13,7 @@ export interface WorktreeCreationJob {
   repoPath: string;
   branchName: string;
   worktreePath: string;
+  startPoint: string | null;
   status: WorktreeCreationJobStatus;
   error: string | null;
   result: WorktreeInfo | null;
@@ -38,6 +39,7 @@ export class WorktreeCreationJobsService implements OnModuleDestroy {
     repoPath: string,
     branchName: string,
     worktreePath: string,
+    startPoint?: string,
   ): WorktreeCreationJob {
     const key = this.buildActiveKey(repoId, branchName, worktreePath);
     const existingJobId = this.activeJobKeys.get(key);
@@ -56,6 +58,7 @@ export class WorktreeCreationJobsService implements OnModuleDestroy {
       repoPath,
       branchName,
       worktreePath,
+      startPoint: startPoint?.trim() || null,
       status: 'pending',
       error: null,
       result: null,
@@ -99,6 +102,7 @@ export class WorktreeCreationJobsService implements OnModuleDestroy {
         job.repoPath,
         job.branchName,
         job.worktreePath,
+        job.startPoint ?? undefined,
       );
       this.updateJob(jobId, {
         status: 'succeeded',

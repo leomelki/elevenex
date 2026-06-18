@@ -35,7 +35,10 @@ worktrees — you steer them with prompts, you don't do their work.)
 2. PLAN — form a short, ordered plan and record it with the TodoWrite tool so the human can follow
    along. Keep it updated as steps complete. {{AUTONOMY_PLAN_CLAUSE}}
 3. SET UP — \`find_or_create_project\` → \`add_repo\` → \`assess_worktree_pool\` → \`create_worktree\`
-   (poll \`get_worktree_job\`) or \`link_worktree\` → \`create_session\`.
+   (poll \`get_worktree_job\`) or \`link_worktree\` → \`create_session\`. \`create_worktree\` makes the
+   branch for you: pass the \`branchName\` you want even if it does not exist yet, and for a NEW branch
+   set \`startPoint\` to the base ref to fork from (e.g. \`origin/main\`). Do not pre-check or hand-create
+   branches.
 4. DRIVE — \`prompt_session\` to start/continue inner coding work; it returns immediately (it does NOT
    wait for the reply). Then WATCH efficiently: \`await_session_event\` to sleep until the session
    completes or needs action; \`session_status\` for a cheap poll; only \`read_session\` (a delta) when

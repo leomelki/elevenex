@@ -42,6 +42,7 @@ export class WorktreesService {
     repoPath: string,
     branchName: string,
     worktreePath?: string,
+    startPoint?: string,
   ): Promise<WorktreeInfo> {
     const git: SimpleGit = worktreeSimpleGit(repoPath);
     const repoName = path.basename(repoPath);
@@ -51,8 +52,28 @@ export class WorktreesService {
       worktreePath ||
       path.join(path.dirname(repoPath), '.worktrees', repoName, branchName);
 
+    const base = startPoint?.trim();
+    const branchExists = await this.localBranchExists(git, branchName);
+
     try {
-      await git.raw(['worktree', 'add', targetPath, branchName]);
+      if (branchExists) {
+        // Existing local branch: check it out in the new worktree. An explicit
+        // startPoint is ignored here — the branch already has its own tip.
+        await git.raw(['worktree', 'add', targetPath, branchName]);
+      } else if (base) {
+        // Branch does not exist yet: create it in the worktree from the given
+        // base ref (e.g. origin/main) using `git worktree add -b`.
+        await git.raw(['worktree', 'add', '-b', branchName, targetPath, base]);
+      } else {
+        // No base ref given. First let git DWIM a remote-tracking branch when
+        // one matches the name; if no such ref exists, create a fresh branch
+        // from the repo's current HEAD instead of failing.
+        try {
+          await git.raw(['worktree', 'add', targetPath, branchName]);
+        } catch {
+          await git.raw(['worktree', 'add', '-b', branchName, targetPath]);
+        }
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new BadRequestException(`Failed to create worktree: ${message}`);
@@ -102,6 +123,22 @@ export class WorktreesService {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new BadRequestException(`Failed to remove worktree: ${message}`);
+    }
+  }
+
+  private async localBranchExists(
+    git: SimpleGit,
+    branchName: string,
+  ): Promise<boolean> {
+    try {
+      // `show-ref --verify` prints the resolved sha when the local branch ref
+      // exists and exits non-zero (which simple-git throws on) otherwise. We
+      // avoid `--quiet`: it suppresses output AND the error exit, so simple-git
+      // would resolve with an empty string and we could not tell the two apart.
+      const out = await git.raw(['show-ref', '--verify', `refs/heads/${branchName}`]);
+      return out.trim().length > 0;
+    } catch {
+      return false;
     }
   }
 
