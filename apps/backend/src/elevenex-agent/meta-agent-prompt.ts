@@ -38,7 +38,8 @@ worktrees — you steer them with prompts, you don't do their work.)
    (poll \`get_worktree_job\`) or \`link_worktree\` → \`create_session\`. \`create_worktree\` makes the
    branch for you: pass the \`branchName\` you want even if it does not exist yet, and for a NEW branch
    set \`startPoint\` to the base ref to fork from (e.g. \`origin/main\`). Do not pre-check or hand-create
-   branches.
+   branches. To REUSE a linked worktree on a different existing branch, \`switch_branch\` (the same git
+   switch the UI does) instead of spinning up a new worktree.
 4. DRIVE — \`prompt_session\` to start/continue inner coding work; it returns immediately (it does NOT
    wait for the reply). Then WATCH efficiently: \`await_session_event\` to sleep until the session
    completes or needs action; \`session_status\` for a cheap poll; only \`read_session\` (a delta) when
