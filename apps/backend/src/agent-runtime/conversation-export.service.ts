@@ -13,6 +13,8 @@ export interface ConversationExportOptions {
   precision: ConversationExportPrecision;
   includeChanges: boolean;
   includeIds: boolean;
+  /** When rendering a delta slice, offset turn numbers so they reflect global position. */
+  turnNumberOffset?: number;
 }
 
 export interface ConversationExportMeta {
@@ -86,6 +88,42 @@ export class ConversationExportService {
     @Inject(forwardRef(() => SessionsService))
     private readonly sessionsService: SessionsService,
   ) {}
+
+  /**
+   * Builds the export model and resolves the runtime running-state in one shot.
+   * Used by the `read_session` MCP tool so it can slice/render without a second
+   * round-trip to `getHistory`.
+   */
+  async buildModel(
+    sessionId: number,
+    provider: string,
+  ): Promise<{ model: ConversationExportModel; running: boolean }> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const runtime = this.registry.getProvider(provider);
+    const items = await runtime.getHistory(sessionId);
+
+    const meta: ConversationExportMeta = {
+      title: session.name?.trim() || session.branchName,
+      sessionId,
+      provider,
+      branch: session.branchName,
+      exportedAt: new Date().toISOString(),
+    };
+
+    let running = false;
+    try {
+      const state = (await runtime.getRuntimeState(sessionId)) as {
+        sessionState?: string | null;
+        runPhase?: string | null;
+      };
+      running =
+        state.sessionState === 'running' || state.runPhase === 'running';
+    } catch {
+      running = false;
+    }
+
+    return { model: buildExportModel(items, meta), running };
+  }
 
   async export(
     sessionId: number,
@@ -267,8 +305,9 @@ export function renderMarkdown(
     }
   }
 
+  const offset = options.turnNumberOffset ?? 0;
   model.turns.forEach((turn, index) => {
-    out.push(renderTurn(turn, index + 1, options));
+    out.push(renderTurn(turn, offset + index + 1, options));
   });
 
   return (

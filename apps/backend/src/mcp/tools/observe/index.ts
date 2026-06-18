@@ -3,6 +3,8 @@ import { projectOverviewTool } from './project-overview.tool.js';
 import { findSessionsTool } from './find-sessions.tool.js';
 import { sessionStatusTool } from './session-status.tool.js';
 import { readSessionTool } from './read-session.tool.js';
+import { grepSessionTool } from './grep-session.tool.js';
+import { readSessionRangeTool } from './read-session-range.tool.js';
 import { textSearchTool } from './text-search.tool.js';
 import { fileSearchTool } from './file-search.tool.js';
 import { readFileTool } from './read-file.tool.js';
@@ -20,6 +22,8 @@ export const OBSERVE_TOOLS: ToolDefinition[] = [
   findSessionsTool,
   sessionStatusTool,
   readSessionTool,
+  grepSessionTool,
+  readSessionRangeTool,
   textSearchTool,
   fileSearchTool,
   readFileTool,
