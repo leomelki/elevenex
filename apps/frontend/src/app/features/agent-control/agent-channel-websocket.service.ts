@@ -3,7 +3,11 @@ import { Router } from '@angular/router';
 import { toast } from 'ngx-sonner';
 
 import { NavigationService } from '@/shared/services/navigation.service';
+import { AgentShowsService } from '@/shared/services/agent-shows.service';
 import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
+import type { AgentShow } from '@/shared/models/agent-channel.model';
+
+export type { AgentShow };
 
 /** Severity levels emitted by the meta-agent for transient notifications. */
 export type AgentNotificationLevel = 'info' | 'success' | 'warning' | 'error';
@@ -14,16 +18,6 @@ export interface AgentNotification {
   agentSessionId: number;
   level: AgentNotificationLevel;
   message: string;
-  deepLink?: string;
-  createdAt: string;
-}
-
-/** A richer "show this to the user" payload (title + optional body). */
-export interface AgentShow {
-  id: string;
-  agentSessionId: number;
-  title: string;
-  body?: string;
   deepLink?: string;
   createdAt: string;
 }
@@ -72,6 +66,7 @@ export class AgentChannelWebsocketService {
   private readonly ngZone = inject(NgZone);
   private readonly navigation = inject(NavigationService);
   private readonly router = inject(Router);
+  private readonly agentShows = inject(AgentShowsService);
 
   private socket: WebSocket | null = null;
   private manuallyClosed = false;
@@ -247,10 +242,7 @@ export class AgentChannelWebsocketService {
   }
 
   private handleShow(show: AgentShow): void {
-    toast.info(show.title, {
-      ...(show.body ? { description: show.body } : {}),
-      ...this.toastOptions(show.deepLink),
-    });
+    this.agentShows.push(show);
   }
 
   private toastOptions(deepLink?: string): { action?: { label: string; onClick: () => void } } {

@@ -65,6 +65,7 @@ import { ClaudeThinkingComponent } from './components/claude-thinking.component'
 import { ClaudeToolCallComponent } from './components/claude-tool-call.component';
 import { ClaudePermissionInlineComponent } from './components/claude-permission-inline.component';
 import { ClaudeUserInputComponent } from './components/claude-user-input.component';
+import { AgentShowCardComponent } from './components/agent-show-card.component';
 import {
   ClaudeComposerComponent,
   ComposerImageAttachment,
@@ -106,6 +107,9 @@ import {
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '@/shared/components/button/button.component';
 import type { CreateSessionForkResponse, SessionFork } from '@/shared/models/session.model';
+import { AgentShowsService } from '@/shared/services/agent-shows.service';
+import { NavigationService } from '@/shared/services/navigation.service';
+import type { AgentShow } from '@/shared/models/agent-channel.model';
 import {
   appendDiffSelectionMentions,
   parseDiffSelectionMentions,
@@ -144,6 +148,7 @@ type TranscriptRenderItem =
     ClaudeTurnChangesComponent,
     CodexLoginCardComponent,
     PiLoginCardComponent,
+    AgentShowCardComponent,
     NgIcon,
     ZardButtonComponent,
   ],
@@ -200,6 +205,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly claudeStatusService = inject(ClaudeStatusService);
   private readonly worktreeContextService = inject(WorktreeContextService);
   private readonly composerDrafts = inject(ComposerDraftService);
+  private readonly agentShowsService = inject(AgentShowsService);
+  private readonly navigationService = inject(NavigationService);
+
+  readonly liveShows = computed<AgentShow[]>(() =>
+    this.agentShowsService.liveShows().filter((s) => s.agentSessionId === this.sessionId),
+  );
 
   readonly loading = signal(true);
   readonly hydrated = signal(false);
@@ -1153,6 +1164,24 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.reset();
     this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
     void this.bootstrap().then(() => this.restoreInitialComposerDraft());
+  }
+
+  dismissShow(id: string): void {
+    this.agentShowsService.dismiss(id);
+  }
+
+  openShowDeepLink(deepLink: string): void {
+    const sessionMatch = /^\/sessions\/(\d+)/.exec(deepLink);
+    if (sessionMatch) {
+      this.navigationService.openSession(Number(sessionMatch[1]));
+      return;
+    }
+    const projectMatch = /^\/projects\/(\d+)/.exec(deepLink);
+    if (projectMatch) {
+      this.navigationService.revealProject(Number(projectMatch[1]));
+      return;
+    }
+    window.open(deepLink, '_blank', 'noopener');
   }
 
   openMcpDrawer(): void {

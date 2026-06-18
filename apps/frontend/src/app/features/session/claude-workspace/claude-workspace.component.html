@@ -432,6 +432,18 @@
               [streaming]="true"
             />
           }
+
+          @if (liveShows().length > 0) {
+            <div class="flex flex-col gap-2">
+              @for (show of liveShows(); track show.id) {
+                <cw-agent-show-card
+                  [show]="show"
+                  (dismiss)="dismissShow($event)"
+                  (open)="openShowDeepLink($event)"
+                />
+              }
+            </div>
+          }
         </div>
       }
     </div>
