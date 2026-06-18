@@ -96,10 +96,39 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     if (sessionIds.length === 0) return;
     await Promise.all(
       sessionIds.map(async (sessionId) => {
+        const state = this.ensureRuntimeState(sessionId);
+        const previous = state.authStatus;
+        const credentialsChanged =
+          (status.authenticated && !previous?.authenticated) ||
+          (status.authenticated &&
+            previous?.authenticated &&
+            previous.authMethod !== status.authMethod);
+        state.authStatus = status;
+
+        // The Pi child process reads ~/.pi/agent/auth.json at startup, so an
+        // already-running runtime keeps reporting "not logged in" even after
+        // the user authenticates via the UI. Stop the runtime so the next
+        // prompt respawns it with the fresh credentials.
+        if (credentialsChanged && this.runtimes.has(sessionId)) {
+          if (this.activeRuns.has(sessionId)) {
+            this.logger.log(
+              `Skipping Pi runtime restart after auth change because a run is active session=${sessionId}`,
+            );
+          } else {
+            try {
+              await this.stopRuntime(sessionId);
+            } catch (error) {
+              this.logger.warn(
+                `Failed to stop Pi runtime after auth change session=${sessionId}: ${String(error)}`,
+              );
+            }
+            this.emitRunState(sessionId);
+            return;
+          }
+        }
+
         try {
           await this.refreshModels(sessionId);
-          const state = this.ensureRuntimeState(sessionId);
-          state.authStatus = status;
           this.emitRunState(sessionId);
         } catch (error) {
           this.logger.warn(

@@ -316,6 +316,108 @@
   color: var(--foreground);
 }
 
+/* ---------------------------------------------------------------- cluster */
+.mc-cluster.is-open {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.mc-cluster__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-left: 0.55rem;
+  border-left: 1px solid color-mix(in oklab, var(--border) 75%, transparent);
+}
+
+.mc-cluster__toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0.1rem 0.1rem 0.1rem 0;
+}
+.mc-cluster__toggle:hover {
+  color: var(--foreground);
+}
+
+/* collapsed pill — folds a finished run of steps into one line */
+.mc-cluster__pill {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.34rem 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 0.6rem;
+  background: color-mix(in oklab, var(--muted) 28%, transparent);
+  color: var(--foreground);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.mc-cluster__pill:hover {
+  background: color-mix(in oklab, var(--primary) 6%, var(--background));
+  border-color: color-mix(in oklab, var(--primary) 20%, var(--border));
+}
+
+.mc-cluster__icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--muted-foreground) 22%, var(--border));
+  background: color-mix(in oklab, var(--muted-foreground) 10%, var(--background));
+  color: var(--muted-foreground);
+}
+
+.mc-cluster__label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  font-weight: 650;
+  color: var(--foreground);
+}
+
+.mc-cluster__meta {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--muted-foreground);
+}
+.mc-cluster__dot {
+  opacity: 0.7;
+}
+
+.mc-cluster__chevron {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  transition: transform 140ms ease;
+}
+.mc-cluster__chevron.is-open {
+  transform: rotate(90deg);
+}
+
 /* ---------------------------------------------------------------- show card */
 .mc-show {
   border: 1px solid color-mix(in oklab, var(--primary) 24%, var(--border));
