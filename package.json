@@ -23,6 +23,7 @@
     "electron:remote-runtime:stage": "node scripts/stage-remote-runtime.js",
     "electron:dev": "ELECTRON_FRONTEND_URL=http://127.0.0.1:4200 ELECTRON_BACKEND_URL=http://127.0.0.1:11111 pnpm electron:start",
     "dev:tmux": "sh scripts/dev-tmux.sh",
+    "e2e": "pnpm --dir e2e test",
     "electron:start": "pnpm --dir apps/electron start",
     "electron:debug": "pnpm --dir apps/electron start:debug",
     "electron:package": "pnpm frontend:build && pnpm backend:bundle && pnpm electron:backend:prepare && pnpm source-maps:collect && pnpm --dir apps/electron package",

@@ -1,5 +1,6 @@
 packages:
   - 'apps/*'
+  - 'e2e'
   - 'vscode-filesystem-provider'
   - 'vscode-scm-extension'
 allowBuilds:
