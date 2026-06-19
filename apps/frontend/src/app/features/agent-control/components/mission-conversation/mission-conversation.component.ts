@@ -429,6 +429,11 @@ export class MissionConversationComponent {
     return out;
   });
 
+  /** True when the transcript already includes at least one user-authored row. */
+  readonly hasUserMessage = computed(() =>
+    this.rows().some((row) => row.type === 'message' && row.kind === 'user'),
+  );
+
   /** Id of the assistant row currently streaming, for the caret. */
   readonly streamingId = computed<string | null>(() => {
     if (!this.isRunning()) return null;
@@ -553,11 +558,16 @@ export class MissionConversationComponent {
     });
   }
 
-  /** The trailing cluster while the agent is actively running (auto-open). */
+  /**
+   * True for any cluster that contains items currently in `liveItems` — i.e.
+   * every cluster that belongs to the agent's current run. While the agent is
+   * running all such clusters stay expanded so individual tool calls remain
+   * visible; they collapse to pills only after the run completes.
+   */
   isLiveCluster(group: ClusterGroup): boolean {
     if (!this.isRunning()) return false;
-    const groups = this.groups();
-    return groups[groups.length - 1]?.id === group.id;
+    const liveIds = new Set(this.liveItems().map((item) => item.id));
+    return group.rows.some((row) => liveIds.has(row.id));
   }
 
   /**

@@ -18,6 +18,11 @@
     </div>
   } @else {
     <div class="mc-timeline">
+      @if (!hasUserMessage()) {
+        <div class="mc-you">
+          <p>{{ mission().title }}</p>
+        </div>
+      }
       @for (group of groups(); track group.id) {
         @if (group.type === 'single') {
           <ng-container *ngTemplateOutlet="rowTpl; context: { $implicit: group.row }" />
