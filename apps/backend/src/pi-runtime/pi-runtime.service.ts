@@ -1196,9 +1196,16 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     try {
       const entries = await this.readPiSessionRecords(path);
       for (const [index, entry] of entries.entries()) {
-        if (entry.type !== 'message') continue;
-        const message = asRecord(entry.message);
-        if (!message) continue;
+        const type = entry.type;
+        // Accept both Pi SDK format ("message") and Claude Code CLI format ("user"/"assistant").
+        if (type !== 'message' && type !== 'user' && type !== 'assistant') continue;
+        const rawMessage = asRecord(entry.message);
+        if (!rawMessage) continue;
+        // Claude Code CLI entries carry timestamp on the top-level entry, not inside message.
+        const message =
+          typeof entry.timestamp === 'string' && !rawMessage['timestamp']
+            ? { ...rawMessage, timestamp: entry.timestamp }
+            : rawMessage;
         const entryId = this.piEntryAnchorId(entry, index);
         result.push(
           ...this.messageToTranscriptItems(message, entryId, entryId),
@@ -1246,9 +1253,10 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     entry: Record<string, unknown>,
     index: number,
   ): string {
-    return typeof entry.id === 'string' && entry.id
-      ? entry.id
-      : `pi-entry:${index}`;
+    if (typeof entry.id === 'string' && entry.id) return entry.id;
+    // Claude Code CLI entries use "uuid" rather than "id".
+    if (typeof entry.uuid === 'string' && entry.uuid) return entry.uuid;
+    return `pi-entry:${index}`;
   }
 
   private buildForkSessionPath(sourcePath: string): string {
@@ -1305,12 +1313,14 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
             timestamp,
             receivedAt: timestamp,
           });
-        } else if (block.type === 'toolCall') {
+        } else if (block.type === 'toolCall' || block.type === 'tool_use') {
           const toolUseId = String(block.id ?? `${id}:${index}`);
           const toolName = String(block.name ?? 'Tool');
+          // Pi SDK uses "arguments"; Claude Code CLI uses "input".
+          const rawInput = block.type === 'tool_use' ? block['input'] : block['arguments'];
           const providerToolInput = this.normalizePiToolInput(
             toolName,
-            block.arguments,
+            rawInput,
           );
           const canonicalTool = canonicalizeAgentTool(
             toolName,
@@ -1371,9 +1381,13 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
   }
 
   private timestampFromMessage(message?: Record<string, unknown>): string {
-    return new Date(
-      typeof message?.timestamp === 'number' ? message.timestamp : Date.now(),
-    ).toISOString();
+    if (typeof message?.timestamp === 'number') {
+      return new Date(message.timestamp).toISOString();
+    }
+    if (typeof message?.timestamp === 'string' && message.timestamp) {
+      return message.timestamp;
+    }
+    return new Date().toISOString();
   }
 
   private contentToText(content: unknown): string {
