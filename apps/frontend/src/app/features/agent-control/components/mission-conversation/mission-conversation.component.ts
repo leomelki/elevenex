@@ -404,7 +404,9 @@ export class MissionConversationComponent {
     };
 
     for (const row of rows) {
-      if (row.type === 'action' || row.type === 'thinking') {
+      // Only tool actions fold into collapsible clusters. Thinking stays inline
+      // as a standalone row so thoughts always read the way they're shown live.
+      if (row.type === 'action') {
         if (!cluster) {
           cluster = {
             type: 'cluster',
@@ -416,10 +418,8 @@ export class MissionConversationComponent {
           };
         }
         cluster.rows.push(row);
-        if (row.type === 'action') {
-          cluster.actionCount += 1;
-          if (row.toolUseId) toolIds.push(row.toolUseId);
-        }
+        cluster.actionCount += 1;
+        if (row.toolUseId) toolIds.push(row.toolUseId);
       } else {
         flush();
         out.push({ type: 'single', id: row.id, row });
@@ -560,9 +560,13 @@ export class MissionConversationComponent {
     return groups[groups.length - 1]?.id === group.id;
   }
 
-  /** A cluster shows its steps live while the agent runs, or when expanded. */
+  /**
+   * Whether the user has explicitly expanded this cluster. Liveness is handled
+   * separately (see `isLiveCluster`) so that once the run ends, even the last
+   * cluster folds back to its pill unless the user opened it.
+   */
   isClusterOpen(group: ClusterGroup): boolean {
-    return this.expandedClusters().has(group.id) || this.isLiveCluster(group);
+    return this.expandedClusters().has(group.id);
   }
 
   // --- actions --------------------------------------------------------------

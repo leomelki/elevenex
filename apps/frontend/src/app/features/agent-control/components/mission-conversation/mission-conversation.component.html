@@ -21,7 +21,7 @@
       @for (group of groups(); track group.id) {
         @if (group.type === 'single') {
           <ng-container *ngTemplateOutlet="rowTpl; context: { $implicit: group.row }" />
-        } @else if (isClusterOpen(group)) {
+        } @else if (isLiveCluster(group) || isClusterOpen(group)) {
           <div class="mc-cluster is-open">
             @if (!isLiveCluster(group)) {
               <button
@@ -53,11 +53,9 @@
             <span class="mc-cluster__label">
               {{
                 group.summary ||
-                  (group.actionCount
-                    ? 'Worked through ' +
-                      group.actionCount +
-                      (group.actionCount === 1 ? ' step' : ' steps')
-                    : 'Thought it through')
+                  'Worked through ' +
+                    group.actionCount +
+                    (group.actionCount === 1 ? ' step' : ' steps')
               }}
             </span>
             <span class="mc-cluster__meta">
