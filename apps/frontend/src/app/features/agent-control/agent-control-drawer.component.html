@@ -1,6 +1,6 @@
 @if (state.isOpen()) {
   <aside class="agent-drawer" role="complementary" aria-label="Elevenex agent">
-    <!-- Header: identity + live channel + active count + new/close -->
+    <!-- Header: identity + new mission + history + close -->
     <header class="agent-drawer__header">
       <div class="agent-drawer__identity">
         <span class="agent-drawer__brand-icon" aria-hidden="true">
@@ -24,6 +24,20 @@
         >
           <ng-icon name="lucidePlus" size="16" />
         </button>
+        @if (state.missions().length > 0) {
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-sm"
+            type="button"
+            aria-label="Previous missions"
+            title="Previous missions"
+            [class.is-active]="showHistory()"
+            (click)="openHistory()"
+          >
+            <ng-icon name="lucideHistory" size="15" />
+          </button>
+        }
         <button
           z-button
           zType="ghost"
@@ -53,55 +67,6 @@
             />
           }
         </div>
-      </section>
-    }
-
-    <!-- Mission list -->
-    @if (state.missions().length > 0) {
-      <section class="agent-drawer__missions" aria-label="Missions">
-        <div class="agent-drawer__missions-head">
-          <span>Missions</span>
-          @if (state.loading()) {
-            <span class="agent-drawer__missions-loading">Refreshing…</span>
-          }
-        </div>
-        <ul class="agent-drawer__mission-list">
-          @for (mission of state.missions(); track mission.sessionId) {
-            <li class="mission-chip-row">
-              <button
-                type="button"
-                class="mission-chip"
-                [class.is-selected]="!composing() && state.selectedMissionId() === mission.sessionId"
-                (click)="selectMission(mission.sessionId)"
-              >
-                <span class="mission-chip__dot" [attr.data-status]="statusView(mission)"></span>
-                <span class="mission-chip__copy">
-                  <span class="mission-chip__title">{{ mission.title }}</span>
-                  <span class="mission-chip__meta">
-                    <span class="mission-chip__status" [attr.data-status]="statusView(mission)">
-                      {{ statusLabel(statusView(mission)) }}
-                    </span>
-                    @if (mission.updatedAt) {
-                      <span class="mission-chip__time">{{ relativeTime(mission.updatedAt) }}</span>
-                    }
-                  </span>
-                </span>
-              </button>
-              <button
-                z-button
-                zType="ghost"
-                zSize="icon-sm"
-                type="button"
-                class="mission-chip-row__delete"
-                aria-label="Delete mission"
-                title="Delete mission"
-                (click)="archive(mission.sessionId)"
-              >
-                <ng-icon name="lucideTrash2" size="13" />
-              </button>
-            </li>
-          }
-        </ul>
       </section>
     }
 
@@ -211,9 +176,93 @@
           <span class="agent-drawer__empty-icon" aria-hidden="true">
             <ng-icon name="lucideSparkles" size="24" />
           </span>
-          <h3>No mission selected</h3>
-          <p>Pick a mission above, or start a new one to put the agent to work.</p>
-          <button z-button zSize="sm" type="button" (click)="startNewMission()">
+          <h3>New mission</h3>
+          <p>Describe what you want the agent to do, or pick up where you left off.</p>
+          <div class="agent-drawer__empty-actions">
+            <button z-button zSize="sm" type="button" (click)="startNewMission()">
+              <ng-icon name="lucidePlus" size="14" />
+              New mission
+            </button>
+            @if (state.missions().length > 0) {
+              <button z-button zType="outline" zSize="sm" type="button" (click)="openHistory()">
+                <ng-icon name="lucideHistory" size="14" />
+                Previous missions
+              </button>
+            }
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- History overlay panel -->
+    @if (showHistory()) {
+      <div class="mission-history" role="dialog" aria-label="Previous missions">
+        <div class="mission-history__head">
+          <span class="mission-history__heading">Previous missions</span>
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-sm"
+            type="button"
+            aria-label="Close history"
+            (click)="closeHistory()"
+          >
+            <ng-icon name="lucideX" size="14" />
+          </button>
+        </div>
+
+        @if (state.loading()) {
+          <div class="mission-history__loading">
+            <ng-icon name="lucideCircleDashed" size="16" aria-hidden="true" />
+            <span>Loading…</span>
+          </div>
+        } @else if (state.missions().length === 0) {
+          <div class="mission-history__empty">
+            No missions yet
+          </div>
+        } @else {
+          <ul class="mission-history__list">
+            @for (mission of state.missions(); track mission.sessionId) {
+              <li class="mission-history__item-row">
+                <button
+                  type="button"
+                  class="mission-history__item"
+                  [class.is-selected]="state.selectedMissionId() === mission.sessionId"
+                  (click)="selectFromHistory(mission.sessionId)"
+                >
+                  <span class="mission-history__dot" [attr.data-status]="statusView(mission)"></span>
+                  <span class="mission-history__item-body">
+                    <span class="mission-history__item-title">{{ mission.title }}</span>
+                    <span class="mission-history__item-meta">
+                      <span
+                        class="mission-history__item-status"
+                        [attr.data-status]="statusView(mission)"
+                      >{{ statusLabel(statusView(mission)) }}</span>
+                      @if (mission.updatedAt) {
+                        <span class="mission-history__item-time">{{ relativeTime(mission.updatedAt) }}</span>
+                      }
+                    </span>
+                  </span>
+                </button>
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="icon-sm"
+                  type="button"
+                  class="mission-history__item-delete"
+                  aria-label="Delete mission"
+                  title="Delete mission"
+                  (click)="archive(mission.sessionId)"
+                >
+                  <ng-icon name="lucideTrash2" size="13" />
+                </button>
+              </li>
+            }
+          </ul>
+        }
+
+        <div class="mission-history__footer">
+          <button z-button zType="ghost" zSize="sm" type="button" class="mission-history__new-btn" (click)="closeHistory(); startNewMission()">
             <ng-icon name="lucidePlus" size="14" />
             New mission
           </button>

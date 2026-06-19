@@ -138,16 +138,21 @@ export class AgentControlStateService {
     try {
       const missions = await firstValueFrom(this.missionsApi.list());
       this.missionsSignal.set(missions);
-      // Keep a valid selection: prefer the current one, else the newest.
+      // If the currently selected mission is no longer in the list, clear it.
       const current = this.selectedMissionIdSignal();
-      if (!current || !missions.some((m) => m.sessionId === current)) {
-        this.select(missions[0]?.sessionId ?? null);
+      if (current && !missions.some((m) => m.sessionId === current)) {
+        this.select(null);
       }
     } catch {
       this.errorSignal.set('Could not load missions.');
     } finally {
       this.loadingSignal.set(false);
     }
+  }
+
+  /** Clear the active mission selection without affecting the mission list. */
+  clearSelection(): void {
+    this.select(null);
   }
 
   /** Create + start a mission, then select it. Returns its session id. */

@@ -3,6 +3,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideArchive,
   lucideCircleDashed,
+  lucideHistory,
   lucideListChecks,
   lucidePlus,
   lucideSparkles,
@@ -48,6 +49,7 @@ import { MissionConversationComponent } from './components/mission-conversation/
     provideIcons({
       lucideArchive,
       lucideCircleDashed,
+      lucideHistory,
       lucideListChecks,
       lucidePlus,
       lucideSparkles,
@@ -63,22 +65,26 @@ export class AgentControlDrawerComponent {
 
   /** Draft text for the NEW-mission composer. */
   readonly promptDraft = signal('');
-  /** When true (or there are no missions), show the new-mission composer. */
-  private readonly composingSignal = signal(false);
+  /** When true, show the new-mission composer. Defaults to true so every open starts fresh. */
+  private readonly composingSignal = signal(true);
+  /** When true, show the history overlay panel. */
+  private readonly showHistorySignal = signal(false);
 
-  readonly composing = computed(
-    () => this.composingSignal() || this.state.missions().length === 0,
-  );
+  readonly composing = computed(() => this.composingSignal());
+  readonly showHistory = computed(() => this.showHistorySignal());
   readonly canSubmit = computed(() => this.promptDraft().trim().length > 0);
 
   constructor() {
     // Open the live meta-agent channel as soon as the drawer mounts; idempotent.
     this.channelWs.connect();
-    // Refresh the mission list whenever the drawer becomes visible.
+    // On every open: reset to fresh composer state, clear any previous selection.
     let wasOpen = false;
     effect(() => {
       const open = this.state.isOpen();
       if (open && !wasOpen) {
+        this.composingSignal.set(true);
+        this.showHistorySignal.set(false);
+        this.state.clearSelection();
         void this.state.refresh();
       }
       wasOpen = open;
@@ -114,6 +120,20 @@ export class AgentControlDrawerComponent {
   cancelNewMission(): void {
     this.composingSignal.set(false);
     this.promptDraft.set('');
+  }
+
+  openHistory(): void {
+    this.showHistorySignal.set(true);
+  }
+
+  closeHistory(): void {
+    this.showHistorySignal.set(false);
+  }
+
+  selectFromHistory(sessionId: number): void {
+    this.showHistorySignal.set(false);
+    this.composingSignal.set(false);
+    this.state.selectMission(sessionId);
   }
 
   setDraftAutonomy(mode: AgentAutonomyMode): void {
