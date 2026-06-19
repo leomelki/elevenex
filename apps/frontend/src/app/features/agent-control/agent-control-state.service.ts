@@ -5,6 +5,7 @@ import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-we
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
 import { AgentMissionsApiService } from './agent-missions-api.service';
+import { NavigationService } from '@/shared/services/navigation.service';
 import {
   AgentAutonomyMode,
   AgentMissionStep,
@@ -43,6 +44,22 @@ export class AgentControlStateService {
   private get runtimeApi(): AgentRuntimeApiService {
     return this.injector.get(AgentRuntimeApiService);
   }
+  private get navService(): NavigationService {
+    return this.injector.get(NavigationService);
+  }
+
+  /** Tools that mutate the navigation tree (sessions, workspaces, repos, projects). */
+  private static readonly SIDEBAR_TOOLS = new Set([
+    'create_session',
+    'create_worktree',
+    'add_repo',
+    'remove_repo',
+    'find_or_create_project',
+    'delete_project',
+    'link_worktree',
+    'steal_worktree',
+    'switch_branch',
+  ]);
 
   private readonly openSignal = signal(false);
   private readonly missionsSignal = signal<MissionSummary[]>([]);
@@ -252,6 +269,12 @@ export class AgentControlStateService {
       const item = payload['item'] as AgentTranscriptItem | undefined;
       if (item && this.isTodoWrite(item)) {
         this.deriveSteps(this.readTodos(item));
+      }
+      if (event.type === 'tool_result' && item) {
+        const name = item.toolName ?? item.providerToolName ?? '';
+        if (AgentControlStateService.SIDEBAR_TOOLS.has(name)) {
+          this.navService.refreshTree();
+        }
       }
     }
   }
