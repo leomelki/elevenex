@@ -12,6 +12,7 @@ import { createSessionTool } from './create-session.tool.js';
 import { generateWorktreeContextTool } from './generate-worktree-context.tool.js';
 import { setTodoTool } from './set-todo.tool.js';
 import { setScratchpadTool } from './set-scratchpad.tool.js';
+import { deleteProjectTool } from './delete-project.tool.js';
 
 /**
  * Setup — the granular primitives that *provision* the environment a mission
@@ -25,6 +26,7 @@ export const SETUP_TOOLS: ToolDefinition[] = [
   findOrCreateProjectTool,
   addRepoTool,
   removeRepoTool,
+  deleteProjectTool,
   assessWorktreePoolTool,
   createWorktreeTool,
   getWorktreeJobTool,
