@@ -31,7 +31,7 @@ import { ReposService } from '@/shared/services/repos.service';
 import { CreateSshForwardPayload, SshForwardDefaults, SshForwardsService } from '@/shared/services/ssh-forwards.service';
 
 type WizardStep = 'project' | 'repos' | 'ports' | 'review';
-type ExistingProjectTarget = Pick<Project, 'id' | 'name'>;
+type ExistingProjectTarget = Pick<Project, 'id' | 'name' | 'agentInstructions'>;
 
 interface WizardRepoDraft {
   id: number;
@@ -344,6 +344,7 @@ export class ProjectOnboardingWizard implements OnInit {
         createdAt: '',
         updatedAt: '',
         archivedAt: null,
+        agentInstructions: target.agentInstructions ?? null,
       };
     }
 
