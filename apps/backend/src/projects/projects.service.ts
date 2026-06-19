@@ -174,6 +174,16 @@ export class ProjectsService {
     );
   }
 
+  async updateAgentInstructions(id: number, instructions: string | null) {
+    await this.findOne(id);
+    const rows = await this.db
+      .update(schema.projects)
+      .set({ agentInstructions: instructions, updatedAt: new Date().toISOString() })
+      .where(eq(schema.projects.id, id))
+      .returning();
+    return rows[0];
+  }
+
   async delete(id: number) {
     const rows = await this.db
       .delete(schema.projects)

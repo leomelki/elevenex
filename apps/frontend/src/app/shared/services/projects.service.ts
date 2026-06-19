@@ -32,6 +32,10 @@ export class ProjectsService {
     return this.http.post<Project>(`/api/projects/${id}/unarchive`, {});
   }
 
+  updateAgentInstructions(id: number, instructions: string | null) {
+    return this.http.patch<Project>(`/api/projects/${id}/agent-instructions`, { instructions });
+  }
+
   delete(id: number) {
     return this.http.delete<Project>(`/api/projects/${id}`);
   }

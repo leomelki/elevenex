@@ -80,6 +80,10 @@
           <span>Browser profile</span>
           <strong>{{ browserModeLabel() }}</strong>
         </button>
+        <button type="button" class="summary-tile" [class.summary-tile--active]="activeSection() === 'instructions'" (click)="selectSection('instructions')">
+          <span>Agent instructions</span>
+          <strong>{{ project()?.agentInstructions ? 'Set' : 'Not set' }}</strong>
+        </button>
         <div class="summary-tile summary-tile--passive" [class.summary-tile--warning]="forwardIssuesCount() > 0">
           <span>Attention</span>
           <strong>{{ forwardIssuesCount() }}</strong>
@@ -98,6 +102,10 @@
         <button type="button" [class.is-active]="activeSection() === 'browser'" [attr.aria-pressed]="activeSection() === 'browser'" (click)="selectSection('browser')">
           <ng-icon name="lucideShield" size="14" />
           Browser Isolation
+        </button>
+        <button type="button" [class.is-active]="activeSection() === 'instructions'" [attr.aria-pressed]="activeSection() === 'instructions'" (click)="selectSection('instructions')">
+          <ng-icon name="lucideMessageSquare" size="14" />
+          Agent Instructions
         </button>
       </nav>
     </header>
@@ -421,6 +429,66 @@
                 }
               </div>
             }
+          }
+        </section>
+      }
+
+      @if (activeSection() === 'instructions') {
+        <section id="agent-instructions" class="project-section" aria-label="Agent instructions">
+          <div class="section-toolbar">
+            <div>
+              <p class="section-eyebrow">Custom behavior</p>
+              <h2>Agent Instructions</h2>
+              <p>Tell the Elevenex Agent how to work on this project. These instructions are injected when the agent orients on this project and override its default heuristics.</p>
+            </div>
+          </div>
+
+          <div class="agent-instructions-card">
+            <div class="agent-instructions-card__header">
+              <span class="agent-instructions-card__label">Instructions</span>
+              @if (agentInstructionsDraft().length > 0) {
+                <span class="agent-instructions-card__count">{{ agentInstructionsDraft().length }} / 4000</span>
+              }
+            </div>
+            <textarea
+              z-input
+              class="agent-instructions-textarea"
+              rows="12"
+              maxlength="4000"
+              [disabled]="isArchived()"
+              placeholder="Examples:&#10;• Always run the full test suite before opening a PR&#10;• This project uses pnpm, never npm&#10;• Branch names must follow the pattern feat/JIRA-123-description&#10;• Never push directly to main — always create a PR"
+              [value]="agentInstructionsDraft()"
+              (input)="agentInstructionsDraft.set($any($event.target).value)"
+            ></textarea>
+
+            @if (!isArchived()) {
+              <div class="agent-instructions-card__footer">
+                <div class="agent-instructions-card__hint">
+                  <ng-icon name="lucideMessageSquare" size="13" />
+                  <span>Read by the agent when it expands this project via <code>project_overview</code></span>
+                </div>
+                <div class="agent-instructions-card__actions">
+                  @if (agentInstructionsDraft().trim() && agentInstructionsDraft() !== (project()?.agentInstructions ?? '')) {
+                    <button z-button zType="ghost" zSize="sm" type="button" (click)="clearAgentInstructions()">Clear</button>
+                  }
+                  <button
+                    z-button
+                    zSize="sm"
+                    type="button"
+                    [zLoading]="savingAgentInstructions()"
+                    [zDisabled]="savingAgentInstructions() || agentInstructionsDraft() === (project()?.agentInstructions ?? '')"
+                    (click)="saveAgentInstructions()"
+                  >Save instructions</button>
+                </div>
+              </div>
+            }
+          </div>
+
+          @if (!isArchived() && !project()?.agentInstructions) {
+            <div class="agent-instructions-empty-hint">
+              <ng-icon name="lucideSparkles" size="15" />
+              <span>No instructions set. The agent will use its default behavior for this project.</span>
+            </div>
           }
         </section>
       }

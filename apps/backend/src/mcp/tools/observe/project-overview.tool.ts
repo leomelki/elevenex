@@ -83,7 +83,13 @@ export const projectOverviewTool = defineTool({
       );
       return {
         data: {
-          project: { id: project.id, name: project.name },
+          project: {
+            id: project.id,
+            name: project.name,
+            ...(project.agentInstructions
+              ? { agentInstructions: project.agentInstructions }
+              : {}),
+          },
           repos: repoSummaries,
         },
         deepLink: ctx.deepLink.project(project.id),

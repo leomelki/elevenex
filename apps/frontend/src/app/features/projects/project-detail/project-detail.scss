@@ -757,6 +757,100 @@
   }
 }
 
+.agent-instructions-card {
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.agent-instructions-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+}
+
+.agent-instructions-card__label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.agent-instructions-card__count {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-instructions-textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.82rem;
+  line-height: 1.65;
+  padding: 0.85rem;
+  outline: none;
+  box-shadow: none;
+
+  &:focus {
+    box-shadow: none;
+    border-color: transparent;
+  }
+}
+
+.agent-instructions-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: var(--muted);
+}
+
+.agent-instructions-card__hint {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+
+  code {
+    padding: 0.06rem 0.25rem;
+    border-radius: 0.25rem;
+    background: color-mix(in oklch, var(--foreground) 10%, transparent);
+    font-size: 0.78rem;
+  }
+}
+
+.agent-instructions-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.agent-instructions-empty-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.82rem;
+  border: 1px solid var(--border);
+}
+
 @media (max-width: 680px) {
   .project-detail-header__top,
   .section-toolbar,

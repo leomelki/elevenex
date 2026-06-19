@@ -4,4 +4,5 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  agentInstructions: string | null;
 }

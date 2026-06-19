@@ -1,7 +1,7 @@
 import { Component, inject, OnInit, OnDestroy, signal, viewChild, computed } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideArchive, lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideRotateCcw, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX } from '@ng-icons/lucide';
+import { lucideArchive, lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideRotateCcw, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX, lucideMessageSquare } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { Subscription, firstValueFrom } from 'rxjs';
 
@@ -28,7 +28,7 @@ import { TrackNativeModalDirective } from '@/shared/core/directives/track-native
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 import { WorktreeSheet } from '@/features/navigation/worktree-sheet/worktree-sheet';
 
-type ProjectDetailSection = 'repos' | 'ssh' | 'browser';
+type ProjectDetailSection = 'repos' | 'ssh' | 'browser' | 'instructions';
 
 @Component({
   selector: 'app-project-detail',
@@ -46,7 +46,7 @@ type ProjectDetailSection = 'repos' | 'ssh' | 'browser';
   templateUrl: './project-detail.html',
   styleUrl: './project-detail.scss',
   host: { class: 'block flex-1 overflow-y-auto bg-background' },
-  viewProviders: [provideIcons({ lucideArchive, lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideRotateCcw, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX })],
+  viewProviders: [provideIcons({ lucideArchive, lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideRotateCcw, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX, lucideMessageSquare })],
 })
 export class ProjectDetail implements OnInit, OnDestroy {
   private projectsService = inject(ProjectsService);
@@ -96,6 +96,9 @@ export class ProjectDetail implements OnInit, OnDestroy {
   browserIsolationLoading = signal(true);
   newGlobInput = signal('');
   savingBrowserIsolation = signal(false);
+
+  agentInstructionsDraft = signal('');
+  savingAgentInstructions = signal(false);
 
   newSshForward = signal<CreateSshForwardPayload>({
     name: '',
@@ -713,12 +716,36 @@ export class ProjectDetail implements OnInit, OnDestroy {
     return candidate;
   }
 
+  saveAgentInstructions() {
+    const project = this.project();
+    if (!project) return;
+    const instructions = this.agentInstructionsDraft().trim() || null;
+    this.savingAgentInstructions.set(true);
+    this.projectsService.updateAgentInstructions(project.id, instructions).subscribe({
+      next: (updated) => {
+        this.project.set(updated);
+        this.agentInstructionsDraft.set(updated.agentInstructions ?? '');
+        this.savingAgentInstructions.set(false);
+        toast.success('Agent instructions saved.');
+      },
+      error: (err: unknown) => {
+        this.savingAgentInstructions.set(false);
+        toast.error(this.getErrorMessage(err, 'Could not save agent instructions.'));
+      },
+    });
+  }
+
+  clearAgentInstructions() {
+    this.agentInstructionsDraft.set('');
+  }
+
   private loadProject(projectId: number) {
     this.resetProjectViewState();
 
     this.projectsService.getOne(projectId).subscribe({
       next: (project) => {
         this.project.set(project);
+        this.agentInstructionsDraft.set(project.agentInstructions ?? '');
       },
       error: () => {
         this.loading.set(false);
@@ -757,6 +784,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
     this.browserIsolationConfig.set(null);
     this.browserIsolationLoading.set(true);
     this.newGlobInput.set('');
+    this.agentInstructionsDraft.set('');
+    this.savingAgentInstructions.set(false);
 
     if (this.sshRefreshTimer !== null) {
       window.clearInterval(this.sshRefreshTimer);
@@ -834,6 +863,10 @@ export class ProjectDetail implements OnInit, OnDestroy {
       return 'browser';
     }
 
+    if (fragment === 'agent-instructions') {
+      return 'instructions';
+    }
+
     return 'repos';
   }
 
@@ -843,6 +876,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
         return 'ssh-forwarding';
       case 'browser':
         return 'browser-settings';
+      case 'instructions':
+        return 'agent-instructions';
       default:
         return undefined;
     }

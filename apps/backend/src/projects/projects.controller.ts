@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -29,6 +30,14 @@ export class ProjectsController {
   @Post()
   create(@Body() dto: CreateProjectDto) {
     return this.projectsService.create(dto.name);
+  }
+
+  @Patch(':id/agent-instructions')
+  updateAgentInstructions(
+    @Param('id') id: string,
+    @Body() body: { instructions: string | null },
+  ) {
+    return this.projectsService.updateAgentInstructions(+id, body.instructions ?? null);
   }
 
   @Post(':id/archive')
