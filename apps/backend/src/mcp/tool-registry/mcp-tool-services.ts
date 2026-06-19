@@ -6,6 +6,7 @@ import { SessionForksService } from '../../sessions/session-forks.service.js';
 import { PlanChatForksService } from '../../sessions/plan-chat-forks.service.js';
 import { WorktreePoolService } from '../../worktrees/worktree-pool.service.js';
 import { WorktreeCreationJobsService } from '../../worktrees/worktree-creation-jobs.service.js';
+import { WorktreesService } from '../../worktrees/worktrees.service.js';
 import { WorkspacesService } from '../../workspaces/workspaces.service.js';
 import { GitService } from '../../git/git.service.js';
 import { ChangeReviewService } from '../../git/change-review.service.js';
@@ -32,6 +33,7 @@ export class McpToolServices {
     readonly planChatForks: PlanChatForksService,
     readonly worktreePool: WorktreePoolService,
     readonly worktreeJobs: WorktreeCreationJobsService,
+    readonly worktrees: WorktreesService,
     readonly workspaces: WorkspacesService,
     readonly git: GitService,
     readonly changeReview: ChangeReviewService,

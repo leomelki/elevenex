@@ -4,6 +4,25 @@ import { worktreeSimpleGit } from '../config/system-paths.js';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 
+export interface BranchLastCommit {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface BranchSnapshot {
+  /** Commits the local branch is ahead of origin/<branch>. */
+  ahead: number;
+  /** Commits origin/<branch> is ahead of the local branch. */
+  behind: number;
+  headSha: string | null;
+  lastCommit: BranchLastCommit | null;
+  /** Whether origin/<branch> exists. */
+  remoteExists: boolean;
+}
+
 export interface WorktreeInfo {
   path: string;
   head: string;
@@ -53,7 +72,7 @@ export class WorktreesService {
       path.join(path.dirname(repoPath), '.worktrees', repoName, branchName);
 
     const base = startPoint?.trim();
-    const branchExists = await this.localBranchExists(git, branchName);
+    const branchExists = await this.localBranchExistsWithGit(git, branchName);
 
     try {
       if (branchExists) {
@@ -126,7 +145,85 @@ export class WorktreesService {
     }
   }
 
-  private async localBranchExists(
+  async localBranchExists(repoPath: string, branchName: string): Promise<boolean> {
+    return this.localBranchExistsWithGit(worktreeSimpleGit(repoPath), branchName);
+  }
+
+  async remoteBranchExists(repoPath: string, branchName: string): Promise<boolean> {
+    const git = worktreeSimpleGit(repoPath);
+    try {
+      const out = await git.raw(['show-ref', '--verify', `refs/remotes/origin/${branchName}`]);
+      return out.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Fetch a branch from origin.
+   * When `createLocal` is true (branch has no local ref yet), uses the
+   * refspec `branchName:branchName` so git creates a local tracking branch.
+   * When false, fetches just the remote tracking ref.
+   */
+  async fetchBranch(repoPath: string, branchName: string, createLocal: boolean): Promise<void> {
+    const git = worktreeSimpleGit(repoPath);
+    try {
+      if (createLocal) {
+        await git.raw(['fetch', 'origin', `${branchName}:${branchName}`]);
+      } else {
+        await git.raw(['fetch', 'origin', branchName]);
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(`Failed to fetch branch from origin: ${message}`);
+    }
+  }
+
+  /**
+   * Return ahead/behind counts vs origin and the tip commit for a local branch.
+   * Does not require the branch to be checked out in a worktree.
+   */
+  async getBranchSnapshot(repoPath: string, branchName: string): Promise<BranchSnapshot> {
+    const git = worktreeSimpleGit(repoPath);
+
+    let headSha: string | null = null;
+    let lastCommit: BranchLastCommit | null = null;
+    try {
+      headSha = (await git.raw(['rev-parse', branchName])).trim() || null;
+      if (headSha) {
+        const log = await git.log({ from: branchName, maxCount: 1 });
+        const latest = log.latest;
+        if (latest) {
+          lastCommit = {
+            hash: latest.hash,
+            shortHash: latest.hash.slice(0, 7),
+            message: latest.message,
+            author: latest.author_name,
+            date: latest.date,
+          };
+        }
+      }
+    } catch { /* branch tip unresolvable */ }
+
+    const remoteRef = `origin/${branchName}`;
+    let ahead = 0;
+    let behind = 0;
+    let remoteExists = false;
+    try {
+      await git.raw(['rev-parse', '--verify', `refs/remotes/${remoteRef}`]);
+      remoteExists = true;
+      const counts = (
+        await git.raw(['rev-list', '--left-right', '--count', `${branchName}...${remoteRef}`])
+      ).trim();
+      const [aheadStr, behindStr] = counts.split(/\s+/);
+      ahead = Number(aheadStr) || 0;
+      behind = Number(behindStr) || 0;
+    } catch { /* remote ref unavailable */ }
+
+    return { ahead, behind, headSha, lastCommit, remoteExists };
+  }
+
+  private async localBranchExistsWithGit(
     git: SimpleGit,
     branchName: string,
   ): Promise<boolean> {
