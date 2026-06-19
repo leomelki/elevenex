@@ -11,6 +11,7 @@ import { readFileTool } from './read-file.tool.js';
 import { changeReviewTool } from './change-review.tool.js';
 import { getWorktreeContextTool } from './get-worktree-context.tool.js';
 import { awaitSessionEventTool } from './await-session-event.tool.js';
+import { pollSessionStatusTool } from './poll-session-status.tool.js';
 
 /**
  * The Observe tool group: read-only primitives for orienting, polling, reading
@@ -21,6 +22,7 @@ export const OBSERVE_TOOLS: ToolDefinition[] = [
   projectOverviewTool,
   findSessionsTool,
   sessionStatusTool,
+  pollSessionStatusTool,
   readSessionTool,
   grepSessionTool,
   readSessionRangeTool,

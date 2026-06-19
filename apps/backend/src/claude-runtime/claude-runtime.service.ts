@@ -3559,6 +3559,15 @@ export class ClaudeRuntimeService extends EventEmitter {
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.liveItems = [];
+    // Invalidate any empty history snapshot recorded during a hydrate that fired
+    // before this turn started. The blank-TUI-session guard in submitPrompt uses
+    // lastHistoryItemCount===0 + lastHistorySource===null as its signal; leaving
+    // those values in place after a completed turn causes it to falsely treat the
+    // session as a standby TUI that never received a message, clearing claudeSessionId
+    // and losing all conversation context for the next message.
+    if (state.lastHistoryItemCount === 0 && state.lastHistorySource === null) {
+      state.lastHistoryItemCount = null;
+    }
     run?.permissionRequests.clear();
     if (run) {
       run.permissionRequestOrder = [];
