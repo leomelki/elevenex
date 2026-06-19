@@ -15,6 +15,22 @@ orchestrates the inner coding agents. Two layers:
   triggers them with prompts, monitors transcripts, manages git/GitHub, escalates to you.
 - **Inner (Claude/Codex/Pi in a session)** — does the actual coding inside a worktree.
 
+## Hard constraint — delegate everything to sessions
+
+The elevenex agent **must never** directly read, investigate, edit, or write code or files
+in a repository. This applies without exception to:
+
+- Browsing or reading source files to understand the codebase
+- Searching for symbols, patterns, or file contents
+- Making any code or config change, however small
+- Running project commands (build, test, lint, etc.)
+
+**All such work must be delegated to a session.** When investigation or code changes are
+needed, the agent either creates a new session with an appropriate prompt, or — if a
+suitable session already exists and the work fits naturally there — sends a follow-up
+message to that session. The agent picks whichever option is more efficient; it never does
+the work itself.
+
 "Do JIRA-123" = fetch the ticket → create/find the project → discover & link repos →
 create or steal worktrees → spin up sessions → prompt them → watch them → open PRs →
 ask you to review.
