@@ -58,9 +58,11 @@
             <span class="mc-cluster__label">
               {{
                 group.summary ||
-                  'Worked through ' +
-                    group.actionCount +
-                    (group.actionCount === 1 ? ' step' : ' steps')
+                  (group.actionCount
+                    ? 'Worked through ' +
+                      group.actionCount +
+                      (group.actionCount === 1 ? ' step' : ' steps')
+                    : 'Worked through the details')
               }}
             </span>
             <span class="mc-cluster__meta">

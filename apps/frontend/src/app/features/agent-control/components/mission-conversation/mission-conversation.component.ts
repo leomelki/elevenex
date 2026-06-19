@@ -53,6 +53,7 @@ import {
 import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
 import { AgentShowsService } from '@/shared/services/agent-shows.service';
 import { AgentChannelWebsocketService } from '../../agent-channel-websocket.service';
+import { TabService } from '@/features/session/tab-service';
 import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
 import type { AgentShow } from '@/shared/models/agent-channel.model';
 import type {
@@ -146,7 +147,11 @@ interface ConversationRow {
   timestamp: string;
 }
 
-/** A run of consecutive work (actions + thinking) that collapses when idle. */
+/**
+ * A turn's folded work — tool calls, thinking, and intermediate assistant
+ * messages — that collapses to a pill when idle. `actionCount` counts only the
+ * tool calls (the "steps"); folded thinking/messages do not add to it.
+ */
 interface ClusterGroup {
   type: 'cluster';
   id: string;
@@ -236,6 +241,7 @@ export class MissionConversationComponent {
   private readonly shows = inject(AgentShowsService);
   private readonly channel = inject(AgentChannelWebsocketService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly tabService = inject(TabService);
 
   private readonly provider: AgentProviderId = 'claude';
 
@@ -379,14 +385,35 @@ export class MissionConversationComponent {
   });
 
   /**
-   * The timeline as render groups: messages/shows/errors stay standalone, while
-   * consecutive work (actions + thinking) folds into a cluster that collapses
-   * once the agent is idle — leaving the final message and any agent-provided
-   * cards in view, with the steps one click away.
+   * The timeline as render groups. A whole turn's work — the agent's tool
+   * calls, thinking, and intermediate messages — folds into a single cluster
+   * that collapses once the agent is idle, leaving just the user prompt and the
+   * turn's final reply in view, with everything else one click away. Standalone
+   * artifacts (shows/errors) and user prompts stay inline and break clusters.
+   *
+   * "Final reply" means the last assistant message before the next user prompt
+   * (or the end of the transcript); earlier assistant messages are intermediate
+   * narration and fold in. While the run is live the cluster stays expanded (see
+   * `isLiveCluster`), so each step still shows individually until it completes.
    */
   readonly groups = computed<TimelineGroup[]>(() => {
     const rows = this.rows();
     const summaries = this.toolSummaries();
+
+    // Pre-mark the last assistant message of each turn so it renders inline as
+    // the visible reply while earlier assistant messages fold into the cluster.
+    const finalAssistantIds = new Set<string>();
+    let lastAssistant: ConversationRow | null = null;
+    for (const row of rows) {
+      if (row.type === 'message' && row.kind === 'user') {
+        if (lastAssistant) finalAssistantIds.add(lastAssistant.id);
+        lastAssistant = null;
+      } else if (row.type === 'message' && row.kind === 'assistant') {
+        lastAssistant = row;
+      }
+    }
+    if (lastAssistant) finalAssistantIds.add(lastAssistant.id);
+
     const out: TimelineGroup[] = [];
     let cluster: ClusterGroup | null = null;
     const toolIds: string[] = [];
@@ -404,9 +431,17 @@ export class MissionConversationComponent {
     };
 
     for (const row of rows) {
-      // Only tool actions fold into collapsible clusters. Thinking stays inline
-      // as a standalone row so thoughts always read the way they're shown live.
-      if (row.type === 'action') {
+      const isFinalReply =
+        row.type === 'message' && row.kind === 'assistant' && finalAssistantIds.has(row.id);
+      // Fold the turn's tool calls, thinking, and intermediate assistant
+      // messages. Everything else — user prompts, the final reply, shows and
+      // errors — stays inline and ends the current cluster.
+      const foldable =
+        row.type === 'action' ||
+        row.type === 'thinking' ||
+        (row.type === 'message' && row.kind === 'assistant' && !isFinalReply);
+
+      if (foldable) {
         if (!cluster) {
           cluster = {
             type: 'cluster',
@@ -418,8 +453,10 @@ export class MissionConversationComponent {
           };
         }
         cluster.rows.push(row);
-        cluster.actionCount += 1;
-        if (row.toolUseId) toolIds.push(row.toolUseId);
+        if (row.type === 'action') {
+          cluster.actionCount += 1;
+          if (row.toolUseId) toolIds.push(row.toolUseId);
+        }
       } else {
         flush();
         out.push({ type: 'single', id: row.id, row });
@@ -595,7 +632,7 @@ export class MissionConversationComponent {
     this.draft.set('');
     this.submitting.set(true);
     this.lastError.set(null);
-    this.send({ type: 'submit_prompt', prompt });
+    this.send({ type: 'submit_prompt', prompt: this.withActiveContext(prompt) });
   }
 
   interrupt(): void {
@@ -667,6 +704,16 @@ export class MissionConversationComponent {
       this.ws.disconnect(this.connectedSessionId, this.provider);
     }
     this.connectedSessionId = null;
+  }
+
+  private withActiveContext(prompt: string): string {
+    const tab = this.tabService.activeTab();
+    if (!tab) return prompt;
+    const parts: string[] = [`sessionId: ${tab.sessionId}`, `name: "${tab.sessionName}"`];
+    if (tab.workspaceName) parts.push(`workspace: "${tab.workspaceName}"`);
+    if (tab.branchName) parts.push(`branch: ${tab.branchName}`);
+    parts.push(`projectId: ${tab.projectId}`);
+    return `[active session — ${parts.join(', ')}]\n\n${prompt}`;
   }
 
   private send(message: Record<string, unknown>): void {
