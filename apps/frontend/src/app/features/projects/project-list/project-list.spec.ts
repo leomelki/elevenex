@@ -5,6 +5,7 @@ import { BehaviorSubject, of, Subject } from 'rxjs';
 import { describe, beforeEach, expect, it, vi } from 'vitest';
 
 import { ProjectList } from './project-list';
+import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 import { NavigationService } from '@/shared/services/navigation.service';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
 import { PathAutocompleteService } from '@/shared/services/path-autocomplete.service';
@@ -24,6 +25,11 @@ describe('ProjectList', () => {
     getAll: vi.fn(() => of(projects)),
     create: vi.fn(),
   };
+  const agentStateMock = {
+    open: vi.fn(),
+    createMission: vi.fn(() => Promise.resolve(1)),
+    error: vi.fn(() => null),
+  };
 
   beforeEach(async () => {
     queryParamMap.next(convertToParamMap({}));
@@ -34,6 +40,7 @@ describe('ProjectList', () => {
       imports: [ProjectList],
       providers: [
         { provide: ProjectsService, useValue: projectsServiceMock },
+        { provide: AgentControlStateService, useValue: agentStateMock },
         {
           provide: Router,
           useValue: {
@@ -130,14 +137,15 @@ describe('ProjectList', () => {
     expect(fixture.nativeElement.textContent).toContain('No matching projects');
   });
 
-  it('renders the compact empty state when no projects exist', () => {
+  it('renders the first-project prompt and opens the agent panel when no projects exist', () => {
     projectsServiceMock.getAll.mockReturnValue(of([]));
 
     const fixture = TestBed.createComponent(ProjectList);
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.textContent).toContain('No projects yet');
-    expect(fixture.nativeElement.textContent).toContain('Create project');
+    expect(fixture.nativeElement.textContent).toContain('Create your first project');
+    expect(fixture.nativeElement.textContent).toContain('Create project manually');
+    expect(agentStateMock.open).toHaveBeenCalled();
   });
 
   it('opens the create wizard from the query param', async () => {

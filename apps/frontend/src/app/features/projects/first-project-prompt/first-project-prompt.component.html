@@ -1,0 +1,71 @@
+<div class="first-project">
+  <span class="first-project__badge" aria-hidden="true">
+    <ng-icon name="lucideSparkles" size="22" />
+  </span>
+
+  <h2 class="first-project__title">Create your first project</h2>
+  <p class="first-project__subtitle">
+    Tell the Elevenex agent what you're building. It sets up the project,
+    attaches your repositories, and gets the workspace ready for you.
+  </p>
+
+  <form class="first-project__bar" (submit)="$event.preventDefault(); submit()">
+    <div class="first-project__glow" aria-hidden="true"></div>
+
+    <span class="first-project__leading" aria-hidden="true">
+      <ng-icon name="lucideSparkles" size="20" />
+    </span>
+
+    <textarea
+      #input
+      class="first-project__input"
+      rows="1"
+      autocomplete="off"
+      autocapitalize="off"
+      autocorrect="off"
+      spellcheck="false"
+      placeholder="e.g. Create a project for my web app and add the repo at ~/code/app"
+      aria-label="Describe your first project for the Elevenex agent"
+      [value]="query()"
+      [disabled]="submitting()"
+      (input)="query.set($any($event.target).value); autoGrow($any($event.target))"
+      (keydown)="onKeydown($event)"
+    ></textarea>
+
+    <button
+      type="submit"
+      class="first-project__send"
+      aria-label="Ask the Elevenex agent to create your project"
+      [disabled]="!query().trim() || submitting()"
+    >
+      @if (submitting()) {
+        <ng-icon name="lucideLoader2" size="18" class="first-project__spin" />
+      } @else {
+        <ng-icon name="lucideArrowUp" size="18" />
+      }
+    </button>
+  </form>
+
+  <div class="first-project__hints">
+    <span class="first-project__hint">
+      <ng-icon name="lucideSparkles" size="13" />
+      Elevenex agent · runs in its own workspace
+    </span>
+    <span class="first-project__keys">
+      <kbd class="first-project__kbd">↵</kbd>
+      <span>to ask</span>
+      <span class="first-project__sep">·</span>
+      <kbd class="first-project__kbd">⌘K</kbd>
+      <span>anywhere</span>
+    </span>
+  </div>
+
+  <div class="first-project__divider" role="separator" aria-label="or">
+    <span>or</span>
+  </div>
+
+  <button z-button zType="outline" type="button" (click)="createManually.emit()">
+    <ng-icon name="lucidePlus" size="15" />
+    Create project manually
+  </button>
+</div>

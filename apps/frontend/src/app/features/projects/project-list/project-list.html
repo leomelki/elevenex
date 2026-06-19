@@ -71,16 +71,8 @@
     }
 
     @if (!loading() && projects().length === 0 && listState() === 'active') {
-      <div class="flex min-h-[18rem] flex-col items-center justify-center rounded-md border border-dashed border-border bg-card/65 px-4 py-10 text-center">
-        <span class="flex size-10 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">
-          <ng-icon name="lucideFolderOpen" size="20" />
-        </span>
-        <h2 class="mt-3 text-sm font-semibold text-foreground">No projects yet</h2>
-        <p class="mt-1 max-w-md text-sm text-muted-foreground">Create a project, attach repositories, and configure setup defaults from one place.</p>
-        <button z-button class="mt-4" type="button" (click)="openCreateWizard()">
-          <ng-icon name="lucidePlus" size="15" />
-          Create project
-        </button>
+      <div class="flex min-h-[60vh] items-center justify-center px-4 py-10">
+        <app-first-project-prompt (createManually)="openCreateWizard()" />
       </div>
     }
 

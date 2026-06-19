@@ -1,7 +1,7 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideArchive, lucideCalendarClock, lucideChevronRight, lucideFolder, lucideFolderOpen, lucidePlus, lucideRotateCcw, lucideSearch, lucideTrash2 } from '@ng-icons/lucide';
+import { lucideArchive, lucideCalendarClock, lucideChevronRight, lucideFolder, lucidePlus, lucideRotateCcw, lucideSearch, lucideTrash2 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
@@ -12,6 +12,8 @@ import { OnboardingStateService } from '@/shared/services/onboarding-state.servi
 import { NavigationService } from '@/shared/services/navigation.service';
 import { ProjectListState, ProjectsService } from '@/shared/services/projects.service';
 import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-wizard/project-onboarding-wizard';
+import { FirstProjectPromptComponent } from '@/features/projects/first-project-prompt/first-project-prompt.component';
+import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 @Component({
   selector: 'app-project-list',
@@ -21,10 +23,11 @@ import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-
     ZardInputDirective,
     ZardSkeletonComponent,
     ProjectOnboardingWizard,
+    FirstProjectPromptComponent,
   ],
   templateUrl: './project-list.html',
   host: { class: 'block flex-1 overflow-y-auto bg-background' },
-  viewProviders: [provideIcons({ lucideArchive, lucideCalendarClock, lucideChevronRight, lucideFolder, lucideFolderOpen, lucidePlus, lucideRotateCcw, lucideSearch, lucideTrash2 })],
+  viewProviders: [provideIcons({ lucideArchive, lucideCalendarClock, lucideChevronRight, lucideFolder, lucidePlus, lucideRotateCcw, lucideSearch, lucideTrash2 })],
 })
 export class ProjectList implements OnInit {
   private projectsService = inject(ProjectsService);
@@ -32,6 +35,10 @@ export class ProjectList implements OnInit {
   private route = inject(ActivatedRoute);
   private onboardingState = inject(OnboardingStateService);
   private navigationService = inject(NavigationService);
+  private agent = inject(AgentControlStateService);
+
+  /** Open the agent side panel only once when we first land on an empty workspace. */
+  private autoOpenedAgentPanel = false;
 
   projects = signal<Project[]>([]);
   loading = signal(true);
@@ -75,11 +82,28 @@ export class ProjectList implements OnInit {
       next: (projects) => {
         this.projects.set(projects);
         this.loading.set(false);
+        this.maybeOpenAgentPanel();
       },
       error: () => {
         this.loading.set(false);
       },
     });
+  }
+
+  /**
+   * When the workspace has no active projects (typically right after
+   * onboarding), open the Elevenex agent side panel so it's clear you can
+   * prompt the agent to create your first project. Done once so we never fight
+   * a user who deliberately closes it.
+   */
+  private maybeOpenAgentPanel() {
+    if (this.autoOpenedAgentPanel) {
+      return;
+    }
+    if (this.listState() === 'active' && this.projects().length === 0) {
+      this.autoOpenedAgentPanel = true;
+      this.agent.open();
+    }
   }
 
   selectListState(state: Exclude<ProjectListState, 'all'>) {
