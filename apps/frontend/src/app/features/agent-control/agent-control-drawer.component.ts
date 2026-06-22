@@ -1,4 +1,4 @@
-import { Component, HostListener, computed, effect, inject, signal } from '@angular/core';
+import { Component, HostListener, computed, effect, inject, signal, untracked } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideArchive,
@@ -77,14 +77,20 @@ export class AgentControlDrawerComponent {
   constructor() {
     // Open the live meta-agent channel as soon as the drawer mounts; idempotent.
     this.channelWs.connect();
-    // On every open: reset to fresh composer state, clear any previous selection.
+    // On every open: reset to fresh composer state unless a mission was
+    // pre-selected (e.g. by createMission() in the command bar flow).
     let wasOpen = false;
     effect(() => {
       const open = this.state.isOpen();
       if (open && !wasOpen) {
-        this.composingSignal.set(true);
         this.showHistorySignal.set(false);
-        this.state.clearSelection();
+        const preSelected = untracked(() => this.state.selectedMission());
+        if (preSelected) {
+          this.composingSignal.set(false);
+        } else {
+          this.composingSignal.set(true);
+          this.state.clearSelection();
+        }
         void this.state.refresh();
       }
       wasOpen = open;
