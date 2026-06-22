@@ -290,18 +290,24 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly wsConnected = signal(false);
   private wsAutoReconnecting = false;
   private wsStateSub: Subscription | null = null;
-  readonly isTranscriptReadOnly = computed(() => this.archived || this.readOnlyTranscript);
+  // Private signals mirroring @Input() properties so computed() calls can track them reactively.
+  // Plain @Input() properties are not tracked by Angular's signal graph, so computed() that only
+  // read non-signal inputs evaluate once and never update when those inputs change.
+  private readonly _archived = signal(false);
+  private readonly _readOnlyTranscript = signal(false);
+  private readonly _terminalTranscriptMirror = signal(false);
+  readonly isTranscriptReadOnly = computed(() => this._archived() || this._readOnlyTranscript());
   readonly showCodexLogin = computed(() => {
-    if (this.readOnlyTranscript) return false;
-    if (this.archived) return false;
+    if (this._readOnlyTranscript()) return false;
+    if (this._archived()) return false;
     if (this.currentProvider() !== 'codex') return false;
     const status = this.codexAuthStatus();
     if (!status) return false;
     return status.authenticated !== true;
   });
   readonly showPiLogin = computed(() => {
-    if (this.readOnlyTranscript) return false;
-    if (this.archived) return false;
+    if (this._readOnlyTranscript()) return false;
+    if (this._archived()) return false;
     if (this.currentProvider() !== 'pi') return false;
     const status = this.piAuthStatus();
     if (!status) return false;
@@ -340,8 +346,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
 
   readonly showContextPin = computed(() => {
-    if (this.readOnlyTranscript && !this.terminalTranscriptMirror) return false;
-    if (this.archived) return false;
+    if (this._readOnlyTranscript() && !this._terminalTranscriptMirror()) return false;
+    if (this._archived()) return false;
     const hasTranscript = this.transcriptItems().length > 0 || this.submitting();
     if (hasTranscript) return false;
     if (this.worktreeContextLoading()) return true;
@@ -453,8 +459,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   readonly messageActionsDisabled = computed(
     () =>
-      this.readOnlyTranscript ||
-      this.archived ||
+      this._readOnlyTranscript() ||
+      this._archived() ||
       this.loading() ||
       this.submitting() ||
       this.runPhase() !== 'idle' ||
@@ -463,10 +469,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.rewindingMessageId() !== null,
   );
   readonly forkActionsDisabled = computed(
-    () => this.readOnlyTranscript || this.loading() || this.forkingAnchorId() !== null,
+    () => this._readOnlyTranscript() || this.loading() || this.forkingAnchorId() !== null,
   );
   readonly forkDisabledReason = computed(() => {
-    if (this.readOnlyTranscript) return 'Forks are not available in terminal mirror mode.';
+    if (this._readOnlyTranscript()) return 'Forks are not available in terminal mirror mode.';
     if (this.forkingAnchorId()) return 'A fork is already being created.';
     if (this.loading()) return 'Transcript is still loading.';
     return '';
@@ -745,6 +751,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   ngOnInit(): void {
+    this._archived.set(this.archived);
+    this._readOnlyTranscript.set(this.readOnlyTranscript);
+    this._terminalTranscriptMirror.set(this.terminalTranscriptMirror);
     this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
     this.runtimeStarted.set(this.hasStartedAgentRuntime);
     if (this.isVisible) {
@@ -755,6 +764,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   ngOnChanges(changes: SimpleChanges): void {
+    // Keep private signals in sync with @Input() changes so computed() calls stay reactive.
+    if (changes['archived']) this._archived.set(this.archived);
+    if (changes['readOnlyTranscript']) this._readOnlyTranscript.set(this.readOnlyTranscript);
+    if (changes['terminalTranscriptMirror']) this._terminalTranscriptMirror.set(this.terminalTranscriptMirror);
+
     if (changes['sessionId'] && !changes['sessionId'].firstChange) {
       this.disconnectTranscriptSocket(changes['sessionId'].previousValue as number);
       this.reset();
@@ -785,7 +799,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         void this.loadWorktreeContext(false);
       }
     }
-    if (changes['archived'] && !changes['archived'].firstChange && this.isVisible) {
+    // Skip archived-change bootstrap if sessionId already triggered a full reset+bootstrap above.
+    if (changes['archived'] && !changes['archived'].firstChange && this.isVisible && !changes['sessionId']) {
       this.reset();
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       this.providerSelection.setProvider(this.activeAgentProvider);
