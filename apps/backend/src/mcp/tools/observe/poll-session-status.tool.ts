@@ -1,6 +1,6 @@
 import type { EventEmitter } from 'node:events';
 import { z } from 'zod';
-import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
+import { defineTool, ToolError, type ToolContext } from '../../tool-registry/tool.types.js';
 import { renderMarkdown } from '../../../agent-runtime/conversation-export.service.js';
 
 const POLL_WAIT_MS = 90_000;
@@ -106,7 +106,7 @@ export const pollSessionStatusTool = defineTool({
 });
 
 async function buildTerminalResult(
-  ctx: Parameters<typeof pollSessionStatusTool['handler']>[1],
+  ctx: ToolContext,
   sessionId: number,
   provider: string,
   status: string,
