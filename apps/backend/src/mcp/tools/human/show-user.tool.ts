@@ -9,7 +9,7 @@ import { resolveDeepLink } from './deep-link-arg.js';
  */
 export const showUserTool = defineTool({
   name: 'show_user',
-  title: 'Show user',
+  title: 'Show to user',
   costClass: 'instant',
   requiresAgent: true,
   description:

@@ -93,130 +93,144 @@ function codexReadActionPath(data: Record<string, unknown>): string | null {
   return typeof name === 'string' && name.trim() ? name : null;
 }
 
-function describeElevenexTool(tool: string, data: Record<string, unknown>): { verb: string; target: string } {
+function describeElevenexTool(tool: string, data: Record<string, unknown>): { icon: string; verb: string; target: string } {
   const sessionId = data['sessionId'];
   const repoId = data['repoId'];
   const sessionRef = typeof sessionId === 'number' ? `session ${sessionId}` : '';
 
   switch (tool) {
+    // ── Drive ────────────────────────────────────────────────────────────────
     case 'prompt_session': {
       const prompt = typeof data['prompt'] === 'string' ? truncate(data['prompt'], 60) : '';
-      return { verb: 'Prompt', target: sessionRef || prompt };
+      return { icon: 'lucideMessageSquare', verb: 'Prompt', target: sessionRef || prompt };
     }
     case 'ask_session':
-      return { verb: 'Ask', target: sessionRef };
-    case 'read_session':
-      return { verb: 'Read session', target: sessionRef };
-    case 'session_status':
-      return { verb: 'Session status', target: sessionRef };
-    case 'await_session_event':
-      return { verb: 'Await event', target: sessionRef };
+      return { icon: 'lucideHelpCircle', verb: 'Ask', target: sessionRef };
     case 'interrupt_session':
-      return { verb: 'Interrupt', target: sessionRef };
+      return { icon: 'lucideStopCircle', verb: 'Interrupt', target: sessionRef };
     case 'reset_session':
-      return { verb: 'Reset session', target: sessionRef };
+      return { icon: 'lucideRotateCcw', verb: 'Reset session', target: sessionRef };
     case 'archive_session':
-      return { verb: 'Archive session', target: sessionRef };
+      return { icon: 'lucideArchive', verb: 'Archive session', target: sessionRef };
     case 'fork_session': {
       const name = typeof data['name'] === 'string' ? data['name'] : '';
-      return { verb: 'Fork session', target: name || sessionRef };
+      return { icon: 'lucideGitFork', verb: 'Fork session', target: name || sessionRef };
     }
     case 'get_pending_action':
-      return { verb: 'Pending action', target: sessionRef };
+      return { icon: 'lucideCircleAlert', verb: 'Pending action', target: sessionRef };
     case 'resolve_action':
-      return { verb: 'Resolve action', target: sessionRef };
+      return { icon: 'lucideCircleCheck', verb: 'Resolve action', target: sessionRef };
     case 'set_model': {
       const model = typeof data['model'] === 'string' ? data['model'] : '';
-      return { verb: 'Set model', target: model ? `${model} · ${sessionRef}` : sessionRef };
+      return { icon: 'lucideCpu', verb: 'Set model', target: model ? `${model} · ${sessionRef}` : sessionRef };
     }
     case 'set_permission_mode':
-      return { verb: 'Set permissions', target: sessionRef };
+      return { icon: 'lucideShield', verb: 'Set permissions', target: sessionRef };
     case 'set_provider':
-      return { verb: 'Set provider', target: sessionRef };
+      return { icon: 'lucideSettings', verb: 'Set provider', target: sessionRef };
+    // ── Observe ───────────────────────────────────────────────────────────────
+    case 'read_session':
+      return { icon: 'lucideScroll', verb: 'Read session', target: sessionRef };
+    case 'read_session_range':
+      return { icon: 'lucideScroll', verb: 'Read session', target: sessionRef };
+    case 'grep_session': {
+      const query = typeof data['query'] === 'string' ? `"${truncate(data['query'], 40)}"` : '';
+      return { icon: 'lucideSearch', verb: 'Search session', target: query || sessionRef };
+    }
+    case 'session_status':
+      return { icon: 'lucideActivity', verb: 'Session status', target: sessionRef };
+    case 'poll_session_status':
+      return { icon: 'lucideRefreshCw', verb: 'Poll status', target: sessionRef };
+    case 'await_session_event':
+      return { icon: 'lucideTimer', verb: 'Await event', target: sessionRef };
     case 'text_search': {
       const query = typeof data['query'] === 'string' ? `"${truncate(data['query'], 40)}"` : '';
-      return { verb: 'Search', target: query && sessionRef ? `${query} in ${sessionRef}` : query || sessionRef };
+      return { icon: 'lucideSearch', verb: 'Search', target: query && sessionRef ? `${query} in ${sessionRef}` : query || sessionRef };
     }
     case 'file_search': {
       const pattern = typeof data['pattern'] === 'string' ? data['pattern'] : '';
-      return { verb: 'File search', target: pattern && sessionRef ? `${pattern} in ${sessionRef}` : pattern || sessionRef };
+      return { icon: 'lucideFolderSearch', verb: 'File search', target: pattern && sessionRef ? `${pattern} in ${sessionRef}` : pattern || sessionRef };
     }
     case 'read_file': {
       const path = typeof data['path'] === 'string' ? displayPath(data['path']) : '';
-      return { verb: 'Read file', target: path || sessionRef };
+      return { icon: 'lucideFileText', verb: 'Read file', target: path || sessionRef };
     }
     case 'change_review':
-      return { verb: 'Change review', target: sessionRef };
+      return { icon: 'lucideGitCompare', verb: 'Change review', target: sessionRef };
     case 'get_worktree_context':
-      return { verb: 'Worktree context', target: sessionRef };
+      return { icon: 'lucideGitBranch', verb: 'Worktree context', target: sessionRef };
     case 'find_sessions': {
       const status = typeof data['status'] === 'string' ? data['status'] : '';
       const scope = typeof repoId === 'number' ? `repo ${repoId}` : typeof data['projectId'] === 'number' ? `project ${data['projectId']}` : '';
-      return { verb: 'Find sessions', target: [status, scope].filter(Boolean).join(' · ') };
+      return { icon: 'lucideSearch', verb: 'Find sessions', target: [status, scope].filter(Boolean).join(' · ') };
     }
+    case 'project_overview':
+      return { icon: 'lucideLayoutDashboard', verb: 'Project overview', target: '' };
+    // ── Setup ─────────────────────────────────────────────────────────────────
     case 'create_session': {
       const name = typeof data['name'] === 'string' ? data['name'] : '';
       const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
-      return { verb: 'Create session', target: name || branch || (typeof repoId === 'number' ? `repo ${repoId}` : '') };
+      return { icon: 'lucidePlusCircle', verb: 'Create session', target: name || branch || (typeof repoId === 'number' ? `repo ${repoId}` : '') };
     }
     case 'create_worktree': {
       const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
-      return { verb: 'Create worktree', target: branch };
+      return { icon: 'lucideGitBranch', verb: 'Create worktree', target: branch };
     }
     case 'link_worktree': {
       const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
-      return { verb: 'Link worktree', target: branch };
+      return { icon: 'lucideLink', verb: 'Link worktree', target: branch };
     }
     case 'steal_worktree':
-      return { verb: 'Steal worktree', target: '' };
+      return { icon: 'lucideAlertTriangle', verb: 'Steal worktree', target: '' };
     case 'get_worktree_job': {
       const jobId = typeof data['jobId'] === 'string' ? data['jobId'] : '';
-      return { verb: 'Worktree job', target: jobId };
+      return { icon: 'lucideLoader', verb: 'Worktree job', target: jobId };
     }
     case 'switch_branch': {
       const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
-      return { verb: 'Switch branch', target: branch };
+      return { icon: 'lucideGitBranch', verb: 'Switch branch', target: branch };
     }
     case 'generate_worktree_context':
-      return { verb: 'Worktree context', target: '' };
+      return { icon: 'lucideCpu', verb: 'Worktree context', target: '' };
     case 'assess_worktree_pool':
-      return { verb: 'Assess pool', target: '' };
-    case 'project_overview':
-      return { verb: 'Project overview', target: '' };
+      return { icon: 'lucideDatabase', verb: 'Assess pool', target: '' };
     case 'find_or_create_project': {
       const name = typeof data['name'] === 'string' ? data['name'] : '';
-      return { verb: 'Find/create project', target: name };
+      return { icon: 'lucideFolderOpen', verb: 'Find/create project', target: name };
     }
     case 'add_repo': {
       const path = typeof data['path'] === 'string' ? displayPath(data['path']) : '';
-      return { verb: 'Add repo', target: path };
+      return { icon: 'lucideGitFork', verb: 'Add repo', target: path };
     }
     case 'remove_repo':
-      return { verb: 'Remove repo', target: typeof repoId === 'number' ? `repo ${repoId}` : '' };
+      return { icon: 'lucideTrash2', verb: 'Remove repo', target: typeof repoId === 'number' ? `repo ${repoId}` : '' };
+    case 'delete_project':
+      return { icon: 'lucideTrash2', verb: 'Delete project', target: '' };
+    case 'set_todo':
+      return { icon: 'lucideListTodo', verb: 'Set todo', target: sessionRef };
+    case 'set_scratchpad': {
+      const name = typeof data['name'] === 'string' ? data['name'] : '';
+      return { icon: 'lucidePencilLine', verb: 'Set scratchpad', target: name || sessionRef };
+    }
+    // ── Human ─────────────────────────────────────────────────────────────────
     case 'escalate_to_user': {
       const title = typeof data['title'] === 'string' ? truncate(data['title'], 60) : '';
-      return { verb: 'Escalate', target: title };
+      return { icon: 'lucideAlertTriangle', verb: 'Escalate', target: title };
     }
     case 'notify_user': {
       const message = typeof data['message'] === 'string' ? truncate(data['message'], 60) : '';
-      return { verb: 'Notify', target: message };
+      return { icon: 'lucideBell', verb: 'Notify', target: message };
     }
     case 'request_approval': {
       const title = typeof data['title'] === 'string' ? truncate(data['title'], 60) : '';
-      return { verb: 'Request approval', target: title };
+      return { icon: 'lucideShieldCheck', verb: 'Request approval', target: title };
     }
     case 'show_user': {
       const title = typeof data['title'] === 'string' ? truncate(data['title'], 60) : '';
-      return { verb: 'Show', target: title };
-    }
-    case 'set_todo':
-      return { verb: 'Set todo', target: sessionRef };
-    case 'set_scratchpad': {
-      const name = typeof data['name'] === 'string' ? data['name'] : '';
-      return { verb: 'Set scratchpad', target: name || sessionRef };
+      return { icon: 'lucideMonitor', verb: 'Show', target: title };
     }
     default:
-      return { verb: tool.replace(/_/g, ' '), target: sessionRef };
+      return { icon: 'lucidePlugZap', verb: tool.replace(/_/g, ' '), target: sessionRef };
   }
 }
 
@@ -312,8 +326,8 @@ function describeCanonicalTool(
       const server = String(data['server'] ?? '');
       const tool = String(data['tool'] ?? data['name'] ?? displayName ?? '');
       if (server === 'elevenex') {
-        const { verb, target } = describeElevenexTool(tool, data);
-        return { kind, icon: 'lucidePlugZap', verb, target };
+        const { icon, verb, target } = describeElevenexTool(tool, data);
+        return { kind, icon, verb, target };
       }
       return { kind, icon: 'lucidePlugZap', verb: server || 'MCP', target: tool };
     }
@@ -491,8 +505,8 @@ export function describeTool(
     const server = String(data['server'] ?? parts[1] ?? '');
     const tool = parts.length > 2 ? parts.slice(2).join('.') : name;
     if (server === 'elevenex') {
-      const { verb, target } = describeElevenexTool(tool, data);
-      return { kind: 'mcp', icon: 'lucidePlugZap', verb, target };
+      const { icon, verb, target } = describeElevenexTool(tool, data);
+      return { kind: 'mcp', icon, verb, target };
     }
     return { kind: 'mcp', icon: 'lucidePlugZap', verb: server || 'MCP', target: tool };
   }

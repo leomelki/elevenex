@@ -14,7 +14,7 @@ const MAX_TIMEOUT_MS = 120_000;
  */
 export const askSessionTool = defineTool({
   name: 'ask_session',
-  title: 'Ask a session a question',
+  title: 'Ask session',
   costClass: 'heavy',
   mutates: true,
   description:
