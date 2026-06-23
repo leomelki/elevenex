@@ -4,6 +4,7 @@ import { toast } from 'ngx-sonner';
 
 import { NavigationService } from '@/shared/services/navigation.service';
 import { AgentShowsService } from '@/shared/services/agent-shows.service';
+import { AgentControlStateService } from './agent-control-state.service';
 import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
 import type { AgentShow } from '@/shared/models/agent-channel.model';
 
@@ -67,6 +68,7 @@ export class AgentChannelWebsocketService {
   private readonly navigation = inject(NavigationService);
   private readonly router = inject(Router);
   private readonly agentShows = inject(AgentShowsService);
+  private readonly agentControlState = inject(AgentControlStateService);
 
   private socket: WebSocket | null = null;
   private manuallyClosed = false;
@@ -243,17 +245,23 @@ export class AgentChannelWebsocketService {
 
   private handleShow(show: AgentShow): void {
     this.agentShows.push(show);
+    if (this.agentControlState.isOpen() && show.deepLink) {
+      this.openDeepLink(show.deepLink);
+    }
   }
 
-  private toastOptions(deepLink?: string): { action?: { label: string; onClick: () => void } } {
-    if (!deepLink) {
-      return {};
-    }
+  private toastOptions(deepLink?: string): Record<string, unknown> {
     return {
-      action: {
-        label: 'Open',
-        onClick: () => this.openDeepLink(deepLink),
-      },
+      duration: 30_000,
+      closeButton: true,
+      ...(deepLink
+        ? {
+            action: {
+              label: 'Open',
+              onClick: () => this.openDeepLink(deepLink),
+            },
+          }
+        : {}),
     };
   }
 
