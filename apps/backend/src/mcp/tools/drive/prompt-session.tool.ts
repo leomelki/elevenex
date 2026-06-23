@@ -4,7 +4,8 @@ import { defineTool } from '../../tool-registry/tool.types.js';
 import { resolveSessionProvider } from './provider.util.js';
 
 const PROMPT_WAIT_MS = 90_000;
-const TERMINAL_STATUSES = new Set(['completed', 'requires_action', 'failed']);
+// DB statuses that mean the session was killed externally — treat as failed.
+const TERMINAL_DB_STATUSES = new Set(['archived', 'stopped']);
 
 /**
  * prompt_session — trigger or continue a session's agent with a prompt. Ensures
@@ -48,24 +49,26 @@ export const promptSessionTool = defineTool({
     // Block up to 90 s for the session to reach a terminal status. This removes
     // the need for a separate await_session_event call in the fast-path where the
     // session completes quickly.
-    const emitter = sessions as unknown as EventEmitter;
+    const sessionEmitter = sessions as unknown as EventEmitter;
+    const runtimeEmitter = runtime as unknown as EventEmitter;
 
     return new Promise((resolve) => {
       let settled = false;
       let timer: NodeJS.Timeout | undefined;
 
       const cleanup = () => {
-        emitter.off('session-status-changed', onChange);
+        sessionEmitter.off('session-status-changed', onSessionStatus);
+        runtimeEmitter.off('event', onRuntimeEvent);
         ctx.signal.removeEventListener('abort', onAbort);
         if (timer) clearTimeout(timer);
       };
 
-      const finish = (event: string) => {
+      const finish = (status: string) => {
         if (settled) return;
         settled = true;
         cleanup();
 
-        if (event === 'timeout' || event === 'aborted') {
+        if (status === 'timeout' || status === 'aborted') {
           resolve({
             data: { sessionId: args.sessionId, accepted: true, stillRunning: true },
             deepLink: ctx.deepLink.session(args.sessionId),
@@ -76,23 +79,41 @@ export const promptSessionTool = defineTool({
         }
 
         resolve({
-          data: { sessionId: args.sessionId, accepted: true, status: event },
+          data: { sessionId: args.sessionId, accepted: true, status },
           deepLink: ctx.deepLink.session(args.sessionId),
           nextStep:
-            event === 'requires_action'
+            status === 'requires_action'
               ? 'Session blocked: get_pending_action to inspect, then resolve_action.'
               : 'Session finished. Call read_session for the transcript.',
         });
       };
 
-      const onChange = (payload: { sessionId: number; status: string }) => {
+      // DB status listener: handles external kills (archived/stopped).
+      const onSessionStatus = (payload: { sessionId: number; status: string }) => {
         if (payload.sessionId !== args.sessionId) return;
-        if (TERMINAL_STATUSES.has(payload.status)) finish(payload.status);
+        if (TERMINAL_DB_STATUSES.has(payload.status)) finish('failed');
+      };
+
+      // Runtime event listener: the actual source of truth for run completion.
+      const onRuntimeEvent = (event: {
+        type: string;
+        payload: { sessionId: number; sessionState?: string | null; runPhase?: string | null };
+      }) => {
+        if (event.payload.sessionId !== args.sessionId) return;
+        if (event.type === 'complete') {
+          finish('completed');
+        } else if (event.type === 'run_state') {
+          if (event.payload.sessionState === 'requires_action') finish('requires_action');
+          else if (event.payload.runPhase === 'error') finish('failed');
+        } else if (event.type === 'error') {
+          finish('failed');
+        }
       };
 
       const onAbort = () => finish('aborted');
 
-      emitter.on('session-status-changed', onChange);
+      sessionEmitter.on('session-status-changed', onSessionStatus);
+      runtimeEmitter.on('event', onRuntimeEvent);
       ctx.signal.addEventListener('abort', onAbort, { once: true });
       timer = setTimeout(() => finish('timeout'), PROMPT_WAIT_MS);
 
@@ -101,10 +122,15 @@ export const promptSessionTool = defineTool({
         return;
       }
 
-      // Re-check status after subscribing to close the race window between
-      // submitPrompt completing and our listener being registered.
-      sessions.findOne(args.sessionId).then((s) => {
-        if (s && TERMINAL_STATUSES.has(s.status)) finish(s.status);
+      // Re-check via runtime state to close the race between submitPrompt
+      // completing and our listeners being registered. We only check for
+      // non-running terminal states here — we deliberately skip the idle/completed
+      // check because submitPrompt may return before the runtime transitions to
+      // 'running', which would cause a false-positive 'completed' signal.
+      runtime.getRuntimeState(args.sessionId).then((s) => {
+        const state = s as { sessionState?: string | null; runPhase?: string | null };
+        if (state.sessionState === 'requires_action') finish('requires_action');
+        else if (state.runPhase === 'error') finish('failed');
       }).catch(() => {});
     });
   },

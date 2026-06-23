@@ -4,7 +4,8 @@ import { defineTool, ToolError, type ToolContext } from '../../tool-registry/too
 import { renderMarkdown } from '../../../agent-runtime/conversation-export.service.js';
 
 const POLL_WAIT_MS = 90_000;
-const TERMINAL_STATUSES = new Set(['completed', 'requires_action', 'failed']);
+// DB statuses that mean the session was killed externally — treat as failed.
+const TERMINAL_DB_STATUSES = new Set(['archived', 'stopped']);
 
 /**
  * poll_session_status — blocking continuation poll for a running session.
@@ -43,29 +44,48 @@ export const pollSessionStatusTool = defineTool({
       });
     }
 
-    // Already terminal — return the transcript immediately without subscribing.
-    if (TERMINAL_STATUSES.has(session.status)) {
-      return buildTerminalResult(ctx, session.id, session.activeAgentProvider, session.status);
+    // Already killed at the DB level — no point subscribing.
+    if (TERMINAL_DB_STATUSES.has(session.status)) {
+      return buildTerminalResult(ctx, session.id, session.activeAgentProvider, 'failed');
     }
 
-    const emitter = sessions as unknown as EventEmitter;
+    const runtime = ctx.services.agentRuntime.getProvider(session.activeAgentProvider);
+
+    // Check live runtime state before subscribing to close any already-done race.
+    const initialState = await runtime.getRuntimeState(session.id).catch(() => null);
+    const initialRuntimeState = initialState as { sessionState?: string | null; runPhase?: string | null } | null;
+    if (initialRuntimeState) {
+      if (initialRuntimeState.sessionState === 'requires_action') {
+        return buildTerminalResult(ctx, session.id, session.activeAgentProvider, 'requires_action');
+      }
+      if (initialRuntimeState.runPhase === 'error') {
+        return buildTerminalResult(ctx, session.id, session.activeAgentProvider, 'failed');
+      }
+      if (initialRuntimeState.sessionState === 'idle' && initialRuntimeState.runPhase === 'idle') {
+        return buildTerminalResult(ctx, session.id, session.activeAgentProvider, 'completed');
+      }
+    }
+
+    const sessionEmitter = sessions as unknown as EventEmitter;
+    const runtimeEmitter = runtime as unknown as EventEmitter;
 
     return new Promise((resolve) => {
       let settled = false;
       let timer: NodeJS.Timeout | undefined;
 
       const cleanup = () => {
-        emitter.off('session-status-changed', onChange);
+        sessionEmitter.off('session-status-changed', onSessionStatus);
+        runtimeEmitter.off('event', onRuntimeEvent);
         ctx.signal.removeEventListener('abort', onAbort);
         if (timer) clearTimeout(timer);
       };
 
-      const finish = async (event: string, currentStatus: string) => {
+      const finish = async (status: string) => {
         if (settled) return;
         settled = true;
         cleanup();
 
-        if (event === 'timeout' || event === 'aborted') {
+        if (status === 'timeout' || status === 'aborted') {
           resolve({
             data: { sessionId: args.sessionId, stillRunning: true },
             deepLink: ctx.deepLink.session(args.sessionId),
@@ -76,30 +96,51 @@ export const pollSessionStatusTool = defineTool({
         }
 
         resolve(
-          await buildTerminalResult(ctx, args.sessionId, session.activeAgentProvider, currentStatus),
+          await buildTerminalResult(ctx, args.sessionId, session.activeAgentProvider, status),
         );
       };
 
-      const onChange = (payload: { sessionId: number; status: string }) => {
+      // DB status listener: handles external kills (archived/stopped).
+      const onSessionStatus = (payload: { sessionId: number; status: string }) => {
         if (payload.sessionId !== args.sessionId) return;
-        if (TERMINAL_STATUSES.has(payload.status)) void finish(payload.status, payload.status);
+        if (TERMINAL_DB_STATUSES.has(payload.status)) void finish('failed');
       };
 
-      const onAbort = () => void finish('aborted', session.status);
+      // Runtime event listener: the actual source of truth for run completion.
+      const onRuntimeEvent = (event: {
+        type: string;
+        payload: { sessionId: number; sessionState?: string | null; runPhase?: string | null };
+      }) => {
+        if (event.payload.sessionId !== args.sessionId) return;
+        if (event.type === 'complete') {
+          void finish('completed');
+        } else if (event.type === 'run_state') {
+          if (event.payload.sessionState === 'requires_action') void finish('requires_action');
+          else if (event.payload.runPhase === 'error') void finish('failed');
+        } else if (event.type === 'error') {
+          void finish('failed');
+        }
+      };
 
-      emitter.on('session-status-changed', onChange);
+      const onAbort = () => void finish('aborted');
+
+      sessionEmitter.on('session-status-changed', onSessionStatus);
+      runtimeEmitter.on('event', onRuntimeEvent);
       ctx.signal.addEventListener('abort', onAbort, { once: true });
-      timer = setTimeout(() => void finish('timeout', session.status), POLL_WAIT_MS);
+      timer = setTimeout(() => void finish('timeout'), POLL_WAIT_MS);
 
       if (ctx.signal.aborted) {
         onAbort();
         return;
       }
 
-      // Re-check after subscribing to close the race between our check above and
-      // listener registration.
-      sessions.findOne(args.sessionId).then((s) => {
-        if (s && TERMINAL_STATUSES.has(s.status)) void finish(s.status, s.status);
+      // Re-check via runtime state after subscribing to close the race between
+      // our initial check above and listener registration.
+      runtime.getRuntimeState(args.sessionId).then((s) => {
+        const state = s as { sessionState?: string | null; runPhase?: string | null };
+        if (state.sessionState === 'requires_action') void finish('requires_action');
+        else if (state.runPhase === 'error') void finish('failed');
+        else if (state.sessionState === 'idle' && state.runPhase === 'idle') void finish('completed');
       }).catch(() => {});
     });
   },
