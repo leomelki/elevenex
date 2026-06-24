@@ -206,9 +206,12 @@ export class ClaudeThinkingComponent {
   readonly preview = computed(() => {
     const text = this.content().trim();
     if (!text) return '';
-    const firstLine = text.split('\n').find((l) => l.trim()) ?? '';
-    const clean = firstLine.replace(/[*_`#>]+/g, '').trim();
-    return clean.length > 80 ? clean.slice(0, 80) + '…' : clean;
+    const lines = text.split('\n');
+    const lastLine = [...lines].reverse().find((l) => l.trim()) ?? '';
+    const clean = lastLine.replace(/[*_`#>]+/g, '').trim();
+    const hasMore = lines.find((l) => l.trim()) !== lastLine;
+    const truncated = clean.length > 80 ? clean.slice(-80) : clean;
+    return hasMore || clean.length > 80 ? '… ' + truncated : truncated;
   });
 
   constructor() {
