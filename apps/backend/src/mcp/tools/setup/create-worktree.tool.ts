@@ -77,7 +77,7 @@ export const createWorktreeTool = defineTool({
     const localExists = await worktrees.localBranchExists(repo.path, branchName);
 
     if (!localExists) {
-      if (!args.from_origin) {
+      if (!args.from_origin && !args.startPoint?.trim()) {
         // Branch does not exist locally — agent must decide what to do next.
         const remoteExists = await worktrees.remoteBranchExists(repo.path, branchName);
         throw new ToolError({
