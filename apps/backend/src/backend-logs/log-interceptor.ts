@@ -1,4 +1,10 @@
 import { EventEmitter } from 'events';
+import { mkdirSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+
+const CRASH_LOG_DIR = join(homedir(), '.elevenex', 'logs');
+const RING_BUFFER_SIZE = 50;
 
 export type LogLevel =
   | 'debug'
@@ -18,6 +24,51 @@ export interface LogEntry {
 
 export const logEmitter = new EventEmitter();
 logEmitter.setMaxListeners(100);
+
+const ringBuffer: LogEntry[] = [];
+
+function pushToRingBuffer(entry: LogEntry): void {
+  if (ringBuffer.length >= RING_BUFFER_SIZE) ringBuffer.shift();
+  ringBuffer.push(entry);
+}
+
+function writeCrashLog(reason: string, error: unknown): void {
+  try {
+    mkdirSync(CRASH_LOG_DIR, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const filePath = join(CRASH_LOG_DIR, `crash-${ts}.log`);
+    const errorText =
+      error instanceof Error
+        ? `${error.message}\n${error.stack ?? ''}`
+        : String(error);
+    const recentLines = ringBuffer
+      .map((e) => `[${e.timestamp}] ${e.level.toUpperCase()} ${e.message}`)
+      .join('\n');
+    writeFileSync(
+      filePath,
+      `CRASH: ${reason}\n${errorText}\n\n--- last ${ringBuffer.length} log lines ---\n${recentLines}\n`,
+      'utf8',
+    );
+  } catch {
+    // best-effort: if we can't write the crash log, there's nothing we can do
+  }
+}
+
+let crashHandlersInstalled = false;
+
+function installCrashHandlers(): void {
+  if (crashHandlersInstalled) return;
+  crashHandlersInstalled = true;
+
+  process.on('uncaughtException', (error) => {
+    writeCrashLog('uncaughtException', error);
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    writeCrashLog('unhandledRejection', reason);
+  });
+}
 
 let intercepted = false;
 let activeConsoleLevel: LogLevel | null = null;
@@ -86,11 +137,13 @@ function emitLog(level: LogLevel, chunk: Uint8Array | string): void {
     typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
   if (!message.trim()) return;
 
-  logEmitter.emit('log', {
+  const entry: LogEntry = {
     level: inferLogLevelFromMessage(message) ?? activeConsoleLevel ?? level,
     message: message.replace(/\n$/, ''),
     timestamp: new Date().toISOString(),
-  } satisfies LogEntry);
+  };
+  pushToRingBuffer(entry);
+  logEmitter.emit('log', entry);
 }
 
 function withConsoleLevel<T>(level: LogLevel, callback: () => T): T {
@@ -126,6 +179,7 @@ export function interceptProcessStreams(): void {
   if (intercepted) return;
   intercepted = true;
   interceptConsoleMethods();
+  installCrashHandlers();
 
   const origStdoutWrite = process.stdout.write.bind(process.stdout);
   const origStderrWrite = process.stderr.write.bind(process.stderr);
