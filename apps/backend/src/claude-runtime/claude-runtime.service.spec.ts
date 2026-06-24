@@ -401,9 +401,47 @@ describe('ClaudeRuntimeService', () => {
         }),
       );
       expect(mcpAuthenticate).toHaveBeenCalledWith('linear');
+      // The loopback callback server (from the redirect_uri's localhost:49152)
+      // must stay alive until the provider redirects back, so the subprocess
+      // must NOT be torn down here. Tearing it down was the root cause of the
+      // "MCP authentication callback unavailable" page.
+      expect(close).not.toHaveBeenCalled();
+    } finally {
+      (query as jest.Mock).mockReset();
+    }
+  });
+
+  it('keeps the auth subprocess alive briefly after the callback hits, then retires it', async () => {
+    jest.useFakeTimers();
+    const close = jest.fn();
+    const mcpAuthenticate = jest.fn().mockResolvedValue({
+      authUrl:
+        'https://auth.example.com/authorize?client_id=claude-code&redirect_uri=http%3A%2F%2F127.0.0.1%3A3118%2Fcallback&state=abc',
+      requiresUserAction: true,
+    });
+    (query as jest.Mock).mockReturnValue({
+      initializationResult: jest.fn().mockResolvedValue({}),
+      mcpAuthenticate,
+      close,
+    });
+
+    try {
+      await service.startMcpAuthFlow(7, 'datadog');
+
+      // Callback arrives: the port is taken from the redirect_uri (3118), so
+      // the proxy's notification matches the parked flow.
+      service.notifyMcpAuthCallback(3118);
+
+      // The subprocess is still alive while the CLI finishes the token
+      // exchange...
+      expect(close).not.toHaveBeenCalled();
+
+      // ...then retired once the grace period elapses.
+      jest.advanceTimersByTime(8 * 1000);
       expect(close).toHaveBeenCalled();
     } finally {
       (query as jest.Mock).mockReset();
+      jest.useRealTimers();
     }
   });
 

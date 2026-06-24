@@ -208,6 +208,13 @@ type McpAuthControlQuery = Query & {
 // abandoned flow does not pin the subprocess forever.
 const MCP_AUTH_FLOW_TIMEOUT_MS = 10 * 60 * 1000;
 
+// Grace period between the loopback server answering the OAuth redirect and us
+// retiring the subprocess. The CLI sends the "Authentication Successful" page
+// FIRST, then exchanges the authorization code for tokens and persists them;
+// SIGTERM-ing it the instant we see that response can kill it mid-exchange and
+// silently lose the tokens. A few seconds covers the token round-trip.
+const MCP_AUTH_CALLBACK_GRACE_MS = 8 * 1000;
+
 interface PendingMcpAuthFlow {
   sessionId: number;
   serverName: string;
@@ -2224,7 +2231,19 @@ export class ClaudeRuntimeService extends EventEmitter {
     if (!key) {
       return;
     }
-    this.teardownMcpAuthFlow(key);
+    const flow = this.pendingMcpAuthFlows.get(key);
+    if (!flow) {
+      return;
+    }
+    // Don't tear down immediately: the CLI still has to exchange the code for
+    // tokens and persist them after it answered the browser. Replace the long
+    // safety timer with a short grace delay so the subprocess survives the
+    // exchange but the (now successful) flow still gets cleaned up promptly.
+    clearTimeout(flow.teardownTimer);
+    flow.teardownTimer = setTimeout(() => {
+      this.teardownMcpAuthFlow(key);
+    }, MCP_AUTH_CALLBACK_GRACE_MS);
+    flow.teardownTimer.unref?.();
   }
 
   cancelMcpAuthFlowsForSession(sessionId: number): void {
@@ -2240,15 +2259,38 @@ export class ClaudeRuntimeService extends EventEmitter {
   }
 
   private parseLoopbackPort(url: string): number | null {
-    try {
-      const parsed = new URL(url);
-      if (!isLoopbackHostname(parsed.hostname) || !parsed.port) {
+    const portFromLoopbackUrl = (candidate: string): number | null => {
+      try {
+        const parsed = new URL(candidate);
+        if (!isLoopbackHostname(parsed.hostname) || !parsed.port) {
+          return null;
+        }
+        const port = Number.parseInt(parsed.port, 10);
+        return Number.isInteger(port) && port > 0 && port <= 65535
+          ? port
+          : null;
+      } catch {
         return null;
       }
-      const port = Number.parseInt(parsed.port, 10);
-      return Number.isInteger(port) && port > 0 && port <= 65535
-        ? port
-        : null;
+    };
+
+    // The value we get back from `mcpAuthenticate` is almost always the OAuth
+    // *provider's* authorize URL (e.g. https://app.datadoghq.com/oauth/...).
+    // The loopback callback server the Claude CLI subprocess owns lives in the
+    // `redirect_uri` query parameter (http://localhost:<port>/callback), not in
+    // the authorize URL's own host. Check the URL itself first (in case the SDK
+    // ever hands us a loopback URL directly), then fall back to redirect_uri.
+    // Getting this wrong means we never find a port, immediately tear down the
+    // subprocess, and the provider's later redirect hits a dead port — the
+    // "MCP authentication callback unavailable" page.
+    const direct = portFromLoopbackUrl(url);
+    if (direct !== null) {
+      return direct;
+    }
+
+    try {
+      const redirectUri = new URL(url).searchParams.get('redirect_uri');
+      return redirectUri ? portFromLoopbackUrl(redirectUri) : null;
     } catch {
       return null;
     }
