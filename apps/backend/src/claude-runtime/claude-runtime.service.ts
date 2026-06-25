@@ -4265,7 +4265,11 @@ export class ClaudeRuntimeService extends EventEmitter {
         // Inject the meta-agent "brain" prompt for agent sessions; normal coding
         // sessions keep the bare preset.
         ...(isAgentSession
-          ? { append: buildMetaAgentPrompt(agentAutonomyMode) }
+          ? {
+              append:
+                buildMetaAgentPrompt(agentAutonomyMode) +
+                (await this.buildAgentSessionContext(sessionId)),
+            }
           : {}),
       },
       tools: {
@@ -4282,6 +4286,52 @@ export class ClaudeRuntimeService extends EventEmitter {
       ),
     };
     return options;
+  }
+
+  /**
+   * Build a brief session/project context snippet for the meta-agent system
+   * prompt so the agent knows its own identity without calling project_overview.
+   * Returned as a block the agent is instructed to use only when referenced,
+   * matching the style of other dynamic context injected at conversation start.
+   */
+  private async buildAgentSessionContext(sessionId: number): Promise<string> {
+    try {
+      const rows = await this.db
+        .select({
+          sessionName: schema.sessions.name,
+          projectId: schema.repos.projectId,
+          projectName: schema.projects.name,
+        })
+        .from(schema.sessions)
+        .innerJoin(schema.repos, eq(schema.sessions.repoId, schema.repos.id))
+        .leftJoin(
+          schema.projects,
+          eq(schema.repos.projectId, schema.projects.id),
+        )
+        .where(eq(schema.sessions.id, sessionId));
+
+      if (rows.length === 0) return '';
+
+      const { sessionName, projectId, projectName } = rows[0];
+
+      let line: string;
+      if (sessionName != null) {
+        const parts: string[] = [`sessionId: ${sessionId}`, `name: "${sessionName}"`];
+        if (projectId != null) parts.push(`projectId: ${projectId}`);
+        if (projectName) parts.push(`projectName: "${projectName}"`);
+        line = `[active session — ${parts.join(', ')}]`;
+      } else if (projectId != null) {
+        const parts = [`projectId: ${projectId}`];
+        if (projectName) parts.push(`name: "${projectName}"`);
+        line = `[active project — ${parts.join(', ')}]`;
+      } else {
+        return '';
+      }
+
+      return `\n\n# Active context\nUse the following context only if the user references it:\n${line}`;
+    } catch {
+      return '';
+    }
   }
 
   /**
