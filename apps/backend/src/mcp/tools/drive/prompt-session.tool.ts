@@ -52,6 +52,36 @@ export const promptSessionTool = defineTool({
     const sessionEmitter = sessions as unknown as EventEmitter;
     const runtimeEmitter = runtime as unknown as EventEmitter;
 
+    // Pre-check: submitPrompt() sets runPhase='running' before returning, so
+    // seeing idle here means the prompt already finished (very fast turn or a
+    // stale/non-running session that never transitioned). Resolve immediately
+    // rather than waiting up to 90 s for an event that already fired.
+    const initialState = await runtime.getRuntimeState(args.sessionId).catch(() => null);
+    const initialRuntimeState = initialState as { sessionState?: string | null; runPhase?: string | null } | null;
+    if (initialRuntimeState) {
+      if (initialRuntimeState.sessionState === 'requires_action') {
+        return {
+          data: { sessionId: args.sessionId, accepted: true, status: 'requires_action' },
+          deepLink: ctx.deepLink.session(args.sessionId),
+          nextStep: 'Session blocked: get_pending_action to inspect, then resolve_action.',
+        };
+      }
+      if (initialRuntimeState.runPhase === 'error') {
+        return {
+          data: { sessionId: args.sessionId, accepted: true, status: 'failed' },
+          deepLink: ctx.deepLink.session(args.sessionId),
+          nextStep: 'Session finished. Call read_session for the transcript.',
+        };
+      }
+      if (initialRuntimeState.sessionState === 'idle' && initialRuntimeState.runPhase === 'idle') {
+        return {
+          data: { sessionId: args.sessionId, accepted: true, status: 'completed' },
+          deepLink: ctx.deepLink.session(args.sessionId),
+          nextStep: 'Session finished. Call read_session for the transcript.',
+        };
+      }
+    }
+
     return new Promise((resolve) => {
       let settled = false;
       let timer: NodeJS.Timeout | undefined;
@@ -105,6 +135,7 @@ export const promptSessionTool = defineTool({
         } else if (event.type === 'run_state') {
           if (event.payload.sessionState === 'requires_action') finish('requires_action');
           else if (event.payload.runPhase === 'error') finish('failed');
+          else if (event.payload.sessionState === 'idle' && event.payload.runPhase === 'idle') finish('completed');
         } else if (event.type === 'error') {
           finish('failed');
         }
@@ -122,15 +153,14 @@ export const promptSessionTool = defineTool({
         return;
       }
 
-      // Re-check via runtime state to close the race between submitPrompt
-      // completing and our listeners being registered. We only check for
-      // non-running terminal states here — we deliberately skip the idle/completed
-      // check because submitPrompt may return before the runtime transitions to
-      // 'running', which would cause a false-positive 'completed' signal.
+      // Re-check after subscribing to close the race between the pre-check above
+      // and listener registration. Handles the case where the prompt completed
+      // during that window.
       runtime.getRuntimeState(args.sessionId).then((s) => {
         const state = s as { sessionState?: string | null; runPhase?: string | null };
         if (state.sessionState === 'requires_action') finish('requires_action');
         else if (state.runPhase === 'error') finish('failed');
+        else if (state.sessionState === 'idle' && state.runPhase === 'idle') finish('completed');
       }).catch(() => {});
     });
   },
