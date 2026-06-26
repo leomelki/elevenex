@@ -4278,6 +4278,7 @@ export class ClaudeRuntimeService extends EventEmitter {
       },
       ...(isAgentSession
         ? {
+            autoMemoryEnabled: false,
             disallowedTools: [
               'Edit',
               'MultiEdit',
