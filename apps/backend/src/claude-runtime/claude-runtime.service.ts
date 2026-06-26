@@ -4276,6 +4276,21 @@ export class ClaudeRuntimeService extends EventEmitter {
         type: 'preset' as const,
         preset: 'claude_code' as const,
       },
+      ...(isAgentSession
+        ? {
+            disallowedTools: [
+              'Edit',
+              'MultiEdit',
+              'Write',
+              'NotebookEdit',
+              'AskUserQuestion',
+              'EnterPlanMode',
+              'ExitPlanMode',
+              'EnterWorktree',
+              'ExitWorktree',
+            ],
+          }
+        : {}),
       env: await this.withAgentToken(
         sessionId,
         buildManagedPlannotatorEnv(
