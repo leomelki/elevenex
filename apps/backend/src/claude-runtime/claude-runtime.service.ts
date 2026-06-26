@@ -19,6 +19,7 @@ import {
   getSessionMessages,
   forkSession,
   query,
+  SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
   type ModelInfo,
   type SDKControlGetContextUsageResponse,
   type CanUseTool,
@@ -4259,19 +4260,22 @@ export class ClaudeRuntimeService extends EventEmitter {
       onElicitation,
       ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
       settingSources: ['project', 'user', 'local'],
-      systemPrompt: {
-        type: 'preset' as const,
-        preset: 'claude_code' as const,
-        // Inject the meta-agent "brain" prompt for agent sessions; normal coding
-        // sessions keep the bare preset.
-        ...(isAgentSession
-          ? {
-              append:
-                buildMetaAgentPrompt(agentAutonomyMode) +
-                (await this.buildAgentSessionContext(sessionId)),
-            }
-          : {}),
-      },
+      // Agent (meta-agent) sessions get a fully custom system prompt that
+      // REPLACES the `claude_code` preset — its coding-agent framing (file
+      // edits, builds, commits) is wrong for an orchestrator. The static brain
+      // and the per-session context are split at SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+      // so the brain stays cacheable across sessions. Normal coding sessions
+      // keep the bare preset.
+      systemPrompt: isAgentSession
+        ? [
+            buildMetaAgentPrompt(agentAutonomyMode),
+            SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+            await this.buildAgentSessionContext(sessionId),
+          ]
+        : {
+            type: 'preset' as const,
+            preset: 'claude_code' as const,
+          },
       tools: {
         type: 'preset' as const,
         preset: 'claude_code' as const,
@@ -4305,12 +4309,16 @@ export class ClaudeRuntimeService extends EventEmitter {
   }
 
   /**
-   * Build a brief session/project context snippet for the meta-agent system
-   * prompt so the agent knows its own identity without calling project_overview.
-   * Returned as a block the agent is instructed to use only when referenced,
-   * matching the style of other dynamic context injected at conversation start.
+   * Build the dynamic (per-session, non-cacheable) tail of the meta-agent system
+   * prompt: today's date — which the dropped `claude_code` preset used to inject
+   * — plus a brief identity snippet so the agent knows which session/project it
+   * is attached to without calling project_overview. This is the suffix placed
+   * after SYSTEM_PROMPT_DYNAMIC_BOUNDARY in buildQueryOptions, so it must stand
+   * on its own as a section and always return content.
    */
   private async buildAgentSessionContext(sessionId: number): Promise<string> {
+    const today = new Date().toISOString().slice(0, 10);
+    const lines = ['# Current context', '', `Today's date: ${today}.`];
     try {
       const rows = await this.db
         .select({
@@ -4326,28 +4334,37 @@ export class ClaudeRuntimeService extends EventEmitter {
         )
         .where(eq(schema.sessions.id, sessionId));
 
-      if (rows.length === 0) return '';
+      if (rows.length > 0) {
+        const { sessionName, projectId, projectName } = rows[0];
 
-      const { sessionName, projectId, projectName } = rows[0];
+        let line: string | null = null;
+        if (sessionName != null) {
+          const parts: string[] = [
+            `sessionId: ${sessionId}`,
+            `name: "${sessionName}"`,
+          ];
+          if (projectId != null) parts.push(`projectId: ${projectId}`);
+          if (projectName) parts.push(`projectName: "${projectName}"`);
+          line = `[active session — ${parts.join(', ')}]`;
+        } else if (projectId != null) {
+          const parts = [`projectId: ${projectId}`];
+          if (projectName) parts.push(`name: "${projectName}"`);
+          line = `[active project — ${parts.join(', ')}]`;
+        }
 
-      let line: string;
-      if (sessionName != null) {
-        const parts: string[] = [`sessionId: ${sessionId}`, `name: "${sessionName}"`];
-        if (projectId != null) parts.push(`projectId: ${projectId}`);
-        if (projectName) parts.push(`projectName: "${projectName}"`);
-        line = `[active session — ${parts.join(', ')}]`;
-      } else if (projectId != null) {
-        const parts = [`projectId: ${projectId}`];
-        if (projectName) parts.push(`name: "${projectName}"`);
-        line = `[active project — ${parts.join(', ')}]`;
-      } else {
-        return '';
+        if (line) {
+          lines.push(
+            '',
+            'This session is attached to an existing elevenex object. Use it only if the user refers to "this"/"current" session or project:',
+            line,
+          );
+        }
       }
-
-      return `\n\n# Active context\nUse the following context only if the user references it:\n${line}`;
     } catch {
-      return '';
+      // Identity lookup must never block a session from starting; fall through
+      // to the date-only context.
     }
+    return lines.join('\n');
   }
 
   /**
