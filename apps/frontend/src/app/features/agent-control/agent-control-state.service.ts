@@ -6,6 +6,7 @@ import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.serv
 import { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
 import { AgentMissionsApiService } from './agent-missions-api.service';
 import { NavigationService } from '@/shared/services/navigation.service';
+import { TabService } from '@/features/session/tab-service';
 import {
   AgentAutonomyMode,
   AgentMissionStep,
@@ -46,6 +47,9 @@ export class AgentControlStateService {
   }
   private get navService(): NavigationService {
     return this.injector.get(NavigationService);
+  }
+  private get tabService(): TabService {
+    return this.injector.get(TabService);
   }
 
   /** Tools that mutate the navigation tree (sessions, workspaces, repos, projects). */
@@ -96,6 +100,13 @@ export class AgentControlStateService {
         (m) => m.status !== 'archived' && m.runPhase !== 'error',
       ).length,
   );
+
+  /**
+   * The code session currently open in the tab bar, if any. Exposed so the
+   * command bar can show a small session chip indicating what will be attached
+   * to the next message.
+   */
+  readonly contextTab = computed(() => this.tabService.activeTab());
 
   // --- Drawer open/close (preserved external API; the panel is global) -------
 
@@ -155,6 +166,20 @@ export class AgentControlStateService {
     this.select(null);
   }
 
+  /**
+   * Append an `<elevenex-session-context>` block to the prompt when the user
+   * has a code session open, so the agent knows which session is in focus
+   * without it being forced context — the system prompt instructs the agent to
+   * treat it as optional and only act on it when the user refers to it.
+   */
+  private buildPrompt(clean: string): string {
+    const tab = this.tabService.activeTab();
+    if (!tab) return clean;
+    const parts = [`sessionId: ${tab.sessionId}`, `name: "${tab.sessionName}"`];
+    if (tab.branchName) parts.push(`branch: "${tab.branchName}"`);
+    return `<elevenex-session-context>\n${parts.join(', ')}\n</elevenex-session-context>\n\n${clean}`;
+  }
+
   /** Create + start a mission, then select it. Returns its session id. */
   async createMission(
     prompt: string,
@@ -167,7 +192,7 @@ export class AgentControlStateService {
     this.errorSignal.set(null);
     try {
       const mission = await firstValueFrom(
-        this.missionsApi.create({ prompt: clean, autonomyMode }),
+        this.missionsApi.create({ prompt: this.buildPrompt(clean), autonomyMode }),
       );
       this.openSignal.set(true);
       // Optimistically add the new mission so the selection is immediate without

@@ -117,6 +117,14 @@ you are not done yet — do the checking yourself.
 **Go all the way through your task loop without stopping to ask.** Use tools, verify, act. Only
 stop when you have reached the end-state or hit a genuine blocker that requires a human decision.
 
+## Per-message session context
+Some messages include an \`<elevenex-session-context>\` block appended by the UI. This block
+identifies the code session the user had open when they sent the message. It is **optional
+context** — only use it when the user's message actually refers to "this session", "the current
+session", "the open session", or a similarly implicit reference. Do not automatically act on the
+session named in the context block unless the user's words indicate it; they may be asking
+something unrelated to any specific session.
+
 ## Per-project agent instructions
 When expanding a project via \`project_overview\` (with \`projectId\`), the response may include an
 \`agentInstructions\` field. If present, treat it as a binding constraint for all work on that

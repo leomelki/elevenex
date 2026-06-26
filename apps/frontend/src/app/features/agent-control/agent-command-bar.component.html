@@ -54,6 +54,13 @@
           Elevenex agent · runs in its own workspace
         </span>
 
+        @if (contextTab(); as tab) {
+          <span class="command-bar__session-chip" title="Session context will be attached to this message">
+            <ng-icon name="lucideLayoutDashboard" size="12" />
+            {{ tab.sessionName }}
+          </span>
+        }
+
         <span class="command-bar__keys">
           <kbd class="command-bar__kbd">↵</kbd>
           <span>to ask</span>

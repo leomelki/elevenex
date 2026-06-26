@@ -10,7 +10,7 @@ import {
 } from '@angular/core';
 import { Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideArrowUp, lucideLoader2, lucideSparkles } from '@ng-icons/lucide';
+import { lucideArrowUp, lucideLoader2, lucideSparkles, lucideLayoutDashboard } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 
 import { AgentCommandBarService } from './agent-command-bar.service';
@@ -28,6 +28,7 @@ import { AgentControlStateService } from './agent-control-state.service';
       lucideArrowUp,
       lucideLoader2,
       lucideSparkles,
+      lucideLayoutDashboard,
     }),
   ],
 })
@@ -37,6 +38,7 @@ export class AgentCommandBarComponent {
   private readonly router = inject(Router);
 
   readonly isOpen = this.bar.isOpen;
+  readonly contextTab = this.agent.contextTab;
   readonly query = signal('');
   readonly submitting = signal(false);
 

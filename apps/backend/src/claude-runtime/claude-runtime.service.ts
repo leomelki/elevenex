@@ -4270,7 +4270,7 @@ export class ClaudeRuntimeService extends EventEmitter {
         ? [
             buildMetaAgentPrompt(agentAutonomyMode),
             SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-            await this.buildAgentSessionContext(sessionId),
+            this.buildAgentSessionContext(),
           ]
         : {
             type: 'preset' as const,
@@ -4310,61 +4310,14 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   /**
    * Build the dynamic (per-session, non-cacheable) tail of the meta-agent system
-   * prompt: today's date — which the dropped `claude_code` preset used to inject
-   * — plus a brief identity snippet so the agent knows which session/project it
-   * is attached to without calling project_overview. This is the suffix placed
-   * after SYSTEM_PROMPT_DYNAMIC_BOUNDARY in buildQueryOptions, so it must stand
-   * on its own as a section and always return content.
+   * prompt: today's date — which the dropped `claude_code` preset used to inject.
+   * Session context (which code session the user has open) is appended to
+   * individual messages at send time, not here, so this stays minimal and
+   * cacheable across turns.
    */
-  private async buildAgentSessionContext(sessionId: number): Promise<string> {
+  private buildAgentSessionContext(): string {
     const today = new Date().toISOString().slice(0, 10);
-    const lines = ['# Current context', '', `Today's date: ${today}.`];
-    try {
-      const rows = await this.db
-        .select({
-          sessionName: schema.sessions.name,
-          projectId: schema.repos.projectId,
-          projectName: schema.projects.name,
-        })
-        .from(schema.sessions)
-        .innerJoin(schema.repos, eq(schema.sessions.repoId, schema.repos.id))
-        .leftJoin(
-          schema.projects,
-          eq(schema.repos.projectId, schema.projects.id),
-        )
-        .where(eq(schema.sessions.id, sessionId));
-
-      if (rows.length > 0) {
-        const { sessionName, projectId, projectName } = rows[0];
-
-        let line: string | null = null;
-        if (sessionName != null) {
-          const parts: string[] = [
-            `sessionId: ${sessionId}`,
-            `name: "${sessionName}"`,
-          ];
-          if (projectId != null) parts.push(`projectId: ${projectId}`);
-          if (projectName) parts.push(`projectName: "${projectName}"`);
-          line = `[active session — ${parts.join(', ')}]`;
-        } else if (projectId != null) {
-          const parts = [`projectId: ${projectId}`];
-          if (projectName) parts.push(`name: "${projectName}"`);
-          line = `[active project — ${parts.join(', ')}]`;
-        }
-
-        if (line) {
-          lines.push(
-            '',
-            'This session is attached to an existing elevenex object. Use it only if the user refers to "this"/"current" session or project:',
-            line,
-          );
-        }
-      }
-    } catch {
-      // Identity lookup must never block a session from starting; fall through
-      // to the date-only context.
-    }
-    return lines.join('\n');
+    return `# Current context\n\nToday's date: ${today}.`;
   }
 
   /**
