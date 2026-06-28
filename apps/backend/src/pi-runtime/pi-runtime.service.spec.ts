@@ -18,6 +18,7 @@ jest.mock('child_process', () => ({
 jest.mock('../config/system-paths.js', () => ({
   buildAugmentedEnvAsync: jest.fn(async () => ({ PATH: '/mock/bin' })),
   findBinary: jest.fn(() => null),
+  buildSpawnCommand: jest.fn((command: string) => ({ command, shell: false })),
 }));
 
 class MockWritable extends EventEmitter {

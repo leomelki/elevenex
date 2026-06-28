@@ -7,7 +7,11 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { EventEmitter } from 'events';
 import { promisify } from 'util';
-import { buildAugmentedEnvAsync } from '../config/system-paths.js';
+import {
+  buildAugmentedEnvAsync,
+  buildSpawnCommand,
+  findBinary,
+} from '../config/system-paths.js';
 import type {
   PiAuthStatus,
   PiOAuthProvider,
@@ -722,9 +726,15 @@ export class PiAuthService extends EventEmitter {
       return cached.value;
     }
     try {
-      const { stdout } = await execFile('pi', ['--version'], {
+      // Resolve the real pi binary path. On Windows pi is installed via Volta
+      // as a `pi.cmd` batch shim; spawning the bare 'pi' yields ENOENT because
+      // the extensionless shim can't be executed and Node refuses to launch
+      // .cmd files without shell:true (CVE-2024-27980 mitigation).
+      const { command, shell } = buildSpawnCommand(findBinary('pi') ?? 'pi');
+      const { stdout } = await execFile(command, ['--version'], {
         env: await buildAugmentedEnvAsync(),
         timeout: 5000,
+        shell,
       });
       const value = stdout.trim().split(/\s+/).pop() || stdout.trim() || null;
       this.versionCache = { value, expiresAt: Date.now() + VERSION_TTL_MS };

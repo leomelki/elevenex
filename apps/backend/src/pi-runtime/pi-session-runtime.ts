@@ -1,7 +1,11 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { StringDecoder } from 'string_decoder';
-import { buildAugmentedEnvAsync } from '../config/system-paths.js';
+import {
+  buildAugmentedEnvAsync,
+  buildSpawnCommand,
+  findBinary,
+} from '../config/system-paths.js';
 import type {
   PiRpcExtensionUiRequest,
   PiRpcResponse,
@@ -58,10 +62,18 @@ export class PiSessionRuntime extends EventEmitter {
     const env = await buildAugmentedEnvAsync(process.env, this.options.cwd);
     if (this.stopped || this.child) return;
 
-    this.child = spawn('pi', args, {
+    // Resolve the real pi binary path. On Windows pi is installed via Volta
+    // as a `pi.cmd` batch shim next to an extensionless POSIX `pi` shim that
+    // CreateProcess cannot execute. findBinary honours PATHEXT so it picks
+    // `pi.cmd`, and buildSpawnCommand sets shell:true so Node (>=18.20, the
+    // CVE-2024-27980 mitigation) can launch the batch file. Spawning the bare
+    // 'pi' here yields `spawn pi ENOENT` on Windows.
+    const { command, shell } = buildSpawnCommand(findBinary('pi') ?? 'pi');
+    this.child = spawn(command, args, {
       cwd: this.options.cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell,
     });
 
     this.attachJsonlReader(this.child.stdout, (line) => this.handleLine(line));
