@@ -95,6 +95,15 @@ export class AgentControlDrawerComponent {
       }
       wasOpen = open;
     });
+    // When a mission is selected while the drawer is already open (e.g. from the
+    // onboarding page prompt which calls createMission() externally), switch away
+    // from the composer view so the new session is shown immediately.
+    effect(() => {
+      const mission = this.state.selectedMission();
+      if (mission) {
+        untracked(() => this.composingSignal.set(false));
+      }
+    });
   }
 
   /**
