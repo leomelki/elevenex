@@ -81,6 +81,41 @@ export class WorktreeCreationJobsService implements OnModuleDestroy {
     return job;
   }
 
+  async waitForCompletion(
+    repoId: number,
+    jobId: string,
+    timeoutMs = 90_000,
+  ): Promise<WorktreeCreationJob | 'timeout'> {
+    const job = this.jobs.get(jobId);
+    if (!job || job.repoId !== repoId) {
+      throw new NotFoundException(`Worktree creation job ${jobId} not found`);
+    }
+
+    if (job.status === 'succeeded' || job.status === 'failed') {
+      return job;
+    }
+
+    const POLL_INTERVAL_MS = 500;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, POLL_INTERVAL_MS),
+      );
+      const current = this.jobs.get(jobId);
+      if (!current) {
+        throw new NotFoundException(
+          `Worktree creation job ${jobId} not found`,
+        );
+      }
+      if (current.status === 'succeeded' || current.status === 'failed') {
+        return current;
+      }
+    }
+
+    return 'timeout';
+  }
+
   onModuleDestroy(): void {
     for (const timer of this.cleanupTimers.values()) {
       clearTimeout(timer);

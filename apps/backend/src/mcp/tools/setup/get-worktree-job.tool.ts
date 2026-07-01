@@ -1,18 +1,20 @@
 import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 
+const WAIT_TIMEOUT_MS = 90_000;
+
 /**
- * get_worktree_job — ⚡instant poll of a create_worktree background job. Returns
- * a compact status handle. Jobs are kept ~60s after they finish. When
- * succeeded, the worktree exists on disk — link_worktree next (or start a
- * session there).
+ * get_worktree_job — waits up to 90s for a create_worktree background job to
+ * finish, then returns the result. Only returns early if the job is already
+ * done or if the 90s window elapses (in which case, call again). Jobs are
+ * kept ~60s after they finish. On succeeded, link_worktree next.
  */
 export const getWorktreeJobTool = defineTool({
   name: 'get_worktree_job',
   title: 'Get worktree job',
   costClass: 'instant',
   description:
-    'Poll a create_worktree background job for its status (pending/running/succeeded/failed). ⚡instant. Jobs expire ~60s after finishing. On succeeded: link_worktree using the returned worktreePath.',
+    'Wait up to 90s for a create_worktree background job to finish (pending/running/succeeded/failed). Blocks until the job completes or the timeout elapses. If it times out, call again — the job is still running. Jobs expire ~60s after finishing. On succeeded: link_worktree using the returned worktreePath.',
   annotations: { readOnlyHint: true },
   inputShape: {
     repoId: z
@@ -24,9 +26,13 @@ export const getWorktreeJobTool = defineTool({
   },
   handler: async (args, ctx) => {
     const { worktreeJobs } = ctx.services;
-    let job;
+    let result: Awaited<ReturnType<typeof worktreeJobs.waitForCompletion>>;
     try {
-      job = worktreeJobs.getJob(args.repoId, args.jobId);
+      result = await worktreeJobs.waitForCompletion(
+        args.repoId,
+        args.jobId,
+        WAIT_TIMEOUT_MS,
+      );
     } catch {
       throw new ToolError({
         code: 'job_not_found',
@@ -37,20 +43,30 @@ export const getWorktreeJobTool = defineTool({
       });
     }
 
-    const done = job.status === 'succeeded';
+    if (result === 'timeout') {
+      return {
+        data: {
+          jobId: args.jobId,
+          status: 'running' as const,
+          timedOut: true,
+        },
+        nextStep:
+          'Job is still running after 90s — call get_worktree_job again with the same jobId to keep waiting.',
+      };
+    }
+
+    const done = result.status === 'succeeded';
     return {
       data: {
-        jobId: job.id,
-        status: job.status,
-        branchName: job.branchName,
-        worktreePath: job.result?.path ?? job.worktreePath,
-        error: job.error ?? undefined,
+        jobId: result.id,
+        status: result.status,
+        branchName: result.branchName,
+        worktreePath: result.result?.path ?? result.worktreePath,
+        error: result.error ?? undefined,
       },
       nextStep: done
         ? 'Worktree ready — link_worktree with this repoId + worktreePath, then create a session.'
-        : job.status === 'failed'
-          ? 'Job failed — inspect error, then retry create_worktree with a different branch/path.'
-          : 'Still working — poll get_worktree_job again shortly.',
+        : 'Job failed — inspect error, then retry create_worktree with a different branch/path.',
     };
   },
 });
