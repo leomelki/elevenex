@@ -197,134 +197,225 @@
       </div>
     }
 
-    <div class="grid min-h-0 flex-1 grid-cols-[minmax(15rem,28%)_minmax(0,1fr)]">
-      <aside class="flex min-h-0 min-w-0 flex-col border-r border-border">
-        <div class="flex items-center gap-2 border-b border-border p-2">
-          <ng-icon name="lucideSearch" size="14" />
-          <input
-            z-input
-            class="h-8 min-w-0 text-xs"
-            type="search"
-            placeholder="Search files"
-            [value]="search()"
-            (input)="setSearch($any($event.target).value)"
-          />
-        </div>
+    <div
+      class="grid min-h-0 flex-1"
+      [style.grid-template-columns]="
+        sidebarCollapsed() ? '2.75rem minmax(0,1fr)' : 'minmax(15rem,28%) minmax(0,1fr)'
+      "
+    >
+      @if (sidebarCollapsed()) {
+        <aside class="flex min-h-0 min-w-0 flex-col items-center gap-1 border-r border-border py-2">
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-sm"
+            type="button"
+            (click)="toggleSidebar()"
+            title="Show file list"
+            aria-label="Show file list"
+          >
+            <ng-icon name="lucideChevronRight" size="16" />
+          </button>
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-sm"
+            type="button"
+            (click)="expandSidebarForSearch()"
+            title="Search files"
+            aria-label="Search files"
+          >
+            <ng-icon name="lucideSearch" size="15" />
+          </button>
 
-        <div class="flex gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
-          @for (filter of statusFilters(); track filter.value) {
-            <button
-              type="button"
-              class="inline-flex min-h-6 items-center gap-1 rounded px-2 text-[0.68rem] font-semibold text-muted-foreground transition-colors hover:text-foreground"
-              [class.bg-accent]="statusFilter() === filter.value"
-              [class.text-accent-foreground]="statusFilter() === filter.value"
-              (click)="setStatusFilter(filter.value)"
-            >
-              {{ filter.label }}
-              <span>{{ filter.count }}</span>
-            </button>
-          }
-        </div>
-
-        @if (loadingSummary()) {
-          <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-            <ng-icon name="lucideLoader" size="16" class="cr-spin" />
-            Loading summary
-          </div>
-        } @else if (largeChangeGuard(); as guard) {
-          <div class="flex flex-col gap-3 p-3 text-xs">
-            <div class="flex items-start gap-2 text-warning">
-              <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 shrink-0" />
-              <div class="min-w-0">
-                <div class="font-bold text-foreground">Large change set</div>
-                <div class="mt-0.5 text-muted-foreground">
-                  {{ formatCount(guard.totalFiles) }} {{ guardedReasonText(guard) }}. File rows are
-                  paused.
-                </div>
-              </div>
-            </div>
-            @if (guard.conflictedFiles > 0) {
+          <div class="flex w-full flex-col items-center gap-1 border-y border-border/60 py-1.5">
+            @for (filter of statusFilters(); track filter.value) {
               <button
-                z-button
-                zType="outline"
-                zSize="sm"
                 type="button"
-                class="justify-start gap-2"
-                (click)="openMergeConflicts()"
+                class="cr-rail-filter"
+                [class.cr-rail-filter--active]="statusFilter() === filter.value"
+                (click)="setStatusFilter(filter.value)"
+                [title]="filter.label + ' — ' + filter.count"
               >
-                <ng-icon name="lucideGitMerge" size="14" />
-                Resolve {{ formatCount(guard.conflictedFiles) }} conflict{{
-                  guard.conflictedFiles === 1 ? '' : 's'
-                }}
+                <span class="cr-rail-filter__label">{{ railFilterGlyph(filter.value) }}</span>
+                <span class="cr-rail-filter__count">{{ filter.count }}</span>
               </button>
             }
           </div>
-        } @else if (filteredFiles().length === 0) {
-          <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-            <ng-icon name="lucideFileCode" size="18" />
-            <span>No files in this scope</span>
-          </div>
-        } @else {
-          <cdk-virtual-scroll-viewport #fileViewport itemSize="58" class="cr-file-viewport">
-            <button
-              *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
-              type="button"
-              class="grid h-[58px] w-full grid-cols-[1.35rem_1.45rem_minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-transparent px-2.5 text-left text-foreground transition-colors hover:bg-accent/70"
-              [ngClass]="{
-                'bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))] shadow-[inset_3px_0_0_var(--primary)]':
-                  isSelectedFile(file),
-                'opacity-55': isFileViewed(file) && !isSelectedFile(file),
-              }"
-              (click)="scrollToFile(file)"
-              (mouseenter)="prefetchFile(file)"
-              (focus)="prefetchFile(file)"
-              [title]="file.path"
+
+          @if (largeChangeGuard()) {
+            <div
+              class="flex flex-1 items-start justify-center pt-2 text-warning"
+              title="Large change set — file rows paused"
             >
-              <span
-                class="flex size-4 items-center justify-center rounded border text-[0.6rem]"
-                [ngClass]="
-                  isFileViewed(file)
-                    ? 'border-success bg-success text-success-foreground'
-                    : isSelectedFile(file)
-                      ? 'border-primary bg-background text-primary'
-                      : 'border-border bg-background text-transparent'
-                "
-                aria-hidden="true"
+              <ng-icon name="lucideTriangleAlert" size="16" />
+            </div>
+          } @else if (filteredFiles().length === 0) {
+            <div class="flex-1"></div>
+          } @else {
+            <cdk-virtual-scroll-viewport #railViewport itemSize="22" class="cr-rail-viewport">
+              <button
+                *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
+                type="button"
+                class="cr-rail-file"
+                [class.cr-rail-file--selected]="isSelectedFile(file)"
+                [class.cr-rail-file--viewed]="isFileViewed(file)"
+                (click)="scrollToFile(file)"
+                (mouseenter)="prefetchFile(file)"
+                (focus)="prefetchFile(file)"
+                [title]="file.path"
               >
-                <ng-icon name="lucideCheck" size="11" />
-              </span>
-              <span class="cr-file-status" [ngClass]="statusClass(file.status)">{{
-                statusLabel(file.status)
-              }}</span>
-              <span class="flex min-w-0 flex-col">
-                <span
-                  class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.78rem] font-semibold"
-                  [class.line-through]="isFileViewed(file)"
-                  [class.text-muted-foreground]="isFileViewed(file) && !isSelectedFile(file)"
-                >
-                  {{ fileBasename(file.path) }}
-                </span>
-                <span
-                  class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground"
-                  [class.line-through]="isFileViewed(file)"
-                >
-                  {{ fileDirname(file.path) }}
-                </span>
-              </span>
-              <span
-                class="inline-flex gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground"
-              >
-                @if (file.binary) {
-                  <ng-icon name="lucideBinary" size="14" />
+                @if (isFileViewed(file)) {
+                  <ng-icon name="lucideCheck" size="11" class="cr-rail-file__check" />
                 } @else {
-                  <span class="text-success">+{{ file.additions }}</span>
-                  <span class="text-destructive">-{{ file.deletions }}</span>
+                  <span class="cr-rail-file__tick" [ngClass]="statusClass(file.status)"></span>
                 }
-              </span>
+              </button>
+            </cdk-virtual-scroll-viewport>
+          }
+        </aside>
+      } @else {
+        <aside class="flex min-h-0 min-w-0 flex-col border-r border-border">
+          <div class="flex items-center gap-2 border-b border-border p-2">
+            <ng-icon name="lucideSearch" size="14" />
+            <input
+              #fileSearchInput
+              z-input
+              class="h-8 min-w-0 text-xs"
+              type="search"
+              placeholder="Search files"
+              [value]="search()"
+              (input)="setSearch($any($event.target).value)"
+            />
+            <button
+              z-button
+              zType="ghost"
+              zSize="icon-sm"
+              type="button"
+              class="shrink-0"
+              (click)="toggleSidebar()"
+              title="Collapse file list"
+              aria-label="Collapse file list"
+            >
+              <ng-icon name="lucideChevronLeft" size="16" />
             </button>
-          </cdk-virtual-scroll-viewport>
-        }
-      </aside>
+          </div>
+
+          <div class="flex gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
+            @for (filter of statusFilters(); track filter.value) {
+              <button
+                type="button"
+                class="inline-flex min-h-6 items-center gap-1 rounded px-2 text-[0.68rem] font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                [class.bg-accent]="statusFilter() === filter.value"
+                [class.text-accent-foreground]="statusFilter() === filter.value"
+                (click)="setStatusFilter(filter.value)"
+              >
+                {{ filter.label }}
+                <span>{{ filter.count }}</span>
+              </button>
+            }
+          </div>
+
+          @if (loadingSummary()) {
+            <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+              <ng-icon name="lucideLoader" size="16" class="cr-spin" />
+              Loading summary
+            </div>
+          } @else if (largeChangeGuard(); as guard) {
+            <div class="flex flex-col gap-3 p-3 text-xs">
+              <div class="flex items-start gap-2 text-warning">
+                <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 shrink-0" />
+                <div class="min-w-0">
+                  <div class="font-bold text-foreground">Large change set</div>
+                  <div class="mt-0.5 text-muted-foreground">
+                    {{ formatCount(guard.totalFiles) }} {{ guardedReasonText(guard) }}. File rows
+                    are paused.
+                  </div>
+                </div>
+              </div>
+              @if (guard.conflictedFiles > 0) {
+                <button
+                  z-button
+                  zType="outline"
+                  zSize="sm"
+                  type="button"
+                  class="justify-start gap-2"
+                  (click)="openMergeConflicts()"
+                >
+                  <ng-icon name="lucideGitMerge" size="14" />
+                  Resolve {{ formatCount(guard.conflictedFiles) }} conflict{{
+                    guard.conflictedFiles === 1 ? '' : 's'
+                  }}
+                </button>
+              }
+            </div>
+          } @else if (filteredFiles().length === 0) {
+            <div class="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+              <ng-icon name="lucideFileCode" size="18" />
+              <span>No files in this scope</span>
+            </div>
+          } @else {
+            <cdk-virtual-scroll-viewport #fileViewport itemSize="58" class="cr-file-viewport">
+              <button
+                *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
+                type="button"
+                class="grid h-[58px] w-full grid-cols-[1.35rem_1.45rem_minmax(0,1fr)_auto] items-center gap-2 border-0 border-b border-[color-mix(in_oklch,var(--border)_70%,transparent)] bg-transparent px-2.5 text-left text-foreground transition-colors hover:bg-accent/70"
+                [ngClass]="{
+                  'bg-[color-mix(in_oklch,var(--primary)_14%,var(--background))] shadow-[inset_3px_0_0_var(--primary)]':
+                    isSelectedFile(file),
+                  'opacity-55': isFileViewed(file) && !isSelectedFile(file),
+                }"
+                (click)="scrollToFile(file)"
+                (mouseenter)="prefetchFile(file)"
+                (focus)="prefetchFile(file)"
+                [title]="file.path"
+              >
+                <span
+                  class="flex size-4 items-center justify-center rounded border text-[0.6rem]"
+                  [ngClass]="
+                    isFileViewed(file)
+                      ? 'border-success bg-success text-success-foreground'
+                      : isSelectedFile(file)
+                        ? 'border-primary bg-background text-primary'
+                        : 'border-border bg-background text-transparent'
+                  "
+                  aria-hidden="true"
+                >
+                  <ng-icon name="lucideCheck" size="11" />
+                </span>
+                <span class="cr-file-status" [ngClass]="statusClass(file.status)">{{
+                  statusLabel(file.status)
+                }}</span>
+                <span class="flex min-w-0 flex-col">
+                  <span
+                    class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.78rem] font-semibold"
+                    [class.line-through]="isFileViewed(file)"
+                    [class.text-muted-foreground]="isFileViewed(file) && !isSelectedFile(file)"
+                  >
+                    {{ fileBasename(file.path) }}
+                  </span>
+                  <span
+                    class="overflow-hidden text-ellipsis whitespace-nowrap text-[0.68rem] text-muted-foreground"
+                    [class.line-through]="isFileViewed(file)"
+                  >
+                    {{ fileDirname(file.path) }}
+                  </span>
+                </span>
+                <span
+                  class="inline-flex gap-1.5 font-mono text-[0.68rem] font-bold text-muted-foreground"
+                >
+                  @if (file.binary) {
+                    <ng-icon name="lucideBinary" size="14" />
+                  } @else {
+                    <span class="text-success">+{{ file.additions }}</span>
+                    <span class="text-destructive">-{{ file.deletions }}</span>
+                  }
+                </span>
+              </button>
+            </cdk-virtual-scroll-viewport>
+          }
+        </aside>
+      }
 
       <main class="flex min-h-0 min-w-0 flex-col">
         @if (loadingSummary()) {
@@ -421,7 +512,9 @@
           </div>
         } @else {
           @if (diffSearchVisible()) {
-            <div class="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-background px-2">
+            <div
+              class="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-background px-2"
+            >
               <ng-icon name="lucideSearch" size="14" class="shrink-0 text-muted-foreground" />
               <input
                 #diffSearchInput

@@ -20,6 +20,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideBinary,
   lucideChevronDown,
+  lucideChevronLeft,
   lucideChevronRight,
   lucideChevronUp,
   lucideCheck,
@@ -189,6 +190,12 @@ const MAX_WINDOW_CACHE_ROWS = 120_000;
 const MAX_WINDOW_CACHE_WINDOWS = 400;
 const MAX_ROW_HTML_CACHE = 8_000;
 const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-file-fingerprints-v1';
+const SIDEBAR_STORAGE_KEY = 'elevenex-change-review-sidebar-pref-v1';
+// Below this panel width, the file sidebar auto-collapses to a compact rail so
+// the diff keeps enough room. Users can still pin it open/closed via the toggle.
+const SIDEBAR_AUTO_COLLAPSE_PX = 560;
+
+type SidebarPref = 'auto' | 'collapsed' | 'expanded';
 
 @Component({
   selector: 'app-change-review-panel',
@@ -208,6 +215,7 @@ const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-file-fingerprints-v1';
     provideIcons({
       lucideBinary,
       lucideChevronDown,
+      lucideChevronLeft,
       lucideChevronRight,
       lucideChevronUp,
       lucideCheck,
@@ -239,6 +247,8 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   private readonly sanitizer = inject(DomSanitizer);
   private readonly diffScroll = viewChild<ElementRef<HTMLElement>>('diffScroll');
   private readonly fileViewport = viewChild<CdkVirtualScrollViewport>('fileViewport');
+  private readonly railViewport = viewChild<CdkVirtualScrollViewport>('railViewport');
+  private readonly fileSearchInput = viewChild<ElementRef<HTMLInputElement>>('fileSearchInput');
   private readonly diffSearchInput = viewChild<ElementRef<HTMLInputElement>>('diffSearchInput');
   private readonly rowHtmlCache = new Map<string, SafeHtml>();
   private readonly windowQueue: WindowRequest[] = [];
@@ -295,6 +305,15 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly isFullscreen = signal(false);
   readonly diffScrollLeftPx = signal(0);
   readonly diffViewportWidthPx = signal<number | null>(null);
+  readonly sidebarPref = signal<SidebarPref>(this.readSidebarPref());
+  readonly containerWidthPx = signal<number | null>(null);
+  readonly sidebarCollapsed = computed(() => {
+    const pref = this.sidebarPref();
+    if (pref === 'collapsed') return true;
+    if (pref === 'expanded') return false;
+    const width = this.containerWidthPx();
+    return width !== null && width < SIDEBAR_AUTO_COLLAPSE_PX;
+  });
   readonly mentionedRowKeys = computed(() => {
     const keys = new Set<string>();
     for (const mention of this.highlightedMentions()) {
@@ -557,6 +576,27 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   setSearch(value: string): void {
     this.search.set(value);
     this.applyFilters(true);
+  }
+
+  toggleSidebar(): void {
+    const next: SidebarPref = this.sidebarCollapsed() ? 'expanded' : 'collapsed';
+    this.setSidebarPref(next);
+  }
+
+  expandSidebarForSearch(): void {
+    this.setSidebarPref('expanded');
+    this.requestResizeFrame(() => this.fileSearchInput()?.nativeElement.focus());
+  }
+
+  private setSidebarPref(pref: SidebarPref): void {
+    this.sidebarPref.set(pref);
+    this.writeSidebarPref(pref);
+    // Layout column widths changed; re-measure the affected virtual viewport.
+    this.scheduleResizeRefresh();
+  }
+
+  railFilterGlyph(value: StatusFilter): string {
+    return value === 'all' ? '∑' : this.statusLabel(value);
   }
 
   @HostListener('document:keydown', ['$event'])
@@ -1875,7 +1915,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   private refreshAfterResize(): void {
+    const width = this.elementRef.nativeElement.clientWidth;
+    if (width > 0) this.containerWidthPx.set(width);
     this.fileViewport()?.checkViewportSize();
+    this.railViewport()?.checkViewportSize();
     this.updateDiffViewportMetrics();
     this.refreshRenderedRows();
     this.ensureVisibleRangeLoaded();
@@ -2222,6 +2265,23 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   private writeViewedFingerprints(value: Record<string, string>): void {
     try {
       localStorage.setItem(VIEWED_STORAGE_KEY, JSON.stringify(value));
+    } catch {
+      // Ignore storage errors.
+    }
+  }
+
+  private readSidebarPref(): SidebarPref {
+    try {
+      const raw = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+      return raw === 'collapsed' || raw === 'expanded' || raw === 'auto' ? raw : 'auto';
+    } catch {
+      return 'auto';
+    }
+  }
+
+  private writeSidebarPref(value: SidebarPref): void {
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, value);
     } catch {
       // Ignore storage errors.
     }
