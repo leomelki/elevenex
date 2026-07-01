@@ -13,7 +13,6 @@ import { NavigationService } from '@/shared/services/navigation.service';
 import { ProjectListState, ProjectsService } from '@/shared/services/projects.service';
 import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-wizard/project-onboarding-wizard';
 import { FirstProjectPromptComponent } from '@/features/projects/first-project-prompt/first-project-prompt.component';
-import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 @Component({
   selector: 'app-project-list',
@@ -35,12 +34,7 @@ export class ProjectList implements OnInit {
   private route = inject(ActivatedRoute);
   private onboardingState = inject(OnboardingStateService);
   private navigationService = inject(NavigationService);
-  private agent = inject(AgentControlStateService);
-
-  /** Open the agent side panel only once when we first land on an empty workspace. */
-  private autoOpenedAgentPanel = false;
-
-  projects = signal<Project[]>([]);
+projects = signal<Project[]>([]);
   loading = signal(true);
   showCreateWizard = signal(false);
   searchTerm = signal('');
@@ -82,28 +76,11 @@ export class ProjectList implements OnInit {
       next: (projects) => {
         this.projects.set(projects);
         this.loading.set(false);
-        this.maybeOpenAgentPanel();
       },
       error: () => {
         this.loading.set(false);
       },
     });
-  }
-
-  /**
-   * When the workspace has no active projects (typically right after
-   * onboarding), open the Elevenex agent side panel so it's clear you can
-   * prompt the agent to create your first project. Done once so we never fight
-   * a user who deliberately closes it.
-   */
-  private maybeOpenAgentPanel() {
-    if (this.autoOpenedAgentPanel) {
-      return;
-    }
-    if (this.listState() === 'active' && this.projects().length === 0) {
-      this.autoOpenedAgentPanel = true;
-      this.agent.open();
-    }
   }
 
   selectListState(state: Exclude<ProjectListState, 'all'>) {
