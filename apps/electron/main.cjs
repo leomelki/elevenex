@@ -281,6 +281,31 @@ const SSH_FORWARD_CONFIG_EXCLUDED_OPTIONS = new Set([
   'tunnel',
   'tunneldevice',
 ]);
+// `ssh -G` prints resolved values unquoted and space-separated. For options
+// whose value is a single token that may legitimately contain spaces (e.g. a
+// 1Password agent socket under "~/Library/Group Containers/…"), the value must
+// be re-quoted before it lands in a config file, otherwise ssh treats the part
+// after the first space as "extra arguments at end of line" and refuses the
+// config. Multi-token list options (userknownhostsfile, etc.) are intentionally
+// excluded so their space-separated entries survive.
+const SSH_FORWARD_CONFIG_QUOTED_OPTIONS = new Set([
+  'identityagent',
+  'identityfile',
+  'certificatefile',
+  'controlpath',
+  'xauthlocation',
+]);
+
+function formatResolvedSshConfigLine(key, value) {
+  if (
+    SSH_FORWARD_CONFIG_QUOTED_OPTIONS.has(key) &&
+    /\s/.test(value) &&
+    !(value.startsWith('"') && value.endsWith('"'))
+  ) {
+    return `  ${key} "${value}"`;
+  }
+  return `  ${key} ${value}`;
+}
 const SSH_FORWARD_PROBE_TIMEOUT_MS = 1800;
 const SSH_PORT_BOUND_TIMEOUT_MS = 10000;
 
@@ -1409,7 +1434,7 @@ function buildResolvedSshConfig(forward) {
       continue;
     }
 
-    configLines.push(`  ${line}`);
+    configLines.push(formatResolvedSshConfigLine(key, value));
   }
 
   if (!configLines.some((line) => line.startsWith('  hostname '))) {
@@ -1429,7 +1454,7 @@ function buildResolvedSshConfig(forward) {
   }
 
   if (forward.authMode === 'key' && forward.identityFilePath) {
-    configLines.push(`  IdentityFile ${forward.identityFilePath}`);
+    configLines.push(formatResolvedSshConfigLine('identityfile', forward.identityFilePath));
     configLines.push('  IdentitiesOnly yes');
   }
 

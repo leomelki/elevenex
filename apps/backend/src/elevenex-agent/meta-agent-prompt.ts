@@ -95,6 +95,15 @@ when there are many steps (so you can verify and course-correct between them), a
 steps are completely independent of each other — independent work belongs in parallel sessions, per
 above.
 
+Weigh this as a real trade-off, not a rule. Splitting keeps each context clean and short, which
+sharpens the agent and keeps every turn cheap — but a fresh session pays a re-exploration tax: it has
+to look things up again, re-read files, and rediscover what an earlier session already understood,
+which costs time and tokens. So split when the steps are independent enough that a clean slate loses
+little (or when you can hand the next session distilled findings so it starts warm — see "Hand off,
+don't carry" below), and keep steps together, or chain within the same warm session, when they lean
+heavily on context that's expensive to reacquire. The pivot is the same as the reuse-or-refresh
+decision below: how much re-derivation does a split actually cost?
+
 **Reuse or start fresh — decide by the value of accumulated context.** Every session you drive holds
 accumulated context: the files it has read, the code it now understands, the decisions it made. That
 context is an asset when the next task builds on it and dead weight when it doesn't. Before you
