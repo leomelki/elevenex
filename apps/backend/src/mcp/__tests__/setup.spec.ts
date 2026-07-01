@@ -61,7 +61,7 @@ function poolItem(overrides: Record<string, unknown> = {}) {
 
 describe('setup tool group', () => {
   it('registers all 12 setup tools', () => {
-    expect(SETUP_TOOLS).toHaveLength(12);
+    expect(SETUP_TOOLS).toHaveLength(14);
     expect(SETUP_TOOLS.map((t) => t.name)).toEqual(
       expect.arrayContaining([
         'find_or_create_project',
@@ -309,6 +309,7 @@ describe('setup tool group', () => {
         repos: {
           findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }),
         },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
       });
       const res = await createWorktreeTool.handler(
@@ -319,13 +320,45 @@ describe('setup tool group', () => {
       expect(data.jobId).toBe('job-1');
       expect(data.status).toBe('pending');
       expect(res.touched).toEqual({ jobId: 'job-1' });
-      // default path was derived and passed to startJob
+      // default path was derived and passed to startJob; no startPoint
       expect(startJob).toHaveBeenCalledWith(
         1,
         '/repo',
         'feature/x',
         expect.stringContaining('.worktrees'),
+        undefined,
       );
+    });
+
+    it('creates a new branch from startPoint without hitting remote check', async () => {
+      const startJob = jest.fn().mockReturnValue({ id: 'job-2', status: 'pending' });
+      const remoteBranchExists = jest.fn();
+      const ctx = makeCtx({
+        repos: {
+          findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }),
+        },
+        worktrees: {
+          localBranchExists: jest.fn().mockResolvedValue(false),
+          remoteBranchExists,
+        },
+        worktreeJobs: { startJob },
+      });
+      const res = await createWorktreeTool.handler(
+        { repoId: 1, branchName: 'user/new-feature', startPoint: 'origin/main' },
+        ctx,
+      );
+      const data = res.data as any;
+      expect(data.jobId).toBe('job-2');
+      // startPoint must be threaded through to startJob
+      expect(startJob).toHaveBeenCalledWith(
+        1,
+        '/repo',
+        'user/new-feature',
+        expect.stringContaining('.worktrees'),
+        'origin/main',
+      );
+      // remote existence must NOT be checked when startPoint is provided
+      expect(remoteBranchExists).not.toHaveBeenCalled();
     });
   });
 

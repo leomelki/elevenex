@@ -90,17 +90,19 @@ export const createWorktreeTool = defineTool({
         });
       }
 
-      // from_origin=true: fetch creates the local tracking branch
-      const remoteExists = await worktrees.remoteBranchExists(repo.path, branchName);
-      if (!remoteExists) {
-        throw new ToolError({
-          code: 'remote_branch_not_found',
-          message: `Branch "${branchName}" does not exist on origin and has no local ref.`,
-          remediation: `Pass startPoint (e.g. "origin/main") to create a new branch from a base ref instead.`,
-        });
-      }
+      if (args.from_origin) {
+        // from_origin=true: fetch creates the local tracking branch
+        const remoteExists = await worktrees.remoteBranchExists(repo.path, branchName);
+        if (!remoteExists) {
+          throw new ToolError({
+            code: 'remote_branch_not_found',
+            message: `Branch "${branchName}" does not exist on origin and has no local ref.`,
+            remediation: `Pass startPoint (e.g. "origin/main") to create a new branch from a base ref instead.`,
+          });
+        }
 
-      await worktrees.fetchBranch(repo.path, branchName, true);
+        await worktrees.fetchBranch(repo.path, branchName, true);
+      }
     } else if (args.from_origin) {
       // Branch exists locally; refresh the remote tracking ref
       await worktrees.fetchBranch(repo.path, branchName, false);
