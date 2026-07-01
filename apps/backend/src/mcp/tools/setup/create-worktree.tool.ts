@@ -13,8 +13,11 @@ import type { BranchSnapshot } from '../../../worktrees/worktrees.service.js';
  *  1. Branch exists locally → proceed, optionally fetch+snapshot when from_origin=true.
  *  2. Branch missing locally + from_origin=true → fetch from origin (creates local
  *     tracking branch), then proceed with snapshot.
- *  3. Branch missing locally + from_origin unset/false → error; agent must decide
- *     whether to fetch (from_origin: true) or create (pass startPoint).
+ *  3. Branch missing locally + from_origin unset/false + startPoint provided →
+ *     create a new local branch forked from startPoint (no remote lookup).
+ *  4. Branch missing locally + from_origin unset/false + startPoint omitted →
+ *     auto-detect the repo's default branch via `refs/remotes/origin/HEAD` and
+ *     use it as startPoint. If detection fails, error so the agent can decide.
  */
 export const createWorktreeTool = defineTool({
   name: 'create_worktree',
@@ -23,8 +26,9 @@ export const createWorktreeTool = defineTool({
   mutates: true,
   description:
     'Start a background job to create a new git worktree for a branch and return a jobId immediately (never blocks). 🔴heavy. ' +
-    'If branchName has no local branch AND from_origin is not set, the tool returns an error asking whether to fetch it from origin (from_origin: true) or create a new branch (pass startPoint). ' +
-    'When from_origin is true the tool fetches origin/<branch> before creating the worktree and returns a branchSnapshot (ahead/behind origin, last commit) so the agent can assess branch state immediately. ' +
+    'If branchName has no local ref and neither from_origin nor startPoint is set, the tool auto-detects the repo default branch (origin/HEAD) and uses it as startPoint — no extra call needed for the common "new branch off main" case. ' +
+    'Pass startPoint explicitly to fork from a specific ref (e.g. "origin/release/2.0"). ' +
+    'Pass from_origin: true to fetch an existing remote branch instead of creating a new one; this also returns a branchSnapshot (ahead/behind, last commit). ' +
     'The job dedupes on repo+branch+path. Next: poll get_worktree_job until succeeded, then link_worktree.',
   annotations: { idempotentHint: true },
   inputShape: {
@@ -50,8 +54,9 @@ export const createWorktreeTool = defineTool({
       .string()
       .optional()
       .describe(
-        'Base ref to fork a NEW local branch from (e.g. main, origin/main). ' +
-        'Used only when branchName has no local ref and from_origin is not true; ignored otherwise.',
+        'Base ref to fork a NEW local branch from (e.g. "main", "origin/main", "origin/release/2.0"). ' +
+        'Used only when branchName has no local ref and from_origin is not true; ignored otherwise. ' +
+        'When omitted the tool auto-detects the repo default branch (origin/HEAD) so you rarely need to set this.',
       ),
     worktreePath: z
       .string()
@@ -76,18 +81,27 @@ export const createWorktreeTool = defineTool({
 
     const localExists = await worktrees.localBranchExists(repo.path, branchName);
 
+    // Resolved start point: explicit arg wins; otherwise auto-detect default branch.
+    let resolvedStartPoint = args.startPoint?.trim() || undefined;
+
     if (!localExists) {
-      if (!args.from_origin && !args.startPoint?.trim()) {
-        // Branch does not exist locally — agent must decide what to do next.
-        const remoteExists = await worktrees.remoteBranchExists(repo.path, branchName);
-        throw new ToolError({
-          code: 'branch_not_found_locally',
-          message: `Branch "${branchName}" does not exist locally.`,
-          remediation: remoteExists
-            ? `origin/${branchName} exists. Re-call with from_origin: true to fetch and create a local tracking branch, or pass startPoint to create a fresh branch from a different base.`
-            : `No local or remote branch named "${branchName}" was found. Pass startPoint (e.g. "origin/main") to create a new branch from that base.`,
-          retryable: true,
-        });
+      if (!args.from_origin && !resolvedStartPoint) {
+        // Auto-detect the repo's default branch from refs/remotes/origin/HEAD.
+        const detected = await worktrees.getDefaultBranch(repo.path);
+        if (detected) {
+          resolvedStartPoint = detected;
+        } else {
+          // Detection failed (no remote, shallow clone, etc.) — ask the agent.
+          const remoteExists = await worktrees.remoteBranchExists(repo.path, branchName);
+          throw new ToolError({
+            code: 'branch_not_found_locally',
+            message: `Branch "${branchName}" does not exist locally and the repo default branch could not be detected.`,
+            remediation: remoteExists
+              ? `origin/${branchName} exists. Re-call with from_origin: true to fetch and create a local tracking branch, or pass startPoint to create a fresh branch from a different base.`
+              : `No local or remote branch named "${branchName}" was found. Pass startPoint (e.g. "origin/main") to create a new branch from that base.`,
+            retryable: true,
+          });
+        }
       }
 
       if (args.from_origin) {
@@ -118,9 +132,10 @@ export const createWorktreeTool = defineTool({
       repo.path,
       branchName,
       worktreePath,
-      // startPoint is only relevant when creating a brand-new branch; after a
-      // fetch the local branch already points at the right commit.
-      !localExists && !args.from_origin ? args.startPoint?.trim() : undefined,
+      // resolvedStartPoint is set for new branches (explicit or auto-detected).
+      // After a from_origin fetch the local branch already points at the right
+      // commit, so startPoint would be ignored by git anyway.
+      !localExists && !args.from_origin ? resolvedStartPoint : undefined,
     );
 
     return {

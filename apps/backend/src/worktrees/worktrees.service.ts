@@ -149,6 +149,24 @@ export class WorktreesService {
     return this.localBranchExistsWithGit(worktreeSimpleGit(repoPath), branchName);
   }
 
+  /**
+   * Resolve the repo's default branch by reading `refs/remotes/origin/HEAD`.
+   * Returns a short remote ref such as `"origin/main"`, or `null` when the
+   * symbolic ref is absent (shallow clone, no fetch yet, or no remote).
+   */
+  async getDefaultBranch(repoPath: string): Promise<string | null> {
+    const git = worktreeSimpleGit(repoPath);
+    try {
+      const out = (
+        await git.raw(['symbolic-ref', 'refs/remotes/origin/HEAD'])
+      ).trim();
+      // out is e.g. "refs/remotes/origin/main" → strip "refs/remotes/"
+      return out.startsWith('refs/remotes/') ? out.slice('refs/remotes/'.length) : out || null;
+    } catch {
+      return null;
+    }
+  }
+
   async remoteBranchExists(repoPath: string, branchName: string): Promise<boolean> {
     const git = worktreeSimpleGit(repoPath);
     try {

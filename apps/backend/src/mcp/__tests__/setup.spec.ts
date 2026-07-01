@@ -360,6 +360,50 @@ describe('setup tool group', () => {
       // remote existence must NOT be checked when startPoint is provided
       expect(remoteBranchExists).not.toHaveBeenCalled();
     });
+
+    it('auto-detects default branch when startPoint is omitted and branch is new', async () => {
+      const startJob = jest.fn().mockReturnValue({ id: 'job-3', status: 'pending' });
+      const ctx = makeCtx({
+        repos: {
+          findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }),
+        },
+        worktrees: {
+          localBranchExists: jest.fn().mockResolvedValue(false),
+          getDefaultBranch: jest.fn().mockResolvedValue('origin/main'),
+        },
+        worktreeJobs: { startJob },
+      });
+      const res = await createWorktreeTool.handler(
+        { repoId: 1, branchName: 'user/auto-detect-test' },
+        ctx,
+      );
+      expect((res.data as any).jobId).toBe('job-3');
+      // auto-detected default branch must be passed as startPoint
+      expect(startJob).toHaveBeenCalledWith(
+        1,
+        '/repo',
+        'user/auto-detect-test',
+        expect.stringContaining('.worktrees'),
+        'origin/main',
+      );
+    });
+
+    it('errors with branch_not_found_locally when auto-detect finds no default branch', async () => {
+      const ctx = makeCtx({
+        repos: {
+          findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }),
+        },
+        worktrees: {
+          localBranchExists: jest.fn().mockResolvedValue(false),
+          getDefaultBranch: jest.fn().mockResolvedValue(null),
+          remoteBranchExists: jest.fn().mockResolvedValue(false),
+        },
+        worktreeJobs: { startJob: jest.fn() },
+      });
+      await expect(
+        createWorktreeTool.handler({ repoId: 1, branchName: 'user/no-remote' }, ctx),
+      ).rejects.toMatchObject({ code: 'branch_not_found_locally' });
+    });
   });
 
   describe('get_worktree_job', () => {
