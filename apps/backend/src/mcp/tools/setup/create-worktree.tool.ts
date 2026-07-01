@@ -18,6 +18,9 @@ import type { BranchSnapshot } from '../../../worktrees/worktrees.service.js';
  *  4. Branch missing locally + from_origin unset/false + startPoint omitted →
  *     auto-detect the repo's default branch via `refs/remotes/origin/HEAD` and
  *     use it as startPoint. If detection fails, error so the agent can decide.
+ *
+ * Freshness: pass fetch_start_point:true to run `git fetch origin <base>` before
+ * the job starts, ensuring the branch is forked from the latest upstream commit.
  */
 export const createWorktreeTool = defineTool({
   name: 'create_worktree',
@@ -28,6 +31,7 @@ export const createWorktreeTool = defineTool({
     'Start a background job to create a new git worktree for a branch and return a jobId immediately (never blocks). 🔴heavy. ' +
     'If branchName has no local ref and neither from_origin nor startPoint is set, the tool auto-detects the repo default branch (origin/HEAD) and uses it as startPoint — no extra call needed for the common "new branch off main" case. ' +
     'Pass startPoint explicitly to fork from a specific ref (e.g. "origin/release/2.0"). ' +
+    'Pass fetch_start_point: true (recommended for new feature branches) to fetch the base ref from origin before forking, so the new branch starts from the latest upstream commit rather than a potentially stale local tracking ref. ' +
     'Pass from_origin: true to fetch an existing remote branch instead of creating a new one; this also returns a branchSnapshot (ahead/behind, last commit). ' +
     'The job dedupes on repo+branch+path. Next: poll get_worktree_job until succeeded, then link_worktree.',
   annotations: { idempotentHint: true },
@@ -57,6 +61,16 @@ export const createWorktreeTool = defineTool({
         'Base ref to fork a NEW local branch from (e.g. "main", "origin/main", "origin/release/2.0"). ' +
         'Used only when branchName has no local ref and from_origin is not true; ignored otherwise. ' +
         'When omitted the tool auto-detects the repo default branch (origin/HEAD) so you rarely need to set this.',
+      ),
+    fetch_start_point: z
+      .boolean()
+      .optional()
+      .describe(
+        'When true: fetch the base ref from origin before forking the new branch. ' +
+        'Ensures the worktree starts from the latest upstream commit rather than a potentially ' +
+        'stale local tracking ref. Recommended when creating feature branches off main/master. ' +
+        'Ignored when from_origin is true (which already performs its own fetch) or when ' +
+        'branchName already exists locally.',
       ),
     worktreePath: z
       .string()
@@ -120,6 +134,14 @@ export const createWorktreeTool = defineTool({
     } else if (args.from_origin) {
       // Branch exists locally; refresh the remote tracking ref
       await worktrees.fetchBranch(repo.path, branchName, false);
+    }
+
+    // Refresh the base ref so the new branch starts from the latest upstream commit.
+    if (!localExists && !args.from_origin && args.fetch_start_point && resolvedStartPoint) {
+      const baseRemoteBranch = resolvedStartPoint.startsWith('origin/')
+        ? resolvedStartPoint.slice('origin/'.length)
+        : resolvedStartPoint;
+      await worktrees.fetchBranch(repo.path, baseRemoteBranch, false);
     }
 
     let branchSnapshot: BranchSnapshot | undefined;

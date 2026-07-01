@@ -404,6 +404,52 @@ describe('setup tool group', () => {
         createWorktreeTool.handler({ repoId: 1, branchName: 'user/no-remote' }, ctx),
       ).rejects.toMatchObject({ code: 'branch_not_found_locally' });
     });
+
+    it('fetches the base ref before forking when fetch_start_point is true', async () => {
+      const startJob = jest.fn().mockReturnValue({ id: 'job-4', status: 'pending' });
+      const fetchBranch = jest.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({
+        repos: {
+          findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }),
+        },
+        worktrees: {
+          localBranchExists: jest.fn().mockResolvedValue(false),
+          getDefaultBranch: jest.fn().mockResolvedValue('origin/main'),
+          fetchBranch,
+        },
+        worktreeJobs: { startJob },
+      });
+      await createWorktreeTool.handler(
+        { repoId: 1, branchName: 'user/fresh-branch', fetch_start_point: true },
+        ctx,
+      );
+      // must fetch 'main' (not 'origin/main') without creating a local branch
+      expect(fetchBranch).toHaveBeenCalledWith('/repo', 'main', false);
+      expect(startJob).toHaveBeenCalledWith(
+        1, '/repo', 'user/fresh-branch',
+        expect.stringContaining('.worktrees'),
+        'origin/main',
+      );
+    });
+
+    it('does not fetch when fetch_start_point is true but branch already exists locally', async () => {
+      const fetchBranch = jest.fn();
+      const ctx = makeCtx({
+        repos: {
+          findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }),
+        },
+        worktrees: {
+          localBranchExists: jest.fn().mockResolvedValue(true),
+          fetchBranch,
+        },
+        worktreeJobs: { startJob: jest.fn().mockReturnValue({ id: 'j', status: 'pending' }) },
+      });
+      await createWorktreeTool.handler(
+        { repoId: 1, branchName: 'feature/existing', fetch_start_point: true },
+        ctx,
+      );
+      expect(fetchBranch).not.toHaveBeenCalled();
+    });
   });
 
   describe('get_worktree_job', () => {
