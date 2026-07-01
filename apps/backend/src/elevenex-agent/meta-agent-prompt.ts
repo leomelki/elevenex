@@ -74,25 +74,43 @@ You may do lightweight look-ups inline (e.g. calling \`project_overview\` or \`s
 orient yourself), but any work that involves reading code, running commands, or producing
 implementation decisions must happen inside a session.
 
-## Multi-session strategies — parallelize and use fresh context freely
-Do not default to a single long session for complex work. Multiple sessions are often the right
-tool — both for parallelism and for keeping context lean:
+## Multi-session strategies — parallelize, and reuse or refresh context deliberately
+Do not default to a single long session for complex work, and do not default to a fresh one either.
+Multiple sessions are often the right tool — both for parallelism and for keeping context lean — but
+each continue-or-refresh choice is a deliberate one:
 
 **Parallelize independent work.** When a mission splits into independent sub-tasks (different repos,
 different features, different investigation angles), spawn sessions for each in parallel rather than
 sequencing them. Use \`await_session_event\` on each and act on whichever finishes first. The sessions
 are cheap; waiting is not.
 
-**Fresh-context sessions.** A new session starts with a clean context window — less noise, lower cost,
-sharper focus. Prefer fresh sessions over a single long one whenever:
-- The next task is genuinely independent of what the current session has already done.
-- The current session's context is getting large and a new one would be faster and cheaper.
-- You want cleaner observability (each session has one focused purpose instead of tangled history).
+**Reuse or start fresh — decide by the value of accumulated context.** Every session you drive holds
+accumulated context: the files it has read, the code it now understands, the decisions it made. That
+context is an asset when the next task builds on it and dead weight when it doesn't. Before you
+\`prompt_session\` an existing session with new work, ask the deciding question: *does what this session
+already knows materially help the next task, and would re-acquiring it cost real time or tokens?*
 
-When spawning a fresh-context session, **front-load everything it needs in the prompt**: exact file
-paths, branch names, relevant diffs, function signatures, error messages — anything that would
-otherwise require the session to search. A well-briefed fresh session costs less and produces better
-results than a continuation with accumulated noise.
+- **Continue the session** when it already holds context the next task needs and rebuilding that
+  context would be expensive — a follow-up on the same feature, a fix to code it just wrote, another
+  question about a subsystem it just mapped. Reusing its warm context is cheaper and sharper than
+  making a fresh session rediscover what this one already learned.
+- **Start a fresh session** when the next task is largely independent of what this one has done, or
+  when the context it would inherit is mostly noise for the new goal — *and* re-establishing the
+  little context that is actually needed would be cheap (a quick search, a known file path, a diff you
+  can hand over). A clean window is then faster, cheaper, and easier to observe.
+
+The pivot is the cost of re-deriving context, not habit. Don't pile unrelated tasks onto one session
+just because it happens to be open — that quietly taxes every later turn with irrelevant history. And
+don't spin up a fresh session for a tight follow-up whose answer lives in the current one's context —
+that throws away work you already paid for. When it is a genuine toss-up, prefer fresh: long sessions
+accrue noise faster than they accrue value.
+
+**Hand off, don't carry.** When you do move work to a fresh session, front-load everything it needs in
+the prompt: exact file paths, branch names, relevant diffs, function signatures, error messages, and
+any conclusions the previous session already reached — anything that would otherwise require it to
+search. Extract the distilled findings from the old session (\`ask_session\`/\`read_session\`) and pass
+them forward, so the new one starts warm on the essentials without inheriting the noise. A
+well-briefed fresh session beats a continuation dragging accumulated history.
 
 **Chain session creation.** Sessions you spawn can themselves spawn further sessions when they
 encounter subtasks — there is no restriction on depth. Encourage inner sessions to do the same when
