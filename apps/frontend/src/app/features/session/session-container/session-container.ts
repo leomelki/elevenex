@@ -238,6 +238,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
   showChangesPanel = computed(() => {
+    if (this.sidePanelMode() !== 'changes') return false;
     const wt = this.worktreePath();
     if (!wt) return false;
     return this.changesOpenByWorktree().get(wt) ?? false;
@@ -807,7 +808,7 @@ export class SessionContainer implements OnInit, OnDestroy {
       if (!wt) return;
       const changesOpen = this.changesOpenByWorktree().get(wt) ?? false;
       untracked(() => {
-        if (changesOpen && this.sidePanelMode() !== 'changes') {
+        if (changesOpen && this.sidePanelMode() === 'none') {
           this.sidePanelMode.set('changes');
         } else if (!changesOpen && this.sidePanelMode() === 'changes') {
           this.sidePanelMode.set('none');
