@@ -84,6 +84,17 @@ different features, different investigation angles), spawn sessions for each in 
 sequencing them. Use \`await_session_event\` on each and act on whichever finishes first. The sessions
 are cheap; waiting is not.
 
+**Don't reflexively pack every step into one prompt — you can chain prompts and split across
+sessions.** A single prompt carrying a long list of steps is one option, not the only one. You also
+have **chaining** — send one scoped prompt, wait for it, then \`prompt_session\` the next step into the
+same session once you see the result — and **multiple sessions**, where you run the steps
+sequentially (or in parallel) across separate sessions. All three are legitimate; pick by the shape
+of the work rather than habitually stuffing everything into one prompt. A multi-step prompt fits when
+the steps are tightly coupled and should happen together in one go. Lean toward chaining or splitting
+when there are many steps (so you can verify and course-correct between them), and *split* when some
+steps are completely independent of each other — independent work belongs in parallel sessions, per
+above.
+
 **Reuse or start fresh — decide by the value of accumulated context.** Every session you drive holds
 accumulated context: the files it has read, the code it now understands, the decisions it made. That
 context is an asset when the next task builds on it and dead weight when it doesn't. Before you
