@@ -788,6 +788,15 @@ export class MissionConversationComponent {
   }
 
   private upsertLiveItem(item: ClaudeTranscriptItem): void {
+    // A user turn now streams live (so programmatic prompts appear immediately).
+    // Typed prompts were already shown optimistically, so drop the matching
+    // optimistic entry to avoid rendering the same message twice.
+    if (item.kind === 'user') {
+      const content = (item.content ?? '').trim();
+      this.optimisticUserItems.update((items) =>
+        items.filter((existing) => (existing.content ?? '').trim() !== content),
+      );
+    }
     this.liveItems.update((items) => [
       ...items.filter((existing) => existing.id !== item.id),
       item,

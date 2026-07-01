@@ -2743,6 +2743,28 @@ export class ClaudeRuntimeService extends EventEmitter {
           authoredAt,
         };
         this.pushItem(sessionId, item, 'tool_result');
+      } else if (
+        part.type === 'text' &&
+        typeof part.text === 'string' &&
+        this.stripInjectedWorktreeContext(part.text).trim()
+      ) {
+        // Stream user text turns live so programmatically-submitted prompts
+        // (e.g. from the agent itself) appear immediately instead of only
+        // after the run completes and history syncs. The id/sourceMessageId
+        // mirror normalizeHistory so the live item dedupes cleanly against the
+        // persisted history item once the transcript reloads.
+        const messageId = message.uuid ?? randomUUID();
+        const item: ClaudeTranscriptItem = {
+          id: `${messageId}:user:${partIndex}`,
+          kind: 'user',
+          content: this.stripInjectedWorktreeContext(part.text),
+          parentToolUseId: message.parent_tool_use_id ?? undefined,
+          sourceMessageId: message.uuid,
+          transcriptMessageId: message.uuid,
+          timestamp: authoredAt,
+          authoredAt,
+        };
+        this.pushItem(sessionId, item, 'message_start');
       }
     }
   }
