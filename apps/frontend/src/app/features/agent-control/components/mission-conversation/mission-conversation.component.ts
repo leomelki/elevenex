@@ -632,7 +632,14 @@ export class MissionConversationComponent {
     this.draft.set('');
     this.submitting.set(true);
     this.lastError.set(null);
-    this.send({ type: 'submit_prompt', prompt: this.withActiveContext(prompt) });
+    // Report the open session out-of-band (not in the prompt). The agent pulls
+    // it on demand via get_focused_session only when the user's words imply the
+    // currently-open session, so a follow-up never mis-attributes to it.
+    this.send({
+      type: 'submit_prompt',
+      prompt,
+      focusedSessionId: this.tabService.activeTab()?.sessionId ?? null,
+    });
   }
 
   interrupt(): void {
@@ -704,16 +711,6 @@ export class MissionConversationComponent {
       this.ws.disconnect(this.connectedSessionId, this.provider);
     }
     this.connectedSessionId = null;
-  }
-
-  private withActiveContext(prompt: string): string {
-    const tab = this.tabService.activeTab();
-    if (!tab) return prompt;
-    const parts: string[] = [`sessionId: ${tab.sessionId}`, `name: "${tab.sessionName}"`];
-    if (tab.workspaceName) parts.push(`workspace: "${tab.workspaceName}"`);
-    if (tab.branchName) parts.push(`branch: ${tab.branchName}`);
-    parts.push(`projectId: ${tab.projectId}`);
-    return `[active session — ${parts.join(', ')}]\n\n${prompt}`;
   }
 
   private send(message: Record<string, unknown>): void {

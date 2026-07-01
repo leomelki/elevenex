@@ -17,6 +17,7 @@ import { ScratchpadService } from '../../scratchpad/scratchpad.service.js';
 import { WorktreeContextService } from '../../worktree-context/worktree-context.service.js';
 import { AgentRuntimeRegistryService } from '../../agent-runtime/agent-runtime-registry.service.js';
 import { ConversationExportService } from '../../agent-runtime/conversation-export.service.js';
+import { AgentFocusService } from '../../agent-focus/agent-focus.service.js';
 
 /**
  * Injectable bag of the existing domain services the MCP tools reuse
@@ -44,5 +45,6 @@ export class McpToolServices {
     readonly worktreeContext: WorktreeContextService,
     readonly agentRuntime: AgentRuntimeRegistryService,
     readonly conversationExport: ConversationExportService,
+    readonly agentFocus: AgentFocusService,
   ) {}
 }

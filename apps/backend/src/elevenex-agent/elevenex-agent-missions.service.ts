@@ -9,6 +9,7 @@ import {
   DEFAULT_AGENT_AUTONOMY_MODE,
 } from '../sessions/sessions.service.js';
 import { normalizeAutonomyMode } from './meta-agent-prompt.js';
+import { AgentFocusService } from '../agent-focus/agent-focus.service.js';
 
 /** Compact mission summary for the panel's mission list. */
 export interface MissionSummary {
@@ -43,12 +44,14 @@ export class ElevenexAgentMissionsService {
     private readonly sessionsService: SessionsService,
     private readonly tokenService: McpAgentTokenService,
     private readonly claudeRuntime: ClaudeRuntimeService,
+    private readonly agentFocus: AgentFocusService,
   ) {}
 
   async createMission(input: {
     prompt: string;
     autonomyMode?: AgentAutonomyMode;
     model?: string | null;
+    focusedSessionId?: number | null;
   }): Promise<MissionSummary> {
     const prompt = input.prompt.trim();
     const autonomyMode = normalizeAutonomyMode(
@@ -89,6 +92,10 @@ export class ElevenexAgentMissionsService {
       await this.sessionsService.start(sessionId);
       this.logger.log(`Mission cold-start session=${sessionId} autonomy=${autonomyMode}`);
     }
+
+    // Record the UI focus the user had when launching this mission so the agent
+    // can pull it via get_focused_session (it is NOT injected into the prompt).
+    this.agentFocus.record(sessionId, input.focusedSessionId);
 
     // Submit the prompt. For warm starts the process is already running so this
     // delivers the first turn immediately; for cold starts it is fire-and-forget

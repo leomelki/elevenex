@@ -11,6 +11,7 @@ import { Server as HttpServer } from 'http';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
 import type { AgentRuntimeEvent } from './agent-runtime.types.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import { AgentFocusService } from '../agent-focus/agent-focus.service.js';
 
 type AgentRuntimeClientAction =
   | { type: 'hydrate' }
@@ -22,6 +23,12 @@ type AgentRuntimeClientAction =
         mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
         data: string;
       }[];
+      /**
+       * The code session the user had focused in the UI when they sent this
+       * message, if any. Recorded out-of-band (NOT injected into the prompt) so
+       * the agent can pull it on demand via `get_focused_session`.
+       */
+      focusedSessionId?: number | null;
     }
   | { type: 'interrupt' }
   | {
@@ -49,6 +56,7 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     private readonly registry: AgentRuntimeRegistryService,
     @Inject(forwardRef(() => SessionsService))
     private readonly sessionsService: SessionsService,
+    private readonly agentFocus: AgentFocusService,
   ) {}
 
   onModuleInit(): void {
@@ -173,6 +181,10 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
         }
         case 'submit_prompt':
           await this.assertSessionMutable(sessionId);
+          // Record the UI focus for this turn before submitting so the agent can
+          // pull it via get_focused_session. A missing/null id clears any prior
+          // focus so a stale tab is never reported.
+          this.agentFocus.record(sessionId, action.focusedSessionId);
           await provider.submitPrompt(
             sessionId,
             action.prompt,

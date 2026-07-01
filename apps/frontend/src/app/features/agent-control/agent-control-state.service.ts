@@ -166,20 +166,6 @@ export class AgentControlStateService {
     this.select(null);
   }
 
-  /**
-   * Append an `<elevenex-session-context>` block to the prompt when the user
-   * has a code session open, so the agent knows which session is in focus
-   * without it being forced context — the system prompt instructs the agent to
-   * treat it as optional and only act on it when the user refers to it.
-   */
-  private buildPrompt(clean: string): string {
-    const tab = this.tabService.activeTab();
-    if (!tab) return clean;
-    const parts = [`sessionId: ${tab.sessionId}`, `name: "${tab.sessionName}"`];
-    if (tab.branchName) parts.push(`branch: "${tab.branchName}"`);
-    return `<elevenex-session-context>\n${parts.join(', ')}\n</elevenex-session-context>\n\n${clean}`;
-  }
-
   /** Create + start a mission, then select it. Returns its session id. */
   async createMission(
     prompt: string,
@@ -191,8 +177,15 @@ export class AgentControlStateService {
     }
     this.errorSignal.set(null);
     try {
+      // Report the open session out-of-band (not in the prompt). The agent pulls
+      // it on demand via get_focused_session only when the user's words imply
+      // the currently-open session, so a follow-up never mis-attributes to it.
       const mission = await firstValueFrom(
-        this.missionsApi.create({ prompt: this.buildPrompt(clean), autonomyMode }),
+        this.missionsApi.create({
+          prompt: clean,
+          autonomyMode,
+          focusedSessionId: this.tabService.activeTab()?.sessionId,
+        }),
       );
       this.openSignal.set(true);
       // Optimistically add the new mission so the selection is immediate without

@@ -20,6 +20,7 @@ export class ElevenexAgentController {
       prompt: dto.prompt,
       autonomyMode: dto.autonomyMode,
       model: dto.model ?? null,
+      focusedSessionId: dto.focusedSessionId ?? null,
     });
   }
 

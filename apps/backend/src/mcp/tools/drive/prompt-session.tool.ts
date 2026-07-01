@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { defineTool } from '../../tool-registry/tool.types.js';
 import { resolveSessionProvider } from './provider.util.js';
 
-const PROMPT_WAIT_MS = 90_000;
+// Cap at ~3 min to stay inside Claude Code's 5-min tool-call timeout.
+const PROMPT_WAIT_MS = 170_000;
 // DB statuses that mean the session was killed externally — treat as failed.
 const TERMINAL_DB_STATUSES = new Set(['archived', 'stopped']);
 
@@ -21,7 +22,7 @@ export const promptSessionTool = defineTool({
   costClass: 'heavy',
   mutates: true,
   description:
-    "Send a prompt to a session's agent and wait up to 90 s for it to finish. 🔴heavy. If the session completes, returns status='completed'. If still running after 90 s, returns stillRunning=true — call poll_session_status immediately (no delay needed; it blocks internally). Resolve any permission prompts with get_pending_action → resolve_action.",
+    "Send a prompt to a session's agent and wait up to 170 s for it to finish. 🔴heavy. If the session completes, returns status='completed'. If still running after 170 s, returns stillRunning=true — call poll_session_status immediately (no delay needed; it blocks internally). Resolve any permission prompts with get_pending_action → resolve_action.",
   inputShape: {
     sessionId: z
       .number()
@@ -103,7 +104,7 @@ export const promptSessionTool = defineTool({
             data: { sessionId: args.sessionId, accepted: true, stillRunning: true },
             deepLink: ctx.deepLink.session(args.sessionId),
             nextStep:
-              'Session is still running after 90 s. Call poll_session_status immediately — it blocks internally so no sleep is needed between calls.',
+              'Session is still running after 170 s. Call poll_session_status immediately — it blocks internally so no sleep is needed between calls.',
           });
           return;
         }

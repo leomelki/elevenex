@@ -16,11 +16,29 @@ describe('ElevenexAgentMissionsService', () => {
         .fn()
         .mockResolvedValue({ projectId: 1, repoId: 7, worktreePath: '/ws' }),
     };
+    // Standby returns no warm session so tests exercise the cold-start path.
+    const standby = {
+      claimStandby: jest.fn().mockReturnValue(null),
+      scheduleStandby: jest.fn(),
+    };
     const sessionsService = {
       create: jest.fn().mockResolvedValue({ id: 42, name: 'Do a thing' }),
+      update: jest.fn().mockResolvedValue({}),
       updateAgentAutonomyMode: jest.fn().mockResolvedValue({}),
       findBySurface: jest.fn(),
-      findOne: jest.fn(),
+      // getMission() (called at the end of createMission) resolves the freshly
+      // created agent session via findOne; default it to a valid mission row.
+      findOne: jest.fn().mockResolvedValue({
+        id: 42,
+        name: 'Do a thing',
+        surface: 'agent',
+        status: 'active',
+        agentAutonomyMode: 'plan',
+        repoId: 7,
+        worktreePath: '/ws',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }),
       start: jest.fn().mockResolvedValue({ success: true }),
       archiveAndStop: jest.fn().mockResolvedValue({}),
     };
@@ -38,13 +56,28 @@ describe('ElevenexAgentMissionsService', () => {
         pendingUserInputRequest: null,
       }),
     };
+    const agentFocus = {
+      record: jest.fn(),
+      get: jest.fn(),
+      clear: jest.fn(),
+    };
     const service = new ElevenexAgentMissionsService(
       agentService as never,
+      standby as never,
       sessionsService as never,
       tokenService as never,
       claudeRuntime as never,
+      agentFocus as never,
     );
-    return { service, agentService, sessionsService, tokenService, claudeRuntime };
+    return {
+      service,
+      agentService,
+      standby,
+      sessionsService,
+      tokenService,
+      claudeRuntime,
+      agentFocus,
+    };
   };
 
   it('createMission provisions, mints a token, persists autonomy, starts, prompts', async () => {
@@ -52,6 +85,7 @@ describe('ElevenexAgentMissionsService', () => {
     const handle = await bag.service.createMission({
       prompt: 'Do a thing\nmore detail',
       autonomyMode: 'plan',
+      focusedSessionId: 7,
     });
 
     expect(bag.agentService.ensureAgentRepo).toHaveBeenCalled();
@@ -75,7 +109,9 @@ describe('ElevenexAgentMissionsService', () => {
       42,
       'Do a thing\nmore detail',
     );
-    expect(handle).toEqual({ sessionId: 42, deepLink: '/sessions/42' });
+    // Focus is recorded out-of-band (not concatenated into the prompt).
+    expect(bag.agentFocus.record).toHaveBeenCalledWith(42, 7);
+    expect(handle).toMatchObject({ sessionId: 42, deepLink: '/sessions/42' });
   });
 
   it('createMission defaults autonomy to review and does not set a model unless provided', async () => {

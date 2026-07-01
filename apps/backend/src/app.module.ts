@@ -30,6 +30,7 @@ import { ServerConnectionModule } from './server-connection/server-connection.mo
 import { SettingsModule } from './settings/settings.module.js';
 import { ElevenexMcpModule } from './mcp/elevenex-mcp.module.js';
 import { ElevenexAgentModule } from './elevenex-agent/elevenex-agent.module.js';
+import { AgentFocusModule } from './agent-focus/agent-focus.module.js';
 import { ShellEnvService } from './config/shell-env.service.js';
 
 @Module({
@@ -63,6 +64,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     SettingsModule,
     ElevenexMcpModule,
     ElevenexAgentModule,
+    AgentFocusModule,
   ],
   controllers: [AppController],
   providers: [AppService, ShellEnvService],

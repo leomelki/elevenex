@@ -18,6 +18,7 @@ export class AgentMissionsApiService {
     prompt: string;
     autonomyMode?: AgentAutonomyMode;
     model?: string;
+    focusedSessionId?: number;
   }): Observable<MissionSummary> {
     return this.http.post<MissionSummary>(this.base, body);
   }

@@ -10,6 +10,7 @@ import { fileSearchTool } from './file-search.tool.js';
 import { readFileTool } from './read-file.tool.js';
 import { changeReviewTool } from './change-review.tool.js';
 import { getWorktreeContextTool } from './get-worktree-context.tool.js';
+import { getFocusedSessionTool } from './get-focused-session.tool.js';
 import { awaitSessionEventTool } from './await-session-event.tool.js';
 import { pollSessionStatusTool } from './poll-session-status.tool.js';
 
@@ -31,5 +32,6 @@ export const OBSERVE_TOOLS: ToolDefinition[] = [
   readFileTool,
   changeReviewTool,
   getWorktreeContextTool,
+  getFocusedSessionTool,
   awaitSessionEventTool,
 ];

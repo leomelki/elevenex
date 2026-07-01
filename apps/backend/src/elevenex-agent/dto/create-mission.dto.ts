@@ -3,6 +3,8 @@ import {
   IsNotEmpty,
   IsOptional,
   IsIn,
+  IsInt,
+  IsPositive,
   MaxLength,
 } from 'class-validator';
 import {
@@ -24,4 +26,14 @@ export class CreateMissionDto {
   @IsString()
   @MaxLength(200)
   model?: string;
+
+  /**
+   * The code session the user had open in the UI when they launched this
+   * mission, if any. Recorded out-of-band (NOT injected into the prompt) so the
+   * agent can pull it on demand via `get_focused_session`.
+   */
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  focusedSessionId?: number;
 }

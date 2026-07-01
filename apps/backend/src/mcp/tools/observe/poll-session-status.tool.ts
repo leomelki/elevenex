@@ -3,19 +3,20 @@ import { z } from 'zod';
 import { defineTool, ToolError, type ToolContext } from '../../tool-registry/tool.types.js';
 import { renderMarkdown } from '../../../agent-runtime/conversation-export.service.js';
 
-const POLL_WAIT_MS = 90_000;
+// Cap at ~3 min to stay inside Claude Code's 5-min tool-call timeout.
+const POLL_WAIT_MS = 170_000;
 // DB statuses that mean the session was killed externally — treat as failed.
 const TERMINAL_DB_STATUSES = new Set(['archived', 'stopped']);
 
 /**
  * poll_session_status — blocking continuation poll for a running session.
  *
- * Waits up to 90 s event-driven (no busy loop). On terminal status: returns a
+ * Waits up to 170 s event-driven (no busy loop). On terminal status: returns a
  * small transcript summary so the caller has immediate context. On timeout:
  * returns a short stillRunning signal — call again immediately, no sleep needed.
  *
  * Designed to be called in a tight loop after prompt_session returns
- * stillRunning=true. Each call already consumes 90 s of wall-clock wait, so
+ * stillRunning=true. Each call already consumes 170 s of wall-clock wait, so
  * back-to-back calls are the correct pattern.
  */
 export const pollSessionStatusTool = defineTool({
@@ -23,7 +24,7 @@ export const pollSessionStatusTool = defineTool({
   title: 'Poll session status',
   costClass: 'heavy',
   description:
-    'Block up to 90 s for a running session to finish (event-driven, not a poll loop). 🔴heavy. On completion: returns a small transcript summary (call read_session for the full transcript or more detail). On timeout: returns stillRunning=true — call poll_session_status again immediately, no sleep needed between calls.',
+    'Block up to 170 s for a running session to finish (event-driven, not a poll loop). 🔴heavy. On completion: returns a small transcript summary (call read_session for the full transcript or more detail). On timeout: returns stillRunning=true — call poll_session_status again immediately, no sleep needed between calls.',
   annotations: { readOnlyHint: true },
   inputShape: {
     sessionId: z
@@ -90,7 +91,7 @@ export const pollSessionStatusTool = defineTool({
             data: { sessionId: args.sessionId, stillRunning: true },
             deepLink: ctx.deepLink.session(args.sessionId),
             nextStep:
-              'Session still running. Call poll_session_status again immediately — each call already waits 90 s, no sleep needed.',
+              'Session still running. Call poll_session_status again immediately — each call already waits 170 s, no sleep needed.',
           });
           return;
         }
