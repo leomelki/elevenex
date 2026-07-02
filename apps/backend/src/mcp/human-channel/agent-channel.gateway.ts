@@ -7,6 +7,9 @@ import {
   type AgentShowRequest,
   type AgentApprovalRequest,
   type AgentApprovalResolution,
+  type AgentSelectionRequest,
+  type AgentSelectionResolution,
+  type SelectedPath,
 } from './human-channel.js';
 
 /** Path the agent panel connects to for the live agent→human channel. */
@@ -19,6 +22,17 @@ interface ResolveApprovalMessage {
   decision: string;
   note?: string;
 }
+
+/** Inbound message the panel sends to answer a blocking selection request. */
+interface ResolveSelectionMessage {
+  type: 'resolve_selection';
+  id: string;
+  outcome: AgentSelectionResolution['outcome'];
+  paths?: SelectedPath[];
+  text?: string;
+}
+
+type InboundMessage = ResolveApprovalMessage | ResolveSelectionMessage;
 
 /**
  * Bridges the in-memory `AgentHumanChannelService` to the frontend agent panel
@@ -52,6 +66,12 @@ export class AgentChannelGateway implements OnModuleDestroy {
     this.channel.on('approval-resolved', (r: AgentApprovalResolution) =>
       this.broadcast(null, { type: 'approval_resolved', resolution: r }),
     );
+    this.channel.on('selection', (s: AgentSelectionRequest) =>
+      this.broadcast(s.agentSessionId, { type: 'selection', selection: s }),
+    );
+    this.channel.on('selection-resolved', (r: AgentSelectionResolution) =>
+      this.broadcast(null, { type: 'selection_resolved', resolution: r }),
+    );
   }
 
   attachToServer(server: HttpServer): void {
@@ -78,6 +98,12 @@ export class AgentChannelGateway implements OnModuleDestroy {
       )) {
         this.send(ws, { type: 'approval', approval });
       }
+      // Replay outstanding selection requests too.
+      for (const selection of this.channel.pendingSelections(
+        agentSessionId ?? undefined,
+      )) {
+        this.send(ws, { type: 'selection', selection });
+      }
       this.send(ws, { type: 'ready' });
 
       ws.on('message', (data) => this.onMessage(data.toString()));
@@ -87,9 +113,9 @@ export class AgentChannelGateway implements OnModuleDestroy {
   }
 
   private onMessage(raw: string): void {
-    let msg: ResolveApprovalMessage;
+    let msg: InboundMessage;
     try {
-      msg = JSON.parse(raw) as ResolveApprovalMessage;
+      msg = JSON.parse(raw) as InboundMessage;
     } catch {
       return;
     }
@@ -100,6 +126,16 @@ export class AgentChannelGateway implements OnModuleDestroy {
         note: msg.note,
       });
       if (!ok) this.logger.debug(`resolve_approval for unknown id ${msg.id}`);
+      return;
+    }
+    if (msg.type === 'resolve_selection' && typeof msg.id === 'string') {
+      const ok = this.channel.resolveSelection({
+        id: msg.id,
+        outcome: msg.outcome,
+        paths: msg.paths,
+        text: msg.text,
+      });
+      if (!ok) this.logger.debug(`resolve_selection for unknown id ${msg.id}`);
     }
   }
 

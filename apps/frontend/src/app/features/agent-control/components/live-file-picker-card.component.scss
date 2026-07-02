@@ -1,0 +1,242 @@
+:host {
+  display: block;
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  border: 1px solid color-mix(in oklch, var(--primary) 30%, var(--border));
+  border-radius: 0.7rem;
+  background: color-mix(in oklch, var(--primary) 6%, var(--card));
+  padding: 0.75rem;
+  box-shadow: 0 12px 30px -26px color-mix(in oklch, var(--primary) 60%, transparent);
+}
+
+.picker__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.picker__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  flex-shrink: 0;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in oklch, var(--primary) 38%, var(--border));
+  background: color-mix(in oklch, var(--primary) 16%, var(--background));
+  color: color-mix(in oklch, var(--primary) 88%, var(--foreground));
+}
+
+.picker__heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.picker__heading strong {
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+
+.picker__detail {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+
+.picker__hint {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: color-mix(in oklch, var(--primary) 70%, var(--muted-foreground));
+}
+
+/* --- Selected chips --- */
+
+.picker__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.picker__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 100%;
+  padding: 0.15rem 0.25rem 0.15rem 0.4rem;
+  border-radius: 0.4rem;
+  border: 1px solid color-mix(in oklch, var(--primary) 32%, var(--border));
+  background: color-mix(in oklch, var(--primary) 12%, var(--background));
+  font-size: 0.72rem;
+  color: var(--foreground);
+}
+
+.picker__chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12rem;
+}
+
+.picker__chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 0.3rem;
+  color: var(--muted-foreground);
+  transition: color 0.12s ease, background-color 0.12s ease;
+}
+
+.picker__chip-remove:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 12%, transparent);
+}
+
+/* --- Tree --- */
+
+.picker__tree {
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: color-mix(in oklch, var(--surface-shade) 3%, var(--background));
+  padding: 0.35rem;
+}
+
+.picker__z-tree {
+  display: block;
+}
+
+.picker__state {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 1rem 0.5rem;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.picker__state--error {
+  color: var(--destructive);
+}
+
+.picker__row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.picker__row--muted {
+  color: var(--muted-foreground);
+  opacity: 0.75;
+}
+
+.picker__check {
+  display: inline-flex;
+  align-items: center;
+}
+
+.picker__check-spacer {
+  display: inline-flex;
+  width: 1rem;
+  flex-shrink: 0;
+}
+
+.picker__row-icon {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.picker__row-icon--folder {
+  color: color-mix(in oklch, var(--primary) 65%, var(--muted-foreground));
+}
+
+.picker__row-label {
+  font-size: 0.78rem;
+  min-width: 0;
+}
+
+/* --- Text reply --- */
+
+.picker__text {
+  display: flex;
+}
+
+.picker__textarea {
+  width: 100%;
+  resize: vertical;
+  font-size: 0.78rem;
+}
+
+/* --- Actions --- */
+
+.picker__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.picker__actions-left,
+.picker__actions-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.picker__actions-left {
+  color: var(--muted-foreground);
+}
+
+.picker__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.28rem;
+  margin-left: 0.05rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: color-mix(in oklch, var(--primary-foreground) 22%, transparent);
+  color: var(--primary-foreground);
+}
+
+.picker__spin {
+  animation: picker-spin 0.9s linear infinite;
+}
+
+@keyframes picker-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 760px) {
+  .picker__actions {
+    justify-content: stretch;
+  }
+
+  .picker__actions-right {
+    flex: 1;
+    justify-content: flex-end;
+  }
+}

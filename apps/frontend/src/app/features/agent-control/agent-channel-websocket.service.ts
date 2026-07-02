@@ -45,12 +45,51 @@ export interface AgentApprovalResolution {
   note?: string;
 }
 
+/** What entry kinds a live selection request allows the human to pick. */
+export type AgentSelectionKind = 'file' | 'folder' | 'any';
+
+/**
+ * A blocking file/folder picker request from the meta-agent. The agent is
+ * paused until the human picks path(s), replies with text, or defers. Replayed
+ * on every (re)connect while still pending.
+ */
+export interface AgentLiveSelection {
+  id: string;
+  agentSessionId: number;
+  title: string;
+  detail?: string;
+  /** Absolute worktree/repo root the picker browses. */
+  rootPath: string;
+  selectionKind: AgentSelectionKind;
+  multiple: boolean;
+  allowText: boolean;
+  allowDefer: boolean;
+  deepLink?: string;
+  createdAt: string;
+}
+
+/** A single picked entry, path relative to the request's `rootPath`. */
+export interface AgentSelectedPath {
+  path: string;
+  type: 'file' | 'directory';
+}
+
+/** How the human answered a live selection request. */
+export interface AgentSelectionResolution {
+  id: string;
+  outcome: 'selected' | 'text' | 'defer' | 'cancelled';
+  paths?: AgentSelectedPath[];
+  text?: string;
+}
+
 type ServerMessage =
   | { type: 'ready' }
   | { type: 'notification'; notification: AgentNotification }
   | { type: 'show'; show: AgentShow }
   | { type: 'approval'; approval: AgentLiveApproval }
-  | { type: 'approval_resolved'; resolution: AgentApprovalResolution };
+  | { type: 'approval_resolved'; resolution: AgentApprovalResolution }
+  | { type: 'selection'; selection: AgentLiveSelection }
+  | { type: 'selection_resolved'; resolution: AgentSelectionResolution };
 
 const RECONNECT_DELAYS_MS = [500, 500, 1000, 1000, 2000, 2000, 4000];
 
@@ -76,10 +115,13 @@ export class AgentChannelWebsocketService {
   private reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   private readonly liveApprovalsSignal = signal<AgentLiveApproval[]>([]);
+  private readonly liveSelectionsSignal = signal<AgentLiveSelection[]>([]);
   private readonly connectedSignal = signal(false);
 
   /** Still-pending blocking approvals, deduped by id. */
   readonly liveApprovals: Signal<AgentLiveApproval[]> = this.liveApprovalsSignal.asReadonly();
+  /** Still-pending blocking file/folder picker requests, deduped by id. */
+  readonly liveSelections: Signal<AgentLiveSelection[]> = this.liveSelectionsSignal.asReadonly();
   /** Whether the channel socket is currently open. */
   readonly connected: Signal<boolean> = this.connectedSignal.asReadonly();
 
@@ -120,6 +162,18 @@ export class AgentChannelWebsocketService {
       );
     }
     this.removeApproval(id);
+  }
+
+  /**
+   * Answer a blocking file/folder selection. Sends `resolve_selection` and
+   * optimistically drops it from the live list (the server also broadcasts a
+   * `selection_resolved`, which is idempotent here).
+   */
+  resolveSelection(resolution: AgentSelectionResolution): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type: 'resolve_selection', ...resolution }));
+    }
+    this.removeSelection(resolution.id);
   }
 
   /**
@@ -235,6 +289,12 @@ export class AgentChannelWebsocketService {
       case 'approval_resolved':
         this.removeApproval(message.resolution.id);
         return;
+      case 'selection':
+        this.upsertSelection(message.selection);
+        return;
+      case 'selection_resolved':
+        this.removeSelection(message.resolution.id);
+        return;
     }
   }
 
@@ -276,6 +336,20 @@ export class AgentChannelWebsocketService {
   private removeApproval(id: string): void {
     this.liveApprovalsSignal.update((approvals) =>
       approvals.filter((approval) => approval.id !== id),
+    );
+  }
+
+  private upsertSelection(selection: AgentLiveSelection): void {
+    this.liveSelectionsSignal.update((selections) => {
+      const next = selections.filter((existing) => existing.id !== selection.id);
+      next.push(selection);
+      return next;
+    });
+  }
+
+  private removeSelection(id: string): void {
+    this.liveSelectionsSignal.update((selections) =>
+      selections.filter((selection) => selection.id !== id),
     );
   }
 }

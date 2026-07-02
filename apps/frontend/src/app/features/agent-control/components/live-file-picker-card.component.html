@@ -1,0 +1,152 @@
+<section class="picker" role="group" [attr.aria-label]="selection().title">
+  <header class="picker__header">
+    <span class="picker__icon" aria-hidden="true">
+      <ng-icon name="lucideFolderSearch" size="15" />
+    </span>
+    <div class="picker__heading">
+      <strong>{{ selection().title }}</strong>
+      @if (selection().detail) {
+        <p class="picker__detail">{{ selection().detail }}</p>
+      }
+      <p class="picker__hint">The agent needs you to point it at {{ kindLabel() }}.</p>
+    </div>
+  </header>
+
+  @if (mode() === 'browse') {
+    @if (selectedList().length) {
+      <div class="picker__chips" aria-label="Selected">
+        @for (item of selectedList(); track item.path) {
+          <span class="picker__chip">
+            <ng-icon
+              [name]="item.type === 'directory' ? 'lucideFolder' : 'lucideFile'"
+              size="12"
+              aria-hidden="true"
+            />
+            <span class="picker__chip-label" [title]="item.path">{{ basename(item.path) }}</span>
+            <button
+              type="button"
+              class="picker__chip-remove"
+              [attr.aria-label]="'Remove ' + item.path"
+              (click)="removeSelected(item.path)"
+            >
+              <ng-icon name="lucideX" size="12" />
+            </button>
+          </span>
+        }
+      </div>
+    }
+
+    <div class="picker__tree">
+      @if (loadingRoot()) {
+        <div class="picker__state">
+          <ng-icon name="lucideLoaderCircle" class="picker__spin" size="16" aria-hidden="true" />
+          <span>Loading…</span>
+        </div>
+      } @else if (errorMessage()) {
+        <div class="picker__state picker__state--error">{{ errorMessage() }}</div>
+      } @else if (!treeData().length) {
+        <div class="picker__state">This folder is empty.</div>
+      } @else {
+        <z-tree
+          class="picker__z-tree"
+          [zData]="treeData()"
+          (zNodeClick)="onNodeClick($event)"
+          (zNodeExpand)="onExpand($event)"
+          (zNodeCollapse)="onCollapse($event)"
+        >
+          <ng-template #nodeTemplate let-node>
+            <span class="picker__row" [class.picker__row--muted]="!isSelectable(node)">
+              @if (isSelectable(node)) {
+                <span class="picker__check" (click)="$event.stopPropagation()">
+                  <z-checkbox
+                    [ngModel]="isSelected(node.key)"
+                    (checkChange)="toggleSelect(node)"
+                  />
+                </span>
+              } @else {
+                <span class="picker__check-spacer" aria-hidden="true"></span>
+              }
+              @if (node.leaf) {
+                <ng-icon name="lucideFile" class="picker__row-icon" size="14" aria-hidden="true" />
+              } @else if (isLoading(node.key)) {
+                <ng-icon
+                  name="lucideLoaderCircle"
+                  class="picker__row-icon picker__spin"
+                  size="14"
+                  aria-hidden="true"
+                />
+              } @else {
+                <ng-icon
+                  [name]="isExpanded(node.key) ? 'lucideFolderOpen' : 'lucideFolder'"
+                  class="picker__row-icon picker__row-icon--folder"
+                  size="14"
+                  aria-hidden="true"
+                />
+              }
+              <span class="picker__row-label truncate">{{ node.label }}</span>
+            </span>
+          </ng-template>
+        </z-tree>
+      }
+    </div>
+  } @else {
+    <div class="picker__text">
+      <textarea
+        z-input
+        rows="3"
+        class="picker__textarea"
+        placeholder="Reply to the agent instead of picking — a hint, or the exact path to use."
+        aria-label="Reply to the agent"
+        [value]="textDraft()"
+        (input)="onTextInput($event)"
+      ></textarea>
+    </div>
+  }
+
+  <footer class="picker__actions">
+    <div class="picker__actions-left">
+      @if (mode() === 'text') {
+        <button z-button type="button" zType="ghost" zSize="sm" (click)="showBrowse()">
+          <ng-icon name="lucideChevronLeft" size="14" />
+          Browse
+        </button>
+      }
+      @if (selection().deepLink) {
+        <button z-button type="button" zType="ghost" zSize="sm" (click)="onOpen()">
+          <ng-icon name="lucideArrowUpRight" size="14" />
+          Open
+        </button>
+      }
+    </div>
+
+    <div class="picker__actions-right">
+      @if (mode() === 'browse') {
+        @if (selection().allowText) {
+          <button z-button type="button" zType="ghost" zSize="sm" (click)="showText()">
+            <ng-icon name="lucideType" size="14" />
+            Reply with text
+          </button>
+        }
+        @if (selection().allowDefer) {
+          <button z-button type="button" zType="outline" zSize="sm" (click)="defer()">
+            <ng-icon name="lucideSparkles" size="14" />
+            Let agent decide
+          </button>
+        }
+        <button z-button type="button" zType="ghost" zSize="sm" (click)="cancel()">Cancel</button>
+        <button z-button type="button" zSize="sm" [disabled]="!canConfirm()" (click)="confirm()">
+          <ng-icon name="lucideCheck" size="14" />
+          Use selection
+          @if (selected().size) {
+            <span class="picker__count">{{ selected().size }}</span>
+          }
+        </button>
+      } @else {
+        <button z-button type="button" zType="ghost" zSize="sm" (click)="cancel()">Cancel</button>
+        <button z-button type="button" zSize="sm" [disabled]="!canSubmitText()" (click)="submitText()">
+          Send reply
+        </button>
+      }
+    </div>
+  </footer>
+</section>

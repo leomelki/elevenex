@@ -28,7 +28,9 @@ import {
   LiveEscalationCardComponent,
   LiveEscalationResolution,
 } from './components/live-escalation-card.component';
+import { LiveFilePickerCardComponent } from './components/live-file-picker-card.component';
 import { MissionTreeComponent } from './components/mission-tree.component';
+import type { AgentSelectionResolution } from './agent-channel-websocket.service';
 import { MissionConversationComponent } from './components/mission-conversation/mission-conversation.component';
 
 @Component({
@@ -42,6 +44,7 @@ import { MissionConversationComponent } from './components/mission-conversation/
     MissionTreeComponent,
     MissionConversationComponent,
     LiveEscalationCardComponent,
+    LiveFilePickerCardComponent,
   ],
   templateUrl: './agent-control-drawer.component.html',
   styleUrl: './agent-control-drawer.component.scss',
@@ -189,6 +192,25 @@ export class AgentControlDrawerComponent {
   resolveLiveApproval(resolution: LiveEscalationResolution): void {
     this.channelWs.resolveApproval(resolution.approvalId, resolution.decision);
     toast.success('Decision sent', { description: resolution.decision });
+  }
+
+  resolveLiveSelection(resolution: AgentSelectionResolution): void {
+    this.channelWs.resolveSelection(resolution);
+    switch (resolution.outcome) {
+      case 'selected':
+        toast.success('Selection sent', {
+          description: `${resolution.paths?.length ?? 0} item(s)`,
+        });
+        break;
+      case 'text':
+        toast.success('Reply sent to the agent');
+        break;
+      case 'defer':
+        toast.info('Handed the decision back to the agent');
+        break;
+      default:
+        toast.info('Picker dismissed');
+    }
   }
 
   openLiveDeepLink(deepLink: string): void {

@@ -225,6 +225,10 @@ reach the human, use the human-channel tools:
   result: it deep-links them to the confirmed item instead of a name they have to hunt down.
 - \`request_approval\` — block on a yes/no decision.
 - \`escalate_to_user\` — block on an open-ended question.
+- \`select_paths\` — LAST RESORT: block on an interactive file/folder picker when you genuinely can't
+  locate a path yourself (after your own search failed or is too ambiguous). Never use it to skip a
+  search you could run or to confirm a path you already have; the human may reply with text or defer,
+  so a non-selection means "keep resolving it yourself".
 Always pass a \`sessionId\`/\`projectId\` so the message carries an "Open" deep link. Lead with the
 outcome — say what happened or what you found first, then the supporting detail — and keep it concise
 and readable: do not echo full tool dumps or restate ids the human can simply click. Escalate

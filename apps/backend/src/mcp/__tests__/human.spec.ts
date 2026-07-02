@@ -5,6 +5,7 @@ import { notifyUserTool } from '../tools/human/notify-user.tool.js';
 import { showUserTool } from '../tools/human/show-user.tool.js';
 import { requestApprovalTool } from '../tools/human/request-approval.tool.js';
 import { escalateToUserTool } from '../tools/human/escalate-to-user.tool.js';
+import { selectPathsTool } from '../tools/human/select-paths.tool.js';
 import type { ToolContext } from '../tool-registry/tool.types.js';
 
 function makeCtx(
@@ -106,6 +107,72 @@ describe('human-channel tools', () => {
     await expect(
       notifyUserTool.handler({ message: 'x', level: 'info' } as never, ctx),
     ).rejects.toMatchObject({ code: 'human_channel_unavailable' });
+  });
+
+  it('select_paths blocks until the human picks, then returns the paths', async () => {
+    const channel = new AgentHumanChannelService();
+    const ctx = makeCtx(channel);
+
+    channel.on('selection', (s: { id: string }) =>
+      channel.resolveSelection({
+        id: s.id,
+        outcome: 'selected',
+        paths: [{ path: 'src/app.ts', type: 'file' }],
+      }),
+    );
+
+    const result = await selectPathsTool.handler(
+      { title: 'Which entry file?', rootPath: '/repo', timeoutMs: 5000 } as never,
+      ctx,
+    );
+    const data = result.data as {
+      outcome: string;
+      paths: { path: string }[];
+      path?: string;
+    };
+    expect(data.outcome).toBe('selected');
+    expect(data.paths).toEqual([{ path: 'src/app.ts', type: 'file' }]);
+    // A single pick is surfaced as a convenience `path`.
+    expect(data.path).toBe('src/app.ts');
+  });
+
+  it('select_paths surfaces a free-text reply as a hint', async () => {
+    const channel = new AgentHumanChannelService();
+    const ctx = makeCtx(channel);
+    channel.on('selection', (s: { id: string }) =>
+      channel.resolveSelection({ id: s.id, outcome: 'text', text: 'look in packages/*' }),
+    );
+    const result = await selectPathsTool.handler(
+      { title: 'Where is it?', rootPath: '/repo', timeoutMs: 5000 } as never,
+      ctx,
+    );
+    expect(result.data).toMatchObject({ outcome: 'text', text: 'look in packages/*' });
+  });
+
+  it('select_paths resolves to cancelled on timeout', async () => {
+    const channel = new AgentHumanChannelService();
+    const ctx = makeCtx(channel);
+    const result = await selectPathsTool.handler(
+      { title: 'unanswered', rootPath: '/repo', timeoutMs: 1000 } as never,
+      ctx,
+    );
+    expect((result.data as { outcome: string }).outcome).toBe('cancelled');
+  });
+
+  it('pendingSelections tracks unresolved picker requests for panel replay', async () => {
+    const channel = new AgentHumanChannelService();
+    const ctx = makeCtx(channel);
+    const pending = selectPathsTool.handler(
+      { title: 'wait', rootPath: '/repo', timeoutMs: 5000 } as never,
+      ctx,
+    );
+    await Promise.resolve();
+    const open = channel.pendingSelections(42);
+    expect(open).toHaveLength(1);
+    expect(open[0].rootPath).toBe('/repo');
+    channel.resolveSelection({ id: open[0].id, outcome: 'defer' });
+    await pending;
+    expect(channel.pendingSelections(42)).toHaveLength(0);
   });
 
   it('pendingApprovals tracks unresolved escalations for panel replay', async () => {

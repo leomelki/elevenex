@@ -51,18 +51,27 @@
       </div>
     </header>
 
-    <!-- Live escalations from the meta-agent (blocking approvals via /agent-channel) -->
-    @if (channelWs.liveApprovals().length > 0) {
+    <!-- Live escalations from the meta-agent (blocking approvals + file/folder pickers via /agent-channel) -->
+    @if (channelWs.liveApprovals().length > 0 || channelWs.liveSelections().length > 0) {
       <section class="agent-drawer__live" aria-label="Live escalations">
         <div class="agent-drawer__live-head">
           <span class="agent-drawer__live-title">Action needed</span>
-          <span class="agent-drawer__live-count">{{ channelWs.liveApprovals().length }}</span>
+          <span class="agent-drawer__live-count">{{
+            channelWs.liveApprovals().length + channelWs.liveSelections().length
+          }}</span>
         </div>
         <div class="agent-drawer__live-list">
           @for (approval of channelWs.liveApprovals(); track approval.id) {
             <app-live-escalation-card
               [approval]="approval"
               (resolve)="resolveLiveApproval($event)"
+              (open)="openLiveDeepLink($event)"
+            />
+          }
+          @for (selection of channelWs.liveSelections(); track selection.id) {
+            <app-live-file-picker-card
+              [selection]="selection"
+              (resolve)="resolveLiveSelection($event)"
               (open)="openLiveDeepLink($event)"
             />
           }
