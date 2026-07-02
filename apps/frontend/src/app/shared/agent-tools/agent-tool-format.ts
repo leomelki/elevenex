@@ -159,6 +159,8 @@ function describeElevenexTool(tool: string, data: Record<string, unknown>): { ic
       return { icon: 'lucideGitCompare', verb: 'Change review', target: sessionRef };
     case 'get_worktree_context':
       return { icon: 'lucideGitBranch', verb: 'Worktree context', target: sessionRef };
+    case 'get_focused_session':
+      return { icon: 'lucideFocus', verb: 'Focused session', target: '' };
     case 'find_sessions': {
       const status = typeof data['status'] === 'string' ? data['status'] : '';
       const scope = typeof repoId === 'number' ? `repo ${repoId}` : typeof data['projectId'] === 'number' ? `project ${data['projectId']}` : '';
@@ -228,6 +230,10 @@ function describeElevenexTool(tool: string, data: Record<string, unknown>): { ic
     case 'show_user': {
       const title = typeof data['title'] === 'string' ? truncate(data['title'], 60) : '';
       return { icon: 'lucideMonitor', verb: 'Show', target: title };
+    }
+    case 'select_paths': {
+      const title = typeof data['title'] === 'string' ? truncate(data['title'], 60) : '';
+      return { icon: 'lucideFolderOpen', verb: 'Select paths', target: title };
     }
     default:
       return { icon: 'lucidePlugZap', verb: tool.replace(/_/g, ' '), target: sessionRef };
