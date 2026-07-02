@@ -5,14 +5,14 @@ import { ClaudeHooksGateway } from './claude-hooks.gateway.js';
 import { SessionsModule } from '../sessions/sessions.module.js';
 import { WorktreeContextModule } from '../worktree-context/worktree-context.module.js';
 import { SessionTitleModule } from '../session-title/session-title.module.js';
-import { NavigationModule } from '../navigation/navigation.module.js';
+import { NavigationEventsModule } from '../navigation/navigation-events.module.js';
 
 @Module({
   imports: [
     forwardRef(() => SessionsModule),
     forwardRef(() => WorktreeContextModule),
     SessionTitleModule,
-    NavigationModule,
+    NavigationEventsModule,
   ],
   controllers: [ClaudeHooksController],
   providers: [ClaudeHooksService, ClaudeHooksGateway],
