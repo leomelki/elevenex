@@ -1,9 +1,10 @@
-import { inject, Injectable, signal } from '@angular/core';
+import { effect, inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
 import { NavigationProject } from '../models/navigation-tree.model';
 import { Session } from '../models/session.model';
+import { ClaudeStatusService } from './claude-status.service';
 
 type SessionCompletionPatch = Pick<
   Session,
@@ -26,6 +27,16 @@ export class NavigationService {
   private fullRefreshInFlight = false;
   private fullRefreshQueued = false;
   private cachedSessionNames = new Map<number, string>();
+
+  constructor() {
+    const claudeStatus = inject(ClaudeStatusService);
+    effect(() => {
+      const count = claudeStatus.treeInvalidated();
+      if (count > 0) {
+        this.refreshTree();
+      }
+    });
+  }
 
   loadTree() {
     const version = ++this.loadVersion;

@@ -10,6 +10,7 @@ import { McpConnectionRegistryService } from '../connection/mcp-connection-regis
 import { ToolError, type ToolContext, type ToolDefinition } from './tool.types.js';
 import { envelopeToResult, errorToResult } from './result-envelope.js';
 import { ALL_TOOLS } from '../tools/index.js';
+import { NavigationEventsService } from '../../navigation/navigation-events.service.js';
 
 /** Hard ceiling the wrapper enforces on any `limit` field, regardless of tool. */
 const MAX_LIMIT = 100;
@@ -35,6 +36,7 @@ export class ToolRegistryService {
     private readonly human: AgentHumanChannelService,
     private readonly tokens: McpAgentTokenService,
     private readonly connections: McpConnectionRegistryService,
+    private readonly navEvents: NavigationEventsService,
   ) {}
 
   /** Register all known tools on a freshly created server. */
@@ -53,6 +55,9 @@ export class ToolRegistryService {
         this.enforceCaps(tool, ctx);
         this.enforceGuards(tool, args);
         const env = await tool.handler(args, ctx);
+        if (tool.mutates || tool.destructive) {
+          this.navEvents.invalidate();
+        }
         return envelopeToResult(env);
       } catch (err) {
         if (!(err instanceof ToolError)) {

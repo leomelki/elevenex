@@ -44,6 +44,9 @@ export class ClaudeStatusService implements OnDestroy {
   private _onReconnect = signal(0);
   readonly onReconnect = this._onReconnect.asReadonly();
 
+  private _treeInvalidated = signal(0);
+  readonly treeInvalidated = this._treeInvalidated.asReadonly();
+
   constructor(private readonly ngZone: NgZone) {
     this.connect();
   }
@@ -177,6 +180,8 @@ export class ClaudeStatusService implements OnDestroy {
               data.sessionId,
               Boolean(data.hasInjectedWorktreeContext),
             );
+          } else if (data.type === 'tree-invalidated') {
+            this._treeInvalidated.update(v => v + 1);
           }
         } catch {
           // Ignore malformed messages

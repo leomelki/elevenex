@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
 import { ClaudeHooksService } from './claude-hooks.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 
 @Injectable()
 export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
@@ -12,6 +13,7 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly hooksService: ClaudeHooksService,
     private readonly sessionsService: SessionsService,
+    private readonly navEvents: NavigationEventsService,
   ) {}
 
   onModuleInit(): void {
@@ -78,6 +80,10 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
         this.broadcast({ type: 'session-worktree-context-changed', ...data });
       },
     );
+
+    this.navEvents.on('tree-invalidated', () => {
+      this.broadcast({ type: 'tree-invalidated' });
+    });
   }
 
   attachToServer(server: HttpServer): void {

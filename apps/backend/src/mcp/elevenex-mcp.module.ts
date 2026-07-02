@@ -12,6 +12,7 @@ import { TodosModule } from '../todos/todos.module.js';
 import { ScratchpadModule } from '../scratchpad/scratchpad.module.js';
 import { WorktreeContextModule } from '../worktree-context/worktree-context.module.js';
 import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module.js';
+import { NavigationModule } from '../navigation/navigation.module.js';
 
 import { McpToolServices } from './tool-registry/mcp-tool-services.js';
 import { DeltaCursorStore } from './tool-registry/delta-cursor.store.js';
@@ -45,6 +46,7 @@ import { ElevenexMcpHttpTransport } from './transport/elevenex-mcp-http.transpor
     ScratchpadModule,
     WorktreeContextModule,
     AgentRuntimeModule,
+    NavigationModule,
   ],
   providers: [
     McpToolServices,
