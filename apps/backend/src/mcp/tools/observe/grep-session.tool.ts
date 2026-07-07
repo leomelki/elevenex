@@ -72,6 +72,13 @@ export const grepSessionTool = defineTool({
         remediation: 'List valid ids with find_sessions or project_overview.',
       });
     }
+    if (session.surface === 'agent') {
+      throw new ToolError({
+        code: 'agent_session_inaccessible',
+        message: `Session ${args.sessionId} is an agent session and cannot be accessed via MCP tools.`,
+        remediation: 'Use find_sessions to list accessible sessions.',
+      });
+    }
 
     const { model } = await conversationExport.buildModel(
       session.id,

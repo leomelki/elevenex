@@ -644,6 +644,15 @@
   }
 }
 
+.cw-msg__diag-summary--static {
+  cursor: default;
+  grid-template-columns: auto auto 1fr;
+}
+
+.cw-msg__meta--push {
+  margin-left: auto;
+}
+
 .cw-msg__diag-title {
   font-weight: 600;
   color: var(--foreground);

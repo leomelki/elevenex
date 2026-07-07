@@ -2831,9 +2831,16 @@ export class ClaudeRuntimeService extends EventEmitter {
     );
 
     if (message.is_error) {
+      const subtypeFallback =
+        message.subtype === 'error_max_turns'
+          ? 'Reached maximum turn limit'
+          : message.subtype === 'error_max_budget_usd'
+            ? 'Reached cost budget limit'
+            : message.subtype === 'error_max_structured_output_retries'
+              ? 'Structured output retries exceeded'
+              : 'Run failed';
       const errorMessage =
-        ('errors' in message ? message.errors.join('\n') : '') ||
-        'Claude run failed';
+        ('errors' in message ? message.errors.join('\n') : '') || subtypeFallback;
       state.lastError = errorMessage;
       // If the error indicates that the stored session no longer exists
       // (e.g. corrupted file or Claude Code pruned the conversation), reset

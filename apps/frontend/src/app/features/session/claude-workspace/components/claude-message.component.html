@@ -407,16 +407,15 @@
     </details>
   }
   @case ('error') {
-    <details class="cw-msg cw-msg--diagnostic cw-msg--error" [attr.title]="timestampTitle()">
-      <summary class="cw-msg__diag-summary">
+    <div class="cw-msg cw-msg--diagnostic cw-msg--error" [attr.title]="timestampTitle()">
+      <div class="cw-msg__diag-summary cw-msg__diag-summary--static">
         <ng-icon name="lucideTriangleAlert" size="13" />
         <span class="cw-msg__diag-title">{{ diagnosticTitle() }}</span>
-        <span class="cw-msg__diag-preview">{{ diagnosticPreview() }}</span>
         @if (timestampLabel(); as label) {
-          <span class="cw-msg__meta" aria-hidden="true">{{ label }}</span>
+          <span class="cw-msg__meta cw-msg__meta--push" aria-hidden="true">{{ label }}</span>
         }
-      </summary>
+      </div>
       <pre class="cw-msg__diag-body">{{ item().content }}</pre>
-    </details>
+    </div>
   }
 }

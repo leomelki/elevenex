@@ -21,5 +21,12 @@ export async function resolveSessionProvider(
       remediation: 'Get valid ids from find_sessions or project_overview.',
     });
   }
+  if (session.surface === 'agent') {
+    throw new ToolError({
+      code: 'agent_session_inaccessible',
+      message: `Session ${sessionId} is an agent session and cannot be driven via MCP tools.`,
+      remediation: 'Use find_sessions to list accessible sessions.',
+    });
+  }
   return { session, provider: session.activeAgentProvider };
 }

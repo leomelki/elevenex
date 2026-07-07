@@ -32,6 +32,13 @@ export const sessionStatusTool = defineTool({
         remediation: 'List valid ids with find_sessions or project_overview.',
       });
     }
+    if (session.surface === 'agent') {
+      throw new ToolError({
+        code: 'agent_session_inaccessible',
+        message: `Session ${args.sessionId} is an agent session and cannot be accessed via MCP tools.`,
+        remediation: 'Use find_sessions to list accessible sessions.',
+      });
+    }
 
     // Live runtime state is best-effort: the runtime may not be started yet, in
     // which case we fall back to the DB status and report no pending action.
