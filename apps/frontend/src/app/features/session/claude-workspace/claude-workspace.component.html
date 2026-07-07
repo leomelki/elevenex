@@ -77,29 +77,33 @@
             </div>
           </div>
         </div>
-      } @else if (lastError()) {
-        <div class="h-full flex items-center justify-center">
-          <div
-            class="max-w-lg rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
-          >
-            {{ lastError() }}
-          </div>
-        </div>
       } @else if (!pairedTranscript().length) {
         <div
           class="h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground text-sm"
         >
-          <div class="text-[0.9375rem] text-foreground font-medium">
-            {{ isTranscriptReadOnly() ? 'No transcript available.' : 'Start with a prompt.' }}
-          </div>
-          @if (!isTranscriptReadOnly()) {
-            <div>
-              Type
-              <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded">/</code>
-              for commands or
-              <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded">$</code>
-              for skills. ⌘↵ to send.
+          @if (lastError()) {
+            <div
+              class="max-w-lg rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
+            >
+              {{ lastError() }}
             </div>
+          } @else {
+            <div class="text-[0.9375rem] text-foreground font-medium">
+              {{ isTranscriptReadOnly() ? 'No transcript available.' : 'Start with a prompt.' }}
+            </div>
+            @if (!isTranscriptReadOnly()) {
+              <div>
+                Type
+                <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded"
+                  >/</code
+                >
+                for commands or
+                <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded"
+                  >$</code
+                >
+                for skills. ⌘↵ to send.
+              </div>
+            }
           }
         </div>
       } @else {
