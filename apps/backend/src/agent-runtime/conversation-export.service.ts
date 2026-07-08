@@ -97,7 +97,7 @@ export class ConversationExportService {
   async buildModel(
     sessionId: number,
     provider: string,
-  ): Promise<{ model: ConversationExportModel; running: boolean }> {
+  ): Promise<{ model: ConversationExportModel; running: boolean; itemCount: number }> {
     const session = await this.sessionsService.findOne(sessionId);
     const runtime = this.registry.getProvider(provider);
     const items = await runtime.getHistory(sessionId);
@@ -122,7 +122,7 @@ export class ConversationExportService {
       running = false;
     }
 
-    return { model: buildExportModel(items, meta), running };
+    return { model: buildExportModel(items, meta), running, itemCount: items.length };
   }
 
   async export(

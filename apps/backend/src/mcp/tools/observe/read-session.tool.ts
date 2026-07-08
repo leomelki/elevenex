@@ -65,7 +65,7 @@ export const readSessionTool = defineTool({
       });
     }
 
-    const { model, running } = await conversationExport.buildModel(
+    const { model, running, itemCount } = await conversationExport.buildModel(
       session.id,
       session.activeAgentProvider,
     );
@@ -75,11 +75,25 @@ export const readSessionTool = defineTool({
     // full read rather than delivering a misleadingly-scoped delta.
     const cursorScope = `${session.id}:${args.precision}`;
     const stored = ctx.cursors.get(ctx.mcpSessionId, cursorScope);
-    const fromTurn = stored !== undefined ? parseInt(stored, 10) : 0;
+
+    // Cursor format: "<turns>:<itemCount>" — tracks both turn boundaries and
+    // intra-turn additions so a completing assistant response is never missed.
+    let fromTurn = 0;
+    let storedItemCount = 0;
     const isDelta = stored !== undefined;
+    if (stored !== undefined) {
+      const colonIdx = stored.indexOf(':');
+      fromTurn = colonIdx === -1 ? parseInt(stored, 10) : parseInt(stored.slice(0, colonIdx), 10);
+      storedItemCount = colonIdx === -1 ? 0 : parseInt(stored.slice(colonIdx + 1), 10);
+    }
     const newTurns = totalTurns - fromTurn;
 
-    if (isDelta && newTurns === 0) {
+    // When the turn count is the same but items grew, the last turn gained
+    // content (e.g. an assistant response was completed mid-turn). Re-deliver
+    // from the last seen turn boundary so the caller gets the updated turn.
+    const lastTurnUpdated = isDelta && newTurns === 0 && itemCount > storedItemCount;
+
+    if (isDelta && newTurns === 0 && !lastTurnUpdated) {
       // Nothing new — skip rendering entirely.
       return {
         data: { sessionId: session.id, delta: true, newTurns: 0, totalTurns, running },
@@ -90,23 +104,26 @@ export const readSessionTool = defineTool({
       };
     }
 
+    // When only the last turn was updated (not a new turn), re-deliver it.
+    const sliceFrom = lastTurnUpdated ? Math.max(0, fromTurn - 1) : fromTurn;
+
     const options: ConversationExportOptions = {
       precision: args.precision,
       includeChanges: args.includeChanges,
       includeIds: args.includeIds,
-      turnNumberOffset: isDelta ? fromTurn : 0,
+      turnNumberOffset: isDelta ? sliceFrom : 0,
     };
 
     const slicedModel: ConversationExportModel = {
       ...model,
       // Preamble (system init items) only belongs in the first full read.
       preamble: isDelta ? [] : model.preamble,
-      turns: model.turns.slice(fromTurn),
+      turns: model.turns.slice(sliceFrom),
     };
 
     const markdown = renderMarkdown(slicedModel, options);
 
-    ctx.cursors.set(ctx.mcpSessionId, cursorScope, String(totalTurns));
+    ctx.cursors.set(ctx.mcpSessionId, cursorScope, `${totalTurns}:${itemCount}`);
 
     return {
       data: {
@@ -120,9 +137,11 @@ export const readSessionTool = defineTool({
       deepLink: ctx.deepLink.session(session.id, { panel: 'transcript' }),
       nextStep: running
         ? 'Runtime still running; use await_session_event then re-read for the next delta.'
-        : isDelta
-          ? `Delta delivered (turns ${fromTurn + 1}–${totalTurns}). Re-read when you expect more turns.`
-          : `Full session delivered (${totalTurns} turn${totalTurns === 1 ? '' : 's'}). Re-read for future deltas.`,
+        : lastTurnUpdated
+          ? `Last turn completed (turn ${totalTurns} updated). Re-read if you expect more turns.`
+          : isDelta
+            ? `Delta delivered (turns ${sliceFrom + 1}–${totalTurns}). Re-read when you expect more turns.`
+            : `Full session delivered (${totalTurns} turn${totalTurns === 1 ? '' : 's'}). Re-read for future deltas.`,
     };
   },
 });

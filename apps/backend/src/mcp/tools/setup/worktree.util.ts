@@ -38,6 +38,7 @@ export function poolItemHandle(item: WorktreePoolItem) {
     hasConflicts: item.hasConflicts,
     isLocked: item.isLocked,
     isMissing: item.isMissing,
+    lastUsedAt: item.lastUsedAt ?? undefined,
   };
 }
 

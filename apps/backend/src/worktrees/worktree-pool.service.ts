@@ -44,6 +44,7 @@ export interface WorktreePoolItem {
   isDirty: boolean;
   hasConflicts: boolean;
   runningAgentCount: number;
+  lastUsedAt: string | null;
   owner: WorktreePoolOwner | null;
   projectWorkspace: {
     id: number;
@@ -122,6 +123,18 @@ export class WorktreePoolService {
       : { currentBranch: null, isDirty: false, hasConflicts: false };
     const currentBranch = statusSnapshot.currentBranch ?? gitInfo?.branch ?? null;
 
+    const contextRows = await this.db
+      .select({ lastUsedAt: schema.worktreeContexts.lastUsedAt })
+      .from(schema.worktreeContexts)
+      .where(
+        and(
+          eq(schema.worktreeContexts.repoId, repoId),
+          eq(schema.worktreeContexts.worktreePath, pool.path),
+        ),
+      )
+      .limit(1);
+    const lastUsedAt = contextRows[0]?.lastUsedAt ?? null;
+
     return {
       id: pool.id,
       repoRootPath: pool.repoRootPath,
@@ -138,6 +151,7 @@ export class WorktreePoolService {
       isDirty: statusSnapshot.isDirty,
       hasConflicts: statusSnapshot.hasConflicts,
       runningAgentCount,
+      lastUsedAt,
       owner,
       projectWorkspace,
     } satisfies WorktreePoolItem;

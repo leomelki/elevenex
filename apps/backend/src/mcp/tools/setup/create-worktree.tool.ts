@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
-import { defaultWorktreePath, resolveRepo } from './worktree.util.js';
+import { defaultWorktreePath, poolItemHandle, resolveRepo } from './worktree.util.js';
 import type { BranchSnapshot } from '../../../worktrees/worktrees.service.js';
+
+/** Worktrees unused for longer than this are candidates to steal/reuse. */
+const STALE_THRESHOLD_MS = 72 * 60 * 60 * 1000; // 72 hours
 
 /**
  * create_worktree — 🔴heavy. Spawns a background `git worktree add` job and
@@ -29,6 +32,8 @@ export const createWorktreeTool = defineTool({
   mutates: true,
   description:
     'Start a background job to create a new git worktree for a branch and return a jobId immediately (never blocks). 🔴heavy. ' +
+    'IMPORTANT: Before calling this tool, always check for existing worktrees to reuse — this tool does that automatically. ' +
+    'If clean worktrees are available (unowned) or clean + idle for >72 h (owned), the tool returns them as candidates instead of creating a new one; use link_worktree or steal_worktree on those candidates. Pass force:true only after confirming with the user that a new worktree is truly needed. ' +
     'If branchName has no local ref and neither from_origin nor startPoint is set, the tool auto-detects the repo default branch (origin/HEAD) and uses it as startPoint — no extra call needed for the common "new branch off main" case. ' +
     'Pass startPoint explicitly to fork from a specific ref (e.g. "origin/release/2.0"). ' +
     'Pass fetch_start_point: true (recommended for new feature branches) to fetch the base ref from origin before forking, so the new branch starts from the latest upstream commit rather than a potentially stale local tracking ref. ' +
@@ -78,9 +83,16 @@ export const createWorktreeTool = defineTool({
       .describe(
         'Explicit absolute path for the worktree. Omit to use the default .worktrees/<repo>/<slug> layout.',
       ),
+    force: z
+      .boolean()
+      .optional()
+      .describe(
+        'Skip the pool pre-check and create a new worktree unconditionally. ' +
+        'Only pass true after the user has confirmed that reusing an existing worktree is not acceptable.',
+      ),
   },
   handler: async (args, ctx) => {
-    const { worktreeJobs, worktrees } = ctx.services;
+    const { worktreeJobs, worktrees, worktreePool } = ctx.services;
     const repo = await resolveRepo(ctx, args.repoId);
     const branchName = args.branchName.trim();
     if (!branchName) {
@@ -89,6 +101,36 @@ export const createWorktreeTool = defineTool({
         message: 'branchName is required.',
         remediation: 'Pass a non-empty branch name.',
       });
+    }
+
+    // Pool pre-check: surface reclaimable worktrees before spawning a new one.
+    if (!args.force) {
+      const now = Date.now();
+      const reclaimable: Array<ReturnType<typeof poolItemHandle> & { reclaimAction: 'link_worktree' | 'steal_worktree' }> = [];
+      await worktreePool.streamForRepo(repo, (item) => {
+        if (item.isDirty || item.hasConflicts || item.isLocked || item.isMissing) return;
+        if (!item.owner) {
+          reclaimable.push({ ...poolItemHandle(item), reclaimAction: 'link_worktree' });
+        } else {
+          const lastUsed = item.lastUsedAt ? new Date(item.lastUsedAt).getTime() : 0;
+          if (now - lastUsed > STALE_THRESHOLD_MS) {
+            reclaimable.push({ ...poolItemHandle(item), reclaimAction: 'steal_worktree' });
+          }
+        }
+      });
+
+      if (reclaimable.length > 0) {
+        return {
+          data: {
+            poolCheckResult: 'reclaimable_worktrees_found',
+            candidates: reclaimable.slice(0, 3),
+          },
+          nextStep:
+            'Reclaimable worktrees found — present these to the user and prefer reusing one. ' +
+            'For category=available use link_worktree; for category=yours (stale) use steal_worktree. ' +
+            'Pass force:true only if the user explicitly confirms a new worktree is needed.',
+        };
+      }
     }
 
     const worktreePath = args.worktreePath?.trim() || defaultWorktreePath(repo, branchName);

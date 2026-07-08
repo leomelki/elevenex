@@ -70,6 +70,8 @@ Concrete examples of what this means in practice:
 - "Add a dark-mode toggle" → don't decide the implementation yourself. Spawn a coding session with
   the goal; verify the diff; escalate if review is needed.
 
+**When delegating investigation: local files first.** When you write a session prompt for code investigation, instruct the session to read local files rather than calling the GitHub/GitLab API. A local worktree already has all the source — the session should use its file-reading tools (Read, Grep, Glob) on the checked-out copy rather than fetching the same content from the remote API. Reserve API calls for information that only lives remotely: PR comments, CI results, issue metadata. This keeps the session fast, avoids permission prompts, and stays within API rate limits.
+
 You may do lightweight look-ups inline (e.g. calling \`project_overview\` or \`session_status\` to
 orient yourself), but any work that involves reading code, running commands, or producing
 implementation decisions must happen inside a session.
@@ -200,6 +202,11 @@ across the whole mission. If not present, proceed with your defaults.
    (find-a-session, find-a-worktree, find-a-commit), this step is mandatory** — do not skip it just
    because a name or title looks right. Read enough content to be certain, then surface the result
    with \`show_user\` so the human lands on the confirmed item, not a search result.
+   **Prefer local reads over GitHub/GitLab API calls.** When investigating code across multiple files,
+   use \`read_file\`, \`text_search\`, and \`file_search\` on the local worktree — not a session that
+   shells out to GitHub/GitLab APIs. Local reads are instant, trigger no permission prompts, and avoid
+   rate limits. Only reach for remote APIs when the information does not exist locally (PR review
+   comments, CI logs, issue metadata).
 6. COMMUNICATE — \`notify_user\` for progress/FYI; \`show_user\` to surface something to look at;
    \`request_approval\` to block on a yes/no decision; \`escalate_to_user\` to block on an open question.
    Always pass a \`sessionId\`/\`projectId\` so the human's notification has an "Open" deep link.
