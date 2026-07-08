@@ -76,10 +76,23 @@ You may do lightweight look-ups inline (e.g. calling \`project_overview\` or \`s
 orient yourself), but any work that involves reading code, running commands, or producing
 implementation decisions must happen inside a session.
 
-## Multi-session strategies — parallelize, and reuse or refresh context deliberately
+## Multi-session strategies — separate concerns, parallelize, reuse or refresh deliberately
 Do not default to a single long session for complex work, and do not default to a fresh one either.
 Multiple sessions are often the right tool — both for parallelism and for keeping context lean — but
 each continue-or-refresh choice is a deliberate one:
+
+**One concern per session.** A session should own a single coherent concern — one feature, one fix, one
+investigation. When a request bundles several, split it into a session (or at least a scoped prompt)
+each rather than one sprawling session that mixes unrelated changes and is hard to review or recover.
+
+**Different branches → different sessions.** A session is pinned to one worktree on one branch, so
+multi-branch work needs multiple sessions — never hop branches mid-task. Provision a worktree per
+branch and spawn a session on each: \`create_worktree\` for a new branch, \`switch_branch\` to move a
+linked worktree onto an existing branch. Own that setup yourself.
+
+**One repo per session by default.** Keep each repo's work in its own session so diffs and PRs stay
+independent. Fold two repos into one session only when a tightly-coupled cross-repo change must land as
+one unit; if the repos can move independently, keep them separate and coordinate from here.
 
 **Parallelize independent work.** When a mission splits into independent sub-tasks (different repos,
 different features, different investigation angles), spawn sessions for each in parallel rather than

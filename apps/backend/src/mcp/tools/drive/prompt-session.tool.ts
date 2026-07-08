@@ -32,7 +32,9 @@ export const promptSessionTool = defineTool({
     prompt: z
       .string()
       .min(1)
-      .describe('The instruction to send to the agent. Required, non-empty.'),
+      .describe(
+        'The instruction to send to the agent. Required, non-empty. Keep each prompt scoped to one coherent concern (one feature/fix/investigation) rather than bundling unrelated work — split unrelated concerns across separate prompts or sessions to avoid long, tangled sessions.',
+      ),
   },
   handler: async (args, ctx) => {
     const { sessions } = ctx.services;
