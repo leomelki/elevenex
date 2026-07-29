@@ -12,13 +12,18 @@ export const findOrCreateProjectTool = defineTool({
   costClass: 'instant',
   mutates: true,
   description:
-    'Find a project by exact name, or create it if missing (idempotent, so resumed missions never duplicate). ⚡instant. Returns the project handle with a created flag. Next: add_repo to attach a repository.',
+    'Find a project by exact name, or create it if missing (idempotent, so resumed missions never duplicate). ⚡instant. Returns the project handle with a created flag. Next: add_repo to attach a repository. ' +
+    'Matching is exact-name, so before inventing one, call project_overview and look at this user\'s existing project names to infer their convention: do they run one project per repo (or fixed repo combo), reused across many tasks — or one project per feature/task? Follow whichever pattern is already established for this user, even if it differs from the default below. ' +
+    'If there is no established pattern yet (e.g. this is the first project), default to naming after what the project durably represents — the repo, or the repo combination it holds — NOT the current feature/task, since a task-named project (e.g. "fix-login-timeout") will never be found again next time you work in the same repo, leaving one throwaway project per task instead of one reusable project per repo. For a single-repo project, prefer that repo\'s own name (e.g. "dd-source"). Use a feature/task name only when the project genuinely represents a fixed multi-repo combination assembled for that task and reuse across other tasks is not expected.',
   annotations: { idempotentHint: true },
   inputShape: {
     name: z
       .string()
       .min(1)
-      .describe('Exact project name to find or create (unique). Trimmed.'),
+      .describe(
+        'Exact project name to find or create (unique). Trimmed. ' +
+        'Check project_overview first to match this user\'s established naming convention (per-repo vs per-feature). Absent a pattern, prefer the repo name for single-repo projects; avoid feature/task-specific names so the same project gets reused across tasks in that repo.',
+      ),
   },
   handler: async (args, ctx) => {
     const { projects } = ctx.services;
