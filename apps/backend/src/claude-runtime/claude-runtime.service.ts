@@ -5,13 +5,15 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { access, readdir, readFile, realpath, writeFile } from 'fs/promises';
 import { constants as fsConstants, readFileSync } from 'fs';
 import { createRequire } from 'module';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { basename, dirname, join, relative, resolve } from 'path';
 import { eq } from 'drizzle-orm';
 import {
@@ -421,9 +423,14 @@ const CLAUDE_PREWARM_IDLE_SHUTDOWN_MS = 90_000;
 const CLAUDE_POST_TURN_IDLE_SHUTDOWN_MS = 5 * 60_000;
 const CLAUDE_PREWARM_COOLDOWN_MS = 30_000;
 const MAX_IDLE_CLAUDE_RUNTIMES = 2;
+const CLAUDE_MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
+const CLAUDE_MODELS_BACKGROUND_REFRESH_MS = 10 * 60 * 1000;
 
 @Injectable()
-export class ClaudeRuntimeService extends EventEmitter {
+export class ClaudeRuntimeService
+  extends EventEmitter
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger('ClaudeRuntimeService');
   private readonly activeRuns = new Map<number, ActiveRunState>();
   private readonly sessionRuntimes = new Map<number, ClaudeSessionRuntime>();
@@ -452,6 +459,17 @@ export class ClaudeRuntimeService extends EventEmitter {
   );
   private claudeCliOverride = this.resolveClaudeCliOverride();
 
+  // Global, cross-session cache of the models Claude currently reports as
+  // available for the authenticated account. This lets the UI show the real
+  // model list immediately (e.g. in the model picker) without waiting for a
+  // per-session Claude Code process to spawn on the first prompt. The cache
+  // is warmed at startup, refreshed periodically in the background, and
+  // opportunistically updated by any session's own live process.
+  private modelsCache: ClaudeModelOption[] | null = null;
+  private modelsCacheAt = 0;
+  private modelsRefreshPromise: Promise<ClaudeModelOption[]> | null = null;
+  private modelsRefreshTimer: NodeJS.Timeout | null = null;
+
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly sessionsService: SessionsService,
@@ -473,6 +491,23 @@ export class ClaudeRuntimeService extends EventEmitter {
         this.handleHookEvent(data.sessionId, data.payload, data.timestamp);
       },
     );
+  }
+
+  onModuleInit(): void {
+    // Warm the model list cache in the background so it is ready before any
+    // session runtime needs it, and keep it fresh without any user action.
+    this.refreshGlobalModels('startup').catch(() => undefined);
+    this.modelsRefreshTimer = setInterval(() => {
+      this.refreshGlobalModels('interval').catch(() => undefined);
+    }, CLAUDE_MODELS_BACKGROUND_REFRESH_MS);
+    this.modelsRefreshTimer.unref?.();
+  }
+
+  onModuleDestroy(): void {
+    if (this.modelsRefreshTimer) {
+      clearInterval(this.modelsRefreshTimer);
+      this.modelsRefreshTimer = null;
+    }
   }
 
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
@@ -519,6 +554,17 @@ export class ClaudeRuntimeService extends EventEmitter {
   async getRuntimeState(sessionId: number): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+
+    // No live Claude Code process for this session yet (e.g. before the
+    // first prompt is sent): fall back to the globally cached model list
+    // instead of the static defaults baked into this service.
+    if (!this.sessionRuntimes.has(sessionId) && this.modelsCache?.length) {
+      state.availableModels = this.modelsCache;
+    }
+    if (!this.sessionRuntimes.has(sessionId)) {
+      this.refreshGlobalModelsIfStale();
+    }
+
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
@@ -3776,7 +3822,9 @@ export class ClaudeRuntimeService extends EventEmitter {
       fastMode: false,
       selectedPermissionMode: 'auto',
       planMode: false,
-      availableModels: [...FALLBACK_MODELS],
+      availableModels: this.modelsCache?.length
+        ? [...this.modelsCache]
+        : [...FALLBACK_MODELS],
       contextUsage: null,
       sessionMetadata: null,
       runtimeStatus: null,
@@ -4672,9 +4720,15 @@ export class ClaudeRuntimeService extends EventEmitter {
           runtime.supportedModels(),
           runtime.getContextUsage(),
         ]);
-        state.availableModels = models.map((model) =>
-          this.toModelOption(model),
-        );
+        const mappedModels = models.map((model) => this.toModelOption(model));
+        state.availableModels = mappedModels;
+        // A running Claude Code process is the freshest source of truth for
+        // the current account's models, so opportunistically update the
+        // global cache other sessions/pickers read from.
+        if (mappedModels.length) {
+          this.modelsCache = mappedModels;
+          this.modelsCacheAt = Date.now();
+        }
         state.contextUsage = this.toContextUsage(contextUsage);
         state.selectedModel = contextUsage.model || state.selectedModel;
         if (state.sessionMetadata && contextUsage.model) {
@@ -4713,6 +4767,102 @@ export class ClaudeRuntimeService extends EventEmitter {
       supportsEffort: model.supportsEffort,
       supportsFastMode: model.supportsFastMode,
       supportsAutoMode: model.supportsAutoMode,
+    };
+  }
+
+  /**
+   * Refreshes the process-wide model list cache by starting a short-lived,
+   * throwaway Claude Code process (independent of any session's worktree)
+   * and asking it which models it supports. Concurrent calls are coalesced
+   * into a single in-flight refresh; failures keep serving the last
+   * known-good list rather than reverting to the static fallback.
+   */
+  private async refreshGlobalModels(
+    reason: string,
+    force = false,
+  ): Promise<ClaudeModelOption[]> {
+    if (this.modelsRefreshPromise) return this.modelsRefreshPromise;
+    if (
+      !force &&
+      Date.now() - this.modelsCacheAt < CLAUDE_MODELS_CACHE_TTL_MS
+    ) {
+      return this.modelsCache ?? [...FALLBACK_MODELS];
+    }
+
+    const refreshPromise = (async () => {
+      let runtime: ClaudeSessionRuntime | null = null;
+      try {
+        const options = await this.buildEphemeralModelQueryOptions();
+        runtime = new ClaudeSessionRuntime({
+          sessionId: -1,
+          options,
+          onMessage: () => undefined,
+          onFatal: () => undefined,
+          onClosed: () => undefined,
+          prewarmIdleShutdownMs: 30_000,
+          postTurnIdleShutdownMs: 30_000,
+        });
+        const models = await runtime.supportedModels();
+        const mapped = models.map((model) => this.toModelOption(model));
+        if (mapped.length) {
+          this.modelsCache = mapped;
+        }
+        this.modelsCacheAt = Date.now();
+        this.logger.debug(
+          `Refreshed Claude models cache reason=${reason} count=${mapped.length}`,
+        );
+        return this.modelsCache ?? [...FALLBACK_MODELS];
+      } catch (error) {
+        // Keep serving the last known-good list rather than clearing it out
+        // on a transient failure (e.g. Claude CLI briefly unavailable).
+        this.modelsCacheAt = Date.now();
+        this.logger.debug(
+          `Failed to refresh Claude models cache reason=${reason}: ${String(error)}`,
+        );
+        return this.modelsCache ?? [...FALLBACK_MODELS];
+      } finally {
+        await runtime?.close().catch(() => undefined);
+      }
+    })();
+
+    this.modelsRefreshPromise = refreshPromise.finally(() => {
+      this.modelsRefreshPromise = null;
+    });
+    return this.modelsRefreshPromise;
+  }
+
+  private refreshGlobalModelsIfStale(): void {
+    if (Date.now() - this.modelsCacheAt < CLAUDE_MODELS_CACHE_TTL_MS) return;
+    this.refreshGlobalModels('stale_on_read').catch(() => undefined);
+  }
+
+  /**
+   * Minimal, session-independent Options for probing the model catalog: a
+   * scratch cwd with no project settings loaded and tool use denied (the
+   * probe never issues a turn, so no tool call should ever occur).
+   */
+  private async buildEphemeralModelQueryOptions(): Promise<Options> {
+    const cwd = tmpdir();
+    const pathToClaudeCodeExecutable =
+      this.claudeCliOverride?.path ??
+      this.resolveSdkClaudePath() ??
+      findBinary('claude') ??
+      undefined;
+    const denyTool: CanUseTool = () =>
+      Promise.resolve({
+        behavior: 'deny',
+        message: 'Model catalog probe does not execute tools.',
+      });
+    const declineElicitation = (): Promise<ElicitationResult> =>
+      Promise.resolve({ action: 'decline' });
+    return {
+      cwd,
+      permissionMode: 'default' as PermissionMode,
+      settingSources: [],
+      canUseTool: denyTool,
+      onElicitation: declineElicitation,
+      ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
+      env: await buildAugmentedEnvAsync(process.env, cwd),
     };
   }
 

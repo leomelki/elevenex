@@ -2,6 +2,8 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import type {
   ApprovalMode,
@@ -122,7 +124,10 @@ interface CodexThreadStartResult {
 }
 
 @Injectable()
-export class CodexRuntimeService extends EventEmitter {
+export class CodexRuntimeService
+  extends EventEmitter
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger('CodexRuntimeService');
   private readonly activeRuns = new Map<number, CodexActiveRunState>();
   private readonly runtimeStates = new Map<number, CodexRuntimeState>();
@@ -132,6 +137,7 @@ export class CodexRuntimeService extends EventEmitter {
   private lastModelRefreshAt = 0;
   private modelRefreshInFlight: Promise<void> | null = null;
   private modelRefreshTimer: NodeJS.Timeout | null = null;
+  private modelCatalogInterval: NodeJS.Timeout | null = null;
   private readonly prewarmInFlight = new Map<number, Promise<void>>();
   private readonly lastPrewarmAt = new Map<number, number>();
   constructor(
@@ -143,6 +149,29 @@ export class CodexRuntimeService extends EventEmitter {
     private readonly titleService: SessionTitleService,
   ) {
     super();
+  }
+
+  onModuleInit(): void {
+    // Warm the model catalog in the background at startup so it's ready
+    // before any session even opens, instead of waiting for the first
+    // getRuntimeState() call to schedule a refresh (and its idle delay).
+    this.refreshModelCatalogInBackground();
+    this.modelCatalogInterval = setInterval(() => {
+      if (this.activeRuns.size > 0) return;
+      this.refreshModelCatalogInBackground();
+    }, CODEX_MODEL_REFRESH_TTL_MS);
+    this.modelCatalogInterval.unref?.();
+  }
+
+  onModuleDestroy(): void {
+    if (this.modelCatalogInterval) {
+      clearInterval(this.modelCatalogInterval);
+      this.modelCatalogInterval = null;
+    }
+    if (this.modelRefreshTimer) {
+      clearTimeout(this.modelRefreshTimer);
+      this.modelRefreshTimer = null;
+    }
   }
 
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
