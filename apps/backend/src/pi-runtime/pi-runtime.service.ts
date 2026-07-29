@@ -368,6 +368,7 @@ export class PiRuntimeService
       state.canInterrupt = true;
       state.lastError = null;
       state.liveItems = [];
+      state.streamingAssistantMessageId = null;
       this.emitRunState(sessionId);
 
       const runtime = await this.ensureRuntime(sessionId);
@@ -839,9 +840,17 @@ export class PiRuntimeService
     const message = event.message as Record<string, unknown> | undefined;
     if (!message || event.type !== 'message_end') return;
     if (message.role === 'user') return;
+    const state = this.ensureRuntimeState(sessionId);
+    // Reuse the exact id assigned to this message while it was streaming (if
+    // any) so the final snapshot reconciles with the in-progress
+    // text/thinking items instead of appending duplicates. Passed as
+    // `precomputedId` (rather than `fallbackId`) so it is used verbatim
+    // instead of being combined again with the message timestamp.
     for (const item of this.messageToTranscriptItems(
       message,
-      String(event.type),
+      randomUUID(),
+      undefined,
+      state.streamingAssistantMessageId ?? undefined,
     )) {
       const type =
         item.kind === 'tool_result'
@@ -853,6 +862,7 @@ export class PiRuntimeService
               : 'message_start';
       this.pushItem(sessionId, item, type);
     }
+    state.streamingAssistantMessageId = null;
   }
 
   private handleMessageUpdate(
@@ -864,7 +874,19 @@ export class PiRuntimeService
       | undefined;
     if (!update) return;
     const message = event.message as Record<string, unknown> | undefined;
-    const sourceMessageId = this.messageId(message);
+    const state = this.ensureRuntimeState(sessionId);
+    // Assign the id once per streamed assistant message and reuse it for
+    // every subsequent update (and the final message_end snapshot). Calling
+    // messageId(message) again on every event would mint a fresh random
+    // fallback id whenever the provider doesn't attach a stable signature
+    // (e.g. non-Anthropic reasoning), breaking delta accumulation and
+    // leaving both a stale streamed item and a duplicate final item.
+    const sourceMessageId =
+      state.streamingAssistantMessageId ??
+      (state.streamingAssistantMessageId = this.messageId(
+        message,
+        randomUUID(),
+      ));
     const contentIndex = Number(update.contentIndex ?? 0);
     const itemId = `${sourceMessageId}:${update.type}:${contentIndex}`;
 
@@ -1114,6 +1136,7 @@ export class PiRuntimeService
       canInterrupt: false,
       pendingPrompts: [],
       liveItems: [],
+      streamingAssistantMessageId: null,
       pendingUserInputRequest: null,
       lastError: null,
       selectedModel: null,
@@ -1382,8 +1405,14 @@ export class PiRuntimeService
     message: Record<string, unknown>,
     fallbackId: string,
     transcriptMessageId?: string,
+    precomputedId?: string,
   ): ClaudeTranscriptItem[] {
-    const id = this.messageId(message, fallbackId);
+    // `precomputedId` is used verbatim (e.g. the id already assigned to an
+    // assistant message while it was streaming) instead of being re-derived
+    // via messageId(), which would otherwise combine it with the message
+    // timestamp again and produce a different id than the one used for the
+    // in-progress streamed transcript items.
+    const id = precomputedId ?? this.messageId(message, fallbackId);
     const timestamp = this.timestampFromMessage(message);
     if (message.role === 'user') {
       return [
@@ -1408,7 +1437,11 @@ export class PiRuntimeService
         const block = part as Record<string, unknown>;
         if (block.type === 'text') {
           items.push({
-            id: `${id}:assistant:${index}`,
+            // Id must match the streaming `text_start` item id
+            // (`${sourceMessageId}:text_start:${contentIndex}`) so that the
+            // final message_end snapshot replaces the in-progress streamed
+            // item instead of being appended as a duplicate transcript entry.
+            id: `${id}:text_start:${index}`,
             kind: 'assistant',
             content: typeof block.text === 'string' ? block.text : '',
             sourceMessageId: id,
@@ -1418,7 +1451,10 @@ export class PiRuntimeService
           });
         } else if (block.type === 'thinking') {
           items.push({
-            id: `${id}:thinking:${index}`,
+            // Same rationale as the text block above: align with the
+            // streaming `thinking_start` item id so message_end reconciles
+            // the streamed reasoning instead of duplicating it.
+            id: `${id}:thinking_start:${index}`,
             kind: 'thinking',
             content: typeof block.thinking === 'string' ? block.thinking : '',
             sourceMessageId: id,

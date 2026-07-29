@@ -69,6 +69,13 @@ export interface PiRuntimeState {
     images?: AgentImageInput[];
   }[];
   liveItems: ClaudeTranscriptItem[];
+  // Stable id for the assistant message currently being streamed, shared by
+  // every `message_update` event and the terminating `message_end` event so
+  // their transcript items reconcile to a single entry instead of the
+  // `message_end` snapshot being appended as a duplicate (this previously
+  // caused reasoning/answer text to render twice, since each call computed
+  // its own random fallback id when the provider omitted a signature).
+  streamingAssistantMessageId: string | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   lastError: string | null;
   selectedModel: string | null;

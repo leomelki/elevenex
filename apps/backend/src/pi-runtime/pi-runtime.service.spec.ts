@@ -407,4 +407,72 @@ describe('PiRuntimeService lifecycle', () => {
     expect(first.kill).toHaveBeenCalledWith('SIGTERM');
     expect(second.kill).not.toHaveBeenCalled();
   });
+
+  it('reconciles streamed thinking/text items with the final message_end snapshot instead of duplicating them', async () => {
+    const { service } = createService();
+    const sessionId = 1;
+    const timestamp = Date.parse('2026-05-22T10:01:00.000Z');
+    const partialMessage = {
+      role: 'assistant',
+      timestamp,
+      content: [
+        { type: 'thinking', thinking: 'partial reasoning' },
+        { type: 'text', text: 'partial answer' },
+      ],
+    };
+    const finalMessage = {
+      role: 'assistant',
+      timestamp,
+      content: [
+        { type: 'thinking', thinking: 'full reasoning' },
+        { type: 'text', text: 'full answer' },
+      ],
+    };
+
+    (service as any).handlePiEvent(sessionId, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 },
+      message: partialMessage,
+    });
+    (service as any).handlePiEvent(sessionId, {
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'thinking_delta',
+        contentIndex: 0,
+        delta: 'partial reasoning',
+      },
+      message: partialMessage,
+    });
+    (service as any).handlePiEvent(sessionId, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_start', contentIndex: 1 },
+      message: partialMessage,
+    });
+    (service as any).handlePiEvent(sessionId, {
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'text_delta',
+        contentIndex: 1,
+        delta: 'partial answer',
+      },
+      message: partialMessage,
+    });
+    (service as any).handlePiEvent(sessionId, {
+      type: 'message_end',
+      message: finalMessage,
+    });
+
+    const state = await service.getRuntimeState(sessionId);
+    const thinkingItems = state.liveItems.filter(
+      (item) => item.kind === 'thinking',
+    );
+    const assistantItems = state.liveItems.filter(
+      (item) => item.kind === 'assistant',
+    );
+
+    expect(thinkingItems).toHaveLength(1);
+    expect(thinkingItems[0]?.content).toBe('full reasoning');
+    expect(assistantItems).toHaveLength(1);
+    expect(assistantItems[0]?.content).toBe('full answer');
+  });
 });
