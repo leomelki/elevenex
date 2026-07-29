@@ -4,10 +4,12 @@ import {
   Logger,
   NotFoundException,
   OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
 import { basename, dirname, extname, join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type {
@@ -41,6 +43,8 @@ import type {
 
 const DEFAULT_IDLE_SHUTDOWN_MS = 5 * 60 * 1000;
 const DEFAULT_IDLE_RUNTIME_CAP = 20;
+const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
+const MODELS_BACKGROUND_REFRESH_MS = 10 * 60 * 1000;
 
 interface PiActiveRun {
   completionPromise: Promise<void>;
@@ -66,7 +70,10 @@ interface PiRuntimeEntry {
 }
 
 @Injectable()
-export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
+export class PiRuntimeService
+  extends EventEmitter
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger(PiRuntimeService.name);
   private readonly activeRuns = new Map<number, PiActiveRun>();
   private readonly initializingRuns = new Set<number>();
@@ -77,6 +84,17 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     Number(process.env.PI_RUNTIME_IDLE_MS) || DEFAULT_IDLE_SHUTDOWN_MS;
   private readonly idleRuntimeCap =
     Number(process.env.PI_RUNTIME_IDLE_CAP) || DEFAULT_IDLE_RUNTIME_CAP;
+
+  // Global, cross-session cache of the models Pi currently reports as
+  // available for the authenticated account(s). This lets the UI show the
+  // real model list immediately (e.g. in the model picker) without waiting
+  // for a per-session Pi RPC process to spawn on first prompt. The cache is
+  // warmed at startup, refreshed periodically in the background, and
+  // refreshed whenever auth credentials change.
+  private modelsCache: ClaudeModelOption[] | null = null;
+  private modelsCacheAt = 0;
+  private modelsRefreshPromise: Promise<ClaudeModelOption[]> | null = null;
+  private modelsRefreshTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly sessionsService: SessionsService,
@@ -90,8 +108,22 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     });
   }
 
+  onModuleInit(): void {
+    // Warm the model list cache in the background so it is ready before any
+    // session runtime needs it, and keep it fresh without any user action.
+    this.refreshGlobalModels('startup').catch(() => undefined);
+    this.modelsRefreshTimer = setInterval(() => {
+      this.refreshGlobalModels('interval').catch(() => undefined);
+    }, MODELS_BACKGROUND_REFRESH_MS);
+    this.modelsRefreshTimer.unref?.();
+  }
+
   private async handleAuthStatusChange(status: PiAuthStatus): Promise<void> {
     if (status.isAuthenticating) return;
+    // Credentials changed: the model list may have changed too (new provider,
+    // different account, etc.), so force a background refresh of the global
+    // cache regardless of whether any session runtime is currently active.
+    this.refreshGlobalModels('auth_status_change', true).catch(() => undefined);
     const sessionIds = Array.from(this.runtimes.keys());
     if (sessionIds.length === 0) return;
     await Promise.all(
@@ -153,6 +185,17 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
     const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
     state.cachedWorktreePath = session.worktreePath;
     state.authStatus = await this.authService.getStatus();
+
+    // No live Pi RPC process for this session yet (e.g. before the first
+    // prompt is sent): fall back to the globally cached model list instead
+    // of showing an empty picker until a runtime spawns.
+    if (!state.availableModels.length && this.modelsCache?.length) {
+      state.availableModels = this.modelsCache;
+    }
+    if (!this.runtimes.has(sessionId)) {
+      this.refreshGlobalModelsIfStale();
+    }
+
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
@@ -522,6 +565,10 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    if (this.modelsRefreshTimer) {
+      clearInterval(this.modelsRefreshTimer);
+      this.modelsRefreshTimer = null;
+    }
     await Promise.all(
       [...this.runtimes.keys()].map((id) => this.stopRuntime(id)),
     );
@@ -633,14 +680,79 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       const response = await runtime.send<{ models?: unknown[] }>({
         type: 'get_available_models',
       });
-      state.availableModels = (
-        Array.isArray(response?.models) ? response.models : []
-      )
+      const models = (Array.isArray(response?.models) ? response.models : [])
         .map((model) => this.toModelOption(model))
         .filter((model): model is ClaudeModelOption => Boolean(model));
+      state.availableModels = models;
+      // A running Pi RPC process is the freshest source of truth for the
+      // current account's models, so opportunistically update the global
+      // cache other sessions/pickers read from.
+      if (models.length) {
+        this.modelsCache = models;
+        this.modelsCacheAt = Date.now();
+      }
     } catch {
-      state.availableModels = [];
+      state.availableModels = this.modelsCache ? [...this.modelsCache] : [];
     }
+  }
+
+  /**
+   * Refreshes the process-wide model list cache by spawning a short-lived Pi
+   * RPC process, independent of any session's worktree/runtime. Concurrent
+   * calls are coalesced into a single in-flight refresh.
+   */
+  private async refreshGlobalModels(
+    reason: string,
+    force = false,
+  ): Promise<ClaudeModelOption[]> {
+    if (this.modelsRefreshPromise) return this.modelsRefreshPromise;
+    if (!force && Date.now() - this.modelsCacheAt < MODELS_CACHE_TTL_MS) {
+      return this.modelsCache ?? [];
+    }
+
+    const refreshPromise = (async () => {
+      const runtime = new PiSessionRuntime({
+        cwd: tmpdir(),
+        timeoutMs: 15_000,
+      });
+      try {
+        await runtime.start();
+        const response = await runtime.send<{ models?: unknown[] }>({
+          type: 'get_available_models',
+        });
+        const models = (Array.isArray(response?.models) ? response.models : [])
+          .map((model) => this.toModelOption(model))
+          .filter((model): model is ClaudeModelOption => Boolean(model));
+        if (models.length) {
+          this.modelsCache = models;
+        }
+        this.modelsCacheAt = Date.now();
+        this.logger.debug(
+          `Refreshed Pi models cache reason=${reason} count=${models.length}`,
+        );
+        return this.modelsCache ?? [];
+      } catch (error) {
+        // Keep serving the last known-good list rather than clearing it out
+        // on a transient failure (e.g. Pi CLI briefly unavailable).
+        this.modelsCacheAt = Date.now();
+        this.logger.debug(
+          `Failed to refresh Pi models cache reason=${reason}: ${String(error)}`,
+        );
+        return this.modelsCache ?? [];
+      } finally {
+        await runtime.stop().catch(() => undefined);
+      }
+    })();
+
+    this.modelsRefreshPromise = refreshPromise.finally(() => {
+      this.modelsRefreshPromise = null;
+    });
+    return this.modelsRefreshPromise;
+  }
+
+  private refreshGlobalModelsIfStale(): void {
+    if (Date.now() - this.modelsCacheAt < MODELS_CACHE_TTL_MS) return;
+    this.refreshGlobalModels('stale_on_read').catch(() => undefined);
   }
 
   private handlePiEvent(sessionId: number, event: PiSessionRuntimeEvent): void {
@@ -1007,7 +1119,7 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       selectedModel: null,
       reasoningEffort: null,
       fastMode: false,
-      availableModels: [],
+      availableModels: this.modelsCache ? [...this.modelsCache] : [],
       contextUsage: null,
       sessionMetadata: null,
       authStatus: null,
@@ -1198,7 +1310,8 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
       for (const [index, entry] of entries.entries()) {
         const type = entry.type;
         // Accept both Pi SDK format ("message") and Claude Code CLI format ("user"/"assistant").
-        if (type !== 'message' && type !== 'user' && type !== 'assistant') continue;
+        if (type !== 'message' && type !== 'user' && type !== 'assistant')
+          continue;
         const rawMessage = asRecord(entry.message);
         if (!rawMessage) continue;
         // Claude Code CLI entries carry timestamp on the top-level entry, not inside message.
@@ -1317,7 +1430,8 @@ export class PiRuntimeService extends EventEmitter implements OnModuleDestroy {
           const toolUseId = String(block.id ?? `${id}:${index}`);
           const toolName = String(block.name ?? 'Tool');
           // Pi SDK uses "arguments"; Claude Code CLI uses "input".
-          const rawInput = block.type === 'tool_use' ? block['input'] : block['arguments'];
+          const rawInput =
+            block.type === 'tool_use' ? block['input'] : block['arguments'];
           const providerToolInput = this.normalizePiToolInput(
             toolName,
             rawInput,
