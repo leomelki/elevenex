@@ -184,7 +184,7 @@ export class GitService {
     ]);
 
     const branch = status.current || 'HEAD';
-    const upstream = await this.getUpstream(git);
+    const upstream = await this.getUpstream(git, branch);
     const { ahead, behind } = upstream
       ? await this.getAheadBehind(git, branch, upstream)
       : { ahead: 0, behind: 0 };
@@ -729,7 +729,10 @@ export class GitService {
     };
   }
 
-  private async getUpstream(git: SimpleGit): Promise<string | null> {
+  private async getUpstream(
+    git: SimpleGit,
+    branch: string,
+  ): Promise<string | null> {
     try {
       return (
         await git.raw([
@@ -739,6 +742,29 @@ export class GitService {
           '@{u}',
         ])
       ).trim();
+    } catch {
+      // No tracking branch configured (e.g. branch created without -u/--set-upstream).
+      // Fall back to a remote branch of the same name so a fully-synced branch
+      // isn't misreported as having unpushed commits.
+      return this.findMatchingRemoteBranch(git, branch);
+    }
+  }
+
+  private async findMatchingRemoteBranch(
+    git: SimpleGit,
+    branch: string,
+  ): Promise<string | null> {
+    if (branch === 'HEAD') return null;
+    try {
+      const remotes = await git.getRemotes(true);
+      const remote =
+        remotes.find((candidate) => candidate.name === 'origin') ??
+        remotes[0];
+      if (!remote) return null;
+
+      const upstream = `${remote.name}/${branch}`;
+      await git.raw(['rev-parse', '--verify', `refs/remotes/${upstream}`]);
+      return upstream;
     } catch {
       return null;
     }
