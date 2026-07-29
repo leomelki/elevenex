@@ -10,6 +10,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideBan,
   lucideCheckCircle,
   lucideChevronDown,
   lucideCheck,
@@ -48,6 +49,7 @@ import { type TaskNotification, parseTaskNotifications } from '@/shared/utils/ta
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
+      lucideBan,
       lucideCheckCircle,
       lucideChevronDown,
       lucideCheck,
@@ -102,6 +104,7 @@ export class ClaudeMessageComponent {
   readonly openPlanChat = output<PlanReviewRequest>();
 
   readonly isEmpty = computed(() => !this.item().content);
+  readonly syntheticMessageInfo = computed(() => getSyntheticMessageInfo(this.item()));
   readonly hasInlineAffordances = computed(
     () => this.showCopy() || this.showEdit() || this.showFork() || this.forks().length > 0,
   );
@@ -222,4 +225,27 @@ function formatTimestamp(value: string): string {
 
 function isWarningText(value: string | undefined): boolean {
   return /\b(warn(?:ing)?|deprecated|ignoring|malformed|invalid config)\b/i.test(value ?? '');
+}
+
+interface SyntheticMessageInfo {
+  icon: string;
+  label: string;
+}
+
+function getSyntheticMessageInfo(item: ClaudeTranscriptItem): SyntheticMessageInfo | null {
+  if (!item.isSynthetic || item.kind !== 'user') return null;
+  const text = item.content ?? '';
+  if (text === '[Request interrupted by user]' || text === '[Request interrupted by user for tool use]') {
+    return { icon: 'lucideSquare', label: 'Request interrupted' };
+  }
+  if (text.startsWith("The user doesn't want to take this action right now.")) {
+    return { icon: 'lucideBan', label: 'Action cancelled' };
+  }
+  if (text.startsWith("The user doesn't want to proceed with this tool use.")) {
+    return { icon: 'lucideBan', label: 'Tool use rejected' };
+  }
+  if (text === 'No response requested.') {
+    return null;
+  }
+  return { icon: 'lucideBan', label: 'Request stopped' };
 }

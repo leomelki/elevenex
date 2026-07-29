@@ -2754,11 +2754,13 @@ export class ClaudeRuntimeService extends EventEmitter {
         // mirror normalizeHistory so the live item dedupes cleanly against the
         // persisted history item once the transcript reloads.
         const messageId = message.uuid ?? randomUUID();
+        const strippedText = this.stripInjectedWorktreeContext(part.text);
         const item: ClaudeTranscriptItem = {
           id: `${messageId}:user:${partIndex}`,
           kind: 'user',
-          content: this.stripInjectedWorktreeContext(part.text),
+          content: strippedText,
           parentToolUseId: message.parent_tool_use_id ?? undefined,
+          isSynthetic: this.isSyntheticUserMessage(strippedText) || undefined,
           sourceMessageId: message.uuid,
           transcriptMessageId: message.uuid,
           timestamp: authoredAt,
@@ -4870,11 +4872,13 @@ export class ClaudeRuntimeService extends EventEmitter {
             typeof part.text === 'string' &&
             this.stripInjectedWorktreeContext(part.text).trim()
           ) {
+            const normalizedText = this.stripInjectedWorktreeContext(part.text);
             normalized.push({
               id: `${message.uuid}:user:${index}`,
               kind: 'user',
-              content: this.stripInjectedWorktreeContext(part.text),
+              content: normalizedText,
               parentToolUseId,
+              isSynthetic: this.isSyntheticUserMessage(normalizedText) || undefined,
               sourceMessageId: message.uuid,
               transcriptMessageId: message.uuid,
               timestamp,
@@ -5387,6 +5391,18 @@ export class ClaudeRuntimeService extends EventEmitter {
 
   private normalizeToolName(name: string): string {
     return name.toLowerCase().replace(/[_-]/g, '');
+  }
+
+  private isSyntheticUserMessage(text: string): boolean {
+    return (
+      text === '[Request interrupted by user]' ||
+      text === '[Request interrupted by user for tool use]' ||
+      text === 'No response requested.' ||
+      text.startsWith("The user doesn't want to take this action right now.") ||
+      text.startsWith("The user doesn't want to proceed with this tool use.") ||
+      text.startsWith('Permission for this tool use was denied.') ||
+      text.startsWith('Permission to use ')
+    );
   }
 
   private stripInjectedWorktreeContext(text: string): string {

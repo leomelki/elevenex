@@ -1,6 +1,18 @@
 @switch (item().kind) {
   @case ('user') {
-    @if (isTaskNotificationOnly()) {
+    @if (syntheticMessageInfo(); as info) {
+      <div class="cw-synthetic-event" [attr.title]="timestampTitle()">
+        <span class="cw-synthetic-event__line" aria-hidden="true"></span>
+        <span class="cw-synthetic-event__pill">
+          <ng-icon [name]="info.icon" size="11" />
+          <span>{{ info.label }}</span>
+          @if (timestampLabel(); as label) {
+            <span class="cw-synthetic-event__time" aria-hidden="true">{{ label }}</span>
+          }
+        </span>
+        <span class="cw-synthetic-event__line" aria-hidden="true"></span>
+      </div>
+    } @else if (isTaskNotificationOnly()) {
       <div class="cw-task-notif" [attr.title]="timestampTitle()">
         @for (notif of userTaskNotifications(); track notif.taskId) {
           <div

@@ -94,6 +94,7 @@ export interface ClaudeTranscriptItem {
   providerToolInput?: unknown;
   interaction?: ClaudeToolInteractionSummary;
   isError?: boolean;
+  isSynthetic?: boolean;
   sourceMessageId?: string;
   transcriptMessageId?: string;
   timestamp: string;
