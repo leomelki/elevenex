@@ -38,6 +38,7 @@ export const createWorktreeTool = defineTool({
     'Pass startPoint explicitly to fork from a specific ref (e.g. "origin/release/2.0"). ' +
     'Pass fetch_start_point: true (recommended for new feature branches) to fetch the base ref from origin before forking, so the new branch starts from the latest upstream commit rather than a potentially stale local tracking ref. ' +
     'Pass from_origin: true to fetch an existing remote branch instead of creating a new one; this also returns a branchSnapshot (ahead/behind, last commit). ' +
+    'Prefer passing an explicit worktreePath with a name of its own (task/feature-based, e.g. "fix-login-timeout") rather than letting it default to a slug of branchName — branches get renamed/rebased/reused across worktrees, so a worktree name tied to the branch name goes stale and gets confusing; give the worktree an identity that is decorrelated from the branch it currently holds. ' +
     'The job dedupes on repo+branch+path. Next: poll get_worktree_job until succeeded, then link_worktree.',
   annotations: { idempotentHint: true },
   inputShape: {
@@ -81,7 +82,8 @@ export const createWorktreeTool = defineTool({
       .string()
       .optional()
       .describe(
-        'Explicit absolute path for the worktree. Omit to use the default .worktrees/<repo>/<slug> layout.',
+        'Explicit absolute path for the worktree. Choose a name for the worktree itself (its final path segment), not just a copy of branchName — worktrees often outlive or get relinked to a different branch than the one they were created for, so a good name describes the task/workspace, not the branch. ' +
+        'Omit only if you have no better name; the default falls back to .worktrees/<repo>/<slug-of-branchName>.',
       ),
     force: z
       .boolean()
