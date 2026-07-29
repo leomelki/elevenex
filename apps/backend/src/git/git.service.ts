@@ -184,10 +184,30 @@ export class GitService {
     ]);
 
     const branch = status.current || 'HEAD';
-    const upstream = await this.getUpstream(git, branch);
-    const { ahead, behind } = upstream
-      ? await this.getAheadBehind(git, branch, upstream)
-      : { ahead: 0, behind: 0 };
+    let upstream = await this.getUpstream(git);
+    let ahead = 0;
+    let behind = 0;
+    if (upstream) {
+      ({ ahead, behind } = await this.getAheadBehind(git, branch, upstream));
+    } else {
+      // No tracking branch configured (e.g. branch created without -u/--set-upstream,
+      // or this repo's fetch refspec doesn't mirror this branch prefix into
+      // refs/remotes/*). Ask the remote directly whether a same-named branch already
+      // exists in sync, so a fully-pushed branch isn't misreported as unpushed.
+      const remoteMatch = await this.findMatchingRemoteBranch(
+        git,
+        worktreePath,
+        branch,
+      );
+      if (remoteMatch) {
+        upstream = remoteMatch.ref;
+        ({ ahead, behind } = await this.getAheadBehindBySha(
+          git,
+          branch,
+          remoteMatch.sha,
+        ));
+      }
+    }
 
     return {
       branch,
@@ -729,10 +749,7 @@ export class GitService {
     };
   }
 
-  private async getUpstream(
-    git: SimpleGit,
-    branch: string,
-  ): Promise<string | null> {
+  private async getUpstream(git: SimpleGit): Promise<string | null> {
     try {
       return (
         await git.raw([
@@ -743,31 +760,56 @@ export class GitService {
         ])
       ).trim();
     } catch {
-      // No tracking branch configured (e.g. branch created without -u/--set-upstream).
-      // Fall back to a remote branch of the same name so a fully-synced branch
-      // isn't misreported as having unpushed commits.
-      return this.findMatchingRemoteBranch(git, branch);
+      return null;
     }
   }
 
+  // Some repos (large monorepos in particular) scope remote.origin.fetch to a
+  // handful of branch prefixes, so most branches never get a local
+  // refs/remotes/origin/<branch> ref even after being pushed. ls-remote asks the
+  // remote directly, but this is polled every few seconds by the UI, so results
+  // are cached briefly per (worktree, branch) to avoid a network round-trip on
+  // every poll.
+  private readonly remoteBranchShaCache = new Map<
+    string,
+    { remoteName: string; sha: string | null; expiresAt: number }
+  >();
+  private static readonly REMOTE_BRANCH_CACHE_TTL_MS = 90_000;
+
   private async findMatchingRemoteBranch(
     git: SimpleGit,
+    worktreePath: string,
     branch: string,
-  ): Promise<string | null> {
+  ): Promise<{ ref: string; sha: string } | null> {
     if (branch === 'HEAD') return null;
-    try {
-      const remotes = await git.getRemotes(true);
-      const remote =
-        remotes.find((candidate) => candidate.name === 'origin') ??
-        remotes[0];
-      if (!remote) return null;
 
-      const upstream = `${remote.name}/${branch}`;
-      await git.raw(['rev-parse', '--verify', `refs/remotes/${upstream}`]);
-      return upstream;
-    } catch {
-      return null;
+    const cacheKey = `${worktreePath}#${branch}`;
+    const cached = this.remoteBranchShaCache.get(cacheKey);
+    const now = Date.now();
+
+    if (cached && cached.expiresAt > now) {
+      return cached.sha
+        ? { ref: `${cached.remoteName}/${branch}`, sha: cached.sha }
+        : null;
     }
+
+    const remotes = await git.getRemotes(true).catch(() => []);
+    const remote =
+      remotes.find((candidate) => candidate.name === 'origin') ?? remotes[0];
+    if (!remote) return null;
+
+    const sha = await git
+      .raw(['ls-remote', remote.name, `refs/heads/${branch}`])
+      .then((output) => output.split(/\s+/)[0]?.trim() || null)
+      .catch(() => null);
+
+    this.remoteBranchShaCache.set(cacheKey, {
+      remoteName: remote.name,
+      sha,
+      expiresAt: now + GitService.REMOTE_BRANCH_CACHE_TTL_MS,
+    });
+
+    return sha ? { ref: `${remote.name}/${branch}`, sha } : null;
   }
 
   private async getAheadBehind(
@@ -782,6 +824,36 @@ export class GitService {
           '--left-right',
           '--count',
           `${branch}...${upstream}`,
+        ])
+      ).trim();
+      const [aheadCount, behindCount] = counts.split(/\s+/);
+      return {
+        ahead: Number(aheadCount) || 0,
+        behind: Number(behindCount) || 0,
+      };
+    } catch {
+      return { ahead: 0, behind: 0 };
+    }
+  }
+
+  // Like getAheadBehind, but compares against a remote SHA obtained via ls-remote
+  // rather than a local refs/remotes/* ref (which may not exist — see
+  // findMatchingRemoteBranch). rev-list still works directly against a raw SHA as
+  // long as the commit is reachable locally; if the remote is ahead of what we have
+  // (e.g. someone else pushed to this branch), the object may be missing and
+  // rev-list fails — treated as "unknown, assume synced" rather than blocking status.
+  private async getAheadBehindBySha(
+    git: SimpleGit,
+    branch: string,
+    remoteSha: string,
+  ): Promise<{ ahead: number; behind: number }> {
+    try {
+      const counts = (
+        await git.raw([
+          'rev-list',
+          '--left-right',
+          '--count',
+          `${branch}...${remoteSha}`,
         ])
       ).trim();
       const [aheadCount, behindCount] = counts.split(/\s+/);
