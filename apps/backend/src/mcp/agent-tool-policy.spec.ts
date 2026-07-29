@@ -20,6 +20,9 @@ describe('agent-tool-policy', () => {
       true,
     );
     expect(isDestructiveElevenexTool('mcp__elevenex__remove_repo')).toBe(true);
+    expect(isDestructiveElevenexTool('mcp__elevenex__delete_worktree')).toBe(
+      true,
+    );
   });
 
   it('treats safe/mutating elevenex tools as non-destructive', () => {
@@ -37,8 +40,9 @@ describe('agent-tool-policy', () => {
     );
   });
 
-  it('exposes exactly the three destructive names, fully qualified', () => {
+  it('exposes exactly the four destructive names, fully qualified', () => {
     expect([...DESTRUCTIVE_ELEVENEX_TOOLS].sort()).toEqual([
+      'mcp__elevenex__delete_worktree',
       'mcp__elevenex__remove_repo',
       'mcp__elevenex__reset_session',
       'mcp__elevenex__steal_worktree',

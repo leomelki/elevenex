@@ -4,6 +4,7 @@ import { addRepoTool } from './add-repo.tool.js';
 import { removeRepoTool } from './remove-repo.tool.js';
 import { assessWorktreePoolTool } from './assess-worktree-pool.tool.js';
 import { createWorktreeTool } from './create-worktree.tool.js';
+import { deleteWorktreeTool } from './delete-worktree.tool.js';
 import { getWorktreeJobTool } from './get-worktree-job.tool.js';
 import { linkWorktreeTool } from './link-worktree.tool.js';
 import { stealWorktreeTool } from './steal-worktree.tool.js';
@@ -29,6 +30,7 @@ export const SETUP_TOOLS: ToolDefinition[] = [
   deleteProjectTool,
   assessWorktreePoolTool,
   createWorktreeTool,
+  deleteWorktreeTool,
   getWorktreeJobTool,
   linkWorktreeTool,
   stealWorktreeTool,

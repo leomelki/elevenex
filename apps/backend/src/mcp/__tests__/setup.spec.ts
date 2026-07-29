@@ -8,6 +8,7 @@ import { addRepoTool } from '../tools/setup/add-repo.tool.js';
 import { removeRepoTool } from '../tools/setup/remove-repo.tool.js';
 import { assessWorktreePoolTool } from '../tools/setup/assess-worktree-pool.tool.js';
 import { createWorktreeTool } from '../tools/setup/create-worktree.tool.js';
+import { deleteWorktreeTool } from '../tools/setup/delete-worktree.tool.js';
 import { getWorktreeJobTool } from '../tools/setup/get-worktree-job.tool.js';
 import { linkWorktreeTool } from '../tools/setup/link-worktree.tool.js';
 import { stealWorktreeTool } from '../tools/setup/steal-worktree.tool.js';
@@ -66,8 +67,8 @@ function emptyPool() {
 }
 
 describe('setup tool group', () => {
-  it('registers all 12 setup tools', () => {
-    expect(SETUP_TOOLS).toHaveLength(14);
+  it('registers all 15 setup tools', () => {
+    expect(SETUP_TOOLS).toHaveLength(15);
     expect(SETUP_TOOLS.map((t) => t.name)).toEqual(
       expect.arrayContaining([
         'find_or_create_project',
@@ -75,6 +76,7 @@ describe('setup tool group', () => {
         'remove_repo',
         'assess_worktree_pool',
         'create_worktree',
+        'delete_worktree',
         'get_worktree_job',
         'link_worktree',
         'steal_worktree',
@@ -85,6 +87,7 @@ describe('setup tool group', () => {
       ]),
     );
     expect(stealWorktreeTool.destructive).toBe(true);
+    expect(deleteWorktreeTool.destructive).toBe(true);
   });
 
   describe('create_session', () => {
@@ -245,6 +248,67 @@ describe('setup tool group', () => {
       const res = await removeRepoTool.handler({ repoId: 7 }, ctx);
       expect(res.data).toEqual({ repoId: 7, removed: true });
       expect(remove).toHaveBeenCalledWith(7);
+    });
+  });
+
+  describe('delete_worktree', () => {
+    it('deletes sessions bound to the worktree, then removes it', async () => {
+      const deleteByRepoAndWorktreePath = jest.fn().mockResolvedValue(undefined);
+      const removeWorktree = jest.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, path: '/repo' }) },
+        sessions: { deleteByRepoAndWorktreePath },
+        worktrees: { removeWorktree },
+      });
+      const res = await deleteWorktreeTool.handler(
+        { repoId: 1, worktreePath: '/repo/.worktrees/feature' },
+        ctx,
+      );
+      expect(deleteByRepoAndWorktreePath).toHaveBeenCalledWith(
+        1,
+        '/repo/.worktrees/feature',
+      );
+      expect(removeWorktree).toHaveBeenCalledWith(
+        '/repo',
+        '/repo/.worktrees/feature',
+      );
+      expect(res.data).toEqual({
+        repoId: 1,
+        worktreePath: '/repo/.worktrees/feature',
+        deleted: true,
+      });
+    });
+
+    it('still removes the worktree if session cleanup fails', async () => {
+      const removeWorktree = jest.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, path: '/repo' }) },
+        sessions: {
+          deleteByRepoAndWorktreePath: jest.fn().mockRejectedValue(new Error('boom')),
+        },
+        worktrees: { removeWorktree },
+      });
+      await deleteWorktreeTool.handler(
+        { repoId: 1, worktreePath: '/repo/.worktrees/feature' },
+        ctx,
+      );
+      expect(removeWorktree).toHaveBeenCalledWith('/repo', '/repo/.worktrees/feature');
+    });
+
+    it('wraps a git failure in a retryable ToolError', async () => {
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, path: '/repo' }) },
+        sessions: { deleteByRepoAndWorktreePath: jest.fn().mockResolvedValue(undefined) },
+        worktrees: {
+          removeWorktree: jest.fn().mockRejectedValue(new Error('not a worktree')),
+        },
+      });
+      await expect(
+        deleteWorktreeTool.handler(
+          { repoId: 1, worktreePath: '/repo/.worktrees/feature' },
+          ctx,
+        ),
+      ).rejects.toBeInstanceOf(ToolError);
     });
   });
 
