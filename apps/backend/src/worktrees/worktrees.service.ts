@@ -119,6 +119,20 @@ export class WorktreesService {
     return created;
   }
 
+  async moveWorktree(
+    repoPath: string,
+    worktreePath: string,
+    newWorktreePath: string,
+  ): Promise<void> {
+    const git: SimpleGit = worktreeSimpleGit(repoPath);
+    try {
+      await git.raw(['worktree', 'move', worktreePath, newWorktreePath]);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(`Failed to move worktree: ${message}`);
+    }
+  }
+
   async removeWorktree(repoPath: string, worktreePath: string): Promise<void> {
     // Use realpath for comparison (macOS symlink issue)
     let normalizedRepoPath = repoPath;

@@ -290,6 +290,83 @@ export class WorktreePoolService {
     return this.findWorkspace(workspace.id);
   }
 
+  /**
+   * Physically move a pool worktree to a new `.worktrees/<repo>/<slug(name)>`
+   * path and rename its pool record, so it stops carrying whatever
+   * branch/task it was originally created for. Also repoints any workspace
+   * currently linked to it and any generated worktree-context row, so
+   * nothing is left pointing at the old path.
+   */
+  async rename(
+    repo: typeof schema.repos.$inferSelect,
+    worktreeId: number,
+    newName: string,
+  ) {
+    await this.projectsService.assertProjectIsActive(repo.projectId);
+    const pool = await this.findPoolForRepo(repo, worktreeId);
+    const name = this.normalizeName(newName);
+    const newPath = path.join(
+      path.dirname(repo.path),
+      '.worktrees',
+      repo.name,
+      this.slugify(name),
+    );
+
+    if (await this.samePath(pool.path, newPath)) {
+      await this.db
+        .update(schema.repoWorktrees)
+        .set({ name, updatedAt: new Date().toISOString() })
+        .where(eq(schema.repoWorktrees.id, pool.id));
+    } else {
+      if (await this.pathExists(newPath)) {
+        throw new BadRequestException(
+          `A worktree already exists at "${newPath}" — pick a different name.`,
+        );
+      }
+
+      try {
+        await this.worktreesService.moveWorktree(repo.path, pool.path, newPath);
+      } catch (error) {
+        throw this.gitError('Could not rename worktree', error);
+      }
+
+      const realNewPath = await this.realPathOrRaw(newPath);
+      const now = new Date().toISOString();
+
+      await this.db
+        .update(schema.repoWorktrees)
+        .set({ path: realNewPath, name, updatedAt: now })
+        .where(eq(schema.repoWorktrees.id, pool.id));
+
+      await this.db
+        .update(schema.workspaces)
+        .set({ path: realNewPath, updatedAt: now })
+        .where(eq(schema.workspaces.poolWorktreeId, pool.id));
+
+      for (const rootRepo of await this.findReposForRoot(pool.repoRootPath)) {
+        await this.db
+          .update(schema.worktreeContexts)
+          .set({ worktreePath: realNewPath, updatedAt: now })
+          .where(
+            and(
+              eq(schema.worktreeContexts.repoId, rootRepo.id),
+              eq(schema.worktreeContexts.worktreePath, pool.path),
+            ),
+          );
+      }
+    }
+
+    const item = (await this.listForRepo(repo)).find(
+      (candidate) => candidate.id === pool.id,
+    );
+    if (!item) {
+      throw new BadRequestException(
+        'Worktree was renamed but could not be reloaded from the pool.',
+      );
+    }
+    return item;
+  }
+
   async reconcileRepo(repo: typeof schema.repos.$inferSelect) {
     const root = await this.realPathOrRaw(repo.path);
     const worktrees = await this.safeListWorktrees(repo.path);

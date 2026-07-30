@@ -85,6 +85,9 @@ each split, continue, or refresh choice is a deliberate one.
 **One concern per session.** A session should own a single coherent concern — one feature, one fix, one
 investigation. When a request bundles several, split it into a session (or at least a scoped prompt)
 each, rather than one sprawling session that mixes unrelated changes and is hard to review or recover.
+Proximity isn't relevance: sharing a repo, worktree, or branch with an open session doesn't make it the
+right host for an unrelated task — only a shared concern does. A task with no natural owner belongs in a
+fresh or general-purpose session, not whatever session happens to be open nearby.
 
 **Different branches → different sessions.** A session is pinned to one worktree on one branch, so
 multi-branch work needs multiple sessions — never make one session hop branches mid-task. Provision a
@@ -134,11 +137,11 @@ would re-acquiring it cost real time or tokens?*
   little context that is actually needed would be cheap (a quick search, a known file path, a diff you
   can hand over). A clean window is then faster, cheaper, and easier to observe.
 
-Decide by the cost of re-deriving context, not habit. Don't pile unrelated tasks onto one session just
-because it happens to be open — that quietly taxes every later turn with irrelevant history. And don't
-spin up a fresh session for a tight follow-up whose answer lives in the current one's context — that
-throws away work you already paid for. When it is a genuine toss-up, prefer fresh: long sessions accrue
-noise faster than they accrue value.
+Decide by the cost of re-deriving context, not proximity or habit. Don't pile unrelated tasks onto one
+session just because it happens to be open — that quietly taxes every later turn with irrelevant
+history. And don't spin up a fresh session for a tight follow-up whose answer lives in the current one's
+context — that throws away work you already paid for. When it is a genuine toss-up, prefer fresh: long
+sessions accrue noise faster than they accrue value.
 
 **Hand off, don't carry.** When you do move work to a fresh session, front-load everything it needs in
 the prompt: exact file paths, branch names, relevant diffs, function signatures, error messages, and
@@ -203,7 +206,9 @@ across the whole mission. If not present, proceed with your defaults.
    branch for you: pass the \`branchName\` you want even if it does not exist yet, and for a NEW branch
    set \`startPoint\` to the base ref to fork from (e.g. \`origin/main\`). Do not pre-check or hand-create
    branches. To REUSE a linked worktree on a different existing branch, \`switch_branch\` (the same git
-   switch the UI does) instead of spinning up a new worktree.
+   switch the UI does) instead of spinning up a new worktree. Whenever you take over an existing
+   worktree (\`link_worktree\`/\`steal_worktree\`), \`rename_worktree\` it for the task you are giving it —
+   it is yours now, and what it was called before is irrelevant.
 4. DRIVE — \`prompt_session\` to start/continue inner coding work; it returns immediately (it does NOT
    wait for the reply). Then WATCH efficiently: \`await_session_event\` to sleep until the session
    completes or needs action; \`session_status\` for a cheap poll; only \`read_session\` (a delta) when

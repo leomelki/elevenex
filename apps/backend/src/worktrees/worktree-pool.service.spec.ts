@@ -21,6 +21,8 @@ function createTestDb() {
     CREATE TABLE projects (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
+      hidden INTEGER NOT NULL DEFAULT 0,
+      agent_instructions TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       archived_at TEXT
@@ -87,6 +89,20 @@ function createTestDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE worktree_contexts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+      worktree_path TEXT NOT NULL,
+      root_ref TEXT,
+      context_sentence TEXT,
+      generation_status TEXT NOT NULL DEFAULT 'idle',
+      context_enabled INTEGER NOT NULL DEFAULT 1,
+      generated_at TEXT,
+      last_used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(repo_id, worktree_path)
+    );
   `);
   return { db: drizzle(sqlite, { schema }), sqlite };
 }
@@ -97,7 +113,9 @@ describe('WorktreePoolService', () => {
   let service: WorktreePoolService;
   let repo: typeof schema.repos.$inferSelect;
   let otherRepo: typeof schema.repos.$inferSelect;
-  let worktreesServiceMock: jest.Mocked<Pick<WorktreesService, 'listWorktrees'>>;
+  let worktreesServiceMock: jest.Mocked<
+    Pick<WorktreesService, 'listWorktrees' | 'moveWorktree'>
+  >;
   let sessionsServiceMock: jest.Mocked<
     Pick<SessionsService, 'archiveAndStopByRepoAndWorktreePath'>
   >;
@@ -145,6 +163,7 @@ describe('WorktreePoolService', () => {
 
     worktreesServiceMock = {
       listWorktrees: jest.fn().mockResolvedValue([mainWorktree, featureWorktree]),
+      moveWorktree: jest.fn().mockResolvedValue(undefined),
     };
     sessionsServiceMock = {
       archiveAndStopByRepoAndWorktreePath: jest.fn().mockResolvedValue(undefined),
@@ -221,6 +240,55 @@ describe('WorktreePoolService', () => {
     expect(linked.poolWorktreeId).toBe(pool.id);
     expect(linked.linkStatus).toBe('linked');
     expect(gitMock.raw).toHaveBeenCalledWith(['checkout', 'feature']);
+  });
+
+  it('renames a pool worktree, moving it and repointing its workspace and context row', async () => {
+    await service.reconcileRepo(repo);
+    const pool = (await db.select().from(schema.repoWorktrees)).find(
+      (row) => row.path === 'C:\\repo-feature',
+    )!;
+
+    const [workspace] = await db
+      .insert(schema.workspaces)
+      .values({
+        repoId: repo.id,
+        name: 'feature',
+        path: pool.path,
+        poolWorktreeId: pool.id,
+      })
+      .returning();
+    await db.insert(schema.worktreeContexts).values({
+      repoId: repo.id,
+      worktreePath: pool.path,
+      contextSentence: 'old context',
+    });
+
+    const pathExists = jest
+      .spyOn(service as any, 'pathExists')
+      .mockResolvedValue(false);
+    const renamed = await service.rename(repo, pool.id, 'fix-login-timeout');
+    pathExists.mockRestore();
+
+    expect(worktreesServiceMock.moveWorktree).toHaveBeenCalledWith(
+      repo.path,
+      pool.path,
+      expect.stringContaining('fix-login-timeout'),
+    );
+    expect(renamed.name).toBe('fix-login-timeout');
+    expect(renamed.path).not.toBe(pool.path);
+
+    const [updatedWorkspace] = await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, workspace.id));
+    expect(updatedWorkspace.path).toBe(renamed.path);
+
+    const [updatedContext] = await db
+      .select()
+      .from(schema.worktreeContexts)
+      .where(eq(schema.worktreeContexts.repoId, repo.id));
+    expect(updatedContext.worktreePath).toBe(renamed.path);
+    expect(updatedContext.contextSentence).toBe('old context');
   });
 
   it('uses one status call per worktree to populate branch, dirty, and conflict fields', async () => {

@@ -204,4 +204,39 @@ describe('WorktreesService', () => {
       ).rejects.toThrow(BadRequestException);
     });
   });
+
+  describe('moveWorktree', () => {
+    it('should move worktree to a new path', async () => {
+      const worktreePath = path.join(tmpDir, 'feature-wt');
+      execSync(`git worktree add "${worktreePath}" feature-branch`, {
+        cwd: mainRepoPath,
+      });
+      const newPath = path.join(tmpDir, 'renamed-wt');
+
+      await service.moveWorktree(mainRepoPath, worktreePath, newPath);
+
+      expect(fs.existsSync(worktreePath)).toBe(false);
+      expect(fs.existsSync(newPath)).toBe(true);
+      const worktrees = await service.listWorktrees(mainRepoPath);
+      const realNewPath = fs.realpathSync(newPath);
+      const moved = worktrees.find((w) => {
+        try {
+          return fs.realpathSync(w.path) === realNewPath;
+        } catch {
+          return false;
+        }
+      });
+      expect(moved?.branch).toBe('feature-branch');
+    });
+
+    it('should throw BadRequestException for non-existent worktree', async () => {
+      await expect(
+        service.moveWorktree(
+          mainRepoPath,
+          '/nonexistent/path',
+          path.join(tmpDir, 'wherever'),
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
 });

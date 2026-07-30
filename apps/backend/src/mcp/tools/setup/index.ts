@@ -7,6 +7,7 @@ import { createWorktreeTool } from './create-worktree.tool.js';
 import { deleteWorktreeTool } from './delete-worktree.tool.js';
 import { getWorktreeJobTool } from './get-worktree-job.tool.js';
 import { linkWorktreeTool } from './link-worktree.tool.js';
+import { renameWorktreeTool } from './rename-worktree.tool.js';
 import { stealWorktreeTool } from './steal-worktree.tool.js';
 import { switchBranchTool } from './switch-branch.tool.js';
 import { createSessionTool } from './create-session.tool.js';
@@ -33,6 +34,7 @@ export const SETUP_TOOLS: ToolDefinition[] = [
   deleteWorktreeTool,
   getWorktreeJobTool,
   linkWorktreeTool,
+  renameWorktreeTool,
   stealWorktreeTool,
   switchBranchTool,
   createSessionTool,

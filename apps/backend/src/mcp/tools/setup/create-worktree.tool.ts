@@ -130,6 +130,7 @@ export const createWorktreeTool = defineTool({
           nextStep:
             'Reclaimable worktrees found — present these to the user and prefer reusing one. ' +
             'For category=available use link_worktree; for category=yours (stale) use steal_worktree. ' +
+            'Either way, rename_worktree it afterward — treat a reclaimed worktree as new, not a continuation of what it held before. ' +
             'Pass force:true only if the user explicitly confirms a new worktree is needed.',
         };
       }
