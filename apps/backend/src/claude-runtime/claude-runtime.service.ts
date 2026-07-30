@@ -266,6 +266,11 @@ interface RuntimeState {
   runPhase: ClaudeRunPhase;
   sessionState: ClaudeSessionExecutionState;
   canInterrupt: boolean;
+  // Set when a background subagent/task wakes the session back up (new SDK
+  // messages arrive with no elevenex-initiated run in flight, e.g. a
+  // backgrounded Task tool posting its completion). Cleared once the
+  // resulting result message lands, so runPhase can drop back to idle.
+  backgroundResumeActive: boolean;
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   pendingPrompts: ClaudePendingPrompt[];
@@ -1624,7 +1629,8 @@ export class ClaudeRuntimeService
 
     if (
       this.activeRuns.has(sessionId) ||
-      this.initializingRuns.has(sessionId)
+      this.initializingRuns.has(sessionId) ||
+      this.hasActiveBackgroundWork(sessionId)
     ) {
       await this.queuePendingPrompt(sessionId, trimmedPrompt, validatedImages);
       return;
@@ -2360,6 +2366,60 @@ export class ClaudeRuntimeService
     }
   }
 
+  // True while a backgrounded subagent/task is still executing for this session,
+  // even though the visible run already finished and runPhase may not have
+  // flipped back to 'running' yet. Used to queue a submitted prompt instead of
+  // racing it against the SDK's own autonomous resume when the background work
+  // completes.
+  private hasActiveBackgroundWork(sessionId: number): boolean {
+    const state = this.runtimeStates.get(sessionId);
+    if (!state) {
+      return false;
+    }
+    if (state.backgroundResumeActive) {
+      return true;
+    }
+    if (state.subagents.some((subagent) => subagent.status === 'started')) {
+      return true;
+    }
+    return state.tasks.some(
+      (task) =>
+        task.isBackgrounded &&
+        (task.status === 'running' || task.status === 'pending'),
+    );
+  }
+
+  // Marks the session as busy again when the SDK stream produces conversational
+  // activity with no elevenex-initiated run in flight. This happens when a
+  // backgrounded subagent/task (launched via the async Agent tool) finishes and
+  // Claude Code autonomously resumes the same persistent connection to report
+  // back — from elevenex's point of view nothing was submitted, so runPhase
+  // would otherwise stay 'idle' and the composer would let a new message
+  // through immediately instead of queuing it behind the resumed turn.
+  private reconcileBackgroundResume(sessionId: number, message: SDKMessage): void {
+    const isResumeSignal =
+      message.type === 'assistant' ||
+      message.type === 'stream_event' ||
+      message.type === 'user' ||
+      (message.type === 'system' &&
+        (message.subtype === 'task_notification' ||
+          message.subtype === 'task_started' ||
+          message.subtype === 'task_updated'));
+    if (!isResumeSignal) {
+      return;
+    }
+
+    const state = this.ensureRuntimeState(sessionId);
+    if (state.runPhase !== 'idle') {
+      return;
+    }
+
+    state.backgroundResumeActive = true;
+    state.runPhase = 'running';
+    state.sessionState = 'running';
+    this.emitRunState(sessionId);
+  }
+
   private async handleSdkMessage(
     sessionId: number,
     message: SDKMessage,
@@ -2376,7 +2436,17 @@ export class ClaudeRuntimeService
     if (run?.interruptRequested) {
       return;
     }
+
+    if (!run) {
+      this.reconcileBackgroundResume(sessionId, message);
+    }
+
     if (!run && message.type === 'result') {
+      const state = this.ensureRuntimeState(sessionId);
+      if (state.backgroundResumeActive) {
+        state.backgroundResumeActive = false;
+        this.finishRun(sessionId);
+      }
       return;
     }
 
@@ -3812,6 +3882,7 @@ export class ClaudeRuntimeService
       runPhase: 'idle',
       sessionState: 'idle',
       canInterrupt: false,
+      backgroundResumeActive: false,
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
       pendingPrompts: [],

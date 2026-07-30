@@ -712,6 +712,7 @@
               [value]="prompt()"
               [submitting]="submitting()"
               [running]="runPhase() === 'running'"
+              [backgroundAgentCount]="activeBackgroundAgents().length"
               [canInterrupt]="canInterrupt()"
               [blockedByPermission]="!!pendingPermissionRequest()"
               [sendDisabledReason]="composerPermissionDisabledReason()"

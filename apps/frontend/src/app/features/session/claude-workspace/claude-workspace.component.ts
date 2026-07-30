@@ -271,6 +271,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly mcpBusyServerName = signal<string | null>(null);
   readonly sessionMetadata = signal<ClaudeRuntimeSessionMetadata | null>(null);
   readonly subagents = signal<ClaudeSubagentState[]>([]);
+  // Backgrounded subagents (launched via the async Agent tool) that are still
+  // executing. These keep running after the visible turn returns to idle, so
+  // the composer needs this separately from runPhase to show an indicator and
+  // queue new messages behind them.
+  readonly activeBackgroundAgents = computed(() =>
+    this.subagents().filter((subagent) => subagent.status === 'started'),
+  );
   readonly recentHookEvents = signal<ClaudeHookEvent[]>([]);
   readonly expandedTurns = signal<Record<string, boolean>>({});
   readonly expandedTurnChanges = signal<Record<string, boolean>>({});

@@ -163,6 +163,12 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
             }
           </div>
         }
+        @if (backgroundAgentCount() > 0) {
+          <div class="cw-comp__bg-agent" role="status">
+            <ng-icon name="lucideLoaderCircle" size="12" class="animate-spin" />
+            {{ backgroundAgentCount() }} background agent{{ backgroundAgentCount() === 1 ? '' : 's' }} running — new messages will be queued
+          </div>
+        }
         @if (pendingPrompts().length) {
           <div class="cw-comp__pending" role="list" aria-label="Queued messages">
             @for (p of pendingPrompts(); track p.id) {
@@ -244,16 +250,16 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
             <button
               type="button"
               class="cw-comp__btn cw-comp__btn--send"
-              [disabled]="(!value().trim() && !attachedImages().length && !diffMentions().length) || (submitting() && !running()) || blockedByPermission() || disconnected()"
+              [disabled]="(!value().trim() && !attachedImages().length && !diffMentions().length) || (submitting() && !queueing()) || blockedByPermission() || disconnected()"
               (click)="submit()"
-              [title]="running() ? 'Queue message' : 'Send'"
+              [title]="queueing() ? 'Queue message' : 'Send'"
             >
-              @if (submitting() && !running()) {
+              @if (submitting() && !queueing()) {
                 <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
               } @else {
                 <ng-icon name="lucideSend" size="14" />
               }
-              {{ running() ? 'Queue' : 'Send' }}
+              {{ queueing() ? 'Queue' : 'Send' }}
             </button>
           </div>
         </div>
@@ -318,6 +324,16 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         gap: 0.25rem;
         padding: 0.5rem 0.625rem 0.25rem 0.875rem;
         border-bottom: 1px dashed color-mix(in oklab, var(--foreground) 12%, transparent);
+      }
+      .cw-comp__bg-agent {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.375rem 0.875rem;
+        font-size: 0.75rem;
+        color: var(--warning);
+        background: color-mix(in oklab, var(--warning) 10%, transparent);
+        border-bottom: 1px solid color-mix(in oklab, var(--warning) 20%, transparent);
       }
       .cw-comp__mentions {
         display: grid;
@@ -640,6 +656,12 @@ export class ClaudeComposerComponent {
   readonly disconnected = input<boolean>(false);
   readonly diffMentions = input<DiffSelectionMention[]>([]);
   readonly imageAttachments = input<ComposerImageAttachment[]>([]);
+  // Count of backgrounded subagents/tasks still executing for this session.
+  // The main turn can be idle while these run, but a submitted message will
+  // still be queued behind them, so the composer must reflect that.
+  readonly backgroundAgentCount = input<number>(0);
+
+  readonly queueing = computed(() => this.running() || this.backgroundAgentCount() > 0);
 
   readonly send = output<ComposerSendPayload>();
   readonly valueChange = output<string>();
@@ -778,7 +800,7 @@ export class ClaudeComposerComponent {
     const diffMentions = this.diffMentions();
     if (!v && !images.length && !diffMentions.length) return;
     if (this.blockedByPermission()) return;
-    if (this.submitting() && !this.running()) return;
+    if (this.submitting() && !this.queueing()) return;
     this.send.emit({ text: v, images, diffMentions });
     this.setAttachedImages([]);
   }
