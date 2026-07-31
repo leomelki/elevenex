@@ -669,6 +669,12 @@ export function buildAugmentedEnv(
   }
   const pathKey = getPathEnvKey(base);
   const merged = { ...shellEnv, ...base };
+  // `base` (the backend's own launch-time env) must not clobber PWD once we've
+  // resolved a specific target cwd — otherwise every spawned terminal inherits
+  // the backend process's stale PWD instead of the worktree it's opening.
+  if (cwd) {
+    merged.PWD = cwd;
+  }
   // PATH ordering matters because dedup keeps the first occurrence: whichever
   // version-manager bin appears first wins for `node`/`python`/etc lookups.
   //
