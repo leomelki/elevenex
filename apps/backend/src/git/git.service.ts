@@ -142,10 +142,11 @@ export class GitService {
 
     status.deleted.forEach((path) => {
       if (conflictedPaths.has(path)) return;
+      if (status.staged.includes(path)) return;
       files.push({
         path,
         status: 'deleted',
-        staged: status.staged.includes(path),
+        staged: false,
       });
     });
 
