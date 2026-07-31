@@ -151,13 +151,30 @@ function extractEdits(toolName: string, input: unknown): ExtractedEdits[] {
   const normalized = normalizeToolName(toolName);
 
   if (normalized === 'edit') {
+    const filePath = readPath(record, ['file_path', 'filePath', 'path']);
+    if (!filePath) return [];
+
+    const rawEdits = Array.isArray(record['edits']) ? (record['edits'] as unknown[]) : [];
+    if (rawEdits.length) {
+      const edits: EditOp[] = [];
+      for (const [index, entry] of rawEdits.entries()) {
+        const editRecord = asRecord(entry);
+        if (!editRecord) continue;
+        edits.push({
+          oldString: asString(editRecord['old_string'] ?? editRecord['oldText']),
+          newString: asString(editRecord['new_string'] ?? editRecord['newText']),
+          label: rawEdits.length > 1 ? `Edit ${index + 1}` : undefined,
+          startLine: asNumber(editRecord['__startLine']),
+        });
+      }
+      return edits.length ? [{ filePath, toolName, edits }] : [];
+    }
+
     const oldString = asString(record['old_string']);
     const newString = asString(record['new_string']);
     const patchEntries = parseApplyPatchLikeEdit(oldString, newString);
     if (patchEntries.length) return patchEntries;
 
-    const filePath = readPath(record, ['file_path', 'filePath', 'path']);
-    if (!filePath) return [];
     const startLine = asNumber(record['__startLine']);
     return [
       {
