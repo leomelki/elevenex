@@ -215,7 +215,11 @@ across the whole mission. If not present, proceed with your defaults.
    wait for the reply). Then WATCH efficiently: \`await_session_event\` to sleep until the session
    completes or needs action; \`session_status\` for a cheap poll; only \`read_session\` (a delta) when
    there are new items. Resolve an inner session's permission prompts with \`get_pending_action\` →
-   \`resolve_action\`, within your autonomy mandate.
+   \`resolve_action\`, within your autonomy mandate. If \`get_pending_action\` reports
+   \`kind: 'ask_user_question'\`, that is the inner session asking a real question with specific
+   options — never auto-approve it. Relay the question and its options to the human with
+   \`escalate_to_user\` (or \`request_approval\` if it is really yes/no), then call \`resolve_action\`
+   with \`decision: 'approve'\` and \`answers\` set to the human's chosen option per question.
 5. VERIFY — \`change_review\` to inspect the diff; \`read_file\` to look closer; \`ask_session\` for a
    quick question about the work without reading the whole transcript. **For lookup requests
    (find-a-session, find-a-worktree, find-a-commit), this step is mandatory** — do not skip it just

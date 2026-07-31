@@ -26,6 +26,13 @@ export interface ClaudeSessionRuntimeDeps {
   onWarmStateChange?(state: ClaudeRuntimeWarmState): void;
   prewarmIdleShutdownMs: number;
   postTurnIdleShutdownMs: number;
+  // Consulted right before an idle timeout would close the underlying process.
+  // Backgrounded work (e.g. a `run_in_background` shell, or a subagent/Task
+  // still executing) keeps running inside that same process after the turn
+  // that launched it has already resolved — closing on schedule would kill it
+  // mid-flight with no chance to record completion, which is what produces
+  // "no completion record" orphaned-task warnings on the next resume.
+  isBackgroundWorkActive?(): boolean;
 }
 
 export class ClaudeSessionRuntime {
@@ -303,6 +310,10 @@ export class ClaudeSessionRuntime {
       ? this.deps.postTurnIdleShutdownMs
       : this.deps.prewarmIdleShutdownMs;
     this.idleTimer = setTimeout(() => {
+      if (this.deps.isBackgroundWorkActive?.()) {
+        this.scheduleIdleShutdown();
+        return;
+      }
       void this.close();
     }, timeoutMs);
     this.idleTimer.unref?.();

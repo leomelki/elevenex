@@ -1494,6 +1494,7 @@ export class ClaudeRuntimeService
         this.updateRuntimeWarmState(sessionId, state, runtime, warmState),
       prewarmIdleShutdownMs: CLAUDE_PREWARM_IDLE_SHUTDOWN_MS,
       postTurnIdleShutdownMs: CLAUDE_POST_TURN_IDLE_SHUTDOWN_MS,
+      isBackgroundWorkActive: () => this.hasActiveBackgroundWork(sessionId),
     });
 
     this.sessionRuntimes.set(sessionId, runtime);
@@ -1574,6 +1575,7 @@ export class ClaudeRuntimeService
       .filter(([sessionId, runtime]) => {
         if (sessionId === preferredSessionId) return false;
         if (this.activeRuns.has(sessionId)) return false;
+        if (this.hasActiveBackgroundWork(sessionId)) return false;
         return runtime.isIdle && runtime.warmState !== 'closing';
       })
       .sort(([, left], [, right]) => {
@@ -1598,7 +1600,12 @@ export class ClaudeRuntimeService
 
   private restartIdleRuntimeForOptionChange(sessionId: number): void {
     const runtime = this.sessionRuntimes.get(sessionId);
-    if (!runtime || !runtime.isIdle || this.activeRuns.has(sessionId)) {
+    if (
+      !runtime ||
+      !runtime.isIdle ||
+      this.activeRuns.has(sessionId) ||
+      this.hasActiveBackgroundWork(sessionId)
+    ) {
       return;
     }
 

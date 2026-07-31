@@ -230,6 +230,43 @@ describe('Drive tool group', () => {
       expect(res.data).toMatchObject({ pending: null, state: 'idle' });
     });
 
+    it('surfaces an ask_user_question prompt with its options', async () => {
+      const runtime = makeRuntime({
+        getRuntimeState: jest.fn().mockResolvedValue({
+          sessionState: 'requires_action',
+          pendingPermissionRequest: {
+            requestId: 'req-2',
+            toolName: 'AskUserQuestion',
+            toolKind: 'ask_user_question',
+            title: 'AskUserQuestion',
+            input: {
+              questions: [
+                {
+                  question: 'Which approach?',
+                  options: [{ label: 'A' }, { label: 'B' }],
+                },
+              ],
+            },
+          },
+          pendingUserInputRequest: null,
+        }),
+      });
+      const { services } = makeServices({ runtime });
+      const res = await getPendingActionTool.handler({ sessionId: 7 }, makeCtx(services));
+      expect(res.data).toMatchObject({
+        pending: {
+          kind: 'ask_user_question',
+          requestId: 'req-2',
+          questions: [
+            {
+              question: 'Which approach?',
+              options: [{ label: 'A' }, { label: 'B' }],
+            },
+          ],
+        },
+      });
+    });
+
     it('surfaces a pending user-input request', async () => {
       const runtime = makeRuntime({
         getRuntimeState: jest.fn().mockResolvedValue({
@@ -264,6 +301,23 @@ describe('Drive tool group', () => {
       expect(runtime.approvePermission).toHaveBeenCalledWith(7, 'req-1', true);
       expect(runtime.denyPermission).not.toHaveBeenCalled();
       expect(res.data).toMatchObject({ resolved: true, decision: 'approve' });
+    });
+
+    it('passes answers through to approvePermission for question prompts', async () => {
+      const { services, runtime } = makeServices({});
+      await resolveActionTool.handler(
+        {
+          sessionId: 7,
+          requestId: 'req-2',
+          decision: 'approve',
+          remember: false,
+          answers: { 'Which approach?': 'A' },
+        },
+        makeCtx(services),
+      );
+      expect(runtime.approvePermission).toHaveBeenCalledWith(7, 'req-2', false, {
+        answers: { 'Which approach?': 'A' },
+      });
     });
 
     it('routes deny to denyPermission with a message', async () => {

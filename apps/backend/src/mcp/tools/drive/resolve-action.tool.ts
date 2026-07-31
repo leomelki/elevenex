@@ -12,7 +12,7 @@ export const resolveActionTool = defineTool({
   costClass: 'scoped',
   mutates: true,
   description:
-    'Approve or deny a pending permission request to unblock a waiting session. 🟡scoped. Get the requestId from get_pending_action first; then resume polling with session_status.',
+    "Approve or deny a pending permission request to unblock a waiting session. If the pending action is a question (kind 'ask_user_question' from get_pending_action), get the human's answer first and pass it via 'answers'. 🟡scoped. Get the requestId from get_pending_action first; then resume polling with session_status.",
   inputShape: {
     sessionId: z
       .number()
@@ -32,6 +32,12 @@ export const resolveActionTool = defineTool({
       .describe(
         'On approve: persist this allowance for the rest of the session. Ignored on deny. Default false.',
       ),
+    answers: z
+      .record(z.string(), z.string())
+      .optional()
+      .describe(
+        "Required when the pending action is an ask_user_question prompt: map of question text -> chosen option label (the human's answer). Ignored for plain permission prompts.",
+      ),
     message: z
       .string()
       .optional()
@@ -45,11 +51,13 @@ export const resolveActionTool = defineTool({
         provider,
         'approvePermission',
       );
-      await runtime.approvePermission(
-        args.sessionId,
-        args.requestId,
-        args.remember,
-      );
+      if (args.answers) {
+        await runtime.approvePermission(args.sessionId, args.requestId, args.remember, {
+          answers: args.answers,
+        });
+      } else {
+        await runtime.approvePermission(args.sessionId, args.requestId, args.remember);
+      }
     } else {
       const runtime = ctx.services.agentRuntime.getProviderFeature(
         provider,

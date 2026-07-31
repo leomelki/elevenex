@@ -966,26 +966,20 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    const result = await this.textAgentGenerationService.generate({
-      provider: 'claude',
-      worktreePath: input.worktreePath,
-      prompt: this.buildCommitMessagePrompt(input),
-      taskName: 'commit-message',
-      claude: {
-        canUseTool: async () => ({
-          behavior: 'deny' as const,
-          message: 'Tool use disabled',
-        }),
-      },
-    });
-
-    const suggestion = this.parseCommitSuggestion(result?.text ?? '');
-    if (!suggestion && result?.text.trim()) {
-      this.logger.warn(
-        `[commit-message] claude response could not be parsed: ${result.text.trim()}`,
-      );
-    }
-    return suggestion;
+    return this.generateCommitSuggestionWithRetry('claude', () =>
+      this.textAgentGenerationService.generate({
+        provider: 'claude',
+        worktreePath: input.worktreePath,
+        prompt: this.buildCommitMessagePrompt(input),
+        taskName: 'commit-message',
+        claude: {
+          canUseTool: async () => ({
+            behavior: 'deny' as const,
+            message: 'Tool use disabled',
+          }),
+        },
+      }),
+    );
   }
 
   private async generateCommitMessageWithCodex(input: {
@@ -996,19 +990,14 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    const result = await this.textAgentGenerationService.generate({
-      provider: 'codex',
-      worktreePath: input.worktreePath,
-      prompt: this.buildCommitMessagePrompt(input),
-      taskName: 'commit-message',
-    });
-    const suggestion = this.parseCommitSuggestion(result?.text ?? '', 'codex');
-    if (!suggestion && result?.text.trim()) {
-      this.logger.warn(
-        `[commit-message] codex response could not be parsed: ${result.text.trim()}`,
-      );
-    }
-    return suggestion;
+    return this.generateCommitSuggestionWithRetry('codex', () =>
+      this.textAgentGenerationService.generate({
+        provider: 'codex',
+        worktreePath: input.worktreePath,
+        prompt: this.buildCommitMessagePrompt(input),
+        taskName: 'commit-message',
+      }),
+    );
   }
 
   private async generateCommitMessageWithPi(input: {
@@ -1019,13 +1008,36 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    const result = await this.textAgentGenerationService.generate({
-      provider: 'pi',
-      worktreePath: input.worktreePath,
-      prompt: this.buildCommitMessagePrompt(input),
-      taskName: 'commit-message',
-    });
-    return this.parseCommitSuggestion(result?.text ?? '', 'pi');
+    return this.generateCommitSuggestionWithRetry('pi', () =>
+      this.textAgentGenerationService.generate({
+        provider: 'pi',
+        worktreePath: input.worktreePath,
+        prompt: this.buildCommitMessagePrompt(input),
+        taskName: 'commit-message',
+      }),
+    );
+  }
+
+  private async generateCommitSuggestionWithRetry(
+    source: CommitMessageSuggestion['source'],
+    generate: () => Promise<GenerateTextWithAgentResult | null>,
+  ): Promise<CommitMessageSuggestion | null> {
+    let lastRawText = '';
+    for (let attempt = 1; attempt <= COMMIT_MESSAGE_MAX_ATTEMPTS; attempt += 1) {
+      const result = await generate();
+      lastRawText = result?.text ?? '';
+      const suggestion = this.parseCommitSuggestion(lastRawText, source);
+      if (suggestion) {
+        return suggestion;
+      }
+    }
+
+    if (lastRawText.trim()) {
+      this.logger.warn(
+        `[commit-message] ${source} response could not be parsed after ${COMMIT_MESSAGE_MAX_ATTEMPTS} attempt(s): ${lastRawText.trim()}`,
+      );
+    }
+    return null;
   }
 
   private generateCommitMessageWithProvider(

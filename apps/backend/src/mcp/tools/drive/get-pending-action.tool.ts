@@ -46,19 +46,27 @@ export const getPendingActionTool = defineTool({
     const input = state.pendingUserInputRequest ?? null;
 
     if (perm) {
+      const isQuestion = perm.toolKind === 'ask_user_question';
+      const questions = isQuestion
+        ? (perm.input as { questions?: unknown } | undefined)?.questions ?? null
+        : null;
+
       return {
         data: {
           pending: {
-            kind: 'permission' as const,
+            kind: isQuestion ? ('ask_user_question' as const) : ('permission' as const),
             requestId: perm.requestId,
             toolName: perm.toolName,
             title: perm.title ?? perm.toolDisplayName ?? perm.toolName,
             description: perm.description ?? perm.decisionReason ?? null,
+            ...(questions ? { questions } : {}),
           },
           state: sessionState,
         },
         deepLink: ctx.deepLink.session(args.sessionId),
-        nextStep: "resolve_action with decision 'approve' or 'deny'.",
+        nextStep: isQuestion
+          ? "The agent is asking a question with options; get the human's answer and call resolve_action with decision 'approve' and an 'answers' map (question -> chosen option label), or 'deny' to decline."
+          : "resolve_action with decision 'approve' or 'deny'.",
       };
     }
 
