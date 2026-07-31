@@ -3140,6 +3140,21 @@ export class ClaudeRuntimeService
     message: SDKSessionStateChangedMessage,
   ): void {
     const state = this.ensureRuntimeState(sessionId);
+
+    // The SDK tracks its own session state independently of elevenex's run
+    // bookkeeping and can emit a stray/late "running" signal after our turn
+    // has already finished (e.g. lagging subagent bookkeeping, hook fallout).
+    // With no active run and no evidence of genuine backgrounded work, no
+    // further message will ever arrive to clear this — canInterrupt would
+    // stay false forever and wedge the session with no way to stop it.
+    if (
+      !this.activeRuns.has(sessionId) &&
+      message.state === 'running' &&
+      !this.hasKnownBackgroundAgents(state)
+    ) {
+      return;
+    }
+
     state.sessionState = message.state;
     if (state.runPhase !== 'error') {
       state.runPhase =
