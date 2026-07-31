@@ -2376,9 +2376,15 @@ export class ClaudeRuntimeService
     if (!state) {
       return false;
     }
-    if (state.backgroundResumeActive) {
-      return true;
-    }
+    return state.backgroundResumeActive || this.hasKnownBackgroundAgents(state);
+  }
+
+  // True only when we have direct evidence (from SubagentStart hooks or
+  // task_started/task_updated events) that a backgrounded subagent/task is
+  // actually in flight. Deliberately does NOT look at runPhase or
+  // backgroundResumeActive — this is the ground truth those two are derived
+  // from, not the other way around.
+  private hasKnownBackgroundAgents(state: RuntimeState): boolean {
     if (state.subagents.some((subagent) => subagent.status === 'started')) {
       return true;
     }
@@ -2411,6 +2417,15 @@ export class ClaudeRuntimeService
 
     const state = this.ensureRuntimeState(sessionId);
     if (state.runPhase !== 'idle') {
+      return;
+    }
+    // A prewarm/rebuilt connection (e.g. after a model or effort change)
+    // replays its own init/hydration chatter through this same message path
+    // with no elevenex-initiated run — without this check that chatter looks
+    // identical to a real backgrounded task waking the session back up, and
+    // permanently sticks runPhase at 'running' since no further 'result'
+    // message will ever arrive to close it out.
+    if (!this.hasKnownBackgroundAgents(state)) {
       return;
     }
 

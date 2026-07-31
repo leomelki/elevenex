@@ -300,8 +300,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly statusPhase = computed<ClaudeStatusBarPhase>(() => {
     const phase = this.runPhase();
     if (phase !== 'idle') return phase;
-    if (this.runtimeStarted()) return 'idle';
-    return this.warmState() === 'prewarming' ? 'initializing' : 'ready';
+    if (this.warmState() === 'prewarming') return 'initializing';
+    return this.runtimeStarted() ? 'idle' : 'ready';
   });
   readonly wsConnected = signal(false);
   private wsAutoReconnecting = false;
