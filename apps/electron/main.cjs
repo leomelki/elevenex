@@ -1560,7 +1560,21 @@ function buildSshTarget(forward) {
 }
 
 function getSshBaseArgs(resolvedConfig, target) {
-  return ['-F', resolvedConfig.configPath, target];
+  return [
+    '-F',
+    resolvedConfig.configPath,
+    // Fail fast when the host is unreachable so exec commands (install/start/probe
+    // scripts) don't hang forever on a dead network.
+    '-o',
+    'ConnectTimeout=10',
+    // Detect a silently-dropped connection during long-running remote scripts (eg.
+    // the readiness poll) and exit instead of leaving the promise unresolved.
+    '-o',
+    'ServerAliveInterval=15',
+    '-o',
+    'ServerAliveCountMax=2',
+    target,
+  ];
 }
 
 function encodePowershellCommand(command) {
