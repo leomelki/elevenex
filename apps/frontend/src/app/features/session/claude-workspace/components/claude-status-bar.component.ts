@@ -32,7 +32,7 @@ import {
   ClaudeModelOption,
   ClaudePermissionMode,
   ClaudeReasoningEffort,
-  ClaudeRunPhase,
+  ClaudeStatusBarPhase,
   ClaudeTaskState,
 } from '@/shared/models/claude-runtime.model';
 import { AgentProviderId, AgentRuntimeProviderInfo } from '@/shared/models/agent-runtime.model';
@@ -95,7 +95,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
   template: `
     <div class="cw-sb">
       <span class="cw-sb__phase" [attr.data-phase]="phase()">
-        @if (phase() === 'running') {
+        @if (phase() === 'running' || phase() === 'initializing') {
           <ng-icon name="lucideLoaderCircle" size="11" class="animate-spin" />
         } @else if (phase() === 'waiting') {
           <ng-icon name="lucideTriangleAlert" size="11" />
@@ -353,7 +353,8 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
         gap: 0.25rem;
         text-transform: lowercase;
       }
-      .cw-sb__phase[data-phase='running'] {
+      .cw-sb__phase[data-phase='running'],
+      .cw-sb__phase[data-phase='initializing'] {
         color: var(--primary);
       }
       .cw-sb__phase[data-phase='error'],
@@ -476,7 +477,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
   ],
 })
 export class ClaudeStatusBarComponent {
-  readonly phase = input<ClaudeRunPhase>('idle');
+  readonly phase = input<ClaudeStatusBarPhase>('ready');
   readonly providers = input<AgentRuntimeProviderInfo[]>([]);
   readonly currentProvider = input<AgentProviderId>('claude');
   readonly providerLocked = input(false);
@@ -577,8 +578,10 @@ export class ClaudeStatusBarComponent {
   readonly phaseLabel = computed(() => {
     const p = this.phase();
     if (p === 'running') return 'running';
+    if (p === 'initializing') return 'initializing';
     if (p === 'waiting') return 'awaiting input';
     if (p === 'error') return 'error';
+    if (p === 'idle') return 'idle';
     return 'ready';
   });
 

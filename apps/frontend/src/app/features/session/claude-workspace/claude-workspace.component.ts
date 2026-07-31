@@ -34,6 +34,8 @@ import {
   ClaudePermissionRequest,
   ClaudeRuntimeSessionMetadata,
   ClaudeRunPhase,
+  ClaudeRuntimeWarmState,
+  ClaudeStatusBarPhase,
   ClaudeRuntimeEvent,
   ClaudeRuntimeState,
   ClaudeSessionExecutionState,
@@ -219,6 +221,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly pendingDiffMentions = signal<DiffSelectionMention[]>([]);
   readonly composerImages = signal<ComposerImageAttachment[]>([]);
   readonly runPhase = signal<ClaudeRunPhase>('idle');
+  readonly warmState = signal<ClaudeRuntimeWarmState>('cold');
   readonly sessionState = signal<ClaudeSessionExecutionState>('idle');
   readonly canInterrupt = signal(false);
   readonly lastError = signal<string | null>(null);
@@ -294,6 +297,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly codexAuthStatus = signal<AgentAuthStatus | null>(null);
   readonly piAuthStatus = signal<AgentAuthStatus | null>(null);
   readonly runtimeStarted = signal(false);
+  readonly statusPhase = computed<ClaudeStatusBarPhase>(() => {
+    const phase = this.runPhase();
+    if (phase !== 'idle') return phase;
+    if (this.runtimeStarted()) return 'idle';
+    return this.warmState() === 'prewarming' ? 'initializing' : 'ready';
+  });
   readonly wsConnected = signal(false);
   private wsAutoReconnecting = false;
   private wsStateSub: Subscription | null = null;
@@ -1933,6 +1942,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         }
         return;
       case 'runtime_warm_state':
+        this.warmState.set(event.payload.warmState);
         return;
       case 'session_created':
         this.claudeSessionId.set(event.payload.claudeSessionId);
@@ -2183,6 +2193,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private applyRuntimeState(state: ClaudeRuntimeState): void {
     this.liveItems.set(state.liveItems);
     this.runPhase.set(state.runPhase);
+    this.warmState.set(state.warmState);
     this.sessionState.set(state.sessionState);
     this.canInterrupt.set(state.canInterrupt);
     this.claudeSessionId.set(state.claudeSessionId);

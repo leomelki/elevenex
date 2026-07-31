@@ -1,4 +1,11 @@
 export type ClaudeRunPhase = 'idle' | 'running' | 'waiting' | 'error';
+export type ClaudeStatusBarPhase =
+  | 'ready'
+  | 'initializing'
+  | 'idle'
+  | 'running'
+  | 'waiting'
+  | 'error';
 export type ClaudeSessionExecutionState = 'idle' | 'running' | 'requires_action' | null;
 export type ClaudeRuntimeWarmState = 'cold' | 'prewarming' | 'warm' | 'closing';
 export type ClaudePermissionMode =
