@@ -10,7 +10,10 @@ import {
   worktreeSimpleGit,
 } from '../config/system-paths.js';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
-import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
+import {
+  TextAgentGenerationService,
+  type GenerateTextWithAgentResult,
+} from '../agent-generation/text-agent-generation.service.js';
 import {
   clearWorktreeFingerprintCache,
   readWorktreeStatusSnapshot,
@@ -20,6 +23,7 @@ const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
 const MAX_COMMIT_MESSAGE_DIFF_CHARS = 24_000;
 const MAX_COMMIT_MESSAGE_LOG_ENTRIES = 8;
 const MAX_COMMIT_MESSAGE_STATUS_FILES = 16;
+const COMMIT_MESSAGE_MAX_ATTEMPTS = 3;
 const UNTRACKED_STATS_CONCURRENCY = 16;
 const MAX_UNTRACKED_STATS_FILE_BYTES = 1_000_000;
 const CONVENTIONAL_COMMIT_SUBJECT_PATTERN =
