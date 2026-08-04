@@ -562,7 +562,10 @@ export class PlanChatForksService {
     for (let i = history.length - 1; i >= 0; i--) {
       const item = history[i];
       if (item.kind === 'user' || item.kind === 'assistant') {
-        return { id: item.id, kind: item.kind };
+        return {
+          id: item.transcriptMessageId ?? item.sourceMessageId ?? item.id,
+          kind: item.kind,
+        };
       }
     }
     throw new BadRequestException(
