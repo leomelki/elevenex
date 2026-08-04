@@ -9,6 +9,7 @@ const {
   removeGitArtifacts,
   stagedVSCodeRoot,
 } = require('./prepare-vscode-web-runtime');
+const { REMOTE_HOME_DIRNAME } = require('../apps/electron/remote-server-utils.cjs');
 
 const repoRoot = path.resolve(__dirname, '..');
 const backendRoot = path.join(repoRoot, 'apps', 'backend');
@@ -314,7 +315,7 @@ function writeLauncher(targetRoot, target) {
       '$port = if ($args.Count -gt 0 -and $args[0]) { [int]$args[0] } else { 11111 }',
       '$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path',
       '$runtimeRoot = Split-Path -Parent $scriptDir',
-      '$logRoot = Join-Path $HOME ".elevenex\\logs"',
+      `$logRoot = Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\logs"`,
       'New-Item -ItemType Directory -Force $logRoot | Out-Null',
       '$env:ELEVENEX_BACKEND_RUNTIME_ROOT = $runtimeRoot',
       '$env:DB_PATH = Join-Path $HOME ".elevenex\\elevenex.db"',
@@ -324,7 +325,9 @@ function writeLauncher(targetRoot, target) {
       '$entry = Join-Path $runtimeRoot "main.cjs"',
       '$stdoutLog = Join-Path $logRoot "backend.log"',
       '$stderrLog = Join-Path $logRoot "backend.err.log"',
-      '$pidPath = Join-Path $HOME ".elevenex\\backend.pid"',
+      // Must match the pid file the start/preflight scripts read, otherwise a
+      // stale backend is never detected or cleaned up before a restart.
+      `$pidPath = Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\backend.pid"`,
       '$process = Start-Process -FilePath $node -ArgumentList @($entry) -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru',
       'Set-Content -LiteralPath $pidPath -Value $process.Id',
       'Wait-Process -Id $process.Id',
@@ -336,6 +339,10 @@ function writeLauncher(targetRoot, target) {
     return;
   }
 
+  // Backend output must land in the remote runtime's own log tree: that is the
+  // file the start/wait scripts write their progress banners to and tail when
+  // startup fails. Logging anywhere else leaves a failed launch reported as a
+  // bare connection refusal with no diagnostics attached.
   const launcherPath = path.join(targetRoot, 'bin', 'start-backend.sh');
   const script = [
     '#!/bin/sh',
@@ -343,12 +350,12 @@ function writeLauncher(targetRoot, target) {
     'PORT="${1:-11111}"',
     'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"',
     'RUNTIME_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"',
-    'mkdir -p "$HOME/.elevenex/logs"',
+    `mkdir -p "$HOME/${REMOTE_HOME_DIRNAME}/logs"`,
     'export ELEVENEX_BACKEND_RUNTIME_ROOT="$RUNTIME_ROOT"',
     'export DB_PATH="$HOME/.elevenex/elevenex.db"',
     'export ELEVENEX_PROXY_PORT="$PORT"',
     'export FRONTEND_PORT="$PORT"',
-    'exec "$RUNTIME_ROOT/node/bin/node" "$RUNTIME_ROOT/main.cjs" >> "$HOME/.elevenex/logs/backend.log" 2>&1',
+    `exec "$RUNTIME_ROOT/node/bin/node" "$RUNTIME_ROOT/main.cjs" >> "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log" 2>&1`,
   ].join('\n');
   ensureDir(path.dirname(launcherPath));
   writeFileSync(launcherPath, `${script}\n`, 'utf8');

@@ -80,6 +80,13 @@ export class PiSessionRuntime extends EventEmitter {
     this.child.stderr.on('data', (chunk: Buffer) => {
       this.stderr += chunk.toString('utf8');
     });
+    // A child that dies immediately (missing interpreter for an npm shim, bad
+    // install, OOM) still reports `stdin.writable === true` for a tick, so an
+    // in-flight write lands on a broken pipe and fails asynchronously. Node
+    // escalates a listener-less stream error to an uncaughtException, which
+    // would take the whole backend down over an unusable optional CLI, so
+    // treat any stdin failure as the process going away.
+    this.child.stdin.on('error', (error: Error) => this.handleExit(error));
     this.child.once('error', (error) => this.handleExit(error));
     this.child.once('exit', (code, signal) => {
       this.handleExit(
@@ -110,7 +117,16 @@ export class PiSessionRuntime extends EventEmitter {
       }, timeoutMs);
       this.pending.set(id, { command: command.type, resolve, reject, timer });
     });
-    child.stdin.write(`${JSON.stringify(payload)}\n`);
+    // Reject on write failure instead of letting the caller wait out the full
+    // timeout for a reply that can never arrive.
+    child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+      if (!error) return;
+      const pending = this.pending.get(id);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      pending.reject(error);
+    });
     const response = await promise;
     if (!response.success) {
       throw new Error(

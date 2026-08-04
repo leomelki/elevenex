@@ -13,6 +13,26 @@ export function isLoginShellEnvRefreshEnabled(): boolean {
   return !IS_WINDOWS;
 }
 
+// The remote and embedded runtimes ship their own Node build and are launched
+// through an absolute path to it, so `node` itself never lands on PATH. Tools
+// installed as npm shims (`#!/usr/bin/env node`) then fail to spawn on hosts
+// with no system Node — the shim exits 127 before reading a byte of stdin.
+// Expose the bundled runtime's bin directory so those shims resolve. Callers
+// append it last, so any user- or project-managed Node still wins.
+function resolveBundledNodeBinPath(): string | null {
+  const runtimeRoot = process.env.ELEVENEX_BACKEND_RUNTIME_ROOT?.trim();
+  if (!runtimeRoot) return null;
+  const binDir = IS_WINDOWS
+    ? join(runtimeRoot, 'node')
+    : join(runtimeRoot, 'node', 'bin');
+  try {
+    accessSync(join(binDir, IS_WINDOWS ? 'node.exe' : 'node'), constants.X_OK);
+    return binDir;
+  } catch {
+    return null;
+  }
+}
+
 // When the packaged Electron app is launched from Finder/DMG, macOS hands it
 // a stripped PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) because no shell rc files
 // are sourced. User-installed CLIs (tmux from Homebrew, claude/plannotator
@@ -21,7 +41,11 @@ export function isLoginShellEnvRefreshEnabled(): boolean {
 // processes or resolve external binaries.
 export const COMMON_BINARY_PATHS: readonly string[] = (() => {
   const paths: string[] = [];
-  if (IS_WINDOWS) return paths;
+  const bundledNodeBinPath = resolveBundledNodeBinPath();
+  if (IS_WINDOWS) {
+    if (bundledNodeBinPath) paths.push(bundledNodeBinPath);
+    return paths;
+  }
   if (process.platform === 'darwin') paths.push('/opt/homebrew/bin');
   paths.push(
     '/usr/local/bin',
@@ -29,6 +53,7 @@ export const COMMON_BINARY_PATHS: readonly string[] = (() => {
     '/usr/bin',
     '/bin',
   );
+  if (bundledNodeBinPath) paths.push(bundledNodeBinPath);
   return paths;
 })();
 

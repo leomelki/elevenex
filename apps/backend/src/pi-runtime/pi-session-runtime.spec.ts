@@ -16,9 +16,11 @@ jest.mock('../config/system-paths.js', () => ({
 class MockWritable extends EventEmitter {
   writable = true;
   readonly writes: string[] = [];
+  writeError: Error | null = null;
 
-  write(chunk: string): boolean {
+  write(chunk: string, callback?: (error?: Error | null) => void): boolean {
     this.writes.push(chunk);
+    if (this.writeError) callback?.(this.writeError);
     return true;
   }
 }
@@ -174,6 +176,34 @@ describe('PiSessionRuntime', () => {
     ]);
     expect(child.stdin.writes.at(-1)).toBe(
       '{"type":"extension_ui_response","id":"ui-1","value":"a"}\n',
+    );
+  });
+
+  it('handles a broken stdin pipe instead of crashing the backend', async () => {
+    const runtime = new PiSessionRuntime({ cwd: '/repo/worktree' });
+    const exits: unknown[] = [];
+    runtime.on('exit', (event) => exits.push(event));
+
+    const resultPromise = runtime.send({ type: 'prompt', prompt: 'hello' });
+    await flushAsyncStart();
+
+    // An EventEmitter with no 'error' listener rethrows on emit, which is
+    // exactly how a stdin EPIPE used to escalate into an uncaughtException and
+    // take the whole backend process down.
+    expect(() =>
+      child.stdin.emit('error', new Error('write EPIPE')),
+    ).not.toThrow();
+
+    await expect(resultPromise).rejects.toThrow('write EPIPE');
+    expect(exits).toHaveLength(1);
+  });
+
+  it('rejects a send whose stdin write fails rather than waiting for timeout', async () => {
+    const runtime = new PiSessionRuntime({ cwd: '/repo/worktree' });
+    child.stdin.writeError = new Error('write EPIPE');
+
+    await expect(runtime.send({ type: 'prompt', prompt: 'hello' })).rejects.toThrow(
+      'write EPIPE',
     );
   });
 
