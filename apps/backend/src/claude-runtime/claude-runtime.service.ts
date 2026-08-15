@@ -138,10 +138,14 @@ import {
   ClaudeToolInteractionSummary,
 } from './claude-runtime.types.js';
 import { ClaudeSessionRuntime } from './claude-session-runtime.js';
+import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
+import { resolveAgentStartupSelection } from '../agent-runtime/agent-model-defaults.js';
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
+  AgentProviderModelCatalogPayload,
 } from '../agent-runtime/agent-runtime.types.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 type PermissionDecision =
   | { behavior: 'allow'; remember: boolean; content?: Record<string, unknown> }
@@ -494,6 +498,7 @@ export class ClaudeRuntimeService
     private readonly claudeHooksService: ClaudeHooksService,
     private readonly terminalService: TerminalService,
     private readonly titleService: SessionTitleService,
+    private readonly settingsService: SettingsService,
   ) {
     super();
     this.logClaudeRuntimeConfiguration();
@@ -584,6 +589,23 @@ export class ClaudeRuntimeService
     }
 
     return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  /**
+   * Session-independent model catalog for the settings pickers. Serves the
+   * cached list immediately and refreshes in the background, so opening
+   * settings never waits on a Claude CLI probe.
+   */
+  getModelCatalog(): AgentProviderModelCatalogPayload {
+    this.refreshGlobalModelsIfStale();
+    return {
+      models: this.modelsCache?.length
+        ? [...this.modelsCache]
+        : [...FALLBACK_MODELS],
+      reasoningEfforts: [...AGENT_REASONING_EFFORTS],
+      providerDefaultModelId: null,
+      supportsModelSelection: true,
+    };
   }
 
   async getSubagentHistory(
@@ -4284,6 +4306,14 @@ export class ClaudeRuntimeService
       return existing;
     }
 
+    const availableModels = this.modelsCache?.length
+      ? [...this.modelsCache]
+      : [...FALLBACK_MODELS];
+    const startup = resolveAgentStartupSelection(
+      this.settingsService.getAgentProviderDefaults('claude'),
+      availableModels,
+    );
+
     const state: RuntimeState = {
       claudeSessionId:
         claudeSessionId && claudeSessionId !== '-1' ? claudeSessionId : null,
@@ -4301,14 +4331,12 @@ export class ClaudeRuntimeService
       pendingPrompts: [],
       liveItems: [],
       lastError: null,
-      selectedModel: null,
-      reasoningEffort: null,
+      selectedModel: startup.selectedModel,
+      reasoningEffort: startup.reasoningEffort,
       fastMode: false,
       selectedPermissionMode: 'auto',
       planMode: false,
-      availableModels: this.modelsCache?.length
-        ? [...this.modelsCache]
-        : [...FALLBACK_MODELS],
+      availableModels,
       contextUsage: null,
       sessionMetadata: null,
       runtimeStatus: null,

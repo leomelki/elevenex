@@ -137,7 +137,10 @@ export class SessionTitleService {
   private normalizeProvider(
     provider: AgentProviderId,
   ): TextAgentProvider | null {
-    return provider === 'claude' || provider === 'codex' || provider === 'pi'
+    return provider === 'claude' ||
+      provider === 'codex' ||
+      provider === 'pi' ||
+      provider === 'gemini'
       ? provider
       : null;
   }

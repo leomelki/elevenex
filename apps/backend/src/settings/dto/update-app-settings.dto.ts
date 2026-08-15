@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsObject,
   IsOptional,
   IsString,
   ValidateNested,
@@ -10,6 +11,7 @@ import {
 import { CLAUDE_SESSION_SURFACES } from '../settings.types.js';
 import { DEFAULT_AGENT_PROVIDERS } from '../settings.types.js';
 import type {
+  AgentProviderPreferencePatch,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
   SessionToolbarButtonSetting,
@@ -39,6 +41,17 @@ export class UpdateAppSettingsDto {
   @ValidateNested({ each: true })
   @Type(() => SessionToolbarButtonDto)
   sessionToolbarButtons?: SessionToolbarButtonDto[] | null;
+
+  // Per-provider patches (`{"claude":"opus"}`, `null` value clears one entry).
+  // Keys and values stay open-ended so a new provider or a model released
+  // tomorrow needs no backend change; `SettingsService` validates their shape.
+  @IsOptional()
+  @IsObject()
+  defaultModelByProvider?: AgentProviderPreferencePatch | null;
+
+  @IsOptional()
+  @IsObject()
+  defaultReasoningEffortByProvider?: AgentProviderPreferencePatch | null;
 }
 
 export class CompleteOnboardingDto {

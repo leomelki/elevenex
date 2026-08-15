@@ -6,6 +6,8 @@ import { CodexRuntimeModule } from '../codex-runtime/codex-runtime.module.js';
 import { CodexAgentRuntimeProvider } from '../codex-runtime/codex-agent-runtime.provider.js';
 import { PiRuntimeModule } from '../pi-runtime/pi-runtime.module.js';
 import { PiAgentRuntimeProvider } from '../pi-runtime/pi-agent-runtime.provider.js';
+import { GeminiRuntimeModule } from '../gemini-runtime/gemini-runtime.module.js';
+import { GeminiAgentRuntimeProvider } from '../gemini-runtime/gemini-agent-runtime.provider.js';
 import { AgentRuntimeController } from './agent-runtime.controller.js';
 import { AgentRuntimeCleanupService } from './agent-runtime-cleanup.service.js';
 import { AgentRuntimeGateway } from './agent-runtime.gateway.js';
@@ -24,6 +26,7 @@ import {
     forwardRef(() => ClaudeRuntimeModule),
     forwardRef(() => CodexRuntimeModule),
     forwardRef(() => PiRuntimeModule),
+    forwardRef(() => GeminiRuntimeModule),
   ],
   controllers: [AgentRuntimeController, ClaudeRuntimeController],
   providers: [
@@ -34,11 +37,13 @@ import {
         claudeProvider: ClaudeAgentRuntimeProvider,
         codexProvider: CodexAgentRuntimeProvider,
         piProvider: PiAgentRuntimeProvider,
-      ) => [claudeProvider, codexProvider, piProvider],
+        geminiProvider: GeminiAgentRuntimeProvider,
+      ) => [claudeProvider, codexProvider, piProvider, geminiProvider],
       inject: [
         ClaudeAgentRuntimeProvider,
         CodexAgentRuntimeProvider,
         PiAgentRuntimeProvider,
+        GeminiAgentRuntimeProvider,
       ],
     },
     AgentRuntimeRegistryService,

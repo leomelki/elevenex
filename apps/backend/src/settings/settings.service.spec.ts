@@ -59,6 +59,8 @@ describe('SettingsService', () => {
       defaultClaudeSessionSurface: 'claude-ui',
       defaultAgentProvider: 'claude',
       sessionToolbarButtons: null,
+      defaultModelByProvider: {},
+      defaultReasoningEffortByProvider: {},
       onboardingCompletedAt: null,
       createdAt: null,
       updatedAt: null,
@@ -211,6 +213,157 @@ describe('SettingsService', () => {
     expect(settings.defaultAgentProvider).toBe('codex');
     expect(settings.defaultClaudeSessionSurface).toBe('tui');
     expect(settings.onboardingCompletedAt).toEqual(expect.any(String));
+  });
+
+  it('patches one provider default without touching the others', async () => {
+    const { db, getRows } = createDbMock();
+    const service = new SettingsService(db);
+
+    await service.update({
+      defaultModelByProvider: { claude: 'opus', codex: 'gpt-5.5' },
+      defaultReasoningEffortByProvider: { claude: 'high' },
+    });
+    const settings = await service.update({
+      defaultModelByProvider: { codex: 'gpt-5.4' },
+    });
+
+    expect(settings.defaultModelByProvider).toEqual({
+      claude: 'opus',
+      codex: 'gpt-5.4',
+    });
+    expect(settings.defaultReasoningEffortByProvider).toEqual({
+      claude: 'high',
+    });
+    expect(getRows()[0]).toMatchObject({
+      defaultModelByProvider: JSON.stringify({
+        claude: 'opus',
+        codex: 'gpt-5.4',
+      }),
+    });
+  });
+
+  it('clears a single provider default when its value is null', async () => {
+    const { db, getRows } = createDbMock();
+    const service = new SettingsService(db);
+
+    await service.update({
+      defaultModelByProvider: { claude: 'opus', pi: 'pi-fast' },
+    });
+    const settings = await service.update({
+      defaultModelByProvider: { claude: null },
+    });
+
+    expect(settings.defaultModelByProvider).toEqual({ pi: 'pi-fast' });
+    expect(getRows()[0]).toMatchObject({
+      defaultModelByProvider: JSON.stringify({ pi: 'pi-fast' }),
+    });
+  });
+
+  it('stores no row value once every provider default is cleared', async () => {
+    const { db, getRows } = createDbMock();
+    const service = new SettingsService(db);
+
+    await service.update({ defaultReasoningEffortByProvider: { pi: 'high' } });
+    const settings = await service.update({
+      defaultReasoningEffortByProvider: null,
+    });
+
+    expect(settings.defaultReasoningEffortByProvider).toEqual({});
+    expect(getRows()[0]).toMatchObject({
+      defaultReasoningEffortByProvider: null,
+    });
+  });
+
+  it('accepts providers and model ids it has never seen before', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+
+    const settings = await service.update({
+      defaultModelByProvider: { opencode: 'some-model-released-tomorrow' },
+    });
+
+    expect(settings.defaultModelByProvider).toEqual({
+      opencode: 'some-model-released-tomorrow',
+    });
+  });
+
+  it('rejects malformed provider default entries', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+
+    await expect(
+      service.update({
+        defaultModelByProvider: { 'not a provider id': 'opus' },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update({
+        defaultModelByProvider: { claude: 42 },
+      } as unknown as Parameters<SettingsService['update']>[0]),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update({
+        defaultModelByProvider: { claude: 'x'.repeat(201) },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('exposes per-provider defaults synchronously once loaded', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+
+    expect(service.getAgentProviderDefaults('claude')).toEqual({
+      model: null,
+      reasoningEffort: null,
+    });
+
+    await service.update({
+      defaultModelByProvider: { claude: 'opus' },
+      defaultReasoningEffortByProvider: { claude: 'xhigh' },
+    });
+
+    expect(service.getAgentProviderDefaults('claude')).toEqual({
+      model: 'opus',
+      reasoningEffort: 'xhigh',
+    });
+    expect(service.getAgentProviderDefaults('codex')).toEqual({
+      model: null,
+      reasoningEffort: null,
+    });
+  });
+
+  it('drops unusable stored provider defaults instead of failing', async () => {
+    const { db } = createDbMock([
+      {
+        id: 1,
+        defaultClaudeSessionSurface: 'claude-ui',
+        defaultAgentProvider: 'claude',
+        sessionToolbarButtons: null,
+        defaultModelByProvider: '{"claude":"opus","bad key":"x","pi":7}',
+        defaultReasoningEffortByProvider: 'not json',
+        onboardingCompletedAt: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+    const service = new SettingsService(db);
+
+    const settings = await service.findOne();
+
+    expect(settings.defaultModelByProvider).toEqual({ claude: 'opus' });
+    expect(settings.defaultReasoningEffortByProvider).toEqual({});
+  });
+
+  it('preserves provider defaults through onboarding', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+
+    await service.update({ defaultModelByProvider: { claude: 'opus' } });
+    const settings = await service.completeOnboarding({
+      defaultAgentProvider: 'claude',
+    });
+
+    expect(settings.defaultModelByProvider).toEqual({ claude: 'opus' });
   });
 
   it('rejects unsupported session toolbar settings', async () => {

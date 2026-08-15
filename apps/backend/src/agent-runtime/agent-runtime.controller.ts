@@ -30,6 +30,11 @@ export class AgentRuntimeController {
     return this.registry.listProviders();
   }
 
+  @Get('agent-providers/models')
+  listModelCatalogs() {
+    return this.registry.listModelCatalogs();
+  }
+
   @Get('agent-providers/:provider/auth/status')
   getAuthStatus(@Param('provider') provider: string) {
     return this.registry

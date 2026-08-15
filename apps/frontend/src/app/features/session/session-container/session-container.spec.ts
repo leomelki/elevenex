@@ -29,6 +29,20 @@ import { toast } from 'ngx-sonner';
 })
 class DummyRouteComponent {}
 
+function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettings {
+  return {
+    defaultClaudeSessionSurface: 'claude-ui',
+    defaultAgentProvider: 'claude',
+    sessionToolbarButtons: null,
+    defaultModelByProvider: {},
+    defaultReasoningEffortByProvider: {},
+    onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
+    createdAt: null,
+    updatedAt: null,
+    ...overrides,
+  };
+}
+
 describe('SessionContainer modal browser gating', () => {
   const tabsSignal = signal<Tab[]>([]);
   const activeSessionIdSignal = signal<number | null>(null);
@@ -40,14 +54,7 @@ describe('SessionContainer modal browser gating', () => {
   const claudeWorktreeContextsSignal = signal(new Map<number, boolean>());
   const claudeActivitiesSignal = signal(new Map<number, any>());
   const reconnectSignal = signal(0);
-  const appSettingsSignal = signal<AppSettings>({
-    defaultClaudeSessionSurface: 'claude-ui',
-    defaultAgentProvider: 'claude',
-    sessionToolbarButtons: null,
-    onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-    createdAt: null,
-    updatedAt: null,
-  });
+  const appSettingsSignal = signal<AppSettings>(makeAppSettings());
   const localStorageStore = new Map<string, string>();
 
   const tabServiceMock = {
@@ -237,14 +244,7 @@ describe('SessionContainer modal browser gating', () => {
     claudeWorktreeContextsSignal.set(new Map());
     claudeActivitiesSignal.set(new Map());
     reconnectSignal.set(0);
-    appSettingsSignal.set({
-      defaultClaudeSessionSurface: 'claude-ui',
-      defaultAgentProvider: 'claude',
-      sessionToolbarButtons: null,
-      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-      createdAt: null,
-      updatedAt: null,
-    });
+    appSettingsSignal.set(makeAppSettings());
     localStorageStore.clear();
     localStorageStore.set(
       'elevenex-layout-preferences',
@@ -477,14 +477,9 @@ describe('SessionContainer modal browser gating', () => {
   });
 
   it('opens a new Claude tab in terminal mode when the backend default is TUI', () => {
-    appSettingsSignal.set({
-      defaultClaudeSessionSurface: 'tui',
-      defaultAgentProvider: 'claude',
-      sessionToolbarButtons: null,
-      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-      createdAt: null,
-      updatedAt: null,
-    });
+    appSettingsSignal.set(
+      makeAppSettings({ defaultClaudeSessionSurface: 'tui' }),
+    );
     tabsSignal.set([]);
     activeSessionIdSignal.set(null);
     sessionsServiceMock.getOne.mockReturnValue(of(makeSession()) as any);
@@ -498,14 +493,7 @@ describe('SessionContainer modal browser gating', () => {
   });
 
   it('keeps a new Claude tab in workspace mode when the backend default is Claude UI', () => {
-    appSettingsSignal.set({
-      defaultClaudeSessionSurface: 'claude-ui',
-      defaultAgentProvider: 'claude',
-      sessionToolbarButtons: null,
-      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-      createdAt: null,
-      updatedAt: null,
-    });
+    appSettingsSignal.set(makeAppSettings());
     tabsSignal.set([]);
     activeSessionIdSignal.set(null);
     sessionsServiceMock.getOne.mockReturnValue(of(makeSession()) as any);
@@ -519,14 +507,9 @@ describe('SessionContainer modal browser gating', () => {
   });
 
   it('does not move an already-open tab when the backend default is TUI', () => {
-    appSettingsSignal.set({
-      defaultClaudeSessionSurface: 'tui',
-      defaultAgentProvider: 'claude',
-      sessionToolbarButtons: null,
-      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-      createdAt: null,
-      updatedAt: null,
-    });
+    appSettingsSignal.set(
+      makeAppSettings({ defaultClaudeSessionSurface: 'tui' }),
+    );
     sessionsServiceMock.getOne.mockReturnValue(of(makeSession()) as any);
 
     const fixture = TestBed.createComponent(SessionContainer);

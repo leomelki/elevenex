@@ -64,6 +64,10 @@ export class PiAgentRuntimeProvider
     return this.runtimeService.getAutocompleteItems(sessionId);
   }
 
+  getModelCatalog() {
+    return Promise.resolve(this.runtimeService.getModelCatalog());
+  }
+
   getAuthStatus() {
     return this.authService.getStatus();
   }

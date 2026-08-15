@@ -477,24 +477,48 @@ export class TabService {
     }
   }
 
-  private providerForSession(session: Session): AgentProviderId {
-    const persisted = session.activeAgentProvider?.trim();
-    const hasPi = Boolean(session.piSessionPath && session.piSessionPath !== '-1');
-    if (
-      persisted
-      && (persisted !== 'claude' || session.claudeSessionId !== '-1' || (session.codexSessionId === '-1' && !hasPi))
-    ) {
-      return persisted;
+  /**
+   * Per-provider session-id columns, most-specific first. Mirrors
+   * `SessionsService.PROVIDER_SESSION_COLUMNS` on the backend — adding a
+   * provider means adding one row here.
+   */
+  private static readonly PROVIDER_SESSION_COLUMNS: readonly [
+    AgentProviderId,
+    keyof Session,
+  ][] = [
+    ['gemini', 'geminiSessionId'],
+    ['pi', 'piSessionPath'],
+    ['codex', 'codexSessionId'],
+    ['claude', 'claudeSessionId'],
+  ];
+
+  private startedProviders(session: Session): Set<AgentProviderId> {
+    const started = new Set<AgentProviderId>();
+    for (const [provider, column] of TabService.PROVIDER_SESSION_COLUMNS) {
+      const value = session[column];
+      if (typeof value === 'string' && value && value !== '-1') {
+        started.add(provider);
+      }
     }
-    if (hasPi) return 'pi';
-    return session.codexSessionId && session.codexSessionId !== '-1' ? 'codex' : 'claude';
+    return started;
+  }
+
+  private providerForSession(session: Session): AgentProviderId {
+    const started = this.startedProviders(session);
+    const persisted = session.activeAgentProvider?.trim();
+    // A persisted bare 'claude' that never started, while something else did,
+    // means the column is stale rather than chosen.
+    const persistedIsStaleDefault =
+      persisted === 'claude' && !started.has('claude') && started.size > 0;
+    if (persisted && !persistedIsStaleDefault) return persisted;
+
+    const inferred = TabService.PROVIDER_SESSION_COLUMNS.find(([provider]) =>
+      started.has(provider),
+    );
+    return inferred?.[0] ?? 'claude';
   }
 
   private hasStartedAgentRuntime(session: Session): boolean {
-    return Boolean(
-      (session.claudeSessionId && session.claudeSessionId !== '-1')
-        || (session.codexSessionId && session.codexSessionId !== '-1')
-        || (session.piSessionPath && session.piSessionPath !== '-1'),
-    );
+    return this.startedProviders(session).size > 0;
   }
 }

@@ -44,6 +44,8 @@ describe('AppSettingsService', () => {
         defaultClaudeSessionSurface: 'tui',
         defaultAgentProvider: 'codex',
         sessionToolbarButtons: null,
+        defaultModelByProvider: {},
+        defaultReasoningEffortByProvider: {},
         onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
@@ -52,6 +54,8 @@ describe('AppSettingsService', () => {
         defaultClaudeSessionSurface: 'tui',
         defaultAgentProvider: 'codex',
         sessionToolbarButtons: null,
+        defaultModelByProvider: {},
+        defaultReasoningEffortByProvider: {},
         onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
@@ -165,6 +169,128 @@ describe('AppSettingsService', () => {
 
     await save;
     expect(service.settings().defaultAgentProvider).toBe('pi');
+  });
+
+  it('sends only the touched provider when saving a default model', async () => {
+    const load = service.load();
+    httpMock.expectOne('/api/settings').flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      defaultModelByProvider: { claude: 'sonnet', codex: 'gpt-5.5' },
+      defaultReasoningEffortByProvider: {},
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    await load;
+
+    const save = service.saveDefaultModel('claude', 'opus');
+    expect(service.settings().defaultModelByProvider).toEqual({
+      claude: 'opus',
+      codex: 'gpt-5.5',
+    });
+
+    const request = httpMock.expectOne('/api/settings');
+    expect(request.request.body).toEqual({
+      defaultModelByProvider: { claude: 'opus' },
+    });
+    request.flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      defaultModelByProvider: { claude: 'opus', codex: 'gpt-5.5' },
+      defaultReasoningEffortByProvider: {},
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    await save;
+    expect(service.settings().defaultModelByProvider).toEqual({
+      claude: 'opus',
+      codex: 'gpt-5.5',
+    });
+  });
+
+  it('clears one provider default with a null patch', async () => {
+    const load = service.load();
+    httpMock.expectOne('/api/settings').flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      defaultModelByProvider: {},
+      defaultReasoningEffortByProvider: { claude: 'high', pi: 'low' },
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    await load;
+
+    const save = service.saveDefaultReasoningEffort('claude', null);
+    expect(service.settings().defaultReasoningEffortByProvider).toEqual({
+      pi: 'low',
+    });
+
+    const request = httpMock.expectOne('/api/settings');
+    expect(request.request.body).toEqual({
+      defaultReasoningEffortByProvider: { claude: null },
+    });
+    request.flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      defaultModelByProvider: {},
+      defaultReasoningEffortByProvider: { pi: 'low' },
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    await save;
+  });
+
+  it('rolls back a provider default when the save fails', async () => {
+    const load = service.load();
+    httpMock.expectOne('/api/settings').flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      defaultModelByProvider: { claude: 'sonnet' },
+      defaultReasoningEffortByProvider: {},
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    await load;
+
+    const save = service.saveDefaultModel('claude', 'opus');
+    httpMock.expectOne('/api/settings').flush(
+      { message: 'Nope' },
+      { status: 500, statusText: 'Server Error' },
+    );
+
+    await expect(save).rejects.toBeTruthy();
+    expect(service.settings().defaultModelByProvider).toEqual({
+      claude: 'sonnet',
+    });
+  });
+
+  it('tolerates a backend that omits the provider default maps', async () => {
+    const load = service.load();
+    httpMock.expectOne('/api/settings').flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      defaultModelByProvider: { claude: '  ', codex: 7 },
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    await load;
+
+    expect(service.settings().defaultModelByProvider).toEqual({});
+    expect(service.settings().defaultReasoningEffortByProvider).toEqual({});
   });
 
   it('completes onboarding through the dedicated endpoint', async () => {

@@ -1,0 +1,89 @@
+<div cdkOverlayOrigin #origin="cdkOverlayOrigin">
+  <button
+    #trigger
+    type="button"
+    class="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-left text-sm text-foreground shadow-sm transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
+    role="combobox"
+    [disabled]="disabled()"
+    [attr.aria-label]="ariaLabel() || null"
+    [attr.aria-expanded]="open()"
+    aria-haspopup="listbox"
+    (click)="toggle()"
+    (keydown)="onTriggerKeydown($event)"
+  >
+    <span class="truncate" [class.text-muted-foreground]="!selectedOption()">
+      {{ triggerLabel() }}
+    </span>
+    <ng-icon
+      name="lucideChevronDown"
+      size="16"
+      class="shrink-0 text-muted-foreground transition-transform"
+      [class.rotate-180]="open()"
+    />
+  </button>
+
+  <ng-template
+    cdkConnectedOverlay
+    [cdkConnectedOverlayOrigin]="origin"
+    [cdkConnectedOverlayOpen]="open()"
+    [cdkConnectedOverlayHasBackdrop]="true"
+    cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+    [cdkConnectedOverlayPush]="true"
+    [cdkConnectedOverlayWidth]="origin.elementRef.nativeElement.offsetWidth"
+    [cdkConnectedOverlayPositions]="[
+      { originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 4 },
+      { originX: 'start', originY: 'top', overlayX: 'start', overlayY: 'bottom', offsetY: -4 }
+    ]"
+    (backdropClick)="close(false)"
+    (detach)="close(false)"
+  >
+    <div
+      #list
+      tabindex="-1"
+      role="listbox"
+      class="max-h-72 overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg focus:outline-none"
+      [attr.aria-label]="ariaLabel() || null"
+      [attr.aria-activedescendant]="activeIndex() >= 0 ? optionId(activeIndex()) : null"
+      (keydown)="onListKeydown($event)"
+    >
+      @for (option of options(); track option.value; let i = $index) {
+        <button
+          type="button"
+          role="option"
+          [id]="optionId(i)"
+          class="flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          [class.bg-accent]="i === activeIndex()"
+          [class.text-accent-foreground]="i === activeIndex()"
+          [disabled]="option.disabled"
+          [attr.aria-selected]="option.value === value()"
+          (click)="select(option)"
+          (mouseenter)="!option.disabled && activeIndex.set(i)"
+        >
+          <ng-icon
+            name="lucideCheck"
+            size="15"
+            class="mt-0.5 shrink-0"
+            [class.opacity-0]="option.value !== value()"
+          />
+          <span class="min-w-0 flex-1">
+            <span class="flex flex-wrap items-center gap-1.5">
+              <span class="text-sm font-medium">{{ option.label }}</span>
+              @if (option.badge) {
+                <span
+                  class="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                >
+                  {{ option.badge }}
+                </span>
+              }
+            </span>
+            @if (option.description) {
+              <span class="mt-0.5 block text-xs text-muted-foreground">{{ option.description }}</span>
+            }
+          </span>
+        </button>
+      } @empty {
+        <div class="px-2 py-3 text-center text-xs text-muted-foreground">{{ emptyText() }}</div>
+      }
+    </div>
+  </ng-template>
+</div>

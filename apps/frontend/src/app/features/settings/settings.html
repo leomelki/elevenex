@@ -24,48 +24,35 @@
           }
         </div>
 
-        <div class="inline-grid grid-cols-3 rounded-lg border border-border bg-muted p-1">
-          <button
-            type="button"
-            class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            [class.bg-background]="appSettings.settings().defaultAgentProvider === 'claude'"
-            [class.text-foreground]="appSettings.settings().defaultAgentProvider === 'claude'"
-            [class.shadow-sm]="appSettings.settings().defaultAgentProvider === 'claude'"
-            [disabled]="appSettings.saving()"
-            [attr.aria-pressed]="appSettings.settings().defaultAgentProvider === 'claude'"
-            (click)="selectAgent('claude')"
-          >
-            <ng-icon name="lucideSparkles" size="15" />
-            <span>Claude</span>
-          </button>
-          <button
-            type="button"
-            class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            [class.bg-background]="appSettings.settings().defaultAgentProvider === 'codex'"
-            [class.text-foreground]="appSettings.settings().defaultAgentProvider === 'codex'"
-            [class.shadow-sm]="appSettings.settings().defaultAgentProvider === 'codex'"
-            [disabled]="appSettings.saving()"
-            [attr.aria-pressed]="appSettings.settings().defaultAgentProvider === 'codex'"
-            (click)="selectAgent('codex')"
-          >
-            <ng-icon name="lucideFileText" size="15" />
-            <span>Codex</span>
-          </button>
-          <button
-            type="button"
-            class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            [class.bg-background]="appSettings.settings().defaultAgentProvider === 'pi'"
-            [class.text-foreground]="appSettings.settings().defaultAgentProvider === 'pi'"
-            [class.shadow-sm]="appSettings.settings().defaultAgentProvider === 'pi'"
-            [disabled]="appSettings.saving()"
-            [attr.aria-pressed]="appSettings.settings().defaultAgentProvider === 'pi'"
-            (click)="selectAgent('pi')"
-          >
-            <ng-icon name="lucideNotebookPen" size="15" />
-            <span>Pi</span>
-          </button>
+        <div class="inline-grid grid-cols-2 rounded-lg border border-border bg-muted p-1 sm:grid-cols-4">
+          @for (provider of agentProviders; track provider.id) {
+            <button
+              type="button"
+              class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              [class.bg-background]="appSettings.settings().defaultAgentProvider === provider.id"
+              [class.text-foreground]="appSettings.settings().defaultAgentProvider === provider.id"
+              [class.shadow-sm]="appSettings.settings().defaultAgentProvider === provider.id"
+              [disabled]="appSettings.saving()"
+              [attr.aria-pressed]="appSettings.settings().defaultAgentProvider === provider.id"
+              (click)="selectAgent(provider.id)"
+            >
+              <ng-icon [name]="provider.icon" size="15" />
+              <span>{{ provider.label }}</span>
+            </button>
+          }
         </div>
       </div>
+    </section>
+
+    <section class="rounded-lg border border-border bg-card">
+      <div class="border-b border-border px-5 py-4">
+        <h2 class="text-sm font-semibold text-foreground">Model defaults</h2>
+        <p class="mt-1 text-sm text-muted-foreground">
+          Pick the model and thinking level each agent starts new sessions with.
+        </p>
+      </div>
+
+      <app-agent-defaults />
     </section>
 
     <section class="rounded-lg border border-border bg-card">

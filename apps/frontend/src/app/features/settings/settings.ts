@@ -15,6 +15,7 @@ import {
   lucideClipboardList,
   lucideFileText,
   lucideFolderTree,
+  lucideGem,
   lucideGitPullRequest,
   lucideGlobe,
   lucideGripVertical,
@@ -31,8 +32,10 @@ import {
 import { toast } from 'ngx-sonner';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { DefaultAgentProvider, DefaultClaudeSessionSurface } from '@/shared/models/app-settings.model';
+import { AGENT_PROVIDER_PRESENTATIONS } from '@/shared/models/agent-provider-presentation';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardCheckboxComponent } from '@/shared/components/checkbox';
+import { AgentDefaults } from './components/agent-defaults.component';
 import { getElectronExternalLinksApi } from '@/shared/runtime/electron-external-links';
 import { FRONTEND_GIT_SHA } from '../../../build-info';
 import {
@@ -43,6 +46,7 @@ import {
 @Component({
   selector: 'app-settings',
   imports: [
+    AgentDefaults,
     DragDropModule,
     FormsModule,
     NgIcon,
@@ -60,6 +64,7 @@ import {
       lucideClipboardList,
       lucideFileText,
       lucideFolderTree,
+      lucideGem,
       lucideGitPullRequest,
       lucideGlobe,
       lucideGripVertical,
@@ -80,6 +85,7 @@ export class Settings {
   private readonly externalLinks = getElectronExternalLinksApi();
   readonly appSettings = inject(AppSettingsService);
 
+  readonly agentProviders = AGENT_PROVIDER_PRESENTATIONS;
   readonly frontendSha = FRONTEND_GIT_SHA.slice(0, 7);
   readonly backendSha = signal('...');
   readonly toolbarButtons = this.appSettings.normalizedSessionToolbarButtons;

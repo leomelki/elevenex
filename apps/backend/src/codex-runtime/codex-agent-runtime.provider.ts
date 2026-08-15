@@ -74,6 +74,10 @@ export class CodexAgentRuntimeProvider
     void this.runtimeService.prewarmSession(sessionId);
   }
 
+  getModelCatalog() {
+    return Promise.resolve(this.runtimeService.getModelCatalog());
+  }
+
   getAuthStatus() {
     return this.authService.getStatus();
   }

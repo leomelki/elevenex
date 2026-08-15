@@ -34,13 +34,28 @@
     </header>
   }
 
-  @if (showCodexLogin()) {
+  @if (showProviderLogin()) {
     <div class="flex flex-1 items-center justify-center overflow-y-auto px-4">
-      <cw-codex-login-card [status]="codexAuthStatus()" (authenticated)="onCodexAuthenticated()" />
-    </div>
-  } @else if (showPiLogin()) {
-    <div class="flex flex-1 items-center justify-center overflow-y-auto px-4">
-      <cw-pi-login-card [status]="piAuthStatus()" (authenticated)="onPiAuthenticated()" />
+      @switch (currentProvider()) {
+        @case ('codex') {
+          <cw-codex-login-card
+            [status]="providerAuthStatus()"
+            (authenticated)="onProviderAuthenticated()"
+          />
+        }
+        @case ('pi') {
+          <cw-pi-login-card
+            [status]="providerAuthStatus()"
+            (authenticated)="onProviderAuthenticated()"
+          />
+        }
+        @case ('gemini') {
+          <cw-gemini-login-card
+            [status]="providerAuthStatus()"
+            (authenticated)="onProviderAuthenticated()"
+          />
+        }
+      }
     </div>
   } @else {
     <div

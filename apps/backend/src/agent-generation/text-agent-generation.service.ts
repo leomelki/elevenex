@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { execFile as execFileCallback } from 'node:child_process';
 import { createRequire } from 'module';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import type {
   CanUseTool,
   SDKAssistantMessage,
@@ -11,8 +13,11 @@ import type {
 import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
 import { findSdkRealDir } from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
+import { buildGeminiSpawnCommand } from '../gemini-runtime/gemini-binary.js';
 
-export type TextAgentProvider = 'claude' | 'codex' | 'pi';
+const execFileAsync = promisify(execFileCallback);
+
+export type TextAgentProvider = 'claude' | 'codex' | 'pi' | 'gemini';
 
 export const DEFAULT_TEXT_AGENT_MODELS = {
   claude: 'haiku',
@@ -59,6 +64,11 @@ export interface GenerateTextWithAgentRequest {
   pi?: {
     timeoutMs?: number;
   };
+  gemini?: {
+    /** Omitted by default so Gemini uses whatever model the account defaults to. */
+    model?: string;
+    timeoutMs?: number;
+  };
 }
 
 export interface GenerateTextWithAgentResult {
@@ -81,6 +91,8 @@ export class TextAgentGenerationService {
         return this.generateWithCodex(request);
       case 'pi':
         return this.generateWithPi(request);
+      case 'gemini':
+        return this.generateWithGemini(request);
     }
   }
 
@@ -301,6 +313,118 @@ export class TextAgentGenerationService {
     } finally {
       await runtime.stop().catch(() => undefined);
     }
+  }
+
+  /**
+   * Runs a one-shot, read-only Gemini turn.
+   *
+   * These flows want a single block of text, not a conversation, so this uses
+   * gemini's non-interactive mode rather than the ACP session machinery the
+   * workspace runtime needs. `--approval-mode plan` keeps it read-only, and
+   * `--skip-trust` is required because a freshly created worktree is never in
+   * Gemini's trusted-folder list and it would otherwise silently downgrade the
+   * approval mode and refuse to run headless.
+   */
+  private async generateWithGemini(
+    request: GenerateTextWithAgentRequest,
+  ): Promise<GenerateTextWithAgentResult | null> {
+    if (typeof request.prompt !== 'string') {
+      this.logger.warn(
+        `[${request.taskName}] Gemini generation requires a string prompt`,
+      );
+      return null;
+    }
+
+    const model = request.gemini?.model ?? null;
+    const args = [
+      '-p',
+      request.prompt,
+      '--output-format',
+      'json',
+      '--approval-mode',
+      'plan',
+      '--skip-trust',
+      ...(model ? ['-m', model] : []),
+    ];
+
+    try {
+      const { command, shell } = buildGeminiSpawnCommand();
+      const env = await buildAugmentedEnvAsync(
+        process.env,
+        request.worktreePath,
+      );
+      const { stdout } = await execFileAsync(command, args, {
+        cwd: request.worktreePath,
+        env,
+        shell,
+        timeout: request.gemini?.timeoutMs ?? 60_000,
+        maxBuffer: 10 * 1024 * 1024,
+        windowsHide: true,
+      });
+
+      const envelope = this.parseGeminiEnvelope(stdout);
+      if (!envelope) {
+        this.logger.warn(
+          `[${request.taskName}] Gemini returned no parseable JSON output`,
+        );
+        return null;
+      }
+      if (envelope.error) {
+        this.logger.warn(
+          `[${request.taskName}] Gemini query failed: ${envelope.error}`,
+        );
+        return null;
+      }
+      return { provider: 'gemini', model, text: envelope.response ?? '' };
+    } catch (error) {
+      this.logger.warn(
+        `[${request.taskName}] Gemini query failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Extracts gemini's `--output-format json` envelope
+   * (`{ session_id, response?, stats?, error?, warnings? }`) from stdout, which
+   * can be preceded by unstructured startup warnings.
+   */
+  private parseGeminiEnvelope(
+    stdout: string,
+  ): { response?: string; error?: string } | null {
+    const candidates = [stdout.trim()];
+    const marker = stdout.indexOf('{\n  "session_id"');
+    if (marker >= 0) candidates.push(stdout.slice(marker));
+    const lastBrace = stdout.lastIndexOf('\n{');
+    if (lastBrace >= 0) candidates.push(stdout.slice(lastBrace + 1));
+
+    for (const candidate of candidates) {
+      if (!candidate.startsWith('{')) continue;
+      try {
+        const parsed: unknown = JSON.parse(candidate);
+        if (!parsed || typeof parsed !== 'object') continue;
+        const record = parsed as Record<string, unknown>;
+        const error = record['error'];
+        const errorMessage =
+          error && typeof error === 'object'
+            ? String((error as Record<string, unknown>)['message'] ?? 'unknown')
+            : typeof error === 'string'
+              ? error
+              : undefined;
+        return {
+          response:
+            typeof record['response'] === 'string'
+              ? record['response']
+              : undefined,
+          ...(errorMessage ? { error: errorMessage } : {}),
+        };
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   private async loadClaudeSdk(): Promise<{

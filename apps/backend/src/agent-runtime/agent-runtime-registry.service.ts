@@ -2,11 +2,14 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AGENT_RUNTIME_PROVIDERS } from './agent-runtime.tokens.js';
+import { AGENT_REASONING_EFFORTS } from './agent-runtime.types.js';
 import type {
   AgentProviderId,
+  AgentProviderModelCatalog,
   AgentRuntimeProvider,
   AgentRuntimeProviderFeatures,
   AgentRuntimeProviderInfo,
@@ -14,6 +17,7 @@ import type {
 
 @Injectable()
 export class AgentRuntimeRegistryService {
+  private readonly logger = new Logger('AgentRuntimeRegistryService');
   private readonly providersById: Map<string, AgentRuntimeProvider>;
 
   constructor(
@@ -27,6 +31,55 @@ export class AgentRuntimeRegistryService {
 
   listProviders(): AgentRuntimeProviderInfo[] {
     return [...this.providersById.values()].map((provider) => provider.info);
+  }
+
+  /**
+   * Model catalogs for every registered provider, in registration order. One
+   * provider failing (CLI missing, signed out, slow) degrades to an empty
+   * catalog for that provider instead of failing the whole request.
+   */
+  async listModelCatalogs(): Promise<AgentProviderModelCatalog[]> {
+    return Promise.all(
+      [...this.providersById.values()].map(async (provider) => {
+        const base = {
+          provider: provider.info.id,
+          displayName: provider.info.displayName,
+        };
+
+        if (typeof provider.getModelCatalog !== 'function') {
+          return {
+            ...base,
+            models: [],
+            reasoningEfforts: [],
+            providerDefaultModelId: null,
+            supportsModelSelection: false,
+          };
+        }
+
+        try {
+          const catalog = await provider.getModelCatalog();
+          return {
+            ...base,
+            ...catalog,
+            reasoningEfforts: catalog.reasoningEfforts.length
+              ? catalog.reasoningEfforts
+              : [...AGENT_REASONING_EFFORTS],
+          };
+        } catch (error) {
+          this.logger.debug(
+            `Failed to load model catalog provider=${provider.info.id}: ${String(error)}`,
+          );
+          return {
+            ...base,
+            models: [],
+            reasoningEfforts: [...AGENT_REASONING_EFFORTS],
+            providerDefaultModelId: null,
+            supportsModelSelection: true,
+            unavailableReason: 'Could not reach this agent to list its models.',
+          };
+        }
+      }),
+    );
   }
 
   getProvider(providerId: AgentProviderId = 'claude'): AgentRuntimeProvider {

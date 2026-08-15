@@ -183,6 +183,20 @@
       "when": 1781875280085,
       "tag": "0025_puzzling_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1786795997000,
+      "tag": "0026_petite_rawhide_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1786834966697,
+      "tag": "0027_same_the_hood",
+      "breakpoints": true
     }
   ]
 }

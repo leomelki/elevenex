@@ -1,15 +1,15 @@
-import { z } from 'zod';
+﻿import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 
 /**
- * create_session — create an inner coding session in a worktree, ready to be
- * triggered with prompt_session. ⚡instant, mutating. This is the bridge between
+ * create_session â€” create an inner coding session in a worktree, ready to be
+ * triggered with prompt_session. âš¡instant, mutating. This is the bridge between
  * provisioning (link_worktree / create_worktree) and driving (prompt_session):
  * you cannot prompt work into existence without a session.
  *
  * Accepts a workspaceId (the natural output of link_worktree) OR an explicit
  * worktreePath + branchName (e.g. from a finished create_worktree job). The
- * session is NOT started here — prompt_session starts it on the first prompt.
+ * session is NOT started here â€” prompt_session starts it on the first prompt.
  */
 export const createSessionTool = defineTool({
   name: 'create_session',
@@ -17,7 +17,7 @@ export const createSessionTool = defineTool({
   costClass: 'instant',
   mutates: true,
   description:
-    'Create an inner coding session in a worktree (does not start it). ⚡instant. Pass a workspaceId from link_worktree, or a worktreePath+branchName from a finished create_worktree job. Next: prompt_session to trigger work, then await_session_event to watch it.',
+    'Create an inner coding session in a worktree (does not start it). âš¡instant. Pass a workspaceId from link_worktree, or a worktreePath+branchName from a finished create_worktree job. Next: prompt_session to trigger work, then await_session_event to watch it.',
   inputShape: {
     repoId: z
       .number()
@@ -29,7 +29,7 @@ export const createSessionTool = defineTool({
       .int()
       .positive()
       .optional()
-      .describe('Linked workspace to run in (preferred — returned by link_worktree). If set, branch/path are taken from it.'),
+      .describe('Linked workspace to run in (preferred â€” returned by link_worktree). If set, branch/path are taken from it.'),
     worktreePath: z
       .string()
       .min(1)
@@ -46,7 +46,7 @@ export const createSessionTool = defineTool({
       .optional()
       .describe('Optional session name; auto-generated (e.g. "Session 3") if omitted.'),
     provider: z
-      .enum(['claude', 'codex', 'pi'])
+      .enum(['claude', 'codex', 'pi', 'gemini'])
       .default('claude')
       .describe("Inner agent provider for this session. Default 'claude'."),
   },

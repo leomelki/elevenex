@@ -1,4 +1,10 @@
-export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
+export type AgentProviderId =
+  | 'claude'
+  | 'codex'
+  | 'pi'
+  | 'gemini'
+  | 'opencode'
+  | string;
 export type AgentPermissionMode = string;
 export type AgentReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | string;
 
@@ -81,13 +87,15 @@ export interface AgentAuthStatus {
   installed?: boolean;
   version?: string | null;
   authenticated?: boolean;
-  authMethod?: 'oauth' | 'api_key' | 'none' | 'unknown';
+  authMethod?: 'oauth' | 'api_key' | 'vertex' | 'gateway' | 'none' | 'unknown';
   email?: string;
   authPath?: string;
   loginMode?: AgentLoginMode | null;
   loginUrl?: string | null;
   loginUserCode?: string | null;
   loginError?: string | null;
+  /** Shown when the provider's CLI is missing, e.g. an install command. */
+  installHint?: string | null;
 }
 
 export type AgentImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';

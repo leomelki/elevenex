@@ -8,6 +8,7 @@ import { SessionsModule } from '../sessions/sessions.module.js';
 import { ClaudeHooksModule } from '../claude-hooks/claude-hooks.module.js';
 import { TerminalModule } from '../terminal/terminal.module.js';
 import { SessionTitleModule } from '../session-title/session-title.module.js';
+import { SettingsModule } from '../settings/settings.module.js';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { SessionTitleModule } from '../session-title/session-title.module.js';
     forwardRef(() => ClaudeHooksModule),
     forwardRef(() => TerminalModule),
     SessionTitleModule,
+    SettingsModule,
   ],
   controllers: [],
   providers: [

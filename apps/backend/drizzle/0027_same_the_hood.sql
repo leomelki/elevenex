@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `gemini_session_id` text DEFAULT '-1';

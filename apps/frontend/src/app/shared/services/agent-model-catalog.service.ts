@@ -16,6 +16,8 @@ export class AgentModelCatalogService {
   readonly catalogs = signal<AgentProviderModelCatalog[]>([]);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
+  /** True once a response has been applied, so the UI can tell empty from pending. */
+  readonly loaded = signal(false);
 
   private loadPromise: Promise<AgentProviderModelCatalog[]> | null = null;
   private loadedOrigin: string | null = null;
@@ -26,6 +28,12 @@ export class AgentModelCatalogService {
       return this.loadPromise;
     }
 
+    if (this.loadedOrigin !== origin) {
+      // Switching backends invalidates the previous host's catalog.
+      this.catalogs.set([]);
+      this.loaded.set(false);
+    }
+
     this.loadedOrigin = origin;
     this.loading.set(true);
     this.error.set(null);
@@ -33,8 +41,11 @@ export class AgentModelCatalogService {
       this.http.get<AgentProviderModelCatalog[]>('/api/agent-providers/models'),
     )
       .then((catalogs) => {
-        const normalized = Array.isArray(catalogs) ? catalogs : [];
+        const normalized = Array.isArray(catalogs)
+          ? catalogs.map((catalog) => this.normalize(catalog))
+          : [];
         this.catalogs.set(normalized);
+        this.loaded.set(true);
         return normalized;
       })
       .catch((error) => {
@@ -46,5 +57,30 @@ export class AgentModelCatalogService {
       .finally(() => this.loading.set(false));
 
     return this.loadPromise;
+  }
+
+  /**
+   * Refetches even when cached — the provider lists are refreshed in the
+   * background on the backend, so a retry can surface models that weren't
+   * ready (or reachable) a moment ago.
+   */
+  refresh(): Promise<AgentProviderModelCatalog[]> {
+    this.loadPromise = null;
+    this.loadedOrigin = null;
+    return this.load();
+  }
+
+  private normalize(
+    catalog: AgentProviderModelCatalog,
+  ): AgentProviderModelCatalog {
+    return {
+      ...catalog,
+      models: Array.isArray(catalog?.models) ? catalog.models : [],
+      reasoningEfforts: Array.isArray(catalog?.reasoningEfforts)
+        ? catalog.reasoningEfforts
+        : [],
+      providerDefaultModelId: catalog?.providerDefaultModelId ?? null,
+      supportsModelSelection: catalog?.supportsModelSelection !== false,
+    };
   }
 }

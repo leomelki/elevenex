@@ -1,8 +1,8 @@
-import { z } from 'zod';
+﻿import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 
 /**
- * generate_worktree_context — 🔴heavy, mutates. Runs git analysis + an LLM to
+ * generate_worktree_context â€” ðŸ”´heavy, mutates. Runs git analysis + an LLM to
  * produce/refresh the one-line "what this branch is doing" context for a
  * worktree, then persists it. The backend coalesces concurrent calls. Returns
  * the resulting snapshot (contextSentence + generationStatus).
@@ -13,7 +13,7 @@ export const generateWorktreeContextTool = defineTool({
   costClass: 'heavy',
   mutates: true,
   description:
-    "Generate/refresh a worktree's one-line context sentence (git diff analysis + LLM) and persist it. 🔴heavy — may take seconds; the backend coalesces concurrent calls. Returns generationStatus + contextSentence. Pass force to regenerate a cached one.",
+    "Generate/refresh a worktree's one-line context sentence (git diff analysis + LLM) and persist it. ðŸ”´heavy â€” may take seconds; the backend coalesces concurrent calls. Returns generationStatus + contextSentence. Pass force to regenerate a cached one.",
   inputShape: {
     repoId: z
       .number()
@@ -29,7 +29,7 @@ export const generateWorktreeContextTool = defineTool({
       .default(false)
       .describe('Regenerate even if a cached sentence exists. Default false.'),
     provider: z
-      .enum(['claude', 'codex'])
+      .enum(['claude', 'codex', 'pi', 'gemini'])
       .default('claude')
       .describe("LLM provider for generation. Default 'claude'."),
   },
@@ -64,10 +64,10 @@ export const generateWorktreeContextTool = defineTool({
       },
       nextStep:
         snapshot.generationStatus === 'ready'
-          ? 'Context ready — use it when creating or prompting a session.'
+          ? 'Context ready â€” use it when creating or prompting a session.'
           : snapshot.generationStatus === 'failed'
-            ? 'Generation failed — inspect error and retry with force:true.'
-            : 'Still generating — re-call to get the latest snapshot.',
+            ? 'Generation failed â€” inspect error and retry with force:true.'
+            : 'Still generating â€” re-call to get the latest snapshot.',
     };
   },
 });

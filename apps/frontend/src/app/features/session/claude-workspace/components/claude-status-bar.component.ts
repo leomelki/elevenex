@@ -661,9 +661,18 @@ export class ClaudeStatusBarComponent {
   );
   readonly reasoningEffortOptions = computed(() => {
     const effort = this.reasoningEffort();
-    return effort && !REASONING_EFFORTS.some((option) => option.id === effort)
-      ? [{ id: effort, label: effort, hint: 'Custom effort' }, ...REASONING_EFFORTS]
+    // Some providers report the levels a model actually accepts; honor that
+    // rather than offering levels the model would reject. "Default effort"
+    // (the empty id) always stays available.
+    const supported = this.selectedModelOption()?.reasoningEfforts;
+    const base = supported?.length
+      ? REASONING_EFFORTS.filter(
+          (option) => option.id === '' || supported.includes(option.id as string),
+        )
       : REASONING_EFFORTS;
+    return effort && !base.some((option) => option.id === effort)
+      ? [{ id: effort, label: effort, hint: 'Custom effort' }, ...base]
+      : base;
   });
   readonly reasoningEffortLabel = computed(() => {
     const effort = this.reasoningEffort();

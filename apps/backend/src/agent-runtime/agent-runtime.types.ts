@@ -1,6 +1,12 @@
 import { EventEmitter } from 'events';
 
-export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
+export type AgentProviderId =
+  | 'claude'
+  | 'codex'
+  | 'pi'
+  | 'gemini'
+  | 'opencode'
+  | string;
 export type AgentPermissionMode = string;
 export type AgentReasoningEffort =
   | 'low'
@@ -29,6 +35,43 @@ export interface AgentRuntimeProviderInfo {
   id: AgentProviderId;
   displayName: string;
   capabilities: AgentRuntimeProviderCapabilities;
+}
+
+/**
+ * Thinking levels offered when a provider does not publish its own list. Kept
+ * in sync with what the per-session picker already offers for every provider.
+ */
+export const AGENT_REASONING_EFFORTS = [
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
+
+export type AgentCatalogModel =
+  import('../claude-runtime/claude-runtime.types.js').ClaudeModelOption;
+
+/**
+ * Session-independent view of what a provider can be pinned to, used by the
+ * default-model/thinking-level pickers in settings. Providers report this
+ * themselves so a newly released model shows up without any UI change.
+ */
+export interface AgentProviderModelCatalogPayload {
+  models: AgentCatalogModel[];
+  /** Provider-wide levels; a model may narrow these via `reasoningEfforts`. */
+  reasoningEfforts: string[];
+  /** What the provider falls back to when nothing is pinned, if known. */
+  providerDefaultModelId: string | null;
+  /** False when a model cannot be chosen ahead of a session. */
+  supportsModelSelection: boolean;
+  /** Set when the list is empty for a knowable reason (e.g. signed out). */
+  unavailableReason?: string | null;
+}
+
+export interface AgentProviderModelCatalog extends AgentProviderModelCatalogPayload {
+  provider: AgentProviderId;
+  displayName: string;
 }
 
 export interface AgentRuntimeStatePayload {
@@ -132,6 +175,12 @@ export interface AgentLoginStartResult {
 }
 
 export interface AgentRuntimeProviderFeatures {
+  /**
+   * Selectable models and thinking levels, independent of any session. Should
+   * resolve from cache and refresh in the background rather than blocking on a
+   * provider round-trip.
+   */
+  getModelCatalog(): Promise<AgentProviderModelCatalogPayload>;
   getAuthStatus(): Promise<AgentAuthStatus>;
   startLogin(options: {
     mode: AgentLoginMode;

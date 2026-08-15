@@ -204,6 +204,13 @@ export interface ClaudeModelOption {
   supportsEffort?: boolean;
   supportsFastMode?: boolean;
   supportsAutoMode?: boolean;
+  /**
+   * Thinking levels this specific model accepts, when the provider tells us.
+   * Absent means "unknown" — fall back to the provider-wide list.
+   */
+  reasoningEfforts?: string[];
+  /** True for the model the provider itself falls back to. */
+  isProviderDefault?: boolean;
 }
 
 export interface ClaudeContextUsage {

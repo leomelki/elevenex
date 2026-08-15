@@ -84,6 +84,13 @@ import { ClaudeTasksDrawerComponent } from './components/claude-tasks-drawer.com
 import { ClaudeMcpDrawerComponent } from './components/claude-mcp-drawer.component';
 import { CodexLoginCardComponent } from './components/codex-login-card.component';
 import { PiLoginCardComponent } from './components/pi-login-card.component';
+import { GeminiLoginCardComponent } from './components/gemini-login-card.component';
+
+/**
+ * Providers whose credentials are collected inside the workspace. Claude is
+ * absent: it manages its own sign-in outside Elevenex.
+ */
+const LOGIN_CARD_PROVIDERS = new Set(['codex', 'pi', 'gemini']);
 import {
   ClaudeAgentInspectorComponent,
   ClaudeSubagentHistoryState,
@@ -153,6 +160,7 @@ type TranscriptRenderItem =
     ClaudeTurnChangesComponent,
     CodexLoginCardComponent,
     PiLoginCardComponent,
+    GeminiLoginCardComponent,
     AgentShowCardComponent,
     NgIcon,
     ZardButtonComponent,
@@ -299,8 +307,17 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
   readonly _permissionMode = signal<ClaudePermissionMode | null>(null);
   readonly _planMode = signal(false);
-  readonly codexAuthStatus = signal<AgentAuthStatus | null>(null);
-  readonly piAuthStatus = signal<AgentAuthStatus | null>(null);
+  /**
+   * Auth status per provider. Only the current provider's entry is ever shown,
+   * but keeping a map means switching provider doesn't leak the previous one's
+   * status into the login card, and a new provider needs no extra signal.
+   */
+  private readonly authStatusByProvider = signal<
+    Record<string, AgentAuthStatus | null>
+  >({});
+  readonly providerAuthStatus = computed(
+    () => this.authStatusByProvider()[this.currentProvider()] ?? null,
+  );
   readonly runtimeStarted = signal(false);
   readonly statusPhase = computed<ClaudeStatusBarPhase>(() => {
     const phase = this.runPhase();
@@ -318,19 +335,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly _readOnlyTranscript = signal(false);
   private readonly _terminalTranscriptMirror = signal(false);
   readonly isTranscriptReadOnly = computed(() => this._archived() || this._readOnlyTranscript());
-  readonly showCodexLogin = computed(() => {
+  /**
+   * True when the current provider needs credentials before it can run. Claude
+   * is absent because it manages its own sign-in outside the workspace.
+   */
+  readonly showProviderLogin = computed(() => {
     if (this._readOnlyTranscript()) return false;
     if (this._archived()) return false;
-    if (this.currentProvider() !== 'codex') return false;
-    const status = this.codexAuthStatus();
-    if (!status) return false;
-    return status.authenticated !== true;
-  });
-  readonly showPiLogin = computed(() => {
-    if (this._readOnlyTranscript()) return false;
-    if (this._archived()) return false;
-    if (this.currentProvider() !== 'pi') return false;
-    const status = this.piAuthStatus();
+    if (!LOGIN_CARD_PROVIDERS.has(this.currentProvider())) return false;
+    const status = this.providerAuthStatus();
     if (!status) return false;
     return status.authenticated !== true;
   });
@@ -726,38 +739,27 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       }
     });
 
-    // While the Codex login card is on screen, poll the auth-status endpoint
-    // as a safety net: the codex CLI's exit event is occasionally delayed
-    // (long-poll) or missed (WS reconnect race), and the user would otherwise
-    // be stuck on a card whose dismissal never arrived.
+    // While a login card is on screen, poll the auth-status endpoint as a
+    // safety net: a CLI's completion event is occasionally delayed (long-poll)
+    // or missed (WS reconnect race), and the user would otherwise be stuck on
+    // a card whose dismissal never arrived. Gemini in particular finishes its
+    // OAuth entirely in the browser, so polling is the only completion signal.
     effect((onCleanup) => {
-      if (!this.showCodexLogin()) return;
+      if (!this.showProviderLogin()) return;
+      const provider = this.currentProvider();
       const id = window.setInterval(() => {
-        firstValueFrom(this.agentApi.getAuthStatus('codex'))
-          .then((status) => this.codexAuthStatus.set(status))
-          .catch(() => undefined);
+        void this.refreshAuthStatus(provider);
       }, 3000);
       onCleanup(() => window.clearInterval(id));
     });
 
-    effect((onCleanup) => {
-      if (!this.showPiLogin()) return;
-      const id = window.setInterval(() => {
-        firstValueFrom(this.agentApi.getAuthStatus('pi'))
-          .then((status) => this.piAuthStatus.set(status))
-          .catch(() => undefined);
-      }, 3000);
-      onCleanup(() => window.clearInterval(id));
-    });
-
-    // Proactively fetch PI auth status when the provider is PI but the status
-    // hasn't arrived yet from the session snapshot (guards against timing races).
+    // Proactively fetch auth status when the provider needs a login card but no
+    // status has arrived from the session snapshot yet (timing race guard).
     effect(() => {
-      if (this.currentProvider() !== 'pi') return;
-      if (this.piAuthStatus() !== null) return;
-      void firstValueFrom(this.agentApi.getAuthStatus('pi'))
-        .then((status) => this.piAuthStatus.set(status))
-        .catch(() => undefined);
+      const provider = this.currentProvider();
+      if (!LOGIN_CARD_PROVIDERS.has(provider)) return;
+      if (this.authStatusByProvider()[provider] !== undefined) return;
+      void this.refreshAuthStatus(provider);
     });
 
     this.destroyRef.onDestroy(() => {
@@ -1288,15 +1290,21 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       });
   }
 
-  onCodexAuthenticated(): void {
-    void firstValueFrom(this.agentApi.getAuthStatus('codex'))
-      .then((status) => this.codexAuthStatus.set(status))
-      .catch(() => undefined);
+  /** A login card reported success — confirm it against the backend. */
+  onProviderAuthenticated(): void {
+    void this.refreshAuthStatus(this.currentProvider());
   }
 
-  onPiAuthenticated(): void {
-    void firstValueFrom(this.agentApi.getAuthStatus('pi'))
-      .then((status) => this.piAuthStatus.set(status))
+  private setAuthStatus(provider: string, status: AgentAuthStatus | null): void {
+    this.authStatusByProvider.update((current) => ({
+      ...current,
+      [provider]: status,
+    }));
+  }
+
+  private refreshAuthStatus(provider: string): Promise<void> {
+    return firstValueFrom(this.agentApi.getAuthStatus(provider))
+      .then((status) => this.setAuthStatus(provider, status))
       .catch(() => undefined);
   }
 
@@ -2072,11 +2080,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         void this.handleCompletion();
         return;
       case 'auth_status':
-        if (this.currentProvider() === 'codex') {
-          this.codexAuthStatus.set(event.payload.status as AgentAuthStatus);
-        } else if (this.currentProvider() === 'pi') {
-          this.piAuthStatus.set(event.payload.status as AgentAuthStatus);
-        }
+        this.setAuthStatus(
+          this.currentProvider(),
+          event.payload.status as AgentAuthStatus,
+        );
         return;
       default:
         return;
@@ -2232,16 +2239,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.sessionMetadata.set(state.sessionMetadata);
     this.subagents.set(state.subagents);
     this.recentHookEvents.set(state.recentHookEvents);
-    if (this.currentProvider() === 'codex') {
-      this.codexAuthStatus.set((state.authStatus ?? null) as AgentAuthStatus | null);
-      this.piAuthStatus.set(null);
-    } else if (this.currentProvider() === 'pi') {
-      this.piAuthStatus.set((state.authStatus ?? null) as AgentAuthStatus | null);
-      this.codexAuthStatus.set(null);
-    } else {
-      this.codexAuthStatus.set(null);
-      this.piAuthStatus.set(null);
-    }
+    this.setAuthStatus(
+      this.currentProvider(),
+      (state.authStatus ?? null) as AgentAuthStatus | null,
+    );
   }
 
   private applyPendingPermissionFromRuntime(req: ClaudePermissionRequest | null): void {
@@ -2329,8 +2330,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.sessionMetadata.set(null);
     this.subagents.set([]);
     this.recentHookEvents.set([]);
-    this.codexAuthStatus.set(null);
-    this.piAuthStatus.set(null);
+    this.authStatusByProvider.set({});
     this.bootstrappedProvider = null;
     this.runtimeStarted.set(this.hasStartedAgentRuntime);
     this.expandedTurns.set({});

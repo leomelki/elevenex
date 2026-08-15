@@ -40,6 +40,17 @@ interface SessionListOptions {
   includeHidden?: boolean;
 }
 
+/**
+ * The per-provider session-id columns. A provider counts as "started" once its
+ * column holds anything other than the `-1` placeholder.
+ */
+interface SessionProviderColumns {
+  claudeSessionId?: string | null;
+  codexSessionId?: string | null;
+  piSessionPath?: string | null;
+  geminiSessionId?: string | null;
+}
+
 @Injectable()
 export class SessionsService extends EventEmitter {
   private readonly logger = new Logger(SessionsService.name);
@@ -435,6 +446,33 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
+  async updateGeminiSessionId(id: number, geminiSessionId: string) {
+    const session = await this.findOne(id);
+
+    if (
+      session.geminiSessionId === geminiSessionId &&
+      session.activeAgentProvider === 'gemini'
+    ) {
+      return session;
+    }
+
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        activeAgentProvider: 'gemini',
+        geminiSessionId,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
   async updateActiveAgentProvider(id: number, provider: AgentProviderId) {
     if (typeof provider !== 'string') {
       throw new BadRequestException('Provider must be a string');
@@ -476,49 +514,53 @@ export class SessionsService extends EventEmitter {
     return typeof name === 'string' && /^Session \d+$/.test(name.trim());
   }
 
-  private hasStartedAgentRuntime(session: {
-    claudeSessionId?: string | null;
-    codexSessionId?: string | null;
-    piSessionPath?: string | null;
-  }): boolean {
-    return Boolean(
-      (session.claudeSessionId && session.claudeSessionId !== '-1') ||
-      (session.codexSessionId && session.codexSessionId !== '-1') ||
-      (session.piSessionPath && session.piSessionPath !== '-1'),
-    );
+  /**
+   * Per-provider session-id columns, most-specific first. Inference walks this
+   * list in order, so adding a provider means adding one row here rather than
+   * another arm to a nested conditional.
+   */
+  private static readonly PROVIDER_SESSION_COLUMNS = [
+    ['gemini', 'geminiSessionId'],
+    ['pi', 'piSessionPath'],
+    ['codex', 'codexSessionId'],
+    ['claude', 'claudeSessionId'],
+  ] as const;
+
+  private startedProviders(
+    session: SessionProviderColumns,
+  ): Set<AgentProviderId> {
+    const started = new Set<AgentProviderId>();
+    for (const [provider, column] of SessionsService.PROVIDER_SESSION_COLUMNS) {
+      const value = session[column];
+      if (value && value !== '-1') started.add(provider);
+    }
+    return started;
+  }
+
+  private hasStartedAgentRuntime(session: SessionProviderColumns): boolean {
+    return this.startedProviders(session).size > 0;
   }
 
   private withInferredActiveAgentProvider<
-    T extends {
-      activeAgentProvider?: string | null;
-      claudeSessionId?: string | null;
-      codexSessionId?: string | null;
-      piSessionPath?: string | null;
-    },
+    T extends SessionProviderColumns & { activeAgentProvider?: string | null },
   >(session: T): T & { activeAgentProvider: AgentProviderId } {
-    const hasClaude = Boolean(
-      session.claudeSessionId && session.claudeSessionId !== '-1',
-    );
-    const hasCodex = Boolean(
-      session.codexSessionId && session.codexSessionId !== '-1',
-    );
-    const hasPi = Boolean(
-      session.piSessionPath && session.piSessionPath !== '-1',
-    );
+    const started = this.startedProviders(session);
     const persisted = session.activeAgentProvider?.trim();
 
-    return {
-      ...session,
-      activeAgentProvider:
-        persisted &&
-        (persisted !== 'claude' || hasClaude || (!hasCodex && !hasPi))
-          ? persisted
-          : hasPi
-            ? 'pi'
-            : hasCodex
-              ? 'codex'
-              : 'claude',
-    };
+    // Trust the persisted choice unless it is the bare 'claude' default that
+    // was never actually started while some other provider was — that pairing
+    // means the column is stale, not chosen.
+    const persistedIsStaleDefault =
+      persisted === 'claude' && !started.has('claude') && started.size > 0;
+
+    if (persisted && !persistedIsStaleDefault) {
+      return { ...session, activeAgentProvider: persisted };
+    }
+
+    const inferred = SessionsService.PROVIDER_SESSION_COLUMNS.find(
+      ([provider]) => started.has(provider),
+    );
+    return { ...session, activeAgentProvider: inferred?.[0] ?? 'claude' };
   }
 
   async markWorktreeContextInjected(id: number) {

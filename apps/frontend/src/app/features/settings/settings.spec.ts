@@ -10,6 +10,41 @@ vi.mock('ngx-sonner', () => ({
   },
 }));
 
+const APP_SETTINGS_RESPONSE = {
+  defaultClaudeSessionSurface: 'claude-ui',
+  defaultAgentProvider: 'claude',
+  sessionToolbarButtons: null,
+  defaultModelByProvider: {},
+  defaultReasoningEffortByProvider: {},
+  onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
+  createdAt: null,
+  updatedAt: null,
+};
+
+const MODEL_CATALOG_RESPONSE = [
+  {
+    provider: 'claude',
+    displayName: 'Claude Code',
+    models: [
+      {
+        id: 'opus',
+        displayName: 'Opus',
+        description: 'Higher-reasoning model.',
+        supportsEffort: true,
+      },
+      {
+        id: 'haiku',
+        displayName: 'Haiku',
+        description: 'Fast lower-cost model.',
+        supportsEffort: false,
+      },
+    ],
+    reasoningEfforts: ['low', 'medium', 'high'],
+    providerDefaultModelId: null,
+    supportsModelSelection: true,
+  },
+];
+
 describe('Settings', () => {
   let httpMock: HttpTestingController;
 
@@ -35,14 +70,10 @@ describe('Settings', () => {
     const fixture = TestBed.createComponent(Settings);
     fixture.detectChanges();
 
-    httpMock.expectOne('/api/settings').flush({
-      defaultClaudeSessionSurface: 'claude-ui',
-      defaultAgentProvider: 'claude',
-      sessionToolbarButtons: null,
-      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-      createdAt: null,
-      updatedAt: null,
-    });
+    httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
+    httpMock
+      .expectOne('/api/agent-providers/models')
+      .flush(MODEL_CATALOG_RESPONSE);
     httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
     await Promise.resolve();
     fixture.detectChanges();
@@ -67,14 +98,10 @@ describe('Settings', () => {
     const fixture = TestBed.createComponent(Settings);
     fixture.detectChanges();
 
-    httpMock.expectOne('/api/settings').flush({
-      defaultClaudeSessionSurface: 'claude-ui',
-      defaultAgentProvider: 'claude',
-      sessionToolbarButtons: null,
-      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-      createdAt: null,
-      updatedAt: null,
-    });
+    httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
+    httpMock
+      .expectOne('/api/agent-providers/models')
+      .flush(MODEL_CATALOG_RESPONSE);
     httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
     await Promise.resolve();
     fixture.detectChanges();
@@ -104,14 +131,10 @@ describe('Settings', () => {
     const fixture = TestBed.createComponent(Settings);
     fixture.detectChanges();
 
-    httpMock.expectOne('/api/settings').flush({
-      defaultClaudeSessionSurface: 'claude-ui',
-      defaultAgentProvider: 'claude',
-      sessionToolbarButtons: null,
-      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-      createdAt: null,
-      updatedAt: null,
-    });
+    httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
+    httpMock
+      .expectOne('/api/agent-providers/models')
+      .flush(MODEL_CATALOG_RESPONSE);
     httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
     await Promise.resolve();
     fixture.detectChanges();
@@ -125,11 +148,8 @@ describe('Settings', () => {
       ),
     ).toEqual({ id: 'terminal', visible: false });
     saveRequest.flush({
-      defaultClaudeSessionSurface: 'claude-ui',
-      defaultAgentProvider: 'claude',
+      ...APP_SETTINGS_RESPONSE,
       sessionToolbarButtons: saveRequest.request.body.sessionToolbarButtons,
-      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-      createdAt: null,
       updatedAt: '2026-01-01T00:00:00.000Z',
     });
     await savePromise;
@@ -138,13 +158,75 @@ describe('Settings', () => {
     const resetRequest = httpMock.expectOne('/api/settings');
     expect(resetRequest.request.body.sessionToolbarButtons).toBeNull();
     resetRequest.flush({
-      defaultClaudeSessionSurface: 'claude-ui',
-      defaultAgentProvider: 'claude',
-      sessionToolbarButtons: null,
-      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-      createdAt: null,
+      ...APP_SETTINGS_RESPONSE,
       updatedAt: '2026-01-01T00:00:01.000Z',
     });
     await resetPromise;
+  });
+
+  it('renders a model default row per provider from the catalog', async () => {
+    const fixture = TestBed.createComponent(Settings);
+    fixture.detectChanges();
+
+    httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
+    httpMock
+      .expectOne('/api/agent-providers/models')
+      .flush(MODEL_CATALOG_RESPONSE);
+    httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.textContent).toContain('Model defaults');
+    expect(element.textContent).toContain('Claude Code');
+    expect(
+      element.querySelector('[aria-label="Default model for Claude Code"]'),
+    ).toBeTruthy();
+    expect(
+      element.querySelector(
+        '[aria-label="Default thinking level for Claude Code"]',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('saves a picked default model for just that provider', async () => {
+    const fixture = TestBed.createComponent(Settings);
+    fixture.detectChanges();
+
+    httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
+    httpMock
+      .expectOne('/api/agent-providers/models')
+      .flush(MODEL_CATALOG_RESPONSE);
+    httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const trigger = element.querySelector(
+      '[aria-label="Default model for Claude Code"]',
+    ) as HTMLButtonElement;
+    trigger.click();
+    fixture.detectChanges();
+
+    const options = Array.from(
+      document.querySelectorAll('[role="option"]'),
+    ) as HTMLElement[];
+    const opus = options.find((option) => option.textContent?.includes('Opus'));
+    expect(opus).toBeTruthy();
+    opus?.click();
+    fixture.detectChanges();
+
+    const request = httpMock.expectOne('/api/settings');
+    expect(request.request.body).toEqual({
+      defaultModelByProvider: { claude: 'opus' },
+    });
+    request.flush({
+      ...APP_SETTINGS_RESPONSE,
+      defaultModelByProvider: { claude: 'opus' },
+    });
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    expect(trigger.textContent).toContain('Opus');
   });
 });

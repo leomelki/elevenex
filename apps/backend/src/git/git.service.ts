@@ -28,7 +28,7 @@ const UNTRACKED_STATS_CONCURRENCY = 16;
 const MAX_UNTRACKED_STATS_FILE_BYTES = 1_000_000;
 const CONVENTIONAL_COMMIT_SUBJECT_PATTERN =
   /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._-]*\))?!?: [a-z0-9].*[^.]$/;
-type CommitMessageProvider = 'claude' | 'codex' | 'pi';
+type CommitMessageProvider = 'claude' | 'codex' | 'pi' | 'gemini';
 
 export function isValidGitRef(ref: string): boolean {
   if (!ref || ref.length === 0) return false;
@@ -62,7 +62,7 @@ export interface CommitMessageSuggestion {
   subject: string;
   body: string | null;
   confidence: 'high' | 'medium' | 'low';
-  source: 'external' | 'claude' | 'codex' | 'pi' | 'fallback';
+  source: 'external' | 'claude' | 'codex' | 'pi' | 'gemini' | 'fallback';
 }
 
 export interface PushResult {
@@ -1022,6 +1022,24 @@ export class GitService {
     );
   }
 
+  private async generateCommitMessageWithGemini(input: {
+    worktreePath: string;
+    branchName: string;
+    files: string[];
+    diff: string;
+    compactStatus: string;
+    compactLog: string;
+  }): Promise<CommitMessageSuggestion | null> {
+    return this.generateCommitSuggestionWithRetry('gemini', () =>
+      this.textAgentGenerationService.generate({
+        provider: 'gemini',
+        worktreePath: input.worktreePath,
+        prompt: this.buildCommitMessagePrompt(input),
+        taskName: 'commit-message',
+      }),
+    );
+  }
+
   private async generateCommitSuggestionWithRetry(
     source: CommitMessageSuggestion['source'],
     generate: () => Promise<GenerateTextWithAgentResult | null>,
@@ -1062,6 +1080,8 @@ export class GitService {
         return this.generateCommitMessageWithCodex(input);
       case 'pi':
         return this.generateCommitMessageWithPi(input);
+      case 'gemini':
+        return this.generateCommitMessageWithGemini(input);
     }
   }
 
@@ -1410,7 +1430,12 @@ export class GitService {
   private normalizeCommitMessageProvider(
     provider: AgentProviderId | undefined,
   ): CommitMessageProvider {
-    if (provider === 'claude' || provider === 'codex' || provider === 'pi') {
+    if (
+      provider === 'claude' ||
+      provider === 'codex' ||
+      provider === 'pi' ||
+      provider === 'gemini'
+    ) {
       return provider;
     }
     throw new BadRequestException(

@@ -50,7 +50,9 @@ export function canonicalizeAgentTool(
   if (
     normalized === 'read' ||
     normalized === 'fileread' ||
-    normalized === 'filereadtool'
+    normalized === 'filereadtool' ||
+    normalized === 'readfile' ||
+    normalized === 'readmanyfiles'
   ) {
     return {
       toolKind: 'read',
@@ -63,6 +65,7 @@ export function canonicalizeAgentTool(
     normalized === 'write' ||
     normalized === 'filewrite' ||
     normalized === 'filewritetool' ||
+    normalized === 'writefile' ||
     normalized === 'create'
   ) {
     return {
@@ -79,7 +82,9 @@ export function canonicalizeAgentTool(
     normalized === 'fileedittool' ||
     normalized === 'strreplace' ||
     normalized === 'strreplacebasededittool' ||
-    normalized === 'strreplacebasedeittool'
+    normalized === 'strreplacebasedeittool' ||
+    // Gemini CLI names its in-place edit tool `replace`.
+    normalized === 'replace'
   ) {
     return {
       toolKind: 'edit',
@@ -100,6 +105,7 @@ export function canonicalizeAgentTool(
     normalized === 'bash' ||
     normalized === 'powershell' ||
     normalized === 'shellcommand' ||
+    normalized === 'runshellcommand' ||
     normalized === 'execcommand'
   ) {
     const readPath = readActionPath(input);
@@ -124,12 +130,18 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'grep') {
+  if (normalized === 'grep' || normalized === 'searchfilecontent') {
     return { toolKind: 'grep', toolDisplayName: 'Grep', toolInput: data };
   }
 
   if (normalized === 'glob') {
     return { toolKind: 'glob', toolDisplayName: 'Glob', toolInput: data };
+  }
+
+  // A directory listing produces the same shape of result as a glob (a set of
+  // paths), so it reuses that card rather than falling through to `unknown`.
+  if (normalized === 'listdirectory' || normalized === 'ls') {
+    return { toolKind: 'glob', toolDisplayName: 'List', toolInput: data };
   }
 
   if (normalized === 'webfetch') {
@@ -140,7 +152,7 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'websearch') {
+  if (normalized === 'websearch' || normalized === 'googlewebsearch') {
     return {
       toolKind: 'web_search',
       toolDisplayName: 'WebSearch',
@@ -168,7 +180,7 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'todowrite') {
+  if (normalized === 'todowrite' || normalized === 'writetodos') {
     return {
       toolKind: 'todo_write',
       toolDisplayName: 'Todos',

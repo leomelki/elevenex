@@ -17,7 +17,11 @@ import type {
   AgentForkConversationResult,
   AgentImageInput,
 } from '../agent-runtime/agent-runtime.types.js';
+import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
+import type { AgentProviderModelCatalogPayload } from '../agent-runtime/agent-runtime.types.js';
+import { resolveAgentStartupSelection } from '../agent-runtime/agent-model-defaults.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
+import { SettingsService } from '../settings/settings.service.js';
 import {
   ClaudeHooksService,
   type ClaudeSessionActivity,
@@ -101,11 +105,31 @@ export class PiRuntimeService
     private readonly authService: PiAuthService,
     private readonly hooksService: ClaudeHooksService,
     private readonly titleService: SessionTitleService,
+    private readonly settingsService: SettingsService,
   ) {
     super();
     this.authService.on('status', (status: PiAuthStatus) => {
       void this.handleAuthStatusChange(status);
     });
+  }
+
+  /**
+   * Session-independent model catalog for the settings pickers. Pi only knows
+   * its models once a signed-in CLI has reported them, so an empty list is a
+   * normal state that the UI explains rather than an error.
+   */
+  getModelCatalog(): AgentProviderModelCatalogPayload {
+    this.refreshGlobalModelsIfStale();
+    const models = this.modelsCache ? [...this.modelsCache] : [];
+    return {
+      models,
+      reasoningEfforts: [...AGENT_REASONING_EFFORTS],
+      providerDefaultModelId: null,
+      supportsModelSelection: true,
+      unavailableReason: models.length
+        ? null
+        : 'Pi has not reported any models yet — check that its CLI is installed and signed in.',
+    };
   }
 
   onModuleInit(): void {
@@ -610,9 +634,47 @@ export class PiRuntimeService
     });
 
     await runtime.start();
+    await this.applyConfiguredDefaultModel(sessionId, runtime);
     await this.refreshStateFromRpc(sessionId);
     this.enforceIdleRuntimeCap();
     return runtime;
+  }
+
+  /**
+   * Pi only changes model on an explicit `set_model` RPC, so the configured
+   * default has to be pushed to a freshly started process — seeding runtime
+   * state alone would display a model the process isn't actually using.
+   * Resuming an existing Pi session keeps whatever model it was left on.
+   */
+  private async applyConfiguredDefaultModel(
+    sessionId: number,
+    runtime: PiSessionRuntime,
+  ): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (state.piSessionPath) {
+      return;
+    }
+
+    const configured =
+      this.settingsService.getAgentProviderDefaults('pi').model;
+    const parsed = this.parseModelRef(configured);
+    if (!parsed) {
+      return;
+    }
+
+    try {
+      await runtime.send({
+        type: 'set_model',
+        provider: parsed.provider,
+        modelId: parsed.modelId,
+      });
+    } catch (error) {
+      // A default that Pi rejects (renamed/unavailable model) must not stop the
+      // session from starting; it just falls back to Pi's own choice.
+      this.logger.warn(
+        `Could not apply the default Pi model session=${sessionId} model=${JSON.stringify(configured)}: ${String(error)}`,
+      );
+    }
   }
 
   private async refreshStateFromRpc(sessionId: number): Promise<void> {
@@ -1127,6 +1189,12 @@ export class PiRuntimeService
         existing.piSessionPath = piSessionPath;
       return existing;
     }
+    const availableModels = this.modelsCache ? [...this.modelsCache] : [];
+    const startup = resolveAgentStartupSelection(
+      this.settingsService.getAgentProviderDefaults('pi'),
+      availableModels,
+    );
+
     const state: PiRuntimeState = {
       piSessionPath:
         piSessionPath && piSessionPath !== '-1' ? piSessionPath : null,
@@ -1139,10 +1207,10 @@ export class PiRuntimeService
       streamingAssistantMessageId: null,
       pendingUserInputRequest: null,
       lastError: null,
-      selectedModel: null,
-      reasoningEffort: null,
+      selectedModel: startup.selectedModel,
+      reasoningEffort: startup.reasoningEffort,
       fastMode: false,
-      availableModels: this.modelsCache ? [...this.modelsCache] : [],
+      availableModels,
       contextUsage: null,
       sessionMetadata: null,
       authStatus: null,

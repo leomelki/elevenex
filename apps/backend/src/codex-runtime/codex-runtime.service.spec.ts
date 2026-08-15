@@ -74,6 +74,12 @@ describe('CodexRuntimeService', () => {
         appServer as never,
         hooksService as never,
         titleService as never,
+        {
+          getAgentProviderDefaults: () => ({
+            model: null,
+            reasoningEffort: null,
+          }),
+        } as never,
       ),
       sessionsService,
       authService,

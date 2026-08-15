@@ -2,10 +2,12 @@ import { computed, inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import {
+  AgentProviderPreferenceMap,
   AppSettings,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
 } from '@/shared/models/app-settings.model';
+import { AGENT_PROVIDER_PRESENTATIONS } from '@/shared/models/agent-provider-presentation';
 import { getBackendOrigin } from '@/shared/runtime/runtime-config';
 import {
   normalizeSessionToolbarButtons,
@@ -17,6 +19,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultClaudeSessionSurface: 'claude-ui',
   defaultAgentProvider: 'claude',
   sessionToolbarButtons: null,
+  defaultModelByProvider: {},
+  defaultReasoningEffortByProvider: {},
   onboardingCompletedAt: null,
   createdAt: null,
   updatedAt: null,
@@ -26,11 +30,9 @@ const VALID_SURFACES = new Set<DefaultClaudeSessionSurface>([
   'claude-ui',
   'tui',
 ]);
-const VALID_AGENT_PROVIDERS = new Set<DefaultAgentProvider>([
-  'claude',
-  'codex',
-  'pi',
-]);
+const VALID_AGENT_PROVIDERS = new Set<DefaultAgentProvider>(
+  AGENT_PROVIDER_PRESENTATIONS.map((provider) => provider.id),
+);
 
 @Injectable({ providedIn: 'root' })
 export class AppSettingsService {
@@ -104,6 +106,53 @@ export class AppSettingsService {
     return this.saveSettings({ sessionToolbarButtons });
   }
 
+  /**
+   * Pins the model new sessions of `provider` start on; `null` defers to the
+   * provider's own default. Only the touched provider is sent, so saving one
+   * agent's default never clobbers another's.
+   */
+  saveDefaultModel(
+    provider: string,
+    model: string | null,
+  ): Promise<AppSettings> {
+    return this.savePreferencePatch('defaultModelByProvider', provider, model);
+  }
+
+  /** Same contract as `saveDefaultModel`, for the thinking level. */
+  saveDefaultReasoningEffort(
+    provider: string,
+    reasoningEffort: string | null,
+  ): Promise<AppSettings> {
+    return this.savePreferencePatch(
+      'defaultReasoningEffortByProvider',
+      provider,
+      reasoningEffort,
+    );
+  }
+
+  private savePreferencePatch(
+    key: 'defaultModelByProvider' | 'defaultReasoningEffortByProvider',
+    provider: string,
+    value: string | null,
+  ): Promise<AppSettings> {
+    if (!provider) {
+      return Promise.reject(new Error('Unknown agent provider.'));
+    }
+
+    // Optimistic local state mirrors the server's merge semantics: clear the
+    // entry on null, otherwise replace just this provider's value.
+    const current = { ...this.settingsState()[key] };
+    if (value === null || value === '') {
+      delete current[provider];
+    } else {
+      current[provider] = value;
+    }
+
+    return this.saveSettings({ [key]: current } as Partial<AppSettings>, {
+      [key]: { [provider]: value },
+    });
+  }
+
   completeOnboarding(input: {
     defaultAgentProvider: DefaultAgentProvider;
     defaultClaudeSessionSurface?: DefaultClaudeSessionSurface;
@@ -148,10 +197,14 @@ export class AppSettingsService {
       .finally(() => this.saving.set(false));
   }
 
+  /**
+   * @param patch Optimistic local state change.
+   * @param requestBody What to send, when it differs from `patch` — per-provider
+   *   maps are sent as a single-provider patch the server merges server-side.
+   */
   private saveSettings(
-    patch: Partial<
-      Pick<AppSettings, 'defaultAgentProvider' | 'defaultClaudeSessionSurface' | 'sessionToolbarButtons'>
-    >,
+    patch: Partial<AppSettings>,
+    requestBody: Record<string, unknown> = patch,
   ): Promise<AppSettings> {
     this.ensureCurrentOrigin();
     const previous = this.settingsState();
@@ -163,7 +216,7 @@ export class AppSettingsService {
     this.error.set(null);
 
     return firstValueFrom(
-      this.http.patch<AppSettings>('/api/settings', patch),
+      this.http.patch<AppSettings>('/api/settings', requestBody),
     )
       .then((settings) => {
         const normalized = this.normalize(settings);
@@ -195,10 +248,31 @@ export class AppSettingsService {
       sessionToolbarButtons: normalizeStoredSessionToolbarButtons(
         settings?.sessionToolbarButtons,
       ),
+      defaultModelByProvider: this.normalizePreferenceMap(
+        settings?.defaultModelByProvider,
+      ),
+      defaultReasoningEffortByProvider: this.normalizePreferenceMap(
+        settings?.defaultReasoningEffortByProvider,
+      ),
       onboardingCompletedAt: settings?.onboardingCompletedAt ?? null,
       createdAt: settings?.createdAt ?? null,
       updatedAt: settings?.updatedAt ?? null,
     };
+  }
+
+  /** Tolerates a backend that predates these fields, or malformed entries. */
+  private normalizePreferenceMap(value: unknown): AgentProviderPreferenceMap {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return {};
+    }
+
+    const result: AgentProviderPreferenceMap = {};
+    for (const [provider, entry] of Object.entries(value)) {
+      if (typeof entry === 'string' && entry.trim().length > 0) {
+        result[provider] = entry;
+      }
+    }
+    return result;
   }
 
   private ensureCurrentOrigin(): string {

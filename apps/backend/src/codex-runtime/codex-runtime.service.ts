@@ -19,11 +19,18 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
+  AgentProviderModelCatalogPayload,
 } from '../agent-runtime/agent-runtime.types.js';
+import {
+  orderReasoningEfforts,
+  resolveAgentStartupSelection,
+} from '../agent-runtime/agent-model-defaults.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
+import { SettingsService } from '../settings/settings.service.js';
 import {
   ClaudeHooksService,
   type ClaudeSessionActivity,
@@ -147,8 +154,35 @@ export class CodexRuntimeService
     private readonly appServer: CodexAppServerClient,
     private readonly hooksService: ClaudeHooksService,
     private readonly titleService: SessionTitleService,
+    private readonly settingsService: SettingsService,
   ) {
     super();
+  }
+
+  /**
+   * Session-independent model catalog for the settings pickers. Serves the
+   * cached catalog immediately and refreshes in the background.
+   */
+  getModelCatalog(): AgentProviderModelCatalogPayload {
+    this.refreshModelCatalogInBackground();
+    const models = [...this.codexModels];
+    // Codex reports supported efforts per model; the provider-wide list is the
+    // union so the picker still offers everything reachable by some model.
+    const reported = new Set<string>();
+    for (const model of models) {
+      for (const effort of model.reasoningEfforts ?? []) {
+        reported.add(effort);
+      }
+    }
+
+    return {
+      models,
+      reasoningEfforts: reported.size
+        ? orderReasoningEfforts([...reported])
+        : [...AGENT_REASONING_EFFORTS],
+      providerDefaultModelId: this.codexDefaultModel,
+      supportsModelSelection: true,
+    };
   }
 
   onModuleInit(): void {
@@ -1045,6 +1079,13 @@ export class CodexRuntimeService
       }
       return existing;
     }
+    const availableModels = [...this.codexModels];
+    const startup = resolveAgentStartupSelection(
+      this.settingsService.getAgentProviderDefaults('codex'),
+      availableModels,
+      this.codexDefaultModel,
+    );
+
     const state: CodexRuntimeState = {
       codexSessionId:
         codexSessionId && codexSessionId !== '-1' ? codexSessionId : null,
@@ -1057,12 +1098,12 @@ export class CodexRuntimeService
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
       lastError: null,
-      selectedModel: this.codexDefaultModel,
-      reasoningEffort: null,
+      selectedModel: startup.selectedModel,
+      reasoningEffort: startup.reasoningEffort,
       fastMode: false,
       selectedPermissionMode: 'auto',
       planMode: false,
-      availableModels: [...this.codexModels],
+      availableModels,
       contextUsage: null,
       sessionMetadata: null,
       authStatus: null,
@@ -1240,11 +1281,20 @@ export class CodexRuntimeService
       previousDefault,
     );
 
+    // A model pinned in settings wins over Codex's own default, so sessions
+    // running on it must not be re-pointed when the remote default moves.
+    const configuredModel =
+      this.settingsService.getAgentProviderDefaults('codex').model;
+
     for (const [sessionId, state] of this.runtimeStates.entries()) {
       state.availableModels = [...this.codexModels];
-      if (!state.selectedModel || state.selectedModel === previousDefault) {
+      if (
+        !configuredModel &&
+        (!state.selectedModel || state.selectedModel === previousDefault)
+      ) {
         state.selectedModel = this.codexDefaultModel;
       } else if (
+        state.selectedModel &&
         !state.availableModels.some((model) => model.id === state.selectedModel)
       ) {
         state.availableModels = [
@@ -1293,9 +1343,15 @@ export class CodexRuntimeService
       typeof model.description === 'string' && model.description.trim()
         ? model.description.trim()
         : 'Codex model.';
-    const supportsEffort =
-      Array.isArray(model.supportedReasoningEfforts) &&
-      model.supportedReasoningEfforts.length > 0;
+    const reasoningEfforts = Array.isArray(model.supportedReasoningEfforts)
+      ? orderReasoningEfforts(
+          model.supportedReasoningEfforts.filter(
+            (effort): effort is string =>
+              typeof effort === 'string' && effort.trim().length > 0,
+          ),
+        )
+      : [];
+    const supportsEffort = reasoningEfforts.length > 0;
     const supportsFastMode =
       (Array.isArray(model.additionalSpeedTiers) &&
         model.additionalSpeedTiers.length > 0) ||
@@ -1305,7 +1361,9 @@ export class CodexRuntimeService
       displayName,
       description,
       supportsEffort,
+      ...(supportsEffort ? { reasoningEfforts } : {}),
       ...(supportsFastMode ? { supportsFastMode: true } : {}),
+      ...(model.isDefault === true ? { isProviderDefault: true } : {}),
     };
   }
 

@@ -25,6 +25,7 @@ import { TerminalService } from '../terminal/terminal.service.js';
 import { DRIZZLE } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { SessionTitleService } from '../session-title/session-title.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 function successfulResultMessage(sessionId = 'claude-session-1') {
   return {
@@ -165,6 +166,15 @@ describe('ClaudeRuntimeService', () => {
         { provide: ClaudeHooksService, useValue: hooksService },
         { provide: TerminalService, useValue: terminalService },
         { provide: SessionTitleService, useValue: titleService },
+        {
+          provide: SettingsService,
+          useValue: {
+            getAgentProviderDefaults: () => ({
+              model: null,
+              reasoningEffort: null,
+            }),
+          },
+        },
       ],
     }).compile();
 
