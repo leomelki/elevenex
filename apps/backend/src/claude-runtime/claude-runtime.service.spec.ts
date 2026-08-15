@@ -3165,10 +3165,19 @@ describe('ClaudeRuntimeService', () => {
       return (state?.backgroundWork ?? []).map((item: any) => item.id);
     }
 
+    function ageItem(id: string, ms: number) {
+      const state = (service as any).runtimeStates.get(SESSION_ID);
+      const item = state.backgroundWork.find((entry: any) => entry.id === id);
+      const stamp = new Date(Date.now() - ms).toISOString();
+      item.updatedAt = stamp;
+      item.startedAt = stamp;
+    }
+
     it('reports a started subagent as active background work', () => {
       startSubagent('agent-1');
 
-      expect((service as any).hasActiveBackgroundWork(SESSION_ID)).toBe(true);
+      expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(true);
+      expect((service as any).shouldQueueBehindBackground(SESSION_ID)).toBe(true);
       expect(backgroundIds()).toEqual(['subagent:agent-1']);
     });
 
@@ -3176,20 +3185,37 @@ describe('ClaudeRuntimeService', () => {
       startSubagent('agent-1');
       (service as any).clearBackgroundWork(SESSION_ID, 'subagent:agent-1');
 
-      expect((service as any).hasActiveBackgroundWork(SESSION_ID)).toBe(false);
+      expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(false);
       expect(backgroundIds()).toEqual([]);
     });
 
     // Regression: a dropped SubagentStop hook used to pin the session as
     // "background busy" forever, which silently queued every later prompt.
-    it('expires background work that has gone silent past the stale window', () => {
+    // Quiet work must stop blocking the queue...
+    it('stops queueing prompts behind background work that has gone quiet', () => {
       startSubagent('agent-1');
-      const state = (service as any).runtimeStates.get(SESSION_ID);
-      const longAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-      state.backgroundWork[0].updatedAt = longAgo;
-      state.backgroundWork[0].startedAt = longAgo;
+      ageItem('subagent:agent-1', 10 * 60 * 1000);
 
-      expect((service as any).hasActiveBackgroundWork(SESSION_ID)).toBe(false);
+      expect((service as any).shouldQueueBehindBackground(SESSION_ID)).toBe(false);
+    });
+
+    // ...but must NOT release the runtime. Nothing the SDK emits carries an
+    // agent_id, so silence is not evidence a background agent has finished, and
+    // retiring the process on that basis is what destroys its work and leaves
+    // Claude Code reporting "no completion record" on the next resume.
+    it('keeps the runtime alive for quiet background work', () => {
+      startSubagent('agent-1');
+      ageItem('subagent:agent-1', 30 * 60 * 1000);
+
+      expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(true);
+      expect(backgroundIds()).toEqual(['subagent:agent-1']);
+    });
+
+    it('retires background work only past the hard age ceiling', () => {
+      startSubagent('agent-1');
+      ageItem('subagent:agent-1', 7 * 60 * 60 * 1000);
+
+      expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(false);
       expect(backgroundIds()).toEqual([]);
     });
 
@@ -3201,7 +3227,7 @@ describe('ClaudeRuntimeService', () => {
 
       (service as any).clearAllBackgroundWork(SESSION_ID, 'runtime_closed');
 
-      expect((service as any).hasActiveBackgroundWork(SESSION_ID)).toBe(false);
+      expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(false);
       expect(backgroundIds()).toEqual([]);
     });
 
@@ -3232,20 +3258,18 @@ describe('ClaudeRuntimeService', () => {
       expect(backgroundIds()).toEqual([]);
     });
 
-    // Regression: a result means the top-level agent loop concluded, so an
-    // inline subagent cannot still be running — it just never got a stop hook.
-    it('prunes lingering subagent work when a run finishes', () => {
+    // Regression: a `run_in_background` agent outlives the result of the turn
+    // that launched it, and its task-kind counterpart is not yet marked
+    // backgrounded at that point (is_backgrounded only ever arrives on a later
+    // task_updated). Pruning on result would drop the last thing keeping the
+    // process alive for it.
+    it('keeps background work across the end of a run', () => {
       startSubagent('agent-1');
-      (service as any).syncTaskBackgroundWork(SESSION_ID, {
-        taskId: 'task-bg',
-        status: 'running',
-        isBackgrounded: true,
-        updatedAt: new Date().toISOString(),
-      });
 
       (service as any).finishRun(SESSION_ID);
 
-      expect(backgroundIds()).toEqual(['task:task-bg']);
+      expect(backgroundIds()).toEqual(['subagent:agent-1']);
+      expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(true);
     });
 
     it('emits background work on the event stream', () => {

@@ -1511,7 +1511,7 @@ export class ClaudeRuntimeService
         this.updateRuntimeWarmState(sessionId, state, runtime, warmState),
       prewarmIdleShutdownMs: CLAUDE_PREWARM_IDLE_SHUTDOWN_MS,
       postTurnIdleShutdownMs: CLAUDE_POST_TURN_IDLE_SHUTDOWN_MS,
-      isBackgroundWorkActive: () => this.hasActiveBackgroundWork(sessionId),
+      isBackgroundWorkActive: () => this.isBackgroundWorkLive(sessionId),
     });
 
     this.sessionRuntimes.set(sessionId, runtime);
@@ -1605,7 +1605,9 @@ export class ClaudeRuntimeService
       .filter(([sessionId, runtime]) => {
         if (sessionId === preferredSessionId) return false;
         if (this.activeRuns.has(sessionId)) return false;
-        if (this.hasActiveBackgroundWork(sessionId)) return false;
+        // Evicting a runtime kills whatever is running inside it, so use the
+        // generous signal here.
+        if (this.isBackgroundWorkLive(sessionId)) return false;
         return runtime.isIdle && runtime.warmState !== 'closing';
       })
       .sort(([, left], [, right]) => {
@@ -1634,7 +1636,8 @@ export class ClaudeRuntimeService
       !runtime ||
       !runtime.isIdle ||
       this.activeRuns.has(sessionId) ||
-      this.hasActiveBackgroundWork(sessionId)
+      // Restarting tears the process down, so use the generous signal.
+      this.isBackgroundWorkLive(sessionId)
     ) {
       return;
     }
@@ -1667,7 +1670,7 @@ export class ClaudeRuntimeService
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId) ||
-      this.hasActiveBackgroundWork(sessionId)
+      this.shouldQueueBehindBackground(sessionId)
     ) {
       await this.queuePendingPrompt(sessionId, trimmedPrompt, validatedImages);
       return;
@@ -2392,21 +2395,42 @@ export class ClaudeRuntimeService
   //
   // Background work is anything that outlives the turn that launched it: a
   // `run_in_background` Agent/Task, or a subagent that reported a start but not
-  // yet a stop. `state.backgroundWork` is the single source of truth, and every
-  // read goes through sweepBackgroundWork() so that a dropped lifecycle hook,
-  // a killed subprocess, or a runaway agent can never pin a session as busy
-  // forever — which used to leave every subsequent prompt silently queued.
+  // yet a stop. `state.backgroundWork` is the single source of truth.
+  //
+  // Two questions are asked of this registry, and they need OPPOSITE biases:
+  //
+  //   1. "May I retire the runtime process?" — answered by isBackgroundWorkLive.
+  //      Getting this wrong kills work mid-flight and loses it, which is what
+  //      produces Claude Code's "No completion record was found for background
+  //      agent ..." warning on the next resume. Biased heavily toward keeping
+  //      the process alive.
+  //
+  //   2. "Must I queue this prompt?" — answered by shouldQueueBehindBackground.
+  //      Getting this wrong silently swallows the user's message. Biased toward
+  //      letting the prompt through.
+  //
+  // Conflating the two is what made the old behaviour bad in both directions at
+  // once: one over-sticky flag both pinned the prompt queue forever and was the
+  // only thing holding the process open.
   // ---------------------------------------------------------------------
 
-  /** Hard ceiling on how long a single background item may stay "in flight". */
-  private static readonly BACKGROUND_WORK_MAX_AGE_MS = 60 * 60 * 1000;
+  /**
+   * Hard ceiling on how long an item may stay in flight. Only a backstop
+   * against a truly runaway entry — the runtime-close handler is the normal way
+   * items are retired, so this is deliberately generous.
+   */
+  private static readonly BACKGROUND_WORK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
   /**
-   * How long an item may go without any update before it is considered dead.
-   * Live background agents emit tool_progress/task_progress steadily, so a
-   * multi-minute silence means the work is gone, not slow.
+   * How long an item may go without an update before new prompts stop being
+   * queued behind it. This does NOT retire the item and does NOT release the
+   * runtime — a background subagent can legitimately run for a long time
+   * without emitting anything we can correlate back to it (tool_progress and
+   * task_progress carry a task_id, but nothing carries an agent_id). All this
+   * says is "we have no recent evidence, so stop holding the user's messages
+   * hostage to it".
    */
-  private static readonly BACKGROUND_WORK_STALE_AFTER_MS = 10 * 60 * 1000;
+  private static readonly BACKGROUND_WORK_QUIET_AFTER_MS = 5 * 60 * 1000;
 
   /**
    * How long an autonomous background run may go without any SDK message
@@ -2415,9 +2439,8 @@ export class ClaudeRuntimeService
   private static readonly BACKGROUND_RUN_STALL_MS = 3 * 60 * 1000;
 
   /**
-   * Returns the live background items, dropping any that have gone stale. This
-   * mutates state (and emits when something was dropped) so that staleness is
-   * reconciled lazily wherever background state is consulted.
+   * Retires only items past the hard age ceiling. Everything else is kept:
+   * dropping a live entry is what gets a background agent killed mid-flight.
    */
   private sweepBackgroundWork(
     sessionId: number,
@@ -2430,13 +2453,8 @@ export class ClaudeRuntimeService
     const now = Date.now();
     const live = state.backgroundWork.filter((item) => {
       const startedAtMs = Date.parse(item.startedAt);
-      const updatedAtMs = Date.parse(item.updatedAt);
-      const age = Number.isNaN(startedAtMs) ? 0 : now - startedAtMs;
-      const silence = Number.isNaN(updatedAtMs) ? 0 : now - updatedAtMs;
-      return (
-        age < ClaudeRuntimeService.BACKGROUND_WORK_MAX_AGE_MS &&
-        silence < ClaudeRuntimeService.BACKGROUND_WORK_STALE_AFTER_MS
-      );
+      if (Number.isNaN(startedAtMs)) return true;
+      return now - startedAtMs < ClaudeRuntimeService.BACKGROUND_WORK_MAX_AGE_MS;
     });
 
     if (live.length !== state.backgroundWork.length) {
@@ -2444,7 +2462,7 @@ export class ClaudeRuntimeService
         (item) => !live.includes(item),
       );
       this.logger.warn(
-        `Claude background work expired session=${sessionId} dropped=${dropped
+        `Claude background work exceeded max age session=${sessionId} dropped=${dropped
           .map((item) => `${item.id}(${item.label})`)
           .join(',')}`,
       );
@@ -2457,6 +2475,45 @@ export class ClaudeRuntimeService
     }
 
     return state.backgroundWork;
+  }
+
+  /**
+   * Any background work at all, however quiet. Used to decide whether the
+   * runtime process may be retired — see the bias note above.
+   */
+  private isBackgroundWorkLive(sessionId: number): boolean {
+    const state = this.runtimeStates.get(sessionId);
+    if (!state) {
+      return false;
+    }
+    if (this.activeRuns.get(sessionId)?.isBackground) {
+      return true;
+    }
+    return this.sweepBackgroundWork(sessionId, state).length > 0;
+  }
+
+  /**
+   * Background work we have recent evidence for. Used to decide whether a newly
+   * submitted prompt must be queued rather than raced against the SDK's own
+   * autonomous resume.
+   */
+  private shouldQueueBehindBackground(sessionId: number): boolean {
+    const state = this.runtimeStates.get(sessionId);
+    if (!state) {
+      return false;
+    }
+    if (this.activeRuns.get(sessionId)?.isBackground) {
+      return true;
+    }
+
+    const now = Date.now();
+    return this.sweepBackgroundWork(sessionId, state).some((item) => {
+      const updatedAtMs = Date.parse(item.updatedAt);
+      if (Number.isNaN(updatedAtMs)) return true;
+      return (
+        now - updatedAtMs < ClaudeRuntimeService.BACKGROUND_WORK_QUIET_AFTER_MS
+      );
+    });
   }
 
   private upsertBackgroundWork(
@@ -2522,21 +2579,6 @@ export class ClaudeRuntimeService
       type: 'background_work',
       payload: { sessionId, backgroundWork: [...state.backgroundWork] },
     });
-  }
-
-  // True while background work is still executing for this session, even though
-  // the visible run already finished. Used to queue a submitted prompt instead
-  // of racing it against the SDK's own autonomous resume, and to hold the
-  // runtime process open so the work is not killed mid-flight.
-  private hasActiveBackgroundWork(sessionId: number): boolean {
-    const state = this.runtimeStates.get(sessionId);
-    if (!state) {
-      return false;
-    }
-    if (this.activeRuns.get(sessionId)?.isBackground) {
-      return true;
-    }
-    return this.sweepBackgroundWork(sessionId, state).length > 0;
   }
 
   /**
@@ -2685,7 +2727,7 @@ export class ClaudeRuntimeService
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId) ||
-      this.hasActiveBackgroundWork(sessionId)
+      this.shouldQueueBehindBackground(sessionId)
     ) {
       return;
     }
@@ -4096,17 +4138,13 @@ export class ClaudeRuntimeService
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.liveItems = [];
-    // A result means the top-level agent loop concluded. Subagents that were
-    // awaited inline cannot outlive it, so any still marked in-flight never got
-    // their stop hook — prune them. Genuinely backgrounded work is tracked as
-    // task-kind items, which the SDK re-announces via task_notification, so it
-    // survives this and re-arms if it is still running.
-    if (state.backgroundWork.some((item) => item.kind === 'subagent')) {
-      state.backgroundWork = state.backgroundWork.filter(
-        (item) => item.kind !== 'subagent',
-      );
-      this.emitBackgroundWork(sessionId, state);
-    }
+    // Deliberately does NOT prune lingering subagent items here. A result only
+    // means the top-level loop finished this turn, which a `run_in_background`
+    // agent outlives by design — and its task-kind counterpart is not reliably
+    // marked backgrounded yet, because `is_backgrounded` only ever arrives on a
+    // later task_updated, never on task_started. Dropping both trackers at that
+    // moment would let the idle timer retire the process out from under a live
+    // agent, which is exactly what leaves "no completion record" behind.
     // Invalidate any empty history snapshot recorded during a hydrate that fired
     // before this turn started. The blank-TUI-session guard in submitPrompt uses
     // lastHistoryItemCount===0 + lastHistorySource===null as its signal; leaving
