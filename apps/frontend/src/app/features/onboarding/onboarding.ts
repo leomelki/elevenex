@@ -28,6 +28,7 @@ import { PathAutocompleteInputComponent } from '@/shared/components/path-autocom
 import { ELEVENEX_REMOTE_PORT } from '@/shared/constants/elevenex';
 import { DefaultAgentProvider, DefaultClaudeSessionSurface } from '@/shared/models/app-settings.model';
 import { SavedServer, ServerAuthMode } from '@/shared/models/onboarding.model';
+import { getElectronWindowControlsApi } from '@/shared/runtime/electron-window-controls';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { OnboardingConnectionService } from '@/shared/services/onboarding-connection.service';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
@@ -70,7 +71,9 @@ export class Onboarding implements OnInit {
   loading = signal(true);
   connecting = signal(false);
   sshSupported = signal(false);
-  selectedMode = signal<'local' | 'ssh' | null>(null);
+  isWindows = signal(false);
+  wslSupported = signal(false);
+  selectedMode = signal<'local' | 'ssh' | 'wsl' | null>(null);
   activeStep = signal<OnboardingStep>('connection');
   connectionError = signal('');
   installMessage = signal('');
@@ -100,6 +103,8 @@ export class Onboarding implements OnInit {
     return this.onboardingState.getActiveServer(snapshot);
   });
 
+  readonly wslSummary = computed(() => this.onboardingState.getWslState(this.onboardingState.readSnapshot()));
+
   readonly stepLabel = computed(() => {
     const step = this.activeStep();
     if (step === 'connection' || step === 'ssh' || step === 'install') {
@@ -125,6 +130,9 @@ export class Onboarding implements OnInit {
     }
 
     this.sshSupported.set(await this.connectionService.isSupported());
+    const environment = await getElectronWindowControlsApi()?.getEnvironment();
+    this.isWindows.set(environment?.platform === 'win32');
+    this.wslSupported.set(await this.connectionService.isWslSupported());
     await this.resolveInitialStep();
     this.loading.set(false);
   }
@@ -141,6 +149,44 @@ export class Onboarding implements OnInit {
     this.connectionError.set('');
     this.installMessage.set('');
     this.onboardingState.setMode('ssh');
+  }
+
+  // Unlike SSH, WSL has nothing to configure first — clicking the card
+  // connects immediately (auto-picking WSL's own default distro), the same
+  // way chooseLocalMode() does for the local backend.
+  async connectToWsl() {
+    if (this.connecting()) {
+      return;
+    }
+
+    this.selectedMode.set('wsl');
+    this.connecting.set(true);
+    this.connectionError.set('');
+    this.installMessage.set('');
+
+    const result = await this.connectionService.connectWsl();
+    this.connecting.set(false);
+
+    if (result.kind === 'success') {
+      this.onboardingState.setWslState({
+        distroName: result.distroName,
+        localPort: result.localPort,
+        installStatus: result.installStatus,
+        lastConnectedAt: new Date().toISOString(),
+      });
+      await this.loadBackendOnboarding();
+      return;
+    }
+
+    if (result.kind === 'missing-install') {
+      this.activeStep.set('install');
+      this.onboardingState.setCurrentStep('install');
+      this.installMessage.set(result.message);
+      return;
+    }
+
+    this.connectionError.set(result.message);
+    toast.error(result.message);
   }
 
   selectAgent(agent: DefaultAgentProvider) {
@@ -226,6 +272,26 @@ export class Onboarding implements OnInit {
     this.onboardingState.setCurrentStep('ssh');
   }
 
+  // Install-step actions dispatch by mode: SSH has a form to go back and edit /
+  // resubmit; WSL has nothing to edit, so "edit" just returns to the connection
+  // picker and "retry" re-attempts the same one-click connect.
+  editCurrentConnection() {
+    if (this.selectedMode() === 'wsl') {
+      this.activeStep.set('connection');
+      this.onboardingState.setCurrentStep('choice');
+      return;
+    }
+    this.retryConnection();
+  }
+
+  async retryCurrentConnection() {
+    if (this.selectedMode() === 'wsl') {
+      await this.connectToWsl();
+      return;
+    }
+    await this.connectToServer();
+  }
+
   async finishOnboarding() {
     try {
       await this.appSettings.completeOnboarding({
@@ -262,6 +328,22 @@ export class Onboarding implements OnInit {
       }
 
       this.activeStep.set('ssh');
+      return;
+    }
+
+    if (snapshot.mode === 'wsl') {
+      this.selectedMode.set('wsl');
+      if (snapshot.wsl) {
+        if (snapshot.currentStep === 'install') {
+          this.activeStep.set('install');
+          this.installMessage.set('WSL is not reachable. Retry the connection.');
+          return;
+        }
+        await this.loadBackendOnboarding();
+        return;
+      }
+
+      this.activeStep.set('connection');
       return;
     }
 

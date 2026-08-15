@@ -12,6 +12,11 @@ function hasBackendConnection(snapshot: OnboardingStateSnapshot): boolean {
   if (snapshot.mode === 'local') {
     return true;
   }
+  // For WSL mode, allow workspace access whenever a WSL connection was ever
+  // established, mirroring the SSH server case below.
+  if (snapshot.mode === 'wsl') {
+    return snapshot.wsl !== null;
+  }
   // For SSH mode, allow workspace access whenever the user has an active server saved,
   // even if the live tunnel isn't ready — the runtime overlay handles reconnect / change-server.
   return snapshot.mode === 'ssh' && getActiveOnboardingServer(snapshot) !== null;

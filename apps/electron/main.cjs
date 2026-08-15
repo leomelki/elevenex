@@ -24,6 +24,11 @@ const {
   shellPathQuote,
   shellSingleQuote,
 } = require('./remote-server-utils.cjs');
+const {
+  isWslCliAvailable,
+  listWslDistros,
+  getDefaultWslDistro,
+} = require('./wsl-utils.cjs');
 
 // Common install directories for user-facing binaries (tmux, claude, plannotator,
 // cursor). macOS Electron apps launched from Finder/DMG get a stripped PATH
@@ -196,6 +201,11 @@ let attachedBrowserKey = null;
 const sshForwardRuntimes = new Map();
 const remoteInstallerSessions = new Map();
 let nextRemoteInstallerSessionId = 1;
+// Sentinel "server id" for the singleton WSL backend connection. Negative so it
+// never collides with a real saved SSH server's id (those are positive,
+// Date.now()-based). There is only ever one WSL target — it is not a saved,
+// named connection the way SSH servers are (see remote-install-flow docs).
+const WSL_SERVER_ID = -1;
 let embeddedBackendRuntime = null;
 let isAppQuitting = false;
 let isReloadingMainWindow = false;
@@ -1597,7 +1607,78 @@ function getRemoteCommandArgs(command, options = {}) {
   return ['sh', '-lc', shellSingleQuote(command)];
 }
 
+// Builds the wsl.exe argv for running `command` inside forward.distroName (or
+// WSL's own default distro when unset). getRemoteCommandArgs already returns
+// `['sh', '-lc', <quoted command>]` for non-win32 targets — a WSL distro's
+// `uname -s` always reports "Linux", so preflight naturally resolves to the
+// POSIX branch and this is exactly the trailing argv wsl.exe needs.
+function getWslArgs(forward, command, options = {}) {
+  const args = [];
+  if (forward.distroName) {
+    args.push('-d', forward.distroName);
+  }
+  args.push('--', ...getRemoteCommandArgs(command, options));
+  return args;
+}
+
+function runWslCommandAsync(forward, command, options = {}) {
+  return new Promise((resolve, reject) => {
+    const wslArgs = getWslArgs(forward, command, options);
+    let child;
+    try {
+      child = spawn('wsl.exe', wslArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    child.once('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error((stderr || stdout || `wsl.exe exited with code ${code ?? 'unknown'}`).trim()));
+      } else {
+        resolve({ stdout, stderr, args: wslArgs });
+      }
+    });
+
+    child.once('error', (error) => reject(error));
+  });
+}
+
+function runWslCommand(forward, command, options = {}) {
+  const wslArgs = getWslArgs(forward, command, options);
+  const { remotePlatform: _remotePlatform, ...spawnOptions } = options;
+  const result = spawnSync('wsl.exe', wslArgs, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...spawnOptions,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || `wsl.exe exited with code ${result.status ?? 'unknown'}`).trim());
+  }
+
+  return { stdout: `${result.stdout || ''}`, stderr: `${result.stderr || ''}`, args: wslArgs };
+}
+
+// Every caller in this file already threads a `forward`-shaped object through
+// runSshCommand(Async) — dispatching on `forward.transport` here (rather than
+// renaming every call site) keeps the entire preflight/install/start/wait
+// orchestration below transport-agnostic. Only the actual process spawn
+// differs between an SSH target and a local WSL distro.
 function runSshCommandAsync(forward, command, options = {}) {
+  if (forward.transport === 'wsl') {
+    return runWslCommandAsync(forward, command, options);
+  }
+
   return new Promise((resolve, reject) => {
     const resolvedConfig = buildResolvedSshConfig(forward);
     const askPass = createSshAskPassRuntime(forward);
@@ -1640,6 +1721,10 @@ function runSshCommandAsync(forward, command, options = {}) {
 }
 
 function runSshCommand(forward, command, options = {}) {
+  if (forward.transport === 'wsl') {
+    return runWslCommand(forward, command, options);
+  }
+
   const resolvedConfig = buildResolvedSshConfig(forward);
   const askPass = createSshAskPassRuntime(forward);
   const target = buildSshTarget(forward);
@@ -1708,11 +1793,53 @@ function destroyRemoteInstallerSessionForServer(serverId) {
   destroyRemoteInstallerSession(existing.id);
 }
 
+// Interactive terminal session that shows live install-guidance output when
+// prerequisites are missing. Reuses the same `remoteInstallerSessions` map,
+// events, and IPC channels (elevenex-remote-server:recheck/send-input/resize/
+// close-session) as the SSH path — those are already keyed by sessionId and
+// never touch SSH-specific state, so no WSL-specific IPC is needed for them.
+function createWslInstallerSession(forward, preflight) {
+  const sessionId = nextRemoteInstallerSessionId++;
+  const wslArgs = forward.distroName ? ['-d', forward.distroName] : [];
+  const child = spawn('wsl.exe', wslArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+  const sessionState = {
+    id: sessionId,
+    serverId: forward.id,
+    forward,
+    process: child,
+    resolvedConfig: null,
+    askPass: null,
+    preflight,
+  };
+  remoteInstallerSessions.set(sessionId, sessionState);
+
+  child.stdout.on('data', (chunk) => {
+    emitRemoteInstallerEvent(sessionId, { type: 'data', data: chunk.toString() });
+  });
+  child.stderr.on('data', (chunk) => {
+    emitRemoteInstallerEvent(sessionId, { type: 'data', data: chunk.toString() });
+  });
+  child.once('exit', (code, signal) => {
+    remoteInstallerSessions.delete(sessionId);
+    emitRemoteInstallerEvent(sessionId, { type: 'exit', code: code ?? null, signal: signal ?? null });
+  });
+  child.once('error', (error) => {
+    emitRemoteInstallerEvent(sessionId, { type: 'error', message: error.message });
+  });
+
+  return sessionState;
+}
+
 function createRemoteInstallerSession(forward, preflight) {
   const existing = Array.from(remoteInstallerSessions.values()).find((session) => session.serverId === forward.id);
   if (existing) {
     existing.preflight = preflight;
     return existing;
+  }
+
+  if (forward.transport === 'wsl') {
+    return createWslInstallerSession(forward, preflight);
   }
 
   const resolvedConfig = buildResolvedSshConfig(forward);
@@ -1836,6 +1963,10 @@ function toRemoteEnsureReadyResult(forward, preflight, overrides = {}) {
     osRelease: preflight.osRelease || {},
     installGuidance,
     version: bundledVersion || null,
+    // Only meaningful for forward.transport === 'wsl' (which distro was
+    // actually used, including when the caller let us pick the default) —
+    // null for SSH forwards, which have no concept of a distro.
+    distroName: forward.distroName ?? null,
   };
 }
 
@@ -2069,6 +2200,38 @@ async function ensureRemoteServerReady(forward) {
   );
 
   emitRemoteServerPhaseEvent(forward.id, 'probing');
+
+  // WSL2 shares localhost with Windows automatically, so there is no tunnel to
+  // start — the wait command above already blocked (from inside the distro)
+  // until the backend was listening on forward.remotePort. All that is left is
+  // to confirm Windows can actually reach it on the same port.
+  if (forward.transport === 'wsl') {
+    const reachable = await probeElevenexBackendWithRetries(forward.localPort, 10, 300);
+    if (!reachable) {
+      return toRemoteEnsureReadyResult(forward, preflight, {
+        status: 'error',
+        installPhase: 'probing',
+        message: 'The Elevenex backend started inside WSL but is not reachable from Windows on '
+          + `127.0.0.1:${forward.localPort}. WSL2 normally forwards localhost automatically — check `
+          + 'that no firewall rule or the WSL "localhostForwarding" setting is blocking it, then retry.',
+        bundledVersion,
+      });
+    }
+
+    return toRemoteEnsureReadyResult(forward, {
+      ...preflight,
+      currentVersion: bundledVersion,
+      backendReachable: true,
+    }, {
+      status: 'ready',
+      installPhase: 'ready',
+      installStatus: 'available',
+      message: '',
+      localPort: forward.localPort,
+      bundledVersion,
+    });
+  }
+
   let runtime = await startSshForwardRuntime({
     ...forward,
     probeType: 'elevenex-backend',
@@ -2138,6 +2301,57 @@ async function ensureRemoteServerReady(forward) {
   });
 }
 
+// Entry point for the singleton WSL backend connection (no saved/named config,
+// unlike SSH servers — see onboarding.model.ts SavedServer vs the plain
+// `wsl` snapshot field). Picks WSL's own default distro when none is given,
+// then delegates to the same preflight/install/start/wait/probe pipeline used
+// for a real SSH-to-Linux remote (ensureRemoteServerReady dispatches its
+// transport off `forward.transport`).
+async function ensureWslServerReady(distroName) {
+  if (process.platform !== 'win32') {
+    throw new Error('WSL is only available on Windows.');
+  }
+
+  if (!isWslCliAvailable()) {
+    throw new Error('WSL is not installed. Install it with `wsl --install`, then restart Elevenex.');
+  }
+
+  const distros = listWslDistros();
+  if (distros.length === 0) {
+    throw new Error('No WSL Linux distribution is installed. Install one (e.g. `wsl --install -d Ubuntu`), then retry.');
+  }
+
+  const targetDistro = distroName
+    ? distros.find((distro) => distro.name === distroName)
+    : getDefaultWslDistro(distros);
+
+  if (!targetDistro) {
+    throw new Error(`WSL distribution "${distroName}" was not found.`);
+  }
+
+  if (targetDistro.wslVersion !== 2) {
+    throw new Error(
+      `"${targetDistro.name}" is running WSL version ${targetDistro.wslVersion}, but Elevenex needs WSL2 `
+      + `to share localhost with Windows. Upgrade it with \`wsl --set-version ${targetDistro.name} 2\`, then retry.`,
+    );
+  }
+
+  // No SSH tunnel means local and remote are literally the same port on
+  // 127.0.0.1 once WSL2's localhost forwarding kicks in.
+  const port = await getFreePort();
+  const forward = {
+    id: WSL_SERVER_ID,
+    transport: 'wsl',
+    distroName: targetDistro.name,
+    sshHost: targetDistro.name,
+    localPort: port,
+    remotePort: port,
+    probeType: 'elevenex-backend',
+  };
+
+  return ensureRemoteServerReady(forward);
+}
+
 function waitForLocalPortBound(address, port, timeoutMs) {
   const host = address === '0.0.0.0' ? '127.0.0.1' : address;
   const deadline = Date.now() + timeoutMs;
@@ -2178,6 +2392,22 @@ function probeElevenexBackend(localPort) {
     });
     request.on('error', () => resolve(false));
   });
+}
+
+// Used by the WSL path instead of an SSH tunnel: WSL2 forwards `localhost`
+// to Windows automatically once the backend inside the distro is listening,
+// but that hop can lag the wait-command's own in-distro readiness poll by a
+// beat, so retry briefly instead of probing once.
+async function probeElevenexBackendWithRetries(localPort, attempts, delayMs) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await probeElevenexBackend(localPort)) {
+      return true;
+    }
+    if (attempt < attempts - 1) {
+      await wait(delayMs);
+    }
+  }
+  return false;
 }
 
 function getFreePort() {
@@ -3918,6 +4148,54 @@ ipcMain.handle('elevenex-remote-server:resize', (_event, payload) => {
 ipcMain.handle('elevenex-remote-server:close-session', (_event, sessionId) => {
   destroyRemoteInstallerSession(Number(sessionId));
   return true;
+});
+
+// ─── WSL backend (Windows-only, singleton — see ensureWslServerReady) ─────────
+// recheck/send-input/resize/close-session and the installer-event/phase-update
+// pushes are intentionally NOT duplicated here: they're already keyed by
+// sessionId/serverId and never touch SSH-specific state, so the frontend's
+// wslServer bridge reuses the elevenex-remote-server:* channels for those.
+
+ipcMain.handle('elevenex-wsl-server:is-supported', () => process.platform === 'win32' && isWslCliAvailable());
+
+ipcMain.handle('elevenex-wsl-server:list-distros', () => {
+  if (process.platform !== 'win32') {
+    return [];
+  }
+  return listWslDistros();
+});
+
+ipcMain.handle('elevenex-wsl-server:ensure-ready', async (_event, payload) => {
+  const distroName = `${payload?.distroName || ''}`.trim() || null;
+
+  let result;
+  try {
+    result = await ensureWslServerReady(distroName);
+  } catch (error) {
+    console.error('[wsl-runtime] ensure-ready failed', {
+      distroName,
+      message: error instanceof Error ? error.message : `${error}`,
+    });
+    result = {
+      status: 'error',
+      installPhase: 'starting',
+      installStatus: 'unknown',
+      remotePlatform: 'unknown',
+      remoteArch: 'unknown',
+      missingDependencies: [],
+      message: error instanceof Error ? error.message : 'WSL backend setup failed.',
+      localPort: null,
+      sessionId: null,
+      osRelease: {},
+      installGuidance: [],
+      version: getRemoteRuntimeVersion(),
+      distroName,
+    };
+  }
+  if (result.status === 'ready' || result.status === 'error' || result.status === 'unsupported') {
+    destroyRemoteInstallerSessionForServer(WSL_SERVER_ID);
+  }
+  return result;
 });
 
 // ─── Cursor integration ────────────────────────────────────────────────────────

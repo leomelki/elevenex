@@ -41,6 +41,7 @@ describe('EnvironmentConnectionManagerService', () => {
     projectHandoffAcknowledged: true,
     servers: [server],
     lastSshDefaults: null,
+    wsl: null,
   });
 
   const onboardingStateMock = {
@@ -152,6 +153,7 @@ describe('EnvironmentConnectionManagerService', () => {
       projectHandoffAcknowledged: true,
       servers: [server],
       lastSshDefaults: null,
+      wsl: null,
     });
     onboardingConnectionMock.connect.mockResolvedValue({
       kind: 'success',

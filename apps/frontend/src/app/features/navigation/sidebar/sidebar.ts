@@ -184,7 +184,10 @@ export class Sidebar implements OnInit, OnDestroy {
   addRepoPath = signal('');
   addRepoSubmitting = signal(false);
   addRepoError = signal('');
-  showPortForwardStep = computed(() => this.onboardingState.snapshotState().mode !== 'local');
+  // Only SSH backends run on a genuinely separate machine that needs a port
+  // forward to reach a project's dev server from this browser view. WSL
+  // shares localhost with Windows the same way Local does, so it doesn't.
+  showPortForwardStep = computed(() => this.onboardingState.snapshotState().mode === 'ssh');
 
   deleteWorktreeRepoId = signal(0);
   deleteWorktreePath = signal('');

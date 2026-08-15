@@ -133,6 +133,49 @@
           </span>
         </div>
 
+        @if (isWindows()) {
+          <!-- WSL row: fixed and always visible like Local, never a saved/named
+               config (see EnvironmentConnectionManagerService.switchToWsl). -->
+          <div
+            role="menuitemradio"
+            tabindex="0"
+            [attr.aria-checked]="isWslActive()"
+            [attr.aria-disabled]="switching() ? 'true' : null"
+            class="env-row"
+            [class.env-row--active]="isWslActive()"
+            [class.env-row--warn]="!wslAvailable()"
+            [class.env-row--disabled]="switching()"
+            [title]="wslAvailable() ? '' : 'WSL is not installed — select to see setup instructions'"
+            (click)="!switching() && selectWsl()"
+            (keydown.enter)="!switching() && selectWsl()"
+            (keydown.space)="$event.preventDefault(); !switching() && selectWsl()"
+          >
+            <span class="env-row__leading">
+              <span class="env-row__iconframe env-row__iconframe--remote">
+                <ng-icon name="lucideServer" size="14" />
+              </span>
+            </span>
+            <span class="env-row__body">
+              <span class="env-row__title-row">
+                <span class="env-row__title">WSL backend</span>
+                @if (!wslAvailable()) {
+                  <span class="env-chip env-chip--warn">Not installed</span>
+                }
+              </span>
+              <span class="env-row__subtitle">
+                {{ isWslActive() && snapshot().wsl?.distroName ? snapshot().wsl?.distroName : 'Native Linux, run inside WSL' }}
+              </span>
+            </span>
+            <span class="env-row__trailing">
+              @if (switchingId() === 'wsl') {
+                <ng-icon name="lucideRefreshCw" size="13" class="env-row__spin" />
+              } @else if (isWslActive()) {
+                <ng-icon name="lucideCheck" size="14" class="env-row__check" />
+              }
+            </span>
+          </div>
+        }
+
         @if (savedServers().length > 0) {
           <div class="env-list__divider"></div>
         }

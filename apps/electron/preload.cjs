@@ -108,6 +108,40 @@ contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
       };
     },
   },
+  wslServer: {
+    isSupported: () => ipcRenderer.invoke('elevenex-wsl-server:is-supported'),
+    listDistros: () => ipcRenderer.invoke('elevenex-wsl-server:list-distros'),
+    ensureReady: (payload) => ipcRenderer.invoke('elevenex-wsl-server:ensure-ready', payload),
+    // Installer-session lifecycle is shared with the SSH remote path (see
+    // main.cjs) — sessions are keyed by sessionId and never touch SSH-specific
+    // state, so the same channels work for both transports.
+    recheck: (payload) => ipcRenderer.invoke('elevenex-remote-server:recheck', payload),
+    sendInput: (payload) => ipcRenderer.invoke('elevenex-remote-server:send-input', payload),
+    resize: (payload) => ipcRenderer.invoke('elevenex-remote-server:resize', payload),
+    closeSession: (sessionId) => ipcRenderer.invoke('elevenex-remote-server:close-session', sessionId),
+    onInstallerEvent: (callback) => {
+      if (typeof callback !== 'function') {
+        return () => {};
+      }
+
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('elevenex-remote-server:installer-event', listener);
+      return () => {
+        ipcRenderer.removeListener('elevenex-remote-server:installer-event', listener);
+      };
+    },
+    onPhaseUpdate: (callback) => {
+      if (typeof callback !== 'function') {
+        return () => {};
+      }
+
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('elevenex-remote-server:phase-update', listener);
+      return () => {
+        ipcRenderer.removeListener('elevenex-remote-server:phase-update', listener);
+      };
+    },
+  },
   cursor: {
     open: (payload) => ipcRenderer.invoke('elevenex-cursor:open', payload),
   },

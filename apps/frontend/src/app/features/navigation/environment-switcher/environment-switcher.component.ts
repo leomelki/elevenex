@@ -30,6 +30,7 @@ import { toast } from 'ngx-sonner';
 import { ZardInputDirective } from '@/shared/components/input';
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
 import { SavedServer, ServerAuthMode } from '@/shared/models/onboarding.model';
+import { getElectronWindowControlsApi } from '@/shared/runtime/electron-window-controls';
 import {
   EnvironmentConnectionManagerService,
   SavedServerDraft,
@@ -110,18 +111,27 @@ export class EnvironmentSwitcherComponent {
   readonly expansion = signal<RowExpansion>(null);
   readonly password = signal('');
   readonly passphrase = signal('');
-  readonly switchingId = signal<number | 'local' | null>(null);
+  readonly switchingId = signal<number | 'local' | 'wsl' | null>(null);
+  // Whether wsl.exe is present on this Windows machine — checked lazily each
+  // time the popover opens, since it can change without restarting Elevenex
+  // (e.g. the user just ran `wsl --install`). The row itself is always shown
+  // on Windows regardless of this value; it only toggles the disabled/hint state.
+  readonly wslAvailable = signal(false);
+  readonly isWindows = signal(false);
 
   readonly statusVariant = computed(() => {
     if (this.switching()) return 'switching';
     if (this.remoteDisconnect()) return 'degraded';
-    return this.snapshot().mode === 'ssh' ? 'remote' : 'local';
+    return this.snapshot().mode === 'ssh' || this.snapshot().mode === 'wsl' ? 'remote' : 'local';
   });
 
   readonly triggerLabel = computed(() => this.connectionManager.environmentLabel());
   readonly triggerSubtitle = computed(() => {
     if (this.switching()) return 'Switching…';
     if (this.remoteDisconnect()) return 'Connection lost';
+    if (this.snapshot().mode === 'wsl') {
+      return this.snapshot().wsl?.distroName || 'WSL';
+    }
     const server = this.activeServer();
     if (!server || this.snapshot().mode !== 'ssh') return 'Local workspace';
     return server.sshUser ? `${server.sshUser}@${server.sshHost}` : server.sshHost;
@@ -153,6 +163,15 @@ export class EnvironmentSwitcherComponent {
         this.connectionManager.clearError();
       }
     });
+
+    void getElectronWindowControlsApi()
+      ?.getEnvironment()
+      .then(environment => this.isWindows.set(environment.platform === 'win32'));
+    void this.refreshWslAvailability();
+  }
+
+  private async refreshWslAvailability(): Promise<void> {
+    this.wslAvailable.set(await this.connectionManager.isWslSupported());
   }
 
   @HostListener('document:mousedown', ['$event'])
@@ -183,6 +202,7 @@ export class EnvironmentSwitcherComponent {
     if (this.open() && this.switching()) return;
     if (!this.open()) {
       this.recomputePosition();
+      void this.refreshWslAvailability();
     }
     this.open.update(v => !v);
   }
@@ -243,6 +263,10 @@ export class EnvironmentSwitcherComponent {
     return this.snapshot().mode === 'local';
   }
 
+  isWslActive(): boolean {
+    return this.snapshot().mode === 'wsl';
+  }
+
   authLabel(mode: ServerAuthMode) {
     switch (mode) {
       case 'agent':
@@ -279,6 +303,20 @@ export class EnvironmentSwitcherComponent {
     this.connectionManager.clearError();
     this.switchingId.set('local');
     const result = await this.connectionManager.switchToLocal();
+    this.switchingId.set(null);
+    if (result.ok) {
+      this.close();
+    }
+  }
+
+  async selectWsl() {
+    if (this.isWslActive() && this.snapshot().remoteConnectionReady) {
+      this.close();
+      return;
+    }
+    this.connectionManager.clearError();
+    this.switchingId.set('wsl');
+    const result = await this.connectionManager.switchToWsl();
     this.switchingId.set(null);
     if (result.ok) {
       this.close();

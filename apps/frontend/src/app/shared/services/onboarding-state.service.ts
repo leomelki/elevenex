@@ -5,6 +5,7 @@ import {
   OnboardingStateSnapshot,
   OnboardingStep,
   SavedServer,
+  WslConnectionState,
 } from '../models/onboarding.model';
 
 export const ONBOARDING_STORAGE_KEY = 'elevenex-onboarding';
@@ -17,6 +18,7 @@ const DEFAULT_SNAPSHOT: OnboardingStateSnapshot = {
   projectHandoffAcknowledged: false,
   servers: [],
   lastSshDefaults: null,
+  wsl: null,
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -67,6 +69,32 @@ function sanitizeServer(value: unknown): SavedServer | null {
   };
 }
 
+function sanitizeWslState(value: unknown): WslConnectionState | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const localPort = Number(value['localPort']);
+  if (!Number.isInteger(localPort) || localPort <= 0) return null;
+
+  const installStatus = value['installStatus'];
+  if (
+    installStatus !== 'unknown'
+    && installStatus !== 'available'
+    && installStatus !== 'missing'
+    && installStatus !== 'needs-update'
+    && installStatus !== 'unsupported-os'
+    && installStatus !== 'missing-prereqs'
+  ) return null;
+
+  return {
+    distroName: value['distroName'] ? `${value['distroName']}`.trim() : null,
+    localPort,
+    installStatus,
+    lastConnectedAt: `${value['lastConnectedAt'] ?? ''}`,
+  };
+}
+
 function sanitizeDefaults(value: unknown): OnboardingLastSshDefaults | null {
   if (!isObject(value)) {
     return null;
@@ -109,7 +137,7 @@ export function readOnboardingStateSnapshot(
       : [];
 
     return {
-      mode: mode === 'local' || mode === 'ssh' ? mode : null,
+      mode: mode === 'local' || mode === 'ssh' || mode === 'wsl' ? mode : null,
       currentStep:
         currentStep === 'choice' || currentStep === 'ssh' || currentStep === 'install' || currentStep === 'project'
           ? currentStep
@@ -119,6 +147,7 @@ export function readOnboardingStateSnapshot(
       projectHandoffAcknowledged: parsed['projectHandoffAcknowledged'] === true,
       servers,
       lastSshDefaults: sanitizeDefaults(parsed['lastSshDefaults']),
+      wsl: sanitizeWslState(parsed['wsl']),
     };
   } catch {
     return DEFAULT_SNAPSHOT;
@@ -140,6 +169,10 @@ export function isOnboardingSetupConfigured(snapshot: OnboardingStateSnapshot): 
     return true;
   }
 
+  if (snapshot.mode === 'wsl') {
+    return snapshot.wsl !== null && snapshot.remoteConnectionReady;
+  }
+
   return snapshot.mode === 'ssh'
     && getActiveOnboardingServer(snapshot) !== null
     && snapshot.remoteConnectionReady;
@@ -150,7 +183,15 @@ export function isOnboardingComplete(snapshot: OnboardingStateSnapshot): boolean
 }
 
 export function getOnboardingBackendOrigin(snapshot: OnboardingStateSnapshot): string | null {
-  if (snapshot.mode !== 'ssh' || !snapshot.remoteConnectionReady) {
+  if (!snapshot.remoteConnectionReady) {
+    return null;
+  }
+
+  if (snapshot.mode === 'wsl') {
+    return snapshot.wsl ? `http://127.0.0.1:${snapshot.wsl.localPort}` : null;
+  }
+
+  if (snapshot.mode !== 'ssh') {
     return null;
   }
 
@@ -183,6 +224,32 @@ export class OnboardingStateService {
       activeServerId: mode === 'local' ? null : snapshot.activeServerId,
       remoteConnectionReady: mode === 'local' ? true : snapshot.remoteConnectionReady,
       currentStep: mode === 'local' ? 'project' : 'ssh',
+    });
+  }
+
+  getWslState(snapshot = this.readSnapshot()): WslConnectionState | null {
+    return snapshot.wsl;
+  }
+
+  // WSL has no "add"/"edit" flow the way SavedServer does (see WslConnectionState
+  // doc comment) — this just records the last-connected distro/port and, unlike
+  // upsertServer, always activates the mode since there is nothing else to pick.
+  setWslState(state: WslConnectionState) {
+    const snapshot = this.readSnapshot();
+    this.writeSnapshot({
+      ...snapshot,
+      mode: 'wsl',
+      currentStep: 'project',
+      remoteConnectionReady: true,
+      wsl: state,
+    });
+  }
+
+  clearWslConnection() {
+    const snapshot = this.readSnapshot();
+    this.writeSnapshot({
+      ...snapshot,
+      remoteConnectionReady: snapshot.mode === 'wsl' ? false : snapshot.remoteConnectionReady,
     });
   }
 

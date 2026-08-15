@@ -58,6 +58,8 @@
           Connected to {{ server.name }} at {{ server.sshUser ? server.sshUser + '@' : '' }}{{ server.sshHost }}.
         } @else if (selectedMode() === 'local') {
           Using the local backend.
+        } @else if (selectedMode() === 'wsl') {
+          Using the WSL backend@if (wslSummary()?.distroName) { ({{ wslSummary()?.distroName }}) }.
         } @else {
           Choose a backend before saving preferences.
         }
@@ -83,7 +85,7 @@
             </p>
           </div>
 
-          <div class="mt-8 grid gap-4 md:grid-cols-2">
+          <div class="mt-8 grid gap-4 md:grid-cols-2" [class.lg:grid-cols-3]="isWindows()">
             <button
               type="button"
               class="group rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -98,6 +100,34 @@
               <div class="mt-5 text-base font-semibold text-foreground">Local backend</div>
               <p class="mt-2 text-sm leading-6 text-muted-foreground">Configure the Elevenex backend running on this machine.</p>
             </button>
+
+            @if (isWindows()) {
+              <button
+                type="button"
+                class="group rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border"
+                [disabled]="connecting()"
+                (click)="connectToWsl()"
+              >
+                <div class="flex items-center justify-between gap-3">
+                  <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
+                    @if (connecting() && selectedMode() === 'wsl') {
+                      <ng-icon name="lucideRefreshCw" size="20" class="animate-spin" />
+                    } @else {
+                      <ng-icon name="lucideHardDrive" size="20" />
+                    }
+                  </span>
+                  <ng-icon name="lucideArrowRight" size="16" class="text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                </div>
+                <div class="mt-5 text-base font-semibold text-foreground">WSL backend</div>
+                <p class="mt-2 text-sm leading-6 text-muted-foreground">
+                  @if (wslSupported()) {
+                    Run the Elevenex backend inside WSL — one click, your default distro is picked automatically.
+                  } @else {
+                    WSL isn't installed yet. Click to see setup instructions.
+                  }
+                </p>
+              </button>
+            }
 
             <button
               type="button"
@@ -114,6 +144,10 @@
               <p class="mt-2 text-sm leading-6 text-muted-foreground">Connect through SSH and configure the backend hosted on that server.</p>
             </button>
           </div>
+
+          @if (connectionError() && selectedMode() === 'wsl') {
+            <div class="mt-5 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive" role="alert">{{ connectionError() }}</div>
+          }
         </section>
       } @else if (activeStep() === 'agent') {
         <section class="w-full max-w-5xl">
@@ -477,20 +511,28 @@
         <section class="w-full max-w-3xl">
           <div class="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <ng-icon name="lucideRefreshCw" size="16" />
-            Remote setup paused
+            {{ selectedMode() === 'wsl' ? 'WSL setup paused' : 'Remote setup paused' }}
           </div>
-          <h2 class="text-3xl font-semibold leading-tight text-foreground">Remote prerequisites are missing.</h2>
+          <h2 class="text-3xl font-semibold leading-tight text-foreground">
+            {{ selectedMode() === 'wsl' ? 'WSL prerequisites are missing.' : 'Remote prerequisites are missing.' }}
+          </h2>
           <p class="mt-3 text-sm leading-6 text-muted-foreground">
-            {{ installMessage() || 'Use the remote setup terminal to install the missing dependencies, then retry.' }}
+            {{ installMessage() || 'Use the setup terminal to install the missing dependencies, then retry.' }}
           </p>
 
           <div class="mt-6 rounded-lg border border-border bg-background p-5 text-sm leading-6 text-muted-foreground">
-            Install the missing pieces on the remote server. After the remote machine is ready, Elevenex will upload or update its runtime automatically.
+            @if (selectedMode() === 'wsl') {
+              Install the missing pieces inside your WSL distro. Once it's ready, Elevenex will install or update its runtime there automatically.
+            } @else {
+              Install the missing pieces on the remote server. After the remote machine is ready, Elevenex will upload or update its runtime automatically.
+            }
           </div>
 
           <div class="mt-8 flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-stretch">
-            <button z-button zType="ghost" type="button" (click)="retryConnection()">Edit connection</button>
-            <button z-button type="button" [zLoading]="connecting()" [zDisabled]="connecting()" (click)="connectToServer()">
+            <button z-button zType="ghost" type="button" (click)="editCurrentConnection()">
+              {{ selectedMode() === 'wsl' ? 'Back' : 'Edit connection' }}
+            </button>
+            <button z-button type="button" [zLoading]="connecting()" [zDisabled]="connecting()" (click)="retryCurrentConnection()">
               <ng-icon name="lucideRefreshCw" size="16" class="mr-1" />
               Retry
             </button>

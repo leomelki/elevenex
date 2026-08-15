@@ -19,6 +19,7 @@ import { toast } from 'ngx-sonner';
 import { Sidebar } from './features/navigation/sidebar/sidebar';
 import { EnvironmentSwitcherComponent } from './features/navigation/environment-switcher/environment-switcher.component';
 import { RemoteInstallModalComponent } from './features/remote-install/remote-install-modal.component';
+import { WslInstallModalComponent } from './features/remote-install/wsl-install-modal.component';
 import { getRuntimeConfig } from './shared/runtime/runtime-config';
 import {
   ElectronWindowState,
@@ -52,7 +53,7 @@ function readSidebarWidth(): number {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, AgentCommandBarComponent, ZardInputDirective, TmuxRequiredOverlayComponent],
+  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, NgIcon, RemoteInstallModalComponent, WslInstallModalComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, AgentCommandBarComponent, ZardInputDirective, TmuxRequiredOverlayComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   viewProviders: [

@@ -10,6 +10,7 @@ import { TabService } from '@/features/session/tab-service';
 import { buildVSCodeIframeKey, VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
 import { ELEVENEX_REMOTE_PORT } from '@/shared/constants/elevenex';
 import { OnboardingLastSshDefaults, SavedServer, ServerAuthMode } from '@/shared/models/onboarding.model';
+import { getElectronWslServerApi } from '@/shared/runtime/electron-wsl-server';
 import { getElectronBrowserApi } from '@/shared/runtime/electron-browser';
 import { getElectronSshForwardingApi } from '@/shared/runtime/electron-ssh-forwarding';
 
@@ -72,6 +73,9 @@ export class EnvironmentConnectionManagerService {
     if (snapshot.mode === 'ssh') {
       return this.activeServer()?.name || 'Remote server';
     }
+    if (snapshot.mode === 'wsl') {
+      return snapshot.wsl?.distroName ? `WSL: ${snapshot.wsl.distroName}` : 'WSL backend';
+    }
 
     return 'Local';
   });
@@ -80,6 +84,38 @@ export class EnvironmentConnectionManagerService {
     return this.runSwitch('Local workspace', async () => {
       await this.stopActiveRemoteTunnel();
       this.onboardingState.setMode('local');
+      this.sshRuntimeRecovery.clearRemoteDisconnect();
+      this.onboardingStartup.clearStartupFailure();
+      await this.finalizeWorkspaceHandoff();
+    });
+  }
+
+  async isWslSupported(): Promise<boolean> {
+    try {
+      return (await getElectronWslServerApi()?.isSupported()) ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  // WSL is a single, always-visible connection like Local — no draft/name to
+  // gather first, and (unlike SSH) nothing to tear down on switch-away since
+  // there is no tunnel, only a local wsl.exe process spawn.
+  async switchToWsl(distroName?: string | null): Promise<{ ok: boolean; error?: string }> {
+    const label = distroName ? `WSL: ${distroName}` : 'WSL backend';
+    return this.runSwitch(label, async () => {
+      await this.stopActiveRemoteTunnel();
+      const result = await this.onboardingConnection.connectWsl(distroName);
+      if (result.kind !== 'success') {
+        throw new Error(result.message || 'Could not connect to WSL.');
+      }
+
+      this.onboardingState.setWslState({
+        distroName: result.distroName,
+        localPort: result.localPort,
+        installStatus: result.installStatus,
+        lastConnectedAt: new Date().toISOString(),
+      });
       this.sshRuntimeRecovery.clearRemoteDisconnect();
       this.onboardingStartup.clearStartupFailure();
       await this.finalizeWorkspaceHandoff();

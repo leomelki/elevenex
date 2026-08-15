@@ -42,6 +42,9 @@ export function getBackendServerId(): string {
     const server = getActiveOnboardingServer(snapshot);
     if (server) return `server-${server.id}`;
   }
+  if (snapshot?.mode === 'wsl') {
+    return 'wsl';
+  }
   return 'local';
 }
 

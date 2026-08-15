@@ -40,7 +40,10 @@ projects = signal<Project[]>([]);
   searchTerm = signal('');
   listState = signal<Exclude<ProjectListState, 'all'>>('active');
   busyProjectId = signal<number | null>(null);
-  showPortForwardStep = computed(() => this.onboardingState.snapshotState().mode !== 'local');
+  // Only SSH backends run on a genuinely separate machine that needs a port
+  // forward to reach a project's dev server from this browser view. WSL
+  // shares localhost with Windows the same way Local does, so it doesn't.
+  showPortForwardStep = computed(() => this.onboardingState.snapshotState().mode === 'ssh');
   projectCountLabel = computed(() => {
     const count = this.projects().length;
     const stateLabel = this.listState() === 'archived' ? 'archived' : 'active';
