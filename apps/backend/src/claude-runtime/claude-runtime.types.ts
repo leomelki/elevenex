@@ -473,6 +473,29 @@ export interface ClaudeSubagentState {
   timestamp: string;
 }
 
+/**
+ * A single unit of work that is still executing in the background — i.e. it
+ * outlives the turn that launched it (a `run_in_background` Agent/Task, or a
+ * subagent that has started but not yet reported a stop).
+ *
+ * This is the single source of truth the runtime uses to decide whether a
+ * session is "busy in the background". It is deliberately a flat, swept list
+ * rather than something derived from the `subagents` / `tasks` history arrays:
+ * those are capped ring buffers kept for display, and a dropped or missed
+ * lifecycle hook there used to pin a session as permanently busy.
+ */
+export interface ClaudeBackgroundWorkItem {
+  /** Stable key: `subagent:<agentId>` or `task:<taskId>`. */
+  id: string;
+  kind: 'subagent' | 'task';
+  /** Human label — agent type, or the task description/subject. */
+  label: string;
+  /** Secondary line: last tool used, latest summary, etc. */
+  detail?: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
 export interface ClaudeSubagentHistoryPayload {
   subagent: ClaudeSubagentState;
   history: ClaudeTranscriptItem[];
@@ -586,6 +609,18 @@ export interface ClaudeRuntimeStatePayload {
   runPhase: ClaudeRunPhase;
   sessionState: ClaudeSessionExecutionState;
   canInterrupt: boolean;
+  /**
+   * Work still executing in the background (see ClaudeBackgroundWorkItem).
+   * Optional: providers without a background-work concept simply omit it.
+   */
+  backgroundWork?: ClaudeBackgroundWorkItem[];
+  /**
+   * True while the current run was started autonomously by background work
+   * reporting back, rather than by a user prompt. The turn is otherwise a
+   * completely ordinary run: it streams, it can be interrupted, it ends in a
+   * result.
+   */
+  backgroundRunActive?: boolean;
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   pendingPrompts: ClaudePendingPrompt[];
@@ -653,6 +688,8 @@ export type ClaudeRuntimeEvent =
         runPhase: ClaudeRunPhase;
         sessionState: ClaudeSessionExecutionState;
         canInterrupt: boolean;
+        backgroundWork?: ClaudeBackgroundWorkItem[];
+        backgroundRunActive?: boolean;
         lastError: string | null;
         selectedModel: string | null;
         reasoningEffort: ClaudeReasoningEffort | null;
@@ -730,6 +767,13 @@ export type ClaudeRuntimeEvent =
   | {
       type: 'subagent_lifecycle';
       payload: { sessionId: number; subagent: ClaudeSubagentState };
+    }
+  | {
+      type: 'background_work';
+      payload: {
+        sessionId: number;
+        backgroundWork: ClaudeBackgroundWorkItem[];
+      };
     }
   | {
       type: 'tool_progress';

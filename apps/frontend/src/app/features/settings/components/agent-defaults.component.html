@@ -1,0 +1,84 @@
+<div class="grid gap-4 p-5">
+  <p class="text-sm text-muted-foreground">
+    Pick the model and thinking level each agent should start new sessions with.
+    Leave a field on <span class="font-medium text-foreground">Provider default</span>
+    to defer to the agent's own default. You can still change these per session.
+  </p>
+
+  @if (catalog.error()) {
+    <div class="text-sm text-destructive" role="alert">{{ catalog.error() }}</div>
+  }
+
+  <div class="divide-y divide-border overflow-hidden rounded-lg border border-border">
+    @for (row of rows(); track row.id) {
+      <div
+        class="grid gap-4 bg-background p-4 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)] md:items-center"
+      >
+        <div class="flex min-w-0 items-center gap-3">
+          <span
+            class="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground"
+          >
+            <ng-icon [name]="row.icon" size="16" />
+          </span>
+          <div class="min-w-0 text-sm font-medium text-foreground">{{ row.label }}</div>
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="flex flex-col gap-1.5">
+            <span class="text-xs font-medium text-muted-foreground">Model</span>
+            <div class="relative">
+              <select
+                class="h-9 w-full appearance-none rounded-md border border-input bg-background pl-3 pr-8 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
+                [value]="row.selectedModel"
+                [disabled]="appSettings.saving() || (!row.hasModels && !row.selectedModel)"
+                [attr.aria-label]="'Default model for ' + row.label"
+                (change)="onModelChange(row.id, $any($event.target).value)"
+              >
+                <option value="">Provider default</option>
+                @for (option of row.modelOptions; track option.value) {
+                  <option [value]="option.value">{{ option.label }}</option>
+                }
+              </select>
+              <ng-icon
+                name="lucideChevronDown"
+                size="16"
+                class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+            </div>
+            @if (!row.hasModels) {
+              <span class="text-xs text-muted-foreground">Models are configured in {{ row.label }}.</span>
+            }
+          </label>
+
+          @if (row.showEffort) {
+            <label class="flex flex-col gap-1.5">
+              <span class="text-xs font-medium text-muted-foreground">Thinking level</span>
+              <div class="relative">
+                <select
+                  class="h-9 w-full appearance-none rounded-md border border-input bg-background pl-3 pr-8 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
+                  [value]="row.selectedEffort"
+                  [disabled]="appSettings.saving() || row.effortDisabled"
+                  [attr.aria-label]="'Default thinking level for ' + row.label"
+                  (change)="onEffortChange(row.id, $any($event.target).value)"
+                >
+                  <option value="">Provider default</option>
+                  @for (option of row.effortOptions; track option.value) {
+                    <option [value]="option.value">{{ option.label }}</option>
+                  }
+                </select>
+                <ng-icon
+                  name="lucideChevronDown"
+                  size="16"
+                  class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+              </div>
+              @if (row.effortDisabled) {
+                <span class="text-xs text-muted-foreground">The selected model uses a fixed thinking level.</span>
+              }
+            </label>
+          }
+        </div>
+      </div>
+    }
+  </div>
+</div>

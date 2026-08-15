@@ -3148,4 +3148,157 @@ describe('ClaudeRuntimeService', () => {
       ]),
     );
   });
+
+  describe('background work', () => {
+    const SESSION_ID = 7;
+
+    function startSubagent(agentId: string, agentType = 'Explore') {
+      (service as any).upsertBackgroundWork(SESSION_ID, {
+        id: `subagent:${agentId}`,
+        kind: 'subagent',
+        label: agentType,
+      });
+    }
+
+    function backgroundIds(): string[] {
+      const state = (service as any).runtimeStates.get(SESSION_ID);
+      return (state?.backgroundWork ?? []).map((item: any) => item.id);
+    }
+
+    it('reports a started subagent as active background work', () => {
+      startSubagent('agent-1');
+
+      expect((service as any).hasActiveBackgroundWork(SESSION_ID)).toBe(true);
+      expect(backgroundIds()).toEqual(['subagent:agent-1']);
+    });
+
+    it('clears background work once the subagent stops', () => {
+      startSubagent('agent-1');
+      (service as any).clearBackgroundWork(SESSION_ID, 'subagent:agent-1');
+
+      expect((service as any).hasActiveBackgroundWork(SESSION_ID)).toBe(false);
+      expect(backgroundIds()).toEqual([]);
+    });
+
+    // Regression: a dropped SubagentStop hook used to pin the session as
+    // "background busy" forever, which silently queued every later prompt.
+    it('expires background work that has gone silent past the stale window', () => {
+      startSubagent('agent-1');
+      const state = (service as any).runtimeStates.get(SESSION_ID);
+      const longAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      state.backgroundWork[0].updatedAt = longAgo;
+      state.backgroundWork[0].startedAt = longAgo;
+
+      expect((service as any).hasActiveBackgroundWork(SESSION_ID)).toBe(false);
+      expect(backgroundIds()).toEqual([]);
+    });
+
+    // Regression: background work runs inside the runtime subprocess, so when
+    // that process dies the work is gone whether or not stop hooks arrived.
+    it('drops all background work when the runtime closes', () => {
+      startSubagent('agent-1');
+      startSubagent('agent-2');
+
+      (service as any).clearAllBackgroundWork(SESSION_ID, 'runtime_closed');
+
+      expect((service as any).hasActiveBackgroundWork(SESSION_ID)).toBe(false);
+      expect(backgroundIds()).toEqual([]);
+    });
+
+    it('only tracks tasks the SDK marks as backgrounded', () => {
+      (service as any).syncTaskBackgroundWork(SESSION_ID, {
+        taskId: 'task-fg',
+        status: 'running',
+        isBackgrounded: false,
+        updatedAt: new Date().toISOString(),
+      });
+      expect(backgroundIds()).toEqual([]);
+
+      (service as any).syncTaskBackgroundWork(SESSION_ID, {
+        taskId: 'task-bg',
+        status: 'running',
+        description: 'Audit the repo',
+        isBackgrounded: true,
+        updatedAt: new Date().toISOString(),
+      });
+      expect(backgroundIds()).toEqual(['task:task-bg']);
+
+      (service as any).syncTaskBackgroundWork(SESSION_ID, {
+        taskId: 'task-bg',
+        status: 'completed',
+        isBackgrounded: true,
+        updatedAt: new Date().toISOString(),
+      });
+      expect(backgroundIds()).toEqual([]);
+    });
+
+    // Regression: a result means the top-level agent loop concluded, so an
+    // inline subagent cannot still be running — it just never got a stop hook.
+    it('prunes lingering subagent work when a run finishes', () => {
+      startSubagent('agent-1');
+      (service as any).syncTaskBackgroundWork(SESSION_ID, {
+        taskId: 'task-bg',
+        status: 'running',
+        isBackgrounded: true,
+        updatedAt: new Date().toISOString(),
+      });
+
+      (service as any).finishRun(SESSION_ID);
+
+      expect(backgroundIds()).toEqual(['task:task-bg']);
+    });
+
+    it('emits background work on the event stream', () => {
+      const events: any[] = [];
+      service.on('event', (event: any) => events.push(event));
+
+      startSubagent('agent-1', 'Plan');
+
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'background_work',
+            payload: expect.objectContaining({
+              sessionId: SESSION_ID,
+              backgroundWork: [
+                expect.objectContaining({
+                  id: 'subagent:agent-1',
+                  kind: 'subagent',
+                  label: 'Plan',
+                }),
+              ],
+            }),
+          }),
+        ]),
+      );
+    });
+
+    // Regression: prompts queued behind background work drained only from the
+    // tail of a user-submitted run, so they sat there until the next manual
+    // send once the background path completed.
+    it('drains a queued prompt once background work clears', async () => {
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      startSubagent('agent-1');
+      state.pendingPrompts = [
+        { id: 'p1', prompt: 'queued while busy', queuedAt: new Date().toISOString() },
+      ];
+      const submitPrompt = jest
+        .spyOn(service, 'submitPrompt')
+        .mockResolvedValue(undefined);
+
+      (service as any).drainPendingPrompts(SESSION_ID);
+      expect(submitPrompt).not.toHaveBeenCalled();
+
+      (service as any).clearBackgroundWork(SESSION_ID, 'subagent:agent-1');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(submitPrompt).toHaveBeenCalledWith(
+        SESSION_ID,
+        'queued while busy',
+        undefined,
+        undefined,
+      );
+      expect(state.pendingPrompts).toEqual([]);
+    });
+  });
 });

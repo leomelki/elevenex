@@ -163,10 +163,11 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
             }
           </div>
         }
+        <!-- What is running is shown by cw-background-activity above the
+             composer; this only explains the consequence for sending. -->
         @if (backgroundAgentCount() > 0) {
           <div class="cw-comp__bg-agent" role="status">
-            <ng-icon name="lucideLoaderCircle" size="12" class="animate-spin" />
-            {{ backgroundAgentCount() }} background agent{{ backgroundAgentCount() === 1 ? '' : 's' }} running — new messages will be queued
+            Background work in progress — new messages will be queued until it finishes.
           </div>
         }
         @if (pendingPrompts().length) {

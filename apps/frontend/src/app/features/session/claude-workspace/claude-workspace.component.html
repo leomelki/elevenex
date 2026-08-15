@@ -696,6 +696,9 @@
 
         @if (!isTranscriptReadOnly()) {
           <div class="max-w-[52rem] w-full mx-auto flex flex-col">
+            @if (backgroundWork().length) {
+              <cw-background-activity class="mb-1.5" [items]="backgroundWork()" />
+            }
             @if (pendingPermissionRequest(); as req) {
               <cw-permission-inline
                 class="cw-compose-shell__permission block w-full"
@@ -712,7 +715,7 @@
               [value]="prompt()"
               [submitting]="submitting()"
               [running]="runPhase() === 'running'"
-              [backgroundAgentCount]="activeBackgroundAgents().length"
+              [backgroundAgentCount]="backgroundWork().length"
               [canInterrupt]="canInterrupt()"
               [blockedByPermission]="!!pendingPermissionRequest()"
               [sendDisabledReason]="composerPermissionDisabledReason()"
@@ -744,6 +747,8 @@
             [availableModels]="availableModels()"
             [contextUsage]="contextUsage()"
             [tasks]="tasks()"
+            [backgroundWorkCount]="backgroundWork().length"
+            [backgroundRunActive]="backgroundRunActive()"
             [permissionMode]="permissionMode()"
             [planMode]="planMode()"
             [mcpSnapshot]="mcpSnapshot()"

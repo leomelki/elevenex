@@ -272,6 +272,20 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
         </span>
       }
 
+      @if (backgroundWorkCount() > 0) {
+        <span class="cw-sb__sep">·</span>
+        <span
+          class="cw-sb__bg"
+          [title]="
+            backgroundWorkCount() +
+            ' background job(s) still running — new messages are queued behind them'
+          "
+        >
+          <span class="cw-sb__bg-dot" aria-hidden="true"></span>
+          {{ backgroundWorkCount() }} in background
+        </span>
+      }
+
       @if (taskCount() > 0) {
         <span class="cw-sb__sep">·</span>
         <button type="button" class="cw-sb__link" (click)="openTasks.emit()">
@@ -367,6 +381,34 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
         border-radius: 999px;
         background: currentColor;
         opacity: 0.5;
+      }
+      .cw-sb__bg {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        color: var(--primary);
+        cursor: default;
+      }
+      .cw-sb__bg-dot {
+        width: 0.375rem;
+        height: 0.375rem;
+        border-radius: 999px;
+        background: currentColor;
+        animation: cw-sb-bg-pulse 1.6s ease-in-out infinite;
+      }
+      @keyframes cw-sb-bg-pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .cw-sb__bg-dot {
+          animation: none;
+        }
       }
       .cw-sb__ctx {
         display: inline-flex;
@@ -487,6 +529,10 @@ export class ClaudeStatusBarComponent {
   readonly availableModels = input<ClaudeModelOption[]>([]);
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
   readonly tasks = input<ClaudeTaskState[]>([]);
+  /** Count of background jobs still running; shown as a persistent chip. */
+  readonly backgroundWorkCount = input<number>(0);
+  /** True when the current run was resumed by background work, not a prompt. */
+  readonly backgroundRunActive = input<boolean>(false);
   readonly permissionMode = input<ClaudePermissionMode>('default');
   readonly planMode = input(false);
   readonly mcpSnapshot = input<ClaudeMcpSnapshot | null>(null);
@@ -577,7 +623,9 @@ export class ClaudeStatusBarComponent {
 
   readonly phaseLabel = computed(() => {
     const p = this.phase();
-    if (p === 'running') return 'running';
+    // A run resumed by background work is an ordinary run in every way; the
+    // label just says where it came from so it doesn't look unexplained.
+    if (p === 'running') return this.backgroundRunActive() ? 'resumed' : 'running';
     if (p === 'initializing') return 'initializing';
     if (p === 'waiting') return 'awaiting input';
     if (p === 'error') return 'error';

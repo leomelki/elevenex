@@ -91,6 +91,7 @@ import {
   isDestructiveElevenexTool,
 } from '../mcp/agent-tool-policy.js';
 import {
+  ClaudeBackgroundWorkItem,
   ClaudeImageInput,
   ClaudeImageMediaType,
   ClaudePendingPrompt,
@@ -177,6 +178,12 @@ interface ActiveUserInputRequest {
 interface ActiveRunState {
   query: ClaudeSessionRuntime;
   worktreePath: string;
+  // True for a run that elevenex did not submit: background work reported back
+  // and Claude Code autonomously resumed the persistent connection. It is
+  // registered as a full run (rather than a special-cased flag) so that
+  // streaming, thinking blocks, interrupt, and run teardown all take exactly
+  // the same code paths as a user-submitted turn.
+  isBackground: boolean;
   interruptRequested: boolean;
   tornDown: boolean;
   permissionRequests: Map<string, ActivePermissionRequest>;
@@ -266,11 +273,17 @@ interface RuntimeState {
   runPhase: ClaudeRunPhase;
   sessionState: ClaudeSessionExecutionState;
   canInterrupt: boolean;
-  // Set when a background subagent/task wakes the session back up (new SDK
-  // messages arrive with no elevenex-initiated run in flight, e.g. a
-  // backgrounded Task tool posting its completion). Cleared once the
-  // resulting result message lands, so runPhase can drop back to idle.
-  backgroundResumeActive: boolean;
+  // Work still executing in the background. Single source of truth for "is this
+  // session busy in the background"; swept for staleness on every read so a
+  // dropped SubagentStop hook or a killed runtime can never pin it forever.
+  backgroundWork: ClaudeBackgroundWorkItem[];
+  // Wall-clock of the last SDK message seen while a background run was active.
+  // Drives the stall watchdog that returns the session to idle if the
+  // autonomous resume dies without ever producing a result message.
+  backgroundRunLastActivityMs: number | null;
+  backgroundRunStallTimer: ReturnType<typeof setTimeout> | null;
+  // Worktree path of the last runtime built for this session.
+  worktreePath: string | null;
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   pendingPrompts: ClaudePendingPrompt[];
@@ -1458,6 +1471,10 @@ export class ClaudeRuntimeService
     // them without re-fetching the session row.
     state.surface = session.surface ?? 'session';
     state.agentAutonomyMode = session.agentAutonomyMode ?? null;
+    // Cached so an autonomous background run — which is registered synchronously
+    // from the message pump and cannot await a session lookup — still resolves
+    // relative edit paths for permission diff previews.
+    state.worktreePath = session.worktreePath;
 
     const canUseTool = this.createCanUseTool(sessionId, state);
     const onElicitation = this.createOnElicitation(sessionId, state);
@@ -1546,7 +1563,20 @@ export class ClaudeRuntimeService
     if (!state || this.invalidatedSessions.has(sessionId)) {
       return;
     }
+    // Background work executes inside the process that just went away, so it is
+    // gone with it whether or not we ever saw its stop hooks. Clearing here is
+    // what stops a crashed or evicted runtime from leaving the session pinned
+    // as "background busy" forever, silently queueing every later prompt.
+    this.clearAllBackgroundWork(sessionId, 'runtime_closed');
+    const backgroundRun = this.activeRuns.get(sessionId);
+    if (backgroundRun?.isBackground) {
+      this.logger.warn(
+        `Claude background run lost its runtime session=${sessionId} run=${backgroundRun.runId}`,
+      );
+      this.finishRun(sessionId);
+    }
     this.updateRuntimeWarmState(sessionId, state, runtime, 'cold');
+    this.drainPendingPrompts(sessionId);
   }
 
   private updateRuntimeWarmState(
@@ -1824,6 +1854,7 @@ export class ClaudeRuntimeService
         currentStreamMessageId: null,
         completionPromise,
         resolveCompletion,
+        isBackground: false,
         startedAtMs,
         runId,
         queryCreatedAtMs,
@@ -1890,28 +1921,11 @@ export class ClaudeRuntimeService
         if (interrupted) {
           this.finalizeInterruptedRun(sessionId);
         }
-        if (
-          !interrupted &&
-          !state.lastError &&
-          state.pendingPrompts.length > 0
-        ) {
-          const [next, ...rest] = state.pendingPrompts;
-          state.pendingPrompts = rest;
-          this.emitRunState(sessionId);
-          setImmediate(() => {
-            this.submitPrompt(
-              sessionId,
-              next.prompt,
-              undefined,
-              next.images,
-            ).catch((err) => {
-              this.logger.error(
-                `Pending prompt drain failed session=${sessionId}: ${
-                  err instanceof Error ? err.message : String(err)
-                }`,
-              );
-            });
-          });
+        if (!interrupted) {
+          // Deferred so background bookkeeping triggered by this run's final
+          // messages settles first; drainPendingPrompts re-checks whether the
+          // session is actually free before sending anything.
+          setImmediate(() => this.drainPendingPrompts(sessionId));
         }
         this.enforceIdleRuntimeLimit(sessionId);
       }
@@ -2373,43 +2387,173 @@ export class ClaudeRuntimeService
     }
   }
 
-  // True while a backgrounded subagent/task is still executing for this session,
-  // even though the visible run already finished and runPhase may not have
-  // flipped back to 'running' yet. Used to queue a submitted prompt instead of
-  // racing it against the SDK's own autonomous resume when the background work
-  // completes.
+  // ---------------------------------------------------------------------
+  // Background work registry
+  //
+  // Background work is anything that outlives the turn that launched it: a
+  // `run_in_background` Agent/Task, or a subagent that reported a start but not
+  // yet a stop. `state.backgroundWork` is the single source of truth, and every
+  // read goes through sweepBackgroundWork() so that a dropped lifecycle hook,
+  // a killed subprocess, or a runaway agent can never pin a session as busy
+  // forever — which used to leave every subsequent prompt silently queued.
+  // ---------------------------------------------------------------------
+
+  /** Hard ceiling on how long a single background item may stay "in flight". */
+  private static readonly BACKGROUND_WORK_MAX_AGE_MS = 60 * 60 * 1000;
+
+  /**
+   * How long an item may go without any update before it is considered dead.
+   * Live background agents emit tool_progress/task_progress steadily, so a
+   * multi-minute silence means the work is gone, not slow.
+   */
+  private static readonly BACKGROUND_WORK_STALE_AFTER_MS = 10 * 60 * 1000;
+
+  /**
+   * How long an autonomous background run may go without any SDK message
+   * before we give up waiting for its result message and return to idle.
+   */
+  private static readonly BACKGROUND_RUN_STALL_MS = 3 * 60 * 1000;
+
+  /**
+   * Returns the live background items, dropping any that have gone stale. This
+   * mutates state (and emits when something was dropped) so that staleness is
+   * reconciled lazily wherever background state is consulted.
+   */
+  private sweepBackgroundWork(
+    sessionId: number,
+    state: RuntimeState,
+  ): ClaudeBackgroundWorkItem[] {
+    if (!state.backgroundWork.length) {
+      return state.backgroundWork;
+    }
+
+    const now = Date.now();
+    const live = state.backgroundWork.filter((item) => {
+      const startedAtMs = Date.parse(item.startedAt);
+      const updatedAtMs = Date.parse(item.updatedAt);
+      const age = Number.isNaN(startedAtMs) ? 0 : now - startedAtMs;
+      const silence = Number.isNaN(updatedAtMs) ? 0 : now - updatedAtMs;
+      return (
+        age < ClaudeRuntimeService.BACKGROUND_WORK_MAX_AGE_MS &&
+        silence < ClaudeRuntimeService.BACKGROUND_WORK_STALE_AFTER_MS
+      );
+    });
+
+    if (live.length !== state.backgroundWork.length) {
+      const dropped = state.backgroundWork.filter(
+        (item) => !live.includes(item),
+      );
+      this.logger.warn(
+        `Claude background work expired session=${sessionId} dropped=${dropped
+          .map((item) => `${item.id}(${item.label})`)
+          .join(',')}`,
+      );
+      state.backgroundWork = live;
+      this.emitBackgroundWork(sessionId, state);
+      // Anything queued behind work that turned out to be dead must not sit
+      // there forever. Deferred so this stays re-entrancy-safe: drain consults
+      // background state, which lands back here.
+      setImmediate(() => this.drainPendingPrompts(sessionId));
+    }
+
+    return state.backgroundWork;
+  }
+
+  private upsertBackgroundWork(
+    sessionId: number,
+    item: Omit<ClaudeBackgroundWorkItem, 'updatedAt' | 'startedAt'> &
+      Partial<Pick<ClaudeBackgroundWorkItem, 'startedAt'>>,
+  ): void {
+    const state = this.ensureRuntimeState(sessionId);
+    const now = new Date().toISOString();
+    const existing = state.backgroundWork.find(
+      (candidate) => candidate.id === item.id,
+    );
+    const next: ClaudeBackgroundWorkItem = {
+      id: item.id,
+      kind: item.kind,
+      label: item.label || existing?.label || item.kind,
+      detail: item.detail ?? existing?.detail,
+      startedAt: existing?.startedAt ?? item.startedAt ?? now,
+      updatedAt: now,
+    };
+    state.backgroundWork = [
+      ...state.backgroundWork.filter((candidate) => candidate.id !== item.id),
+      next,
+    ];
+    this.emitBackgroundWork(sessionId, state);
+  }
+
+  private clearBackgroundWork(sessionId: number, id: string): void {
+    const state = this.ensureRuntimeState(sessionId);
+    if (!state.backgroundWork.some((item) => item.id === id)) {
+      return;
+    }
+    state.backgroundWork = state.backgroundWork.filter(
+      (item) => item.id !== id,
+    );
+    this.emitBackgroundWork(sessionId, state);
+    this.drainPendingPrompts(sessionId);
+  }
+
+  /**
+   * Drops every background item for a session. Called when the underlying
+   * runtime process goes away: background work lives *inside* that process, so
+   * once it is gone the work is definitively gone with it, whether or not we
+   * ever saw the matching stop hooks.
+   */
+  private clearAllBackgroundWork(sessionId: number, reason: string): void {
+    const state = this.runtimeStates.get(sessionId);
+    if (!state?.backgroundWork.length) {
+      return;
+    }
+    this.logger.log(
+      `Claude background work cleared session=${sessionId} reason=${reason} count=${state.backgroundWork.length}`,
+    );
+    state.backgroundWork = [];
+    this.emitBackgroundWork(sessionId, state);
+  }
+
+  private emitBackgroundWork(sessionId: number, state: RuntimeState): void {
+    if (this.invalidatedSessions.has(sessionId)) {
+      return;
+    }
+    this.emitEvent({
+      type: 'background_work',
+      payload: { sessionId, backgroundWork: [...state.backgroundWork] },
+    });
+  }
+
+  // True while background work is still executing for this session, even though
+  // the visible run already finished. Used to queue a submitted prompt instead
+  // of racing it against the SDK's own autonomous resume, and to hold the
+  // runtime process open so the work is not killed mid-flight.
   private hasActiveBackgroundWork(sessionId: number): boolean {
     const state = this.runtimeStates.get(sessionId);
     if (!state) {
       return false;
     }
-    return state.backgroundResumeActive || this.hasKnownBackgroundAgents(state);
-  }
-
-  // True only when we have direct evidence (from SubagentStart hooks or
-  // task_started/task_updated events) that a backgrounded subagent/task is
-  // actually in flight. Deliberately does NOT look at runPhase or
-  // backgroundResumeActive — this is the ground truth those two are derived
-  // from, not the other way around.
-  private hasKnownBackgroundAgents(state: RuntimeState): boolean {
-    if (state.subagents.some((subagent) => subagent.status === 'started')) {
+    if (this.activeRuns.get(sessionId)?.isBackground) {
       return true;
     }
-    return state.tasks.some(
-      (task) =>
-        task.isBackgrounded &&
-        (task.status === 'running' || task.status === 'pending'),
-    );
+    return this.sweepBackgroundWork(sessionId, state).length > 0;
   }
 
-  // Marks the session as busy again when the SDK stream produces conversational
-  // activity with no elevenex-initiated run in flight. This happens when a
-  // backgrounded subagent/task (launched via the async Agent tool) finishes and
-  // Claude Code autonomously resumes the same persistent connection to report
-  // back — from elevenex's point of view nothing was submitted, so runPhase
-  // would otherwise stay 'idle' and the composer would let a new message
-  // through immediately instead of queuing it behind the resumed turn.
-  private reconcileBackgroundResume(sessionId: number, message: SDKMessage): void {
+  /**
+   * Wakes the session back up when the SDK stream produces conversational
+   * activity with no elevenex-initiated run in flight. This happens when
+   * background work finishes and Claude Code autonomously resumes the same
+   * persistent connection to report back.
+   *
+   * The resumed turn is registered as a real run so it is indistinguishable
+   * from a user-submitted one downstream: partial/stream events render, thinking
+   * blocks animate, Stop is live, and the normal result -> finishRun path ends
+   * it. A stall watchdog guarantees it ends even if the result never arrives.
+   */
+  private reconcileBackgroundResume(
+    sessionId: number,
+    message: SDKMessage,
+  ): void {
     const isResumeSignal =
       message.type === 'assistant' ||
       message.type === 'stream_event' ||
@@ -2423,23 +2567,143 @@ export class ClaudeRuntimeService
     }
 
     const state = this.ensureRuntimeState(sessionId);
-    if (state.runPhase !== 'idle') {
-      return;
-    }
     // A prewarm/rebuilt connection (e.g. after a model or effort change)
     // replays its own init/hydration chatter through this same message path
     // with no elevenex-initiated run — without this check that chatter looks
-    // identical to a real backgrounded task waking the session back up, and
-    // permanently sticks runPhase at 'running' since no further 'result'
-    // message will ever arrive to close it out.
-    if (!this.hasKnownBackgroundAgents(state)) {
+    // identical to real background work waking the session back up.
+    if (!this.sweepBackgroundWork(sessionId, state).length) {
       return;
     }
 
-    state.backgroundResumeActive = true;
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (!runtime) {
+      return;
+    }
+
+    let resolveCompletion!: () => void;
+    const completionPromise = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const startedAtMs = Date.now();
+    const runId = `bg-${randomUUID().slice(0, 6)}`;
+
+    state.liveItems = [];
+    state.lastError = null;
     state.runPhase = 'running';
     state.sessionState = 'running';
+    state.canInterrupt = true;
+
+    this.activeRuns.set(sessionId, {
+      query: runtime,
+      worktreePath: state.worktreePath ?? '',
+      isBackground: true,
+      interruptRequested: false,
+      tornDown: false,
+      permissionRequests: new Map(),
+      permissionRequestOrder: [],
+      userInputRequests: new Map(),
+      partialAssistantItems: new Map(),
+      partialThinkingItems: new Map(),
+      currentStreamMessageId: null,
+      completionPromise,
+      resolveCompletion,
+      startedAtMs,
+      runId,
+      queryCreatedAtMs: startedAtMs,
+      firstSdkMessageAtMs: null,
+      firstVisibleAtMs: null,
+      sawFirstSdkMessage: false,
+      sawFirstVisibleItem: false,
+      systemSubtypesBeforeVisible: [],
+      observedPreVisibleMarkers: new Set(),
+    });
+
+    this.logger.log(
+      `Claude background run started session=${sessionId} run=${runId} pendingBackgroundItems=${state.backgroundWork.length}`,
+    );
+    this.touchBackgroundRun(sessionId);
     this.emitRunState(sessionId);
+    void this.claudeHooksService.updateStatus(sessionId, 'running', {
+      markCompletion: false,
+    });
+  }
+
+  /**
+   * Re-arms the background-run stall watchdog. Called for every SDK message
+   * while an autonomous background run is active: as long as the resumed turn
+   * is producing output it stays alive, and if it goes silent (subprocess died,
+   * result message lost) the session falls back to idle instead of showing a
+   * spinner that never stops.
+   */
+  private touchBackgroundRun(sessionId: number): void {
+    const state = this.ensureRuntimeState(sessionId);
+    const run = this.activeRuns.get(sessionId);
+    if (!run?.isBackground) {
+      this.clearBackgroundRunStallTimer(state);
+      return;
+    }
+
+    state.backgroundRunLastActivityMs = Date.now();
+    this.clearBackgroundRunStallTimer(state);
+    const timer = setTimeout(() => {
+      state.backgroundRunStallTimer = null;
+      const stalled = this.activeRuns.get(sessionId);
+      if (!stalled?.isBackground) {
+        return;
+      }
+      this.logger.warn(
+        `Claude background run stalled session=${sessionId} run=${stalled.runId} silenceMs=${ClaudeRuntimeService.BACKGROUND_RUN_STALL_MS} — returning session to idle`,
+      );
+      this.clearAllBackgroundWork(sessionId, 'background_run_stalled');
+      this.finishRun(sessionId);
+    }, ClaudeRuntimeService.BACKGROUND_RUN_STALL_MS);
+    timer.unref?.();
+    state.backgroundRunStallTimer = timer;
+  }
+
+  private clearBackgroundRunStallTimer(state: RuntimeState): void {
+    if (state.backgroundRunStallTimer) {
+      clearTimeout(state.backgroundRunStallTimer);
+      state.backgroundRunStallTimer = null;
+    }
+  }
+
+  /**
+   * Submits the oldest queued prompt if the session is now free to run it.
+   * Queued prompts used to drain only from the tail of a user-submitted run, so
+   * anything queued behind background work sat there until the next manual
+   * send. Every path that can free the session calls this.
+   */
+  private drainPendingPrompts(sessionId: number): void {
+    const state = this.runtimeStates.get(sessionId);
+    if (!state || this.invalidatedSessions.has(sessionId)) {
+      return;
+    }
+    if (!state.pendingPrompts.length || state.lastError) {
+      return;
+    }
+    if (
+      this.activeRuns.has(sessionId) ||
+      this.initializingRuns.has(sessionId) ||
+      this.hasActiveBackgroundWork(sessionId)
+    ) {
+      return;
+    }
+
+    const [next, ...rest] = state.pendingPrompts;
+    state.pendingPrompts = rest;
+    this.emitRunState(sessionId);
+    setImmediate(() => {
+      this.submitPrompt(sessionId, next.prompt, undefined, next.images).catch(
+        (error) => {
+          this.logger.error(
+            `Pending prompt drain failed session=${sessionId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        },
+      );
+    });
   }
 
   private async handleSdkMessage(
@@ -2450,25 +2714,27 @@ export class ClaudeRuntimeService
       return;
     }
 
-    const run = this.activeRuns.get(sessionId);
     // Always capture the Claude session ID even when interrupted — if the
     // system:init arrives after the user stops, we still need to persist the
     // session ID so that getHistory can load it and the next run can resume.
     this.captureClaudeSessionId(sessionId, message);
-    if (run?.interruptRequested) {
+    if (this.activeRuns.get(sessionId)?.interruptRequested) {
       return;
     }
 
-    if (!run) {
+    if (!this.activeRuns.has(sessionId)) {
       this.reconcileBackgroundResume(sessionId, message);
     }
 
+    // Re-read: reconcileBackgroundResume may have just registered an autonomous
+    // background run, and everything below must treat it as the active run so
+    // the resumed turn streams and renders exactly like a submitted one.
+    const run = this.activeRuns.get(sessionId);
+    if (run?.isBackground) {
+      this.touchBackgroundRun(sessionId);
+    }
+
     if (!run && message.type === 'result') {
-      const state = this.ensureRuntimeState(sessionId);
-      if (state.backgroundResumeActive) {
-        state.backgroundResumeActive = false;
-        this.finishRun(sessionId);
-      }
       return;
     }
 
@@ -3157,7 +3423,7 @@ export class ClaudeRuntimeService
     if (
       !this.activeRuns.has(sessionId) &&
       message.state === 'running' &&
-      !this.hasKnownBackgroundAgents(state)
+      !this.sweepBackgroundWork(sessionId, state).length
     ) {
       return;
     }
@@ -3314,7 +3580,37 @@ export class ClaudeRuntimeService
       skipTranscript: message.skip_transcript,
       updatedAt: new Date().toISOString(),
     });
+    this.syncTaskBackgroundWork(sessionId, task);
     this.emitEvent({ type: 'task_started', payload: { sessionId, task } });
+  }
+
+  /**
+   * Mirrors a task into the background-work registry. Only tasks the SDK marks
+   * `is_backgrounded` qualify: a foreground task blocks the turn that launched
+   * it, so the session is already "running" for it.
+   */
+  private syncTaskBackgroundWork(
+    sessionId: number,
+    task: ClaudeTaskState,
+  ): void {
+    const isLive =
+      Boolean(task.isBackgrounded) &&
+      (task.status === 'running' || task.status === 'pending');
+    if (!isLive) {
+      this.clearBackgroundWork(sessionId, `task:${task.taskId}`);
+      return;
+    }
+    this.upsertBackgroundWork(sessionId, {
+      id: `task:${task.taskId}`,
+      kind: 'task',
+      label:
+        task.description ||
+        task.subject ||
+        task.workflowName ||
+        task.taskType ||
+        'Background task',
+      detail: task.summary ?? task.lastToolName,
+    });
   }
 
   private handleTaskUpdatedMessage(
@@ -3331,6 +3627,7 @@ export class ClaudeRuntimeService
       isBackgrounded: message.patch.is_backgrounded,
       updatedAt: new Date().toISOString(),
     });
+    this.syncTaskBackgroundWork(sessionId, task);
     this.emitEvent({ type: 'task_updated', payload: { sessionId, task } });
   }
 
@@ -3348,6 +3645,7 @@ export class ClaudeRuntimeService
       summary: message.summary,
       updatedAt: new Date().toISOString(),
     });
+    this.syncTaskBackgroundWork(sessionId, task);
     this.emitEvent({ type: 'task_progress', payload: { sessionId, task } });
   }
 
@@ -3365,6 +3663,7 @@ export class ClaudeRuntimeService
       skipTranscript: message.skip_transcript,
       updatedAt: new Date().toISOString(),
     });
+    this.syncTaskBackgroundWork(sessionId, task);
     this.emitEvent({ type: 'task_notification', payload: { sessionId, task } });
   }
 
@@ -3659,6 +3958,15 @@ export class ClaudeRuntimeService
           type: 'subagent_lifecycle',
           payload: { sessionId, subagent },
         });
+        if (subagent.status === 'started') {
+          this.upsertBackgroundWork(sessionId, {
+            id: `subagent:${agentId}`,
+            kind: 'subagent',
+            label: agentType,
+          });
+        } else {
+          this.clearBackgroundWork(sessionId, `subagent:${agentId}`);
+        }
       }
     }
 
@@ -3780,12 +4088,25 @@ export class ClaudeRuntimeService
 
     const run = this.activeRuns.get(sessionId);
     const state = this.ensureRuntimeState(sessionId);
+    this.clearBackgroundRunStallTimer(state);
+    state.backgroundRunLastActivityMs = null;
     state.runPhase = state.lastError ? 'error' : 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.liveItems = [];
+    // A result means the top-level agent loop concluded. Subagents that were
+    // awaited inline cannot outlive it, so any still marked in-flight never got
+    // their stop hook — prune them. Genuinely backgrounded work is tracked as
+    // task-kind items, which the SDK re-announces via task_notification, so it
+    // survives this and re-arms if it is still running.
+    if (state.backgroundWork.some((item) => item.kind === 'subagent')) {
+      state.backgroundWork = state.backgroundWork.filter(
+        (item) => item.kind !== 'subagent',
+      );
+      this.emitBackgroundWork(sessionId, state);
+    }
     // Invalidate any empty history snapshot recorded during a hydrate that fired
     // before this turn started. The blank-TUI-session guard in submitPrompt uses
     // lastHistoryItemCount===0 + lastHistorySource===null as its signal; leaving
@@ -3810,6 +4131,15 @@ export class ClaudeRuntimeService
         },
       );
     }
+    // A user-submitted run is unregistered by submitPrompt's finally block,
+    // which also drains the prompt queue. An autonomous background run has no
+    // such owner, so it retires itself here — otherwise the session would stay
+    // pinned as "running" and anything queued behind it would never be sent.
+    if (run?.isBackground) {
+      this.activeRuns.delete(sessionId);
+      run.resolveCompletion();
+      setImmediate(() => this.drainPendingPrompts(sessionId));
+    }
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
     void this.claudeHooksService.updateStatus(sessionId, 'idle');
@@ -3831,6 +4161,8 @@ export class ClaudeRuntimeService
 
     const run = this.activeRuns.get(sessionId);
     const state = this.ensureRuntimeState(sessionId);
+    this.clearBackgroundRunStallTimer(state);
+    state.backgroundRunLastActivityMs = null;
     state.runPhase = 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
@@ -3838,6 +4170,9 @@ export class ClaudeRuntimeService
     state.pendingUserInputRequest = null;
     state.liveItems = [];
     state.lastError = null;
+    // Stopping the session stops its background work too — the interrupt goes
+    // to the whole agent loop, not just the visible turn.
+    this.clearAllBackgroundWork(sessionId, 'run_interrupted');
     run?.permissionRequests.clear();
     if (run) {
       run.permissionRequestOrder = [];
@@ -3919,7 +4254,10 @@ export class ClaudeRuntimeService
       runPhase: 'idle',
       sessionState: 'idle',
       canInterrupt: false,
-      backgroundResumeActive: false,
+      backgroundWork: [],
+      backgroundRunLastActivityMs: null,
+      backgroundRunStallTimer: null,
+      worktreePath: null,
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
       pendingPrompts: [],
@@ -3987,6 +4325,10 @@ export class ClaudeRuntimeService
         runPhase: state.runPhase,
         sessionState: state.sessionState,
         canInterrupt: state.canInterrupt,
+        backgroundWork: [...state.backgroundWork],
+        backgroundRunActive: Boolean(
+          this.activeRuns.get(sessionId)?.isBackground,
+        ),
         lastError: state.lastError,
         selectedModel: state.selectedModel,
         reasoningEffort: state.reasoningEffort,
@@ -4732,6 +5074,8 @@ export class ClaudeRuntimeService
       runPhase: state.runPhase,
       canInterrupt: state.canInterrupt,
       sessionState: state.sessionState,
+      backgroundWork: [...state.backgroundWork],
+      backgroundRunActive: Boolean(this.activeRuns.get(sessionId)?.isBackground),
       pendingPermissionRequest: state.pendingPermissionRequest,
       pendingUserInputRequest: state.pendingUserInputRequest,
       pendingPrompts: state.pendingPrompts,
@@ -6391,6 +6735,14 @@ export class ClaudeRuntimeService
 
     run.tornDown = true;
     run.interruptRequested = true;
+    // A user-submitted run has submitPrompt awaiting its turn and resolving
+    // completion in a finally block. An autonomous background run has no such
+    // awaiter, and handleSdkMessage stops processing its messages the moment
+    // interruptRequested flips — so nothing would ever resolve it and
+    // interrupt() would hang. Settle it here.
+    if (run.isBackground) {
+      run.resolveCompletion();
+    }
     this.logStartupTiming(
       sessionId,
       run.runId,

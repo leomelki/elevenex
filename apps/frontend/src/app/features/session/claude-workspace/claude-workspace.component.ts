@@ -22,6 +22,7 @@ import { Subscription, firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import {
   ClaudeAutocompleteItem,
+  ClaudeBackgroundWorkItem,
   ClaudeContextUsage,
   ClaudeHookEvent,
   ClaudeMcpServerEntry,
@@ -74,6 +75,7 @@ import {
   ComposerSendPayload,
 } from './components/claude-composer.component';
 import { ClaudeStatusBarComponent } from './components/claude-status-bar.component';
+import { ClaudeBackgroundActivityComponent } from './components/claude-background-activity.component';
 import {
   ClaudeExportDialogComponent,
   type ExportRequest,
@@ -143,6 +145,7 @@ type TranscriptRenderItem =
     ClaudeUserInputComponent,
     ClaudeComposerComponent,
     ClaudeStatusBarComponent,
+    ClaudeBackgroundActivityComponent,
     ClaudeExportDialogComponent,
     ClaudeTasksDrawerComponent,
     ClaudeMcpDrawerComponent,
@@ -274,13 +277,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly mcpBusyServerName = signal<string | null>(null);
   readonly sessionMetadata = signal<ClaudeRuntimeSessionMetadata | null>(null);
   readonly subagents = signal<ClaudeSubagentState[]>([]);
-  // Backgrounded subagents (launched via the async Agent tool) that are still
-  // executing. These keep running after the visible turn returns to idle, so
-  // the composer needs this separately from runPhase to show an indicator and
-  // queue new messages behind them.
-  readonly activeBackgroundAgents = computed(() =>
-    this.subagents().filter((subagent) => subagent.status === 'started'),
-  );
+  // Work still executing in the background after the visible turn returned to
+  // idle. Comes straight from the backend's swept registry rather than being
+  // re-derived from the subagent ring buffer here: a missed stop hook used to
+  // leave this stuck non-empty, which silently queued every later message.
+  readonly backgroundWork = signal<ClaudeBackgroundWorkItem[]>([]);
+  // True while the current run was started by background work reporting back
+  // rather than by a user prompt. The turn itself behaves identically; this is
+  // only used to label it in the UI.
+  readonly backgroundRunActive = signal(false);
   readonly recentHookEvents = signal<ClaudeHookEvent[]>([]);
   readonly expandedTurns = signal<Record<string, boolean>>({});
   readonly expandedTurnChanges = signal<Record<string, boolean>>({});
@@ -1963,10 +1968,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
           ...items.filter((agent) => agent.agentId !== event.payload.subagent.agentId),
         ]);
         return;
+      case 'background_work':
+        this.backgroundWork.set(event.payload.backgroundWork ?? []);
+        return;
       case 'run_state':
         this.runPhase.set(event.payload.runPhase);
         this.sessionState.set(event.payload.sessionState);
         this.canInterrupt.set(event.payload.canInterrupt);
+        this.backgroundWork.set(event.payload.backgroundWork ?? []);
+        this.backgroundRunActive.set(event.payload.backgroundRunActive ?? false);
         this.lastError.set(event.payload.lastError);
         this.selectedModel.set(event.payload.selectedModel);
         this.reasoningEffort.set(event.payload.reasoningEffort ?? null);
@@ -2196,6 +2206,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.warmState.set(state.warmState);
     this.sessionState.set(state.sessionState);
     this.canInterrupt.set(state.canInterrupt);
+    this.backgroundWork.set(state.backgroundWork ?? []);
+    this.backgroundRunActive.set(state.backgroundRunActive ?? false);
     this.claudeSessionId.set(state.claudeSessionId);
     if (state.claudeSessionId && state.claudeSessionId !== '-1') {
       this.runtimeStarted.set(true);
@@ -2278,6 +2290,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.runPhase.set('idle');
     this.sessionState.set('idle');
     this.canInterrupt.set(false);
+    this.backgroundWork.set([]);
+    this.backgroundRunActive.set(false);
     this.lastError.set(null);
     this.claudeSessionId.set(null);
     this.selectedModel.set(null);

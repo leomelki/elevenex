@@ -462,6 +462,22 @@ export interface ClaudeSubagentState {
   timestamp: string;
 }
 
+/**
+ * A unit of work still executing in the background — a `run_in_background`
+ * agent/task, or a subagent that started but has not reported back yet. These
+ * outlive the turn that launched them, so the UI surfaces them independently of
+ * `runPhase`.
+ */
+export interface ClaudeBackgroundWorkItem {
+  /** Stable key: `subagent:<agentId>` or `task:<taskId>`. */
+  id: string;
+  kind: 'subagent' | 'task';
+  label: string;
+  detail?: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
 export interface ClaudeSubagentHistoryPayload {
   subagent: ClaudeSubagentState;
   history: ClaudeTranscriptItem[];
@@ -563,6 +579,8 @@ export interface ClaudeRuntimeState {
   runPhase: ClaudeRunPhase;
   sessionState: ClaudeSessionExecutionState;
   canInterrupt: boolean;
+  backgroundWork?: ClaudeBackgroundWorkItem[];
+  backgroundRunActive?: boolean;
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   pendingPrompts: ClaudePendingPrompt[];
@@ -624,6 +642,8 @@ export type ClaudeRuntimeEvent =
         runPhase: ClaudeRunPhase;
         sessionState: ClaudeSessionExecutionState;
         canInterrupt: boolean;
+        backgroundWork?: ClaudeBackgroundWorkItem[];
+        backgroundRunActive?: boolean;
         lastError: string | null;
         selectedModel: string | null;
         reasoningEffort: ClaudeReasoningEffort | null;
@@ -660,6 +680,10 @@ export type ClaudeRuntimeEvent =
   | { type: 'task_notification'; payload: { sessionId: number; task: ClaudeTaskState } }
   | { type: 'task_lifecycle'; payload: { sessionId: number; taskLifecycle: ClaudeTaskLifecycle } }
   | { type: 'subagent_lifecycle'; payload: { sessionId: number; subagent: ClaudeSubagentState } }
+  | {
+      type: 'background_work';
+      payload: { sessionId: number; backgroundWork: ClaudeBackgroundWorkItem[] };
+    }
   | { type: 'tool_progress'; payload: { sessionId: number; progress: ClaudeToolProgress } }
   | { type: 'tool_summary'; payload: { sessionId: number; summary: ClaudeToolUseSummary } }
   | { type: 'memory_recall'; payload: { sessionId: number; recall: ClaudeMemoryRecall } }
