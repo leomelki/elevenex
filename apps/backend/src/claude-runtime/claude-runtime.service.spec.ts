@@ -3282,6 +3282,69 @@ describe('ClaudeRuntimeService', () => {
       expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(true);
     });
 
+    // Regression: after a background resume finished, a stray late 'running'
+    // from the SDK set runPhase with no run to own it — no result and no
+    // watchdog could ever clear it, so the session stuck on "running" and the
+    // user had to hit Stop before they could talk to it again.
+    it('ignores a session state of running when no run owns it', () => {
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      startSubagent('agent-1');
+      state.runPhase = 'idle';
+
+      (service as any).handleSessionStateChangedMessage(SESSION_ID, {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'running',
+      });
+
+      expect(state.runPhase).toBe('idle');
+    });
+
+    // Regression: task bookkeeping routinely trails the result of the turn that
+    // just ended, so treating it as a wake-up spawned a second background run
+    // that nothing would ever close.
+    it('does not start a background run from task bookkeeping alone', () => {
+      startSubagent('agent-1');
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.runPhase = 'idle';
+
+      (service as any).reconcileBackgroundResume(SESSION_ID, {
+        type: 'system',
+        subtype: 'task_updated',
+        task_id: 'task-1',
+        patch: { status: 'completed' },
+      });
+
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+      expect(state.runPhase).toBe('idle');
+    });
+
+    // The SDK reporting idle is authoritative that the agent loop concluded, so
+    // it closes a background run even if we never see its result message.
+    it('ends a background run when the SDK reports the session idle', () => {
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.runPhase = 'running';
+      state.canInterrupt = true;
+      (service as any).activeRuns.set(SESSION_ID, {
+        isBackground: true,
+        runId: 'bg-test',
+        startedAtMs: Date.now(),
+        permissionRequests: new Map(),
+        permissionRequestOrder: [],
+        resolveCompletion: jest.fn(),
+      });
+
+      (service as any).handleSessionStateChangedMessage(SESSION_ID, {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'idle',
+      });
+
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+      expect(state.runPhase).toBe('idle');
+      expect(state.canInterrupt).toBe(false);
+    });
+
     it('emits background work on the event stream', () => {
       const events: any[] = [];
       service.on('event', (event: any) => events.push(event));

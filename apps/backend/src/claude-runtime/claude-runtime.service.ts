@@ -2457,8 +2457,11 @@ export class ClaudeRuntimeService
   /**
    * How long an autonomous background run may go without any SDK message
    * before we give up waiting for its result message and return to idle.
+   * Every message re-arms this, so it only elapses on genuine dead air — a
+   * streaming turn never trips it, and the ceiling is short enough that a
+   * resume which dies silently does not look like a hang to the user.
    */
-  private static readonly BACKGROUND_RUN_STALL_MS = 3 * 60 * 1000;
+  private static readonly BACKGROUND_RUN_STALL_MS = 45 * 1000;
 
   /**
    * Retires only items past the hard age ceiling. Everything else is kept:
@@ -2618,14 +2621,18 @@ export class ClaudeRuntimeService
     sessionId: number,
     message: SDKMessage,
   ): void {
+    // Deliberately limited to actual conversational output. Task bookkeeping
+    // (task_started/task_updated/task_notification) is NOT a resume signal:
+    // those routinely trail the result of the turn that just ended — a
+    // backgrounded task is typically marked completed after it — and treating
+    // them as a wake-up registers a second run that no result will ever close,
+    // leaving the session stuck on "running" until the user hits Stop. When
+    // Claude genuinely resumes to report back it emits assistant/stream_event
+    // output immediately, so nothing is lost by waiting for that instead.
     const isResumeSignal =
       message.type === 'assistant' ||
       message.type === 'stream_event' ||
-      message.type === 'user' ||
-      (message.type === 'system' &&
-        (message.subtype === 'task_notification' ||
-          message.subtype === 'task_started' ||
-          message.subtype === 'task_updated'));
+      message.type === 'user';
     if (!isResumeSignal) {
       return;
     }
@@ -3477,18 +3484,31 @@ export class ClaudeRuntimeService
     message: SDKSessionStateChangedMessage,
   ): void {
     const state = this.ensureRuntimeState(sessionId);
+    const run = this.activeRuns.get(sessionId);
 
-    // The SDK tracks its own session state independently of elevenex's run
-    // bookkeeping and can emit a stray/late "running" signal after our turn
-    // has already finished (e.g. lagging subagent bookkeeping, hook fallout).
-    // With no active run and no evidence of genuine backgrounded work, no
-    // further message will ever arrive to clear this — canInterrupt would
-    // stay false forever and wedge the session with no way to stop it.
-    if (
-      !this.activeRuns.has(sessionId) &&
-      message.state === 'running' &&
-      !this.sweepBackgroundWork(sessionId, state).length
-    ) {
+    // Only a registered run may put the session into 'running'. The SDK tracks
+    // its own session state independently of elevenex's run bookkeeping and can
+    // emit a stray/late 'running' after our turn already finished (lagging
+    // subagent bookkeeping, hook fallout). Honouring that here would set a
+    // phase with no owner: there is no run, so no result and no watchdog will
+    // ever arrive to clear it, and the session sticks on "running" until the
+    // user hits Stop. Genuine background wake-ups come through
+    // reconcileBackgroundResume, which registers a real run precisely so the
+    // phase has something that can end it.
+    if (!run && message.state === 'running') {
+      return;
+    }
+
+    // Conversely, 'idle' from the SDK is authoritative that the agent loop
+    // concluded. For an autonomous background run that is a second completion
+    // path alongside the result message — without it, a resume whose result we
+    // never see would hang until the stall watchdog fires.
+    if (run?.isBackground && message.state === 'idle') {
+      state.sessionState = 'idle';
+      this.logger.log(
+        `Claude background run closed by session state session=${sessionId} run=${run.runId}`,
+      );
+      this.finishRun(sessionId);
       return;
     }
 
