@@ -1608,16 +1608,33 @@ function getRemoteCommandArgs(command, options = {}) {
 }
 
 // Builds the wsl.exe argv for running `command` inside forward.distroName (or
-// WSL's own default distro when unset). getRemoteCommandArgs already returns
-// `['sh', '-lc', <quoted command>]` for non-win32 targets — a WSL distro's
-// `uname -s` always reports "Linux", so preflight naturally resolves to the
-// POSIX branch and this is exactly the trailing argv wsl.exe needs.
+// WSL's own default distro when unset).
+//
+// Deliberately does NOT reuse getRemoteCommandArgs()'s POSIX branch as-is: ssh
+// joins its trailing argv into a single string that the remote's shell
+// re-parses, which is why that branch wraps `command` in shellSingleQuote.
+// wsl.exe has no such re-parsing step — each argv element node's spawn() hands
+// it is forwarded to the Linux process as one literal argument (like execve),
+// so an *already shell-quoted* string arrives as a literal argument containing
+// stray quote characters, which breaks `sh -lc` (it fails immediately, and
+// runRemotePreflight's SSH-oriented try/catch would then silently retry with
+// the Windows preflight script — which "succeeds" via WSL's Win32 interop by
+// transparently running the real Windows powershell.exe, misreporting the
+// distro as a Windows remote entirely). Pass the raw command instead.
 function getWslArgs(forward, command, options = {}) {
   const args = [];
   if (forward.distroName) {
     args.push('-d', forward.distroName);
   }
-  args.push('--', ...getRemoteCommandArgs(command, options));
+  args.push('--');
+  if (options.remotePlatform === 'win32') {
+    // Base64-encoded, so no quoting/escaping is needed either way — safe to
+    // reuse verbatim. Should not normally be reached for a WSL distro (see
+    // the transport === 'wsl' guard in runRemotePreflight).
+    args.push(...getRemoteCommandArgs(command, options));
+  } else {
+    args.push('sh', '-lc', command);
+  }
   return args;
 }
 
@@ -1904,6 +1921,13 @@ async function runRemotePreflight(forward) {
   try {
     return await runSshCommandAsync(forward, buildRemotePreflightScript(remotePort));
   } catch (unixError) {
+    // A WSL distro is always Linux — never probe it as a Windows target. Its
+    // Win32 interop feature lets `powershell.exe` resolve and "succeed" by
+    // transparently running the real Windows PowerShell outside the distro,
+    // which would silently misreport the distro as a Windows remote.
+    if (forward.transport === 'wsl') {
+      throw unixError;
+    }
     try {
       return await runSshCommandAsync(
         forward,
