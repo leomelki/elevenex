@@ -35,6 +35,7 @@
       "preload.cjs",
       "settings-preload.cjs",
       "remote-server-utils.cjs",
+      "wsl-utils.cjs",
       "assets/**/*",
       {
         "from": "../frontend/dist/frontend/browser",
