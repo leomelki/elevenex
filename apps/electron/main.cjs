@@ -1610,17 +1610,15 @@ function getRemoteCommandArgs(command, options = {}) {
 // Builds the wsl.exe argv for running `command` inside forward.distroName (or
 // WSL's own default distro when unset).
 //
-// Deliberately does NOT reuse getRemoteCommandArgs()'s POSIX branch as-is: ssh
-// joins its trailing argv into a single string that the remote's shell
-// re-parses, which is why that branch wraps `command` in shellSingleQuote.
-// wsl.exe has no such re-parsing step — each argv element node's spawn() hands
-// it is forwarded to the Linux process as one literal argument (like execve),
-// so an *already shell-quoted* string arrives as a literal argument containing
-// stray quote characters, which breaks `sh -lc` (it fails immediately, and
-// runRemotePreflight's SSH-oriented try/catch would then silently retry with
-// the Windows preflight script — which "succeeds" via WSL's Win32 interop by
-// transparently running the real Windows powershell.exe, misreporting the
-// distro as a Windows remote entirely). Pass the raw command instead.
+// The POSIX branch deliberately does NOT put `command` on the argv at all.
+// wsl.exe forwards each argv element it receives to the Linux side as one
+// literal argument, but that hand-off does not reliably round-trip the
+// backslash-quote escaping Windows adds when node's spawn() builds the actual
+// command line (needed because `command` — a multi-line script — is full of
+// embedded `"` characters). The escaped quotes can arrive unescaped-back on
+// the Linux side, garbling the script and breaking `sh -lc` with syntax
+// errors near the mangled quotes. Piping the script over stdin instead (see
+// runWslCommandAsync/runWslCommand) avoids Windows/WSL argv quoting entirely.
 function getWslArgs(forward, command, options = {}) {
   const args = [];
   if (forward.distroName) {
@@ -1633,7 +1631,7 @@ function getWslArgs(forward, command, options = {}) {
     // the transport === 'wsl' guard in runRemotePreflight).
     args.push(...getRemoteCommandArgs(command, options));
   } else {
-    args.push('sh', '-lc', command);
+    args.push('sh', '-ls');
   }
   return args;
 }
@@ -1641,9 +1639,10 @@ function getWslArgs(forward, command, options = {}) {
 function runWslCommandAsync(forward, command, options = {}) {
   return new Promise((resolve, reject) => {
     const wslArgs = getWslArgs(forward, command, options);
+    const feedsStdin = options.remotePlatform !== 'win32';
     let child;
     try {
-      child = spawn('wsl.exe', wslArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn('wsl.exe', wslArgs, { stdio: [feedsStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     } catch (error) {
       reject(error);
       return;
@@ -1663,15 +1662,21 @@ function runWslCommandAsync(forward, command, options = {}) {
     });
 
     child.once('error', (error) => reject(error));
+
+    if (feedsStdin) {
+      child.stdin.end(command);
+    }
   });
 }
 
 function runWslCommand(forward, command, options = {}) {
   const wslArgs = getWslArgs(forward, command, options);
+  const feedsStdin = options.remotePlatform !== 'win32';
   const { remotePlatform: _remotePlatform, ...spawnOptions } = options;
   const result = spawnSync('wsl.exe', wslArgs, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    input: feedsStdin ? command : undefined,
     ...spawnOptions,
   });
 
