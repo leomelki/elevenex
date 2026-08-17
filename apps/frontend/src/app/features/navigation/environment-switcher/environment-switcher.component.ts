@@ -36,11 +36,13 @@ import {
   SavedServerDraft,
 } from '@/shared/services/environment-connection-manager.service';
 import { OnboardingConnectionService } from '@/shared/services/onboarding-connection.service';
+import { RemoteInstallFlowService } from '@/shared/services/remote-install-flow.service';
 import {
   CONNECTING_PHASES,
   SshRuntimeRecoveryService,
   remoteInstallPhaseToIndex,
 } from '@/shared/services/ssh-runtime-recovery.service';
+import { WslInstallFlowService } from '@/shared/services/wsl-install-flow.service';
 
 type PopoverView = 'list' | 'editor';
 type RowExpansion =
@@ -87,6 +89,8 @@ export class EnvironmentSwitcherComponent {
   private readonly connectionManager = inject(EnvironmentConnectionManagerService);
   private readonly onboardingConnection = inject(OnboardingConnectionService);
   private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
+  private readonly remoteInstallFlow = inject(RemoteInstallFlowService);
+  private readonly wslInstallFlow = inject(WslInstallFlowService);
   private readonly host = inject(ElementRef<HTMLElement>);
 
   @ViewChild('trigger') triggerEl?: ElementRef<HTMLButtonElement>;
@@ -161,6 +165,16 @@ export class EnvironmentSwitcherComponent {
         this.password.set('');
         this.passphrase.set('');
         this.connectionManager.clearError();
+      }
+    });
+
+    // The SSH/WSL "finish setting up" dialogs are full-screen modals that must
+    // sit above everything else; this popover has no way to know they're about
+    // to open (switchToServer/switchToWsl only resolve after the modal already
+    // did), so close it eagerly whenever either flow's session state appears.
+    effect(() => {
+      if (this.remoteInstallFlow.state() || this.wslInstallFlow.state()) {
+        this.open.set(false);
       }
     });
 

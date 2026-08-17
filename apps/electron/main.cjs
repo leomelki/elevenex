@@ -1833,6 +1833,10 @@ function createWslInstallerSession(forward, preflight) {
     resolvedConfig: null,
     askPass: null,
     preflight,
+    // wsl.exe is spawned with plain OS pipes (no console/ConPTY to inherit),
+    // so the distro-side shell has no controlling tty — `stty` would fail
+    // with "Inappropriate ioctl for device". Unlike the SSH path's `-tt`.
+    hasTty: false,
   };
   remoteInstallerSessions.set(sessionId, sessionState);
 
@@ -1887,6 +1891,9 @@ function createRemoteInstallerSession(forward, preflight) {
     resolvedConfig,
     askPass,
     preflight,
+    // `-tt` above forces the remote sshd to allocate a real pty, so `stty` in
+    // the resize handler works.
+    hasTty: true,
   };
   remoteInstallerSessions.set(sessionId, sessionState);
 
@@ -4167,7 +4174,7 @@ ipcMain.handle('elevenex-remote-server:resize', (_event, payload) => {
     return false;
   }
 
-  if (Number.isFinite(cols) && Number.isFinite(rows)) {
+  if (sessionState.hasTty && Number.isFinite(cols) && Number.isFinite(rows)) {
     sessionState.process.stdin.write(`stty cols ${Math.max(20, cols)} rows ${Math.max(5, rows)}\n`);
   }
 
