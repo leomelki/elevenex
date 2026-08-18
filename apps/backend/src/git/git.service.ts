@@ -26,8 +26,9 @@ const MAX_COMMIT_MESSAGE_STATUS_FILES = 16;
 const COMMIT_MESSAGE_MAX_ATTEMPTS = 3;
 const UNTRACKED_STATS_CONCURRENCY = 16;
 const MAX_UNTRACKED_STATS_FILE_BYTES = 1_000_000;
-const CONVENTIONAL_COMMIT_SUBJECT_PATTERN =
-  /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._-]*\))?!?: [a-z0-9].*[^.]$/;
+const CONVENTIONAL_COMMIT_TYPES_EXAMPLE =
+  'feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert';
+const MAX_COMMIT_SUBJECT_LENGTH = 200;
 type CommitMessageProvider = 'claude' | 'codex' | 'pi' | 'gemini';
 
 export function isValidGitRef(ref: string): boolean {
@@ -970,11 +971,11 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    return this.generateCommitSuggestionWithRetry('claude', () =>
+    return this.generateCommitSuggestionWithRetry('claude', (retryHint) =>
       this.textAgentGenerationService.generate({
         provider: 'claude',
         worktreePath: input.worktreePath,
-        prompt: this.buildCommitMessagePrompt(input),
+        prompt: this.buildCommitMessagePrompt({ ...input, retryHint }),
         taskName: 'commit-message',
         claude: {
           canUseTool: async () => ({
@@ -994,11 +995,11 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    return this.generateCommitSuggestionWithRetry('codex', () =>
+    return this.generateCommitSuggestionWithRetry('codex', (retryHint) =>
       this.textAgentGenerationService.generate({
         provider: 'codex',
         worktreePath: input.worktreePath,
-        prompt: this.buildCommitMessagePrompt(input),
+        prompt: this.buildCommitMessagePrompt({ ...input, retryHint }),
         taskName: 'commit-message',
       }),
     );
@@ -1012,11 +1013,11 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    return this.generateCommitSuggestionWithRetry('pi', () =>
+    return this.generateCommitSuggestionWithRetry('pi', (retryHint) =>
       this.textAgentGenerationService.generate({
         provider: 'pi',
         worktreePath: input.worktreePath,
-        prompt: this.buildCommitMessagePrompt(input),
+        prompt: this.buildCommitMessagePrompt({ ...input, retryHint }),
         taskName: 'commit-message',
       }),
     );
@@ -1030,11 +1031,11 @@ export class GitService {
     compactStatus: string;
     compactLog: string;
   }): Promise<CommitMessageSuggestion | null> {
-    return this.generateCommitSuggestionWithRetry('gemini', () =>
+    return this.generateCommitSuggestionWithRetry('gemini', (retryHint) =>
       this.textAgentGenerationService.generate({
         provider: 'gemini',
         worktreePath: input.worktreePath,
-        prompt: this.buildCommitMessagePrompt(input),
+        prompt: this.buildCommitMessagePrompt({ ...input, retryHint }),
         taskName: 'commit-message',
       }),
     );
@@ -1042,16 +1043,20 @@ export class GitService {
 
   private async generateCommitSuggestionWithRetry(
     source: CommitMessageSuggestion['source'],
-    generate: () => Promise<GenerateTextWithAgentResult | null>,
+    generate: (
+      retryHint?: string,
+    ) => Promise<GenerateTextWithAgentResult | null>,
   ): Promise<CommitMessageSuggestion | null> {
     let lastRawText = '';
+    let retryHint: string | undefined;
     for (let attempt = 1; attempt <= COMMIT_MESSAGE_MAX_ATTEMPTS; attempt += 1) {
-      const result = await generate();
+      const result = await generate(retryHint);
       lastRawText = result?.text ?? '';
       const suggestion = this.parseCommitSuggestion(lastRawText, source);
       if (suggestion) {
         return suggestion;
       }
+      retryHint = `Your previous response could not be parsed as the required JSON shape. Return exactly one JSON object: {"subject":"...","body":null}.`;
     }
 
     if (lastRawText.trim()) {
@@ -1090,6 +1095,7 @@ export class GitService {
     compactLog: string;
     compactStatus: string;
     diff: string;
+    retryHint?: string;
   }): string {
     return [
       'Generate the exact commit message that will be passed to git commit -m.',
@@ -1106,9 +1112,10 @@ export class GitService {
       '',
       'Follow the project commit style shown in the recent commits below.',
       'Match their format, tone, and level of detail.',
-      'If no clear convention is detectable, fall back to Conventional Commits (e.g. feat(scope): description).',
+      `If no clear convention is detectable, fall back to Conventional Commits (e.g. feat(scope): description), using one of these types: ${CONVENTIONAL_COMMIT_TYPES_EXAMPLE}.`,
       'Describe the semantic change, not the file operations.',
       'Use null for body unless extra context materially helps.',
+      ...(input.retryHint ? ['', input.retryHint] : []),
       '',
       `Branch: ${input.branchName}`,
       'Recent commits:',
@@ -1219,11 +1226,7 @@ export class GitService {
     }
 
     const normalized = subject.trim().replace(/\s+/g, ' ');
-    if (!normalized) {
-      return null;
-    }
-
-    if (!CONVENTIONAL_COMMIT_SUBJECT_PATTERN.test(normalized)) {
+    if (!normalized || normalized.length > MAX_COMMIT_SUBJECT_LENGTH) {
       return null;
     }
 

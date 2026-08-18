@@ -442,7 +442,7 @@ describe('GitService', () => {
 
     it('should parse a later valid JSON commit suggestion after invalid JSON-like text', () => {
       const suggestion = (service as any).parseCommitSuggestion(
-        'Notes: {"subject":"Improve generated commit messages","body":null}\n{"subject":"fix(git): parse generated commit message json","body":"Handle assistant preambles without rejecting the suggestion."}',
+        'Notes: {"subject": "Improve generated commit messages", body: null}\n{"subject":"fix(git): parse generated commit message json","body":"Handle assistant preambles without rejecting the suggestion."}',
       );
 
       expect(suggestion).toEqual({
@@ -461,9 +461,22 @@ describe('GitService', () => {
       expect(suggestion).toBeNull();
     });
 
-    it('should reject commit suggestions with non-conventional subjects', () => {
+    it('should accept commit suggestions with non-conventional subjects', () => {
       const suggestion = (service as any).parseCommitSuggestion(
         '{"subject":"Improve generated commit messages","body":null}',
+      );
+
+      expect(suggestion).toEqual({
+        subject: 'Improve generated commit messages',
+        body: null,
+        confidence: 'medium',
+        source: 'claude',
+      });
+    });
+
+    it('should reject commit suggestions with an overlong subject', () => {
+      const suggestion = (service as any).parseCommitSuggestion(
+        JSON.stringify({ subject: 'a'.repeat(201), body: null }),
       );
 
       expect(suggestion).toBeNull();
