@@ -281,11 +281,26 @@ interface RuntimeState {
   // session busy in the background"; swept for staleness on every read so a
   // dropped SubagentStop hook or a killed runtime can never pin it forever.
   backgroundWork: ClaudeBackgroundWorkItem[];
+  // Wall-clock of the last time an item was retired from backgroundWork via
+  // clearBackgroundWork (a SubagentStop hook or a terminal task_updated).
+  // Hook callbacks and SDK stdout messages are separate transports with no
+  // ordering guarantee, so reconcileBackgroundResume treats a message
+  // arriving shortly after this timestamp as the matching resume report even
+  // though backgroundWork itself is already empty by then.
+  lastBackgroundWorkFinishedAtMs: number | null;
   // Wall-clock of the last SDK message seen while a background run was active.
   // Drives the stall watchdog that returns the session to idle if the
   // autonomous resume dies without ever producing a result message.
   backgroundRunLastActivityMs: number | null;
   backgroundRunStallTimer: ReturnType<typeof setTimeout> | null;
+  // toolUseIds of `Agent` tool calls whose input requested run_in_background,
+  // captured when the assistant message that made the call arrives — before
+  // the matching task_started fires. The SDK's own is_backgrounded flag only
+  // ever arrives on a later task_updated, which leaves a window where a
+  // backgrounded agent looks like an ordinary foreground task; consuming this
+  // set in handleTaskStartedMessage closes that window. Entries are removed
+  // as soon as they are consumed.
+  pendingBackgroundAgentToolUses: Set<string>;
   // Worktree path of the last runtime built for this session.
   worktreePath: string | null;
   pendingPermissionRequest: ClaudePermissionRequest | null;
@@ -2464,6 +2479,20 @@ export class ClaudeRuntimeService
   private static readonly BACKGROUND_RUN_STALL_MS = 45 * 1000;
 
   /**
+   * Grace window, after an item is retired via clearBackgroundWork, during
+   * which an inbound assistant/stream_event/user message still counts as
+   * that item's resume report even though backgroundWork is already empty.
+   * The SubagentStop/TaskCompleted hook (HTTP) and the SDK message that
+   * reports the result (subprocess stdout) are independent transports with
+   * no ordering guarantee — without this window, whichever happens to be
+   * processed first wins the race, and if the hook wins,
+   * reconcileBackgroundResume finds no live background work and never flips
+   * the session back to "running", leaving the UI stuck on idle while
+   * Claude is actively producing output.
+   */
+  private static readonly BACKGROUND_RESUME_GRACE_MS = 4 * 1000;
+
+  /**
    * Retires only items past the hard age ceiling. Everything else is kept:
    * dropping a live entry is what gets a background agent killed mid-flight.
    */
@@ -2574,6 +2603,7 @@ export class ClaudeRuntimeService
     state.backgroundWork = state.backgroundWork.filter(
       (item) => item.id !== id,
     );
+    state.lastBackgroundWorkFinishedAtMs = Date.now();
     this.emitBackgroundWork(sessionId, state);
     this.drainPendingPrompts(sessionId);
   }
@@ -2641,10 +2671,21 @@ export class ClaudeRuntimeService
     // A prewarm/rebuilt connection (e.g. after a model or effort change)
     // replays its own init/hydration chatter through this same message path
     // with no elevenex-initiated run — without this check that chatter looks
-    // identical to real background work waking the session back up.
-    if (!this.sweepBackgroundWork(sessionId, state).length) {
+    // identical to real background work waking the session back up. Also
+    // accept the grace window right after backgroundWork was cleared: the
+    // clearing hook and this resume message race over independent
+    // transports, so the work can already look "gone" by the time the
+    // message that reports on it arrives (see BACKGROUND_RESUME_GRACE_MS).
+    const hasLiveBackgroundWork =
+      this.sweepBackgroundWork(sessionId, state).length > 0;
+    const recentlyFinishedBackgroundWork =
+      state.lastBackgroundWorkFinishedAtMs !== null &&
+      Date.now() - state.lastBackgroundWorkFinishedAtMs <
+        ClaudeRuntimeService.BACKGROUND_RESUME_GRACE_MS;
+    if (!hasLiveBackgroundWork && !recentlyFinishedBackgroundWork) {
       return;
     }
+    state.lastBackgroundWorkFinishedAtMs = null;
 
     const runtime = this.sessionRuntimes.get(sessionId);
     if (!runtime) {
@@ -3115,6 +3156,16 @@ export class ClaudeRuntimeService
           receivedAt,
         };
         this.pushItem(sessionId, item, 'tool_use');
+        if (
+          part.name === 'Agent' &&
+          typeof part.id === 'string' &&
+          (part.input as { run_in_background?: unknown } | undefined)
+            ?.run_in_background === true
+        ) {
+          this.ensureRuntimeState(sessionId).pendingBackgroundAgentToolUses.add(
+            part.id,
+          );
+        }
       }
     }
   }
@@ -3653,6 +3704,15 @@ export class ClaudeRuntimeService
     sessionId: number,
     message: SDKTaskStartedMessage,
   ): void {
+    const state = this.ensureRuntimeState(sessionId);
+    // The SDK's own is_backgrounded flag only ever arrives later, on a
+    // task_updated patch — never on task_started. Consuming the flag we
+    // captured from the originating Agent tool_use closes that gap so the
+    // background-agent bar picks the task up immediately instead of only
+    // after a subsequent task_updated happens to report it.
+    const requestedBackground = message.tool_use_id
+      ? state.pendingBackgroundAgentToolUses.delete(message.tool_use_id)
+      : false;
     const task = this.upsertTask(sessionId, {
       taskId: message.task_id,
       status: 'running',
@@ -3662,6 +3722,7 @@ export class ClaudeRuntimeService
       toolUseId: message.tool_use_id,
       prompt: message.prompt,
       skipTranscript: message.skip_transcript,
+      isBackgrounded: requestedBackground ? true : undefined,
       updatedAt: new Date().toISOString(),
     });
     this.syncTaskBackgroundWork(sessionId, task);
@@ -4343,8 +4404,10 @@ export class ClaudeRuntimeService
       sessionState: 'idle',
       canInterrupt: false,
       backgroundWork: [],
+      lastBackgroundWorkFinishedAtMs: null,
       backgroundRunLastActivityMs: null,
       backgroundRunStallTimer: null,
+      pendingBackgroundAgentToolUses: new Set(),
       worktreePath: null,
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,

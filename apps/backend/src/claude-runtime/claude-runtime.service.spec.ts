@@ -3397,5 +3397,122 @@ describe('ClaudeRuntimeService', () => {
       );
       expect(state.pendingPrompts).toEqual([]);
     });
+
+    // Regression: is_backgrounded only ever arrives on a later task_updated,
+    // so a subagent that never receives one (or whose SubagentStop hook lacks
+    // a well-formed agent_id/agent_type) showed up in the tasks drawer but
+    // never in the background-agent bar. Capturing run_in_background from the
+    // originating Agent tool_use closes that gap.
+    it('marks a task backgrounded immediately from its run_in_background tool call', async () => {
+      await (service as any).handleSdkMessage(SESSION_ID, {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        session_id: 'claude-session-1',
+        message: {
+          id: 'assistant-msg-1',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool-agent-1',
+              name: 'Agent',
+              input: {
+                description: 'Explore',
+                prompt: 'find things',
+                run_in_background: true,
+              },
+            },
+          ],
+        },
+      });
+
+      await (service as any).handleSdkMessage(SESSION_ID, {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-bg-1',
+        description: 'Explore',
+        tool_use_id: 'tool-agent-1',
+        uuid: 'task-start-1',
+        session_id: 'claude-session-1',
+      });
+
+      expect(backgroundIds()).toEqual(['task:task-bg-1']);
+    });
+
+    it('does not background a task whose tool call did not request run_in_background', async () => {
+      await (service as any).handleSdkMessage(SESSION_ID, {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        session_id: 'claude-session-1',
+        message: {
+          id: 'assistant-msg-1',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool-agent-1',
+              name: 'Agent',
+              input: { description: 'Explore', prompt: 'find things' },
+            },
+          ],
+        },
+      });
+
+      await (service as any).handleSdkMessage(SESSION_ID, {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-fg-1',
+        description: 'Explore',
+        tool_use_id: 'tool-agent-1',
+        uuid: 'task-start-1',
+        session_id: 'claude-session-1',
+      });
+
+      expect(backgroundIds()).toEqual([]);
+    });
+
+    // Regression: the SubagentStop/TaskCompleted hook (HTTP) and the SDK
+    // message reporting the result (subprocess stdout) are independent
+    // transports with no ordering guarantee. If the hook wins the race and
+    // clears backgroundWork first, reconcileBackgroundResume used to find no
+    // live work and skip flipping the session back to "running" — leaving the
+    // UI stuck on idle while Claude was actively producing output.
+    it('still starts a background run when the resume message arrives just after backgroundWork was cleared', () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.runPhase = 'idle';
+      startSubagent('agent-1');
+
+      (service as any).clearBackgroundWork(SESSION_ID, 'subagent:agent-1');
+      expect(backgroundIds()).toEqual([]);
+
+      (service as any).reconcileBackgroundResume(SESSION_ID, {
+        type: 'assistant',
+        uuid: 'assistant-resume-1',
+        session_id: 'claude-session-1',
+        message: { id: 'assistant-resume-1', content: [] },
+      });
+
+      expect(state.runPhase).toBe('running');
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(true);
+    });
+
+    it('does not start a background run once the resume grace window has elapsed', () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.runPhase = 'idle';
+      startSubagent('agent-1');
+
+      (service as any).clearBackgroundWork(SESSION_ID, 'subagent:agent-1');
+      state.lastBackgroundWorkFinishedAtMs = Date.now() - 60 * 1000;
+
+      (service as any).reconcileBackgroundResume(SESSION_ID, {
+        type: 'assistant',
+        uuid: 'assistant-resume-1',
+        session_id: 'claude-session-1',
+        message: { id: 'assistant-resume-1', content: [] },
+      });
+
+      expect(state.runPhase).toBe('idle');
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+    });
   });
 });
