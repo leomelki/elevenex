@@ -3514,5 +3514,97 @@ describe('ClaudeRuntimeService', () => {
       expect(state.runPhase).toBe('idle');
       expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
     });
+
+    // Regression: canUseTool read activeRuns directly and auto-denied any
+    // permission RPC that arrived before reconcileBackgroundResume (or after
+    // finishRun already retired the run) had registered one — the CLI's own
+    // "question tools automatically declined and couldn't be answered" bug.
+    it('answers a permission request on a resumed run instead of auto-denying it', async () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.runPhase = 'idle';
+
+      const canUseTool = (service as any).createCanUseTool(SESSION_ID, state);
+      const decision = canUseTool('Bash', { command: 'ls' }, {
+        toolUseID: 'tool-1',
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(true);
+      const run = (service as any).activeRuns.get(SESSION_ID);
+      expect(run.permissionRequests.size).toBe(1);
+      const pending = [...run.permissionRequests.values()][0];
+      pending.resolve({ behavior: 'allow' });
+
+      const result = await decision;
+      expect(result.behavior).toBe('allow');
+    });
+
+    it('denies a permission request when the runtime is gone entirely', async () => {
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.runPhase = 'idle';
+
+      const canUseTool = (service as any).createCanUseTool(SESSION_ID, state);
+      const result = await canUseTool('Bash', { command: 'ls' }, {
+        toolUseID: 'tool-1',
+      });
+
+      expect(result.behavior).toBe('deny');
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+    });
+
+    // Same bug, on the elicitation RPC path used for MCP user-input prompts
+    // (e.g. AskUserQuestion-style flows): a resumed run with no activeRuns
+    // entry used to auto-decline instead of surfacing an answerable request.
+    it('surfaces an elicitation request on a resumed run instead of auto-declining it', async () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.runPhase = 'idle';
+
+      const onElicitation = (service as any).createOnElicitation(
+        SESSION_ID,
+        state,
+      );
+      const decision = onElicitation({
+        serverName: 'linear',
+        message: 'Authenticate Linear',
+        mode: 'url',
+        url: 'https://auth.example.com/authorize',
+        elicitationId: 'elicit-1',
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(true);
+      const run = (service as any).activeRuns.get(SESSION_ID);
+      expect(run.userInputRequests.size).toBe(1);
+      const pending = [...run.userInputRequests.values()][0];
+      pending.resolve({ action: 'accept' });
+
+      const result = await decision;
+      expect(result).toEqual({ action: 'accept' });
+      expect(state.runPhase).toBe('waiting');
+    });
+
+    it('declines an elicitation request when the runtime is gone entirely', async () => {
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.runPhase = 'idle';
+
+      const onElicitation = (service as any).createOnElicitation(
+        SESSION_ID,
+        state,
+      );
+      const result = await onElicitation({
+        serverName: 'linear',
+        message: 'Authenticate Linear',
+        mode: 'url',
+        url: 'https://auth.example.com/authorize',
+        elicitationId: 'elicit-2',
+      });
+
+      expect(result).toEqual({ action: 'decline' });
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+    });
   });
 });

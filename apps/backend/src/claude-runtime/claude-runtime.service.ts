@@ -1287,7 +1287,13 @@ export class ClaudeRuntimeService
         decision: PermissionDecision;
         suggestions?: PermissionUpdate[];
       }>((resolve) => {
-        const run = this.activeRuns.get(sessionId);
+        // Being asked to authorize a tool call is itself proof the runtime is
+        // live and mid-turn — including a resumed `run_in_background` agent
+        // whose wake-up hasn't reached reconcileBackgroundResume yet, or a
+        // turn that this session's own finishRun already retired from
+        // activeRuns moments before this RPC arrived. Attach it to a freshly
+        // registered run instead of auto-denying on nobody's behalf.
+        const run = this.ensureActiveRunForCallback(sessionId, state);
         if (!run) {
           resolve({
             decision: { behavior: 'deny', message: 'Session no longer active' },
@@ -1387,7 +1393,11 @@ export class ClaudeRuntimeService
       };
 
       return new Promise<ElicitationResult>((resolve) => {
-        const run = this.activeRuns.get(sessionId);
+        // See createCanUseTool: an elicitation RPC is itself proof the
+        // runtime is live and mid-turn, so attach it to a freshly registered
+        // run rather than auto-declining just because activeRuns hasn't
+        // caught up with a resumed or just-finished turn.
+        const run = this.ensureActiveRunForCallback(sessionId, state);
         if (!run) {
           resolve({ action: 'decline' });
           return;
@@ -2692,6 +2702,30 @@ export class ClaudeRuntimeService
       return;
     }
 
+    this.startBackgroundRun(sessionId, state, runtime);
+  }
+
+  /**
+   * Registers a fresh autonomous run for a session with nothing currently
+   * tracked in `activeRuns`, and flips the session to "running" for it.
+   *
+   * Used from two call sites that both discover the same situation — Claude
+   * resumed the persistent connection with no elevenex-initiated run to own
+   * it — from different signals:
+   *   - reconcileBackgroundResume, on conversational SDK output, gated on
+   *     backgroundWork so prewarm/rebuild chatter isn't mistaken for it.
+   *   - createCanUseTool / createOnElicitation, on a live permission or
+   *     elicitation RPC. That RPC is itself unambiguous proof the runtime is
+   *     mid-turn right now — there is no chatter that could fake it — so
+   *     those call sites need no equivalent gate; the alternative to
+   *     registering a run here is answering on nobody's behalf, which is the
+   *     "declined and couldn't be answered" bug this closes.
+   */
+  private startBackgroundRun(
+    sessionId: number,
+    state: RuntimeState,
+    runtime: ClaudeSessionRuntime,
+  ): ActiveRunState {
     let resolveCompletion!: () => void;
     const completionPromise = new Promise<void>((resolve) => {
       resolveCompletion = resolve;
@@ -2705,7 +2739,7 @@ export class ClaudeRuntimeService
     state.sessionState = 'running';
     state.canInterrupt = true;
 
-    this.activeRuns.set(sessionId, {
+    const run: ActiveRunState = {
       query: runtime,
       worktreePath: state.worktreePath ?? '',
       isBackground: true,
@@ -2728,7 +2762,8 @@ export class ClaudeRuntimeService
       sawFirstVisibleItem: false,
       systemSubtypesBeforeVisible: [],
       observedPreVisibleMarkers: new Set(),
-    });
+    };
+    this.activeRuns.set(sessionId, run);
 
     this.logger.log(
       `Claude background run started session=${sessionId} run=${runId} pendingBackgroundItems=${state.backgroundWork.length}`,
@@ -2738,6 +2773,32 @@ export class ClaudeRuntimeService
     void this.claudeHooksService.updateStatus(sessionId, 'running', {
       markCompletion: false,
     });
+    return run;
+  }
+
+  /**
+   * Returns the run currently registered for a session, or registers one on
+   * the spot when the runtime is still alive. Shared by the permission and
+   * elicitation callbacks so a live RPC from the CLI is never answered with
+   * an unattended auto-deny just because our own bookkeeping hasn't (yet)
+   * recognised the turn that produced it.
+   */
+  private ensureActiveRunForCallback(
+    sessionId: number,
+    state: RuntimeState,
+  ): ActiveRunState | undefined {
+    const existing = this.activeRuns.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+    if (this.invalidatedSessions.has(sessionId)) {
+      return undefined;
+    }
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (!runtime) {
+      return undefined;
+    }
+    return this.startBackgroundRun(sessionId, state, runtime);
   }
 
   /**
