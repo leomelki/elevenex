@@ -312,6 +312,9 @@
                         [class.session-selected]="session.id === activeSessionId()"
                         [attr.data-session-row-id]="session.id"
                         [style.padding-left]="'64px'"
+                        draggable="true"
+                        [attr.title]="'Open ' + (session.name || 'Session ' + session.id) + ' · drag into a chat to mention'"
+                        (dragstart)="onSessionDragStart($event, session)"
                         (click)="isWorkspaceUnlinked(workspace) ? $event.stopPropagation() : onSessionClick(session)">
                         <div
                           class="flex items-center gap-1 flex-1 min-w-0">
@@ -443,6 +446,9 @@
                            [class.session-selected]="session.id === activeSessionId()"
                            [attr.data-session-row-id]="session.id"
                            [style.padding-left]="'82px'"
+                           draggable="true"
+                           [attr.title]="'Open ' + (session.name || 'Session ' + session.id) + ' · drag into a chat to mention'"
+                           (dragstart)="onSessionDragStart($event, session)"
                            (click)="isWorkspaceUnlinked(workspace) ? $event.stopPropagation() : onSessionClick(session)">
                            <div class="flex items-center gap-1 flex-1 min-w-0">
                              @if (editingSessionTitleId() === session.id) {

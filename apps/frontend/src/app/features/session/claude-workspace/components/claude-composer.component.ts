@@ -16,6 +16,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideFileCode,
   lucideLoaderCircle,
+  lucideMessageSquare,
   lucidePaperclip,
   lucideSend,
   lucideSquare,
@@ -33,6 +34,9 @@ import {
   parseDiffSelectionMentions,
 } from '@/shared/utils/diff-selection-mention';
 import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
+import type { SessionMention, SessionMentionCandidate } from '@/shared/models/session-mention.model';
+import { SESSION_MENTION_DRAG_TYPE } from '@/shared/models/session-mention.model';
+import { parseSessionMentions } from '@/shared/utils/session-mention';
 
 interface Range {
   start: number;
@@ -57,7 +61,12 @@ export interface ComposerSendPayload {
   text: string;
   images: ComposerImageAttachment[];
   diffMentions?: DiffSelectionMention[];
+  sessionMentions?: SessionMention[];
 }
+
+type ComposerAutocompleteOption =
+  | { type: 'provider'; item: ClaudeAutocompleteItem }
+  | { type: 'session'; item: SessionMentionCandidate };
 
 const COMPOSER_IMAGE_ALLOWED_MIME: readonly ComposerImageMediaType[] = [
   'image/png',
@@ -77,7 +86,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
     '(document:mousedown)': 'onDocumentMousedown($event)',
   },
   viewProviders: [
-    provideIcons({ lucideFileCode, lucideLoaderCircle, lucidePaperclip, lucideSend, lucideSquare, lucideX }),
+    provideIcons({ lucideFileCode, lucideLoaderCircle, lucideMessageSquare, lucidePaperclip, lucideSend, lucideSquare, lucideX }),
   ],
   template: `
     <div class="cw-comp">
@@ -91,9 +100,15 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
               (mouseenter)="selectedIndex.set(i)"
               (mousedown)="$event.preventDefault(); apply(item)"
             >
-              <span class="cw-comp__ac-label">{{ item.label }}</span>
-              <span class="cw-comp__ac-kind">{{ item.kind }}</span>
-              <span class="cw-comp__ac-desc">{{ item.description }}</span>
+              @if (item.type === 'session') {
+                <span class="cw-comp__ac-label">&#64;{{ item.item.title }}</span>
+                <span class="cw-comp__ac-kind">session #{{ item.item.sessionId }}</span>
+                <span class="cw-comp__ac-desc">{{ item.item.branch }} · {{ item.item.status }}</span>
+              } @else {
+                <span class="cw-comp__ac-label">{{ item.item.label }}</span>
+                <span class="cw-comp__ac-kind">{{ item.item.kind }}</span>
+                <span class="cw-comp__ac-desc">{{ item.item.description }}</span>
+              }
             </button>
           }
         </div>
@@ -102,13 +117,19 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
       <div
         class="cw-comp__box"
         [class.cw-comp__box--attached]="attachedPanelOpen()"
-        [class.cw-comp__box--dropping]="allowImages() && isDropTarget()"
+        [class.cw-comp__box--dropping]="isDropTarget()"
         [class.cw-comp__box--disconnected]="disconnected()"
         (dragenter)="onDragEnter($event)"
         (dragover)="onDragOver($event)"
         (dragleave)="onDragLeave($event)"
         (drop)="onDrop($event)"
       >
+        @if (isDropTarget()) {
+          <div class="cw-comp__drop-hint" role="status">
+            <ng-icon name="lucideMessageSquare" size="14" />
+            Drop to attach context
+          </div>
+        }
         @if (attachedImages().length) {
           <div class="cw-comp__images" role="list" aria-label="Attached images">
             @for (img of attachedImages(); track img.id) {
@@ -123,6 +144,34 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
                 >
                   <ng-icon name="lucideX" size="12" />
                 </button>
+              </div>
+            }
+          </div>
+        }
+        @if (sessionMentions().length || loadingSessionMention()) {
+          <div class="cw-comp__mentions" role="list" aria-label="Mentioned sessions">
+            @for (mention of sessionMentions(); track mention.sessionId) {
+              <article class="cw-comp__mention" role="listitem">
+                <span class="cw-comp__mention-icon" aria-hidden="true">
+                  <ng-icon name="lucideMessageSquare" size="14" />
+                </span>
+                <div class="cw-comp__mention-body">
+                  <div class="cw-comp__mention-head">
+                    <strong class="cw-comp__mention-name">{{ mention.title }}</strong>
+                    <span class="cw-comp__mention-lines">#{{ mention.sessionId }}</span>
+                  </div>
+                  <p class="cw-comp__mention-preview">{{ mention.provider }} · {{ mention.branch }}</p>
+                  <span class="cw-comp__mention-meta">Compact transcript snapshot · full export available to the agent</span>
+                </div>
+                <button type="button" class="cw-comp__mention-remove" title="Remove session mention" [attr.aria-label]="'Remove ' + mention.title" (click)="removeSessionMention.emit(mention.sessionId)">
+                  <ng-icon name="lucideX" size="12" />
+                </button>
+              </article>
+            }
+            @if (loadingSessionMention()) {
+              <div class="cw-comp__pending-item" role="status">
+                <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" />
+                Preparing session context…
               </div>
             }
           </div>
@@ -219,7 +268,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
             } @else if (blockedByPermission()) {
               {{ sendDisabledReason() || 'Respond to the approval request before sending another message.' }}
             } @else {
-              / commands · $ skills · ↵ send · ⇧↵ line break
+              &#64; sessions · / commands · $ skills · ↵ send · ⇧↵ line break
             }
           </span>
 
@@ -251,7 +300,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
             <button
               type="button"
               class="cw-comp__btn cw-comp__btn--send"
-              [disabled]="(!value().trim() && !attachedImages().length && !diffMentions().length) || (submitting() && !queueing()) || blockedByPermission() || disconnected()"
+              [disabled]="(!value().trim() && !attachedImages().length && !diffMentions().length && !sessionMentions().length) || loadingSessionMention() || (submitting() && !queueing()) || blockedByPermission() || disconnected()"
               (click)="submit()"
               [title]="queueing() ? 'Queue message' : 'Send'"
             >
@@ -535,6 +584,18 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         border-color: color-mix(in oklab, var(--primary) 60%, var(--border));
         background: color-mix(in oklab, var(--primary) 4%, var(--background));
       }
+      .cw-comp__drop-hint {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.4rem;
+        padding: 0.55rem 0.875rem;
+        border-bottom: 1px dashed color-mix(in oklab, var(--primary) 35%, var(--border));
+        background: color-mix(in oklab, var(--primary) 9%, var(--background));
+        color: var(--primary);
+        font-size: 0.75rem;
+        font-weight: 650;
+      }
       .cw-comp__box--disconnected {
         opacity: 0.6;
         pointer-events: none;
@@ -652,6 +713,9 @@ export class ClaudeComposerComponent {
   readonly attachedPanelOpen = input<boolean>(false);
   readonly allowImages = input<boolean>(true);
   readonly autocompleteItems = input<ClaudeAutocompleteItem[]>([]);
+  readonly sessionMentionCandidates = input<SessionMentionCandidate[]>([]);
+  readonly sessionMentions = input<SessionMention[]>([]);
+  readonly loadingSessionMention = input<boolean>(false);
   readonly placeholderText = input<string>('Tell Claude what to do…');
   readonly pendingPrompts = input<ClaudePendingPrompt[]>([]);
   readonly disconnected = input<boolean>(false);
@@ -670,12 +734,14 @@ export class ClaudeComposerComponent {
   readonly interrupt = output<void>();
   readonly cancelPending = output<string>();
   readonly removeDiffMention = output<string>();
+  readonly requestSessionMention = output<number>();
+  readonly removeSessionMention = output<number>();
 
   readonly attachedImages = signal<ComposerImageAttachment[]>([]);
   readonly isDropTarget = signal(false);
   private dragDepth = 0;
 
-  readonly activeTrigger = signal<'/' | '$' | null>(null);
+  readonly activeTrigger = signal<'/' | '$' | '@' | null>(null);
   readonly activeQuery = signal('');
   readonly autocompleteOpen = signal(false);
   readonly selectedIndex = signal(0);
@@ -685,12 +751,22 @@ export class ClaudeComposerComponent {
     const trigger = this.activeTrigger();
     if (!trigger) return [];
     const q = this.activeQuery().toLowerCase();
+    if (trigger === '@') {
+      const attached = new Set(this.sessionMentions().map((mention) => mention.sessionId));
+      return this.sessionMentionCandidates()
+        .filter((item) => !attached.has(item.sessionId))
+        .map((item) => ({ item, score: scoreSession(item, q) }))
+        .filter((entry) => entry.score > Number.NEGATIVE_INFINITY)
+        .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
+        .map(({ item }): ComposerAutocompleteOption => ({ type: 'session', item }))
+        .slice(0, 10);
+    }
     return this.autocompleteItems()
       .filter((i) => i.trigger === trigger)
       .map((i) => ({ i, score: score(i, q) }))
       .filter((x) => x.score > Number.NEGATIVE_INFINITY)
       .sort((a, b) => b.score - a.score || a.i.label.localeCompare(b.i.label))
-      .map((x) => x.i)
+      .map(({ i }): ComposerAutocompleteOption => ({ type: 'provider', item: i }))
       .slice(0, 10);
   });
 
@@ -762,12 +838,12 @@ export class ClaudeComposerComponent {
   refreshAc(ta: HTMLTextAreaElement): void {
     const caret = ta.selectionStart ?? ta.value.length;
     const before = ta.value.slice(0, caret);
-    const m = before.match(/(^|\s)([/$])([^\s]*)$/);
+    const m = before.match(/(^|\s)([/$@])([^\s]*)$/);
     if (!m) {
       this.close();
       return;
     }
-    const trigger = m[2] as '/' | '$';
+    const trigger = m[2] as '/' | '$' | '@';
     const query = m[3] ?? '';
     const tokenStart = caret - (query.length + 1);
     const trailing = ta.value.slice(caret).match(/^[^\s]*/)?.[0] ?? '';
@@ -779,13 +855,15 @@ export class ClaudeComposerComponent {
     if (!this.filtered().length) this.close();
   }
 
-  apply(item: ClaudeAutocompleteItem | undefined): void {
+  apply(option: ComposerAutocompleteOption | undefined): void {
     const ta = this.ta.nativeElement;
-    if (!ta || !item || !this.range) return;
+    if (!ta || !option || !this.range) return;
     const { start, end } = this.range;
-    const next = `${ta.value.slice(0, start)}${item.insertText}${ta.value.slice(end)}`;
-    const caret = start + item.insertText.length;
+    const insertText = option.type === 'provider' ? option.item.insertText : '';
+    const next = `${ta.value.slice(0, start)}${insertText}${ta.value.slice(end)}`;
+    const caret = start + insertText.length;
     this.valueChange.emit(next);
+    if (option.type === 'session') this.requestSessionMention.emit(option.item.sessionId);
     this.close();
     queueMicrotask(() => {
       ta.value = next;
@@ -799,10 +877,16 @@ export class ClaudeComposerComponent {
     const v = this.value().trim();
     const images = this.allowImages() ? this.attachedImages() : [];
     const diffMentions = this.diffMentions();
-    if (!v && !images.length && !diffMentions.length) return;
+    const sessionMentions = this.sessionMentions();
+    if (!v && !images.length && !diffMentions.length && !sessionMentions.length) return;
     if (this.blockedByPermission()) return;
     if (this.submitting() && !this.queueing()) return;
-    this.send.emit({ text: v, images, diffMentions });
+    this.send.emit({
+      text: v,
+      images,
+      diffMentions,
+      ...(sessionMentions.length ? { sessionMentions } : {}),
+    });
     this.setAttachedImages([]);
   }
 
@@ -823,10 +907,23 @@ export class ClaudeComposerComponent {
   }
 
   pendingPromptPreview(prompt: string): string {
-    const parsed = parseDiffSelectionMentions(prompt);
-    const text = parsed.text || (parsed.mentions.length ? 'Review the mentioned diff selection.' : prompt);
-    if (!parsed.mentions.length) return text;
-    return `${text} · ${parsed.mentions.length} diff mention${parsed.mentions.length === 1 ? '' : 's'}`;
+    const sessions = parseSessionMentions(prompt);
+    const parsed = parseDiffSelectionMentions(sessions.text);
+    const text =
+      parsed.text ||
+      (sessions.mentions.length
+        ? 'Use the mentioned session context.'
+        : parsed.mentions.length
+          ? 'Review the mentioned diff selection.'
+          : prompt);
+    const labels: string[] = [];
+    if (sessions.mentions.length) {
+      labels.push(`${sessions.mentions.length} session mention${sessions.mentions.length === 1 ? '' : 's'}`);
+    }
+    if (parsed.mentions.length) {
+      labels.push(`${parsed.mentions.length} diff mention${parsed.mentions.length === 1 ? '' : 's'}`);
+    }
+    return labels.length ? `${text} · ${labels.join(' · ')}` : text;
   }
 
   removeImage(id: string): void {
@@ -868,16 +965,14 @@ export class ClaudeComposerComponent {
   }
 
   onDragEnter(event: DragEvent): void {
-    if (!this.allowImages()) return;
-    if (!this.hasImageData(event)) return;
+    if (!this.hasSupportedDropData(event)) return;
     event.preventDefault();
     this.dragDepth += 1;
     this.isDropTarget.set(true);
   }
 
   onDragOver(event: DragEvent): void {
-    if (!this.allowImages()) return;
-    if (!this.hasImageData(event)) return;
+    if (!this.hasSupportedDropData(event)) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
   }
@@ -889,16 +984,30 @@ export class ClaudeComposerComponent {
   }
 
   onDrop(event: DragEvent): void {
-    if (!this.allowImages()) return;
-    if (!this.hasImageData(event)) return;
+    if (!this.hasSupportedDropData(event)) return;
     event.preventDefault();
     this.dragDepth = 0;
     this.isDropTarget.set(false);
+    const sessionId = Number(event.dataTransfer?.getData(SESSION_MENTION_DRAG_TYPE));
+    if (Number.isInteger(sessionId) && sessionId > 0) {
+      this.requestSessionMention.emit(sessionId);
+      return;
+    }
+    if (!this.allowImages()) return;
     const files = event.dataTransfer?.files;
     if (!files || !files.length) return;
     const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
     if (!imageFiles.length) return;
     void this.ingestFiles(imageFiles);
+  }
+
+  private hasSupportedDropData(event: DragEvent): boolean {
+    const types = event.dataTransfer?.types;
+    if (!types) return false;
+    for (let i = 0; i < types.length; i += 1) {
+      if (types[i] === SESSION_MENTION_DRAG_TYPE) return true;
+    }
+    return this.allowImages() && this.hasImageData(event);
   }
 
   private hasImageData(event: DragEvent): boolean {
@@ -1008,6 +1117,18 @@ function score(item: ClaudeAutocompleteItem, query: string): number {
   if (label.startsWith(`${item.trigger}${query}`)) return 400;
   if (label.includes(query)) return 300;
   if ((item.description || '').toLowerCase().includes(query)) return 200;
+  return Number.NEGATIVE_INFINITY;
+}
+
+function scoreSession(item: SessionMentionCandidate, query: string): number {
+  if (!query) return item.status === 'active' ? 250 : 150;
+  const title = item.title.toLowerCase();
+  const branch = item.branch.toLowerCase();
+  if (`${item.sessionId}` === query) return 600;
+  if (title === query) return 500;
+  if (title.startsWith(query)) return 400;
+  if (title.includes(query)) return 300;
+  if (branch.includes(query)) return 200;
   return Number.NEGATIVE_INFINITY;
 }
 

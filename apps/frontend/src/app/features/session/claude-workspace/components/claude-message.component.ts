@@ -41,6 +41,7 @@ import {
 } from '@/shared/utils/diff-selection-mention';
 import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
 import { type TaskNotification, parseTaskNotifications } from '@/shared/utils/task-notification';
+import { parseSessionMentions } from '@/shared/utils/session-mention';
 
 @Component({
   selector: 'cw-message',
@@ -138,11 +139,15 @@ export class ClaudeMessageComponent {
       this.userTaskNotifications().length > 0 &&
       !this.userTaskNotificationDisplay().text.trim(),
   );
+  readonly userSessionMentionDisplay = computed(() =>
+    parseSessionMentions(this.userTaskNotificationDisplay().text),
+  );
   readonly userMessageDisplay = computed(() =>
-    parseDiffSelectionMentions(this.userTaskNotificationDisplay().text),
+    parseDiffSelectionMentions(this.userSessionMentionDisplay().text),
   );
   readonly userMessageText = computed(() => this.userMessageDisplay().text);
   readonly userDiffMentions = computed(() => this.userMessageDisplay().mentions);
+  readonly userSessionMentions = computed(() => this.userSessionMentionDisplay().mentions);
 
   mentionLineLabel(mention: DiffSelectionMention): string {
     return diffSelectionMentionLineLabel(mention);

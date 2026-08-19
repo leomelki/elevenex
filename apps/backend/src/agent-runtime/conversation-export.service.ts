@@ -1,4 +1,7 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
@@ -67,6 +70,19 @@ export interface CompactItem {
   isError?: boolean;
 }
 
+export interface ConversationMentionResult {
+  sessionId: number;
+  title: string;
+  provider: string;
+  providerSessionId: string | null;
+  branch: string;
+  status: string;
+  transcriptExportPath: string;
+  contextMarkdown: string;
+  omittedTurns: number;
+  generatedAt: string;
+}
+
 export interface ConversationDeltaResult {
   items: CompactItem[];
   /** Id of the last item in the full history (for the caller's cursor), or null. */
@@ -80,6 +96,8 @@ export interface ConversationDeltaResult {
 }
 
 const COMPACT_TEXT_LIMIT = 280;
+const MENTION_CONTEXT_MAX_CHARS = 14_000;
+const MENTION_INITIAL_TURN_LIMIT = 8;
 
 @Injectable()
 export class ConversationExportService {
@@ -123,6 +141,86 @@ export class ConversationExportService {
     }
 
     return { model: buildExportModel(items, meta), running, itemCount: items.length };
+  }
+
+  async buildMention(sessionId: number): Promise<ConversationMentionResult> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const provider = session.activeAgentProvider;
+    const { model } = await this.buildModel(sessionId, provider);
+    const options: ConversationExportOptions = {
+      precision: 'small',
+      includeChanges: true,
+      includeIds: true,
+    };
+
+    const artifactOptions: ConversationExportOptions = {
+      precision: 'medium',
+      includeChanges: true,
+      includeIds: true,
+    };
+    const artifactDir = join(tmpdir(), 'elevenex', 'conversation-exports');
+    const artifactPath = join(
+      artifactDir,
+      `session-${sessionId}-${provider.replace(/[^a-z0-9_-]/gi, '_')}.md`,
+    );
+    const mentionModel = compactNestedSessionMentions(model);
+    await mkdir(artifactDir, { recursive: true });
+    await writeFile(
+      artifactPath,
+      renderMarkdown(mentionModel, artifactOptions),
+      'utf8',
+    );
+
+    const totalTurns = mentionModel.turns.length;
+    let firstTurn = Math.max(0, totalTurns - MENTION_INITIAL_TURN_LIMIT);
+    let contextMarkdown = '';
+    do {
+      const sliced: ConversationExportModel = {
+        ...mentionModel,
+        preamble: [],
+        turns: mentionModel.turns.slice(firstTurn),
+      };
+      contextMarkdown = renderMarkdown(sliced, {
+        ...options,
+        turnNumberOffset: firstTurn,
+      });
+      if (contextMarkdown.length <= MENTION_CONTEXT_MAX_CHARS || firstTurn >= totalTurns - 1) {
+        break;
+      }
+      firstTurn += 1;
+    } while (firstTurn < totalTurns);
+
+    if (contextMarkdown.length > MENTION_CONTEXT_MAX_CHARS) {
+      contextMarkdown = `${contextMarkdown.slice(0, MENTION_CONTEXT_MAX_CHARS)}\n\n[Snapshot truncated; read the transcript export for the remainder.]\n`;
+    }
+    if (firstTurn > 0) {
+      contextMarkdown = `[${firstTurn} earlier turn${firstTurn === 1 ? '' : 's'} omitted; the transcript export contains the complete conversation.]\n\n${contextMarkdown}`;
+    }
+
+    const providerSessionId =
+      provider === 'claude'
+        ? session.claudeSessionId
+        : provider === 'codex'
+          ? session.codexSessionId
+          : provider === 'pi'
+            ? session.piSessionPath
+            : provider === 'gemini'
+              ? session.geminiSessionId
+              : null;
+
+    return {
+      sessionId,
+      title: model.meta.title,
+      provider,
+      providerSessionId:
+        providerSessionId && providerSessionId !== '-1' ? providerSessionId : null,
+      branch: model.meta.branch,
+      status: session.status,
+      transcriptExportPath: artifactPath,
+      contextMarkdown,
+      omittedTurns: firstTurn,
+      generatedAt: model.meta.exportedAt,
+    };
   }
 
   async export(
@@ -231,6 +329,40 @@ function truncateText(text: string): string {
 }
 
 // --- pure model building --------------------------------------------------
+
+function compactNestedSessionMentions(model: ConversationExportModel): ConversationExportModel {
+  const compactItem = (item: ClaudeTranscriptItem | null): ClaudeTranscriptItem | null => {
+    if (!item?.content?.includes('<elevenex_session_mention>')) return item;
+    return {
+      ...item,
+      content: item.content.replace(
+        /<elevenex_session_mention>([\s\S]*?)<\/elevenex_session_mention>/g,
+        (_block, body: string) => {
+          const reference = body
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((line) =>
+              /^(Session|Session ID|Provider|Provider session ID|Branch|Status|Transcript export):/.test(line),
+            );
+          return [
+            '[Previously mentioned session; nested snapshot omitted.]',
+            ...reference,
+          ].join('\n');
+        },
+      ),
+    };
+  };
+  return {
+    ...model,
+    preamble: model.preamble.map((item) => compactItem(item) ?? item),
+    turns: model.turns.map((turn) => ({
+      ...turn,
+      user: compactItem(turn.user),
+      steps: turn.steps.map((item) => compactItem(item) ?? item),
+      finalResponse: compactItem(turn.finalResponse),
+    })),
+  };
+}
 
 function isContentful(item: ClaudeTranscriptItem | undefined): boolean {
   return !!item?.content && item.content.trim().length > 0;

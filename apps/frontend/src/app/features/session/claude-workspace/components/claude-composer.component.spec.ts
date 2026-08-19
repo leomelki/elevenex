@@ -138,6 +138,32 @@ describe('ClaudeComposerComponent', () => {
     expect(sendSpy).toHaveBeenCalledWith({ text: '', images: [], diffMentions: [diffMention] });
   });
 
+  it('finds sessions with @ and attaches the selected session', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('value', '@auth');
+    fixture.componentRef.setInput('sessionMentionCandidates', [
+      { sessionId: 42, title: 'Fix authentication', branch: 'feature/auth', status: 'active' },
+    ]);
+    const requestSpy = vi.fn();
+    fixture.componentInstance.requestSessionMention.subscribe(requestSpy);
+    fixture.detectChanges();
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+    const textarea = fixture.nativeElement.querySelector('.cw-comp__ta') as HTMLTextAreaElement;
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    fixture.componentInstance.refreshAc(textarea);
+
+    expect(fixture.componentInstance.filtered()[0]).toEqual(
+      expect.objectContaining({ type: 'session' }),
+    );
+    fixture.componentInstance.apply(fixture.componentInstance.filtered()[0]);
+    expect(requestSpy).toHaveBeenCalledWith(42);
+  });
+
   it('renders controlled image attachments and emits removal changes', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeComposerComponent],

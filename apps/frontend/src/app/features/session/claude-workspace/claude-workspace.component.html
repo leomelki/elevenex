@@ -738,6 +738,9 @@
               [placeholderText]="composerPlaceholder()"
               [allowImages]="currentProviderSupportsImages()"
               [autocompleteItems]="autocompleteItems()"
+              [sessionMentionCandidates]="sessionMentionCandidates()"
+              [sessionMentions]="pendingSessionMentions()"
+              [loadingSessionMention]="loadingSessionMentionId() !== null"
               [pendingPrompts]="pendingPrompts()"
               [diffMentions]="pendingDiffMentions()"
               [imageAttachments]="composerImages()"
@@ -747,6 +750,8 @@
               (send)="submitPrompt($event)"
               (interrupt)="interrupt()"
               (cancelPending)="cancelPendingPrompt($event)"
+              (requestSessionMention)="addSessionMention($event)"
+              (removeSessionMention)="removeSessionMention($event)"
               (removeDiffMention)="removeDiffMention($event)"
             />
           </div>

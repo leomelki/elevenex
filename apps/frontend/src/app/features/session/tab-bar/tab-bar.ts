@@ -16,6 +16,7 @@ import {
   normalizeSessionToolbarButtons,
   SessionToolbarButtonPreference,
 } from '@/shared/models/session-toolbar-button.model';
+import { SESSION_MENTION_DRAG_TYPE } from '@/shared/models/session-mention.model';
 
 @Component({
   selector: 'app-tab-bar',
@@ -228,6 +229,13 @@ export class TabBar {
   getTooltip(tab: Tab): string {
     const status = tab.status.charAt(0).toUpperCase() + tab.status.slice(1);
     return `${tab.sessionName}\nBranch: ${tab.branchName}\nStatus: ${status}`;
+  }
+
+  onTabDragStart(event: DragEvent, tab: Tab): void {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData(SESSION_MENTION_DRAG_TYPE, String(tab.sessionId));
+    event.dataTransfer.setData('text/plain', `@${tab.sessionName}`);
   }
 
   onTabClick(tab: Tab): void {

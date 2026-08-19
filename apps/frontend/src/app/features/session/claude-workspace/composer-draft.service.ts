@@ -1,12 +1,14 @@
 import { Injectable } from '@angular/core';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { ComposerImageAttachment } from './components/claude-composer.component';
+import type { SessionMention } from '@/shared/models/session-mention.model';
 
 export interface ComposerDraft {
   version: 1;
   sessionId: number;
   text: string;
   diffMentions: DiffSelectionMention[];
+  sessionMentions: SessionMention[];
   images: ComposerImageAttachment[];
   updatedAt: string;
 }
@@ -39,7 +41,11 @@ export class ComposerDraftService {
     }
   }
 
-  async save(draft: Omit<ComposerDraft, 'version' | 'updatedAt'>): Promise<void> {
+  async save(
+    draft: Omit<ComposerDraft, 'version' | 'updatedAt' | 'sessionMentions'> & {
+      sessionMentions?: SessionMention[];
+    },
+  ): Promise<void> {
     if (!this.isValidSessionId(draft.sessionId)) return;
     if (!this.hasContent(draft)) {
       await this.delete(draft.sessionId);
@@ -54,6 +60,7 @@ export class ComposerDraftService {
         sessionId: draft.sessionId,
         text: draft.text,
         diffMentions: draft.diffMentions,
+        sessionMentions: draft.sessionMentions ?? [],
         images: draft.images,
         updatedAt: new Date().toISOString(),
       };
@@ -140,13 +147,25 @@ export class ComposerDraftService {
       sessionId,
       text: value.text,
       diffMentions: value.diffMentions as DiffSelectionMention[],
+      sessionMentions: Array.isArray(value.sessionMentions)
+        ? (value.sessionMentions as SessionMention[])
+        : [],
       images,
       updatedAt: value.updatedAt,
     };
   }
 
-  private hasContent(draft: Pick<ComposerDraft, 'text' | 'diffMentions' | 'images'>): boolean {
-    return !!draft.text.trim() || draft.diffMentions.length > 0 || draft.images.length > 0;
+  private hasContent(
+    draft: Pick<ComposerDraft, 'text' | 'diffMentions' | 'images'> & {
+      sessionMentions?: SessionMention[];
+    },
+  ): boolean {
+    return (
+      !!draft.text.trim() ||
+      draft.diffMentions.length > 0 ||
+      (draft.sessionMentions?.length ?? 0) > 0 ||
+      draft.images.length > 0
+    );
   }
 
   private isValidSessionId(sessionId: number): boolean {

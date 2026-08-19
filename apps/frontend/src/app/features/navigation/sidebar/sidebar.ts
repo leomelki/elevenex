@@ -32,6 +32,7 @@ import { TabColorService } from '../../../shared/services/tab-color.service';
 import { TabService } from '../../session/tab-service';
 import { NavigationBranch, NavigationProject, NavigationRepo, NavigationWorkspace } from '../../../shared/models/navigation-tree.model';
 import { SessionInTree } from '../../../shared/models/session.model';
+import { SESSION_MENTION_DRAG_TYPE } from '../../../shared/models/session-mention.model';
 import { BranchInfo } from '../../../shared/models/branch.model';
 import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
 import { BranchSearch } from '../branch-search/branch-search';
@@ -381,6 +382,13 @@ export class Sidebar implements OnInit, OnDestroy {
       workspace.linkStatus === 'unlinked' ? 'Status: unlinked from worktree' : 'Status: linked',
       `Path: ${workspace.path}`,
     ].join('\n');
+  }
+
+  onSessionDragStart(event: DragEvent, session: SessionInTree): void {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData(SESSION_MENTION_DRAG_TYPE, String(session.id));
+    event.dataTransfer.setData('text/plain', `@${session.name?.trim() || `Session ${session.id}`}`);
   }
 
   onSessionClick(session: SessionInTree) {

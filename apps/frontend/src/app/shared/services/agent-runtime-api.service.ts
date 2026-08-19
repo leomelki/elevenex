@@ -14,6 +14,7 @@ import {
   AgentTranscriptItem,
 } from '../models/agent-runtime.model';
 import { AgentRuntimeProviderService } from './agent-runtime-provider.service';
+import type { SessionMention } from '../models/session-mention.model';
 
 @Injectable({ providedIn: 'root' })
 export class AgentRuntimeApiService {
@@ -57,6 +58,10 @@ export class AgentRuntimeApiService {
       `/api/agent-providers/${encodeURIComponent(provider)}/auth/continue-login`,
       body,
     );
+  }
+
+  getConversationMention(sessionId: number) {
+    return this.http.get<SessionMention>(`/api/sessions/${sessionId}/mention`);
   }
 
   getHistory(sessionId: number, provider = this.currentProvider()) {

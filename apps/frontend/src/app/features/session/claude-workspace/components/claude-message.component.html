@@ -74,6 +74,25 @@
               }
             </div>
           }
+          @if (userSessionMentions().length) {
+            <div class="cw-msg__mentions" aria-label="Mentioned sessions">
+              @for (mention of userSessionMentions(); track mention.sessionId) {
+                <article class="cw-msg__mention">
+                  <span class="cw-msg__mention-icon" aria-hidden="true">
+                    <ng-icon name="lucideMessageSquarePlus" size="14" />
+                  </span>
+                  <div class="cw-msg__mention-body">
+                    <div class="cw-msg__mention-head">
+                      <strong class="cw-msg__mention-name">{{ mention.title }}</strong>
+                      <span class="cw-msg__mention-lines">#{{ mention.sessionId }}</span>
+                    </div>
+                    <p class="cw-msg__mention-preview">{{ mention.provider }} · {{ mention.branch }}</p>
+                    <span class="cw-msg__mention-meta">Session context attached · transcript export available</span>
+                  </div>
+                </article>
+              }
+            </div>
+          }
           @if (userDiffMentions().length) {
             <div class="cw-msg__mentions" aria-label="Mentioned diff selections">
               @for (mention of userDiffMentions(); track mention.id) {

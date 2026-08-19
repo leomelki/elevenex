@@ -49,6 +49,7 @@ import {
 } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import type { SessionMention, SessionMentionCandidate } from '@/shared/models/session-mention.model';
 import {
   AgentAuthStatus,
   AgentProviderId,
@@ -125,6 +126,7 @@ import {
   appendDiffSelectionMentions,
   parseDiffSelectionMentions,
 } from '@/shared/utils/diff-selection-mention';
+import { appendSessionMentions, parseSessionMentions } from '@/shared/utils/session-mention';
 import { ComposerDraftService } from './composer-draft.service';
 
 type TranscriptRenderItem =
@@ -230,6 +232,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly submitting = signal(false);
   readonly prompt = signal('');
   readonly pendingDiffMentions = signal<DiffSelectionMention[]>([]);
+  readonly pendingSessionMentions = signal<SessionMention[]>([]);
+  readonly loadingSessionMentionId = signal<number | null>(null);
   readonly composerImages = signal<ComposerImageAttachment[]>([]);
   readonly runPhase = signal<ClaudeRunPhase>('idle');
   readonly warmState = signal<ClaudeRuntimeWarmState>('cold');
@@ -354,6 +358,25 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
   readonly planMode = computed(() => this._planMode());
   readonly showLoading = computed(() => this.loading() || !this.hydrated());
+  readonly sessionMentionCandidates = computed<SessionMentionCandidate[]>(() => {
+    const candidates: SessionMentionCandidate[] = [];
+    for (const project of this.navigationService.tree()) {
+      for (const repo of project.repos) {
+        for (const workspace of repo.workspaces ?? []) {
+          for (const session of [...workspace.sessions, ...(workspace.archivedSessions ?? [])]) {
+            if (session.id === this.sessionId) continue;
+            candidates.push({
+              sessionId: session.id,
+              title: session.name?.trim() || `Session ${session.id}`,
+              branch: session.branchName,
+              status: session.status,
+            });
+          }
+        }
+      }
+    }
+    return candidates.sort((a, b) => a.title.localeCompare(b.title));
+  });
   readonly promptIsCommand = computed(() => this.prompt().trimStart().startsWith('/'));
   readonly canAppendContext = computed(
     () =>
@@ -880,15 +903,57 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.persistComposerDraft();
   }
 
+  async addSessionMention(sessionId: number): Promise<void> {
+    if (this.pendingSessionMentions().length >= 3) {
+      toast.error('You can mention up to 3 sessions in one message.');
+      return;
+    }
+    if (
+      this.isTranscriptReadOnly() ||
+      sessionId === this.sessionId ||
+      this.loadingSessionMentionId() !== null ||
+      this.pendingSessionMentions().some((mention) => mention.sessionId === sessionId)
+    ) return;
+    this.loadingSessionMentionId.set(sessionId);
+    try {
+      const mention = await firstValueFrom(this.agentApi.getConversationMention(sessionId));
+      this.pendingSessionMentions.update((items) => [...items, mention]);
+      this.markComposerDraftChanged();
+      this.persistComposerDraft();
+      queueMicrotask(() => this.composer?.focusAtEnd());
+    } catch (error) {
+      toast.error(this.getHttpErrorMessage(error, 'Could not mention that session.'));
+    } finally {
+      if (this.loadingSessionMentionId() === sessionId) this.loadingSessionMentionId.set(null);
+    }
+  }
+
+  removeSessionMention(sessionId: number): void {
+    this.pendingSessionMentions.update((items) =>
+      items.filter((mention) => mention.sessionId !== sessionId),
+    );
+    this.markComposerDraftChanged();
+    this.persistComposerDraft();
+  }
+
   async submitPrompt(payload: ComposerSendPayload | string): Promise<void> {
     if (this.isTranscriptReadOnly()) return;
     const normalized: ComposerSendPayload =
-      typeof payload === 'string' ? { text: payload, images: [], diffMentions: [] } : payload;
+      typeof payload === 'string'
+        ? { text: payload, images: [], diffMentions: [], sessionMentions: [] }
+        : payload;
     const trimmed = normalized.text.trim();
     const diffMentions = normalized.diffMentions ?? [];
+    const sessionMentions = normalized.sessionMentions ?? [];
     const visiblePrompt =
-      trimmed || (diffMentions.length ? 'Review the mentioned diff selection.' : '');
-    const promptWithMentions = appendDiffSelectionMentions(visiblePrompt, diffMentions);
+      trimmed ||
+      (sessionMentions.length
+        ? 'Use the mentioned session context.'
+        : diffMentions.length
+          ? 'Review the mentioned diff selection.'
+          : '');
+    const promptWithDiffMentions = appendDiffSelectionMentions(visiblePrompt, diffMentions);
+    const promptWithMentions = appendSessionMentions(promptWithDiffMentions, sessionMentions);
     const images = this.currentProviderSupportsImages() ? normalized.images : [];
     if (!promptWithMentions.trim() && !images.length) return;
     const isIdle = this.runPhase() === 'idle';
@@ -914,6 +979,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.lastSubmittedPromptText = normalized.text;
     this.prompt.set('');
     this.pendingDiffMentions.set([]);
+    this.pendingSessionMentions.set([]);
     this.composerImages.set([]);
     this.markComposerDraftChanged();
     this.clearComposerDraft();
@@ -1497,7 +1563,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private forkExcerptForItem(item: ClaudeTranscriptItem): string {
-    return parseDiffSelectionMentions(item.content).text.trim().slice(0, 500);
+    const withoutSessions = parseSessionMentions(item.content).text;
+    return parseDiffSelectionMentions(withoutSessions).text.trim().slice(0, 500);
   }
 
   isEditArmed(item: ClaudeTranscriptItem): boolean {
@@ -1506,7 +1573,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   async copyMessage(item: ClaudeTranscriptItem, selectedText?: string | null): Promise<void> {
     const selectedContent = typeof selectedText === 'string' ? selectedText.trim() : '';
-    const itemContent = parseDiffSelectionMentions(item.content).text;
+    const itemContent = parseDiffSelectionMentions(parseSessionMentions(item.content).text).text;
     const content = selectedContent || itemContent;
     if (!content) return;
     if (!navigator.clipboard?.writeText) {
@@ -1548,7 +1615,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private async restorePromptFromMessage(item: ClaudeTranscriptItem): Promise<void> {
     const messageId = item.sourceMessageId;
     const content = item.content ?? '';
-    const restored = parseDiffSelectionMentions(content);
+    const restoredSessions = parseSessionMentions(content);
+    const restored = parseDiffSelectionMentions(restoredSessions.text);
     if (!messageId) return;
 
     this.rewindingMessageId.set(messageId);
@@ -1568,6 +1636,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.expandedTurnChanges.set({});
       this.prompt.set(restored.text);
       this.pendingDiffMentions.set(restored.mentions);
+      this.pendingSessionMentions.set(restoredSessions.mentions);
       this.composerImages.set([]);
       this.markComposerDraftChanged();
       this.persistComposerDraft();
@@ -1714,9 +1783,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private applyPendingForkDraft(): boolean {
     const draft = this.forkDrafts.consumeDraft(this.sessionId);
     if (!draft) return false;
-    const parsed = parseDiffSelectionMentions(draft);
+    const parsedSessions = parseSessionMentions(draft);
+    const parsed = parseDiffSelectionMentions(parsedSessions.text);
     this.prompt.set(parsed.text);
     this.pendingDiffMentions.set(parsed.mentions);
+    this.pendingSessionMentions.set(parsedSessions.mentions);
     this.composerImages.set([]);
     this.markComposerDraftChanged();
     this.persistComposerDraft();
@@ -1737,6 +1808,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
       this.prompt.set(draft.text);
       this.pendingDiffMentions.set(draft.diffMentions);
+      this.pendingSessionMentions.set(draft.sessionMentions);
       this.composerImages.set(draft.images);
       queueMicrotask(() => this.composer?.focusAtEnd());
     });
@@ -1753,6 +1825,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       sessionId: this.sessionId,
       text: this.prompt(),
       diffMentions: this.pendingDiffMentions(),
+      sessionMentions: this.pendingSessionMentions(),
       images: this.composerImages(),
     });
   }
@@ -2287,6 +2360,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.submitting.set(false);
     this.prompt.set('');
     this.pendingDiffMentions.set([]);
+    this.pendingSessionMentions.set([]);
+    this.loadingSessionMentionId.set(null);
     this.composerImages.set([]);
     this.runPhase.set('idle');
     this.sessionState.set('idle');

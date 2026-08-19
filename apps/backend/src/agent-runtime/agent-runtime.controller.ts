@@ -78,6 +78,13 @@ export class AgentRuntimeController {
       .continueLogin({ code: body.code });
   }
 
+  @Get('sessions/:sessionId/mention')
+  getConversationMention(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+  ) {
+    return this.exportService.buildMention(sessionId);
+  }
+
   @Get('sessions/:sessionId/agents/:provider/history')
   getHistory(
     @Param('sessionId', ParseIntPipe) sessionId: number,

@@ -9,8 +9,10 @@
           'before:absolute before:right-4 before:bottom-0.5 before:left-4 before:h-0.5 before:rounded-px before:bg-current before:opacity-[0.18] hover:before:opacity-30': isSameProjectAsActive(tab) && !isActive(tab)
         }"
         role="tab"
+        draggable="true"
         [attr.aria-label]="tab.sessionName + ' - ' + tab.branchName + ' - ' + tab.status"
         [title]="getTooltip(tab)"
+        (dragstart)="onTabDragStart($event, tab)"
         (click)="onTabClick(tab)"
         (contextmenu)="onContextMenu($event, tab)"
       >
