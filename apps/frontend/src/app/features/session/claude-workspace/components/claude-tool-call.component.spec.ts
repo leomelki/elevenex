@@ -147,6 +147,35 @@ describe('ClaudeToolCallComponent', () => {
     expect(diff?.querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-line');
   });
 
+  it('renders a raw single-replacement Pi edit', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeToolCallComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'tool-pi-single',
+      kind: 'tool_use',
+      toolUseId: 'tool-pi-single',
+      toolName: 'edit',
+      toolInput: {
+        path: 'src/simple.ts',
+        edits: [{ oldText: 'const value = 1;', newText: 'const value = 2;' }],
+      },
+      timestamp: '2026-04-24T08:00:00.000Z',
+    });
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
+    button.click();
+    fixture.detectChanges();
+
+    const diffs = fixture.nativeElement.querySelectorAll('cw-inline-diff');
+    expect(diffs).toHaveLength(1);
+    expect(diffs[0].textContent).toContain('src/simple.ts');
+    expect(diffs[0].querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-line');
+  });
+
   it('renders every replacement from a Pi multi-edit', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeToolCallComponent],
