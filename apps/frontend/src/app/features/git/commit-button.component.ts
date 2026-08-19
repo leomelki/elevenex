@@ -73,13 +73,13 @@ export class CommitButtonComponent {
   readonly loading = signal(true);
   readonly refreshing = signal(false);
   readonly open = signal(false);
-  readonly submitting = signal(false);
   readonly includeUnstaged = signal(false);
   readonly commitMessage = signal('');
 
   private refreshInFlightKey: string | null = null;
   private refreshRequestId = 0;
   private readonly pushingWorktreePaths = signal<ReadonlySet<string>>(new Set());
+  private readonly submittingWorktreePaths = signal<ReadonlySet<string>>(new Set());
 
   readonly hasChanges = computed(() => this.summary()?.hasChanges ?? false);
   readonly hasPushableCommits = computed(() => {
@@ -99,6 +99,10 @@ export class CommitButtonComponent {
   readonly pushing = computed(() => {
     const worktreePath = this.worktreePath();
     return Boolean(worktreePath && this.pushingWorktreePaths().has(worktreePath));
+  });
+  readonly submitting = computed(() => {
+    const worktreePath = this.worktreePath();
+    return Boolean(worktreePath && this.submittingWorktreePaths().has(worktreePath));
   });
   readonly isBusy = computed(() => this.submitting() || this.pushing());
   readonly triggerLabel = computed(() => {
@@ -218,7 +222,7 @@ export class CommitButtonComponent {
     const worktreePath = this.worktreePath();
     if (!worktreePath || !this.canCommit()) return;
 
-    this.submitting.set(true);
+    this.setSubmittingWorktree(worktreePath, true);
     try {
       const result = await firstValueFrom(
         this.gitService.commit(worktreePath, {
@@ -231,13 +235,15 @@ export class CommitButtonComponent {
         result.message.length > 64 ? result.message.slice(0, 61) + '…' : result.message;
       toast.success(`Committed: ${shortMsg}`);
 
-      this.commitMessage.set('');
-      this.open.set(false);
-      await this.refreshSummary({ force: true });
+      if (this.worktreePath() === worktreePath) {
+        this.commitMessage.set('');
+        this.open.set(false);
+        await this.refreshSummary({ force: true });
+      }
     } catch (error: any) {
       this.showGitError(error, 'Could not create commit.');
     } finally {
-      this.submitting.set(false);
+      this.setSubmittingWorktree(worktreePath, false);
     }
   }
 
@@ -378,6 +384,18 @@ export class CommitButtonComponent {
     this.pushingWorktreePaths.update((current) => {
       const next = new Set(current);
       if (pushing) {
+        next.add(worktreePath);
+      } else {
+        next.delete(worktreePath);
+      }
+      return next;
+    });
+  }
+
+  private setSubmittingWorktree(worktreePath: string, submitting: boolean): void {
+    this.submittingWorktreePaths.update((current) => {
+      const next = new Set(current);
+      if (submitting) {
         next.add(worktreePath);
       } else {
         next.delete(worktreePath);
