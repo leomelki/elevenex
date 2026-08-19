@@ -92,7 +92,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
     <div class="cw-comp">
       @if (autocompleteOpen() && filtered().length) {
         <div class="cw-comp__ac" role="listbox">
-          @for (item of filtered(); track item.id; let i = $index) {
+          @for (item of filtered(); track autocompleteOptionId(item); let i = $index) {
             <button
               type="button"
               class="cw-comp__ac-item"
@@ -853,6 +853,12 @@ export class ClaudeComposerComponent {
     this.autocompleteOpen.set(true);
     this.selectedIndex.set(0);
     if (!this.filtered().length) this.close();
+  }
+
+  autocompleteOptionId(option: ComposerAutocompleteOption): string {
+    return option.type === 'session'
+      ? `session:${option.item.sessionId}`
+      : `provider:${option.item.id}`;
   }
 
   apply(option: ComposerAutocompleteOption | undefined): void {
