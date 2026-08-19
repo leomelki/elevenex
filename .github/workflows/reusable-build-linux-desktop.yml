@@ -16,6 +16,7 @@ jobs:
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google.list
           sudo apt-get update
+          echo "\$nrconf{restart} = 'a';" | sudo tee -a /etc/needrestart/needrestart.conf > /dev/null
           sudo apt-get install -y python3 make g++ fakeroot rpm
 
       - uses: pnpm/action-setup@v4
