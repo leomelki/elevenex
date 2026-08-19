@@ -75,7 +75,7 @@ export class CodexAgentRuntimeProvider
   }
 
   getModelCatalog() {
-    return Promise.resolve(this.runtimeService.getModelCatalog());
+    return this.runtimeService.getModelCatalog();
   }
 
   getAuthStatus() {

@@ -234,9 +234,15 @@ export class PiRuntimeService
   async getAutocompleteItems(
     sessionId: number,
   ): Promise<ClaudeAutocompleteItem[]> {
+    // Only query a runtime that is already running. Spawning one here via
+    // ensureRuntime() would persist a real piSessionPath before the user
+    // ever sends a prompt (the composer calls this on every session open),
+    // which makes submitPrompt() think the session already has history and
+    // permanently skips auto-generating its title.
+    const entry = this.runtimes.get(sessionId);
+    if (!entry) return [];
     try {
-      const runtime = await this.ensureRuntime(sessionId);
-      const response = await runtime.send<{ commands?: unknown[] }>({
+      const response = await entry.runtime.send<{ commands?: unknown[] }>({
         type: 'get_commands',
       });
       return (Array.isArray(response?.commands) ? response.commands : [])

@@ -244,6 +244,42 @@ describe('CodexRuntimeService', () => {
     expect(models).toEqual([{ id: 'gpt-test', displayName: 'GPT Test' }]);
   });
 
+  it('waits for Codex to report the current account model catalog', async () => {
+    const { service, appServer } = createService();
+    appServer.request.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'gpt-current',
+          displayName: 'GPT Current',
+          isDefault: true,
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'low', description: 'Quick' },
+            { reasoningEffort: 'ultra', description: 'Deep' },
+          ],
+        },
+      ],
+    });
+
+    const catalog = await service.getModelCatalog();
+
+    expect(appServer.request).toHaveBeenCalledWith(
+      'model/list',
+      { limit: 100, includeHidden: false },
+      8000,
+    );
+    expect(catalog.models).toEqual([
+      expect.objectContaining({
+        id: 'gpt-current',
+        displayName: 'GPT Current',
+        reasoningEfforts: ['low', 'ultra'],
+        supportsEffort: true,
+        isProviderDefault: true,
+      }),
+    ]);
+    expect(catalog.providerDefaultModelId).toBe('gpt-current');
+    expect(catalog.reasoningEfforts).toEqual(['low', 'ultra']);
+  });
+
   it('does not treat remote Codex model list order as the default', async () => {
     const { service, appServer } = createService();
     appServer.request.mockResolvedValueOnce({

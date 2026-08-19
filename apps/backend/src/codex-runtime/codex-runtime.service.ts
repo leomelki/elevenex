@@ -62,7 +62,8 @@ import type {
 
 const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const DEFAULT_CODEX_CONTEXT_WINDOW = 1_050_000;
-const CODEX_MODEL_REFRESH_TTL_MS = 60 * 60 * 1000;
+const CODEX_MODEL_REFRESH_TTL_MS = 10 * 60 * 1000;
+const CODEX_MODEL_REFRESH_RETRY_MS = 30_000;
 const CODEX_MODEL_LIST_TIMEOUT_MS = 8_000;
 const CODEX_MODEL_REFRESH_IDLE_DELAY_MS = 10_000;
 const CODEX_PREWARM_COOLDOWN_MS = 30_000;
@@ -124,6 +125,10 @@ interface CodexModelListResult {
   data?: unknown;
 }
 
+interface CodexReasoningEffortDescriptor {
+  reasoningEffort?: unknown;
+}
+
 interface CodexThreadStartResult {
   thread?: {
     id?: unknown;
@@ -142,6 +147,7 @@ export class CodexRuntimeService
   private codexModels: ClaudeModelOption[] = [...CODEX_MODELS];
   private codexDefaultModel = DEFAULT_CODEX_MODEL;
   private lastModelRefreshAt = 0;
+  private lastModelRefreshAttemptAt = 0;
   private modelRefreshInFlight: Promise<void> | null = null;
   private modelRefreshTimer: NodeJS.Timeout | null = null;
   private modelCatalogInterval: NodeJS.Timeout | null = null;
@@ -160,11 +166,12 @@ export class CodexRuntimeService
   }
 
   /**
-   * Session-independent model catalog for the settings pickers. Serves the
-   * cached catalog immediately and refreshes in the background.
+   * Session-independent model catalog for the settings pickers. Like the Pi
+   * catalog probe, the first/stale read waits for Codex itself to report the
+   * models available to the current account. Subsequent reads use the cache.
    */
-  getModelCatalog(): AgentProviderModelCatalogPayload {
-    this.refreshModelCatalogInBackground();
+  async getModelCatalog(): Promise<AgentProviderModelCatalogPayload> {
+    await this.refreshModelCatalogIfStale();
     const models = [...this.codexModels];
     // Codex reports supported efforts per model; the provider-wide list is the
     // union so the picker still offers everything reachable by some model.
@@ -189,10 +196,10 @@ export class CodexRuntimeService
     // Warm the model catalog in the background at startup so it's ready
     // before any session even opens, instead of waiting for the first
     // getRuntimeState() call to schedule a refresh (and its idle delay).
-    this.refreshModelCatalogInBackground();
+    void this.refreshModelCatalogIfStale();
     this.modelCatalogInterval = setInterval(() => {
       if (this.activeRuns.size > 0) return;
-      this.refreshModelCatalogInBackground();
+      void this.refreshModelCatalogIfStale();
     }, CODEX_MODEL_REFRESH_TTL_MS);
     this.modelCatalogInterval.unref?.();
   }
@@ -1245,17 +1252,30 @@ export class CodexRuntimeService
         this.scheduleModelCatalogRefresh();
         return;
       }
-      this.refreshModelCatalogInBackground();
+      void this.refreshModelCatalogIfStale();
     }, CODEX_MODEL_REFRESH_IDLE_DELAY_MS);
     this.modelRefreshTimer.unref?.();
   }
 
-  private refreshModelCatalogInBackground(): void {
-    const ageMs = Date.now() - this.lastModelRefreshAt;
-    if (ageMs < CODEX_MODEL_REFRESH_TTL_MS || this.modelRefreshInFlight) {
-      return;
+  private refreshModelCatalogIfStale(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastModelRefreshAt < CODEX_MODEL_REFRESH_TTL_MS) {
+      return Promise.resolve();
     }
+    if (this.modelRefreshInFlight) {
+      return this.modelRefreshInFlight;
+    }
+    // Avoid repeatedly holding up catalog requests when Codex is unavailable,
+    // while retrying much sooner than the normal successful-refresh TTL.
+    if (now - this.lastModelRefreshAttemptAt < CODEX_MODEL_REFRESH_RETRY_MS) {
+      return Promise.resolve();
+    }
+
+    this.lastModelRefreshAttemptAt = now;
     this.modelRefreshInFlight = this.refreshModelCatalog()
+      .then((refreshed) => {
+        if (refreshed) this.lastModelRefreshAt = Date.now();
+      })
       .catch((error) => {
         this.logger.debug(
           `Codex model catalog refresh failed: ${
@@ -1264,15 +1284,15 @@ export class CodexRuntimeService
         );
       })
       .finally(() => {
-        this.lastModelRefreshAt = Date.now();
         this.modelRefreshInFlight = null;
       });
+    return this.modelRefreshInFlight;
   }
 
-  private async refreshModelCatalog(): Promise<void> {
+  private async refreshModelCatalog(): Promise<boolean> {
     const models = await this.fetchCodexAppServerModels();
     if (!models.length) {
-      return;
+      return false;
     }
     const previousDefault = this.codexDefaultModel;
     this.codexModels = models.map((model) => this.toModelOption(model));
@@ -1309,6 +1329,7 @@ export class CodexRuntimeService
       }
       this.emitRunState(sessionId);
     }
+    return true;
   }
 
   private async fetchCodexAppServerModels(): Promise<CodexAppServerModel[]> {
@@ -1345,10 +1366,15 @@ export class CodexRuntimeService
         : 'Codex model.';
     const reasoningEfforts = Array.isArray(model.supportedReasoningEfforts)
       ? orderReasoningEfforts(
-          model.supportedReasoningEfforts.filter(
-            (effort): effort is string =>
-              typeof effort === 'string' && effort.trim().length > 0,
-          ),
+          model.supportedReasoningEfforts
+            .map((effort): string => {
+              if (typeof effort === 'string') return effort.trim();
+              if (!effort || typeof effort !== 'object') return '';
+              const value = (effort as CodexReasoningEffortDescriptor)
+                .reasoningEffort;
+              return typeof value === 'string' ? value.trim() : '';
+            })
+            .filter((effort) => effort.length > 0),
         )
       : [];
     const supportsEffort = reasoningEfforts.length > 0;

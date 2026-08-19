@@ -481,4 +481,29 @@ describe('PiRuntimeService lifecycle', () => {
     expect(assistantItems).toHaveLength(1);
     expect(assistantItems[0]?.content).toBe('full answer');
   });
+
+  it('does not spawn a runtime or persist a Pi session path when fetching autocomplete for a session with no active run', async () => {
+    const { service, sessions } = createService();
+
+    const items = await service.getAutocompleteItems(1);
+
+    expect(items).toEqual([]);
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(sessions.updatePiSessionPath).not.toHaveBeenCalled();
+  });
+
+  it('queries the already-running Pi process for autocomplete instead of spawning a new one', async () => {
+    const child = createPiProcess('/tmp/pi-session-1.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    const { service } = createService();
+
+    await service.submitPrompt(1, 'first');
+    await service.getAutocompleteItems(1);
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const sentTypes = child.stdin.writes.map(
+      (write) => (JSON.parse(write) as { type: string }).type,
+    );
+    expect(sentTypes).toContain('get_commands');
+  });
 });

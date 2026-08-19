@@ -15,11 +15,10 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
    - `skipGitRepoCheck: true`.
    - the selected Codex model.
    - Codex sandbox and approval settings derived from the app permission mode.
-5. The Codex model picker is seeded with the current Codex catalog
-   (`gpt-5.5` by default, plus `gpt-5.4`, `gpt-5.4-mini`,
-   `gpt-5.3-codex`, and `gpt-5.2`) and refreshes from Codex app-server's
-   `model/list` RPC when the local CLI supports it. If that RPC is unavailable,
-   Elevenex keeps the built-in catalog so prompt submission still works.
+5. The Codex model picker fetches the account's current catalog from Codex
+   app-server's `model/list` RPC, caches it, and refreshes it periodically.
+   Elevenex only uses its built-in catalog as a fallback when that RPC is
+   unavailable, so prompt submission still works.
 6. Image attachments are staged as temporary local image files and sent through
    Codex SDK `local_image` inputs.
 7. Codex SDK stream events are converted into the same transcript item shape
