@@ -146,4 +146,48 @@ describe('ClaudeToolCallComponent', () => {
     expect(diff?.textContent).toContain('-2');
     expect(diff?.querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-line');
   });
+
+  it('renders every replacement from a Pi multi-edit', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeToolCallComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'tool-5',
+      kind: 'tool_use',
+      toolUseId: 'tool-5',
+      toolName: 'edit',
+      toolKind: 'edit',
+      toolInput: {
+        file_path: 'src/app.ts',
+        edits: [
+          { old_string: 'const a = 1;', new_string: 'const a = 2;' },
+          { old_string: 'const b = 1;', new_string: 'const b = 2;' },
+        ],
+      },
+      timestamp: '2026-04-24T08:00:00.000Z',
+    });
+    fixture.componentRef.setInput('result', {
+      id: 'tool-5-result',
+      kind: 'tool_result',
+      toolUseId: 'tool-5',
+      content: 'Successfully replaced 2 regions',
+      timestamp: '2026-04-24T08:00:01.000Z',
+    });
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
+    button.click();
+    fixture.detectChanges();
+
+    const diffs = fixture.nativeElement.querySelectorAll(
+      'cw-inline-diff',
+    ) as NodeListOf<HTMLElement>;
+    expect(diffs).toHaveLength(2);
+    expect(diffs[0].textContent).toContain('src/app.ts · Edit 1');
+    expect(diffs[1].textContent).toContain('src/app.ts · Edit 2');
+    expect(diffs[0].querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-line');
+    expect(diffs[1].querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-line');
+  });
 });

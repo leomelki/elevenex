@@ -235,12 +235,12 @@ type Todo = ToolTodoItem;
                 }
               }
               @case ('edit') {
-                @if (isEditDiff()) {
+                @for (diff of editDiffs(); track $index) {
                   <cw-inline-diff
-                    [html]="diffHtml()"
-                    [label]="editDiffLabel()"
-                    [additions]="editStats().additions"
-                    [deletions]="editStats().deletions"
+                    [html]="diff.html"
+                    [label]="diff.label"
+                    [additions]="diff.additions"
+                    [deletions]="diff.deletions"
                   />
                 }
                 @if (resultText() && state() === 'error') {
@@ -1146,37 +1146,51 @@ export class ClaudeToolCallComponent {
     return input?.command ?? '';
   });
 
-  readonly isEditDiff = computed(() => {
-    if (this.display().kind !== 'edit') return false;
-    const data = this.call().toolInput as Record<string, unknown> | undefined;
-    return (
-      !!data && typeof data['old_string'] === 'string' && typeof data['new_string'] === 'string'
-    );
-  });
-
   readonly editFilePath = computed(() => {
     if (this.display().kind !== 'edit') return '';
-    const data = this.call().toolInput as { file_path?: string } | undefined;
-    return data?.file_path ?? '';
+    const data = this.call().toolInput as
+      | { file_path?: string; filePath?: string; path?: string }
+      | undefined;
+    return data?.file_path ?? data?.filePath ?? data?.path ?? '';
   });
 
-  readonly editDiffLabel = computed(() => this.editFilePath() || 'Edit');
+  readonly editDiffs = computed<Array<{
+    html: SafeHtml;
+    label: string;
+    additions: number;
+    deletions: number;
+  }>>(() => {
+    if (this.display().kind !== 'edit') return [];
+    const data = this.call().toolInput as Record<string, unknown> | undefined;
+    if (!data) return [];
 
-  readonly editStats = computed(() => {
-    if (!this.isEditDiff()) return { additions: 0, deletions: 0 };
-    const data = this.call().toolInput as { old_string?: string; new_string?: string } | undefined;
-    return {
-      additions: countTextLines(data?.new_string),
-      deletions: countTextLines(data?.old_string),
-    };
+    const rawEdits = Array.isArray(data['edits']) ? data['edits'] : [data];
+    return rawEdits.flatMap((rawEdit, index) => {
+      if (!rawEdit || typeof rawEdit !== 'object') return [];
+      const edit = rawEdit as Record<string, unknown>;
+      const oldString = edit['old_string'] ?? edit['oldText'];
+      const newString = edit['new_string'] ?? edit['newText'];
+      if (typeof oldString !== 'string' || typeof newString !== 'string') return [];
+
+      const startLine = typeof edit['__startLine'] === 'number' ? edit['__startLine'] : 1;
+      const html = highlightedUnifiedDiffHtml(
+        oldString,
+        newString,
+        this.editFilePath(),
+        startLine,
+      );
+      const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+      const baseLabel = this.editFilePath() || 'Edit';
+      return [{
+        html: this.sanitizer.bypassSecurityTrustHtml(safe),
+        label: rawEdits.length > 1 ? `${baseLabel} · Edit ${index + 1}` : baseLabel,
+        additions: countTextLines(newString),
+        deletions: countTextLines(oldString),
+      }];
+    });
   });
 
-  readonly diffHtml = computed<SafeHtml>(() => {
-    const data = this.call().toolInput as { old_string?: string; new_string?: string; __startLine?: number } | undefined;
-    const html = highlightedUnifiedDiffHtml(data?.old_string ?? '', data?.new_string ?? '', this.editFilePath(), data?.__startLine ?? 1);
-    const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
-    return this.sanitizer.bypassSecurityTrustHtml(safe);
-  });
+  readonly isEditDiff = computed(() => this.editDiffs().length > 0);
 
   readonly writeContent = computed(() => {
     if (this.display().kind !== 'write') return '';
