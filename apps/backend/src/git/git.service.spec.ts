@@ -332,6 +332,46 @@ describe('GitService', () => {
   });
 
   describe('suggestCommitMessage', () => {
+    it('should query claude with a minimal preprompt, no tools, and repo convention docs', async () => {
+      fs.writeFileSync(
+        path.join(repoPath, 'AGENTS.md'),
+        'Follow the commit convention in COMMIT_CONVENTION.md.',
+      );
+      fs.writeFileSync(
+        path.join(repoPath, 'COMMIT_CONVENTION.md'),
+        'Use Conventional Commits.',
+      );
+      fs.writeFileSync(
+        path.join(repoPath, 'feature.ts'),
+        'export const value = 1;\n',
+      );
+      await service.stageFiles(repoPath, ['feature.ts']);
+
+      const generate = (service as any).textAgentGenerationService
+        .generate as jest.Mock;
+      generate.mockResolvedValue({
+        provider: 'claude',
+        model: 'haiku',
+        text: '{"subject":"feat(git): add feature","body":null}',
+      });
+
+      await service.suggestCommitMessage(repoPath, 'claude');
+
+      expect(generate).toHaveBeenCalledTimes(1);
+      const request = generate.mock.calls[0][0];
+      expect(request.claude.tools).toEqual([]);
+      expect(request.claude.settingSources).toEqual([]);
+      expect(typeof request.claude.systemPrompt).toBe('string');
+      expect(request.claude.systemPrompt.length).toBeLessThan(300);
+      expect(request.prompt).toContain('Repository convention docs:');
+      expect(request.prompt).toContain('### AGENTS.md');
+      expect(request.prompt).toContain(
+        'Follow the commit convention in COMMIT_CONVENTION.md.',
+      );
+      expect(request.prompt).toContain('### COMMIT_CONVENTION.md');
+      expect(request.prompt).toContain('Use Conventional Commits.');
+    });
+
     it('should reject when the selected provider cannot generate a message', async () => {
       fs.writeFileSync(
         path.join(repoPath, 'feature.ts'),

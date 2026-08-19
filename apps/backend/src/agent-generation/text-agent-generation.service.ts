@@ -57,6 +57,19 @@ export interface GenerateTextWithAgentRequest {
     settingSources?: Array<'user' | 'project' | 'local'>;
     allowedTools?: string[];
     canUseTool?: CanUseTool;
+    /**
+     * Custom system prompt. Defaults to the full `claude_code` preset prompt.
+     * Pass a short string to skip that preset entirely for cheap, one-shot
+     * tasks that don't need Claude Code's assistant persona or tool-use
+     * instructions.
+     */
+    systemPrompt?: string;
+    /**
+     * Built-in tool set. Defaults to the full `claude_code` preset (every
+     * tool schema sent with the request). Pass `[]` to send no tool schemas
+     * at all for tasks that never use tools.
+     */
+    tools?: string[] | { type: 'preset'; preset: 'claude_code' };
   };
   codex?: {
     model?: string;
@@ -134,11 +147,11 @@ export class TextAgentGenerationService {
           ? { allowedTools: request.claude.allowedTools }
           : {}),
         pathToClaudeCodeExecutable: this.resolveClaudeCodeExecutable(),
-        systemPrompt: {
+        systemPrompt: request.claude?.systemPrompt ?? {
           type: 'preset' as const,
           preset: 'claude_code' as const,
         },
-        tools: {
+        tools: request.claude?.tools ?? {
           type: 'preset' as const,
           preset: 'claude_code' as const,
         },

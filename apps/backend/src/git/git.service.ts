@@ -29,7 +29,25 @@ const MAX_UNTRACKED_STATS_FILE_BYTES = 1_000_000;
 const CONVENTIONAL_COMMIT_TYPES_EXAMPLE =
   'feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert';
 const MAX_COMMIT_SUBJECT_LENGTH = 200;
+const COMMIT_CONVENTION_DOC_FILENAMES = [
+  'AGENTS.md',
+  'COMMIT_CONVENTION.md',
+  'CONTRIBUTING.md',
+];
+const MAX_COMMIT_MESSAGE_CONVENTION_DOC_CHARS = 6_000;
+const COMMIT_MESSAGE_CLAUDE_SYSTEM_PROMPT =
+  'You generate git commit messages. You have no tool access. Follow the ' +
+  'user instructions exactly and respond with nothing but the requested JSON.';
 type CommitMessageProvider = 'claude' | 'codex' | 'pi' | 'gemini';
+interface CommitMessagePromptInput {
+  worktreePath: string;
+  branchName: string;
+  files: string[];
+  diff: string;
+  compactStatus: string;
+  compactLog: string;
+  conventionDocs: string;
+}
 
 export function isValidGitRef(ref: string): boolean {
   if (!ref || ref.length === 0) return false;
@@ -414,10 +432,11 @@ export class GitService {
         );
       }
 
-      const [diff, branchSummary, log] = await Promise.all([
+      const [diff, branchSummary, log, conventionDocs] = await Promise.all([
         this.getDiff(worktreePath, { staged: true }),
         git.branchLocal(),
         this.getLog(worktreePath, MAX_COMMIT_MESSAGE_LOG_ENTRIES),
+        this.readCommitConventionDocs(worktreePath),
       ]);
 
       const currentBranch = branchSummary.current || 'HEAD';
@@ -425,7 +444,7 @@ export class GitService {
       const compressedLog = this.buildCompactLog(log);
       const truncatedDiff = this.truncateDiffForPrompt(diff);
       this.logger.log(
-        `[commit-message:${requestId}] context loaded branch="${currentBranch}" diffChars=${diff.length} truncatedDiffChars=${truncatedDiff.length} recentCommits=${log.length}`,
+        `[commit-message:${requestId}] context loaded branch="${currentBranch}" diffChars=${diff.length} truncatedDiffChars=${truncatedDiff.length} recentCommits=${log.length} conventionDocChars=${conventionDocs.length}`,
       );
 
       const promptInput = {
@@ -435,6 +454,7 @@ export class GitService {
         diff: truncatedDiff,
         compactStatus: compressedStatus,
         compactLog: compressedLog,
+        conventionDocs,
       };
 
       const aiSuggestion = await this.generateCommitMessageWithProvider(
@@ -939,6 +959,30 @@ export class GitService {
     }
   }
 
+  private async readCommitConventionDocs(worktreePath: string): Promise<string> {
+    const sections = await Promise.all(
+      COMMIT_CONVENTION_DOC_FILENAMES.map(async (filename) => {
+        try {
+          const contents = await readFile(
+            path.join(worktreePath, filename),
+            'utf8',
+          );
+          const trimmed = contents.trim();
+          if (!trimmed) return null;
+          const truncated =
+            trimmed.length > MAX_COMMIT_MESSAGE_CONVENTION_DOC_CHARS
+              ? `${trimmed.slice(0, MAX_COMMIT_MESSAGE_CONVENTION_DOC_CHARS)}\n\n[truncated]`
+              : trimmed;
+          return `### ${filename}\n${truncated}`;
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    return sections.filter((section): section is string => section !== null).join('\n\n');
+  }
+
   private buildCompactStatusSummary(files: string[]): string {
     const visibleFiles = files.slice(0, MAX_COMMIT_MESSAGE_STATUS_FILES);
     const lines = visibleFiles.map((file) => `- ${file}`);
@@ -963,14 +1007,9 @@ export class GitService {
     return `${diff.slice(0, MAX_COMMIT_MESSAGE_DIFF_CHARS)}\n\n[diff truncated for commit message generation]`;
   }
 
-  private async generateCommitMessageWithClaude(input: {
-    worktreePath: string;
-    branchName: string;
-    files: string[];
-    diff: string;
-    compactStatus: string;
-    compactLog: string;
-  }): Promise<CommitMessageSuggestion | null> {
+  private async generateCommitMessageWithClaude(
+    input: CommitMessagePromptInput,
+  ): Promise<CommitMessageSuggestion | null> {
     return this.generateCommitSuggestionWithRetry('claude', (retryHint) =>
       this.textAgentGenerationService.generate({
         provider: 'claude',
@@ -978,23 +1017,17 @@ export class GitService {
         prompt: this.buildCommitMessagePrompt({ ...input, retryHint }),
         taskName: 'commit-message',
         claude: {
-          canUseTool: async () => ({
-            behavior: 'deny' as const,
-            message: 'Tool use disabled',
-          }),
+          systemPrompt: COMMIT_MESSAGE_CLAUDE_SYSTEM_PROMPT,
+          tools: [],
+          settingSources: [],
         },
       }),
     );
   }
 
-  private async generateCommitMessageWithCodex(input: {
-    worktreePath: string;
-    branchName: string;
-    files: string[];
-    diff: string;
-    compactStatus: string;
-    compactLog: string;
-  }): Promise<CommitMessageSuggestion | null> {
+  private async generateCommitMessageWithCodex(
+    input: CommitMessagePromptInput,
+  ): Promise<CommitMessageSuggestion | null> {
     return this.generateCommitSuggestionWithRetry('codex', (retryHint) =>
       this.textAgentGenerationService.generate({
         provider: 'codex',
@@ -1005,14 +1038,9 @@ export class GitService {
     );
   }
 
-  private async generateCommitMessageWithPi(input: {
-    worktreePath: string;
-    branchName: string;
-    files: string[];
-    diff: string;
-    compactStatus: string;
-    compactLog: string;
-  }): Promise<CommitMessageSuggestion | null> {
+  private async generateCommitMessageWithPi(
+    input: CommitMessagePromptInput,
+  ): Promise<CommitMessageSuggestion | null> {
     return this.generateCommitSuggestionWithRetry('pi', (retryHint) =>
       this.textAgentGenerationService.generate({
         provider: 'pi',
@@ -1023,14 +1051,9 @@ export class GitService {
     );
   }
 
-  private async generateCommitMessageWithGemini(input: {
-    worktreePath: string;
-    branchName: string;
-    files: string[];
-    diff: string;
-    compactStatus: string;
-    compactLog: string;
-  }): Promise<CommitMessageSuggestion | null> {
+  private async generateCommitMessageWithGemini(
+    input: CommitMessagePromptInput,
+  ): Promise<CommitMessageSuggestion | null> {
     return this.generateCommitSuggestionWithRetry('gemini', (retryHint) =>
       this.textAgentGenerationService.generate({
         provider: 'gemini',
@@ -1069,14 +1092,7 @@ export class GitService {
 
   private generateCommitMessageWithProvider(
     provider: CommitMessageProvider,
-    input: {
-      worktreePath: string;
-      branchName: string;
-      files: string[];
-      diff: string;
-      compactStatus: string;
-      compactLog: string;
-    },
+    input: CommitMessagePromptInput,
   ): Promise<CommitMessageSuggestion | null> {
     switch (provider) {
       case 'claude':
@@ -1095,6 +1111,7 @@ export class GitService {
     compactLog: string;
     compactStatus: string;
     diff: string;
+    conventionDocs: string;
     retryHint?: string;
   }): string {
     return [
@@ -1110,7 +1127,8 @@ export class GitService {
       '- The subject string is the exact first line that will be committed.',
       '- The body string, when non-null, is the exact commit body after a blank line.',
       '',
-      'Follow the project commit style shown in the recent commits below.',
+      'Follow the project commit style shown in the recent commits below and any',
+      'repository convention docs provided.',
       'Match their format, tone, and level of detail.',
       `If no clear convention is detectable, fall back to Conventional Commits (e.g. feat(scope): description), using one of these types: ${CONVENTIONAL_COMMIT_TYPES_EXAMPLE}.`,
       'Describe the semantic change, not the file operations.',
@@ -1126,6 +1144,9 @@ export class GitService {
       '',
       'Unified diff:',
       input.diff || '[empty diff]',
+      '',
+      'Repository convention docs:',
+      input.conventionDocs || '- none found',
     ].join('\n');
   }
 
