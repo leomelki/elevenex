@@ -1,4 +1,5 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -161,7 +162,7 @@ export class ConversationExportService {
     const artifactDir = join(tmpdir(), 'elevenex', 'conversation-exports');
     const artifactPath = join(
       artifactDir,
-      `session-${sessionId}-${provider.replace(/[^a-z0-9_-]/gi, '_')}.md`,
+      `session-${sessionId}-${provider.replace(/[^a-z0-9_-]/gi, '_')}-${randomUUID()}.md`,
     );
     const mentionModel = compactNestedSessionMentions(model);
     await mkdir(artifactDir, { recursive: true });
