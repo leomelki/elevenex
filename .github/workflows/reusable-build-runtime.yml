@@ -28,15 +28,17 @@ jobs:
             runs-on: windows-2022
             archive_extension: zip
     runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
       - name: Install native build toolchain
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
           echo "\$nrconf{restart} = 'a';" | sudo tee -a /etc/needrestart/needrestart.conf > /dev/null
-          sudo apt-get install -y python3 make g++
+          APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15"
+          sudo apt-get $APT_OPTS update
+          sudo apt-get $APT_OPTS install -y python3 make g++
 
       - uses: pnpm/action-setup@v4
         with:
