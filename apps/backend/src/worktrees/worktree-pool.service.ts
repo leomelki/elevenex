@@ -766,9 +766,29 @@ export class WorktreePoolService {
     isDirty: boolean;
     hasConflicts: boolean;
   }> {
+    const git = worktreeSimpleGit(worktreePath);
     try {
-      const status = await worktreeSimpleGit(worktreePath).status();
-      const currentBranch = status.current && status.current !== 'HEAD' ? status.current : null;
+      // Git's built-in fsmonitor daemon is only supported on Windows and
+      // macOS. Some large, shared repositories still set `core.fsmonitor=true`
+      // on Linux; Git then falls back to a very expensive full worktree scan.
+      // Override that invalid setting for this read only, while preserving
+      // hook-based fsmonitor configurations (whose value is a path).
+      if (await this.hasUnsupportedBuiltinFsMonitor(git)) {
+        const output = await git.raw([
+          '-c',
+          'core.fsmonitor=false',
+          'status',
+          '--porcelain=v2',
+          '--branch',
+          '-z',
+          '--untracked-files=normal',
+        ]);
+        return this.parseStatusPorcelainV2(output);
+      }
+
+      const status = await git.status();
+      const currentBranch =
+        status.current && status.current !== 'HEAD' ? status.current : null;
       return {
         currentBranch,
         isDirty: !status.isClean(),
@@ -781,6 +801,47 @@ export class WorktreePoolService {
         hasConflicts: false,
       };
     }
+  }
+
+  private async hasUnsupportedBuiltinFsMonitor(
+    git: ReturnType<typeof worktreeSimpleGit>,
+  ): Promise<boolean> {
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      return false;
+    }
+    try {
+      const value = await git.raw([
+        'config',
+        '--type=bool',
+        '--get',
+        'core.fsmonitor',
+      ]);
+      return value.trim() === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  private parseStatusPorcelainV2(output: string): {
+    currentBranch: string | null;
+    isDirty: boolean;
+    hasConflicts: boolean;
+  } {
+    let currentBranch: string | null = null;
+    let isDirty = false;
+    let hasConflicts = false;
+
+    for (const record of output.split('\0')) {
+      if (record.startsWith('# branch.head ')) {
+        const branch = record.slice('# branch.head '.length);
+        currentBranch = branch === '(detached)' ? null : branch;
+      } else if (/^[12u?] /.test(record)) {
+        isDirty = true;
+        if (record.startsWith('u ')) hasConflicts = true;
+      }
+    }
+
+    return { currentBranch, isDirty, hasConflicts };
   }
 
   private async uniqueWorkspaceName(repoId: number, baseName: string) {

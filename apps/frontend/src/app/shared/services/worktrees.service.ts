@@ -1,6 +1,6 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, Subscription } from 'rxjs';
 import {
   CreatePoolWorktreePayload,
   CreateWorktreeJob,
@@ -31,6 +31,7 @@ export class WorktreesService {
       );
       const items: WorktreePoolItem[] = [];
       let closed = false;
+      let fallbackSubscription: Subscription | null = null;
 
       const onWorktree = (event: MessageEvent) => {
         if (closed) return;
@@ -51,11 +52,21 @@ export class WorktreesService {
         subscriber.complete();
       };
 
-      const onError = (error: Event) => {
+      const onError = () => {
         if (closed) return;
         closed = true;
         source.close();
-        subscriber.error(error);
+
+        // EventSource exposes neither the HTTP status nor the response body
+        // when the stream is interrupted, which previously produced the
+        // unhelpful "Could not load worktrees" toast. Retry through HttpClient:
+        // it is also more tolerant of proxies that do not support SSE and
+        // preserves the backend's actual error response if loading really fails.
+        fallbackSubscription = this.getPoolByRepo(repoId).subscribe({
+          next: (fallbackItems) => subscriber.next(fallbackItems),
+          error: (error) => subscriber.error(error),
+          complete: () => subscriber.complete(),
+        });
       };
 
       source.addEventListener('worktree', onWorktree);
@@ -65,6 +76,7 @@ export class WorktreesService {
       return () => {
         closed = true;
         source.close();
+        fallbackSubscription?.unsubscribe();
       };
     });
   }

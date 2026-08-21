@@ -314,6 +314,37 @@ describe('WorktreePoolService', () => {
     expect(featureItem?.hasConflicts).toBe(true);
   });
 
+  it('uses a fast status scan when built-in fsmonitor is unsupported', async () => {
+    jest
+      .spyOn(service as any, 'hasUnsupportedBuiltinFsMonitor')
+      .mockResolvedValue(true);
+    gitMock.raw.mockResolvedValue(
+      '# branch.oid abc123\0# branch.head feature\0' +
+        '1 .M N... 100644 100644 100644 abc123 abc123 src/file.ts\0' +
+        'u UU N... 100644 100644 100644 100644 abc123 abc123 abc123 conflicted.ts\0',
+    );
+
+    const snapshot = await (service as any).getWorktreeStatusSnapshot(
+      'C:\\repo-feature',
+    );
+
+    expect(gitMock.status).not.toHaveBeenCalled();
+    expect(gitMock.raw).toHaveBeenCalledWith([
+      '-c',
+      'core.fsmonitor=false',
+      'status',
+      '--porcelain=v2',
+      '--branch',
+      '-z',
+      '--untracked-files=normal',
+    ]);
+    expect(snapshot).toEqual({
+      currentBranch: 'feature',
+      isDirty: true,
+      hasConflicts: true,
+    });
+  });
+
   it('uses status.current as branch and treats null as detached', async () => {
     const detachedWorktree: WorktreeInfo = {
       path: 'C:\\repo-detached',
