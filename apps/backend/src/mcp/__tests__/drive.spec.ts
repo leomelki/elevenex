@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { DeltaCursorStore } from '../tool-registry/delta-cursor.store.js';
 import { DeepLinkBuilder } from '../deep-link/deep-link.builder.js';
 import { ToolError } from '../tool-registry/tool.types.js';
@@ -32,14 +33,19 @@ function makeCtx(services: unknown): ToolContext {
   } as unknown as ToolContext;
 }
 
-/** A baseline runtime provider double with every method drive tools may call. */
+/**
+ * A baseline runtime provider double with every method drive tools may call.
+ * It's a real EventEmitter (like the production ClaudeRuntimeService) so
+ * prompt_session's blocking wait can subscribe to `.on('event', ...)`.
+ */
 function makeRuntime(overrides: Record<string, unknown> = {}) {
-  return {
+  return Object.assign(new EventEmitter(), {
     submitPrompt: jest.fn().mockResolvedValue(undefined),
     interrupt: jest.fn().mockResolvedValue(undefined),
     setSelectedModel: jest.fn().mockResolvedValue({ selectedModel: null }),
     getRuntimeState: jest.fn().mockResolvedValue({
       sessionState: 'idle',
+      runPhase: 'idle',
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
     }),
@@ -47,7 +53,7 @@ function makeRuntime(overrides: Record<string, unknown> = {}) {
     denyPermission: jest.fn().mockResolvedValue(undefined),
     setPermissionMode: jest.fn().mockResolvedValue({}),
     ...overrides,
-  };
+  });
 }
 
 /** Build a services bag with a session and a single runtime provider. */
@@ -64,7 +70,9 @@ function makeServices(opts: {
   return {
     runtime,
     services: {
-      sessions: {
+      // Also a real EventEmitter, like the production SessionsService, so
+      // prompt_session's `session-status-changed` listener can attach.
+      sessions: Object.assign(new EventEmitter(), {
         findOne: jest
           .fn()
           .mockImplementation(async () => {
@@ -83,7 +91,7 @@ function makeServices(opts: {
           .fn()
           .mockResolvedValue({ id: 7, activeAgentProvider: 'codex' }),
         ...opts.sessionsOverrides,
-      },
+      }),
       agentRuntime: {
         getProvider: jest.fn().mockReturnValue(runtime),
         getProviderFeature: jest.fn().mockReturnValue(runtime),
@@ -151,6 +159,102 @@ describe('Drive tool group', () => {
       await expect(
         promptSessionTool.handler({ sessionId: 404, prompt: 'go' }, makeCtx(services)),
       ).rejects.toBeInstanceOf(ToolError);
+    });
+
+    it('does not report completed when the prompt was queued behind live background work', async () => {
+      // submitPrompt() silently queues instead of running when the runtime is
+      // still busy with a `run_in_background` task (shouldQueueBehindBackground),
+      // so sessionState/runPhase are left over from the PREVIOUS finished turn:
+      // idle/idle, even though nothing has actually run yet.
+      const runtime = makeRuntime({
+        getRuntimeState: jest.fn().mockResolvedValue({
+          sessionState: 'idle',
+          runPhase: 'idle',
+          backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
+          pendingPrompts: [],
+          pendingPermissionRequest: null,
+          pendingUserInputRequest: null,
+        }),
+      });
+      const { services } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'claude' },
+        runtime,
+      });
+
+      const pending = promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      // Give the handler a tick to run past the pre-check and subscribe.
+      await new Promise((r) => setTimeout(r, 10));
+      runtime.emit('event', {
+        type: 'run_state',
+        payload: {
+          sessionId: 7,
+          sessionState: 'idle',
+          runPhase: 'idle',
+          backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
+          pendingPrompts: [],
+        },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Still waiting: the background task hasn't cleared, so this must not
+      // have resolved as completed yet.
+      let settledEarly = false;
+      void pending.then(() => {
+        settledEarly = true;
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(settledEarly).toBe(false);
+
+      // The background task finishes and drains the queued prompt, which then
+      // runs and completes for real.
+      runtime.getRuntimeState = jest.fn().mockResolvedValue({
+        sessionState: 'idle',
+        runPhase: 'idle',
+        backgroundWork: [],
+        pendingPrompts: [],
+      });
+      runtime.emit('event', { type: 'complete', payload: { sessionId: 7 } });
+
+      const res = await pending;
+      expect(res.data).toMatchObject({ sessionId: 7, accepted: true, status: 'completed' });
+    });
+
+    it('waits through a background_work clear event before reporting completed', async () => {
+      const runtime = makeRuntime({
+        getRuntimeState: jest.fn().mockResolvedValue({
+          sessionState: 'idle',
+          runPhase: 'idle',
+          backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
+          pendingPrompts: [],
+        }),
+      });
+      const { services } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'claude' },
+        runtime,
+      });
+
+      const pending = promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Background work clears with nothing queued behind it — no further
+      // `complete`/`run_state` event will ever fire, so the `background_work`
+      // event itself must be enough to re-check and resolve.
+      runtime.getRuntimeState = jest.fn().mockResolvedValue({
+        sessionState: 'idle',
+        runPhase: 'idle',
+        backgroundWork: [],
+        pendingPrompts: [],
+      });
+      runtime.emit('event', { type: 'background_work', payload: { sessionId: 7, backgroundWork: [] } });
+
+      const res = await pending;
+      expect(res.data).toMatchObject({ sessionId: 7, accepted: true, status: 'completed' });
     });
   });
 

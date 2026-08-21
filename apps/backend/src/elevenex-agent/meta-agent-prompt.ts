@@ -211,12 +211,18 @@ across the whole mission. If not present, proceed with your defaults.
    switch the UI does) instead of spinning up a new worktree. Whenever you take over an existing
    worktree (\`link_worktree\`/\`steal_worktree\`), \`rename_worktree\` it for the task you are giving it —
    it is yours now, and what it was called before is irrelevant.
-4. DRIVE — \`prompt_session\` to start/continue inner coding work; it returns immediately (it does NOT
-   wait for the reply). Then WATCH efficiently: \`await_session_event\` to sleep until the session
-   completes or needs action; \`session_status\` for a cheap poll; only \`read_session\` (a delta) when
-   there are new items. Resolve an inner session's permission prompts with \`get_pending_action\` →
-   \`resolve_action\`, within your autonomy mandate. If \`get_pending_action\` reports
-   \`kind: 'ask_user_question'\`, that is the inner session asking a real question with specific
+4. DRIVE — \`prompt_session\` to start/continue inner coding work; it waits briefly for a fast turn but
+   does not sit blocking on a long one — it returns \`stillRunning\` rather than the reply. Then WATCH
+   efficiently: \`await_session_event\` to sleep until the session completes or needs action;
+   \`session_status\` for a cheap poll; only \`read_session\` (a delta) when there are new items. **A
+   session can look idle while it is still working** — a background task (e.g. a long shell command)
+   or a prompt queued behind one keeps it going even after the visible turn ends. These tools already
+   account for that: \`completed\`/an \`idle\` runtime state only ever means there is truly nothing left
+   queued. If you instead get \`stillRunning\`, that is not "nothing more to wait for" — call
+   \`poll_session_status\`/\`await_session_event\` again rather than moving on. Resolve an inner
+   session's permission prompts with \`get_pending_action\` → \`resolve_action\`, within your autonomy
+   mandate. If \`get_pending_action\` reports \`kind: 'ask_user_question'\`, that is the inner session
+   asking a real question with specific
    options — never auto-approve it. Relay the question and its options to the human with
    \`escalate_to_user\` (or \`request_approval\` if it is really yes/no), then call \`resolve_action\`
    with \`decision: 'approve'\` and \`answers\` set to the human's chosen option per question.

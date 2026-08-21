@@ -2,6 +2,10 @@ import type { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import { defineTool } from '../../tool-registry/tool.types.js';
 import { resolveSessionProvider } from './provider.util.js';
+import {
+  isSessionSettled,
+  type SessionRuntimeSnapshot,
+} from '../session-runtime-state.util.js';
 
 // Cap at ~3 min to stay inside Claude Code's 5-min tool-call timeout.
 const PROMPT_WAIT_MS = 170_000;
@@ -22,7 +26,7 @@ export const promptSessionTool = defineTool({
   costClass: 'heavy',
   mutates: true,
   description:
-    "Send a prompt to a session's agent and wait up to 170 s for it to finish. 🔴heavy. If the session completes, returns status='completed'. If still running after 170 s, returns stillRunning=true — call poll_session_status immediately (no delay needed; it blocks internally). Resolve any permission prompts with get_pending_action → resolve_action.",
+    "Send a prompt to a session's agent and wait up to 170 s for it to finish. 🔴heavy. If the session completes, returns status='completed' — this only happens once the session is truly settled, not merely when a background task or a prompt queued behind one leaves it looking idle. If still running after 170 s, returns stillRunning=true — call poll_session_status immediately (no delay needed; it blocks internally). Resolve any permission prompts with get_pending_action → resolve_action.",
   inputShape: {
     sessionId: z
       .number()
@@ -55,30 +59,33 @@ export const promptSessionTool = defineTool({
     const sessionEmitter = sessions as unknown as EventEmitter;
     const runtimeEmitter = runtime as unknown as EventEmitter;
 
-    // Pre-check: submitPrompt() sets runPhase='running' before returning, so
-    // seeing idle here means the prompt already finished (very fast turn or a
-    // stale/non-running session that never transitioned). Resolve immediately
-    // rather than waiting up to 90 s for an event that already fired.
+    // Pre-check: submitPrompt() sets runPhase='running' before returning when it
+    // actually starts a run, so seeing idle here means either a very fast turn
+    // already finished, OR — if the runtime queued this prompt behind live
+    // background work (shouldQueueBehindBackground) — it hasn't started at all
+    // yet. isSessionSettled distinguishes the two: only resolve 'completed' when
+    // there is truly nothing left queued, otherwise fall through to wait for the
+    // real completion event below.
     const initialState = await runtime.getRuntimeState(args.sessionId).catch(() => null);
-    const initialRuntimeState = initialState as { sessionState?: string | null; runPhase?: string | null } | null;
+    const initialRuntimeState = initialState as SessionRuntimeSnapshot | null;
     if (initialRuntimeState) {
       if (initialRuntimeState.sessionState === 'requires_action') {
         return {
-          data: { sessionId: args.sessionId, accepted: true, status: 'requires_action' },
+          data: { sessionId: args.sessionId, accepted: true, provider, status: 'requires_action' },
           deepLink: ctx.deepLink.session(args.sessionId),
           nextStep: 'Session blocked: get_pending_action to inspect, then resolve_action.',
         };
       }
       if (initialRuntimeState.runPhase === 'error') {
         return {
-          data: { sessionId: args.sessionId, accepted: true, status: 'failed' },
+          data: { sessionId: args.sessionId, accepted: true, provider, status: 'failed' },
           deepLink: ctx.deepLink.session(args.sessionId),
           nextStep: 'Session finished. Call read_session for the transcript.',
         };
       }
-      if (initialRuntimeState.sessionState === 'idle' && initialRuntimeState.runPhase === 'idle') {
+      if (isSessionSettled(initialRuntimeState)) {
         return {
-          data: { sessionId: args.sessionId, accepted: true, status: 'completed' },
+          data: { sessionId: args.sessionId, accepted: true, provider, status: 'completed' },
           deepLink: ctx.deepLink.session(args.sessionId),
           nextStep: 'Session finished. Call read_session for the transcript.',
         };
@@ -103,7 +110,7 @@ export const promptSessionTool = defineTool({
 
         if (status === 'timeout' || status === 'aborted') {
           resolve({
-            data: { sessionId: args.sessionId, accepted: true, stillRunning: true },
+            data: { sessionId: args.sessionId, accepted: true, provider, stillRunning: true },
             deepLink: ctx.deepLink.session(args.sessionId),
             nextStep:
               'Session is still running after 170 s. Call poll_session_status immediately — it blocks internally so no sleep is needed between calls.',
@@ -112,7 +119,7 @@ export const promptSessionTool = defineTool({
         }
 
         resolve({
-          data: { sessionId: args.sessionId, accepted: true, status },
+          data: { sessionId: args.sessionId, accepted: true, provider, status },
           deepLink: ctx.deepLink.session(args.sessionId),
           nextStep:
             status === 'requires_action'
@@ -128,19 +135,30 @@ export const promptSessionTool = defineTool({
       };
 
       // Runtime event listener: the actual source of truth for run completion.
+      // `run_state` payloads already carry backgroundWork/pendingPrompts, so they
+      // can be judged directly. `complete` fires as soon as the visible turn
+      // ends even while a background task is still live, and `background_work`
+      // fires when that task later clears (possibly with nothing else queued
+      // behind it, so no further `complete`/`run_state` event is coming) — both
+      // need a fresh read to confirm the session is truly settled.
       const onRuntimeEvent = (event: {
         type: string;
-        payload: { sessionId: number; sessionState?: string | null; runPhase?: string | null };
+        payload: { sessionId: number } & SessionRuntimeSnapshot;
       }) => {
         if (event.payload.sessionId !== args.sessionId) return;
-        if (event.type === 'complete') {
-          finish('completed');
+        if (event.type === 'error') {
+          finish('failed');
         } else if (event.type === 'run_state') {
           if (event.payload.sessionState === 'requires_action') finish('requires_action');
           else if (event.payload.runPhase === 'error') finish('failed');
-          else if (event.payload.sessionState === 'idle' && event.payload.runPhase === 'idle') finish('completed');
-        } else if (event.type === 'error') {
-          finish('failed');
+          else if (isSessionSettled(event.payload)) finish('completed');
+        } else if (event.type === 'complete' || event.type === 'background_work') {
+          void runtime
+            .getRuntimeState(args.sessionId)
+            .then((s) => {
+              if (isSessionSettled(s as SessionRuntimeSnapshot)) finish('completed');
+            })
+            .catch(() => {});
         }
       };
 
@@ -160,10 +178,10 @@ export const promptSessionTool = defineTool({
       // and listener registration. Handles the case where the prompt completed
       // during that window.
       runtime.getRuntimeState(args.sessionId).then((s) => {
-        const state = s as { sessionState?: string | null; runPhase?: string | null };
+        const state = s as SessionRuntimeSnapshot;
         if (state.sessionState === 'requires_action') finish('requires_action');
         else if (state.runPhase === 'error') finish('failed');
-        else if (state.sessionState === 'idle' && state.runPhase === 'idle') finish('completed');
+        else if (isSessionSettled(state)) finish('completed');
       }).catch(() => {});
     });
   },

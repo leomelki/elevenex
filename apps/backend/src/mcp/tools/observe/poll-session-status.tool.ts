@@ -2,6 +2,10 @@ import type { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import { defineTool, ToolError, type ToolContext } from '../../tool-registry/tool.types.js';
 import { renderMarkdown } from '../../../agent-runtime/conversation-export.service.js';
+import {
+  isSessionSettled,
+  type SessionRuntimeSnapshot,
+} from '../session-runtime-state.util.js';
 
 // Cap at ~3 min to stay inside Claude Code's 5-min tool-call timeout.
 const POLL_WAIT_MS = 170_000;
@@ -24,7 +28,7 @@ export const pollSessionStatusTool = defineTool({
   title: 'Poll session status',
   costClass: 'heavy',
   description:
-    'Block up to 170 s for a running session to finish (event-driven, not a poll loop). 🔴heavy. On completion: returns a small transcript summary (call read_session for the full transcript or more detail). On timeout: returns stillRunning=true — call poll_session_status again immediately, no sleep needed between calls.',
+    'Block up to 170 s for a running session to finish (event-driven, not a poll loop). 🔴heavy. Only reports completion once the session is truly settled — a live background task or a prompt queued behind one keeps it waiting even though the visible turn already ended. On completion: returns a small transcript summary (call read_session for the full transcript or more detail). On timeout: returns stillRunning=true — call poll_session_status again immediately, no sleep needed between calls.',
   annotations: { readOnlyHint: true },
   inputShape: {
     sessionId: z
@@ -60,8 +64,10 @@ export const pollSessionStatusTool = defineTool({
     const runtime = ctx.services.agentRuntime.getProvider(session.activeAgentProvider);
 
     // Check live runtime state before subscribing to close any already-done race.
+    // isSessionSettled (not a raw idle/idle check) so a live background task or
+    // a prompt queued behind one doesn't get reported as completed early.
     const initialState = await runtime.getRuntimeState(session.id).catch(() => null);
-    const initialRuntimeState = initialState as { sessionState?: string | null; runPhase?: string | null } | null;
+    const initialRuntimeState = initialState as SessionRuntimeSnapshot | null;
     if (initialRuntimeState) {
       if (initialRuntimeState.sessionState === 'requires_action') {
         return buildTerminalResult(ctx, session.id, session.activeAgentProvider, 'requires_action');
@@ -69,7 +75,7 @@ export const pollSessionStatusTool = defineTool({
       if (initialRuntimeState.runPhase === 'error') {
         return buildTerminalResult(ctx, session.id, session.activeAgentProvider, 'failed');
       }
-      if (initialRuntimeState.sessionState === 'idle' && initialRuntimeState.runPhase === 'idle') {
+      if (isSessionSettled(initialRuntimeState)) {
         return buildTerminalResult(ctx, session.id, session.activeAgentProvider, 'completed');
       }
     }
@@ -115,18 +121,30 @@ export const pollSessionStatusTool = defineTool({
       };
 
       // Runtime event listener: the actual source of truth for run completion.
+      // `run_state` payloads already carry backgroundWork/pendingPrompts, so they
+      // can be judged directly. `complete` fires as soon as the visible turn
+      // ends even while a background task is still live, and `background_work`
+      // fires when that task later clears (possibly with nothing else queued
+      // behind it, so no further `complete`/`run_state` event is coming) — both
+      // need a fresh read to confirm the session is truly settled.
       const onRuntimeEvent = (event: {
         type: string;
-        payload: { sessionId: number; sessionState?: string | null; runPhase?: string | null };
+        payload: { sessionId: number } & SessionRuntimeSnapshot;
       }) => {
         if (event.payload.sessionId !== args.sessionId) return;
-        if (event.type === 'complete') {
-          void finish('completed');
+        if (event.type === 'error') {
+          void finish('failed');
         } else if (event.type === 'run_state') {
           if (event.payload.sessionState === 'requires_action') void finish('requires_action');
           else if (event.payload.runPhase === 'error') void finish('failed');
-        } else if (event.type === 'error') {
-          void finish('failed');
+          else if (isSessionSettled(event.payload)) void finish('completed');
+        } else if (event.type === 'complete' || event.type === 'background_work') {
+          void runtime
+            .getRuntimeState(args.sessionId)
+            .then((s) => {
+              if (isSessionSettled(s as SessionRuntimeSnapshot)) void finish('completed');
+            })
+            .catch(() => {});
         }
       };
 
@@ -145,10 +163,10 @@ export const pollSessionStatusTool = defineTool({
       // Re-check via runtime state after subscribing to close the race between
       // our initial check above and listener registration.
       runtime.getRuntimeState(args.sessionId).then((s) => {
-        const state = s as { sessionState?: string | null; runPhase?: string | null };
+        const state = s as SessionRuntimeSnapshot;
         if (state.sessionState === 'requires_action') void finish('requires_action');
         else if (state.runPhase === 'error') void finish('failed');
-        else if (state.sessionState === 'idle' && state.runPhase === 'idle') void finish('completed');
+        else if (isSessionSettled(state)) void finish('completed');
       }).catch(() => {});
     });
   },

@@ -1,6 +1,10 @@
 import type { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
+import {
+  isSessionSettled,
+  type SessionRuntimeSnapshot,
+} from '../session-runtime-state.util.js';
 
 const DEFAULT_EVENTS = ['completed', 'requires_action', 'failed'];
 // Cap at ~3 min to stay inside Claude Code's 5-min tool-call timeout.
@@ -19,7 +23,7 @@ export const awaitSessionEventTool = defineTool({
   title: 'Await session event',
   costClass: 'heavy',
   description:
-    "Block until a session reaches one of `events` (default completed/requires_action/failed) or `timeoutMs` elapses — event-driven, not polling. 🔴 Use instead of looping session_status. On resolve: read_session for the delta, or get_pending_action when requires_action. On timeout: re-call immediately — no sleep needed.",
+    "Block until a session reaches one of `events` (default completed/requires_action/failed) or `timeoutMs` elapses — event-driven, not polling. 🔴 Use instead of looping session_status. `completed` only fires once the session is truly settled: a live background task or a prompt queued behind one keeps it running even though the visible turn already ended, so this correctly keeps waiting through that instead of returning early. On resolve: read_session for the delta, or get_pending_action when requires_action. On timeout: re-call immediately — no sleep needed.",
   annotations: { readOnlyHint: true },
   inputShape: {
     sessionId: z
@@ -77,13 +81,13 @@ export const awaitSessionEventTool = defineTool({
     });
 
     // Map runtime state to a logical event name the caller cares about.
-    const runtimeEventFor = (s: {
-      sessionState?: string | null;
-      runPhase?: string | null;
-    }): string | null => {
+    // idle+idle alone is NOT "completed": a live background task or a prompt
+    // queued behind one will resume this session on its own (see
+    // session-runtime-state.util.ts) — isSessionSettled accounts for both.
+    const runtimeEventFor = (s: SessionRuntimeSnapshot): string | null => {
       if (s.sessionState === 'requires_action') return 'requires_action';
       if (s.runPhase === 'error') return 'failed';
-      if (s.sessionState === 'idle' && s.runPhase === 'idle') return 'completed';
+      if (isSessionSettled(s)) return 'completed';
       return null;
     };
 
@@ -97,9 +101,7 @@ export const awaitSessionEventTool = defineTool({
     // Check live runtime state before subscribing to close any already-done race.
     const initialState = await runtime.getRuntimeState(session.id).catch(() => null);
     if (initialState) {
-      const logicalEvent = runtimeEventFor(
-        initialState as { sessionState?: string | null; runPhase?: string | null },
-      );
+      const logicalEvent = runtimeEventFor(initialState as SessionRuntimeSnapshot);
       if (logicalEvent && wanted.has(logicalEvent)) {
         return makeResult(logicalEvent, logicalEvent);
       }
@@ -135,22 +137,34 @@ export const awaitSessionEventTool = defineTool({
       };
 
       // Runtime event listener: the actual source of truth for run completion.
+      // `run_state` payloads already carry backgroundWork/pendingPrompts (see
+      // emitRunState), so they can be judged directly. `complete` and
+      // `background_work` payloads don't carry the full snapshot — a `complete`
+      // can fire while a background task is still live, and a `background_work`
+      // clear can fire with nothing queued behind it — so re-check the live
+      // state before deciding either one means the session is truly settled.
       const onRuntimeEvent = (event: {
         type: string;
-        payload: { sessionId: number; sessionState?: string | null; runPhase?: string | null };
+        payload: { sessionId: number } & SessionRuntimeSnapshot;
       }) => {
         if (event.payload.sessionId !== session.id) return;
-        let logicalEvent: string | null = null;
-        if (event.type === 'complete') {
-          logicalEvent = 'completed';
-        } else if (event.type === 'run_state') {
-          logicalEvent = runtimeEventFor(event.payload);
-        } else if (event.type === 'error') {
-          logicalEvent = 'failed';
+        if (event.type === 'error') {
+          if (wanted.has('failed')) finish('failed', 'failed');
+          return;
         }
-        if (logicalEvent && wanted.has(logicalEvent)) {
-          finish(logicalEvent, logicalEvent);
+        if (event.type === 'run_state') {
+          const logicalEvent = runtimeEventFor(event.payload);
+          if (logicalEvent && wanted.has(logicalEvent)) finish(logicalEvent, logicalEvent);
+          return;
         }
+        if (event.type !== 'complete' && event.type !== 'background_work') return;
+        void runtime
+          .getRuntimeState(session.id)
+          .then((s) => {
+            const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
+            if (logicalEvent && wanted.has(logicalEvent)) finish(logicalEvent, logicalEvent);
+          })
+          .catch(() => {});
       };
 
       const onAbort = () => finish('aborted', 'aborted');
@@ -169,8 +183,7 @@ export const awaitSessionEventTool = defineTool({
       // Re-check runtime state after subscribing to close the race between our
       // initial check above and listener registration.
       runtime.getRuntimeState(session.id).then((s) => {
-        const state = s as { sessionState?: string | null; runPhase?: string | null };
-        const logicalEvent = runtimeEventFor(state);
+        const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
         if (logicalEvent && wanted.has(logicalEvent)) finish(logicalEvent, logicalEvent);
       }).catch(() => {});
     });

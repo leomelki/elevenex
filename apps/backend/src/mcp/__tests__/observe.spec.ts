@@ -9,6 +9,7 @@ import { textSearchTool } from '../tools/observe/text-search.tool.js';
 import { readFileTool } from '../tools/observe/read-file.tool.js';
 import { changeReviewTool } from '../tools/observe/change-review.tool.js';
 import { awaitSessionEventTool } from '../tools/observe/await-session-event.tool.js';
+import { pollSessionStatusTool } from '../tools/observe/poll-session-status.tool.js';
 import { getFocusedSessionTool } from '../tools/observe/get-focused-session.tool.js';
 import { grepSessionTool } from '../tools/observe/grep-session.tool.js';
 import { readSessionRangeTool } from '../tools/observe/read-session-range.tool.js';
@@ -135,6 +136,131 @@ describe('observe tool group', () => {
       await expect(
         sessionStatusTool.handler({ sessionId: 99 }, makeCtx(services)),
       ).rejects.toBeInstanceOf(ToolError);
+    });
+
+    it('reports hasQueuedWork and overrides a stale idle when background work is live', async () => {
+      const services = {
+        sessions: sessionsMock(),
+        agentRuntime: {
+          getProvider: () => ({
+            getRuntimeState: jest.fn().mockResolvedValue({
+              sessionState: 'idle',
+              runPhase: 'idle',
+              backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
+              pendingPrompts: [],
+              pendingPermissionRequest: null,
+              pendingUserInputRequest: null,
+            }),
+          }),
+        },
+      };
+      const res = await sessionStatusTool.handler({ sessionId: 7 }, makeCtx(services));
+      expect(res.data).toMatchObject({ runtimeState: 'running', hasQueuedWork: true });
+      expect(res.nextStep).toContain('Not actually idle');
+    });
+
+    it('reports hasQueuedWork:false and plain idle when truly settled', async () => {
+      const services = {
+        sessions: sessionsMock(),
+        agentRuntime: {
+          getProvider: () => ({
+            getRuntimeState: jest.fn().mockResolvedValue({
+              sessionState: 'idle',
+              runPhase: 'idle',
+              backgroundWork: [],
+              pendingPrompts: [],
+              pendingPermissionRequest: null,
+              pendingUserInputRequest: null,
+            }),
+          }),
+        },
+      };
+      const res = await sessionStatusTool.handler({ sessionId: 7 }, makeCtx(services));
+      expect(res.data).toMatchObject({ runtimeState: 'idle', hasQueuedWork: false });
+    });
+  });
+
+  describe('poll_session_status', () => {
+    function makePollServices(
+      runtimeState: Record<string, unknown> = {},
+      sessionStatus = 'active',
+    ) {
+      const sessions = new EventEmitter() as EventEmitter & { findOne: jest.Mock };
+      sessions.findOne = jest.fn(async (id: number) => ({
+        ...baseSession,
+        id,
+        status: sessionStatus,
+      }));
+      const runtimeEmitter = new EventEmitter();
+      const agentRuntime = {
+        getProvider: jest.fn(() => ({
+          getRuntimeState: jest.fn().mockResolvedValue(runtimeState),
+          on: runtimeEmitter.on.bind(runtimeEmitter),
+          off: runtimeEmitter.off.bind(runtimeEmitter),
+        })),
+      };
+      return { sessions, agentRuntime, runtimeEmitter };
+    }
+
+    it('resolves immediately when the session is already settled', async () => {
+      const { sessions, agentRuntime } = makePollServices({
+        sessionState: 'idle',
+        runPhase: 'idle',
+      });
+      const res = await pollSessionStatusTool.handler(
+        { sessionId: 7 },
+        makeCtx({ sessions, agentRuntime }),
+      );
+      expect(res.data).toMatchObject({ sessionId: 7, status: 'completed' });
+    });
+
+    it('does not resolve completed on a bare complete event while background work is live', async () => {
+      const runtimeState: Record<string, unknown> = {
+        sessionState: 'idle',
+        runPhase: 'idle',
+        backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
+      };
+      const { sessions, agentRuntime, runtimeEmitter } = makePollServices(runtimeState);
+      const ctx = makeCtx({ sessions, agentRuntime });
+
+      const pending = pollSessionStatusTool.handler({ sessionId: 7 }, ctx);
+      await new Promise((r) => setTimeout(r, 10));
+      runtimeEmitter.emit('event', { type: 'complete', payload: { sessionId: 7 } });
+      await new Promise((r) => setTimeout(r, 10));
+
+      let settledEarly = false;
+      void pending.then(() => {
+        settledEarly = true;
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(settledEarly).toBe(false);
+
+      runtimeState.backgroundWork = [];
+      runtimeEmitter.emit('event', { type: 'background_work', payload: { sessionId: 7, backgroundWork: [] } });
+
+      const res = await pending;
+      expect(res.data).toMatchObject({ sessionId: 7, status: 'completed' });
+    });
+
+    it('resolves with timeout and leaks no listeners', async () => {
+      const { sessions, agentRuntime, runtimeEmitter } = makePollServices();
+      const ctx = makeCtx({ sessions, agentRuntime });
+
+      // Access the private-ish timeout path via a very small window: the tool
+      // itself caps at 170s, so simulate a quick abort instead to exercise the
+      // same cleanup path without waiting on the real timer.
+      const controller = new AbortController();
+      const pending = pollSessionStatusTool.handler(
+        { sessionId: 7 },
+        makeCtx({ sessions, agentRuntime }, { signal: controller.signal }),
+      );
+      await new Promise((r) => setTimeout(r, 10));
+      controller.abort();
+
+      const res = await pending;
+      expect(res.data).toMatchObject({ sessionId: 7, stillRunning: true });
+      expect(sessions.listenerCount('session-status-changed')).toBe(0);
+      expect(runtimeEmitter.listenerCount('event')).toBe(0);
     });
   });
 
@@ -603,7 +729,11 @@ describe('observe tool group', () => {
     }
 
     it('resolves when the runtime emits a complete event', async () => {
-      const { sessions, agentRuntime, runtimeEmitter } = makeAwaitServices();
+      // `complete`'s own payload carries no state, so the handler re-reads live
+      // runtime state to confirm settlement — mutate the same object the mock
+      // resolves so that re-read sees the turn as genuinely finished.
+      const runtimeState: Record<string, unknown> = {};
+      const { sessions, agentRuntime, runtimeEmitter } = makeAwaitServices(runtimeState);
       const ctx = makeCtx({ sessions, agentRuntime });
 
       const pending = awaitSessionEventTool.handler(
@@ -612,12 +742,49 @@ describe('observe tool group', () => {
       );
       // Let the handler subscribe before emitting.
       await new Promise((r) => setTimeout(r, 10));
+      runtimeState.sessionState = 'idle';
+      runtimeState.runPhase = 'idle';
       runtimeEmitter.emit('event', { type: 'complete', payload: { sessionId: 7 } });
 
       const res = await pending;
       expect(res.data).toMatchObject({ event: 'completed', status: 'completed' });
       expect(sessions.listenerCount('session-status-changed')).toBe(0);
       expect(runtimeEmitter.listenerCount('event')).toBe(0);
+    });
+
+    it('keeps waiting through a complete event while background work is still live', async () => {
+      const runtimeState: Record<string, unknown> = {
+        sessionState: 'idle',
+        runPhase: 'idle',
+        backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
+      };
+      const { sessions, agentRuntime, runtimeEmitter } = makeAwaitServices(runtimeState);
+      const ctx = makeCtx({ sessions, agentRuntime });
+
+      const pending = awaitSessionEventTool.handler(
+        { sessionId: 7, events: ['completed'], timeoutMs: 5000 },
+        ctx,
+      );
+      await new Promise((r) => setTimeout(r, 10));
+      // The visible turn ends, but the background task is still running — this
+      // must NOT resolve as completed yet.
+      runtimeEmitter.emit('event', { type: 'complete', payload: { sessionId: 7 } });
+      await new Promise((r) => setTimeout(r, 10));
+
+      let settledEarly = false;
+      void pending.then(() => {
+        settledEarly = true;
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(settledEarly).toBe(false);
+
+      // Background work clears — the `background_work` event alone must be
+      // enough to re-check and resolve, since nothing else is queued.
+      runtimeState.backgroundWork = [];
+      runtimeEmitter.emit('event', { type: 'background_work', payload: { sessionId: 7, backgroundWork: [] } });
+
+      const res = await pending;
+      expect(res.data).toMatchObject({ event: 'completed', status: 'completed' });
     });
 
     it('resolves when the runtime emits a requires_action run_state', async () => {
