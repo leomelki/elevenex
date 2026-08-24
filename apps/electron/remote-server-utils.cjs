@@ -217,6 +217,8 @@ function parseRemotePreflight(raw) {
     remoteArch,
     remoteTarget,
     osRelease,
+    // Empty on Windows remotes, whose preflight does not report it.
+    remoteHome: `${data.remote_home || ''}`.trim(),
     hasClaude: data.has_claude === '1',
     hasTmux: data.has_tmux === '1',
     currentVersion: `${data.current_version || ''}`.trim(),
@@ -314,6 +316,9 @@ function buildRemotePreflightScript(remotePort) {
     'fi',
     'printf "uname_s=%s\\n" "$UNAME_S"',
     'printf "uname_m=%s\\n" "$UNAME_M"',
+    // Absolute home path: RemoteForward does not expand `~`, so the client can
+    // only place a socket under the runtime directory once it knows this.
+    'printf "remote_home=%s\\n" "$HOME"',
     'printf "has_claude=%s\\n" "$HAS_CLAUDE"',
     'printf "has_tmux=%s\\n" "$HAS_TMUX"',
     'printf "current_version=%s\\n" "$CURRENT_VERSION"',
@@ -440,7 +445,7 @@ function buildWindowsRemoteStartCommand({ remoteRoot, remotePort, forcePortClean
   ].join('\r\n');
 }
 
-function buildRemoteStartCommand({ remoteRoot, remotePort, forcePortCleanup }) {
+function buildRemoteStartCommand({ remoteRoot, remotePort, forcePortCleanup, agentSocketPath }) {
   const safePort = Number.isFinite(Number(remotePort)) ? Number(remotePort) : 11111;
   return [
     'set -eu',
@@ -477,6 +482,34 @@ function buildRemoteStartCommand({ remoteRoot, remotePort, forcePortCleanup }) {
     '    log "start: no fuser/lsof available for port cleanup"',
     '  fi',
     'fi',
+    // Point the daemon at the socket the tunnel binds, but only when the value
+    // it would otherwise inherit is ssh's own per-session socket
+    // ($TMPDIR/ssh-*/agent.*) or nothing at all. That socket dies with the
+    // command that starts the backend, so it can never work for a daemon —
+    // taking it over cannot regress anything.
+    //
+    // Any other value is deliberate: a login hook maintaining a stable symlink,
+    // gpg-agent with ssh support, a systemd user agent, a keyring. Those are
+    // left untouched — the tunnel holds a session channel open so host
+    // mechanisms that republish a forwarded agent keep working.
+    //
+    // Runs last so it sees whatever the login profile exported for `sh -lc`.
+    // Exporting a path the tunnel has not bound yet is fine: a unix socket is
+    // resolved at connect() time, and this path is stable across reconnects.
+    ...(agentSocketPath
+      ? [
+        'case "${SSH_AUTH_SOCK:-}" in',
+        '  ""|*/ssh-*/agent.*)',
+        `    SSH_AUTH_SOCK=${shellPathQuote(agentSocketPath)}`,
+        '    export SSH_AUTH_SOCK',
+        '    log "start: using forwarded agent socket $SSH_AUTH_SOCK"',
+        '    ;;',
+        '  *)',
+        '    log "start: keeping inherited agent socket $SSH_AUTH_SOCK"',
+        '    ;;',
+        'esac',
+      ]
+      : []),
     `printf "\\n[%s] Starting Elevenex backend from %s on port %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REMOTE_ROOT" "$PORT" >> "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log"`,
     '"$TMUX_BIN" new-session -d -s elevenex-backend "$REMOTE_ROOT/bin/start-backend.sh $PORT"',
     'sleep 1',

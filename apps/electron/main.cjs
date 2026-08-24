@@ -318,14 +318,24 @@ function formatResolvedSshConfigLine(key, value) {
 }
 const SSH_FORWARD_PROBE_TIMEOUT_MS = 1800;
 const SSH_PORT_BOUND_TIMEOUT_MS = 10000;
-// OpenSSH only sends the agent-forwarding request on a session channel, so a
-// forwarding-only tunnel (`ssh -N`) never forwards the agent however
-// ForwardAgent resolves — the remote ends up with no usable SSH_AUTH_SOCK once
-// the short-lived setup/install commands have exited. Hold a session open for
-// the tunnel's lifetime instead, running a no-op reader: it costs nothing on
-// the remote, produces no output, and exits on stdin EOF when the tunnel goes
-// away, so nothing is left behind.
+// Agent forwarding needs two things the plain `-L` tunnel does not give us.
+//
+// 1. A fixed socket on the remote. `ssh -R` binds one for the life of the
+//    connection and rebinds the same path on reconnect, which is what lets the
+//    backend hold one SSH_AUTH_SOCK forever. The socket ssh normally exports
+//    lives in a per-session /tmp directory and dies with the command that
+//    created it, so a daemon can never rely on it.
+// 2. A session channel. OpenSSH only sends the agent-forwarding request on one
+//    (`auth-agent-req@openssh.com`), and `-N` opens no session at all, so hosts
+//    with their own convention for republishing a forwarded agent — a login
+//    hook maintaining a stable symlink, say — would see nothing to publish.
+//    A no-op reader holds one open: no output, no CPU, and it exits on stdin
+//    EOF when the tunnel goes away, so nothing is left behind.
+//
+// Both are skipped entirely unless the host's own SSH config asks for agent
+// forwarding and an agent is actually reachable (see resolveAgentForwardPlan).
 const SSH_AGENT_SESSION_KEEPALIVE_COMMAND = 'cat > /dev/null';
+const REMOTE_AGENT_SOCKET_BASENAME = 'agent.sock';
 
 function getLocalFrontendEntry() {
   return findExistingPath([
@@ -1401,7 +1411,7 @@ function toSshRuntimeView(id, runtime) {
   };
 }
 
-function buildResolvedSshConfig(forward) {
+function buildSshResolveArgs(forward) {
   const resolveArgs = ['-G', '-p', String(forward.sshPort)];
 
   if (forward.sshUser) {
@@ -1414,29 +1424,44 @@ function buildResolvedSshConfig(forward) {
   }
 
   resolveArgs.push(forward.sshHost);
+  return resolveArgs;
+}
 
-  const resolved = spawnSync('ssh', resolveArgs, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+// `RemoteForward <remote> <local>`, with either side quoted when it contains
+// spaces (agent sockets under "~/Library/Group Containers/…" routinely do).
+function formatRemoteForwardLine(remoteSocket, localSocket) {
+  const quote = (value) => (/\s/.test(value) ? `"${value}"` : value);
+  return `  RemoteForward ${quote(remoteSocket)} ${quote(localSocket)}`;
+}
 
-  if (resolved.error) {
-    throw resolved.error;
-  }
+// `resolvedSshOutput` is the `ssh -G` dump the caller already produced; only
+// when it is missing (the standalone forwarding IPC path) is one resolved here.
+function buildResolvedSshConfig(forward, resolvedSshOutput) {
+  const resolveArgs = buildSshResolveArgs(forward);
+  let resolvedStdout = resolvedSshOutput || '';
 
-  if (resolved.status !== 0) {
-    throw new Error(
-      (resolved.stderr || resolved.stdout || `ssh -G exited with code ${resolved.status ?? 'unknown'}`).trim(),
-    );
+  if (!resolvedStdout) {
+    const resolved = spawnSync('ssh', resolveArgs, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    if (resolved.error) {
+      throw resolved.error;
+    }
+
+    if (resolved.status !== 0) {
+      throw new Error(
+        (resolved.stderr || resolved.stdout || `ssh -G exited with code ${resolved.status ?? 'unknown'}`).trim(),
+      );
+    }
+
+    resolvedStdout = resolved.stdout;
   }
 
   const configLines = [];
   let resolvedHostname = '';
-  // `forwardagent` resolves to `no`, `yes`, or an explicit socket path/$VAR —
-  // anything but `no` means the tunnel should keep a session channel open so
-  // the agent actually reaches the remote.
-  let forwardsAgent = false;
-  for (const rawLine of resolved.stdout.split(/\r?\n/)) {
+  for (const rawLine of resolvedStdout.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) {
       continue;
@@ -1451,9 +1476,6 @@ function buildResolvedSshConfig(forward) {
     const value = line.slice(separatorIndex + 1).trim();
     if (key === 'hostname') {
       resolvedHostname = value;
-    }
-    if (key === 'forwardagent') {
-      forwardsAgent = value !== 'no';
     }
     if (!value || SSH_FORWARD_CONFIG_EXCLUDED_OPTIONS.has(key)) {
       continue;
@@ -1472,6 +1494,16 @@ function buildResolvedSshConfig(forward) {
   // never tears down elevenex's tunnel.
   configLines.push('  ExitOnForwardFailure no');
   configLines.push('  StreamLocalBindUnlink yes');
+
+  // Publishes the agent at the fixed path the remote backend was told to use.
+  // StreamLocalBindUnlink above clears the socket a previous connection left
+  // behind, so reconnects rebind the same path instead of failing.
+  if (forward.agentForward) {
+    configLines.push(formatRemoteForwardLine(
+      forward.agentForward.remoteSocket,
+      forward.agentForward.localSocket,
+    ));
+  }
 
   if (forward.authMode === 'password') {
     configLines.push('  PreferredAuthentications password,keyboard-interactive');
@@ -1495,7 +1527,94 @@ function buildResolvedSshConfig(forward) {
     configPath,
     tempDir,
     resolveArgs,
-    forwardsAgent,
+  };
+}
+
+// Async `ssh -G`, resolved once per connection and reused by everything that
+// needs it — a config can contain `Match exec` blocks that run shell commands
+// on every resolve, so this must not be called more often than it used to be.
+// Returns '' on failure; buildResolvedSshConfig then falls back to resolving it
+// itself, which is also where a bad host surfaces as a proper error.
+function resolveSshConfigOutput(forward) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn('ssh', buildSshResolveArgs(forward), { stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      resolve('');
+      return;
+    }
+
+    let stdout = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.once('error', () => resolve(''));
+    child.once('exit', (code) => resolve(code === 0 ? stdout : ''));
+  });
+}
+
+function readSshConfigValue(resolvedOutput, key) {
+  const prefix = `${key} `;
+  const line = `${resolvedOutput || ''}`
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .find((entry) => entry.toLowerCase().startsWith(prefix));
+  return line ? line.slice(prefix.length).trim() : '';
+}
+
+// ForwardAgent resolves to `no`, `yes`, an explicit socket path, or `$VAR`
+// naming the environment variable holding one. Returns the socket the user
+// actually wants forwarded, or null when forwarding is off or no agent is
+// listening (unset, stale, or a Windows named pipe rather than a socket).
+function resolveLocalAgentSocket(forwardAgentValue) {
+  const value = `${forwardAgentValue || ''}`.trim();
+  if (!value || value === 'no') {
+    return null;
+  }
+
+  let candidate;
+  if (value === 'yes') {
+    candidate = process.env.SSH_AUTH_SOCK;
+  } else if (value.startsWith('$')) {
+    candidate = process.env[value.slice(1)];
+  } else {
+    candidate = value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
+  }
+
+  if (!candidate) {
+    return null;
+  }
+
+  try {
+    return statSync(candidate).isSocket() ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+// Whether this connection should carry an agent, and where it lands remotely.
+// Everything is derived from the host's own SSH config, so a host that does not
+// forward an agent — or a machine with no agent running at all — resolves to
+// null and keeps exactly the forwarding-only tunnel it has today. Unix-socket
+// forwarding rules out non-POSIX remotes, and WSL shares localhost with Windows
+// rather than tunnelling, so neither gets a plan.
+function resolveAgentForwardPlan(forward, preflight, resolvedSshOutput) {
+  if (forward.transport === 'wsl' || !['linux', 'darwin'].includes(preflight?.remotePlatform)) {
+    return null;
+  }
+
+  const remoteHome = `${preflight?.remoteHome || ''}`.trim().replace(/\/+$/, '');
+  if (!remoteHome.startsWith('/')) {
+    return null;
+  }
+
+  const localSocket = resolveLocalAgentSocket(readSshConfigValue(resolvedSshOutput, 'forwardagent'));
+  if (!localSocket) {
+    return null;
+  }
+
+  return {
+    localSocket,
+    remoteSocket: `${remoteHome}/${REMOTE_HOME_DIRNAME}/${REMOTE_AGENT_SOCKET_BASENAME}`,
   };
 }
 
@@ -2190,6 +2309,16 @@ async function ensureRemoteServerReady(forward) {
   const waitCommand = preflight.remotePlatform === 'win32'
     ? buildWindowsRemoteWaitForReadyCommand
     : buildRemoteWaitForReadyCommand;
+  // Resolved before the backend starts, because the start command has to bake
+  // the socket path into the daemon's environment; the tunnel then binds that
+  // same path a few steps later. Null whenever the host does not forward an
+  // agent, which leaves both the start command and the tunnel untouched.
+  // The `ssh -G` dump is kept so the tunnel below reuses it instead of paying
+  // for a second resolve.
+  const resolvedSshOutput = forward.transport === 'wsl'
+    ? ''
+    : await resolveSshConfigOutput(forward);
+  const agentForward = resolveAgentForwardPlan(forward, preflight, resolvedSshOutput);
 
   if (installStatus === 'missing' || installStatus === 'needs-update') {
     emitRemoteServerPhaseEvent(forward.id, 'uploading');
@@ -2236,6 +2365,7 @@ async function ensureRemoteServerReady(forward) {
           installStatus === 'needs-update'
           || runningVersionMismatch
         ),
+        agentSocketPath: agentForward?.remoteSocket,
       }),
       remoteCommandOptions,
     );
@@ -2286,9 +2416,9 @@ async function ensureRemoteServerReady(forward) {
 
   let runtime = await startSshForwardRuntime({
     ...forward,
-    remotePlatform: preflight.remotePlatform,
+    agentForward,
     probeType: 'elevenex-backend',
-  });
+  }, resolvedSshOutput);
 
   if (isRemoteBackendProbeMissing(runtime)) {
     console.warn('[remote-runtime] backend probe failed after startup; restarting remote runtime and reallocating tunnel port', {
@@ -2308,6 +2438,7 @@ async function ensureRemoteServerReady(forward) {
         remoteRoot: remoteCurrentRoot,
         remotePort: forward.remotePort || 11111,
         forcePortCleanup: true,
+        agentSocketPath: agentForward?.remoteSocket,
       }),
       remoteCommandOptions,
     );
@@ -2325,9 +2456,9 @@ async function ensureRemoteServerReady(forward) {
     emitRemoteServerPhaseEvent(forward.id, 'probing');
     runtime = await startSshForwardRuntime({
       ...forward,
-      remotePlatform: preflight.remotePlatform,
+      agentForward,
       probeType: 'elevenex-backend',
-    });
+    }, resolvedSshOutput);
   }
 
   if (runtime.status !== 'active') {
@@ -2505,7 +2636,7 @@ function assertNoSshBindConflict(forward) {
   }
 }
 
-async function startSshForwardRuntime(forward) {
+async function startSshForwardRuntime(forward, resolvedSshOutput) {
   const existing = sshForwardRuntimes.get(forward.id);
   if (existing && (existing.status === 'connecting' || existing.status === 'active')) {
     return toSshRuntimeView(forward.id, existing);
@@ -2513,16 +2644,15 @@ async function startSshForwardRuntime(forward) {
 
   assertNoSshBindConflict(forward);
 
-  const resolvedConfig = buildResolvedSshConfig(forward);
+  const resolvedConfig = buildResolvedSshConfig(forward, resolvedSshOutput);
   const askPass = createSshAskPassRuntime(forward);
   const target = forward.sshHost;
   const bindSpec = `${forward.bindAddress}:${forward.localPort}:${forward.remoteHost}:${forward.remotePort}`;
   const batchMode = askPass ? 'no' : 'yes';
-  // The keepalive is a POSIX shell one-liner, so only claim the session channel
-  // on remotes known to run one; anything else (Windows, not yet probed) keeps
-  // the forwarding-only tunnel.
-  const keepsAgentSession = resolvedConfig.forwardsAgent
-    && ['linux', 'darwin'].includes(forward.remotePlatform);
+  // Set only when resolveAgentForwardPlan found an agent worth carrying, which
+  // already rules out non-POSIX remotes — so the keepalive below can safely be
+  // a POSIX shell one-liner.
+  const keepsAgentSession = Boolean(forward.agentForward);
   const spawnArgs = [
     '-F',
     resolvedConfig.configPath,
