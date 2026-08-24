@@ -318,6 +318,14 @@ function formatResolvedSshConfigLine(key, value) {
 }
 const SSH_FORWARD_PROBE_TIMEOUT_MS = 1800;
 const SSH_PORT_BOUND_TIMEOUT_MS = 10000;
+// OpenSSH only sends the agent-forwarding request on a session channel, so a
+// forwarding-only tunnel (`ssh -N`) never forwards the agent however
+// ForwardAgent resolves — the remote ends up with no usable SSH_AUTH_SOCK once
+// the short-lived setup/install commands have exited. Hold a session open for
+// the tunnel's lifetime instead, running a no-op reader: it costs nothing on
+// the remote, produces no output, and exits on stdin EOF when the tunnel goes
+// away, so nothing is left behind.
+const SSH_AGENT_SESSION_KEEPALIVE_COMMAND = 'cat > /dev/null';
 
 function getLocalFrontendEntry() {
   return findExistingPath([
@@ -1424,6 +1432,10 @@ function buildResolvedSshConfig(forward) {
 
   const configLines = [];
   let resolvedHostname = '';
+  // `forwardagent` resolves to `no`, `yes`, or an explicit socket path/$VAR —
+  // anything but `no` means the tunnel should keep a session channel open so
+  // the agent actually reaches the remote.
+  let forwardsAgent = false;
   for (const rawLine of resolved.stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) {
@@ -1439,6 +1451,9 @@ function buildResolvedSshConfig(forward) {
     const value = line.slice(separatorIndex + 1).trim();
     if (key === 'hostname') {
       resolvedHostname = value;
+    }
+    if (key === 'forwardagent') {
+      forwardsAgent = value !== 'no';
     }
     if (!value || SSH_FORWARD_CONFIG_EXCLUDED_OPTIONS.has(key)) {
       continue;
@@ -1480,6 +1495,7 @@ function buildResolvedSshConfig(forward) {
     configPath,
     tempDir,
     resolveArgs,
+    forwardsAgent,
   };
 }
 
@@ -2270,6 +2286,7 @@ async function ensureRemoteServerReady(forward) {
 
   let runtime = await startSshForwardRuntime({
     ...forward,
+    remotePlatform: preflight.remotePlatform,
     probeType: 'elevenex-backend',
   });
 
@@ -2308,6 +2325,7 @@ async function ensureRemoteServerReady(forward) {
     emitRemoteServerPhaseEvent(forward.id, 'probing');
     runtime = await startSshForwardRuntime({
       ...forward,
+      remotePlatform: preflight.remotePlatform,
       probeType: 'elevenex-backend',
     });
   }
@@ -2500,10 +2518,17 @@ async function startSshForwardRuntime(forward) {
   const target = forward.sshHost;
   const bindSpec = `${forward.bindAddress}:${forward.localPort}:${forward.remoteHost}:${forward.remotePort}`;
   const batchMode = askPass ? 'no' : 'yes';
+  // The keepalive is a POSIX shell one-liner, so only claim the session channel
+  // on remotes known to run one; anything else (Windows, not yet probed) keeps
+  // the forwarding-only tunnel.
+  const keepsAgentSession = resolvedConfig.forwardsAgent
+    && ['linux', 'darwin'].includes(forward.remotePlatform);
   const spawnArgs = [
     '-F',
     resolvedConfig.configPath,
-    '-N',
+    // `-T` keeps the session channel that agent forwarding rides on while still
+    // refusing a TTY; `-N` opens no session at all.
+    keepsAgentSession ? '-T' : '-N',
     '-L',
     bindSpec,
     // Do not abort on RemoteForward failures (eg. a user-defined gpg-agent
@@ -2530,14 +2555,23 @@ async function startSshForwardRuntime(forward) {
     'ControlPath=none',
     target,
   ];
+  if (keepsAgentSession) {
+    spawnArgs.push(SSH_AGENT_SESSION_KEEPALIVE_COMMAND);
+  }
   const childProcess = spawn(
     'ssh',
     spawnArgs,
     {
-      stdio: ['ignore', 'ignore', 'pipe'],
+      // The keepalive reader blocks on stdin, so the pipe has to stay open for
+      // as long as the tunnel does — it is never written to, and closing it
+      // (or killing ssh) is what ends the remote session.
+      stdio: [keepsAgentSession ? 'pipe' : 'ignore', 'ignore', 'pipe'],
       env: askPass?.env ?? process.env,
     },
   );
+  // ssh going away first turns any pending write into EPIPE; nothing writes
+  // here, but an unhandled 'error' on the stream would still crash the process.
+  childProcess.stdin?.on('error', () => {});
 
   const runtime = {
     id: forward.id,
