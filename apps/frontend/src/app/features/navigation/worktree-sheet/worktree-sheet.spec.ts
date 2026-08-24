@@ -56,6 +56,7 @@ function poolItem(patch: Partial<WorktreePoolItem> = {}): WorktreePoolItem {
     isMissing: false,
     isDirty: false,
     hasConflicts: false,
+    statusLoading: false,
     runningAgentCount: 0,
     owner: null,
     projectWorkspace: null,
@@ -69,6 +70,7 @@ describe('WorktreeSheet', () => {
     getPoolByRepoStream: vi.fn(),
     createPool: vi.fn(),
     linkPool: vi.fn(),
+    renamePool: vi.fn(),
   };
   const sessionsServiceMock = {
     create: vi.fn(),
@@ -84,6 +86,7 @@ describe('WorktreeSheet', () => {
     worktreesServiceMock.getPoolByRepoStream.mockReset();
     worktreesServiceMock.createPool.mockReset();
     worktreesServiceMock.linkPool.mockReset();
+    worktreesServiceMock.renamePool.mockReset();
     sessionsServiceMock.create.mockReset();
     navigationServiceMock.refreshTree.mockReset();
     navigationServiceMock.openSession.mockReset();
@@ -263,6 +266,33 @@ describe('WorktreeSheet', () => {
     });
   });
 
+  it('allows a loaded worktree while another worktree is still loading', () => {
+    const loadingItem = poolItem({ id: 10, statusLoading: true });
+    const cleanItem = poolItem({ id: 11 });
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.branchName.set('feature');
+    component.pool.set([loadingItem, cleanItem]);
+
+    const loadingEntry = component.visiblePool().find(
+      (entry) => entry.item.id === loadingItem.id,
+    )!;
+    const cleanEntry = component.visiblePool().find(
+      (entry) => entry.item.id === cleanItem.id,
+    )!;
+    expect(loadingEntry.assessment.usable).toBe(false);
+    expect(loadingEntry.assessment.stateLabel).toBe('Checking status');
+    expect(cleanEntry.assessment.usable).toBe(true);
+
+    component.requestAction(loadingEntry);
+    expect(worktreesServiceMock.linkPool).not.toHaveBeenCalled();
+    component.requestAction(cleanEntry);
+    expect(worktreesServiceMock.linkPool).toHaveBeenCalledOnce();
+  });
+
   it('links a clean, available worktree immediately without confirmation', () => {
     const item = poolItem();
     const fixture = TestBed.createComponent(WorktreeSheet);
@@ -284,5 +314,63 @@ describe('WorktreeSheet', () => {
       confirmStash: false,
       applyPendingStash: false,
     });
+  });
+
+  it('renames a worktree and updates it in the pool', () => {
+    const item = poolItem();
+    const renamed = poolItem({ name: 'renamed-worktree' });
+    worktreesServiceMock.renamePool.mockReturnValue(of(renamed));
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.pool.set([item]);
+
+    component.startRename(item, new Event('click'));
+    expect(component.renamingId()).toBe(item.id);
+    expect(component.renameValue()).toBe(item.name);
+
+    component.renameValue.set('renamed-worktree');
+    component.saveRename(item);
+
+    expect(worktreesServiceMock.renamePool).toHaveBeenCalledWith(7, item.id, 'renamed-worktree');
+    expect(component.renamingId()).toBeNull();
+    expect(component.pool()).toEqual([renamed]);
+  });
+
+  it('does not rename when the trimmed name is unchanged', () => {
+    const item = poolItem();
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.pool.set([item]);
+
+    component.startRename(item, new Event('click'));
+    component.renameValue.set(`  ${item.name}  `);
+    component.saveRename(item);
+
+    expect(worktreesServiceMock.renamePool).not.toHaveBeenCalled();
+    expect(component.renamingId()).toBeNull();
+  });
+
+  it('blocks renaming while a link is in progress', () => {
+    const linkingItem = poolItem({ id: 12 });
+    const linkSubject = new Subject<{ id: number; repoId: number }>();
+    worktreesServiceMock.linkPool.mockReturnValue(linkSubject.asObservable());
+    const fixture = TestBed.createComponent(WorktreeSheet);
+    const component = fixture.componentInstance;
+    fixture.detectChanges();
+
+    component.repoId.set(7);
+    component.branchName.set('feature');
+    component.pool.set([linkingItem]);
+    component.link(linkingItem);
+
+    expect(component.canRename(linkingItem)).toBe(false);
+    component.startRename(linkingItem, new Event('click'));
+    expect(component.renamingId()).toBeNull();
   });
 });

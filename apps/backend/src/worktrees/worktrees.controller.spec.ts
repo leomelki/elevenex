@@ -168,7 +168,7 @@ describe('WorktreesController', () => {
       listForRepo: jest.fn(),
       createForRepo: jest.fn(),
       linkToProject: jest.fn(),
-      streamForRepo: jest
+      streamProgressivelyForRepo: jest
         .fn()
         .mockImplementation(async (_repo: any, onItem: (item: { id: number; name: string }) => void) => {
           onItem({ id: 11, name: 'feature' });
@@ -206,7 +206,40 @@ describe('WorktreesController', () => {
     expect((events[1] as any).type).toBe('worktree');
     expect((events[2] as any).type).toBe('done');
     expect(events[2].data).toEqual({ total: 2 });
-    expect(worktreePoolServiceMock.streamForRepo).toHaveBeenCalled();
+    expect(
+      worktreePoolServiceMock.streamProgressivelyForRepo,
+    ).toHaveBeenCalled();
+  });
+
+  it('renames a pool worktree for the matching repo', async () => {
+    const worktreePoolServiceMock = {
+      listForRepo: jest.fn(),
+      createForRepo: jest.fn(),
+      linkToProject: jest.fn(),
+      rename: jest.fn().mockResolvedValue({ id: 11, name: 'fix-login-timeout' }),
+    };
+    const controller = new WorktreesController(
+      { removeWorktree: jest.fn() } as any,
+      worktreePoolServiceMock as any,
+      { startJob: jest.fn(), getJob: jest.fn() } as any,
+      {
+        deleteByWorktreePath: jest.fn(),
+        deleteByRepoAndWorktreePath: jest.fn(),
+      } as any,
+      { assertProjectIsActive: jest.fn() } as any,
+      makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
+    );
+
+    const result = await controller.renamePoolWorktree('7', '11', {
+      name: 'fix-login-timeout',
+    });
+
+    expect(result).toEqual({ id: 11, name: 'fix-login-timeout' });
+    expect(worktreePoolServiceMock.rename).toHaveBeenCalledWith(
+      { id: 7, name: 'test-repo', path: '/tmp/test-repo' },
+      11,
+      'fix-login-timeout',
+    );
   });
 
   it('returns worktree creation job status for the matching repo', async () => {

@@ -5,12 +5,15 @@ import {
   lucideArchive,
   lucideArrowRightLeft,
   lucideBot,
+  lucideCheck,
   lucideCircleAlert,
   lucideCircleCheck,
   lucideFolderGit2,
   lucideGitBranch,
   lucideInfo,
+  lucideLoaderCircle,
   lucideLock,
+  lucidePencil,
   lucidePlus,
   lucideSearch,
   lucideSparkles,
@@ -77,12 +80,15 @@ interface AssessedWorktree {
       lucideArchive,
       lucideArrowRightLeft,
       lucideBot,
+      lucideCheck,
       lucideCircleAlert,
       lucideCircleCheck,
       lucideFolderGit2,
       lucideGitBranch,
       lucideInfo,
+      lucideLoaderCircle,
       lucideLock,
+      lucidePencil,
       lucidePlus,
       lucideSearch,
       lucideSparkles,
@@ -115,6 +121,9 @@ export class WorktreeSheet {
   filter = signal<WorktreeFilter>('all');
   confirmingId = signal<number | null>(null);
   applyStashChoice = signal(true);
+  renamingId = signal<number | null>(null);
+  renameValue = signal('');
+  renaming = signal(false);
 
   private assessed = computed<AssessedWorktree[]>(() => {
     const repoId = this.repoId();
@@ -122,7 +131,12 @@ export class WorktreeSheet {
       .map((item) => ({ item, assessment: this.assess(item, repoId), recommended: false }))
       .sort((a, b) => a.assessment.score - b.assessment.score || a.item.name.localeCompare(b.item.name));
 
-    const best = ranked.find((entry) => entry.assessment.category === 'available' && entry.assessment.score <= 0);
+    const best = ranked.find(
+      (entry) =>
+        !entry.item.statusLoading &&
+        entry.assessment.category === 'available' &&
+        entry.assessment.score <= 0,
+    );
     if (best) best.recommended = true;
     return ranked;
   });
@@ -171,6 +185,7 @@ export class WorktreeSheet {
     this.search.set('');
     this.filter.set('all');
     this.confirmingId.set(null);
+    this.renamingId.set(null);
     this.prepareCreateDefaults([]);
     this.pool.set([]);
     this.dialogRef.open();
@@ -280,7 +295,12 @@ export class WorktreeSheet {
   }
 
   link(item: WorktreePoolItem) {
-    if (this.linkingId() !== null || item.isMissing || item.isLocked) {
+    if (
+      this.linkingId() !== null ||
+      item.statusLoading ||
+      item.isMissing ||
+      item.isLocked
+    ) {
       return;
     }
 
@@ -305,6 +325,63 @@ export class WorktreeSheet {
         toast.error(err?.error?.message || 'Could not link worktree.');
         this.linkingId.set(null);
         this.loadPool();
+      },
+    });
+  }
+
+  canRename(item: WorktreePoolItem) {
+    return (
+      !item.statusLoading &&
+      !item.isMissing &&
+      !item.isLocked &&
+      this.linkingId() === null &&
+      !this.creating()
+    );
+  }
+
+  startRename(item: WorktreePoolItem, event: Event) {
+    event.stopPropagation();
+    if (!this.canRename(item)) return;
+    this.confirmingId.set(null);
+    this.renamingId.set(item.id);
+    this.renameValue.set(item.name);
+  }
+
+  cancelRename(event?: Event) {
+    event?.stopPropagation();
+    if (this.renaming()) return;
+    this.renamingId.set(null);
+    this.renameValue.set('');
+  }
+
+  saveRename(item: WorktreePoolItem, event?: Event) {
+    event?.stopPropagation();
+    if (this.renaming()) return;
+
+    const name = this.renameValue().trim();
+    if (!name) {
+      toast.error('Worktree name is required.');
+      return;
+    }
+    if (name === item.name) {
+      this.cancelRename();
+      return;
+    }
+
+    this.renaming.set(true);
+    this.worktreesService.renamePool(this.repoId(), item.id, name).subscribe({
+      next: (updated) => {
+        this.pool.update((items) =>
+          items.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
+        );
+        toast.success('Worktree renamed');
+        this.renaming.set(false);
+        this.renamingId.set(null);
+        this.renameValue.set('');
+      },
+      error: (err) => {
+        toast.error(err?.error?.message || 'Could not rename worktree.');
+        this.renaming.set(false);
       },
     });
   }
@@ -375,6 +452,28 @@ export class WorktreeSheet {
     const isTakeover = item.owner !== null && item.owner.repoId !== repoId;
     const isYours = item.owner !== null && item.owner.repoId === repoId;
     const hasPendingStash = item.projectWorkspace?.pendingStashStatus === 'pending';
+
+    if (item.statusLoading) {
+      const category: WorktreeCategory = item.owner === null
+        ? 'available'
+        : isYours
+          ? 'yours'
+          : 'others';
+      return {
+        category,
+        usable: false,
+        score: item.owner === null ? 0 : isYours ? 5 : 40,
+        stateLabel: 'Checking status',
+        stateTone: 'muted',
+        stateIcon: 'lucideLoaderCircle',
+        summary: 'Checking this worktree for changes and conflicts…',
+        summaryTone: 'muted',
+        actionLabel: 'Checking…',
+        actionTone: 'default',
+        consequences: [],
+        needsConfirm: false,
+      };
+    }
 
     // Unusable states block linking entirely.
     if (item.isMissing) {

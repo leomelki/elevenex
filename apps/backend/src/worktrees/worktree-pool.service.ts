@@ -43,6 +43,7 @@ export interface WorktreePoolItem {
   isMissing: boolean;
   isDirty: boolean;
   hasConflicts: boolean;
+  statusLoading: boolean;
   runningAgentCount: number;
   lastUsedAt: string | null;
   owner: WorktreePoolOwner | null;
@@ -80,6 +81,54 @@ export class WorktreePoolService {
     repo: typeof schema.repos.$inferSelect,
     onItem: (item: WorktreePoolItem) => Promise<void> | void,
   ): Promise<number> {
+    const { poolRows, gitByRealPath } = await this.preparePoolListing(repo);
+
+    await Promise.all(
+      poolRows.map(async (pool) => {
+        const item = await this.buildPoolItem(repo.id, pool, gitByRealPath);
+        await onItem(item);
+      }),
+    );
+
+    return poolRows.length;
+  }
+
+  async streamProgressivelyForRepo(
+    repo: typeof schema.repos.$inferSelect,
+    onItem: (item: WorktreePoolItem) => Promise<void> | void,
+  ): Promise<number> {
+    const { poolRows, gitByRealPath } = await this.preparePoolListing(repo);
+
+    await Promise.all(
+      poolRows.map(async (pool) => {
+        const metadata = await this.buildPoolItemMetadata(
+          repo.id,
+          pool,
+          gitByRealPath,
+        );
+        await onItem(metadata.item);
+
+        if (!metadata.exists) return;
+        const status = await this.getWorktreeStatusSnapshot(pool.path);
+        const currentBranch =
+          status.currentBranch ?? metadata.item.currentBranch;
+        await onItem({
+          ...metadata.item,
+          currentBranch,
+          isDetached: metadata.gitInfo?.isDetached ?? currentBranch === null,
+          isDirty: status.isDirty,
+          hasConflicts: status.hasConflicts,
+          statusLoading: false,
+        });
+      }),
+    );
+
+    return poolRows.length;
+  }
+
+  private async preparePoolListing(
+    repo: typeof schema.repos.$inferSelect,
+  ) {
     await this.reconcileRepo(repo);
     const root = await this.realPathOrRaw(repo.path);
     const poolRows = await this.db
@@ -92,15 +141,7 @@ export class WorktreePoolService {
     for (const worktree of gitWorktrees) {
       gitByRealPath.set(await this.realPathOrRaw(worktree.path), worktree);
     }
-
-    await Promise.all(
-      poolRows.map(async (pool) => {
-        const item = await this.buildPoolItem(repo.id, pool, gitByRealPath);
-        await onItem(item);
-      }),
-    );
-
-    return poolRows.length;
+    return { poolRows, gitByRealPath };
   }
 
   private async buildPoolItem(
@@ -108,6 +149,30 @@ export class WorktreePoolService {
     pool: typeof schema.repoWorktrees.$inferSelect,
     gitByRealPath: Map<string, WorktreeInfo>,
   ): Promise<WorktreePoolItem> {
+    const metadata = await this.buildPoolItemMetadata(
+      repoId,
+      pool,
+      gitByRealPath,
+    );
+    if (!metadata.exists) return metadata.item;
+
+    const status = await this.getWorktreeStatusSnapshot(pool.path);
+    const currentBranch = status.currentBranch ?? metadata.item.currentBranch;
+    return {
+      ...metadata.item,
+      currentBranch,
+      isDetached: metadata.gitInfo?.isDetached ?? currentBranch === null,
+      isDirty: status.isDirty,
+      hasConflicts: status.hasConflicts,
+      statusLoading: false,
+    };
+  }
+
+  private async buildPoolItemMetadata(
+    repoId: number,
+    pool: typeof schema.repoWorktrees.$inferSelect,
+    gitByRealPath: Map<string, WorktreeInfo>,
+  ) {
     const [realPath, owner, projectWorkspace, exists] = await Promise.all([
       this.realPathOrRaw(pool.path),
       this.findLinkedOwner(pool.id),
@@ -118,10 +183,7 @@ export class WorktreePoolService {
     const runningAgentCount = owner
       ? await this.countRunningAgents(owner.workspaceId)
       : 0;
-    const statusSnapshot = exists
-      ? await this.getWorktreeStatusSnapshot(pool.path)
-      : { currentBranch: null, isDirty: false, hasConflicts: false };
-    const currentBranch = statusSnapshot.currentBranch ?? gitInfo?.branch ?? null;
+    const currentBranch = gitInfo?.branch ?? null;
 
     const contextRows = await this.db
       .select({ lastUsedAt: schema.worktreeContexts.lastUsedAt })
@@ -136,25 +198,30 @@ export class WorktreePoolService {
     const lastUsedAt = contextRows[0]?.lastUsedAt ?? null;
 
     return {
-      id: pool.id,
-      repoRootPath: pool.repoRootPath,
-      path: pool.path,
-      name: pool.name,
-      createdFromRef: pool.createdFromRef,
-      currentBranch,
-      head: gitInfo?.head ?? null,
-      isDetached: gitInfo?.isDetached ?? currentBranch === null,
-      isBare: gitInfo?.isBare ?? false,
-      isLocked: gitInfo?.isLocked ?? false,
-      lockReason: gitInfo?.lockReason ?? null,
-      isMissing: !gitInfo && !exists,
-      isDirty: statusSnapshot.isDirty,
-      hasConflicts: statusSnapshot.hasConflicts,
-      runningAgentCount,
-      lastUsedAt,
-      owner,
-      projectWorkspace,
-    } satisfies WorktreePoolItem;
+      exists,
+      gitInfo,
+      item: {
+        id: pool.id,
+        repoRootPath: pool.repoRootPath,
+        path: pool.path,
+        name: pool.name,
+        createdFromRef: pool.createdFromRef,
+        currentBranch,
+        head: gitInfo?.head ?? null,
+        isDetached: gitInfo?.isDetached ?? currentBranch === null,
+        isBare: gitInfo?.isBare ?? false,
+        isLocked: gitInfo?.isLocked ?? false,
+        lockReason: gitInfo?.lockReason ?? null,
+        isMissing: !gitInfo && !exists,
+        isDirty: false,
+        hasConflicts: false,
+        statusLoading: exists,
+        runningAgentCount,
+        lastUsedAt,
+        owner,
+        projectWorkspace,
+      } satisfies WorktreePoolItem,
+    };
   }
 
   async createForRepo(

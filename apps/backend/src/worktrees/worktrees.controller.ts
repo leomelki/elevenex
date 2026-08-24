@@ -8,6 +8,7 @@ import {
   Inject,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Sse,
 } from '@nestjs/common';
@@ -17,6 +18,7 @@ import { WorktreesService } from './worktrees.service.js';
 import { CreateWorktreeDto } from './dto/create-worktree.dto.js';
 import { CreatePoolWorktreeDto } from './dto/create-pool-worktree.dto.js';
 import { LinkPoolWorktreeDto } from './dto/link-pool-worktree.dto.js';
+import { RenamePoolWorktreeDto } from './dto/rename-pool-worktree.dto.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreeCreationJobsService } from './worktree-creation-jobs.service.js';
@@ -64,7 +66,7 @@ export class WorktreesController {
       };
 
       this.worktreePoolService
-        .streamForRepo(repo, onItem)
+        .streamProgressivelyForRepo(repo, onItem)
         .then((total) => {
           if (closed) return;
           subscriber.next({
@@ -92,6 +94,16 @@ export class WorktreesController {
   ) {
     const { repo } = await this.findRepo(repoId);
     return this.worktreePoolService.createForRepo(repo, dto);
+  }
+
+  @Patch('repos/:repoId/worktree-pool/:worktreeId')
+  async renamePoolWorktree(
+    @Param('repoId') repoId: string,
+    @Param('worktreeId') worktreeId: string,
+    @Body() dto: RenamePoolWorktreeDto,
+  ) {
+    const { repo } = await this.findRepo(repoId);
+    return this.worktreePoolService.rename(repo, +worktreeId, dto.name);
   }
 
   @Post('repos/:repoId/worktree-pool/:worktreeId/link')

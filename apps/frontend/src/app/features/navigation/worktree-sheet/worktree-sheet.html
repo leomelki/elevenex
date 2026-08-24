@@ -103,13 +103,58 @@
                 [class]="chipClass(entry.assessment.stateTone)">
                 <ng-icon
                   [name]="entry.assessment.usable ? 'lucideGitBranch' : entry.assessment.stateIcon"
-                  class="!h-4 !w-4" />
+                  class="!h-4 !w-4"
+                  [class.animate-spin]="entry.item.statusLoading" />
               </div>
 
               <!-- Main info -->
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <h3 class="truncate text-sm font-semibold text-foreground">{{ entry.item.name }}</h3>
+                  @if (renamingId() === entry.item.id) {
+                    <input
+                      z-input
+                      type="text"
+                      class="h-7 min-w-0 max-w-[220px] text-sm font-semibold"
+                      [ngModel]="renameValue()"
+                      (ngModelChange)="renameValue.set($event)"
+                      (keydown.enter)="saveRename(entry.item)"
+                      (keydown.escape)="cancelRename()"
+                      (click)="$event.stopPropagation()"
+                      autofocus />
+                    <button
+                      z-button
+                      zType="ghost"
+                      zSize="icon-sm"
+                      type="button"
+                      aria-label="Save name"
+                      [zLoading]="renaming()"
+                      (click)="saveRename(entry.item, $event)">
+                      <ng-icon name="lucideCheck" class="!h-3.5 !w-3.5" />
+                    </button>
+                    <button
+                      z-button
+                      zType="ghost"
+                      zSize="icon-sm"
+                      type="button"
+                      aria-label="Cancel rename"
+                      [zDisabled]="renaming()"
+                      (click)="cancelRename($event)">
+                      <ng-icon name="lucideX" class="!h-3.5 !w-3.5" />
+                    </button>
+                  } @else {
+                    <h3 class="truncate text-sm font-semibold text-foreground">{{ entry.item.name }}</h3>
+                    @if (canRename(entry.item)) {
+                      <button
+                        z-button
+                        zType="ghost"
+                        zSize="icon-sm"
+                        type="button"
+                        aria-label="Rename worktree"
+                        (click)="startRename(entry.item, $event)">
+                        <ng-icon name="lucidePencil" class="!h-3 !w-3" />
+                      </button>
+                    }
+                  }
                   @if (entry.recommended) {
                     <span class="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[0.65rem] font-medium text-primary">
                       <ng-icon name="lucideSparkles" class="!h-3 !w-3" />
@@ -119,7 +164,10 @@
                   <span
                     class="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[0.65rem] font-medium"
                     [class]="chipClass(entry.assessment.stateTone)">
-                    <ng-icon [name]="entry.assessment.stateIcon" class="!h-3 !w-3" />
+                    <ng-icon
+                      [name]="entry.assessment.stateIcon"
+                      class="!h-3 !w-3"
+                      [class.animate-spin]="entry.item.statusLoading" />
                     {{ entry.assessment.stateLabel }}
                   </span>
                   @if (entry.item.runningAgentCount > 0) {

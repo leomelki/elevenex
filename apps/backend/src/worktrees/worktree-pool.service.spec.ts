@@ -5,7 +5,10 @@ import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreesService, WorktreeInfo } from './worktrees.service.js';
-import { WorktreePoolService } from './worktree-pool.service.js';
+import {
+  WorktreePoolItem,
+  WorktreePoolService,
+} from './worktree-pool.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 
@@ -312,6 +315,45 @@ describe('WorktreePoolService', () => {
     expect(featureItem?.currentBranch).toBe('feature');
     expect(featureItem?.isDirty).toBe(true);
     expect(featureItem?.hasConflicts).toBe(true);
+  });
+
+  it('streams each worktree before its status scan finishes', async () => {
+    const pathExists = jest
+      .spyOn(service as any, 'pathExists')
+      .mockResolvedValue(true);
+    let releaseStatus!: () => void;
+    const statusGate = new Promise<void>((resolve) => {
+      releaseStatus = resolve;
+    });
+    gitMock.status.mockImplementation(async () => {
+      await statusGate;
+      return {
+        current: 'feature',
+        isClean: () => true,
+        conflicted: [],
+      };
+    });
+
+    const emitted: WorktreePoolItem[] = [];
+    const stream = service.streamProgressivelyForRepo(repo, (item) => {
+      emitted.push(item);
+    });
+
+    while (gitMock.status.mock.calls.length === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(emitted.length).toBeGreaterThan(0);
+    expect(emitted.every((item) => item.statusLoading)).toBe(true);
+
+    releaseStatus();
+    await stream;
+    pathExists.mockRestore();
+
+    for (const id of new Set(emitted.map((item) => item.id))) {
+      expect(
+        emitted.filter((item) => item.id === id).map((item) => item.statusLoading),
+      ).toEqual([true, false]);
+    }
   });
 
   it('uses a fast status scan when built-in fsmonitor is unsupported', async () => {

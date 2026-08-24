@@ -36,7 +36,15 @@ export class WorktreesService {
       const onWorktree = (event: MessageEvent) => {
         if (closed) return;
         try {
-          items.push(JSON.parse(event.data));
+          const item = JSON.parse(event.data) as WorktreePoolItem;
+          const existingIndex = items.findIndex(
+            (candidate) => candidate.id === item.id,
+          );
+          if (existingIndex === -1) {
+            items.push(item);
+          } else {
+            items[existingIndex] = item;
+          }
           subscriber.next([...items]);
         } catch (error) {
           closed = true;
@@ -87,6 +95,10 @@ export class WorktreesService {
 
   linkPool(repoId: number, worktreeId: number, payload: LinkPoolWorktreePayload) {
     return this.http.post<Workspace>(`/api/repos/${repoId}/worktree-pool/${worktreeId}/link`, payload);
+  }
+
+  renamePool(repoId: number, worktreeId: number, name: string) {
+    return this.http.patch<WorktreePoolItem>(`/api/repos/${repoId}/worktree-pool/${worktreeId}`, { name });
   }
 
   create(repoId: number, branchName: string, worktreePath?: string) {
