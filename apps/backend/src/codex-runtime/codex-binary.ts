@@ -163,15 +163,27 @@ function resolveBundledOnce(): string | null {
 
 /**
  * Resolves the codex binary to spawn (for app-server, login, --version,
- * model-catalog refresh, etc.). Prefers the bundled binary so we use the
- * exact version this build was tested against; falls back to whatever
- * `codex` is on the user's PATH (Homebrew, npm global, …) only when the
- * bundled binary can't be located — e.g. dev installs without the SDK,
- * or a cross-platform install missing the optionalDependency for the host.
+ * model-catalog refresh, etc.). Prefer the user's installed CLI so Codex's
+ * proactive `model/list` probe is not capped by the SDK version bundled when
+ * Elevenex was released. Codex gates newly released models on sufficiently
+ * recent CLI versions, so probing the bundled binary can return an otherwise
+ * valid but stale catalog. Packaged installs without a user CLI still fall
+ * back to the bundled, tested binary.
+ *
  * Memoized for the process lifetime.
  */
 export function resolveCodexBinary(): string {
   if (cachedResolved !== undefined) return cachedResolved;
-  cachedResolved = findBundledCodexPath() ?? findBinary('codex') ?? 'codex';
+  cachedResolved = selectCodexBinary(
+    findBinary('codex'),
+    findBundledCodexPath(),
+  );
   return cachedResolved;
+}
+
+export function selectCodexBinary(
+  installedBinary: string | null,
+  bundledBinary: string | null,
+): string {
+  return installedBinary ?? bundledBinary ?? 'codex';
 }
