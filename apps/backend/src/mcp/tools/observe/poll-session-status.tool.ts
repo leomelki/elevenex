@@ -19,9 +19,11 @@ const TERMINAL_DB_STATUSES = new Set(['archived', 'stopped']);
  * small transcript summary so the caller has immediate context. On timeout:
  * returns a short stillRunning signal — call again immediately, no sleep needed.
  *
- * Designed to be called in a tight loop after prompt_session returns
- * stillRunning=true. Each call already consumes 170 s of wall-clock wait, so
- * back-to-back calls are the correct pattern.
+ * Call this after prompt_session (which returns immediately once the prompt is
+ * accepted, without waiting for the turn to finish) whenever you actually need
+ * to wait for a session. Each call already consumes up to 170 s of
+ * event-driven wall-clock wait, so back-to-back calls are the correct pattern
+ * on timeout.
  */
 export const pollSessionStatusTool = defineTool({
   name: 'poll_session_status',

@@ -35,8 +35,9 @@ function makeCtx(services: unknown): ToolContext {
 
 /**
  * A baseline runtime provider double with every method drive tools may call.
- * It's a real EventEmitter (like the production ClaudeRuntimeService) so
- * prompt_session's blocking wait can subscribe to `.on('event', ...)`.
+ * It's a real EventEmitter (like the production ClaudeRuntimeService) so tools
+ * that subscribe to `.on('event', ...)` (e.g. poll_session_status) can be
+ * exercised elsewhere; drive tools here mostly just call it directly.
  */
 function makeRuntime(overrides: Record<string, unknown> = {}) {
   return Object.assign(new EventEmitter(), {
@@ -70,8 +71,8 @@ function makeServices(opts: {
   return {
     runtime,
     services: {
-      // Also a real EventEmitter, like the production SessionsService, so
-      // prompt_session's `session-status-changed` listener can attach.
+      // Also a real EventEmitter, like the production SessionsService, for
+      // parity with the runtime double above.
       sessions: Object.assign(new EventEmitter(), {
         findOne: jest
           .fn()
@@ -161,11 +162,13 @@ describe('Drive tool group', () => {
       ).rejects.toBeInstanceOf(ToolError);
     });
 
-    it('does not report completed when the prompt was queued behind live background work', async () => {
+    it('returns immediately with status running when queued behind live background work', async () => {
       // submitPrompt() silently queues instead of running when the runtime is
       // still busy with a `run_in_background` task (shouldQueueBehindBackground),
       // so sessionState/runPhase are left over from the PREVIOUS finished turn:
-      // idle/idle, even though nothing has actually run yet.
+      // idle/idle, even though nothing has actually run yet. prompt_session must
+      // not wait for that background work to clear — it reports the queued
+      // state and returns, leaving the caller free to prompt other sessions.
       const runtime = makeRuntime({
         getRuntimeState: jest.fn().mockResolvedValue({
           sessionState: 'idle',
@@ -181,53 +184,22 @@ describe('Drive tool group', () => {
         runtime,
       });
 
-      const pending = promptSessionTool.handler(
+      const res = await promptSessionTool.handler(
         { sessionId: 7, prompt: 'go' },
         makeCtx(services),
       );
-      // Give the handler a tick to run past the pre-check and subscribe.
-      await new Promise((r) => setTimeout(r, 10));
-      runtime.emit('event', {
-        type: 'run_state',
-        payload: {
-          sessionId: 7,
-          sessionState: 'idle',
-          runPhase: 'idle',
-          backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
-          pendingPrompts: [],
-        },
-      });
-      await new Promise((r) => setTimeout(r, 10));
 
-      // Still waiting: the background task hasn't cleared, so this must not
-      // have resolved as completed yet.
-      let settledEarly = false;
-      void pending.then(() => {
-        settledEarly = true;
-      });
-      await new Promise((r) => setTimeout(r, 10));
-      expect(settledEarly).toBe(false);
-
-      // The background task finishes and drains the queued prompt, which then
-      // runs and completes for real.
-      runtime.getRuntimeState = jest.fn().mockResolvedValue({
-        sessionState: 'idle',
-        runPhase: 'idle',
-        backgroundWork: [],
-        pendingPrompts: [],
-      });
-      runtime.emit('event', { type: 'complete', payload: { sessionId: 7 } });
-
-      const res = await pending;
-      expect(res.data).toMatchObject({ sessionId: 7, accepted: true, status: 'completed' });
+      expect(res.data).toMatchObject({ sessionId: 7, accepted: true, status: 'running' });
+      // No event was ever emitted on the runtime — resolving without one proves
+      // the handler didn't subscribe and wait.
     });
 
-    it('waits through a background_work clear event before reporting completed', async () => {
+    it('does not block on a still-running turn', async () => {
       const runtime = makeRuntime({
         getRuntimeState: jest.fn().mockResolvedValue({
-          sessionState: 'idle',
-          runPhase: 'idle',
-          backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
+          sessionState: 'running',
+          runPhase: 'running',
+          backgroundWork: [],
           pendingPrompts: [],
         }),
       });
@@ -236,25 +208,12 @@ describe('Drive tool group', () => {
         runtime,
       });
 
-      const pending = promptSessionTool.handler(
+      const res = await promptSessionTool.handler(
         { sessionId: 7, prompt: 'go' },
         makeCtx(services),
       );
-      await new Promise((r) => setTimeout(r, 10));
 
-      // Background work clears with nothing queued behind it — no further
-      // `complete`/`run_state` event will ever fire, so the `background_work`
-      // event itself must be enough to re-check and resolve.
-      runtime.getRuntimeState = jest.fn().mockResolvedValue({
-        sessionState: 'idle',
-        runPhase: 'idle',
-        backgroundWork: [],
-        pendingPrompts: [],
-      });
-      runtime.emit('event', { type: 'background_work', payload: { sessionId: 7, backgroundWork: [] } });
-
-      const res = await pending;
-      expect(res.data).toMatchObject({ sessionId: 7, accepted: true, status: 'completed' });
+      expect(res.data).toMatchObject({ sessionId: 7, accepted: true, status: 'running' });
     });
   });
 
