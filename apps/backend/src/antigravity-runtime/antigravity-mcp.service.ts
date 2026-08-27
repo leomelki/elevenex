@@ -10,57 +10,52 @@ import type {
   ClaudeMcpTransport,
 } from '../claude-runtime/claude-runtime.types.js';
 
-/**
- * The two settings files Gemini merges, in increasing precedence. Enterprise
- * and system scopes exist too but are read-only for our purposes.
- */
-interface GeminiSettingsScope {
+interface AntigravityConfigScope {
   scope: ClaudeMcpScope;
   path: string;
 }
 
-interface GeminiSettings {
+interface AntigravityMcpConfig {
   mcpServers?: Record<string, Record<string, unknown>>;
-  mcp?: {
-    allowed?: string[];
-    excluded?: string[];
-    [key: string]: unknown;
-  };
   [key: string]: unknown;
 }
 
-interface LoadedScope extends GeminiSettingsScope {
-  settings: GeminiSettings;
+interface LoadedScope extends AntigravityConfigScope {
+  config: AntigravityMcpConfig;
   parseError: string | null;
-  exists: boolean;
 }
 
 /**
- * Reads and edits Gemini's MCP configuration.
+ * Reads and edits `agy`'s MCP configuration.
  *
- * Gemini keeps MCP servers in `settings.json` under a top-level `mcpServers`
- * map, and gates them with `mcp.allowed` / `mcp.excluded` name lists — the same
- * mechanism `gemini mcp enable|disable` drives. Elevenex edits those files
- * directly rather than shelling out to `gemini mcp`, because those subcommands
- * refuse to operate in a folder Gemini considers untrusted, which is the normal
- * state for a freshly created worktree.
+ * Config location (per antigravity.google/docs/cli/mcp/, cross-checked on two
+ * independent fetches — not verified against a live install):
  *
- * Gemini loads this config itself at `session/new`, so Elevenex passes an empty
- * `mcpServers` list over ACP rather than re-declaring the same servers and
- * getting them registered twice.
+ *   ~/.gemini/config/mcp_config.json   user scope (path inherited from the
+ *                                      gemini-cli era; confirmed current for
+ *                                      Antigravity by the same doc page)
+ *   <worktree>/.agents/mcp_config.json project scope (wins on name collision)
+ *
+ * Format is `{"mcpServers": {"name": {...}}}`, each entry gated by its own
+ * `disabled` boolean — unlike Gemini's `mcp.allowed`/`mcp.excluded` name
+ * lists. Elevenex edits the file directly (there is no documented `agy mcp`
+ * subcommand for enable/disable, only the interactive `/mcp` overlay).
  */
 @Injectable()
-export class GeminiMcpService {
-  private readonly logger = new Logger('GeminiMcpService');
+export class AntigravityMcpService {
+  private readonly logger = new Logger('AntigravityMcpService');
 
-  private scopesFor(worktreePath: string | null): GeminiSettingsScope[] {
-    const scopes: GeminiSettingsScope[] = [
-      { scope: 'user', path: join(homedir(), '.gemini', 'settings.json') },
+  private scopesFor(worktreePath: string | null): AntigravityConfigScope[] {
+    const scopes: AntigravityConfigScope[] = [
+      {
+        scope: 'user',
+        path: join(homedir(), '.gemini', 'config', 'mcp_config.json'),
+      },
     ];
     if (worktreePath) {
       scopes.push({
         scope: 'project',
-        path: join(worktreePath, '.gemini', 'settings.json'),
+        path: join(worktreePath, '.agents', 'mcp_config.json'),
       });
     }
     return scopes;
@@ -75,26 +70,21 @@ export class GeminiMcpService {
     const diagnostics: ClaudeMcpDiagnosticGroup[] = [];
 
     for (const scope of loaded) {
-      const errors = scope.parseError
-        ? [{ path: scope.path, message: scope.parseError }]
-        : [];
-      if (errors.length) {
+      if (scope.parseError) {
         diagnostics.push({
           scope: scope.scope,
           configLocation: scope.path,
-          errors,
+          errors: [{ path: scope.path, message: scope.parseError }],
           warnings: [],
         });
       }
-
-      const entries = scope.settings.mcpServers ?? {};
+      const entries = scope.config.mcpServers ?? {};
       for (const [name, raw] of Object.entries(entries)) {
         servers.push(this.toServerEntry(name, raw, scope));
       }
     }
 
-    // A project-scope definition wins over a user-scope one of the same name,
-    // matching how Gemini merges its settings files.
+    // A project-scope definition wins over a user-scope one of the same name.
     const deduped = new Map<string, ClaudeMcpServerEntry>();
     for (const server of servers) deduped.set(server.name, server);
     const finalServers = [...deduped.values()];
@@ -117,10 +107,7 @@ export class GeminiMcpService {
     };
   }
 
-  /**
-   * Flips a server between enabled and disabled by editing `mcp.excluded` in
-   * the scope that defines it. Returns the refreshed snapshot.
-   */
+  /** Flips a server's `disabled` flag in the scope that defines it. */
   async toggleServer(
     worktreePath: string | null,
     serverName: string,
@@ -128,72 +115,64 @@ export class GeminiMcpService {
     const loaded = await Promise.all(
       this.scopesFor(worktreePath).map((scope) => this.loadScope(scope)),
     );
-    // Prefer the most specific scope that declares the server.
     const owning = [...loaded]
       .reverse()
-      .find((scope) => Boolean(scope.settings.mcpServers?.[serverName]));
+      .find((scope) => Boolean(scope.config.mcpServers?.[serverName]));
     if (!owning) {
       throw new NotFoundException(
-        `MCP server "${serverName}" is not configured for Gemini.`,
+        `MCP server "${serverName}" is not configured for Antigravity.`,
       );
     }
 
-    const excluded = new Set(owning.settings.mcp?.excluded ?? []);
-    if (excluded.has(serverName)) {
-      excluded.delete(serverName);
-    } else {
-      excluded.add(serverName);
-    }
-
-    const next: GeminiSettings = {
-      ...owning.settings,
-      mcp: { ...(owning.settings.mcp ?? {}), excluded: [...excluded] },
+    const server = owning.config.mcpServers![serverName];
+    const next: AntigravityMcpConfig = {
+      ...owning.config,
+      mcpServers: {
+        ...owning.config.mcpServers,
+        [serverName]: { ...server, disabled: !server['disabled'] },
+      },
     };
-    await this.writeSettings(owning.path, next);
+    await this.writeConfig(owning.path, next);
 
     return this.getSnapshot(worktreePath);
   }
 
-  /**
-   * Gemini connects to MCP servers itself and does not expose a re-check RPC,
-   * so this is a plain re-read of the configuration.
-   */
+  /** `agy` owns its MCP connections; a re-check is a plain config re-read. */
   recheckServer(worktreePath: string | null): Promise<ClaudeMcpSnapshot> {
     return this.getSnapshot(worktreePath);
   }
 
-  private async loadScope(scope: GeminiSettingsScope): Promise<LoadedScope> {
+  private async loadScope(scope: AntigravityConfigScope): Promise<LoadedScope> {
     try {
       const raw = await fs.readFile(scope.path, 'utf8');
       try {
         const parsed: unknown = JSON.parse(raw);
-        const settings =
+        const config =
           parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-            ? (parsed as GeminiSettings)
+            ? (parsed as AntigravityMcpConfig)
             : {};
-        return { ...scope, settings, parseError: null, exists: true };
+        return { ...scope, config, parseError: null };
       } catch (error) {
         return {
           ...scope,
-          settings: {},
+          config: {},
           parseError: `Could not parse ${scope.path}: ${
             error instanceof Error ? error.message : String(error)
           }`,
-          exists: true,
         };
       }
     } catch {
-      return { ...scope, settings: {}, parseError: null, exists: false };
+      return { ...scope, config: {}, parseError: null };
     }
   }
 
-  private async writeSettings(
+  private async writeConfig(
     path: string,
-    settings: GeminiSettings,
+    config: AntigravityMcpConfig,
   ): Promise<void> {
     await fs.mkdir(dirname(path), { recursive: true });
-    await fs.writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
-    this.logger.log(`Updated Gemini MCP settings at ${path}`);
+    await fs.writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+    this.logger.log(`Updated Antigravity MCP config at ${path}`);
   }
 
   private toServerEntry(
@@ -201,14 +180,7 @@ export class GeminiMcpService {
     raw: Record<string, unknown>,
     scope: LoadedScope,
   ): ClaudeMcpServerEntry {
-    const allowed = scope.settings.mcp?.allowed;
-    const excluded = scope.settings.mcp?.excluded ?? [];
-    const enabled =
-      !excluded.includes(name) &&
-      (!Array.isArray(allowed) ||
-        allowed.length === 0 ||
-        allowed.includes(name));
-
+    const enabled = raw['disabled'] !== true;
     const transport = this.resolveTransport(raw);
     const configStatus = this.hasUsableTarget(raw) ? 'valid' : 'error';
 
@@ -219,21 +191,19 @@ export class GeminiMcpService {
       transport,
       configLocation: scope.path,
       enabled,
-      // Gemini owns the connections and reports their health only inside its
-      // own UI, so Elevenex cannot honestly claim "connected" here.
+      // `agy` owns the connections and does not expose their health over the
+      // headless protocol, so Elevenex cannot honestly claim "connected".
       connectionStatus: enabled ? 'unknown' : 'disabled',
       configStatus,
       ...(configStatus === 'error'
         ? {
             error:
-              'Server has neither a `command` (stdio) nor a `url`/`httpUrl` (sse/http).',
+              'Server has neither a `command` (stdio) nor a `serverUrl` (remote).',
           }
         : {}),
       actions: {
         canToggle: true,
         canRecheck: true,
-        // Gemini handles MCP OAuth through its own CLI flow rather than an
-        // elicitation Elevenex can drive.
         canAuth: false,
         canReauth: false,
         canViewTools: false,
@@ -242,8 +212,7 @@ export class GeminiMcpService {
   }
 
   private resolveTransport(raw: Record<string, unknown>): ClaudeMcpTransport {
-    if (typeof raw['httpUrl'] === 'string') return 'http';
-    if (typeof raw['url'] === 'string') return 'sse';
+    if (typeof raw['serverUrl'] === 'string') return 'http';
     if (typeof raw['command'] === 'string') return 'stdio';
     return 'unknown';
   }
@@ -251,8 +220,7 @@ export class GeminiMcpService {
   private hasUsableTarget(raw: Record<string, unknown>): boolean {
     return (
       typeof raw['command'] === 'string' ||
-      typeof raw['url'] === 'string' ||
-      typeof raw['httpUrl'] === 'string'
+      typeof raw['serverUrl'] === 'string'
     );
   }
 }

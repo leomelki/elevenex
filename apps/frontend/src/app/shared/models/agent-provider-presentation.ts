@@ -23,7 +23,7 @@ export const AGENT_PROVIDER_PRESENTATIONS: readonly AgentProviderPresentation[] 
     { id: 'claude', label: 'Claude', icon: 'lucideSparkles' },
     { id: 'codex', label: 'Codex', icon: 'lucideFileText' },
     { id: 'pi', label: 'Pi', icon: 'lucideNotebookPen' },
-    { id: 'gemini', label: 'Gemini', icon: 'lucideGem' },
+    { id: 'antigravity', label: 'Antigravity', icon: 'lucideOrbit' },
   ] as const;
 
 /** Icon lookup for provider ids reported by the backend. */

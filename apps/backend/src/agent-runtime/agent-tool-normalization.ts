@@ -82,9 +82,7 @@ export function canonicalizeAgentTool(
     normalized === 'fileedittool' ||
     normalized === 'strreplace' ||
     normalized === 'strreplacebasededittool' ||
-    normalized === 'strreplacebasedeittool' ||
-    // Gemini CLI names its in-place edit tool `replace`.
-    normalized === 'replace'
+    normalized === 'strreplacebasedeittool'
   ) {
     return {
       toolKind: 'edit',

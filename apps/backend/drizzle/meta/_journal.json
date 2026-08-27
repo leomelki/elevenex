@@ -197,6 +197,20 @@
       "when": 1786834966697,
       "tag": "0027_same_the_hood",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1787688772966,
+      "tag": "0028_glamorous_nightcrawler",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1787688782622,
+      "tag": "0029_natural_alice",
+      "breakpoints": true
     }
   ]
 }

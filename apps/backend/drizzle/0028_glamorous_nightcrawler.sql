@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `antigravity_session_id` text DEFAULT '-1';

@@ -46,7 +46,7 @@ export const createSessionTool = defineTool({
       .optional()
       .describe('Optional session name; auto-generated (e.g. "Session 3") if omitted.'),
     provider: z
-      .enum(['claude', 'codex', 'pi', 'gemini'])
+      .enum(['claude', 'codex', 'pi', 'antigravity'])
       .default('claude')
       .describe("Inner agent provider for this session. Default 'claude'."),
   },

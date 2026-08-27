@@ -15,11 +15,11 @@ import {
   resolveCodexBinary,
 } from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
-import { buildGeminiSpawnCommand } from '../gemini-runtime/gemini-binary.js';
+import { buildAntigravitySpawnCommand } from '../antigravity-runtime/antigravity-binary.js';
 
 const execFileAsync = promisify(execFileCallback);
 
-export type TextAgentProvider = 'claude' | 'codex' | 'pi' | 'gemini';
+export type TextAgentProvider = 'claude' | 'codex' | 'pi' | 'antigravity';
 
 export const DEFAULT_TEXT_AGENT_MODELS = {
   claude: 'haiku',
@@ -79,8 +79,8 @@ export interface GenerateTextWithAgentRequest {
   pi?: {
     timeoutMs?: number;
   };
-  gemini?: {
-    /** Omitted by default so Gemini uses whatever model the account defaults to. */
+  antigravity?: {
+    /** Omitted by default so Antigravity uses whatever model the account defaults to. */
     model?: string;
     timeoutMs?: number;
   };
@@ -106,8 +106,8 @@ export class TextAgentGenerationService {
         return this.generateWithCodex(request);
       case 'pi':
         return this.generateWithPi(request);
-      case 'gemini':
-        return this.generateWithGemini(request);
+      case 'antigravity':
+        return this.generateWithAntigravity(request);
     }
   }
 
@@ -332,39 +332,40 @@ export class TextAgentGenerationService {
   }
 
   /**
-   * Runs a one-shot, read-only Gemini turn.
+   * Runs a one-shot, read-only Antigravity turn via `agy -p ... --output-format
+   * json`. These flows want a single block of text, not a conversation, so
+   * this uses `agy`'s headless print mode rather than the stream-json session
+   * machinery the workspace runtime needs. Read-only by construction (no
+   * `--dangerously-skip-permissions`): unapproved tool calls are soft-denied
+   * per `agy`'s default policy, which is exactly what a text-generation task
+   * wants.
    *
-   * These flows want a single block of text, not a conversation, so this uses
-   * gemini's non-interactive mode rather than the ACP session machinery the
-   * workspace runtime needs. `--approval-mode plan` keeps it read-only, and
-   * `--skip-trust` is required because a freshly created worktree is never in
-   * Gemini's trusted-folder list and it would otherwise silently downgrade the
-   * approval mode and refuse to run headless.
+   * The exact `--output-format json` envelope shape is not confirmed against
+   * a live install — see docs/antigravity-provider-flow.md — so
+   * `parseAntigravityEnvelope` scans defensively the same way the old Gemini
+   * parser did, rather than assuming a fixed shape.
    */
-  private async generateWithGemini(
+  private async generateWithAntigravity(
     request: GenerateTextWithAgentRequest,
   ): Promise<GenerateTextWithAgentResult | null> {
     if (typeof request.prompt !== 'string') {
       this.logger.warn(
-        `[${request.taskName}] Gemini generation requires a string prompt`,
+        `[${request.taskName}] Antigravity generation requires a string prompt`,
       );
       return null;
     }
 
-    const model = request.gemini?.model ?? null;
+    const model = request.antigravity?.model ?? null;
     const args = [
       '-p',
       request.prompt,
       '--output-format',
       'json',
-      '--approval-mode',
-      'plan',
-      '--skip-trust',
-      ...(model ? ['-m', model] : []),
+      ...(model ? ['--model', model] : []),
     ];
 
     try {
-      const { command, shell } = buildGeminiSpawnCommand();
+      const { command, shell } = buildAntigravitySpawnCommand();
       const env = await buildAugmentedEnvAsync(
         process.env,
         request.worktreePath,
@@ -373,28 +374,28 @@ export class TextAgentGenerationService {
         cwd: request.worktreePath,
         env,
         shell,
-        timeout: request.gemini?.timeoutMs ?? 60_000,
+        timeout: request.antigravity?.timeoutMs ?? 60_000,
         maxBuffer: 10 * 1024 * 1024,
         windowsHide: true,
       });
 
-      const envelope = this.parseGeminiEnvelope(stdout);
+      const envelope = this.parseAntigravityEnvelope(stdout);
       if (!envelope) {
         this.logger.warn(
-          `[${request.taskName}] Gemini returned no parseable JSON output`,
+          `[${request.taskName}] Antigravity returned no parseable JSON output`,
         );
         return null;
       }
       if (envelope.error) {
         this.logger.warn(
-          `[${request.taskName}] Gemini query failed: ${envelope.error}`,
+          `[${request.taskName}] Antigravity query failed: ${envelope.error}`,
         );
         return null;
       }
-      return { provider: 'gemini', model, text: envelope.response ?? '' };
+      return { provider: 'antigravity', model, text: envelope.response ?? '' };
     } catch (error) {
       this.logger.warn(
-        `[${request.taskName}] Gemini query failed: ${
+        `[${request.taskName}] Antigravity query failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -403,18 +404,20 @@ export class TextAgentGenerationService {
   }
 
   /**
-   * Extracts gemini's `--output-format json` envelope
-   * (`{ session_id, response?, stats?, error?, warnings? }`) from stdout, which
-   * can be preceded by unstructured startup warnings.
+   * Extracts `agy -p --output-format json`'s result envelope from stdout,
+   * which can be preceded by unstructured startup noise. Looks for the first
+   * and last top-level `{` on stdout as candidate parses rather than assuming
+   * a fixed prefix, since the exact envelope shape is unconfirmed.
    */
-  private parseGeminiEnvelope(
+  private parseAntigravityEnvelope(
     stdout: string,
   ): { response?: string; error?: string } | null {
-    const candidates = [stdout.trim()];
-    const marker = stdout.indexOf('{\n  "session_id"');
-    if (marker >= 0) candidates.push(stdout.slice(marker));
+    const trimmed = stdout.trim();
+    const candidates = [trimmed];
+    const firstBrace = trimmed.indexOf('{');
+    if (firstBrace > 0) candidates.push(trimmed.slice(firstBrace));
     const lastBrace = stdout.lastIndexOf('\n{');
-    if (lastBrace >= 0) candidates.push(stdout.slice(lastBrace + 1));
+    if (lastBrace >= 0) candidates.push(stdout.slice(lastBrace + 1).trim());
 
     for (const candidate of candidates) {
       if (!candidate.startsWith('{')) continue;
@@ -424,16 +427,21 @@ export class TextAgentGenerationService {
         const record = parsed as Record<string, unknown>;
         const error = record['error'];
         const errorMessage =
-          error && typeof error === 'object'
-            ? String((error as Record<string, unknown>)['message'] ?? 'unknown')
-            : typeof error === 'string'
-              ? error
+          typeof error === 'string'
+            ? error
+            : error && typeof error === 'object'
+              ? String((error as Record<string, unknown>)['message'] ?? 'unknown')
+              : record['status'] === 'ERROR'
+                ? 'Antigravity turn failed.'
+                : undefined;
+        const response =
+          typeof record['response'] === 'string'
+            ? record['response']
+            : typeof record['text'] === 'string'
+              ? record['text']
               : undefined;
         return {
-          response:
-            typeof record['response'] === 'string'
-              ? record['response']
-              : undefined,
+          response,
           ...(errorMessage ? { error: errorMessage } : {}),
         };
       } catch {

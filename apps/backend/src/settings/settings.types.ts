@@ -7,7 +7,7 @@ export const DEFAULT_AGENT_PROVIDERS = [
   'claude',
   'codex',
   'pi',
-  'gemini',
+  'antigravity',
 ] as const;
 
 export type DefaultClaudeSessionSurface =

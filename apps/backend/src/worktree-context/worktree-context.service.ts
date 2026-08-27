@@ -34,7 +34,7 @@ const VALID_GENERATION_STATUSES = [
 ] as const;
 
 type GenerationStatus = (typeof VALID_GENERATION_STATUSES)[number];
-type ContextGenerationProvider = 'claude' | 'codex' | 'pi' | 'gemini';
+type ContextGenerationProvider = 'claude' | 'codex' | 'pi' | 'antigravity';
 
 export interface WorktreeContextSnapshot {
   repoId: number;
@@ -1121,7 +1121,7 @@ export class WorktreeContextService {
       provider === 'claude' ||
       provider === 'codex' ||
       provider === 'pi' ||
-      provider === 'gemini'
+      provider === 'antigravity'
     ) {
       return provider;
     }

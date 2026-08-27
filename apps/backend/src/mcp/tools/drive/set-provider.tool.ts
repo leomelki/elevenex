@@ -2,7 +2,7 @@
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 
 /**
- * set_provider â€” choose which agent backend (claude/codex/pi/gemini) a session uses.
+ * set_provider â€” choose which agent backend (claude/codex/pi/antigravity) a session uses.
  * Only meaningful before the session has started; switching after start is a
  * no-op for the running runtime.
  */
@@ -12,7 +12,7 @@ export const setProviderTool = defineTool({
   costClass: 'instant',
   mutates: true,
   description:
-    "Set which agent backend a session uses (claude/codex/pi/gemini). âš¡instant. Only applies before the session starts â€” set it before the first prompt_session.",
+    "Set which agent backend a session uses (claude/codex/pi/antigravity). âš¡instant. Only applies before the session starts â€” set it before the first prompt_session.",
   inputShape: {
     sessionId: z
       .number()
@@ -20,7 +20,7 @@ export const setProviderTool = defineTool({
       .positive()
       .describe('Session to reconfigure.'),
     provider: z
-      .enum(['claude', 'codex', 'pi', 'gemini'])
+      .enum(['claude', 'codex', 'pi', 'antigravity'])
       .describe('Agent backend to use. Applies only before the session starts.'),
   },
   handler: async (args, ctx) => {

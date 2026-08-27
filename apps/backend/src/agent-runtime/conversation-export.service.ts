@@ -205,8 +205,8 @@ export class ConversationExportService {
           ? session.codexSessionId
           : provider === 'pi'
             ? session.piSessionPath
-            : provider === 'gemini'
-              ? session.geminiSessionId
+            : provider === 'antigravity'
+              ? session.antigravitySessionId
               : null;
 
     return {

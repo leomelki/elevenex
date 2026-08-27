@@ -38,7 +38,7 @@ const MAX_COMMIT_MESSAGE_CONVENTION_DOC_CHARS = 6_000;
 const COMMIT_MESSAGE_CLAUDE_SYSTEM_PROMPT =
   'You generate git commit messages. You have no tool access. Follow the ' +
   'user instructions exactly and respond with nothing but the requested JSON.';
-type CommitMessageProvider = 'claude' | 'codex' | 'pi' | 'gemini';
+type CommitMessageProvider = 'claude' | 'codex' | 'pi' | 'antigravity';
 interface CommitMessagePromptInput {
   worktreePath: string;
   branchName: string;
@@ -81,7 +81,7 @@ export interface CommitMessageSuggestion {
   subject: string;
   body: string | null;
   confidence: 'high' | 'medium' | 'low';
-  source: 'external' | 'claude' | 'codex' | 'pi' | 'gemini' | 'fallback';
+  source: 'external' | 'claude' | 'codex' | 'pi' | 'antigravity' | 'fallback';
 }
 
 export interface PushResult {
@@ -1051,12 +1051,12 @@ export class GitService {
     );
   }
 
-  private async generateCommitMessageWithGemini(
+  private async generateCommitMessageWithAntigravity(
     input: CommitMessagePromptInput,
   ): Promise<CommitMessageSuggestion | null> {
-    return this.generateCommitSuggestionWithRetry('gemini', (retryHint) =>
+    return this.generateCommitSuggestionWithRetry('antigravity', (retryHint) =>
       this.textAgentGenerationService.generate({
-        provider: 'gemini',
+        provider: 'antigravity',
         worktreePath: input.worktreePath,
         prompt: this.buildCommitMessagePrompt({ ...input, retryHint }),
         taskName: 'commit-message',
@@ -1101,8 +1101,8 @@ export class GitService {
         return this.generateCommitMessageWithCodex(input);
       case 'pi':
         return this.generateCommitMessageWithPi(input);
-      case 'gemini':
-        return this.generateCommitMessageWithGemini(input);
+      case 'antigravity':
+        return this.generateCommitMessageWithAntigravity(input);
     }
   }
 
@@ -1458,7 +1458,7 @@ export class GitService {
       provider === 'claude' ||
       provider === 'codex' ||
       provider === 'pi' ||
-      provider === 'gemini'
+      provider === 'antigravity'
     ) {
       return provider;
     }

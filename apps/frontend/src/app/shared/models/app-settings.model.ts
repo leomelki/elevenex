@@ -1,7 +1,7 @@
 import { SessionToolbarButtonPreference } from './session-toolbar-button.model';
 
 export type DefaultClaudeSessionSurface = 'claude-ui' | 'tui';
-export type DefaultAgentProvider = 'claude' | 'codex' | 'pi' | 'gemini';
+export type DefaultAgentProvider = 'claude' | 'codex' | 'pi' | 'antigravity';
 
 /**
  * Per-provider preferences keyed by agent provider id. Values are opaque

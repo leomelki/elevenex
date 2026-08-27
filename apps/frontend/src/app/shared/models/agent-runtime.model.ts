@@ -2,7 +2,7 @@ export type AgentProviderId =
   | 'claude'
   | 'codex'
   | 'pi'
-  | 'gemini'
+  | 'antigravity'
   | 'opencode'
   | string;
 export type AgentPermissionMode = string;

@@ -48,7 +48,7 @@ interface SessionProviderColumns {
   claudeSessionId?: string | null;
   codexSessionId?: string | null;
   piSessionPath?: string | null;
-  geminiSessionId?: string | null;
+  antigravitySessionId?: string | null;
 }
 
 @Injectable()
@@ -446,12 +446,12 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
-  async updateGeminiSessionId(id: number, geminiSessionId: string) {
+  async updateAntigravitySessionId(id: number, antigravitySessionId: string) {
     const session = await this.findOne(id);
 
     if (
-      session.geminiSessionId === geminiSessionId &&
-      session.activeAgentProvider === 'gemini'
+      session.antigravitySessionId === antigravitySessionId &&
+      session.activeAgentProvider === 'antigravity'
     ) {
       return session;
     }
@@ -459,8 +459,8 @@ export class SessionsService extends EventEmitter {
     const rows = await this.db
       .update(schema.sessions)
       .set({
-        activeAgentProvider: 'gemini',
-        geminiSessionId,
+        activeAgentProvider: 'antigravity',
+        antigravitySessionId,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.sessions.id, id))
@@ -520,7 +520,7 @@ export class SessionsService extends EventEmitter {
    * another arm to a nested conditional.
    */
   private static readonly PROVIDER_SESSION_COLUMNS = [
-    ['gemini', 'geminiSessionId'],
+    ['antigravity', 'antigravitySessionId'],
     ['pi', 'piSessionPath'],
     ['codex', 'codexSessionId'],
     ['claude', 'claudeSessionId'],

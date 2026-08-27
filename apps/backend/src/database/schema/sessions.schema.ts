@@ -31,7 +31,7 @@ export const sessions = sqliteTable('sessions', {
   claudeSessionId: text('claude_session_id').default('-1'),
   codexSessionId: text('codex_session_id').default('-1'),
   piSessionPath: text('pi_session_path').default('-1'),
-  geminiSessionId: text('gemini_session_id').default('-1'),
+  antigravitySessionId: text('antigravity_session_id').default('-1'),
   hasInjectedWorktreeContext: integer('has_injected_worktree_context', {
     mode: 'boolean',
   })

@@ -13,7 +13,7 @@ export interface Session {
   claudeSessionId: string;
   codexSessionId: string;
   piSessionPath?: string;
-  geminiSessionId?: string;
+  antigravitySessionId?: string;
   hasInjectedWorktreeContext: boolean;
   hasUnreviewedCompletion: boolean;
   lastCompletionAt: string | null;

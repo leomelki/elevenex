@@ -268,27 +268,27 @@
             <button
               type="button"
               class="rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              [class.border-primary]="selectedAgent() === 'gemini'"
-              [class.bg-accent]="selectedAgent() === 'gemini'"
-              [attr.aria-pressed]="selectedAgent() === 'gemini'"
-              (click)="selectAgent('gemini')"
+              [class.border-primary]="selectedAgent() === 'antigravity'"
+              [class.bg-accent]="selectedAgent() === 'antigravity'"
+              [attr.aria-pressed]="selectedAgent() === 'antigravity'"
+              (click)="selectAgent('antigravity')"
             >
               <div class="flex items-center justify-between gap-3">
                 <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
-                  <ng-icon name="lucideGem" size="20" />
+                  <ng-icon name="lucideOrbit" size="20" />
                 </span>
-                @if (selectedAgent() === 'gemini') {
+                @if (selectedAgent() === 'antigravity') {
                   <span class="flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
                     <ng-icon name="lucideCheck" size="14" />
                   </span>
                 }
               </div>
-              <div class="mt-5 text-base font-semibold text-foreground">Gemini</div>
-              <p class="mt-2 text-sm leading-6 text-muted-foreground">Use Google's Gemini CLI as the default agent. No separate UI/TUI preference is needed.</p>
+              <div class="mt-5 text-base font-semibold text-foreground">Antigravity</div>
+              <p class="mt-2 text-sm leading-6 text-muted-foreground">Use Google's Antigravity CLI as the default agent. No separate UI/TUI preference is needed.</p>
               <div class="mt-5 rounded-md border border-border bg-card p-3">
                 <div class="flex items-center gap-2 border-b border-border pb-2 text-xs text-muted-foreground">
-                  <ng-icon name="lucideGem" size="13" />
-                  Gemini session
+                  <ng-icon name="lucideOrbit" size="13" />
+                  Antigravity session
                 </div>
                 <div class="mt-3 grid gap-2">
                   <div class="h-2 w-2/3 rounded bg-muted"></div>
@@ -407,9 +407,9 @@
             <ng-icon name="lucideSparkles" size="16" />
             Claude setting
           </div>
-          <h2 class="text-3xl font-semibold leading-tight text-foreground">Your default agent is {{ selectedAgent() === 'codex' ? 'Codex' : 'Pi' }}.</h2>
+          <h2 class="text-3xl font-semibold leading-tight text-foreground">Your default agent is {{ selectedAgent() === 'codex' ? 'Codex' : selectedAgent() === 'pi' ? 'Pi' : 'Antigravity' }}.</h2>
           <p class="mt-3 text-sm leading-6 text-muted-foreground">
-            Codex and Pi do not have a separate UI/TUI setting. If you later use Claude, you can choose Claude UI or Claude TUI from Settings.
+            Codex, Pi, and Antigravity do not have a separate UI/TUI setting. If you later use Claude, you can choose Claude UI or Claude TUI from Settings.
           </p>
 
           <div class="mt-6 rounded-lg border border-border bg-background p-5">

@@ -140,7 +140,7 @@ export class SessionTitleService {
     return provider === 'claude' ||
       provider === 'codex' ||
       provider === 'pi' ||
-      provider === 'gemini'
+      provider === 'antigravity'
       ? provider
       : null;
   }

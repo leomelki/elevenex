@@ -86,13 +86,16 @@ import { ClaudeMcpDrawerComponent } from './components/claude-mcp-drawer.compone
 import { ClaudeInstallCardComponent } from './components/claude-install-card.component';
 import { CodexLoginCardComponent } from './components/codex-login-card.component';
 import { PiLoginCardComponent } from './components/pi-login-card.component';
-import { GeminiLoginCardComponent } from './components/gemini-login-card.component';
 
 /**
- * Providers whose credentials are collected inside the workspace. Claude is
- * absent: it manages its own sign-in outside Elevenex.
+ * Providers gated behind a card in the workspace: Codex and Pi collect their
+ * credentials here, Claude only needs its CLI installed. Antigravity is absent:
+ * its auth status can't be verified from the backend yet (see
+ * docs/antigravity-provider-flow.md), so gating on `authenticated === true`
+ * would lock every Antigravity session out permanently — a failed prompt
+ * surfaces its own error instead.
  */
-const LOGIN_CARD_PROVIDERS = new Set(['claude', 'codex', 'pi', 'gemini']);
+const LOGIN_CARD_PROVIDERS = new Set(['claude', 'codex', 'pi']);
 import {
   ClaudeAgentInspectorComponent,
   ClaudeSubagentHistoryState,
@@ -164,7 +167,6 @@ type TranscriptRenderItem =
     ClaudeInstallCardComponent,
     CodexLoginCardComponent,
     PiLoginCardComponent,
-    GeminiLoginCardComponent,
     AgentShowCardComponent,
     NgIcon,
     ZardButtonComponent,
@@ -764,8 +766,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     // While a login card is on screen, poll the auth-status endpoint as a
     // safety net: a CLI's completion event is occasionally delayed (long-poll)
     // or missed (WS reconnect race), and the user would otherwise be stuck on
-    // a card whose dismissal never arrived. Gemini in particular finishes its
-    // OAuth entirely in the browser, so polling is the only completion signal.
+    // a card whose dismissal never arrived. A provider that finishes OAuth
+    // entirely in the browser has no other completion signal to rely on.
     effect((onCleanup) => {
       if (!this.showProviderLogin()) return;
       const provider = this.currentProvider();

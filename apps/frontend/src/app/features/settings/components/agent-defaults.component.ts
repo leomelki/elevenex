@@ -2,8 +2,8 @@ import { Component, computed, inject } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideFileText,
-  lucideGem,
   lucideNotebookPen,
+  lucideOrbit,
   lucideRefreshCw,
   lucideSparkles,
   lucideTriangleAlert,
@@ -71,8 +71,8 @@ interface ProviderRow {
   viewProviders: [
     provideIcons({
       lucideFileText,
-      lucideGem,
       lucideNotebookPen,
+      lucideOrbit,
       lucideRefreshCw,
       lucideSparkles,
       lucideTriangleAlert,

@@ -29,7 +29,7 @@ export const generateWorktreeContextTool = defineTool({
       .default(false)
       .describe('Regenerate even if a cached sentence exists. Default false.'),
     provider: z
-      .enum(['claude', 'codex', 'pi', 'gemini'])
+      .enum(['claude', 'codex', 'pi', 'antigravity'])
       .default('claude')
       .describe("LLM provider for generation. Default 'claude'."),
   },

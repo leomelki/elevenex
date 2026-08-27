@@ -486,7 +486,7 @@ export class TabService {
     AgentProviderId,
     keyof Session,
   ][] = [
-    ['gemini', 'geminiSessionId'],
+    ['antigravity', 'antigravitySessionId'],
     ['pi', 'piSessionPath'],
     ['codex', 'codexSessionId'],
     ['claude', 'claudeSessionId'],
