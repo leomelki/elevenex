@@ -141,6 +141,7 @@ import { ClaudeSessionRuntime } from './claude-session-runtime.js';
 import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
 import { resolveAgentStartupSelection } from '../agent-runtime/agent-model-defaults.js';
 import type {
+  AgentAuthStatus,
   AgentForkConversationRequest,
   AgentForkConversationResult,
   AgentProviderModelCatalogPayload,
@@ -516,8 +517,11 @@ export class ClaudeRuntimeService
     private readonly settingsService: SettingsService,
   ) {
     super();
-    this.logClaudeRuntimeConfiguration();
-    void this.refreshClaudeCliOverrideVersion();
+    if (this.claudeCliOverride) {
+      void this.refreshClaudeCliOverrideVersion();
+    } else {
+      this.logClaudeRuntimeConfiguration();
+    }
 
     this.claudeHooksService.on(
       'hook-event',
@@ -620,6 +624,75 @@ export class ClaudeRuntimeService
       reasoningEfforts: [...AGENT_REASONING_EFFORTS],
       providerDefaultModelId: null,
       supportsModelSelection: true,
+    };
+  }
+
+  async getCliStatus(): Promise<AgentAuthStatus> {
+    const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
+    const binaryPath = configuredPath
+      ? findBinary(configuredPath) ?? configuredPath
+      : findBinary('claude');
+    if (!binaryPath) {
+      const installHint =
+        process.platform === 'win32'
+          ? 'irm https://claude.ai/install.ps1 | iex'
+          : 'curl -fsSL https://claude.ai/install.sh | bash';
+      return {
+        isAuthenticating: false,
+        installed: false,
+        authenticated: false,
+        version: null,
+        installHint,
+        output: [
+          'Claude Code CLI is not installed.',
+          `Install it with: ${installHint}`,
+        ],
+      };
+    }
+
+    const selected = this.claudeCliOverride;
+    const version =
+      selected?.path === binaryPath && selected.version
+        ? selected.version
+        : await this.readClaudeCliVersion(binaryPath, false);
+    if (!version) {
+      return {
+        isAuthenticating: false,
+        installed: false,
+        authenticated: false,
+        version: null,
+        installHint:
+          process.platform === 'win32'
+            ? 'irm https://claude.ai/install.ps1 | iex'
+            : 'curl -fsSL https://claude.ai/install.sh | bash',
+        output: [
+          `Claude Code CLI could not be executed at ${binaryPath}.`,
+        ],
+      };
+    }
+
+    const environmentAuth = Boolean(
+      process.env.ANTHROPIC_API_KEY?.trim() ||
+      process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() ||
+      process.env.CLAUDE_CODE_USE_BEDROCK === '1' ||
+      process.env.CLAUDE_CODE_USE_VERTEX === '1' ||
+      process.env.CLAUDE_CODE_USE_FOUNDRY === '1',
+    );
+    const authenticated =
+      environmentAuth ||
+      ((await this.readClaudeAuthenticated(binaryPath)) ?? true);
+    return {
+      isAuthenticating: false,
+      installed: true,
+      authenticated,
+      version,
+      installHint: authenticated ? null : 'claude auth login',
+      output: authenticated
+        ? [`Claude Code ${version}`]
+        : [
+            `Claude Code ${version}`,
+            'Claude Code is not signed in. Run: claude auth login',
+          ],
     };
   }
 
@@ -1859,10 +1932,7 @@ export class ClaudeRuntimeService
           permissionMode: state.selectedPermissionMode ?? 'default',
           warmState: runtime.warmState,
           claudeBinary:
-            this.claudeCliOverride?.path ??
-            this.resolveSdkClaudePath() ??
-            findBinary('claude') ??
-            'sdk-default',
+            this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude',
           historyItems: state.lastHistoryItemCount,
           historySource: state.lastHistorySource,
           historyAgeMs:
@@ -4919,29 +4989,6 @@ export class ClaudeRuntimeService
     return matchingKeys[ordinal] ?? null;
   }
 
-  private resolveSdkClaudePath(): string | null {
-    const ext = process.platform === 'win32' ? '.exe' : '';
-    const candidates =
-      process.platform === 'linux'
-        ? [
-            `@anthropic-ai/claude-agent-sdk-linux-${process.arch}-musl/claude${ext}`,
-            `@anthropic-ai/claude-agent-sdk-linux-${process.arch}/claude${ext}`,
-          ]
-        : [
-            `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`,
-          ];
-
-    const scopedRequire = createRequire(__filename);
-    for (const candidate of candidates) {
-      try {
-        return scopedRequire.resolve(candidate);
-      } catch {
-        // Try next candidate.
-      }
-    }
-    return null;
-  }
-
   private async buildQueryOptions(
     sessionId: number,
     worktreePath: string,
@@ -4968,13 +5015,11 @@ export class ClaudeRuntimeService
     const effectivePermissionMode = autonomyPolicy
       ? autonomyPolicy.permissionMode
       : this.normalizeStoredPermissionMode(selectedPermissionMode);
-    // Use the SDK-managed Claude Code binary by default so the query process
-    // and SDK protocol stay in lockstep across prompt turns.
+    // Always use the independently installed Claude Code CLI. Passing the
+    // command name even when PATH resolution fails prevents the Agent SDK from
+    // silently falling back to its bundled optional executable.
     const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ??
-      this.resolveSdkClaudePath() ??
-      findBinary('claude') ??
-      undefined;
+      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
     const options: Options & {
       fastMode?: boolean;
       fastModePerSessionOptIn?: boolean;
@@ -5124,10 +5169,7 @@ export class ClaudeRuntimeService
     abortController: AbortController,
   ): Promise<Options> {
     const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ??
-      this.resolveSdkClaudePath() ??
-      findBinary('claude') ??
-      undefined;
+      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
 
     return {
       abortController,
@@ -5181,17 +5223,21 @@ export class ClaudeRuntimeService
   private resolveClaudeCliOverride(): {
     path: string;
     version: string | null;
+    configured: boolean;
   } | null {
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
-    if (!configuredPath) {
-      return null;
+    if (configuredPath) {
+      return {
+        path: findBinary(configuredPath) ?? configuredPath,
+        version: null,
+        configured: true,
+      };
     }
 
-    const resolvedPath = findBinary(configuredPath) ?? configuredPath;
-    return {
-      path: resolvedPath,
-      version: null,
-    };
+    const installedPath = findBinary('claude');
+    return installedPath
+      ? { path: installedPath, version: null, configured: false }
+      : null;
   }
 
   private async refreshClaudeCliOverrideVersion(): Promise<void> {
@@ -5205,10 +5251,42 @@ export class ClaudeRuntimeService
       ...this.claudeCliOverride,
       version,
     };
+    this.logClaudeRuntimeConfiguration();
+  }
+
+  private async readClaudeAuthenticated(
+    binaryPath: string,
+  ): Promise<boolean | null> {
+    const parseStatus = (value: unknown): boolean | null => {
+      if (typeof value !== 'string' || !value.trim()) return null;
+      try {
+        const parsed = JSON.parse(value) as { loggedIn?: unknown };
+        return typeof parsed.loggedIn === 'boolean' ? parsed.loggedIn : null;
+      } catch {
+        return null;
+      }
+    };
+
+    try {
+      const { stdout } = await execFileAsync(
+        binaryPath,
+        ['auth', 'status', '--json'],
+        {
+          env: await buildAugmentedEnvAsync(),
+          timeout: 5000,
+        },
+      );
+      return parseStatus(stdout);
+    } catch (error) {
+      // Signed-out Claude versions may return a non-zero status while still
+      // writing the useful JSON payload to stdout.
+      return parseStatus((error as { stdout?: unknown })?.stdout);
+    }
   }
 
   private async readClaudeCliVersion(
     binaryPath: string,
+    logFailure = true,
   ): Promise<string | null> {
     try {
       const { stdout } = await execFileAsync(binaryPath, ['--version'], {
@@ -5218,9 +5296,11 @@ export class ClaudeRuntimeService
       const output = stdout.trim();
       return output || null;
     } catch (error) {
-      this.logger.warn(
-        `Could not read Claude CLI version for override "${binaryPath}": ${String(error)}`,
-      );
+      if (logFailure) {
+        this.logger.warn(
+          `Could not read Claude CLI version for "${binaryPath}": ${String(error)}`,
+        );
+      }
       return null;
     }
   }
@@ -5231,24 +5311,27 @@ export class ClaudeRuntimeService
       CLAUDE_SDK_PACKAGE.claudeCodeVersion ?? 'unknown';
 
     if (!this.claudeCliOverride) {
-      this.logger.log(
-        `Claude runtime configured to use the SDK-managed CLI (sdk=${sdkVersion}, claudeCode=${sdkClaudeCodeVersion}).`,
+      this.logger.warn(
+        `Claude CLI not found on PATH (sdk=${sdkVersion}, expectedClaudeCode=${sdkClaudeCodeVersion}). Install Claude Code before using the Claude provider.`,
       );
       return;
     }
 
-    const overrideVersion = this.claudeCliOverride.version ?? 'unknown';
+    const cliVersion = this.claudeCliOverride.version ?? 'unknown';
+    const source = this.claudeCliOverride.configured
+      ? 'ELEVENEX_CLAUDE_BIN'
+      : 'PATH';
     this.logger.log(
-      `Claude runtime configured with ELEVENEX_CLAUDE_BIN=${this.claudeCliOverride.path} (sdk=${sdkVersion}, sdkClaudeCode=${sdkClaudeCodeVersion}, overrideVersion=${overrideVersion}).`,
+      `Claude runtime configured from ${source}: ${this.claudeCliOverride.path} (sdk=${sdkVersion}, sdkClaudeCode=${sdkClaudeCodeVersion}, cliVersion=${cliVersion}).`,
     );
 
     if (
       CLAUDE_SDK_PACKAGE.claudeCodeVersion &&
-      overrideVersion !== 'unknown' &&
-      !overrideVersion.includes(CLAUDE_SDK_PACKAGE.claudeCodeVersion)
+      cliVersion !== 'unknown' &&
+      !cliVersion.includes(CLAUDE_SDK_PACKAGE.claudeCodeVersion)
     ) {
       this.logger.warn(
-        `Claude CLI override version mismatch: sdk expects ${CLAUDE_SDK_PACKAGE.claudeCodeVersion}, override reports ${overrideVersion}. Streaming and SDK behavior may degrade.`,
+        `Claude CLI version mismatch: sdk expects ${CLAUDE_SDK_PACKAGE.claudeCodeVersion}, installed CLI reports ${cliVersion}. Streaming and SDK behavior may degrade.`,
       );
     }
   }
@@ -5506,10 +5589,7 @@ export class ClaudeRuntimeService
   private async buildEphemeralModelQueryOptions(): Promise<Options> {
     const cwd = tmpdir();
     const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ??
-      this.resolveSdkClaudePath() ??
-      findBinary('claude') ??
-      undefined;
+      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
     const denyTool: CanUseTool = () =>
       Promise.resolve({
         behavior: 'deny',
@@ -7127,6 +7207,18 @@ export function loadClaudeSdkPackageMetadata(
       'package.json',
     ),
   ]);
+
+  if (options.packageAnchors === undefined) {
+    try {
+      const sdkEntry = createRequire(__filename).resolve(
+        '@anthropic-ai/claude-agent-sdk',
+      );
+      candidates.add(join(dirname(sdkEntry), 'package.json'));
+    } catch {
+      // Packaged runtimes may only stage package metadata at a runtime-root
+      // candidate below rather than expose it through normal resolution.
+    }
+  }
 
   const packageAnchors = options.packageAnchors ?? [
     join(runtimeRoot, 'package.json'),

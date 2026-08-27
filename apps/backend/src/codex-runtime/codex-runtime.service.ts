@@ -2472,13 +2472,6 @@ export class CodexRuntimeService
   }
 }
 
-type CodexSdkModule = typeof import('@openai/codex-sdk');
-
-const importCodexSdk = new Function(
-  'specifier',
-  'return import(specifier)',
-) as (specifier: string) => Promise<CodexSdkModule>;
-
 function commandActionsFrom(value: unknown): unknown[] | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;

@@ -60,6 +60,10 @@ export class ClaudeAgentRuntimeProvider
     return Promise.resolve(this.runtimeService.getModelCatalog());
   }
 
+  getAuthStatus() {
+    return this.runtimeService.getCliStatus();
+  }
+
   getSubagentHistory(sessionId: number, agentId: string) {
     return this.runtimeService.getSubagentHistory(sessionId, agentId);
   }

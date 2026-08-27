@@ -11,7 +11,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
 import { buildAugmentedEnv, buildSpawnCommand } from '../config/system-paths.js';
-import { findBundledCodexPath, resolveCodexBinary } from './codex-binary.js';
+import { resolveCodexBinary } from './codex-binary.js';
 import type {
   CodexAuthStatus,
   CodexLoginMode,
@@ -109,7 +109,7 @@ export class CodexAuthService extends EventEmitter {
     return {
       isAuthenticating: Boolean(active),
       output,
-      installed: Boolean(version || findBundledCodexPath()),
+      installed: Boolean(version),
       version,
       authenticated,
       authMethod,
@@ -132,21 +132,15 @@ export class CodexAuthService extends EventEmitter {
       await this.killActive();
     }
     const codexBin = resolveCodexBinary();
-    // Only do the sanity-check spawn when we fell back to a PATH lookup;
-    // the bundled-binary path is known-good (resolved through the SDK's own
-    // optionalDependency layout) so skipping the check saves ~100ms of
-    // process-spawn latency on every login attempt.
-    if (!findBundledCodexPath()) {
-      try {
-        await execFile(codexBin, ['--version'], {
-          env: buildAugmentedEnv(),
-          timeout: 5000,
-        });
-      } catch {
-        throw new BadRequestException(
-          'Codex CLI not found. Install it with `npm install -g @openai/codex` or `brew install codex`.',
-        );
-      }
+    try {
+      await execFile(codexBin, ['--version'], {
+        env: buildAugmentedEnv(),
+        timeout: 5000,
+      });
+    } catch {
+      throw new BadRequestException(
+        'Codex CLI not found. Install it with `npm install -g @openai/codex` or `brew install codex`.',
+      );
     }
 
     if (options.mode === 'api_key') {

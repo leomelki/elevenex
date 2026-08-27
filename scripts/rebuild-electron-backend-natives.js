@@ -1,4 +1,4 @@
-const { existsSync } = require('fs');
+const { existsSync, readdirSync } = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
@@ -11,10 +11,6 @@ function resolveModule(request) {
   return require.resolve(request, {
     paths: [electronAppRoot, repoRoot, __dirname],
   });
-}
-
-function loadElectronRebuild() {
-  return require(resolveModule('@electron/rebuild'));
 }
 
 function getInstalledElectronVersion() {
@@ -30,7 +26,7 @@ function getBundledNodeExecutable() {
   return candidates.find((candidate) => existsSync(candidate)) || null;
 }
 
-function validateBundledNodeRuntime(nodeExecutable) {
+function validateNativeRuntime(nodeExecutable, env = process.env) {
   const script = [
     "const path = require('path');",
     "const root = process.argv[1];",
@@ -43,6 +39,7 @@ function validateBundledNodeRuntime(nodeExecutable) {
 
   const result = spawnSync(nodeExecutable, ['-e', script, stageBackendRoot], {
     cwd: stageBackendRoot,
+    env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -54,10 +51,56 @@ function validateBundledNodeRuntime(nodeExecutable) {
   if (result.status !== 0) {
     throw new Error(
       [
-        `Bundled Node runtime native smoke test failed with exit code ${result.status ?? 'unknown'}.`,
+        `Native backend module smoke test failed with exit code ${result.status ?? 'unknown'}.`,
         result.stderr.trim(),
         result.stdout.trim(),
       ].filter(Boolean).join('\n'),
+    );
+  }
+}
+
+function resolveNodeGypEntrypoint() {
+  const pnpmRoot = path.join(repoRoot, 'node_modules', '.pnpm');
+  const packageDir = readdirSync(pnpmRoot)
+    .filter((entry) => entry.startsWith('node-gyp@'))
+    .sort(
+      (left, right) =>
+        Number.parseInt(right.slice('node-gyp@'.length), 10) -
+        Number.parseInt(left.slice('node-gyp@'.length), 10),
+    )[0];
+  if (!packageDir) throw new Error('Could not locate node-gyp');
+  const entrypoint = path.join(
+    pnpmRoot,
+    packageDir,
+    'node_modules',
+    'node-gyp',
+    'bin',
+    'node-gyp.js',
+  );
+  if (!existsSync(entrypoint)) {
+    throw new Error(`node-gyp entrypoint is missing: ${entrypoint}`);
+  }
+  return entrypoint;
+}
+
+function rebuildForElectron(moduleName, electronVersion) {
+  const moduleRoot = path.join(stageBackendRoot, 'node_modules', moduleName);
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolveNodeGypEntrypoint(),
+      'rebuild',
+      '--release',
+      `--target=${electronVersion}`,
+      `--arch=${process.arch}`,
+      '--dist-url=https://electronjs.org/headers',
+    ],
+    { cwd: moduleRoot, env: process.env, stdio: 'inherit' },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `Failed to rebuild ${moduleName} for Electron ${electronVersion}`,
     );
   }
 }
@@ -69,21 +112,24 @@ async function main() {
 
   const bundledNode = getBundledNodeExecutable();
   if (bundledNode) {
-    validateBundledNodeRuntime(bundledNode);
+    validateNativeRuntime(bundledNode);
     console.log(`Validated native backend modules with bundled Node at ${bundledNode}`);
     return;
   }
 
-  const { rebuild } = loadElectronRebuild();
-  await rebuild({
-    buildPath: stageBackendRoot,
-    electronVersion: getInstalledElectronVersion(),
-    arch: process.arch,
-    onlyModules: NATIVE_RUNTIME_DEPENDENCIES,
-    force: true,
-  });
+  const electronVersion = getInstalledElectronVersion();
+  for (const moduleName of NATIVE_RUNTIME_DEPENDENCIES) {
+    rebuildForElectron(moduleName, electronVersion);
+  }
 
-  console.log(`Rebuilt native backend modules for Electron in ${stageBackendRoot}`);
+  const electronExecutable = require(resolveModule('electron'));
+  validateNativeRuntime(electronExecutable, {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+  });
+  console.log(
+    `Rebuilt and validated native backend modules for Electron ${electronVersion} in ${stageBackendRoot}`,
+  );
 }
 
 main().catch((error) => {

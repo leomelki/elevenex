@@ -15,16 +15,7 @@ const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const backendPackageJson = require(path.join(backendRoot, 'package.json'));
 const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@vscode/ripgrep'];
-const EMBED_LOCAL_CODEX_BINARY = process.env.ELEVENEX_EMBED_LOCAL_CODEX === '1';
 const EMBED_LOCAL_NODE_RUNTIME = process.env.ELEVENEX_EMBED_LOCAL_NODE === '1';
-const CODEX_PLATFORM_PACKAGE_BY_TARGET = {
-  'x86_64-unknown-linux-musl': '@openai/codex-linux-x64',
-  'aarch64-unknown-linux-musl': '@openai/codex-linux-arm64',
-  'x86_64-apple-darwin': '@openai/codex-darwin-x64',
-  'aarch64-apple-darwin': '@openai/codex-darwin-arm64',
-  'x86_64-pc-windows-msvc': '@openai/codex-win32-x64',
-  'aarch64-pc-windows-msvc': '@openai/codex-win32-arm64',
-};
 const STAGE_COPY_PLANS = {
   'better-sqlite3': {
     files: ['package.json', 'binding.gyp', 'LICENSE'],
@@ -92,55 +83,11 @@ const STAGE_COPY_PLANS = {
     files: ['package.json', 'LICENSE'],
     directories: ['dist'],
   },
-  '@openai/codex': {
+  '@anthropic-ai/claude-agent-sdk': {
     files: ['package.json'],
-    directories: ['bin'],
-  },
-  '@openai/codex-darwin-arm64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-darwin-x64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-linux-arm64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-linux-x64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-win32-arm64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-win32-x64': {
-    files: ['package.json'],
-    directories: ['vendor'],
+    directories: [],
   },
 };
-
-function codexTargetTriple() {
-  const { platform, arch } = process;
-  if (platform === 'linux' || platform === 'android') {
-    if (arch === 'x64') return 'x86_64-unknown-linux-musl';
-    if (arch === 'arm64') return 'aarch64-unknown-linux-musl';
-    return null;
-  }
-  if (platform === 'darwin') {
-    if (arch === 'x64') return 'x86_64-apple-darwin';
-    if (arch === 'arm64') return 'aarch64-apple-darwin';
-    return null;
-  }
-  if (platform === 'win32') {
-    if (arch === 'x64') return 'x86_64-pc-windows-msvc';
-    if (arch === 'arm64') return 'aarch64-pc-windows-msvc';
-    return null;
-  }
-  return null;
-}
 
 function ensureDir(dirPath) {
   mkdirSync(dirPath, { recursive: true });
@@ -320,22 +267,6 @@ function stageNativePackageTree(packageName, seen = new Set(), searchPaths = [ba
   }
 }
 
-function stageCodexRuntime() {
-  const triple = codexTargetTriple();
-  const platformPackage = triple ? CODEX_PLATFORM_PACKAGE_BY_TARGET[triple] : null;
-  if (!platformPackage) {
-    console.warn(`Skipping embedded Codex binary for unsupported platform ${process.platform}/${process.arch}`);
-    return;
-  }
-
-  const sdkRoot = resolveInstalledPackagePath('@openai/codex-sdk', [backendRoot, repoRoot]);
-  copyDependencyTree('@openai/codex-sdk', [backendRoot, repoRoot]);
-
-  const codexRoot = resolveInstalledPackagePath('@openai/codex', [sdkRoot, backendRoot, repoRoot]);
-  copyDependencyTree('@openai/codex', [sdkRoot, backendRoot, repoRoot]);
-  copyDependencyTree(platformPackage, [codexRoot, sdkRoot, backendRoot, repoRoot]);
-}
-
 function main() {
   resetStageRoot();
   assembleRuntime();
@@ -348,11 +279,13 @@ function main() {
   for (const packageName of NATIVE_RUNTIME_DEPENDENCIES) {
     stageNativePackageTree(packageName, stagedNativePackages);
   }
-  if (EMBED_LOCAL_CODEX_BINARY) {
-    stageCodexRuntime();
-  } else {
-    console.log('Skipping embedded Codex binary for local runtime (set ELEVENEX_EMBED_LOCAL_CODEX=1 to include it)');
-  }
+  // The backend dynamically imports the small JavaScript SDK for lightweight
+  // Codex generation. Stage only its JS files; never traverse its dependency
+  // on @openai/codex, which is where the native CLI payload is published.
+  copyDependencyTree('@openai/codex-sdk', [backendRoot, repoRoot]);
+  // Claude's JS SDK is part of main.cjs; retain only its package metadata for
+  // runtime compatibility diagnostics, not any platform CLI package.
+  copyDependencyTree('@anthropic-ai/claude-agent-sdk', [backendRoot, repoRoot]);
   if (EMBED_LOCAL_NODE_RUNTIME) {
     stageBundledNodeRuntime();
   } else {

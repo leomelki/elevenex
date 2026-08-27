@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { execFile as execFileCallback } from 'node:child_process';
-import { createRequire } from 'module';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -11,7 +10,10 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
-import { findSdkRealDir } from '../codex-runtime/codex-binary.js';
+import {
+  findSdkRealDir,
+  resolveCodexBinary,
+} from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
 import { buildGeminiSpawnCommand } from '../gemini-runtime/gemini-binary.js';
 
@@ -201,6 +203,7 @@ export class TextAgentGenerationService {
       );
       const { Codex } = await importCodexSdk();
       const codex = new Codex({
+        codexPathOverride: resolveCodexBinary(),
         env: this.toStringEnv(env),
       });
       const thread = codex.startThread({
@@ -476,36 +479,13 @@ export class TextAgentGenerationService {
       .join('');
   }
 
-  private resolveSdkClaudePath(): string | null {
-    const ext = process.platform === 'win32' ? '.exe' : '';
-    const candidates =
-      process.platform === 'linux'
-        ? [
-            `@anthropic-ai/claude-agent-sdk-linux-${process.arch}-musl/claude${ext}`,
-            `@anthropic-ai/claude-agent-sdk-linux-${process.arch}/claude${ext}`,
-          ]
-        : [
-            `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude${ext}`,
-          ];
-
-    const scopedRequire = createRequire(__filename);
-    for (const candidate of candidates) {
-      try {
-        return scopedRequire.resolve(candidate);
-      } catch {
-        // Try next candidate.
-      }
-    }
-    return null;
-  }
-
   private resolveClaudeCodeExecutable(): string {
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     if (configuredPath) {
       return findBinary(configuredPath) ?? configuredPath;
     }
 
-    return findBinary('claude') ?? this.resolveSdkClaudePath() ?? 'claude';
+    return findBinary('claude') ?? 'claude';
   }
 
   private toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {

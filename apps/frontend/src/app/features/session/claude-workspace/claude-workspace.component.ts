@@ -83,6 +83,7 @@ import {
 } from './components/claude-export-dialog.component';
 import { ClaudeTasksDrawerComponent } from './components/claude-tasks-drawer.component';
 import { ClaudeMcpDrawerComponent } from './components/claude-mcp-drawer.component';
+import { ClaudeInstallCardComponent } from './components/claude-install-card.component';
 import { CodexLoginCardComponent } from './components/codex-login-card.component';
 import { PiLoginCardComponent } from './components/pi-login-card.component';
 import { GeminiLoginCardComponent } from './components/gemini-login-card.component';
@@ -91,7 +92,7 @@ import { GeminiLoginCardComponent } from './components/gemini-login-card.compone
  * Providers whose credentials are collected inside the workspace. Claude is
  * absent: it manages its own sign-in outside Elevenex.
  */
-const LOGIN_CARD_PROVIDERS = new Set(['codex', 'pi', 'gemini']);
+const LOGIN_CARD_PROVIDERS = new Set(['claude', 'codex', 'pi', 'gemini']);
 import {
   ClaudeAgentInspectorComponent,
   ClaudeSubagentHistoryState,
@@ -160,6 +161,7 @@ type TranscriptRenderItem =
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
     ClaudeTurnChangesComponent,
+    ClaudeInstallCardComponent,
     CodexLoginCardComponent,
     PiLoginCardComponent,
     GeminiLoginCardComponent,
@@ -339,10 +341,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly _readOnlyTranscript = signal(false);
   private readonly _terminalTranscriptMirror = signal(false);
   readonly isTranscriptReadOnly = computed(() => this._archived() || this._readOnlyTranscript());
-  /**
-   * True when the current provider needs credentials before it can run. Claude
-   * is absent because it manages its own sign-in outside the workspace.
-   */
+  /** True when the current provider is unavailable or needs credentials. */
   readonly showProviderLogin = computed(() => {
     if (this._readOnlyTranscript()) return false;
     if (this._archived()) return false;
@@ -781,7 +780,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     effect(() => {
       const provider = this.currentProvider();
       if (!LOGIN_CARD_PROVIDERS.has(provider)) return;
-      if (this.authStatusByProvider()[provider] !== undefined) return;
+      if (this.authStatusByProvider()[provider] != null) return;
       void this.refreshAuthStatus(provider);
     });
 
@@ -2312,10 +2311,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.sessionMetadata.set(state.sessionMetadata);
     this.subagents.set(state.subagents);
     this.recentHookEvents.set(state.recentHookEvents);
-    this.setAuthStatus(
-      this.currentProvider(),
-      (state.authStatus ?? null) as AgentAuthStatus | null,
-    );
+    if (state.authStatus != null) {
+      this.setAuthStatus(
+        this.currentProvider(),
+        state.authStatus as AgentAuthStatus,
+      );
+    }
   }
 
   private applyPendingPermissionFromRuntime(req: ClaudePermissionRequest | null): void {

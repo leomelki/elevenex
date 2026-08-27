@@ -37,6 +37,12 @@
   @if (showProviderLogin()) {
     <div class="flex flex-1 items-center justify-center overflow-y-auto px-4">
       @switch (currentProvider()) {
+        @case ('claude') {
+          <cw-claude-install-card
+            [status]="providerAuthStatus()"
+            (recheck)="onProviderAuthenticated()"
+          />
+        }
         @case ('codex') {
           <cw-codex-login-card
             [status]="providerAuthStatus()"

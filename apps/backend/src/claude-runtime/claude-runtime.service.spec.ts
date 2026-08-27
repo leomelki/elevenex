@@ -1321,7 +1321,7 @@ describe('ClaudeRuntimeService', () => {
     );
   });
 
-  it('uses the SDK-managed Claude CLI by default when submitting prompts', async () => {
+  it('uses the independently installed Claude CLI when submitting prompts', async () => {
     (query as jest.Mock).mockReturnValue({
       supportedModels: jest.fn().mockResolvedValue([]),
       getContextUsage: jest.fn().mockResolvedValue({
@@ -1890,6 +1890,18 @@ describe('ClaudeRuntimeService', () => {
     expect(state.lastHistoryLoadedAtMs).toEqual(expect.any(Number));
   });
 
+  it('reports a missing configured Claude CLI without falling back to the SDK executable', async () => {
+    process.env.ELEVENEX_CLAUDE_BIN = '/definitely/missing/claude';
+
+    await expect(service.getCliStatus()).resolves.toEqual(
+      expect.objectContaining({
+        installed: false,
+        authenticated: false,
+        installHint: expect.any(String),
+      }),
+    );
+  });
+
   it('uses ELEVENEX_CLAUDE_BIN when configured', async () => {
     process.env.ELEVENEX_CLAUDE_BIN = '/custom/bin/claude';
 
@@ -1919,23 +1931,21 @@ describe('ClaudeRuntimeService', () => {
     expect(options.pathToClaudeCodeExecutable).toBe('/custom/bin/claude');
   });
 
-  it('warns when ELEVENEX_CLAUDE_BIN version does not match SDK parity', () => {
-    const overrideService = Object.assign(
-      Object.create(Object.getPrototypeOf(service)),
-      service,
-      {
-        claudeCliOverride: {
-          path: '/custom/bin/claude',
-          version: '2.1.81 (Claude Code)',
-        },
-      },
-    ) as ClaudeRuntimeService;
+  it('warns when the installed Claude CLI version does not match SDK parity', () => {
+    (service as any).claudeCliOverride = {
+      path: '/custom/bin/claude',
+      version: '2.1.81 (Claude Code)',
+      configured: true,
+    };
 
-    (overrideService as any).logClaudeRuntimeConfiguration();
+    const warn = jest
+      .spyOn((service as any).logger, 'warn')
+      .mockImplementation();
+    (service as any).logClaudeRuntimeConfiguration();
 
-    expect(loggerWarnSpy).toHaveBeenCalledWith(
+    expect(warn).toHaveBeenCalledWith(
       expect.stringContaining(
-        'Claude CLI override version mismatch: sdk expects 2.1.131, override reports 2.1.81 (Claude Code).',
+        'Claude CLI version mismatch: sdk expects 2.1.131, installed CLI reports 2.1.81 (Claude Code).',
       ),
     );
   });

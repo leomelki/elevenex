@@ -10,15 +10,6 @@ const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const archivePath = path.join(stageBaseRoot, 'backend.tar.gz');
 const STAGED_NODE_MODULES_ROOT = path.join(stageBackendRoot, 'node_modules');
 const STAGED_BACKEND_WARN_THRESHOLD_BYTES = 110 * 1024 * 1024;
-const EMBED_LOCAL_CODEX_BINARY = process.env.ELEVENEX_EMBED_LOCAL_CODEX === '1';
-const CODEX_PLATFORM_PACKAGE_BY_TARGET = {
-  'x86_64-unknown-linux-musl': '@openai/codex-linux-x64',
-  'aarch64-unknown-linux-musl': '@openai/codex-linux-arm64',
-  'x86_64-apple-darwin': '@openai/codex-darwin-x64',
-  'aarch64-apple-darwin': '@openai/codex-darwin-arm64',
-  'x86_64-pc-windows-msvc': '@openai/codex-win32-x64',
-  'aarch64-pc-windows-msvc': '@openai/codex-win32-arm64',
-};
 const NODE_PTY_PLATFORM_PREBUILDS_ROOT = path.join(
   STAGED_NODE_MODULES_ROOT,
   'node-pty',
@@ -114,6 +105,13 @@ const FINAL_RUNTIME_PACKAGE_PLANS = {
     files: ['package.json'],
     directories: ['bin'],
   },
+  '@openai/codex-sdk': {
+    files: ['package.json', 'LICENSE'],
+    directories: ['dist'],
+  },
+  '@anthropic-ai/claude-agent-sdk': {
+    files: ['package.json'],
+  },
   bindings: {
     files: ['package.json', 'bindings.js', 'LICENSE.md'],
     optionalFiles: ['README.md'],
@@ -122,78 +120,7 @@ const FINAL_RUNTIME_PACKAGE_PLANS = {
   'file-uri-to-path': {
     files: ['package.json', 'index.js', 'LICENSE'],
   },
-  '@openai/codex-sdk': {
-    files: ['package.json', 'LICENSE'],
-    directories: ['dist'],
-  },
-  '@openai/codex': {
-    files: ['package.json'],
-    directories: ['bin'],
-  },
-  '@openai/codex-darwin-arm64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-darwin-x64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-linux-arm64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-linux-x64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-win32-arm64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
-  '@openai/codex-win32-x64': {
-    files: ['package.json'],
-    directories: ['vendor'],
-  },
 };
-
-function codexTargetTriple() {
-  const { platform, arch } = process;
-  if (platform === 'linux' || platform === 'android') {
-    if (arch === 'x64') return 'x86_64-unknown-linux-musl';
-    if (arch === 'arm64') return 'aarch64-unknown-linux-musl';
-    return null;
-  }
-  if (platform === 'darwin') {
-    if (arch === 'x64') return 'x86_64-apple-darwin';
-    if (arch === 'arm64') return 'aarch64-apple-darwin';
-    return null;
-  }
-  if (platform === 'win32') {
-    if (arch === 'x64') return 'x86_64-pc-windows-msvc';
-    if (arch === 'arm64') return 'aarch64-pc-windows-msvc';
-    return null;
-  }
-  return null;
-}
-
-function scopedPackagePath(packageName) {
-  return path.join(STAGED_NODE_MODULES_ROOT, ...packageName.split('/'));
-}
-
-function codexBinaryPath() {
-  const triple = codexTargetTriple();
-  if (!triple) return null;
-  const platformPackage = CODEX_PLATFORM_PACKAGE_BY_TARGET[triple];
-  if (!platformPackage) return null;
-  const binaryName = process.platform === 'win32' ? 'codex.exe' : 'codex';
-  return path.join(
-    scopedPackagePath(platformPackage),
-    'vendor',
-    triple,
-    'codex',
-    binaryName,
-  );
-}
 
 function keepOnly(packageRoot, plan) {
   if (!existsSync(packageRoot)) {
@@ -306,6 +233,38 @@ function prunePackage(packageName, packageRoot) {
   keepOnly(packageRoot, plan);
 }
 
+function validateNoEmbeddedAgentExecutables() {
+  const openAiRoot = path.join(STAGED_NODE_MODULES_ROOT, '@openai');
+  const anthropicRoot = path.join(STAGED_NODE_MODULES_ROOT, '@anthropic-ai');
+  const forbidden = [
+    path.join(STAGED_NODE_MODULES_ROOT, '.bin', 'codex'),
+    path.join(STAGED_NODE_MODULES_ROOT, '.bin', 'claude'),
+    ...[
+      'codex',
+      'codex-darwin-arm64',
+      'codex-darwin-x64',
+      'codex-linux-arm64',
+      'codex-linux-x64',
+      'codex-win32-arm64',
+      'codex-win32-x64',
+    ].map((packageName) => path.join(openAiRoot, packageName)),
+  ].filter((candidate) => existsSync(candidate));
+
+  if (existsSync(anthropicRoot)) {
+    forbidden.push(
+      ...readdirSync(anthropicRoot)
+        .filter((packageName) => packageName.startsWith('claude-agent-sdk-'))
+        .map((packageName) => path.join(anthropicRoot, packageName)),
+    );
+  }
+
+  if (forbidden.length) {
+    throw new Error(
+      `Refusing to archive embedded agent executables: ${forbidden.join(', ')}`,
+    );
+  }
+}
+
 function logStageSizeSummary() {
   const componentPaths = [
     'main.cjs',
@@ -330,18 +289,7 @@ function logStageSizeSummary() {
 }
 
 function validateNativeRuntimeArtifacts() {
-  const codexBin = codexBinaryPath();
-  const requiredArtifacts = [
-    ...REQUIRED_NATIVE_RUNTIME_ARTIFACTS,
-    ...(EMBED_LOCAL_CODEX_BINARY && codexBin
-      ? [
-          {
-            label: 'Codex embedded binary',
-            alternatives: [codexBin],
-          },
-        ]
-      : []),
-  ];
+  const requiredArtifacts = [...REQUIRED_NATIVE_RUNTIME_ARTIFACTS];
   const missingArtifacts = requiredArtifacts.filter(
     (artifact) =>
       !artifact.alternatives.some((artifactPath) => existsSync(artifactPath)),
@@ -417,41 +365,6 @@ function validateNativeRuntimeLoad() {
   console.log(`Validated staged native modules with ${bundledNode ? 'bundled Node' : 'Electron-as-Node'}`);
 }
 
-function validateCodexRuntimeLoad() {
-  if (!EMBED_LOCAL_CODEX_BINARY) {
-    console.log('Skipping Codex binary smoke test for local runtime (set ELEVENEX_EMBED_LOCAL_CODEX=1 to include it)');
-    return;
-  }
-
-  const codexBin = codexBinaryPath();
-  if (!codexBin) {
-    console.warn(`Skipping Codex binary smoke test for unsupported platform ${process.platform}/${process.arch}`);
-    return;
-  }
-
-  const result = spawnSync(codexBin, ['--version'], {
-    cwd: stageBackendRoot,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  if (result.error) {
-    throw result.error;
-  }
-
-  if (result.status !== 0) {
-    throw new Error(
-      [
-        `Staged Codex binary smoke test failed with exit code ${result.status ?? 'unknown'}.`,
-        result.stderr.trim(),
-        result.stdout.trim(),
-      ].filter(Boolean).join('\n'),
-    );
-  }
-
-  console.log(`Validated staged Codex binary: ${result.stdout.trim() || codexBin}`);
-}
-
 function main() {
   if (!existsSync(stageBackendRoot)) {
     throw new Error(`Stage backend root is missing: ${stageBackendRoot}`);
@@ -459,8 +372,8 @@ function main() {
 
   validateNativeRuntimeArtifacts();
   pruneStagedNodeModules();
+  validateNoEmbeddedAgentExecutables();
   validateNativeRuntimeLoad();
-  validateCodexRuntimeLoad();
   logStageSizeSummary();
 
   execFileSync('tar', ['-czf', archivePath, '-C', stageBaseRoot, 'backend'], {

@@ -27,6 +27,15 @@ const TARGETS = [
   { key: 'win32-x64', platform: 'win32', arch: 'x64', nodeArch: 'x64', nodePlatform: 'win', archiveExtension: 'zip' },
 ];
 const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@openai/codex-sdk', '@vscode/ripgrep'];
+const CODEX_CLI_PACKAGE_NAMES = [
+  'codex',
+  'codex-darwin-arm64',
+  'codex-darwin-x64',
+  'codex-linux-arm64',
+  'codex-linux-x64',
+  'codex-win32-arm64',
+  'codex-win32-x64',
+];
 
 function ensureDir(targetPath) {
   mkdirSync(targetPath, { recursive: true });
@@ -276,6 +285,53 @@ async function stageBundledNodeRuntime(targetRoot, target, nodeVersion) {
   copyRequiredPath(extractedNodeRoot, path.join(targetRoot, 'node'));
 }
 
+function prepareNodeGypShim() {
+  const pnpmRoot = path.join(repoRoot, 'node_modules', '.pnpm');
+  const nodeGypPackage = existsSync(pnpmRoot)
+    ? readdirSync(pnpmRoot)
+        .filter((entry) => entry.startsWith('node-gyp@'))
+        .sort(
+          (left, right) =>
+            Number.parseInt(right.slice('node-gyp@'.length), 10) -
+            Number.parseInt(left.slice('node-gyp@'.length), 10),
+        )[0]
+    : null;
+  if (!nodeGypPackage) {
+    throw new Error('Could not locate node-gyp required to build remote native modules');
+  }
+
+  const entrypoint = path.join(
+    pnpmRoot,
+    nodeGypPackage,
+    'node_modules',
+    'node-gyp',
+    'bin',
+    'node-gyp.js',
+  );
+  if (!existsSync(entrypoint)) {
+    throw new Error(`node-gyp entrypoint is missing: ${entrypoint}`);
+  }
+
+  const shimRoot = path.join(tempRoot, 'tool-bin');
+  ensureDir(shimRoot);
+  if (process.platform === 'win32') {
+    writeFileSync(
+      path.join(shimRoot, 'node-gyp.cmd'),
+      `@echo off\r\n"${process.execPath}" "${entrypoint}" %*\r\n`,
+      'utf8',
+    );
+  } else {
+    const shimPath = path.join(shimRoot, 'node-gyp');
+    writeFileSync(
+      shimPath,
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(entrypoint)} "$@"\n`,
+      'utf8',
+    );
+    chmodSync(shimPath, 0o755);
+  }
+  return shimRoot;
+}
+
 function installRuntimeDependencies(targetRoot, target) {
   writeFileSync(
     path.join(targetRoot, 'package.json'),
@@ -283,7 +339,9 @@ function installRuntimeDependencies(targetRoot, target) {
     'utf8',
   );
 
+  const nodeGypShimRoot = prepareNodeGypShim();
   const env = buildChildEnv({
+    PATH: `${nodeGypShimRoot}${path.delimiter}${process.env.PATH || ''}`,
     npm_config_platform: target.platform,
     npm_config_arch: target.arch,
     npm_config_target_platform: target.platform,
@@ -298,11 +356,189 @@ function installRuntimeDependencies(targetRoot, target) {
     env,
   });
 
-  if (shouldBuildNativeDependenciesOnHost(target)) {
-    runCommand('pnpm', ['rebuild', 'better-sqlite3', 'node-pty'], {
-      cwd: targetRoot,
-      env,
-    });
+}
+
+function validateRemoteNativeRuntime(targetRoot, target) {
+  if (!shouldBuildNativeDependenciesOnHost(target)) return;
+  const nodeExecutable =
+    target.platform === 'win32'
+      ? path.join(targetRoot, 'node', 'node.exe')
+      : path.join(targetRoot, 'node', 'bin', 'node');
+  const script = [
+    "const path = require('path');",
+    'const root = process.argv[1];',
+    "const Database = require(path.join(root, 'node_modules', 'better-sqlite3'));",
+    "const db = new Database(':memory:');",
+    "db.prepare('select 1 as ok').get();",
+    'db.close();',
+    "require(path.join(root, 'node_modules', 'node-pty'));",
+  ].join('');
+  const result = spawnSync(nodeExecutable, ['-e', script, targetRoot], {
+    cwd: targetRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      [
+        `Remote native module smoke test failed for ${target.key}.`,
+        result.stderr.trim(),
+        result.stdout.trim(),
+      ].filter(Boolean).join('\n'),
+    );
+  }
+}
+
+function removeEmbeddedAgentExecutables(targetRoot) {
+  const nodeModulesRoot = path.join(targetRoot, 'node_modules');
+  const pnpmRoot = path.join(nodeModulesRoot, '.pnpm');
+
+  // Keep the JavaScript SDKs used by the backend, but remove their optional
+  // CLI packages. Agent executables are managed by the user on the remote
+  // PATH so runtime/model updates do not depend on an Elevenex release.
+  const openAiScope = path.join(nodeModulesRoot, '@openai');
+  for (const packageName of CODEX_CLI_PACKAGE_NAMES) {
+    rmSync(path.join(openAiScope, packageName), { recursive: true, force: true });
+  }
+
+  const anthropicScope = path.join(nodeModulesRoot, '@anthropic-ai');
+  if (existsSync(anthropicScope)) {
+    for (const packageName of readdirSync(anthropicScope)) {
+      if (packageName.startsWith('claude-agent-sdk-')) {
+        rmSync(path.join(anthropicScope, packageName), {
+          recursive: true,
+          force: true,
+        });
+      }
+    }
+  }
+
+  if (existsSync(pnpmRoot)) {
+    for (const entry of readdirSync(pnpmRoot)) {
+      if (
+        entry.startsWith('@openai+codex@') ||
+        entry.startsWith('@anthropic-ai+claude-agent-sdk-')
+      ) {
+        rmSync(path.join(pnpmRoot, entry), { recursive: true, force: true });
+      } else if (entry.startsWith('@openai+codex-sdk@')) {
+        for (const relativePath of [
+          ['node_modules', '@openai', 'codex'],
+          [
+            'node_modules',
+            '@openai',
+            'codex-sdk',
+            'node_modules',
+            '.bin',
+            'codex',
+          ],
+        ]) {
+          rmSync(path.join(pnpmRoot, entry, ...relativePath), {
+            recursive: true,
+            force: true,
+          });
+        }
+      } else if (entry.startsWith('@anthropic-ai+claude-agent-sdk@')) {
+        rmSync(
+          path.join(
+            pnpmRoot,
+            entry,
+            'node_modules',
+            '@anthropic-ai',
+            'claude-agent-sdk',
+            'node_modules',
+            '.bin',
+            'claude',
+          ),
+          { recursive: true, force: true },
+        );
+      }
+    }
+
+    for (const shimPath of [
+      path.join(nodeModulesRoot, '.bin', 'codex'),
+      path.join(nodeModulesRoot, '.bin', 'claude'),
+      path.join(pnpmRoot, 'node_modules', '.bin', 'codex'),
+      path.join(pnpmRoot, 'node_modules', '.bin', 'claude'),
+    ]) {
+      rmSync(shimPath, { recursive: true, force: true });
+    }
+
+    const pnpmOpenAiScope = path.join(pnpmRoot, 'node_modules', '@openai');
+    if (existsSync(pnpmOpenAiScope)) {
+      for (const packageName of readdirSync(pnpmOpenAiScope)) {
+        if (packageName === 'codex' || packageName.startsWith('codex-')) {
+          rmSync(path.join(pnpmOpenAiScope, packageName), {
+            recursive: true,
+            force: true,
+          });
+        }
+      }
+    }
+  }
+
+  const leftovers = [
+    path.join(nodeModulesRoot, '.bin', 'codex'),
+    path.join(nodeModulesRoot, '.bin', 'claude'),
+    path.join(pnpmRoot, 'node_modules', '.bin', 'codex'),
+    path.join(pnpmRoot, 'node_modules', '.bin', 'claude'),
+    ...CODEX_CLI_PACKAGE_NAMES.map((packageName) =>
+      path.join(openAiScope, packageName),
+    ),
+    ...(existsSync(anthropicScope)
+      ? readdirSync(anthropicScope)
+          .filter((packageName) => packageName.startsWith('claude-agent-sdk-'))
+          .map((packageName) => path.join(anthropicScope, packageName))
+      : []),
+    ...(existsSync(pnpmRoot)
+      ? readdirSync(pnpmRoot)
+          .filter(
+            (entry) =>
+              entry.startsWith('@openai+codex@') ||
+              entry.startsWith('@anthropic-ai+claude-agent-sdk-'),
+          )
+          .map((entry) => path.join(pnpmRoot, entry))
+      : []),
+    ...(existsSync(pnpmRoot)
+      ? readdirSync(pnpmRoot)
+          .filter((entry) => entry.startsWith('@openai+codex-sdk@'))
+          .map((entry) =>
+            path.join(
+              pnpmRoot,
+              entry,
+              'node_modules',
+              '@openai',
+              'codex-sdk',
+              'node_modules',
+              '.bin',
+              'codex',
+            ),
+          )
+      : []),
+    ...(existsSync(pnpmRoot)
+      ? readdirSync(pnpmRoot)
+          .filter((entry) =>
+            entry.startsWith('@anthropic-ai+claude-agent-sdk@'),
+          )
+          .map((entry) =>
+            path.join(
+              pnpmRoot,
+              entry,
+              'node_modules',
+              '@anthropic-ai',
+              'claude-agent-sdk',
+              'node_modules',
+              '.bin',
+              'claude',
+            ),
+          )
+      : []),
+  ].filter((candidate) => existsSync(candidate));
+
+  if (leftovers.length) {
+    throw new Error(
+      `Refusing to package embedded agent executables: ${leftovers.join(', ')}`,
+    );
   }
 }
 
@@ -397,6 +633,24 @@ async function stageTarget(target, commitSha, nodeVersion) {
 
   await stageBundledNodeRuntime(targetRoot, target, nodeVersion);
   installRuntimeDependencies(targetRoot, target);
+  removeEmbeddedAgentExecutables(targetRoot);
+  validateRemoteNativeRuntime(targetRoot, target);
+  copyRequiredPath(
+    path.join(
+      backendRoot,
+      'node_modules',
+      '@anthropic-ai',
+      'claude-agent-sdk',
+      'package.json',
+    ),
+    path.join(
+      targetRoot,
+      'node_modules',
+      '@anthropic-ai',
+      'claude-agent-sdk',
+      'package.json',
+    ),
+  );
   writeLauncher(targetRoot, target);
 
   removeSourceMaps(targetRoot);
@@ -469,7 +723,11 @@ async function main() {
   console.log(`Remote runtime staged at ${remoteRuntimeRoot}`);
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { removeEmbeddedAgentExecutables };
