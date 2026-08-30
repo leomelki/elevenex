@@ -248,6 +248,66 @@ describe('ClaudeRuntimeService', () => {
     expect(baseOptions.permissionMode).toBe('acceptEdits');
   });
 
+  it('runs review-autonomy agent sessions in auto mode but still asks for destructive elevenex tools', async () => {
+    const options = await (service as any).buildQueryOptions(
+      7,
+      '/tmp/project',
+      'claude-session-1',
+      null,
+      null,
+      false,
+      null,
+      false,
+      jest.fn(),
+      jest.fn(),
+      'agent',
+      'review',
+    );
+
+    expect(options.permissionMode).toBe('auto');
+
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks?.[0];
+    expect(hook).toBeDefined();
+    await expect(
+      hook({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'mcp__elevenex__delete_worktree',
+        tool_input: {},
+        tool_use_id: 'tool-1',
+      }),
+    ).resolves.toMatchObject({
+      hookSpecificOutput: { permissionDecision: 'ask' },
+    });
+    await expect(
+      hook({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'mcp__elevenex__project_overview',
+        tool_input: {},
+        tool_use_id: 'tool-2',
+      }),
+    ).resolves.toEqual({});
+  });
+
+  it('leaves full-autonomy agent sessions on bypassPermissions with no destructive hook', async () => {
+    const options = await (service as any).buildQueryOptions(
+      7,
+      '/tmp/project',
+      'claude-session-1',
+      null,
+      null,
+      false,
+      null,
+      false,
+      jest.fn(),
+      jest.fn(),
+      'agent',
+      'full',
+    );
+
+    expect(options.permissionMode).toBe('bypassPermissions');
+    expect(options.hooks).toBeUndefined();
+  });
+
   it('updates active Claude runtime when plan mode is toggled', async () => {
     const setPermissionMode = jest.fn().mockResolvedValue(undefined);
     const state = (service as any).ensureRuntimeState(7);

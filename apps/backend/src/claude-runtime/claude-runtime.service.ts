@@ -27,6 +27,7 @@ import {
   type CanUseTool,
   type ElicitationRequest,
   type ElicitationResult,
+  type HookCallback,
   type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
@@ -452,6 +453,27 @@ const FALLBACK_MODELS: ClaudeModelOption[] = [
     description: 'Fast lower-cost model for lighter tasks.',
   },
 ];
+/**
+ * PreToolUse hook for meta-agent sessions in "review" autonomy. Those sessions
+ * run in `auto`, where a classifier answers most permission prompts itself and
+ * `canUseTool` never fires for the calls it approves — so the destructive
+ * elevenex tools are forced back onto the human path here, keeping the promise
+ * of "Review destructive" while everything routine stays unprompted.
+ */
+const askOnDestructiveElevenexTool: HookCallback = (input) =>
+  Promise.resolve(
+    input.hook_event_name === 'PreToolUse' &&
+      isDestructiveElevenexTool(input.tool_name)
+      ? {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse' as const,
+            permissionDecision: 'ask' as const,
+            permissionDecisionReason:
+              'Destructive elevenex action — needs human approval under the Review destructive autonomy mode.',
+          },
+        }
+      : {},
+  );
 const MAX_RECENT_NOTIFICATIONS = 25;
 const MAX_RECENT_HOOKS = 50;
 const MAX_RECENT_HOOK_EVENTS = 50;
@@ -5064,6 +5086,15 @@ export class ClaudeRuntimeService
         type: 'preset' as const,
         preset: 'claude_code' as const,
       },
+      ...(isAgentSession &&
+      normalizeAutonomyMode(agentAutonomyMode) === 'review' &&
+      effectivePermissionMode === 'auto'
+        ? {
+            hooks: {
+              PreToolUse: [{ hooks: [askOnDestructiveElevenexTool] }],
+            },
+          }
+        : {}),
       ...(isAgentSession
         ? {
             autoMemoryEnabled: false,

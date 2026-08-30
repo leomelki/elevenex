@@ -58,23 +58,23 @@ describe('meta-agent-prompt', () => {
       });
     });
 
-    it('maps review → default, no plan mode', () => {
+    it('maps review → auto, no plan mode', () => {
       expect(permissionModeForAutonomy('review')).toEqual({
-        permissionMode: 'default',
+        permissionMode: 'auto',
         planMode: false,
       });
     });
 
-    it('maps plan → default + plan mode', () => {
+    it('maps plan → auto + plan mode', () => {
       expect(permissionModeForAutonomy('plan')).toEqual({
-        permissionMode: 'default',
+        permissionMode: 'auto',
         planMode: true,
       });
     });
 
     it('defaults unknown modes to review behavior', () => {
       expect(permissionModeForAutonomy(undefined)).toEqual({
-        permissionMode: 'default',
+        permissionMode: 'auto',
         planMode: false,
       });
     });

@@ -310,25 +310,30 @@ const AUTONOMY_SUBSTITUTIONS: Record<AgentAutonomyMode, AutonomySubstitution> = 
 /**
  * Map an autonomy mode to the runtime permission policy it enforces:
  * - full   → `bypassPermissions` (all tools auto-allowed, incl. destructive)
- * - review → `default` (safe tools auto-allowed via workspace settings + runtime
- *            gating; destructive elevenex tools raise a human permission request)
- * - plan   → plan mode (the agent presents an ordered plan and blocks on it)
+ * - review → `auto` (same default as normal sessions: the classifier approves
+ *            routine calls — reading files, searching, running the agent's own
+ *            workspace commands — so the human isn't prompted at every step.
+ *            Destructive elevenex tools still reach the human: a PreToolUse hook
+ *            in claude-runtime forces them to `ask` and the request surfaces in
+ *            the agent panel)
+ * - plan   → plan mode (the agent presents an ordered plan and blocks on it),
+ *            reverting to `auto` once the human leaves plan mode
  *
  * Returns a `ClaudePermissionMode`-compatible string + the plan-mode flag; the
  * runtime stores these on the session's RuntimeState.
  */
 export function permissionModeForAutonomy(mode: string | null | undefined): {
-  permissionMode: 'bypassPermissions' | 'default';
+  permissionMode: 'bypassPermissions' | 'auto';
   planMode: boolean;
 } {
   switch (normalizeAutonomyMode(mode)) {
     case 'full':
       return { permissionMode: 'bypassPermissions', planMode: false };
     case 'plan':
-      return { permissionMode: 'default', planMode: true };
+      return { permissionMode: 'auto', planMode: true };
     case 'review':
     default:
-      return { permissionMode: 'default', planMode: false };
+      return { permissionMode: 'auto', planMode: false };
   }
 }
 
