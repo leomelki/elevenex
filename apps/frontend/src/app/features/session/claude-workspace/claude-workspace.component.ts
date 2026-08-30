@@ -2256,7 +2256,24 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.historyItems.set(
       [...history, ...liveToMerge].sort((l, r) => l.timestamp.localeCompare(r.timestamp)),
     );
-    this.optimisticUserItems.set(optimisticToKeep);
+    // Preserve optimistic user items that arrived during the async getHistory call (e.g. a
+    // queued prompt draining right as this sync started). Without this, updatePendingPrompts'
+    // freshly-added item is silently overwritten by the stale pre-fetch snapshot below, and the
+    // queued message never appears in the transcript even though it was actually sent.
+    const postSyncOptimisticUserItems = this.optimisticUserItems();
+    const newOptimisticDuringSync = postSyncOptimisticUserItems.filter(
+      (item) => !preSyncOptimisticUserItems.some((pre) => pre.id === item.id),
+    );
+    const newOptimisticToKeep = newOptimisticDuringSync.filter((item) => {
+      const key = (item.content ?? '').trim();
+      const remaining = historyUserCounts.get(key) ?? 0;
+      if (remaining > 0) {
+        historyUserCounts.set(key, remaining - 1);
+        return false;
+      }
+      return true;
+    });
+    this.optimisticUserItems.set([...optimisticToKeep, ...newOptimisticToKeep]);
     // Preserve items that arrived in liveItems during the async getHistory call (e.g. a
     // second message that started streaming while the fetch was in flight). Without this,
     // those items get wiped and their subsequent deltas find no target, leaving only the
