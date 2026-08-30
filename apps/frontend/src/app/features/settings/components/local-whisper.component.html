@@ -9,13 +9,13 @@
 }
 
 <!-- First-run call to action: nothing is downloaded, so say what happens next -->
-@if (!anyReady() && !loading()) {
+@if (!anyReady() && !loading() && engineAvailable()) {
   <div class="rounded-lg border border-border bg-muted/40 px-4 py-3">
     <div class="flex items-start gap-2">
       <ng-icon name="lucideHardDrive" size="16" class="mt-0.5 text-muted-foreground" />
       <div class="min-w-0 text-sm text-muted-foreground">
-        Dictation runs entirely on this machine — no API key, no audio leaves
-        the device. Pick a model below to download it once;
+        Dictation runs on {{ backendLabel() }}. {{ privacyNote() }}
+        Pick a model to download it once;
         @if (recommended(); as pick) {
           <span class="text-foreground">{{ pick.label }}</span> ({{ formatSize(pick.downloadBytes) }})
           is the recommended balance of speed and accuracy.
@@ -27,6 +27,9 @@
   </div>
 }
 
+<!-- With no engine there is nothing actionable in the list: every row would
+     offer a download that cannot be used. The banner above says why. -->
+@if (engineAvailable()) {
 <ul class="grid gap-2" role="radiogroup" aria-label="Local speech model">
   @for (model of models(); track model.id) {
     <li>
@@ -169,6 +172,8 @@
 
 @if (status().cacheDir) {
   <p class="text-xs text-muted-foreground">
-    Stored in <code class="font-mono">{{ status().cacheDir }}</code>
+    Stored on {{ backendLabel() }} in
+    <code class="font-mono">{{ status().cacheDir }}</code>
   </p>
+}
 }

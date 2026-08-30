@@ -19,6 +19,26 @@ const NODE_PTY_PLATFORM_PREBUILDS_ROOT = path.join(
   'prebuilds',
   `${process.platform}-${process.arch}`,
 );
+/** Keep in step with apps/backend/src/speech-to-text/local-whisper/whisper-platform.ts. */
+const ONNXRUNTIME_SUPPORTED_TARGETS = new Set([
+  'darwin-arm64',
+  'linux-arm64',
+  'linux-x64',
+  'win32-arm64',
+  'win32-x64',
+]);
+const ONNXRUNTIME_TARGET_SUPPORTED = ONNXRUNTIME_SUPPORTED_TARGETS.has(
+  `${process.platform}-${process.arch}`,
+);
+const ONNXRUNTIME_BINDING_PATH = path.join(
+  STAGED_NODE_MODULES_ROOT,
+  'onnxruntime-node',
+  'bin',
+  'napi-v6',
+  process.platform,
+  process.arch,
+  'onnxruntime_binding.node',
+);
 const REQUIRED_NATIVE_RUNTIME_ARTIFACTS = [
   {
     label: 'better-sqlite3',
@@ -33,20 +53,17 @@ const REQUIRED_NATIVE_RUNTIME_ARTIFACTS = [
       path.join(NODE_PTY_PLATFORM_PREBUILDS_ROOT, 'pty.node'),
     ],
   },
-  {
-    label: 'onnxruntime-node binding',
-    alternatives: [
-      path.join(
-        STAGED_NODE_MODULES_ROOT,
-        'onnxruntime-node',
-        'bin',
-        'napi-v6',
-        process.platform,
-        process.arch,
-        'onnxruntime_binding.node',
-      ),
-    ],
-  },
+  // Required only where ONNX Runtime publishes an addon. Building on an Intel
+  // Mac must still produce a working app — one whose offline dictation reports
+  // itself unavailable — rather than failing the package step.
+  ...(ONNXRUNTIME_TARGET_SUPPORTED
+    ? [
+        {
+          label: 'onnxruntime-node binding',
+          alternatives: [ONNXRUNTIME_BINDING_PATH],
+        },
+      ]
+    : []),
   ...(process.platform === 'win32'
     ? [
         {
@@ -365,9 +382,11 @@ function validateNativeRuntimeLoad() {
     "db.close();",
     "require(path.join(root, 'node_modules', 'node-pty'));",
     // Catches a pruned-away platform directory or a binding that cannot link
-    // its runtime DLLs, which would otherwise only surface the first time a
-    // user tried to dictate offline.
-    "require(path.join(root, 'node_modules', 'onnxruntime-node'));",
+    // its runtime libraries, which would otherwise only surface the first time
+    // a user tried to dictate offline.
+    ...(ONNXRUNTIME_TARGET_SUPPORTED
+      ? ["require(path.join(root, 'node_modules', 'onnxruntime-node'));"]
+      : []),
   ].join('');
   const bundledNode = getBundledNodeExecutable();
   const executable = bundledNode || getElectronExecutable();
@@ -403,6 +422,11 @@ function main() {
     throw new Error(`Stage backend root is missing: ${stageBackendRoot}`);
   }
 
+  if (!ONNXRUNTIME_TARGET_SUPPORTED) {
+    console.warn(
+      `Warning: onnxruntime-node publishes no addon for ${process.platform}/${process.arch}; this build's offline dictation will report itself unavailable.`,
+    );
+  }
   validateNativeRuntimeArtifacts();
   pruneStagedNodeModules();
   validateNoEmbeddedAgentExecutables();

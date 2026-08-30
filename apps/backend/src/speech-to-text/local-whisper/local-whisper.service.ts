@@ -21,6 +21,7 @@ import {
   findWhisperModel,
   type LocalWhisperModelSpec,
 } from './whisper-catalog.js';
+import { describeUnsupportedPlatform } from './whisper-platform.js';
 
 /**
  * Weights live under the user's home rather than inside the app bundle so they
@@ -46,7 +47,15 @@ function resolveCacheDir(): string {
  */
 const COMPLETE_MARKER = '.elevenex-complete';
 
-const HF_RESOLVE_BASE = 'https://huggingface.co';
+/**
+ * Where weights are fetched from. `HF_ENDPOINT` is the variable the Hugging
+ * Face tooling already uses, so a machine behind a mirror — common on the
+ * locked-down hosts people attach as remote backends — needs no new setting.
+ */
+function resolveHfEndpoint(): string {
+  const configured = process.env.HF_ENDPOINT?.trim();
+  return (configured || 'https://huggingface.co').replace(/\/+$/, '');
+}
 
 /** Progress updates are coalesced to this cadence before hitting the SSE stream. */
 const PROGRESS_EMIT_INTERVAL_MS = 300;
@@ -92,7 +101,12 @@ export class LocalWhisperService implements OnModuleDestroy {
   /** Serializes inference: two concurrent runs would just thrash the CPU. */
   private transcribeChain: Promise<unknown> = Promise.resolve();
 
-  private engineError: string | null = null;
+  /**
+   * Set at construction on a machine ONNX Runtime has no build for, and
+   * afterwards by a failed load. Non-null means every entry point below
+   * refuses early with a message the user can act on.
+   */
+  private engineError: string | null = describeUnsupportedPlatform();
   private transformersPromise: Promise<TransformersModule> | null = null;
 
   private readonly changesSubject = new Subject<LocalWhisperStatus>();
@@ -164,6 +178,13 @@ export class LocalWhisperService implements OnModuleDestroy {
     const spec = findWhisperModel(model);
     if (!spec) {
       throw new SpeechToTextProviderError(`Unknown Whisper model: ${model}.`);
+    }
+
+    // Refuse before spending a gigabyte of the user's bandwidth on weights this
+    // machine could never load.
+    const unsupported = describeUnsupportedPlatform();
+    if (unsupported) {
+      throw new SpeechToTextProviderError(unsupported);
     }
 
     const job: DownloadJob = {
@@ -262,6 +283,10 @@ export class LocalWhisperService implements OnModuleDestroy {
   private async runTranscription(
     input: LocalWhisperTranscribeInput,
   ): Promise<string> {
+    const unsupported = describeUnsupportedPlatform();
+    if (unsupported) {
+      throw new SpeechToTextProviderError(unsupported);
+    }
     if (!(await this.isReady(input.model))) {
       const spec = findWhisperModel(input.model);
       throw new SpeechToTextProviderError(
@@ -346,6 +371,13 @@ export class LocalWhisperService implements OnModuleDestroy {
       return this.transformersPromise;
     }
 
+    // Guarded again here so the success path below cannot clear a
+    // platform-support message by loading something that was never going to.
+    const unsupported = describeUnsupportedPlatform();
+    if (unsupported) {
+      throw new SpeechToTextProviderError(unsupported);
+    }
+
     this.transformersPromise = (async () => {
       try {
         const transformers = (await import(
@@ -358,6 +390,10 @@ export class LocalWhisperService implements OnModuleDestroy {
         // downloaded" depend on the process's working directory.
         transformers.env.allowLocalModels = false;
         transformers.env.useFSCache = true;
+        // Any file the pipeline wants beyond the ones downloaded above must go
+        // through the same mirror, or a locked-down host fails at load time
+        // having succeeded at download time.
+        transformers.env.remoteHost = resolveHfEndpoint();
 
         this.engineError = null;
         return transformers;
@@ -458,7 +494,8 @@ export class LocalWhisperService implements OnModuleDestroy {
       return;
     }
 
-    const url = `${HF_RESOLVE_BASE}/${spec.repo}/resolve/main/${file}`;
+    const endpoint = resolveHfEndpoint();
+    const url = `${endpoint}/${spec.repo}/resolve/main/${file}`;
     let response: Response;
     try {
       response = await fetch(url, { signal: job.controller.signal });
@@ -467,7 +504,7 @@ export class LocalWhisperService implements OnModuleDestroy {
         throw new DownloadCancelled();
       }
       throw new SpeechToTextProviderError(
-        `Could not reach huggingface.co: ${describeError(error)}`,
+        `Could not reach ${endpoint}: ${describeError(error)}`,
       );
     }
 
@@ -594,6 +631,7 @@ type TransformersModule = {
     cacheDir: string | null;
     allowLocalModels: boolean;
     useFSCache: boolean;
+    remoteHost: string;
   };
 };
 

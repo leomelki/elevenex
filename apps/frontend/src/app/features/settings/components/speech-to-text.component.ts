@@ -43,9 +43,11 @@ const TEST_RECORDING_MS = 4_000;
 const PROVIDER_OPTIONS: OptionSelectItem[] = [
   {
     value: 'local-whisper',
-    label: 'On this device',
+    // Deliberately not "on this device": Whisper runs inside the backend, which
+    // may be WSL or an SSH host. The panel below names the actual machine.
+    label: 'Whisper (self-hosted)',
     description:
-      'Whisper, running locally. Free, works offline, and no audio leaves the machine.',
+      'Runs on your own backend. Free, needs no API key, and works without internet once downloaded.',
   },
   {
     value: 'elevenlabs',

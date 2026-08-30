@@ -3,10 +3,15 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import {
   EMPTY_LOCAL_WHISPER_STATUS,
+  LocalWhisperBackendKind,
   LocalWhisperStatus,
 } from '@/shared/models/local-whisper.model';
 import { LocalWhisperModelId } from '@/shared/models/app-settings.model';
-import { getApiBaseUrl, getBackendOrigin } from '@/shared/runtime/runtime-config';
+import {
+  getApiBaseUrl,
+  getBackendOrigin,
+  getBackendServerId,
+} from '@/shared/runtime/runtime-config';
 
 const BASE_PATH = '/api/speech-to-text/local-models';
 
@@ -35,9 +40,21 @@ export class LocalWhisperService {
   /** Coalesces concurrent refreshes into one request. */
   private inFlight: Promise<LocalWhisperStatus> | null = null;
   private loadedOrigin: string | null = null;
+  /** Backend the cached state belongs to; see `ensureCurrentOrigin`. */
+  private statusOrigin: string | null = null;
   private watchers = 0;
   private source: EventSource | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * Where "local" actually is. Whisper runs wherever the backend runs, so on a
+   * WSL or SSH backend the weights land on that host and the recording is sent
+   * to it — still not to a third party, but not "on this device" either, and
+   * the UI must not claim otherwise.
+   */
+  readonly backendKind = signal<LocalWhisperBackendKind>(
+    describeBackendKind(),
+  );
 
   readonly models = computed(() => this.statusState().models);
 
@@ -60,7 +77,7 @@ export class LocalWhisperService {
 
   /** Fetches once per backend origin; later calls reuse the cached state. */
   ensureLoaded(): Promise<LocalWhisperStatus> {
-    const origin = getBackendOrigin();
+    const origin = this.ensureCurrentOrigin();
     if (this.loadedOrigin === origin && !this.inFlight) {
       return Promise.resolve(this.statusState());
     }
@@ -68,31 +85,41 @@ export class LocalWhisperService {
   }
 
   refresh(): Promise<LocalWhisperStatus> {
+    const origin = this.ensureCurrentOrigin();
     if (this.inFlight) {
       return this.inFlight;
     }
 
-    const origin = getBackendOrigin();
     this.loading.set(true);
-    this.inFlight = firstValueFrom(this.http.get<LocalWhisperStatus>(BASE_PATH))
+    const request = firstValueFrom(this.http.get<LocalWhisperStatus>(BASE_PATH))
       .then((status) => {
+        // A backend switch while this was in flight makes the answer wrong,
+        // not just late — it describes a machine we are no longer talking to.
+        if (this.statusOrigin !== origin) {
+          return this.statusState();
+        }
         this.loadedOrigin = origin;
         this.apply(status);
         this.error.set(null);
         return status;
       })
       .catch((error: unknown) => {
-        this.error.set(
-          describeError(error, 'Could not read local model status.'),
-        );
+        if (this.statusOrigin === origin) {
+          this.error.set(
+            describeError(error, 'Could not read local model status.'),
+          );
+        }
         throw error;
       })
       .finally(() => {
         this.loading.set(false);
-        this.inFlight = null;
+        if (this.inFlight === request) {
+          this.inFlight = null;
+        }
       });
 
-    return this.inFlight;
+    this.inFlight = request;
+    return request;
   }
 
   async startDownload(model: LocalWhisperModelId): Promise<void> {
@@ -121,6 +148,7 @@ export class LocalWhisperService {
    * stream is shared, so several callers cost one connection.
    */
   watch(): () => void {
+    this.ensureCurrentOrigin();
     this.watchers += 1;
     if (this.watchers === 1) {
       this.openStream();
@@ -208,6 +236,40 @@ export class LocalWhisperService {
     }
     this.statusState.set(status);
   }
+
+  /**
+   * Models live on whichever backend is connected, so switching to a remote or
+   * WSL host makes the current state wrong rather than merely stale — showing
+   * the previous machine's downloads would enable a mic that cannot work.
+   * Drops the state and reconnects the stream to the new origin.
+   */
+  private ensureCurrentOrigin(): string {
+    const origin = getBackendOrigin();
+    if (this.statusOrigin === origin) {
+      return origin;
+    }
+
+    this.statusOrigin = origin;
+    this.loadedOrigin = null;
+    this.inFlight = null;
+    this.statusState.set(EMPTY_LOCAL_WHISPER_STATUS);
+    this.backendKind.set(describeBackendKind());
+    this.error.set(null);
+
+    if (this.watchers > 0) {
+      this.closeStream();
+      this.openStream();
+    }
+    return origin;
+  }
+}
+
+function describeBackendKind(): LocalWhisperBackendKind {
+  const id = getBackendServerId();
+  if (id === 'wsl') {
+    return 'wsl';
+  }
+  return id === 'local' ? 'local' : 'remote';
 }
 
 /** The backend phrases these for humans; prefer its message to a status code. */

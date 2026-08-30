@@ -21,6 +21,7 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardProgressBarComponent } from '@/shared/components/progress-bar';
 import type { LocalWhisperModelId } from '@/shared/models/app-settings.model';
 import {
+  LOCAL_WHISPER_BACKEND_LABELS,
   LOCAL_WHISPER_SPEED_LABELS,
   formatModelSize,
   type LocalWhisperModel,
@@ -82,6 +83,31 @@ export class LocalWhisperSettingsComponent {
   );
 
   readonly selectedReady = this.localWhisper.selectedModelReady;
+  readonly backendKind = this.localWhisper.backendKind;
+
+  /** "this machine" / "your WSL backend" / "the remote backend". */
+  readonly backendLabel = computed(
+    () => LOCAL_WHISPER_BACKEND_LABELS[this.backendKind()],
+  );
+
+  /**
+   * Only a local backend can honestly claim the audio never leaves the device.
+   * On WSL or SSH the recording travels to that host — still your own hardware,
+   * still no third party, but a different sentence.
+   */
+  readonly privacyNote = computed(() => {
+    switch (this.backendKind()) {
+      case 'local':
+        return 'No API key, and no audio leaves this device.';
+      case 'wsl':
+        return 'No API key. Recordings go to your WSL backend and no further.';
+      default:
+        return 'No API key. Recordings go to your own backend over the connection you already use, and no further.';
+    }
+  });
+
+  /** Disables the download buttons when the engine cannot run at all. */
+  readonly engineAvailable = computed(() => this.status().engineAvailable);
 
   constructor() {
     // Streams download progress only while this panel is on screen; the

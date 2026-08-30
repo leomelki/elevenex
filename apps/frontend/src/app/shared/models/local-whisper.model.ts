@@ -29,6 +29,23 @@ export interface LocalWhisperModel {
   loadedInMemory: boolean;
 }
 
+/**
+ * Where the engine actually runs. Whisper runs inside the backend, so this is
+ * the difference between "nothing leaves this device" and "the recording goes
+ * to your own remote host".
+ */
+export type LocalWhisperBackendKind = 'local' | 'wsl' | 'remote';
+
+/** Names the machine in prose, for sentences like "downloaded to {x}". */
+export const LOCAL_WHISPER_BACKEND_LABELS: Record<
+  LocalWhisperBackendKind,
+  string
+> = {
+  local: 'this machine',
+  wsl: 'your WSL backend',
+  remote: 'the remote backend',
+};
+
 export interface LocalWhisperStatus {
   engineAvailable: boolean;
   engineError: string | null;

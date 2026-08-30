@@ -26,7 +26,33 @@ const TARGETS = [
   { key: 'darwin-arm64', platform: 'darwin', arch: 'arm64', nodeArch: 'arm64' },
   { key: 'win32-x64', platform: 'win32', arch: 'x64', nodeArch: 'x64', nodePlatform: 'win', archiveExtension: 'zip' },
 ];
-const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@openai/codex-sdk', '@vscode/ripgrep'];
+const NATIVE_RUNTIME_DEPENDENCIES = [
+  'better-sqlite3',
+  'node-pty',
+  '@openai/codex-sdk',
+  '@vscode/ripgrep',
+  // main.cjs keeps this external and requires it when offline dictation runs.
+  // Omitting it does not break the build — it breaks the first dictation on
+  // every remote backend, which is far harder to notice.
+  'onnxruntime-node',
+];
+
+/**
+ * ONNX Runtime ships every platform's addon in one ~210 MB package. A remote
+ * runtime is uploaded over SSH, so carrying five platforms' binaries to a
+ * machine that can load one is the difference between a ~50 MB and a ~260 MB
+ * transfer. Prune to the target being staged.
+ */
+const ONNXRUNTIME_BINDING_ROOT = ['node_modules', 'onnxruntime-node', 'bin', 'napi-v6'];
+
+/** Targets ONNX Runtime publishes an addon for; see whisper-platform.ts. */
+const ONNXRUNTIME_SUPPORTED_TARGETS = new Set([
+  'darwin-arm64',
+  'linux-arm64',
+  'linux-x64',
+  'win32-arm64',
+  'win32-x64',
+]);
 const CODEX_CLI_PACKAGE_NAMES = [
   'codex',
   'codex-darwin-arm64',
@@ -372,6 +398,9 @@ function validateRemoteNativeRuntime(targetRoot, target) {
     "db.prepare('select 1 as ok').get();",
     'db.close();',
     "require(path.join(root, 'node_modules', 'node-pty'));",
+    // Only meaningful when the host is the target, which is what this whole
+    // function is gated on. Catches a mispruned addon before it reaches a user.
+    "require(path.join(root, 'node_modules', 'onnxruntime-node'));",
   ].join('');
   const result = spawnSync(nodeExecutable, ['-e', script, targetRoot], {
     cwd: targetRoot,
@@ -386,6 +415,48 @@ function validateRemoteNativeRuntime(targetRoot, target) {
         result.stderr.trim(),
         result.stdout.trim(),
       ].filter(Boolean).join('\n'),
+    );
+  }
+}
+
+/**
+ * Keeps only the target's own ONNX Runtime addon, and reports when the target
+ * has none. `darwin-x64` is the live case: upstream stopped publishing an Intel
+ * macOS build after 1.23.2, so that runtime ships without an engine and the
+ * backend reports offline dictation as unavailable there.
+ */
+function pruneOnnxRuntimeBinaries(targetRoot, target) {
+  const bindingRoot = path.join(targetRoot, ...ONNXRUNTIME_BINDING_ROOT);
+  if (!existsSync(bindingRoot)) {
+    console.warn(`  ${target.key}: onnxruntime-node binaries are missing; offline dictation will be unavailable`);
+    return;
+  }
+
+  const keepDir = path.join(bindingRoot, target.platform, target.arch);
+  for (const platformEntry of readdirSync(bindingRoot)) {
+    const platformRoot = path.join(bindingRoot, platformEntry);
+    if (!statSync(platformRoot).isDirectory()) continue;
+
+    for (const archEntry of readdirSync(platformRoot)) {
+      const archRoot = path.join(platformRoot, archEntry);
+      if (path.resolve(archRoot) !== path.resolve(keepDir)) {
+        rmSync(archRoot, { recursive: true, force: true });
+      }
+    }
+
+    if (readdirSync(platformRoot).length === 0) {
+      rmSync(platformRoot, { recursive: true, force: true });
+    }
+  }
+
+  if (!existsSync(keepDir)) {
+    if (ONNXRUNTIME_SUPPORTED_TARGETS.has(target.key)) {
+      throw new Error(
+        `onnxruntime-node has no addon for ${target.key}; offline dictation would fail at runtime on this target.`,
+      );
+    }
+    console.warn(
+      `  ${target.key}: onnxruntime-node publishes no addon for this target; offline dictation will report itself unavailable`,
     );
   }
 }
@@ -555,6 +626,9 @@ function writeLauncher(targetRoot, target) {
       'New-Item -ItemType Directory -Force $logRoot | Out-Null',
       '$env:ELEVENEX_BACKEND_RUNTIME_ROOT = $runtimeRoot',
       `$env:DB_PATH = Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\elevenex.db"`,
+      // Whisper weights run to a gigabyte; keep them with the rest of this
+      // runtime's state so removing the remote install takes them too.
+      `$env:ELEVENEX_WHISPER_CACHE_DIR = Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\whisper-models"`,
       '$env:ELEVENEX_PROXY_PORT = "$port"',
       '$env:FRONTEND_PORT = "$port"',
       '$node = Join-Path $runtimeRoot "node\\node.exe"',
@@ -589,6 +663,9 @@ function writeLauncher(targetRoot, target) {
     `mkdir -p "$HOME/${REMOTE_HOME_DIRNAME}/logs"`,
     'export ELEVENEX_BACKEND_RUNTIME_ROOT="$RUNTIME_ROOT"',
     `export DB_PATH="$HOME/${REMOTE_HOME_DIRNAME}/elevenex.db"`,
+    // Whisper weights run to a gigabyte; keep them with the rest of this
+    // runtime's state so removing the remote install takes them too.
+    `export ELEVENEX_WHISPER_CACHE_DIR="$HOME/${REMOTE_HOME_DIRNAME}/whisper-models"`,
     'export ELEVENEX_PROXY_PORT="$PORT"',
     'export FRONTEND_PORT="$PORT"',
     `exec "$RUNTIME_ROOT/node/bin/node" "$RUNTIME_ROOT/main.cjs" >> "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log" 2>&1`,
@@ -633,6 +710,7 @@ async function stageTarget(target, commitSha, nodeVersion) {
 
   await stageBundledNodeRuntime(targetRoot, target, nodeVersion);
   installRuntimeDependencies(targetRoot, target);
+  pruneOnnxRuntimeBinaries(targetRoot, target);
   removeEmbeddedAgentExecutables(targetRoot);
   validateRemoteNativeRuntime(targetRoot, target);
   copyRequiredPath(
@@ -730,4 +808,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { removeEmbeddedAgentExecutables };
+module.exports = { removeEmbeddedAgentExecutables, pruneOnnxRuntimeBinaries };
