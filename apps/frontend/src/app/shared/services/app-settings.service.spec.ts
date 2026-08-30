@@ -2,6 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_SPEECH_TO_TEXT_SETTINGS } from '@/shared/models/app-settings.model';
 import { AppSettingsService } from './app-settings.service';
 
 describe('AppSettingsService', () => {
@@ -39,27 +40,26 @@ describe('AppSettingsService', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
     });
 
+    // A response with no dictation fields at all: the normalizer has to fill
+    // them in, which is what a backend older than this feature would send.
+    const normalized = {
+      defaultClaudeSessionSurface: 'tui',
+      defaultAgentProvider: 'codex',
+      sessionToolbarButtons: null,
+      defaultModelByProvider: {},
+      defaultReasoningEffortByProvider: {},
+      speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+      speechToTextApiKeyConfigured: false,
+      speechToTextApiKeyFromEnv: false,
+      speechToTextRequiresApiKey: false,
+      onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
     await expect(Promise.all([first, second])).resolves.toEqual([
-      {
-        defaultClaudeSessionSurface: 'tui',
-        defaultAgentProvider: 'codex',
-        sessionToolbarButtons: null,
-        defaultModelByProvider: {},
-        defaultReasoningEffortByProvider: {},
-        onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-01T00:00:00.000Z',
-      },
-      {
-        defaultClaudeSessionSurface: 'tui',
-        defaultAgentProvider: 'codex',
-        sessionToolbarButtons: null,
-        defaultModelByProvider: {},
-        defaultReasoningEffortByProvider: {},
-        onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-01T00:00:00.000Z',
-      },
+      normalized,
+      normalized,
     ]);
     expect(service.settings().defaultClaudeSessionSurface).toBe('tui');
   });

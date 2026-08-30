@@ -116,6 +116,7 @@ describe('ClaudeWorkspaceComponent', () => {
     usingRepoDefaultRootRef: true,
     errorMessage: null,
     hasRecord: true,
+    contextEnabled: true,
   });
 
   const timestampAfter = (start: string, ms: number) =>

@@ -1,4 +1,5 @@
 import { ElevenLabsSpeechToTextProvider } from './elevenlabs.provider.js';
+import { LocalWhisperSpeechToTextProvider } from './local-whisper.provider.js';
 import { OpenAiCompatibleSpeechToTextProvider } from './openai-compatible.provider.js';
 import {
   OpenRouterSpeechToTextProvider,
@@ -223,5 +224,94 @@ describe('stripTranscriptPreamble', () => {
     expect(stripTranscriptPreamble('rename it to "foo" please')).toBe(
       'rename it to "foo" please',
     );
+  });
+});
+
+describe('LocalWhisperSpeechToTextProvider', () => {
+  /** 16 kHz mono 16-bit PCM, exactly what the client transcodes to. */
+  function wav(sampleCount: number): Buffer {
+    const dataBytes = sampleCount * 2;
+    const buffer = Buffer.alloc(44 + dataBytes);
+    buffer.write('RIFF', 0, 'ascii');
+    buffer.writeUInt32LE(36 + dataBytes, 4);
+    buffer.write('WAVE', 8, 'ascii');
+    buffer.write('fmt ', 12, 'ascii');
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20);
+    buffer.writeUInt16LE(1, 22);
+    buffer.writeUInt32LE(16_000, 24);
+    buffer.writeUInt32LE(32_000, 28);
+    buffer.writeUInt16LE(2, 32);
+    buffer.writeUInt16LE(16, 34);
+    buffer.write('data', 36, 'ascii');
+    buffer.writeUInt32LE(dataBytes, 40);
+    for (let i = 0; i < sampleCount; i += 1) {
+      buffer.writeInt16LE(i % 2 ? 8000 : -8000, 44 + i * 2);
+    }
+    return buffer;
+  }
+
+  const engine = () => ({ transcribe: jest.fn(async () => 'ship the fix') });
+
+  it('accepts only WAV, which is what the client transcodes to', () => {
+    const provider = new LocalWhisperSpeechToTextProvider(engine() as never);
+    expect(provider.acceptedMimeTypes).toContain('audio/wav');
+    expect(provider.acceptedMimeTypes).not.toContain('audio/webm');
+  });
+
+  it('decodes the container and passes samples plus the language through', async () => {
+    const local = engine();
+    const provider = new LocalWhisperSpeechToTextProvider(local as never);
+
+    const text = await provider.transcribe({
+      audio: wav(320),
+      mimeType: 'audio/wav',
+      model: 'small',
+      language: 'fr',
+      keyterms: ['useAuthStore'],
+    });
+
+    expect(text).toBe('ship the fix');
+    const call = local.transcribe.mock.calls[0]![0] as {
+      samples: Float32Array;
+      model: string;
+      language: string | null;
+    };
+    expect(call.samples).toBeInstanceOf(Float32Array);
+    expect(call.samples.length).toBe(320);
+    expect(call.model).toBe('small');
+    expect(call.language).toBe('fr');
+    // Whisper has no keyterm input; passing one silently would be a lie.
+    expect(call).not.toHaveProperty('keyterms');
+  });
+
+  it('reports a malformed container as a user-actionable error', async () => {
+    const provider = new LocalWhisperSpeechToTextProvider(engine() as never);
+
+    await expect(
+      provider.transcribe({
+        audio: Buffer.from('this is definitely not a wav file'),
+        mimeType: 'audio/wav',
+        model: 'small',
+        language: null,
+        keyterms: [],
+      }),
+    ).rejects.toBeInstanceOf(SpeechToTextProviderError);
+  });
+
+  it('rejects a container holding no samples rather than calling the engine', async () => {
+    const local = engine();
+    const provider = new LocalWhisperSpeechToTextProvider(local as never);
+
+    await expect(
+      provider.transcribe({
+        audio: wav(0),
+        mimeType: 'audio/wav',
+        model: 'small',
+        language: null,
+        keyterms: [],
+      }),
+    ).rejects.toThrow(SpeechToTextProviderError);
+    expect(local.transcribe).not.toHaveBeenCalled();
   });
 });

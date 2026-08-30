@@ -10,9 +10,42 @@ const EXTERNAL_MODULES = [
   'better-sqlite3',
   'node-pty',
   '@vscode/ripgrep',
+  // Ships a native .node binding, so it has to stay a real require against the
+  // staged node_modules rather than being inlined into main.cjs.
+  'onnxruntime-node',
   '@nestjs/microservices',
   '@nestjs/microservices/microservices-module',
 ];
+
+/**
+ * Transformers.js requires `sharp` at the top of its Node build for image
+ * pipelines. The backend only ever runs its speech pipeline, so stubbing the
+ * import keeps a ~30 MB native image library — and a second per-platform
+ * binary to stage and sign — out of the packaged app entirely.
+ */
+const SHARP_STUB = `
+const unavailable = () => {
+  throw new Error('Image processing is not available in this build.');
+};
+module.exports = unavailable;
+module.exports.default = unavailable;
+`;
+
+function createSharpStubPlugin() {
+  return {
+    name: 'stub-sharp',
+    setup(build) {
+      build.onResolve({ filter: /^sharp$/ }, () => ({
+        path: 'sharp',
+        namespace: 'sharp-stub',
+      }));
+      build.onLoad({ filter: /.*/, namespace: 'sharp-stub' }, () => ({
+        contents: SHARP_STUB,
+        loader: 'js',
+      }));
+    },
+  };
+}
 
 function findEsbuildModule() {
   const pnpmRoot = path.join(repoRoot, 'node_modules', '.pnpm');
@@ -87,7 +120,7 @@ async function main() {
     minify: false,
     legalComments: 'none',
     external: EXTERNAL_MODULES,
-    plugins: [createPnpmAliasPlugin('express')],
+    plugins: [createPnpmAliasPlugin('express'), createSharpStubPlugin()],
     logLevel: 'info',
   });
 

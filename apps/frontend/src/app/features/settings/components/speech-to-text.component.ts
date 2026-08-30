@@ -28,6 +28,8 @@ import type {
   SpeechToTextProviderId,
 } from '@/shared/models/app-settings.model';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
+import { LocalWhisperService } from '@/shared/services/local-whisper.service';
+import { LocalWhisperSettingsComponent } from './local-whisper.component';
 import {
   AudioCaptureSession,
   isRecordingSupported,
@@ -39,6 +41,12 @@ import { blobToWav16kMono } from '@/shared/speech/wav';
 const TEST_RECORDING_MS = 4_000;
 
 const PROVIDER_OPTIONS: OptionSelectItem[] = [
+  {
+    value: 'local-whisper',
+    label: 'On this device',
+    description:
+      'Whisper, running locally. Free, works offline, and no audio leaves the machine.',
+  },
   {
     value: 'elevenlabs',
     label: 'ElevenLabs Scribe',
@@ -94,6 +102,7 @@ interface TestResult {
     ZardCheckboxComponent,
     ZardInputDirective,
     OptionSelectComponent,
+    LocalWhisperSettingsComponent,
   ],
   templateUrl: './speech-to-text.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -109,6 +118,7 @@ interface TestResult {
 export class SpeechToTextSettingsComponent {
   readonly appSettings = inject(AppSettingsService);
   private readonly api = inject(SpeechToTextApiService);
+  private readonly localWhisper = inject(LocalWhisperService);
 
   readonly providerOptions = PROVIDER_OPTIONS;
   readonly cleanupOptions = CLEANUP_OPTIONS;
@@ -138,8 +148,14 @@ export class SpeechToTextSettingsComponent {
   readonly isElevenLabs = computed(
     () => this.settings().provider === 'elevenlabs',
   );
+  readonly isLocal = computed(() => this.settings().provider === 'local-whisper');
   readonly isFixedCleanup = computed(
     () => this.settings().cleanupMode === 'fixed',
+  );
+
+  /** Only the cloud providers have a key or a free-text model id to configure. */
+  readonly needsApiKey = computed(
+    () => this.appSettings.settings().speechToTextRequiresApiKey,
   );
 
   readonly modelPlaceholder = computed(() => {
@@ -153,13 +169,19 @@ export class SpeechToTextSettingsComponent {
     }
   });
 
-  readonly canTest = computed(
-    () =>
-      this.recordingSupported &&
-      this.settings().enabled &&
-      this.keyConfigured() &&
-      !this.testing(),
-  );
+  /**
+   * The round trip is only worth offering once the chosen provider has what it
+   * runs on — a key for the cloud services, downloaded weights for the local
+   * engine — otherwise the test can only ever report the same missing setup.
+   */
+  readonly canTest = computed(() => {
+    if (!this.recordingSupported || !this.settings().enabled || this.testing()) {
+      return false;
+    }
+    return this.isLocal()
+      ? this.localWhisper.selectedModelReady()
+      : this.keyConfigured();
+  });
 
   setEnabled(enabled: boolean): void {
     void this.patch({ enabled });

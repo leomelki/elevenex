@@ -40,6 +40,7 @@ function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
     speechToTextApiKeyConfigured: false,
     speechToTextApiKeyFromEnv: false,
+    speechToTextRequiresApiKey: false,
     onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
     createdAt: null,
     updatedAt: null,

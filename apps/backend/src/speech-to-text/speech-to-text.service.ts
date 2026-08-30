@@ -16,9 +16,12 @@ import {
   DEFAULT_AGENT_PROVIDERS,
   DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
   DEFAULT_SPEECH_TO_TEXT_MODELS,
+  speechProviderRequiresApiKey,
   type DefaultAgentProvider,
 } from '../settings/settings.types.js';
 import { KeytermService } from './keyterm.service.js';
+import { LocalWhisperService } from './local-whisper/local-whisper.service.js';
+import { LocalWhisperSpeechToTextProvider } from './providers/local-whisper.provider.js';
 import { ElevenLabsSpeechToTextProvider } from './providers/elevenlabs.provider.js';
 import { OpenAiCompatibleSpeechToTextProvider } from './providers/openai-compatible.provider.js';
 import { OpenRouterSpeechToTextProvider } from './providers/openrouter.provider.js';
@@ -59,6 +62,7 @@ export class SpeechToTextService {
     private readonly settingsService: SettingsService,
     private readonly keytermService: KeytermService,
     private readonly cleanupService: TranscriptCleanupService,
+    private readonly localWhisperService: LocalWhisperService,
   ) {}
 
   async transcribe(request: TranscribeRequest): Promise<TranscriptionResult> {
@@ -77,13 +81,14 @@ export class SpeechToTextService {
         'Dictation is turned off. Enable it in Settings.',
       );
     }
-    if (!config.apiKey) {
+    const needsApiKey = speechProviderRequiresApiKey(config.provider);
+    if (needsApiKey && !config.apiKey) {
       throw new BadRequestException(
         'No dictation API key is configured. Add one in Settings.',
       );
     }
 
-    const provider = this.buildProvider(config, config.apiKey);
+    const provider = this.buildProvider(config, config.apiKey ?? '');
     const mimeType = baseMimeType(request.mimeType);
     if (!provider.acceptedMimeTypes.includes(mimeType)) {
       // Defence in depth: the client already converts for providers that need
@@ -95,14 +100,23 @@ export class SpeechToTextService {
 
     const session = await this.loadSession(request.sessionId);
     const worktreePath = request.worktreePath ?? session?.worktreePath ?? null;
-    const model = config.model ?? DEFAULT_SPEECH_TO_TEXT_MODELS[config.provider];
+    // The local engine picks its build from `localModel`, so the free-text
+    // `model` field — which belongs to whichever cloud provider was configured
+    // last — must not leak into it.
+    const model =
+      config.provider === 'local-whisper'
+        ? config.localModel
+        : (config.model ?? DEFAULT_SPEECH_TO_TEXT_MODELS[config.provider]);
 
-    const keyterms = config.keytermsEnabled
-      ? await this.keytermService.collect(
-          worktreePath,
-          session?.branchName ?? null,
-        )
-      : [];
+    // Skipped for the local engine, which has no vocabulary-bias input —
+    // collecting them would scan the worktree to build a list nothing reads.
+    const keyterms =
+      config.keytermsEnabled && config.provider !== 'local-whisper'
+        ? await this.keytermService.collect(
+            worktreePath,
+            session?.branchName ?? null,
+          )
+        : [];
 
     const startedAt = Date.now();
     let rawText: string;
@@ -206,6 +220,8 @@ export class SpeechToTextService {
     apiKey: string,
   ): SpeechToTextProvider {
     switch (config.provider) {
+      case 'local-whisper':
+        return new LocalWhisperSpeechToTextProvider(this.localWhisperService);
       case 'elevenlabs':
         return new ElevenLabsSpeechToTextProvider(apiKey);
       case 'openai-compatible':

@@ -7,6 +7,9 @@ import {
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
+  LOCAL_WHISPER_MODELS,
+  LocalWhisperModelId,
+  OFFLINE_SPEECH_TO_TEXT_PROVIDERS,
   SPEECH_CLEANUP_MODES,
   SPEECH_TO_TEXT_PROVIDERS,
   SpeechCleanupMode,
@@ -30,6 +33,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   speechToTextApiKeyConfigured: false,
   speechToTextApiKeyFromEnv: false,
+  speechToTextRequiresApiKey: false,
   onboardingCompletedAt: null,
   createdAt: null,
   updatedAt: null,
@@ -170,8 +174,16 @@ export class AppSettingsService {
   saveSpeechToText(
     patch: Partial<SpeechToTextSettings>,
   ): Promise<AppSettings> {
+    const speechToText = { ...this.settingsState().speechToText, ...patch };
     return this.saveSettings(
-      { speechToText: { ...this.settingsState().speechToText, ...patch } },
+      {
+        speechToText,
+        // Derived from the provider, so switching to the local engine has to
+        // hide the API key field immediately rather than after the round trip.
+        speechToTextRequiresApiKey: !OFFLINE_SPEECH_TO_TEXT_PROVIDERS.includes(
+          speechToText.provider,
+        ),
+      },
       { speechToText: patch },
     );
   }
@@ -293,6 +305,14 @@ export class AppSettingsService {
       speechToTextApiKeyConfigured:
         settings?.speechToTextApiKeyConfigured === true,
       speechToTextApiKeyFromEnv: settings?.speechToTextApiKeyFromEnv === true,
+      // A backend predating offline dictation only ever served key-based
+      // providers, so assume a key is required when the flag is absent.
+      speechToTextRequiresApiKey:
+        typeof settings?.speechToTextRequiresApiKey === 'boolean'
+          ? settings.speechToTextRequiresApiKey
+          : !OFFLINE_SPEECH_TO_TEXT_PROVIDERS.includes(
+              this.normalizeSpeechToText(settings?.speechToText).provider,
+            ),
       onboardingCompletedAt: settings?.onboardingCompletedAt ?? null,
       createdAt: settings?.createdAt ?? null,
       updatedAt: settings?.updatedAt ?? null,
@@ -323,6 +343,11 @@ export class AppSettingsService {
         ? (raw['provider'] as SpeechToTextProviderId)
         : DEFAULT_SPEECH_TO_TEXT_SETTINGS.provider,
       baseUrl: str('baseUrl'),
+      localModel: LOCAL_WHISPER_MODELS.includes(
+        raw['localModel'] as LocalWhisperModelId,
+      )
+        ? (raw['localModel'] as LocalWhisperModelId)
+        : DEFAULT_SPEECH_TO_TEXT_SETTINGS.localModel,
       model: str('model'),
       language: str('language'),
       keytermsEnabled: bool('keytermsEnabled'),

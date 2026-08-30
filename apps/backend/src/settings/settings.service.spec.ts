@@ -96,10 +96,17 @@ describe('SettingsService', () => {
       speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
       speechToTextApiKeyConfigured: false,
       speechToTextApiKeyFromEnv: false,
+      // Dictation defaults to the on-device engine, which needs no key.
+      speechToTextRequiresApiKey: false,
       onboardingCompletedAt: null,
       createdAt: null,
       updatedAt: null,
     });
+  });
+
+  it('defaults dictation to a local model so it works without any key', () => {
+    expect(DEFAULT_SPEECH_TO_TEXT_SETTINGS.provider).toBe('local-whisper');
+    expect(DEFAULT_SPEECH_TO_TEXT_SETTINGS.localModel).toBe('small');
   });
 
   it('creates and returns the singleton settings row', async () => {
@@ -254,7 +261,12 @@ describe('SettingsService', () => {
     it('prefers an environment key and reports where it came from', async () => {
       const { db } = createDbMock();
       const service = new SettingsService(db);
-      await service.update({ speechToTextApiKey: 'sk-from-db' });
+      // Environment keys are looked up per provider; the local engine has none,
+      // so this has to be on a provider that authenticates.
+      await service.update({
+        speechToText: { provider: 'elevenlabs' },
+        speechToTextApiKey: 'sk-from-db',
+      });
 
       process.env.ELEVENEX_STT_API_KEY = 'sk-from-env';
 

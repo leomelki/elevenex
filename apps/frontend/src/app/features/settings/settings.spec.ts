@@ -21,6 +21,29 @@ const APP_SETTINGS_RESPONSE = {
   updatedAt: null,
 };
 
+const LOCAL_MODELS_RESPONSE = {
+  engineAvailable: true,
+  engineError: null,
+  cacheDir: '/home/user/.elevenex/whisper-models',
+  selectedModel: 'small',
+  models: [
+    {
+      id: 'small',
+      label: 'Whisper Small',
+      repo: 'onnx-community/whisper-small',
+      downloadBytes: 254_000_000,
+      speed: 'moderate',
+      description: 'Accurate enough for technical dictation.',
+      status: 'not-downloaded',
+      loadedBytes: 0,
+      progress: 0,
+      currentFile: null,
+      error: null,
+      loadedInMemory: false,
+    },
+  ],
+};
+
 const MODEL_CATALOG_RESPONSE = [
   {
     provider: 'claude',
@@ -63,6 +86,14 @@ describe('Settings', () => {
   });
 
   afterEach(() => {
+    // The dictation panel watches offline model status while it is mounted.
+    // jsdom has no EventSource, so it falls back to polling — drain whatever
+    // that produced rather than asserting on a cadence.
+    for (const request of httpMock.match((candidate) =>
+      candidate.url.includes('/api/speech-to-text/local-models'),
+    )) {
+      request.flush(LOCAL_MODELS_RESPONSE);
+    }
     httpMock.verify();
   });
 

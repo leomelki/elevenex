@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.131",
+    "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
@@ -32,21 +33,22 @@
     "@openai/codex-sdk": "^0.129.0",
     "@vscode/ripgrep": "^1.18.0",
     "better-sqlite3": "^12.8.0",
+    "chokidar": "^5.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.1",
     "hash-wasm": "^4.12.0",
     "node-pty": "^1.1.0",
+    "onnxruntime-node": "^1.29.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "simple-git": "^3.33.0",
     "smol-toml": "^1.6.1",
     "socket.io": "^4.8.3",
+    "vscode-web": "^1.91.1",
     "ws": "^8.20.0",
-    "zod": "^3.25.76",
-    "chokidar": "^5.0.0",
-    "vscode-web": "^1.91.1"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

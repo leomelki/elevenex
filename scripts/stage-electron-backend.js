@@ -14,7 +14,7 @@ const backendBundleRoot = path.join(backendRoot, 'bundle');
 const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const backendPackageJson = require(path.join(backendRoot, 'package.json'));
-const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@vscode/ripgrep'];
+const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node'];
 const EMBED_LOCAL_NODE_RUNTIME = process.env.ELEVENEX_EMBED_LOCAL_NODE === '1';
 const STAGE_COPY_PLANS = {
   'better-sqlite3': {
@@ -78,6 +78,16 @@ const STAGE_COPY_PLANS = {
   '@vscode/ripgrep-win32-x64': {
     files: ['package.json'],
     directories: ['bin'],
+  },
+  // ONNX Runtime publishes every platform's binaries in one package (~210 MB
+  // unpacked). Only the host's own build can ever load, so stage just that one
+  // and leave the other ~150 MB out of the installer.
+  'onnxruntime-node': {
+    files: ['package.json', 'README.md'],
+    directories: ['dist', 'lib'],
+    optionalDirectories: [
+      path.join('bin', 'napi-v6', process.platform, process.arch),
+    ],
   },
   '@openai/codex-sdk': {
     files: ['package.json', 'LICENSE'],

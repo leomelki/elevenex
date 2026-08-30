@@ -41,10 +41,15 @@ describe('OnboardingStartupService', () => {
     refreshTree: vi.fn(),
   };
 
+  const projectsServiceMock = {
+    refresh: vi.fn(),
+  };
+
   const createService = () => new OnboardingStartupService(
     onboardingStateMock as never,
     onboardingConnectionMock as never,
     sshForwardsServiceMock as never,
+    projectsServiceMock as never,
     navigationServiceMock as never,
   );
 

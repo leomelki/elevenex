@@ -48,6 +48,10 @@
     />
   </div>
 
+  @if (isLocal()) {
+    <app-local-whisper-settings />
+  }
+
   @if (settings().provider === 'openrouter') {
     <div
       class="flex items-start gap-2 rounded-lg border border-border bg-muted/45 px-4 py-3 text-sm text-muted-foreground"
@@ -85,27 +89,31 @@
     </div>
   }
 
-  <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-center">
-    <div class="min-w-0">
-      <div class="text-sm font-medium text-foreground">Model</div>
-      <div class="mt-1 text-sm text-muted-foreground">
-        Leave empty to use the service default.
+  @if (!isLocal()) {
+    <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-center">
+      <div class="min-w-0">
+        <div class="text-sm font-medium text-foreground">Model</div>
+        <div class="mt-1 text-sm text-muted-foreground">
+          Leave empty to use the service default.
+        </div>
       </div>
+      <input
+        z-input
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        [placeholder]="modelPlaceholder()"
+        aria-label="Transcription model"
+        [disabled]="appSettings.saving()"
+        [ngModel]="settings().model"
+        (ngModelChange)="setModel($event)"
+      />
     </div>
-    <input
-      z-input
-      type="text"
-      autocomplete="off"
-      spellcheck="false"
-      [placeholder]="modelPlaceholder()"
-      aria-label="Transcription model"
-      [disabled]="appSettings.saving()"
-      [ngModel]="settings().model"
-      (ngModelChange)="setModel($event)"
-    />
-  </div>
+  }
 
-  <!-- API key: write-only -->
+  <!-- API key: write-only. Hidden for the local engine, which has nothing to
+       authenticate against. -->
+  @if (needsApiKey()) {
   <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-start">
     <div class="min-w-0">
       <div class="flex items-center gap-2">
@@ -169,6 +177,7 @@
       </div>
     </div>
   </div>
+  }
 
   <div class="h-px bg-border"></div>
 
@@ -194,25 +203,38 @@
     />
   </div>
 
-  <div class="flex flex-wrap items-center justify-between gap-4">
-    <div class="min-w-0">
-      <div class="text-sm font-medium text-foreground">Bias towards repository names</div>
-      <div class="mt-1 text-sm text-muted-foreground">
-        Sends branch and changed-file names as hints so identifiers come out
-        spelled correctly.
-        @if (isElevenLabs()) {
-          ElevenLabs charges 20% extra for this.
-        }
+  @if (!isLocal()) {
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      <div class="min-w-0">
+        <div class="text-sm font-medium text-foreground">Bias towards repository names</div>
+        <div class="mt-1 text-sm text-muted-foreground">
+          Sends branch and changed-file names as hints so identifiers come out
+          spelled correctly.
+          @if (isElevenLabs()) {
+            ElevenLabs charges 20% extra for this.
+          }
+        </div>
       </div>
+      <z-checkbox
+        [zDisabled]="appSettings.saving()"
+        [ngModel]="settings().keytermsEnabled"
+        (ngModelChange)="setKeyterms($event)"
+      >
+        Enabled
+      </z-checkbox>
     </div>
-    <z-checkbox
-      [zDisabled]="appSettings.saving()"
-      [ngModel]="settings().keytermsEnabled"
-      (ngModelChange)="setKeyterms($event)"
-    >
-      Enabled
-    </z-checkbox>
-  </div>
+  } @else {
+    <!-- Whisper's only vocabulary hook is an initial prompt, which it happily
+         echoes into the transcript. Cleanup is the honest answer here. -->
+    <div class="flex items-start gap-2 rounded-lg border border-border bg-muted/45 px-4 py-3 text-sm text-muted-foreground">
+      <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 text-muted-foreground" />
+      <span>
+        The local engine cannot be biased towards your repository's names.
+        Turning on transcript cleanup below is the best way to get identifiers
+        such as <code class="font-mono text-xs">useAuthStore</code> spelled correctly.
+      </span>
+    </div>
+  }
 
   <div class="h-px bg-border"></div>
 

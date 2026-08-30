@@ -140,6 +140,7 @@ const fileWindow = (
   hasMore: false,
   context: 8,
   changeHash: `${path}:hash`,
+  fingerprint: null,
   rows,
   contextRanges: [],
 });

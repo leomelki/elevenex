@@ -9,7 +9,10 @@ const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const archivePath = path.join(stageBaseRoot, 'backend.tar.gz');
 const STAGED_NODE_MODULES_ROOT = path.join(stageBackendRoot, 'node_modules');
-const STAGED_BACKEND_WARN_THRESHOLD_BYTES = 110 * 1024 * 1024;
+// Raised from 110 MB when offline dictation added ONNX Runtime, whose
+// single-platform binaries are ~35-60 MB depending on the host. Kept just above
+// the expected total so an unintended addition still trips it.
+const STAGED_BACKEND_WARN_THRESHOLD_BYTES = 175 * 1024 * 1024;
 const NODE_PTY_PLATFORM_PREBUILDS_ROOT = path.join(
   STAGED_NODE_MODULES_ROOT,
   'node-pty',
@@ -28,6 +31,20 @@ const REQUIRED_NATIVE_RUNTIME_ARTIFACTS = [
     alternatives: [
       path.join(STAGED_NODE_MODULES_ROOT, 'node-pty', 'build', 'Release', 'pty.node'),
       path.join(NODE_PTY_PLATFORM_PREBUILDS_ROOT, 'pty.node'),
+    ],
+  },
+  {
+    label: 'onnxruntime-node binding',
+    alternatives: [
+      path.join(
+        STAGED_NODE_MODULES_ROOT,
+        'onnxruntime-node',
+        'bin',
+        'napi-v6',
+        process.platform,
+        process.arch,
+        'onnxruntime_binding.node',
+      ),
     ],
   },
   ...(process.platform === 'win32'
@@ -104,6 +121,18 @@ const FINAL_RUNTIME_PACKAGE_PLANS = {
   '@vscode/ripgrep-win32-x64': {
     files: ['package.json'],
     directories: ['bin'],
+  },
+  // `dist/binding.js` resolves its addon through
+  // `bin/napi-v6/<platform>/<arch>/`, so that one directory is the only part of
+  // the ~210 MB multi-platform payload the packaged app can use.
+  'onnxruntime-node': {
+    files: ['package.json'],
+    directories: ['dist', 'lib'],
+    optionalDirectories: [`bin/napi-v6/${process.platform}/${process.arch}`],
+  },
+  'onnxruntime-common': {
+    files: ['package.json'],
+    directories: ['dist', 'lib'],
   },
   '@openai/codex-sdk': {
     files: ['package.json', 'LICENSE'],
@@ -335,6 +364,10 @@ function validateNativeRuntimeLoad() {
     "db.prepare('select 1 as ok').get();",
     "db.close();",
     "require(path.join(root, 'node_modules', 'node-pty'));",
+    // Catches a pruned-away platform directory or a binding that cannot link
+    // its runtime DLLs, which would otherwise only surface the first time a
+    // user tried to dictate offline.
+    "require(path.join(root, 'node_modules', 'onnxruntime-node'));",
   ].join('');
   const bundledNode = getBundledNodeExecutable();
   const executable = bundledNode || getElectronExecutable();

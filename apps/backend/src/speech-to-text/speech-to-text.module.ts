@@ -3,6 +3,8 @@ import * as express from 'express';
 import { AgentGenerationModule } from '../agent-generation/agent-generation.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { KeytermService } from './keyterm.service.js';
+import { LocalWhisperController } from './local-whisper/local-whisper.controller.js';
+import { LocalWhisperService } from './local-whisper/local-whisper.service.js';
 import { SpeechCleanupController } from './speech-cleanup.controller.js';
 import { SpeechToTextController } from './speech-to-text.controller.js';
 import { SpeechToTextService } from './speech-to-text.service.js';
@@ -11,8 +13,17 @@ import { TranscriptCleanupService } from './transcript-cleanup.service.js';
 
 @Module({
   imports: [SettingsModule, AgentGenerationModule],
-  controllers: [SpeechToTextController, SpeechCleanupController],
-  providers: [SpeechToTextService, TranscriptCleanupService, KeytermService],
+  controllers: [
+    SpeechToTextController,
+    SpeechCleanupController,
+    LocalWhisperController,
+  ],
+  providers: [
+    SpeechToTextService,
+    TranscriptCleanupService,
+    KeytermService,
+    LocalWhisperService,
+  ],
   exports: [SpeechToTextService],
 })
 export class SpeechToTextModule implements NestModule {

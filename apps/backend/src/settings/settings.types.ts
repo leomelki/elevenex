@@ -46,12 +46,43 @@ export const AGENT_PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
 export const MAX_AGENT_PREFERENCE_VALUE_LENGTH = 200;
 export const MAX_AGENT_PREFERENCE_ENTRIES = 32;
 
+/**
+ * Whisper builds the local engine can run. These are persisted setting values,
+ * so ids are stable strings rather than Hugging Face repo names — the repo, the
+ * download size and the label live in the speech-to-text module's catalog and
+ * can change without a migration.
+ */
+export const LOCAL_WHISPER_MODELS = [
+  'tiny',
+  'base',
+  'small',
+  'large-v3-turbo',
+] as const;
+export type LocalWhisperModelId = (typeof LOCAL_WHISPER_MODELS)[number];
+
+export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModelId = 'small';
+
 export const SPEECH_TO_TEXT_PROVIDERS = [
+  'local-whisper',
   'elevenlabs',
   'openai-compatible',
   'openrouter',
 ] as const;
 export type SpeechToTextProviderId = (typeof SPEECH_TO_TEXT_PROVIDERS)[number];
+
+/**
+ * Providers that transcribe on this machine. They need no API key, so the
+ * "is dictation usable" check must not demand one — readiness for these is
+ * instead "are the model weights on disk", which the local engine reports.
+ */
+export const OFFLINE_SPEECH_TO_TEXT_PROVIDERS: readonly SpeechToTextProviderId[] =
+  ['local-whisper'];
+
+export function speechProviderRequiresApiKey(
+  provider: SpeechToTextProviderId,
+): boolean {
+  return !OFFLINE_SPEECH_TO_TEXT_PROVIDERS.includes(provider);
+}
 
 /**
  * How the raw transcript is cleaned up before it reaches the textarea.
@@ -68,6 +99,12 @@ export interface SpeechToTextSettings {
   provider: SpeechToTextProviderId;
   /** Only meaningful for `openai-compatible`; `null` means api.openai.com. */
   baseUrl: string | null;
+  /**
+   * Which on-disk Whisper build `local-whisper` runs. Kept separate from
+   * `model` so switching to a cloud provider and back does not lose the
+   * downloaded model the user picked — the weights stay on disk either way.
+   */
+  localModel: LocalWhisperModelId;
   /** `null` means "use this provider's default model". */
   model: string | null;
   /** ISO-639 code, or `null` to let the provider auto-detect. */
@@ -86,8 +123,11 @@ export interface SpeechToTextSettings {
 
 export const DEFAULT_SPEECH_TO_TEXT_SETTINGS: SpeechToTextSettings = {
   enabled: false,
-  provider: 'elevenlabs',
+  // Runs on this machine and costs nothing, so it is the only provider that
+  // works before the user has pasted a key anywhere.
+  provider: 'local-whisper',
   baseUrl: null,
+  localModel: DEFAULT_LOCAL_WHISPER_MODEL,
   model: null,
   language: null,
   keytermsEnabled: true,
@@ -103,6 +143,9 @@ export const DEFAULT_SPEECH_TO_TEXT_MODELS: Record<
   SpeechToTextProviderId,
   string
 > = {
+  // Unused for the local engine, whose build is chosen by `localModel`; kept so
+  // the record stays exhaustive over the provider union.
+  'local-whisper': DEFAULT_LOCAL_WHISPER_MODEL,
   elevenlabs: 'scribe_v2',
   'openai-compatible': 'gpt-4o-transcribe',
   openrouter: 'google/gemini-2.5-flash',
@@ -126,6 +169,11 @@ export interface AppSettings {
   speechToTextApiKeyConfigured: boolean;
   /** True when the key comes from the environment, so the UI can say it is not editable here. */
   speechToTextApiKeyFromEnv: boolean;
+  /**
+   * Whether the selected dictation provider needs a key at all. False for the
+   * local engine, whose readiness is "the weights are downloaded" instead.
+   */
+  speechToTextRequiresApiKey: boolean;
   onboardingCompletedAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;

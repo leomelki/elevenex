@@ -134,7 +134,7 @@ describe('ClaudeMessageComponent', () => {
     fixture.componentRef.setInput('showCopy', true);
 
     const copySpy = vi.fn();
-    fixture.componentInstance.copy.subscribe(copySpy);
+    fixture.componentInstance.messageCopy.subscribe(copySpy);
     fixture.detectChanges();
 
     const text = fixture.nativeElement.querySelector('.cw-msg__user-text') as HTMLElement;

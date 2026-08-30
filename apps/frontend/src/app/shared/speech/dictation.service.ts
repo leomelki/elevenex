@@ -1,5 +1,6 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
+import { LocalWhisperService } from '@/shared/services/local-whisper.service';
 import { SPEECH_PROVIDERS_REQUIRING_WAV } from '@/shared/models/app-settings.model';
 import {
   AudioCaptureSession,
@@ -43,6 +44,19 @@ export interface DictationTarget {
 export class DictationService {
   private readonly api = inject(SpeechToTextApiService);
   private readonly appSettings = inject(AppSettingsService);
+  private readonly localWhisper = inject(LocalWhisperService);
+
+  constructor() {
+    // The mic's enabled state depends on whether the weights are on disk, so
+    // read that once the local engine is the selected provider. `ensureLoaded`
+    // is cached per backend origin, so this costs one request, not one per
+    // composer that renders a mic button.
+    effect(() => {
+      if (this.appSettings.settings().speechToText.provider === 'local-whisper') {
+        void this.localWhisper.ensureLoaded().catch(() => undefined);
+      }
+    });
+  }
 
   private session: AudioCaptureSession | null = null;
   private meter: LevelMeter | null = null;
@@ -66,23 +80,37 @@ export class DictationService {
     () => this.appSettings.settings().speechToText,
   );
 
-  /** Dictation needs both the feature switch and a key the backend can use. */
-  readonly available = computed(
-    () =>
-      this.supported &&
-      this.speechSettings().enabled &&
-      this.appSettings.settings().speechToTextApiKeyConfigured,
-  );
+  /**
+   * Dictation needs the feature switch plus whatever the chosen provider runs
+   * on: an API key for the cloud services, downloaded weights for the local
+   * engine.
+   */
+  readonly available = computed(() => this.unavailableReason() === null);
 
   /** Why the mic is unavailable, for a tooltip. `null` when it is usable. */
   readonly unavailableReason = computed(() => {
     if (!this.supported) {
       return 'This browser cannot record audio.';
     }
-    if (!this.speechSettings().enabled) {
+    const settings = this.appSettings.settings();
+    if (!settings.speechToText.enabled) {
       return 'Dictation is off. Turn it on in Settings.';
     }
-    if (!this.appSettings.settings().speechToTextApiKeyConfigured) {
+    if (settings.speechToText.provider === 'local-whisper') {
+      if (!this.localWhisper.status().engineAvailable) {
+        return 'The local speech engine could not start. See Settings.';
+      }
+      if (!this.localWhisper.selectedModelReady()) {
+        return this.localWhisper.downloadingModel()
+          ? 'The speech model is still downloading.'
+          : 'Download a speech model in Settings.';
+      }
+      return null;
+    }
+    if (
+      settings.speechToTextRequiresApiKey &&
+      !settings.speechToTextApiKeyConfigured
+    ) {
       return 'Add a dictation API key in Settings.';
     }
     return null;

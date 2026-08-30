@@ -21,6 +21,8 @@ import {
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
+  LOCAL_WHISPER_MODELS,
+  LocalWhisperModelId,
   MAX_AGENT_PREFERENCE_ENTRIES,
   MAX_AGENT_PREFERENCE_VALUE_LENGTH,
   MAX_SPEECH_SETTING_VALUE_LENGTH,
@@ -31,6 +33,7 @@ import {
   SpeechToTextProviderId,
   SpeechToTextSettings,
   UpdateAppSettingsInput,
+  speechProviderRequiresApiKey,
 } from './settings.types.js';
 
 const SINGLETON_SETTINGS_ID = 1;
@@ -40,6 +43,8 @@ const SINGLETON_SETTINGS_ID = 1;
  * order. Lets a user keep the secret out of the SQLite file entirely.
  */
 const SPEECH_API_KEY_ENV_VARS: Record<SpeechToTextProviderId, string[]> = {
+  // The local engine has nothing to authenticate against.
+  'local-whisper': [],
   elevenlabs: ['ELEVENEX_STT_API_KEY', 'ELEVENLABS_API_KEY'],
   'openai-compatible': ['ELEVENEX_STT_API_KEY', 'OPENAI_API_KEY'],
   openrouter: ['ELEVENEX_STT_API_KEY', 'OPENROUTER_API_KEY'],
@@ -97,6 +102,9 @@ export class SettingsService implements OnModuleInit {
         speechToText,
         speechToTextApiKeyConfigured: envKey !== null,
         speechToTextApiKeyFromEnv: envKey !== null,
+        speechToTextRequiresApiKey: speechProviderRequiresApiKey(
+          speechToText.provider,
+        ),
         onboardingCompletedAt: null,
         createdAt: null,
         updatedAt: null,
@@ -312,6 +320,9 @@ export class SettingsService implements OnModuleInit {
       speechToTextApiKeyConfigured:
         envKey !== null || Boolean(row.speechToTextApiKey?.trim()),
       speechToTextApiKeyFromEnv: envKey !== null,
+      speechToTextRequiresApiKey: speechProviderRequiresApiKey(
+        speechToText.provider,
+      ),
       onboardingCompletedAt: row.onboardingCompletedAt ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -386,6 +397,13 @@ export class SettingsService implements OnModuleInit {
       next.provider = patch.provider;
     }
 
+    if (patch.localModel !== undefined) {
+      if (!LOCAL_WHISPER_MODELS.includes(patch.localModel)) {
+        throw new BadRequestException('Unsupported local Whisper model.');
+      }
+      next.localModel = patch.localModel;
+    }
+
     if (patch.cleanupMode !== undefined) {
       if (!SPEECH_CLEANUP_MODES.includes(patch.cleanupMode)) {
         throw new BadRequestException('Unsupported transcript cleanup mode.');
@@ -444,6 +462,11 @@ export class SettingsService implements OnModuleInit {
           ? (raw.provider as SpeechToTextProviderId)
           : DEFAULT_SPEECH_TO_TEXT_SETTINGS.provider,
         baseUrl: str('baseUrl'),
+        localModel: LOCAL_WHISPER_MODELS.includes(
+          raw.localModel as LocalWhisperModelId,
+        )
+          ? (raw.localModel as LocalWhisperModelId)
+          : DEFAULT_SPEECH_TO_TEXT_SETTINGS.localModel,
         model: str('model'),
         language: str('language'),
         keytermsEnabled: bool('keytermsEnabled'),

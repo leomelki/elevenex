@@ -5,7 +5,13 @@ import {
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   type AppSettings,
 } from '@/shared/models/app-settings.model';
+import {
+  EMPTY_LOCAL_WHISPER_STATUS,
+  type LocalWhisperModel,
+  type LocalWhisperStatus,
+} from '@/shared/models/local-whisper.model';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
+import { LocalWhisperService } from '@/shared/services/local-whisper.service';
 import { DictationService, type DictationTarget } from './dictation.service';
 import { SpeechToTextApiService } from './speech-to-text-api.service';
 import * as audioCapture from './audio-capture';
@@ -17,13 +23,45 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     sessionToolbarButtons: null,
     defaultModelByProvider: {},
     defaultReasoningEffortByProvider: {},
-    speechToText: { ...DEFAULT_SPEECH_TO_TEXT_SETTINGS, enabled: true },
+    // These cases are about the cloud path; the local engine has its own
+    // block below, since its readiness is a download rather than a key.
+    speechToText: {
+      ...DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+      enabled: true,
+      provider: 'elevenlabs',
+    },
     speechToTextApiKeyConfigured: true,
     speechToTextApiKeyFromEnv: false,
+    speechToTextRequiresApiKey: true,
     onboardingCompletedAt: null,
     createdAt: null,
     updatedAt: null,
     ...overrides,
+  };
+}
+
+function localSettings(): AppSettings {
+  return makeSettings({
+    speechToText: {
+      ...DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+      enabled: true,
+      provider: 'local-whisper',
+    },
+    speechToTextApiKeyConfigured: false,
+    speechToTextRequiresApiKey: false,
+  });
+}
+
+/** Minimal stand-in for the offline engine's status signals. */
+function makeLocalWhisperStub() {
+  return {
+    status: signal<LocalWhisperStatus>({
+      ...EMPTY_LOCAL_WHISPER_STATUS,
+      engineAvailable: true,
+    }),
+    selectedModelReady: signal(false),
+    downloadingModel: signal<LocalWhisperModel | null>(null),
+    ensureLoaded: vi.fn(async () => EMPTY_LOCAL_WHISPER_STATUS),
   };
 }
 
@@ -58,6 +96,7 @@ describe('DictationService', () => {
   const settingsSignal = signal<AppSettings>(makeSettings());
   let transcribe: ReturnType<typeof vi.fn>;
   let cleanup: ReturnType<typeof vi.fn>;
+  let localWhisper: ReturnType<typeof makeLocalWhisperStub>;
   let service: DictationService;
 
   beforeEach(() => {
@@ -87,11 +126,14 @@ describe('DictationService', () => {
       elapsedMs: 0,
     }));
 
+    localWhisper = makeLocalWhisperStub();
+
     TestBed.configureTestingModule({
       providers: [
         DictationService,
         { provide: AppSettingsService, useValue: { settings: settingsSignal } },
         { provide: SpeechToTextApiService, useValue: { transcribe, cleanup } },
+        { provide: LocalWhisperService, useValue: localWhisper },
       ],
     });
     service = TestBed.inject(DictationService);
@@ -110,6 +152,43 @@ describe('DictationService', () => {
     it('explains a missing API key', () => {
       settingsSignal.set(makeSettings({ speechToTextApiKeyConfigured: false }));
       expect(service.unavailableReason()).toMatch(/API key/i);
+    });
+
+    it('does not ask for an API key when transcription runs locally', () => {
+      settingsSignal.set(localSettings());
+      localWhisper.selectedModelReady.set(true);
+
+      expect(service.unavailableReason()).toBeNull();
+      expect(service.available()).toBe(true);
+    });
+
+    it('points at the download when the local model is missing', () => {
+      settingsSignal.set(localSettings());
+      localWhisper.selectedModelReady.set(false);
+
+      expect(service.unavailableReason()).toMatch(/download/i);
+    });
+
+    it('distinguishes a download in progress from one never started', () => {
+      settingsSignal.set(localSettings());
+      localWhisper.selectedModelReady.set(false);
+      localWhisper.downloadingModel.set({
+        id: 'small',
+      } as LocalWhisperModel);
+
+      expect(service.unavailableReason()).toMatch(/still downloading/i);
+    });
+
+    it('surfaces an engine that could not start', () => {
+      settingsSignal.set(localSettings());
+      localWhisper.selectedModelReady.set(true);
+      localWhisper.status.set({
+        ...EMPTY_LOCAL_WHISPER_STATUS,
+        engineAvailable: false,
+        engineError: 'no ONNX runtime here',
+      });
+
+      expect(service.unavailableReason()).toMatch(/engine/i);
     });
 
     it('refuses to start and reports why when unavailable', async () => {
