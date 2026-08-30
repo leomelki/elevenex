@@ -37,9 +37,17 @@ function prefixOutput(child, label) {
 }
 
 function spawnPnpm(label, args, extraEnv = {}) {
+  const env = { ...process.env, ...extraEnv };
+  // If this script is itself launched from a terminal spawned by an already-
+  // running Elevenex/Electron instance, ELECTRON_RUN_AS_NODE is inherited
+  // here. That var makes any `electron` binary we spawn run as plain Node
+  // instead of launching the app (Electron's `app` module comes back
+  // undefined), so always strip it for our own children.
+  delete env.ELECTRON_RUN_AS_NODE;
+
   const child = spawn('pnpm', args, {
     cwd: root,
-    env: { ...process.env, ...extraEnv },
+    env,
     shell: true,
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -80,6 +88,8 @@ function shutdown(exitCode) {
 
 function waitForPort(host, port, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
+  let attempts = 0;
+  let lastLoggedErrorCode = null;
   return new Promise((resolve, reject) => {
     const attempt = () => {
       if (shuttingDown) {
@@ -87,15 +97,20 @@ function waitForPort(host, port, timeoutMs) {
         return;
       }
 
+      attempts += 1;
       const socket = net.createConnection({ host, port });
       socket.once('connect', () => {
         socket.destroy();
         resolve();
       });
-      socket.once('error', () => {
+      socket.once('error', (error) => {
         socket.destroy();
+        if (error.code !== lastLoggedErrorCode) {
+          lastLoggedErrorCode = error.code;
+          console.log(`[dev] ${host}:${port} not ready yet (${error.code}), retrying...`);
+        }
         if (Date.now() > deadline) {
-          reject(new Error(`Timed out waiting for ${host}:${port}`));
+          reject(new Error(`Timed out waiting for ${host}:${port} after ${attempts} attempts`));
           return;
         }
         setTimeout(attempt, 500);
@@ -110,7 +125,13 @@ process.on('SIGTERM', () => shutdown(0));
 
 async function main() {
   console.log('[dev] starting backend and frontend dev servers...');
-  const backend = spawnPnpm('backend', ['backend:dev']);
+  // Pin the backend's proxy port explicitly: if this script is itself run from
+  // inside a terminal spawned by an already-running Elevenex instance, that
+  // instance's ELEVENEX_PROXY_PORT/FRONTEND_PORT env vars are inherited here
+  // and would otherwise silently redirect the new backend to the wrong port.
+  const backend = spawnPnpm('backend', ['backend:dev'], {
+    ELEVENEX_PROXY_PORT: String(BACKEND_PORT),
+  });
   const frontend = spawnPnpm('frontend', ['frontend:dev']);
 
   for (const entry of [backend, frontend]) {
