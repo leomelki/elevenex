@@ -79,6 +79,7 @@ describe('ElevenLabsSpeechToTextProvider', () => {
       mimeType: 'audio/webm',
       model: 'scribe_v2',
       language: null,
+      languages: [],
       keyterms: [],
     });
 
@@ -98,6 +99,7 @@ describe('ElevenLabsSpeechToTextProvider', () => {
         mimeType: 'audio/webm',
         model: 'scribe_v2',
         language: null,
+        languages: [],
         keyterms: [],
       }),
     ).rejects.toThrow(/rejected the API key/i);
@@ -117,6 +119,7 @@ describe('OpenAiCompatibleSpeechToTextProvider', () => {
       mimeType: 'audio/webm;codecs=opus',
       model: 'whisper-large-v3-turbo',
       language: null,
+      languages: [],
       keyterms: ['useEffect', 'claude-composer'],
     });
 
@@ -145,6 +148,7 @@ describe('OpenAiCompatibleSpeechToTextProvider', () => {
         mimeType: 'audio/webm',
         model: 'whisper-1',
         language: null,
+        languages: [],
         keyterms: [],
       }),
     ).rejects.toThrow(/base URL/i);
@@ -163,6 +167,7 @@ describe('OpenRouterSpeechToTextProvider', () => {
       mimeType: 'audio/wav',
       model: 'google/gemini-2.5-flash',
       language: null,
+      languages: [],
       keyterms: [],
     });
 
@@ -195,6 +200,7 @@ describe('OpenRouterSpeechToTextProvider', () => {
         mimeType: 'audio/wav',
         model: 'some/text-only-model',
         language: null,
+        languages: [],
         keyterms: [],
       }),
     ).rejects.toThrow(SpeechToTextProviderError);
@@ -259,15 +265,18 @@ describe('LocalWhisperSpeechToTextProvider', () => {
     expect(provider.acceptedMimeTypes).not.toContain('audio/webm');
   });
 
-  it('decodes the container and passes samples plus the language through', async () => {
+  it('decodes the container and passes samples plus every allowed language', async () => {
     const local = engine();
     const provider = new LocalWhisperSpeechToTextProvider(local as never);
 
     const text = await provider.transcribe({
       audio: wav(320),
       mimeType: 'audio/wav',
+      // A cloud provider would get `language: null` here, since it can only be
+      // pinned to one; this engine gets the whole set and detects among it.
+      language: null,
+      languages: ['fr', 'en'],
       model: 'small',
-      language: 'fr',
       keyterms: ['useAuthStore'],
     });
 
@@ -275,12 +284,12 @@ describe('LocalWhisperSpeechToTextProvider', () => {
     const call = local.transcribe.mock.calls[0]![0] as {
       samples: Float32Array;
       model: string;
-      language: string | null;
+      languages: string[];
     };
     expect(call.samples).toBeInstanceOf(Float32Array);
     expect(call.samples.length).toBe(320);
     expect(call.model).toBe('small');
-    expect(call.language).toBe('fr');
+    expect(call.languages).toEqual(['fr', 'en']);
     // Whisper has no keyterm input; passing one silently would be a lie.
     expect(call).not.toHaveProperty('keyterms');
   });
@@ -294,6 +303,7 @@ describe('LocalWhisperSpeechToTextProvider', () => {
         mimeType: 'audio/wav',
         model: 'small',
         language: null,
+        languages: [],
         keyterms: [],
       }),
     ).rejects.toBeInstanceOf(SpeechToTextProviderError);
@@ -309,6 +319,7 @@ describe('LocalWhisperSpeechToTextProvider', () => {
         mimeType: 'audio/wav',
         model: 'small',
         language: null,
+        languages: [],
         keyterms: [],
       }),
     ).rejects.toThrow(SpeechToTextProviderError);

@@ -93,7 +93,7 @@ describe('LocalWhisperService', () => {
       service.transcribe({
         samples: new Float32Array(16_000),
         model: 'base',
-        language: null,
+        languages: [],
       }),
     ).rejects.toThrow(/not downloaded/i);
   });
@@ -181,7 +181,7 @@ describe('LocalWhisperService', () => {
       const speaking = service.transcribe({
         samples: new Float32Array(16_000),
         model: 'small',
-        language: null,
+        languages: [],
       });
       // Deleting the resident model is a real entry point that evicts. Before
       // the queue it disposed immediately, pulling the weights out from under
@@ -213,9 +213,9 @@ describe('LocalWhisperService', () => {
       });
 
       await Promise.all([
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
       ]);
 
       expect(peak).toBe(1);
@@ -239,13 +239,193 @@ describe('LocalWhisperService', () => {
       });
 
       await expect(
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
       ).rejects.toThrow(/blew up/);
 
       // A rejected task must not poison the shared queue.
       await expect(
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
       ).resolves.toBe('second');
+    });
+  });
+
+  describe('language selection', () => {
+    /**
+     * Whisper's language table, cut down to what these tests need. The real one
+     * carries all ninety-nine; the ids are arbitrary but must be distinct.
+     */
+    const LANG_TO_ID = {
+      '<|en|>': 50259,
+      '<|fr|>': 50265,
+      '<|de|>': 50261,
+      '<|ja|>': 50266,
+    };
+    const START_TOKEN = 50258;
+
+    /**
+     * A pipeline that records the options it is asked to transcribe with, and
+     * answers the one-token detection pass with `detected`.
+     */
+    function fakePipeline(detected: keyof typeof LANG_TO_ID | 'none') {
+      const transcribeOptions: Record<string, unknown>[] = [];
+      const generateOptions: Record<string, unknown>[] = [];
+
+      const transcriber = Object.assign(
+        async (_audio: Float32Array, options: Record<string, unknown>) => {
+          transcribeOptions.push(options);
+          return { text: 'bonjour' };
+        },
+        {
+          processor: async (samples: Float32Array) => ({
+            input_features: { samples: samples.length },
+          }),
+          model: {
+            generation_config: {
+              decoder_start_token_id: START_TOKEN,
+              lang_to_id: LANG_TO_ID,
+              suppress_tokens: [1, 2],
+            },
+            generate: async (options: Record<string, unknown>) => {
+              generateOptions.push(options);
+              const token = detected === 'none' ? 9_999 : LANG_TO_ID[detected];
+              // Shaped like a real generate() result: the prompt token followed
+              // by what the model produced, as BigInt from the int64 tensor.
+              return {
+                tolist: () => [[BigInt(START_TOKEN), BigInt(token)]],
+              };
+            },
+          },
+        },
+      );
+
+      return { transcriber, transcribeOptions, generateOptions };
+    }
+
+    async function install(pipeline: { transcriber: unknown }) {
+      await markDownloaded('onnx-community/whisper-small');
+      const internals = service as unknown as {
+        loadedModel: string;
+        pipelinePromise: Promise<unknown>;
+      };
+      internals.loadedModel = 'small';
+      internals.pipelinePromise = Promise.resolve(pipeline.transcriber);
+    }
+
+    it('pins a single language without paying for a detection pass', async () => {
+      const pipeline = fakePipeline('<|en|>');
+      await install(pipeline);
+
+      await service.transcribe({
+        samples: new Float32Array(16_000),
+        model: 'small',
+        languages: ['fr'],
+      });
+
+      // The whole point of one-language setups: no extra encoder run.
+      expect(pipeline.generateOptions).toHaveLength(0);
+      expect(pipeline.transcribeOptions[0]?.language).toBe('fr');
+    });
+
+    it('detects among the allowed languages and transcribes with the winner', async () => {
+      const pipeline = fakePipeline('<|en|>');
+      await install(pipeline);
+
+      await service.transcribe({
+        samples: new Float32Array(16_000),
+        model: 'small',
+        languages: ['fr', 'en'],
+      });
+
+      expect(pipeline.generateOptions).toHaveLength(1);
+      expect(pipeline.transcribeOptions[0]?.language).toBe('en');
+    });
+
+    it('suppresses the languages the user did not allow', async () => {
+      const pipeline = fakePipeline('<|fr|>');
+      await install(pipeline);
+
+      await service.transcribe({
+        samples: new Float32Array(16_000),
+        model: 'small',
+        languages: ['fr', 'en'],
+      });
+
+      const suppressed = pipeline.generateOptions[0]?.suppress_tokens as number[];
+      // Narrowing the field to the two candidates is what makes detection
+      // reliable on the small builds.
+      expect(suppressed).toEqual(expect.arrayContaining([50261, 50266]));
+      expect(suppressed).not.toContain(50259);
+      expect(suppressed).not.toContain(50265);
+      // The model's own suppression list has to survive, not be replaced.
+      expect(suppressed).toEqual(expect.arrayContaining([1, 2]));
+      // Only the start token is prompted, so the model must predict the rest.
+      expect(pipeline.generateOptions[0]?.decoder_input_ids).toEqual([
+        START_TOKEN,
+      ]);
+    });
+
+    it('detects freely when no language is restricted', async () => {
+      const pipeline = fakePipeline('<|ja|>');
+      await install(pipeline);
+
+      await service.transcribe({
+        samples: new Float32Array(16_000),
+        model: 'small',
+        languages: [],
+      });
+
+      // Transformers.js has no detection of its own and would have forced
+      // English here, which is the bug this pass exists to fix.
+      expect(pipeline.generateOptions[0]?.suppress_tokens).toEqual([1, 2]);
+      expect(pipeline.transcribeOptions[0]?.language).toBe('ja');
+    });
+
+    it('falls back to the first choice when detection answers with a non-language', async () => {
+      const pipeline = fakePipeline('none');
+      await install(pipeline);
+
+      await service.transcribe({
+        samples: new Float32Array(16_000),
+        model: 'small',
+        languages: ['fr', 'en'],
+      });
+
+      expect(pipeline.transcribeOptions[0]?.language).toBe('fr');
+    });
+
+    it('still transcribes when the detection pass throws', async () => {
+      const pipeline = fakePipeline('<|en|>');
+      pipeline.transcriber.model.generate = async () => {
+        throw new Error('onnx session died');
+      };
+      await install(pipeline);
+
+      await expect(
+        service.transcribe({
+          samples: new Float32Array(16_000),
+          model: 'small',
+          languages: ['fr', 'en'],
+        }),
+      ).resolves.toBe('bonjour');
+      expect(pipeline.transcribeOptions[0]?.language).toBe('fr');
+    });
+
+    it('only feeds detection one window, however long the recording is', async () => {
+      const pipeline = fakePipeline('<|en|>');
+      await install(pipeline);
+
+      await service.transcribe({
+        // Two minutes: chunked for transcription, but the language token is
+        // decided once, so detection must not encode all of it.
+        samples: new Float32Array(120 * 16_000),
+        model: 'small',
+        languages: ['fr', 'en'],
+      });
+
+      const features = pipeline.generateOptions[0]?.inputs as {
+        samples: number;
+      };
+      expect(features.samples).toBe(30 * 16_000);
     });
   });
 

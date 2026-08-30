@@ -16,6 +16,7 @@ import {
   DEFAULT_AGENT_PROVIDERS,
   DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
   DEFAULT_SPEECH_TO_TEXT_MODELS,
+  soleSpeechLanguage,
   speechProviderRequiresApiKey,
   type DefaultAgentProvider,
 } from '../settings/settings.types.js';
@@ -125,7 +126,8 @@ export class SpeechToTextService {
         audio: request.audio,
         mimeType: request.mimeType,
         model,
-        language: config.language,
+        language: soleSpeechLanguage(config.languages),
+        languages: config.languages,
         keyterms,
       });
     } catch (error) {

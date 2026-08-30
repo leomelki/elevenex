@@ -38,6 +38,10 @@ export interface LocalWhisperTranscribeInput {
   /** 16 kHz mono PCM. */
   samples: Float32Array;
   model: LocalWhisperModelId;
-  /** ISO-639 code, or `null` to let Whisper detect it. */
-  language: string | null;
+  /**
+   * ISO-639 codes the speaker may use, most likely first. One entry pins the
+   * language outright; several run a detection pass restricted to them; empty
+   * detects across everything Whisper knows.
+   */
+  languages: string[];
 }

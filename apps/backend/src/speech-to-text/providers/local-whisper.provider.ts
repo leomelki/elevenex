@@ -48,7 +48,9 @@ export class LocalWhisperSpeechToTextProvider implements SpeechToTextProvider {
     return this.engine.transcribe({
       samples,
       model: input.model as LocalWhisperModelId,
-      language: input.language,
+      // The full set, not `input.language`: unlike the cloud providers this
+      // engine can restrict its own language detection to the user's choices.
+      languages: input.languages,
     });
   }
 }

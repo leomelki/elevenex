@@ -25,6 +25,7 @@ import {
   LocalWhisperModelId,
   MAX_AGENT_PREFERENCE_ENTRIES,
   MAX_AGENT_PREFERENCE_VALUE_LENGTH,
+  MAX_SPEECH_LANGUAGES,
   MAX_SPEECH_SETTING_VALUE_LENGTH,
   SPEECH_CLEANUP_MODES,
   SPEECH_TO_TEXT_PROVIDERS,
@@ -33,10 +34,32 @@ import {
   SpeechToTextProviderId,
   SpeechToTextSettings,
   UpdateAppSettingsInput,
+  isSpeechLanguageCode,
   speechProviderRequiresApiKey,
 } from './settings.types.js';
 
 const SINGLETON_SETTINGS_ID = 1;
+
+/**
+ * Reads the dictation language set from a stored row, accepting the single
+ * `language` string written before the set existed. Rows are only rewritten
+ * when the user next saves, so the legacy shape has to keep working
+ * indefinitely rather than being migrated once at startup.
+ */
+function parseSpeechLanguages(raw: Record<string, unknown>): string[] {
+  const source = Array.isArray(raw.languages)
+    ? raw.languages
+    : [raw.language].filter((value) => value !== undefined);
+
+  const languages: string[] = [];
+  for (const value of source) {
+    const code = typeof value === 'string' ? value.trim().toLowerCase() : null;
+    if (code && isSpeechLanguageCode(code) && !languages.includes(code)) {
+      languages.push(code);
+    }
+  }
+  return languages.slice(0, MAX_SPEECH_LANGUAGES);
+}
 
 /**
  * Environment variables that override the stored dictation key, checked in
@@ -364,7 +387,7 @@ export class SettingsService implements OnModuleInit {
     bool('autoSend');
     bool('silenceAutoStop');
 
-    const optionalText = (key: 'baseUrl' | 'model' | 'language' | 'cleanupModel') => {
+    const optionalText = (key: 'baseUrl' | 'model' | 'cleanupModel') => {
       const value = patch[key];
       if (value === undefined) return;
       if (value === null || value === '') {
@@ -381,8 +404,32 @@ export class SettingsService implements OnModuleInit {
     };
     optionalText('baseUrl');
     optionalText('model');
-    optionalText('language');
     optionalText('cleanupModel');
+
+    if (patch.languages !== undefined) {
+      if (!Array.isArray(patch.languages)) {
+        throw new BadRequestException('Unsupported speech-to-text languages.');
+      }
+      if (patch.languages.length > MAX_SPEECH_LANGUAGES) {
+        throw new BadRequestException(
+          `Pick at most ${MAX_SPEECH_LANGUAGES} dictation languages.`,
+        );
+      }
+      const languages: string[] = [];
+      for (const language of patch.languages) {
+        if (!isSpeechLanguageCode(language)) {
+          throw new BadRequestException(
+            'Unsupported speech-to-text languages.',
+          );
+        }
+        // Order carries meaning — the first is the fallback — but a repeat adds
+        // nothing, so keep the earliest occurrence.
+        if (!languages.includes(language)) {
+          languages.push(language);
+        }
+      }
+      next.languages = languages;
+    }
 
     if (next.baseUrl !== null && !/^https?:\/\//i.test(next.baseUrl)) {
       throw new BadRequestException(
@@ -468,7 +515,7 @@ export class SettingsService implements OnModuleInit {
           ? (raw.localModel as LocalWhisperModelId)
           : DEFAULT_SPEECH_TO_TEXT_SETTINGS.localModel,
         model: str('model'),
-        language: str('language'),
+        languages: parseSpeechLanguages(raw),
         keytermsEnabled: bool('keytermsEnabled'),
         cleanupMode: SPEECH_CLEANUP_MODES.includes(
           raw.cleanupMode as SpeechCleanupMode,

@@ -182,26 +182,28 @@
   <div class="h-px bg-border"></div>
 
   <!-- Recognition tuning -->
-  <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-center">
+  <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-start">
     <div class="min-w-0">
-      <div class="text-sm font-medium text-foreground">Language</div>
+      <div class="text-sm font-medium text-foreground">Languages</div>
       <div class="mt-1 text-sm text-muted-foreground">
-        The spoken language dictation should expect.
-        @if (isLocal()) {
-          Local Whisper builds detect the language poorly on their own, so
-          this defaults to your computer's language.
-        } @else {
-          Leave on Auto-detect unless it keeps guessing wrong.
-        }
+        The languages you dictate in. Pick one to pin it, several to have the
+        engine choose between them per recording, or none to let it work the
+        language out unaided.
       </div>
     </div>
-    <app-option-select
-      ariaLabel="Dictation language"
-      [options]="languageOptions"
-      [value]="settings().language ?? ''"
-      [disabled]="appSettings.saving()"
-      (valueChange)="setLanguage($event)"
-    />
+    <div class="flex flex-col gap-1.5">
+      <app-multi-option-select
+        ariaLabel="Dictation languages"
+        placeholder="Detect automatically"
+        primaryBadge="Fallback"
+        [options]="languageOptions"
+        [values]="settings().languages"
+        [max]="maxLanguages"
+        [disabled]="appSettings.saving()"
+        (valuesChange)="setLanguages($event)"
+      />
+      <span class="text-xs text-muted-foreground">{{ languageNote() }}</span>
+    </div>
   </div>
 
   @if (!isLocal()) {

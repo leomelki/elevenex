@@ -9,7 +9,18 @@ export interface TranscribeAudioInput {
   audio: Buffer;
   mimeType: string;
   model: string;
+  /**
+   * The one code this provider should be pinned to, or `null` to let it detect.
+   * Already `null` when the user allowed several languages, since these
+   * providers take a single code and their own detection beats picking one.
+   */
   language: string | null;
+  /**
+   * Every language the user allowed, most likely first. Only the local engine
+   * uses this: it can restrict its own detection to the set. Empty means the
+   * user did not restrict anything.
+   */
+  languages: string[];
   /** Vocabulary bias terms — repo, branch and file names from the session. */
   keyterms: string[];
 }

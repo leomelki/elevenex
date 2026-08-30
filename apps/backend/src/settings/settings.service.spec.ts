@@ -331,6 +331,74 @@ describe('SettingsService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
+    it('keeps the dictation languages in the order they were picked', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+
+      const settings = await service.update({
+        // Order is meaningful: the first is the fallback when detection is
+        // inconclusive, so it must not be sorted or deduplicated away.
+        speechToText: { languages: ['fr', 'en', 'fr'] },
+      });
+
+      expect(settings.speechToText.languages).toEqual(['fr', 'en']);
+    });
+
+    it('rejects malformed or oversized language sets', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+
+      await expect(
+        service.update({ speechToText: { languages: ['francais'] } }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      await expect(
+        service.update({
+          speechToText: { languages: [42] } as Parameters<
+            SettingsService['update']
+          >[0]['speechToText'],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      await expect(
+        service.update({
+          speechToText: { languages: ['en', 'fr', 'de', 'es', 'it', 'ja'] },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('reads a row written before languages were a set', async () => {
+      const { db } = createDbMock([
+        {
+          id: 1,
+          defaultClaudeSessionSurface: 'claude-ui',
+          defaultAgentProvider: 'claude',
+          // The single-language shape, which is what every existing install
+          // has on disk until the user next saves.
+          speechToText: JSON.stringify({ enabled: true, language: 'fr' }),
+        },
+      ]);
+      const service = new SettingsService(db);
+
+      const settings = await service.findOne();
+      expect(settings.speechToText.languages).toEqual(['fr']);
+    });
+
+    it('reads a legacy row that never pinned a language', async () => {
+      const { db } = createDbMock([
+        {
+          id: 1,
+          defaultClaudeSessionSurface: 'claude-ui',
+          defaultAgentProvider: 'claude',
+          speechToText: JSON.stringify({ enabled: true, language: null }),
+        },
+      ]);
+      const service = new SettingsService(db);
+
+      const settings = await service.findOne();
+      expect(settings.speechToText.languages).toEqual([]);
+    });
+
     it('falls back to defaults for a hand-edited settings row', async () => {
       const { db } = createDbMock([
         {

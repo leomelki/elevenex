@@ -48,7 +48,12 @@ export interface SpeechToTextSettings {
   /** Which Whisper build `local-whisper` runs; kept when switching providers. */
   localModel: LocalWhisperModelId;
   model: string | null;
-  language: string | null;
+  /**
+   * ISO-639 codes the speaker may use, most likely first. Empty means "work it
+   * out". Several entries do not transcribe languages side by side — Whisper
+   * decodes one at a time — they narrow what the engine detects between.
+   */
+  languages: string[];
   keytermsEnabled: boolean;
   cleanupMode: SpeechCleanupMode;
   cleanupProvider: DefaultAgentProvider | null;
@@ -63,7 +68,7 @@ export const DEFAULT_SPEECH_TO_TEXT_SETTINGS: SpeechToTextSettings = {
   baseUrl: null,
   localModel: DEFAULT_LOCAL_WHISPER_MODEL,
   model: null,
-  language: null,
+  languages: [],
   keytermsEnabled: true,
   cleanupMode: 'off',
   cleanupProvider: null,

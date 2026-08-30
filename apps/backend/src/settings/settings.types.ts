@@ -94,6 +94,29 @@ export function speechProviderRequiresApiKey(
 export const SPEECH_CLEANUP_MODES = ['off', 'session-harness', 'fixed'] as const;
 export type SpeechCleanupMode = (typeof SPEECH_CLEANUP_MODES)[number];
 
+/**
+ * Cap on `SpeechToTextSettings.languages`. Each extra candidate makes the
+ * detection pass less decisive, and past a handful the user is better served
+ * by free detection.
+ */
+export const MAX_SPEECH_LANGUAGES = 5;
+
+/** ISO-639-1, plus the three-letter codes Whisper uses (`yue`, `haw`, …). */
+const SPEECH_LANGUAGE_CODE = /^[a-z]{2,3}$/;
+
+export function isSpeechLanguageCode(value: unknown): value is string {
+  return typeof value === 'string' && SPEECH_LANGUAGE_CODE.test(value);
+}
+
+/**
+ * The single code to hand a provider that only accepts one. Deliberately
+ * `null` when several are configured: a provider with real auto-detect does
+ * better guessing than we do forcing the first entry on it.
+ */
+export function soleSpeechLanguage(languages: string[]): string | null {
+  return languages.length === 1 ? languages[0]! : null;
+}
+
 export interface SpeechToTextSettings {
   enabled: boolean;
   provider: SpeechToTextProviderId;
@@ -107,8 +130,22 @@ export interface SpeechToTextSettings {
   localModel: LocalWhisperModelId;
   /** `null` means "use this provider's default model". */
   model: string | null;
-  /** ISO-639 code, or `null` to let the provider auto-detect. */
-  language: string | null;
+  /**
+   * ISO-639 codes the speaker may use, most likely first.
+   *
+   * Whisper puts exactly one language token in the decoder prompt, so this is
+   * not "transcribe several languages at once" — it is the set the engine is
+   * allowed to choose between, per 30 s window:
+   * - `[]`      — detect freely.
+   * - `['fr']`  — force French; no detection pass, so no extra latency.
+   * - `['fr', 'en']` — detect, but only among these; the first is the fallback
+   *   when detection lands outside the set. Far more reliable on the small
+   *   local builds than choosing between all 99 languages.
+   *
+   * The cloud providers take a single code, so they receive one only when
+   * exactly one is listed; with several, their own auto-detect is used instead.
+   */
+  languages: string[];
   /** Bias transcription towards repo/branch/file names. */
   keytermsEnabled: boolean;
   cleanupMode: SpeechCleanupMode;
@@ -129,7 +166,7 @@ export const DEFAULT_SPEECH_TO_TEXT_SETTINGS: SpeechToTextSettings = {
   baseUrl: null,
   localModel: DEFAULT_LOCAL_WHISPER_MODEL,
   model: null,
-  language: null,
+  languages: [],
   keytermsEnabled: true,
   cleanupMode: 'off',
   cleanupProvider: null,

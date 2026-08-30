@@ -349,7 +349,15 @@ export class AppSettingsService {
         ? (raw['localModel'] as LocalWhisperModelId)
         : DEFAULT_SPEECH_TO_TEXT_SETTINGS.localModel,
       model: str('model'),
-      language: str('language'),
+      // Tolerates the single-`language` shape a backend older than this build
+      // still reports, so downgrading the server does not blank the setting.
+      languages: Array.isArray(raw['languages'])
+        ? (raw['languages'] as unknown[]).filter(
+            (language): language is string => typeof language === 'string',
+          )
+        : typeof raw['language'] === 'string' && raw['language'].trim()
+          ? [raw['language'].trim()]
+          : [],
       keytermsEnabled: bool('keytermsEnabled'),
       cleanupMode: SPEECH_CLEANUP_MODES.includes(
         raw['cleanupMode'] as SpeechCleanupMode,

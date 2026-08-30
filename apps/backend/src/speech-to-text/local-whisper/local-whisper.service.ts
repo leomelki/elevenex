@@ -76,6 +76,16 @@ interface DownloadJob {
   cancelled: boolean;
 }
 
+/**
+ * How much audio the language-detection pass looks at. Whisper decides the
+ * language from a single 30 s window regardless, so feeding it more would cost
+ * an extra encoder run for a token it has already committed to.
+ */
+const LANGUAGE_DETECTION_SAMPLES = 30 * 16_000;
+
+/** Matches the `<|fr|>` style language tokens in the tokenizer's table. */
+const LANGUAGE_TOKEN = /^<\|([a-z]{2,3})\|>$/;
+
 /** The narrow slice of Transformers.js this service uses. */
 interface WhisperPipeline {
   (
@@ -83,6 +93,40 @@ interface WhisperPipeline {
     options: Record<string, unknown>,
   ): Promise<{ text?: unknown }>;
   dispose?: () => Promise<void> | void;
+  /**
+   * Reached into for language detection: the pipeline only exposes "transcribe
+   * with this language", never "which language is this?".
+   */
+  model?: {
+    generation_config?: {
+      decoder_start_token_id?: number;
+      lang_to_id?: Record<string, number>;
+      suppress_tokens?: number[] | null;
+    };
+    generate?: (options: Record<string, unknown>) => Promise<unknown>;
+  };
+  processor?: (
+    samples: Float32Array,
+  ) => Promise<{ input_features?: unknown }>;
+}
+
+/**
+ * Reads the last id out of whatever `generate` returned. The shape depends on
+ * the options passed (bare tensor vs. dict), and int64 tensors come back as
+ * BigInt, so this stays defensive rather than asserting one layout.
+ */
+function lastGeneratedTokenId(output: unknown): number | null {
+  const tensor = output as { tolist?: () => unknown };
+  if (typeof tensor?.tolist !== 'function') {
+    return null;
+  }
+  const rows: unknown = tensor.tolist();
+  const row: unknown = Array.isArray(rows) ? rows[0] : null;
+  const last: unknown = Array.isArray(row) ? row[row.length - 1] : null;
+  if (typeof last === 'bigint') {
+    return Number(last);
+  }
+  return typeof last === 'number' ? last : null;
 }
 
 @Injectable()
@@ -314,13 +358,14 @@ export class LocalWhisperService implements OnModuleDestroy {
     const transcriber = await this.loadPipeline(input.model);
 
     try {
+      const language = await this.resolveLanguage(transcriber, input);
       const output = await transcriber(input.samples, {
         // Whisper only sees 30 s at a time; chunking with an overlap lets a
         // long dictation through without clipping words at the seams.
         chunk_length_s: 30,
         stride_length_s: 5,
         return_timestamps: false,
-        ...(input.language ? { language: input.language } : {}),
+        ...(language ? { language } : {}),
       });
 
       return typeof output.text === 'string' ? output.text.trim() : '';
@@ -333,6 +378,126 @@ export class LocalWhisperService implements OnModuleDestroy {
       // idle timer dispose the pipeline underneath a dictation that simply took
       // longer than the timeout.
       this.scheduleEviction();
+    }
+  }
+
+  /**
+   * Which single language token to decode with.
+   *
+   * Whisper takes exactly one, so allowing several languages cannot mean
+   * decoding them together — it means detecting which one this recording is in
+   * before transcribing. A lone choice skips the detection pass entirely, so
+   * the common "always French" setup pays nothing for the feature.
+   */
+  private async resolveLanguage(
+    transcriber: WhisperPipeline,
+    input: LocalWhisperTranscribeInput,
+  ): Promise<string | null> {
+    if (input.languages.length === 1) {
+      return input.languages[0]!;
+    }
+
+    const detected = await this.detectLanguage(
+      transcriber,
+      input.samples,
+      input.languages,
+    );
+    // Falling back to the first choice rather than to nothing: Transformers.js
+    // has no detection of its own and silently decodes as English when handed
+    // no language, which is the wrong guess for everyone who set this up.
+    return detected ?? input.languages[0] ?? null;
+  }
+
+  /**
+   * Asks the model for the one token it puts in front of a transcript: its
+   * guess at the spoken language. Restricting the candidates — suppressing
+   * every language the user did not allow — is what makes this usable, since
+   * choosing between two known languages is a far easier call than ranking all
+   * ninety-nine, which the tiny and base builds do badly.
+   *
+   * Returns `null` when detection is not possible or produced something that
+   * is not a language, leaving the caller to fall back.
+   */
+  private async detectLanguage(
+    transcriber: WhisperPipeline,
+    samples: Float32Array,
+    candidates: string[],
+  ): Promise<string | null> {
+    const generationConfig = transcriber.model?.generation_config;
+    const generate = transcriber.model?.generate;
+    const processor = transcriber.processor;
+    const startToken = generationConfig?.decoder_start_token_id;
+    const langToId = generationConfig?.lang_to_id;
+
+    if (
+      !generationConfig ||
+      typeof generate !== 'function' ||
+      typeof processor !== 'function' ||
+      typeof startToken !== 'number' ||
+      !langToId
+    ) {
+      // An English-only build has no language table, and a future Transformers
+      // release may move these; either way, transcription still works.
+      return null;
+    }
+
+    const codeByToken = new Map<number, string>();
+    for (const [token, id] of Object.entries(langToId)) {
+      const code = LANGUAGE_TOKEN.exec(token)?.[1];
+      if (code && typeof id === 'number') {
+        codeByToken.set(id, code);
+      }
+    }
+
+    const allowed = new Set(candidates);
+    const suppressed = candidates.length
+      ? [...codeByToken]
+          .filter(([, code]) => !allowed.has(code))
+          .map(([id]) => id)
+      : [];
+    if (candidates.length && suppressed.length === codeByToken.size) {
+      // Every candidate is unknown to this tokenizer; suppressing the whole
+      // table would leave the model nothing to answer with.
+      return null;
+    }
+
+    try {
+      const window =
+        samples.length > LANGUAGE_DETECTION_SAMPLES
+          ? samples.subarray(0, LANGUAGE_DETECTION_SAMPLES)
+          : samples;
+      const features = await processor(window);
+
+      const output = await generate.call(transcriber.model, {
+        inputs: features.input_features,
+        // Only the start token: leaving the language out of the decoder prompt
+        // is precisely what makes the model predict it as the first token.
+        decoder_input_ids: [startToken],
+        max_new_tokens: 1,
+        suppress_tokens: [
+          ...(generationConfig.suppress_tokens ?? []),
+          ...suppressed,
+        ],
+      });
+
+      const tokenId = lastGeneratedTokenId(output);
+      const detected = tokenId === null ? null : codeByToken.get(tokenId);
+      if (!detected) {
+        this.logger.debug(
+          `Language detection returned no language token (id=${tokenId ?? 'none'}).`,
+        );
+        return null;
+      }
+      this.logger.debug(
+        `Detected dictation language=${detected} among=${candidates.join(',') || 'all'}`,
+      );
+      return detected;
+    } catch (error) {
+      // Never fatal: a failed guess just means transcribing with the fallback.
+      this.logger.warn(
+        `Language detection failed, falling back: ${describeError(error)}`,
+      );
+      return null;
     }
   }
 

@@ -20,6 +20,7 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardCheckboxComponent } from '@/shared/components/checkbox';
 import { ZardInputDirective } from '@/shared/components/input';
 import {
+  MultiOptionSelectComponent,
   OptionSelectComponent,
   OptionSelectItem,
 } from '@/shared/components/option-select';
@@ -96,23 +97,23 @@ const CLEANUP_OPTIONS: OptionSelectItem[] = [
   },
 ];
 
-const LANGUAGE_OPTIONS: OptionSelectItem[] = [
-  {
-    value: '',
-    label: 'Auto-detect',
-    description: 'Let the transcription service identify the spoken language.',
-  },
-  ...SPEECH_LANGUAGES.map(
-    (language): OptionSelectItem => ({
-      value: language.code,
-      label: language.label,
-    }),
-  ),
-];
+const LANGUAGE_OPTIONS: OptionSelectItem[] = SPEECH_LANGUAGES.map(
+  (language): OptionSelectItem => ({
+    value: language.code,
+    label: language.label,
+  }),
+);
+
+/**
+ * Mirrors `MAX_SPEECH_LANGUAGES` on the backend, which rejects anything longer.
+ * Past a handful of candidates detection stops being a confident choice and the
+ * user is better off selecting none.
+ */
+const MAX_LANGUAGES = 5;
 
 /**
  * Applied at most once per browser profile, so it sets a sensible starting
- * point without fighting a user who deliberately picks Auto-detect afterwards
+ * point without fighting a user who deliberately clears the list afterwards
  * — that choice would otherwise look identical to "never touched" and get
  * silently overwritten on the next visit.
  */
@@ -135,6 +136,7 @@ interface TestResult {
     ZardCheckboxComponent,
     ZardInputDirective,
     OptionSelectComponent,
+    MultiOptionSelectComponent,
     LocalWhisperSettingsComponent,
   ],
   templateUrl: './speech-to-text.component.html',
@@ -158,6 +160,7 @@ export class SpeechToTextSettingsComponent {
   readonly providerOptions = PROVIDER_OPTIONS;
   readonly cleanupOptions = CLEANUP_OPTIONS;
   readonly languageOptions = LANGUAGE_OPTIONS;
+  readonly maxLanguages = MAX_LANGUAGES;
   readonly agentOptions: OptionSelectItem[] = AGENT_PROVIDER_PRESENTATIONS.map(
     (provider) => ({ value: provider.id, label: provider.label }),
   );
@@ -191,6 +194,34 @@ export class SpeechToTextSettingsComponent {
   readonly isFixedCleanup = computed(
     () => this.settings().cleanupMode === 'fixed',
   );
+
+  /**
+   * What picking several languages actually buys, spelled out per provider.
+   * Whisper decodes one language at a time either way, so the honest framing
+   * is "which languages may it choose between", never "both at once".
+   */
+  readonly languageNote = computed(() => {
+    const count = this.settings().languages.length;
+    if (count === 0) {
+      return this.isLocal()
+        ? 'Whisper will work out the language of each recording on its own.'
+        : 'The service will identify the spoken language.';
+    }
+    if (count === 1) {
+      return 'Every recording is transcribed as this language.';
+    }
+    return this.isLocal()
+      ? `Whisper picks one of these per recording. English words inside a ${this.primaryLanguageLabel()} sentence are transcribed as-is either way — the choice only matters when a whole recording switches language.`
+      : 'This service only accepts one language, so it will fall back to detecting the language itself.';
+  });
+
+  private readonly primaryLanguageLabel = computed(() => {
+    const [primary] = this.settings().languages;
+    return (
+      SPEECH_LANGUAGES.find((language) => language.code === primary)?.label ??
+      'your'
+    );
+  });
 
   /** The chosen agent's entry in the catalog, absent until one is picked. */
   private readonly cleanupCatalog = computed<AgentProviderModelCatalog | null>(
@@ -271,15 +302,16 @@ export class SpeechToTextSettingsComponent {
     // a no-op when the defaults page already loaded it.
     void this.catalog.load().catch(() => undefined);
 
-    // Auto-detect works poorly on the small/tiny local builds, so a fresh
-    // install defaults local dictation to English or this machine's own
-    // language rather than leaving it to guess. Cloud providers keep
-    // auto-detect as their default since they handle it well.
+    // Detection across all ninety-nine languages is a coin toss on the small
+    // local builds, so a fresh install starts pinned to this machine's own
+    // language: no detection pass, no latency, right for most people. Adding a
+    // second language is a click away for anyone who switches. Cloud providers
+    // keep free detection as their default since they handle it well.
     //
     // Gated on `loading`/`error` rather than just the settings value: this
     // component renders before `AppSettingsService.load()` resolves, and its
     // placeholder state looks identical to a genuine unconfigured install
-    // (local-whisper, no language). Firing on that placeholder would patch
+    // (local-whisper, no languages). Firing on that placeholder would patch
     // real stored settings with a locally-guessed merge.
     effect(() => {
       const settings = this.appSettings.settings();
@@ -289,13 +321,13 @@ export class SpeechToTextSettingsComponent {
         stillResolving
         || this.appSettings.saving()
         || settings.speechToText.provider !== 'local-whisper'
-        || settings.speechToText.language !== null
+        || settings.speechToText.languages.length > 0
         || localStorage.getItem(LOCAL_LANGUAGE_DEFAULTED_KEY)
       ) {
         return;
       }
       localStorage.setItem(LOCAL_LANGUAGE_DEFAULTED_KEY, '1');
-      void this.patch({ language: this.detectedLanguageCode });
+      void this.patch({ languages: [this.detectedLanguageCode] });
     });
   }
 
@@ -320,8 +352,8 @@ export class SpeechToTextSettingsComponent {
     void this.patch({ model: model.trim() || null });
   }
 
-  setLanguage(language: string): void {
-    void this.patch({ language: language.trim() || null });
+  setLanguages(languages: string[]): void {
+    void this.patch({ languages });
   }
 
   setKeyterms(keytermsEnabled: boolean): void {

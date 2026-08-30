@@ -41,8 +41,15 @@ export class OpenRouterSpeechToTextProvider implements SpeechToTextProvider {
       'Do not add commentary, quotation marks, or a preamble.',
       'If the audio contains no speech, reply with an empty string.',
     ];
+    // Unlike the dedicated speech services this is a chat model with no
+    // detection step of its own, so a shortlist is worth stating even when
+    // `language` is null because the user allowed more than one.
     if (input.language) {
       instructions.push(`The audio is in ${input.language}.`);
+    } else if (input.languages.length > 1) {
+      instructions.push(
+        `The audio is in one of these languages: ${input.languages.join(', ')}.`,
+      );
     }
     if (input.keyterms.length > 0) {
       instructions.push(

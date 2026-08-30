@@ -64,6 +64,40 @@ describe('AppSettingsService', () => {
     expect(service.settings().defaultClaudeSessionSurface).toBe('tui');
   });
 
+  it('reads dictation languages from a backend that still sends a single one', async () => {
+    const load = service.load();
+    httpMock.expectOne('/api/settings').flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      // Downgrading the backend below this feature must not read as "no
+      // language configured" and blank what the user had set.
+      speechToText: { enabled: true, language: 'fr' },
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    await load;
+
+    expect(service.settings().speechToText.languages).toEqual(['fr']);
+  });
+
+  it('drops non-string entries from a malformed language list', async () => {
+    const load = service.load();
+    httpMock.expectOne('/api/settings').flush({
+      defaultClaudeSessionSurface: 'claude-ui',
+      defaultAgentProvider: 'claude',
+      sessionToolbarButtons: null,
+      speechToText: { enabled: true, languages: ['fr', 7, null, 'en'] },
+      onboardingCompletedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    await load;
+
+    expect(service.settings().speechToText.languages).toEqual(['fr', 'en']);
+  });
+
   it('optimistically saves and rolls back when saving fails', async () => {
     const load = service.load();
     httpMock.expectOne('/api/settings').flush({
