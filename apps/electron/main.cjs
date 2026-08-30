@@ -4449,6 +4449,43 @@ ipcMain.handle('elevenex-cursor:open', async (_event, payload) => {
   }
 });
 
+/**
+ * Chromium denies `getUserMedia` by default in Electron, so dictation would
+ * silently fail in the packaged app without this. Only the microphone is
+ * granted, and only to the pages we load ourselves — an embedded browser tab
+ * or a remote page asking for the camera still gets refused.
+ */
+function installMicrophonePermissionHandler() {
+  const isTrustedOrigin = (url) => {
+    if (!url) return false;
+    if (url.startsWith('file://')) return true;
+    try {
+      const { hostname } = new URL(url);
+      return hostname === 'localhost' || hostname === '127.0.0.1';
+    } catch {
+      return false;
+    }
+  };
+
+  session.defaultSession.setPermissionRequestHandler(
+    (webContents, permission, callback, details) => {
+      if (permission === 'media') {
+        const wantsVideo = details?.mediaTypes?.includes('video');
+        callback(!wantsVideo && isTrustedOrigin(webContents?.getURL()));
+        return;
+      }
+      callback(false);
+    },
+  );
+
+  // Chromium also consults this synchronously for some media checks; without
+  // it the mic can appear permitted and then produce a silent stream.
+  session.defaultSession.setPermissionCheckHandler(
+    (_webContents, permission, requestingOrigin) =>
+      permission === 'media' && isTrustedOrigin(requestingOrigin),
+  );
+}
+
 app.whenReady().then(async () => {
   app.setName('Elevenex');
 
@@ -4466,6 +4503,7 @@ app.whenReady().then(async () => {
     }
   }
 
+  installMicrophonePermissionHandler();
   installMenu();
   await createMainWindow();
 

@@ -96,6 +96,8 @@ import {
   type ResultSummary,
 } from '@/shared/agent-tools/agent-tool-format';
 import { MarkdownPipe } from '@/features/session/claude-workspace/pipes/markdown.pipe';
+import { DictateTargetDirective } from '@/shared/speech/dictate-target.directive';
+import { DictationButtonComponent } from '@/shared/speech/dictation-button.component';
 import { ClaudePermissionInlineComponent } from '@/features/session/claude-workspace/components/claude-permission-inline.component';
 import { ClaudeUserInputComponent } from '@/features/session/claude-workspace/components/claude-user-input.component';
 import type { MissionSummary } from '../../agent-control.model';
@@ -211,6 +213,8 @@ type TimelineGroup = ClusterGroup | SingleGroup;
     MarkdownPipe,
     ClaudePermissionInlineComponent,
     ClaudeUserInputComponent,
+    DictateTargetDirective,
+    DictationButtonComponent,
   ],
   templateUrl: './mission-conversation.component.html',
   styleUrl: './mission-conversation.component.scss',

@@ -4,8 +4,14 @@ import { firstValueFrom } from 'rxjs';
 import {
   AgentProviderPreferenceMap,
   AppSettings,
+  DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
+  SPEECH_CLEANUP_MODES,
+  SPEECH_TO_TEXT_PROVIDERS,
+  SpeechCleanupMode,
+  SpeechToTextProviderId,
+  SpeechToTextSettings,
 } from '@/shared/models/app-settings.model';
 import { AGENT_PROVIDER_PRESENTATIONS } from '@/shared/models/agent-provider-presentation';
 import { getBackendOrigin } from '@/shared/runtime/runtime-config';
@@ -21,6 +27,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   sessionToolbarButtons: null,
   defaultModelByProvider: {},
   defaultReasoningEffortByProvider: {},
+  speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+  speechToTextApiKeyConfigured: false,
+  speechToTextApiKeyFromEnv: false,
   onboardingCompletedAt: null,
   createdAt: null,
   updatedAt: null,
@@ -153,6 +162,32 @@ export class AppSettingsService {
     });
   }
 
+  /**
+   * Patches dictation settings. Only the touched keys are sent so two panels
+   * editing different fields cannot clobber each other, matching the
+   * per-provider map semantics above.
+   */
+  saveSpeechToText(
+    patch: Partial<SpeechToTextSettings>,
+  ): Promise<AppSettings> {
+    return this.saveSettings(
+      { speechToText: { ...this.settingsState().speechToText, ...patch } },
+      { speechToText: patch },
+    );
+  }
+
+  /**
+   * Stores or clears the dictation API key. Write-only: the server never
+   * returns it, so local state only tracks whether one exists.
+   */
+  saveSpeechToTextApiKey(apiKey: string | null): Promise<AppSettings> {
+    const trimmed = apiKey?.trim() ?? '';
+    return this.saveSettings(
+      { speechToTextApiKeyConfigured: trimmed.length > 0 },
+      { speechToTextApiKey: trimmed },
+    );
+  }
+
   completeOnboarding(input: {
     defaultAgentProvider: DefaultAgentProvider;
     defaultClaudeSessionSurface?: DefaultClaudeSessionSurface;
@@ -254,9 +289,56 @@ export class AppSettingsService {
       defaultReasoningEffortByProvider: this.normalizePreferenceMap(
         settings?.defaultReasoningEffortByProvider,
       ),
+      speechToText: this.normalizeSpeechToText(settings?.speechToText),
+      speechToTextApiKeyConfigured:
+        settings?.speechToTextApiKeyConfigured === true,
+      speechToTextApiKeyFromEnv: settings?.speechToTextApiKeyFromEnv === true,
       onboardingCompletedAt: settings?.onboardingCompletedAt ?? null,
       createdAt: settings?.createdAt ?? null,
       updatedAt: settings?.updatedAt ?? null,
+    };
+  }
+
+  /** Tolerates a backend that predates dictation, or malformed entries. */
+  private normalizeSpeechToText(value: unknown): SpeechToTextSettings {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return DEFAULT_SPEECH_TO_TEXT_SETTINGS;
+    }
+
+    const raw = value as Record<string, unknown>;
+    const bool = (key: keyof SpeechToTextSettings): boolean =>
+      typeof raw[key] === 'boolean'
+        ? (raw[key] as boolean)
+        : (DEFAULT_SPEECH_TO_TEXT_SETTINGS[key] as boolean);
+    const str = (key: keyof SpeechToTextSettings): string | null =>
+      typeof raw[key] === 'string' && (raw[key] as string).trim().length > 0
+        ? (raw[key] as string).trim()
+        : null;
+
+    return {
+      enabled: bool('enabled'),
+      provider: SPEECH_TO_TEXT_PROVIDERS.includes(
+        raw['provider'] as SpeechToTextProviderId,
+      )
+        ? (raw['provider'] as SpeechToTextProviderId)
+        : DEFAULT_SPEECH_TO_TEXT_SETTINGS.provider,
+      baseUrl: str('baseUrl'),
+      model: str('model'),
+      language: str('language'),
+      keytermsEnabled: bool('keytermsEnabled'),
+      cleanupMode: SPEECH_CLEANUP_MODES.includes(
+        raw['cleanupMode'] as SpeechCleanupMode,
+      )
+        ? (raw['cleanupMode'] as SpeechCleanupMode)
+        : DEFAULT_SPEECH_TO_TEXT_SETTINGS.cleanupMode,
+      cleanupProvider: VALID_AGENT_PROVIDERS.has(
+        raw['cleanupProvider'] as DefaultAgentProvider,
+      )
+        ? (raw['cleanupProvider'] as DefaultAgentProvider)
+        : null,
+      cleanupModel: str('cleanupModel'),
+      autoSend: bool('autoSend'),
+      silenceAutoStop: bool('silenceAutoStop'),
     };
   }
 

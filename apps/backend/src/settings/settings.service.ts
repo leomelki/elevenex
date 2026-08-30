@@ -18,15 +18,38 @@ import {
   DEFAULT_AGENT_PROVIDER,
   DEFAULT_AGENT_PROVIDERS,
   DEFAULT_CLAUDE_SESSION_SURFACE,
+  DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
   MAX_AGENT_PREFERENCE_ENTRIES,
   MAX_AGENT_PREFERENCE_VALUE_LENGTH,
+  MAX_SPEECH_SETTING_VALUE_LENGTH,
+  SPEECH_CLEANUP_MODES,
+  SPEECH_TO_TEXT_PROVIDERS,
   SessionToolbarButtonSetting,
+  SpeechCleanupMode,
+  SpeechToTextProviderId,
+  SpeechToTextSettings,
   UpdateAppSettingsInput,
 } from './settings.types.js';
 
 const SINGLETON_SETTINGS_ID = 1;
+
+/**
+ * Environment variables that override the stored dictation key, checked in
+ * order. Lets a user keep the secret out of the SQLite file entirely.
+ */
+const SPEECH_API_KEY_ENV_VARS: Record<SpeechToTextProviderId, string[]> = {
+  elevenlabs: ['ELEVENEX_STT_API_KEY', 'ELEVENLABS_API_KEY'],
+  'openai-compatible': ['ELEVENEX_STT_API_KEY', 'OPENAI_API_KEY'],
+  openrouter: ['ELEVENEX_STT_API_KEY', 'OPENROUTER_API_KEY'],
+};
+
+/** Resolved dictation config for the speech-to-text module. */
+export interface ResolvedSpeechToTextConfig extends SpeechToTextSettings {
+  apiKey: string | null;
+  apiKeyFromEnv: boolean;
+}
 
 const NO_PROVIDER_DEFAULTS: AgentProviderDefaults = {
   model: null,
@@ -63,12 +86,17 @@ export class SettingsService implements OnModuleInit {
 
     const row = rows[0];
     if (!row) {
+      const speechToText = { ...DEFAULT_SPEECH_TO_TEXT_SETTINGS };
+      const envKey = this.resolveApiKeyFromEnv(speechToText.provider);
       return {
         defaultClaudeSessionSurface: DEFAULT_CLAUDE_SESSION_SURFACE,
         defaultAgentProvider: DEFAULT_AGENT_PROVIDER,
         sessionToolbarButtons: null,
         defaultModelByProvider: {},
         defaultReasoningEffortByProvider: {},
+        speechToText,
+        speechToTextApiKeyConfigured: envKey !== null,
+        speechToTextApiKeyFromEnv: envKey !== null,
         onboardingCompletedAt: null,
         createdAt: null,
         updatedAt: null,
@@ -76,6 +104,39 @@ export class SettingsService implements OnModuleInit {
     }
 
     return this.toResponse(row);
+  }
+
+  /**
+   * Dictation config plus the resolved API key, for the speech-to-text module.
+   * Never call this from anything that serializes its result to the client —
+   * `findOne()` is the API-facing read and deliberately omits the key.
+   */
+  async getSpeechToTextConfig(): Promise<ResolvedSpeechToTextConfig> {
+    const rows = await this.db
+      .select()
+      .from(schema.appSettings)
+      .where(eq(schema.appSettings.id, SINGLETON_SETTINGS_ID))
+      .limit(1);
+
+    const speechToText = this.parseSpeechToTextSettings(rows[0]?.speechToText);
+    const envKey = this.resolveApiKeyFromEnv(speechToText.provider);
+    const storedKey = rows[0]?.speechToTextApiKey?.trim() || null;
+
+    return {
+      ...speechToText,
+      apiKey: envKey ?? storedKey,
+      apiKeyFromEnv: envKey !== null,
+    };
+  }
+
+  private resolveApiKeyFromEnv(provider: SpeechToTextProviderId): string | null {
+    for (const name of SPEECH_API_KEY_ENV_VARS[provider] ?? []) {
+      const value = process.env[name]?.trim();
+      if (value) {
+        return value;
+      }
+    }
+    return null;
   }
 
   /**
@@ -123,6 +184,11 @@ export class SettingsService implements OnModuleInit {
       'default thinking level',
     );
 
+    const speechToText = this.mergeSpeechToTextSettings(
+      current.speechToText,
+      input.speechToText,
+    );
+
     const timestamp = new Date().toISOString();
     const row = {
       defaultClaudeSessionSurface,
@@ -136,16 +202,30 @@ export class SettingsService implements OnModuleInit {
       defaultReasoningEffortByProvider: this.serializeAgentPreferences(
         defaultReasoningEffortByProvider,
       ),
+      speechToText: JSON.stringify(speechToText),
       onboardingCompletedAt: current.onboardingCompletedAt,
       updatedAt: timestamp,
     };
 
+    // Absent key => keep whatever is stored; explicit null/'' => clear it.
+    const apiKeyPatch = Object.prototype.hasOwnProperty.call(
+      input,
+      'speechToTextApiKey',
+    )
+      ? { speechToTextApiKey: input.speechToTextApiKey?.trim() || null }
+      : {};
+
     await this.db
       .insert(schema.appSettings)
-      .values({ id: SINGLETON_SETTINGS_ID, ...row, createdAt: timestamp })
+      .values({
+        id: SINGLETON_SETTINGS_ID,
+        ...row,
+        ...apiKeyPatch,
+        createdAt: timestamp,
+      })
       .onConflictDoUpdate({
         target: [schema.appSettings.id],
-        set: row,
+        set: { ...row, ...apiKeyPatch },
       });
 
     return this.findOne();
@@ -215,6 +295,9 @@ export class SettingsService implements OnModuleInit {
       reasoningEfforts: defaultReasoningEffortByProvider,
     };
 
+    const speechToText = this.parseSpeechToTextSettings(row.speechToText);
+    const envKey = this.resolveApiKeyFromEnv(speechToText.provider);
+
     return {
       defaultClaudeSessionSurface,
       defaultAgentProvider,
@@ -223,10 +306,164 @@ export class SettingsService implements OnModuleInit {
       ),
       defaultModelByProvider,
       defaultReasoningEffortByProvider,
+      speechToText,
+      // Only ever a boolean — `row.speechToTextApiKey` must not appear in the
+      // response. See the column comment in app-settings.schema.ts.
+      speechToTextApiKeyConfigured:
+        envKey !== null || Boolean(row.speechToTextApiKey?.trim()),
+      speechToTextApiKeyFromEnv: envKey !== null,
       onboardingCompletedAt: row.onboardingCompletedAt ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
+  }
+
+  /**
+   * Applies a partial dictation patch on top of the stored config. Unknown and
+   * malformed values are rejected rather than silently coerced, since a bad
+   * base URL or provider id would otherwise surface as a confusing upstream
+   * error at dictation time.
+   */
+  private mergeSpeechToTextSettings(
+    current: SpeechToTextSettings,
+    patch: Partial<SpeechToTextSettings> | null | undefined,
+  ): SpeechToTextSettings {
+    if (patch === undefined) {
+      return current;
+    }
+    if (patch === null) {
+      return { ...DEFAULT_SPEECH_TO_TEXT_SETTINGS };
+    }
+    if (typeof patch !== 'object' || Array.isArray(patch)) {
+      throw new BadRequestException('Unsupported speech-to-text settings.');
+    }
+
+    const next: SpeechToTextSettings = { ...current };
+
+    const bool = (key: 'enabled' | 'keytermsEnabled' | 'autoSend' | 'silenceAutoStop') => {
+      const value = patch[key];
+      if (value === undefined) return;
+      if (typeof value !== 'boolean') {
+        throw new BadRequestException(`Unsupported speech-to-text ${key}.`);
+      }
+      next[key] = value;
+    };
+    bool('enabled');
+    bool('keytermsEnabled');
+    bool('autoSend');
+    bool('silenceAutoStop');
+
+    const optionalText = (key: 'baseUrl' | 'model' | 'language' | 'cleanupModel') => {
+      const value = patch[key];
+      if (value === undefined) return;
+      if (value === null || value === '') {
+        next[key] = null;
+        return;
+      }
+      if (
+        typeof value !== 'string' ||
+        value.length > MAX_SPEECH_SETTING_VALUE_LENGTH
+      ) {
+        throw new BadRequestException(`Unsupported speech-to-text ${key}.`);
+      }
+      next[key] = value.trim();
+    };
+    optionalText('baseUrl');
+    optionalText('model');
+    optionalText('language');
+    optionalText('cleanupModel');
+
+    if (next.baseUrl !== null && !/^https?:\/\//i.test(next.baseUrl)) {
+      throw new BadRequestException(
+        'Speech-to-text base URL must start with http:// or https://.',
+      );
+    }
+
+    if (patch.provider !== undefined) {
+      if (!SPEECH_TO_TEXT_PROVIDERS.includes(patch.provider)) {
+        throw new BadRequestException('Unsupported speech-to-text provider.');
+      }
+      next.provider = patch.provider;
+    }
+
+    if (patch.cleanupMode !== undefined) {
+      if (!SPEECH_CLEANUP_MODES.includes(patch.cleanupMode)) {
+        throw new BadRequestException('Unsupported transcript cleanup mode.');
+      }
+      next.cleanupMode = patch.cleanupMode;
+    }
+
+    if (patch.cleanupProvider !== undefined) {
+      if (patch.cleanupProvider === null) {
+        next.cleanupProvider = null;
+      } else if (!DEFAULT_AGENT_PROVIDERS.includes(patch.cleanupProvider)) {
+        throw new BadRequestException(
+          'Unsupported transcript cleanup provider.',
+        );
+      } else {
+        next.cleanupProvider = patch.cleanupProvider;
+      }
+    }
+
+    return next;
+  }
+
+  /** Tolerant of hand-edited or legacy rows: unusable fields fall back to defaults. */
+  private parseSpeechToTextSettings(
+    value: string | null | undefined,
+  ): SpeechToTextSettings {
+    if (!value) {
+      return { ...DEFAULT_SPEECH_TO_TEXT_SETTINGS };
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
+        return { ...DEFAULT_SPEECH_TO_TEXT_SETTINGS };
+      }
+
+      const raw = parsed as Record<string, unknown>;
+      const bool = (key: keyof SpeechToTextSettings): boolean =>
+        typeof raw[key] === 'boolean'
+          ? (raw[key] as boolean)
+          : (DEFAULT_SPEECH_TO_TEXT_SETTINGS[key] as boolean);
+      const str = (key: keyof SpeechToTextSettings): string | null =>
+        typeof raw[key] === 'string' && (raw[key] as string).trim().length > 0
+          ? (raw[key] as string).trim()
+          : null;
+
+      return {
+        enabled: bool('enabled'),
+        provider: SPEECH_TO_TEXT_PROVIDERS.includes(
+          raw.provider as SpeechToTextProviderId,
+        )
+          ? (raw.provider as SpeechToTextProviderId)
+          : DEFAULT_SPEECH_TO_TEXT_SETTINGS.provider,
+        baseUrl: str('baseUrl'),
+        model: str('model'),
+        language: str('language'),
+        keytermsEnabled: bool('keytermsEnabled'),
+        cleanupMode: SPEECH_CLEANUP_MODES.includes(
+          raw.cleanupMode as SpeechCleanupMode,
+        )
+          ? (raw.cleanupMode as SpeechCleanupMode)
+          : DEFAULT_SPEECH_TO_TEXT_SETTINGS.cleanupMode,
+        cleanupProvider: DEFAULT_AGENT_PROVIDERS.includes(
+          raw.cleanupProvider as DefaultAgentProvider,
+        )
+          ? (raw.cleanupProvider as DefaultAgentProvider)
+          : null,
+        cleanupModel: str('cleanupModel'),
+        autoSend: bool('autoSend'),
+        silenceAutoStop: bool('silenceAutoStop'),
+      };
+    } catch {
+      return { ...DEFAULT_SPEECH_TO_TEXT_SETTINGS };
+    }
   }
 
   private assertDefaultClaudeSessionSurface(

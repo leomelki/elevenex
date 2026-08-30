@@ -15,6 +15,7 @@ import type {
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
   SessionToolbarButtonSetting,
+  SpeechToTextSettings,
 } from '../settings.types.js';
 
 class SessionToolbarButtonDto implements SessionToolbarButtonSetting {
@@ -52,6 +53,22 @@ export class UpdateAppSettingsDto {
   @IsOptional()
   @IsObject()
   defaultReasoningEffortByProvider?: AgentProviderPreferencePatch | null;
+
+  // Partial dictation patch. Field-level validation lives in `SettingsService.
+  // mergeSpeechToTextSettings` so provider ids and cleanup modes are checked
+  // against the same constants the rest of the service uses.
+  @IsOptional()
+  @IsObject()
+  speechToText?: Partial<SpeechToTextSettings> | null;
+
+  /**
+   * Write-only. Omit to keep the stored key, send `null` or `''` to clear it.
+   * Never echoed back — `GET /api/settings` exposes only
+   * `speechToTextApiKeyConfigured`.
+   */
+  @IsOptional()
+  @IsString()
+  speechToTextApiKey?: string | null;
 }
 
 export class CompleteOnboardingDto {

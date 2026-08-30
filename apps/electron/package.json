@@ -88,7 +88,8 @@
         "NSDownloadsFolderUsageDescription": "Elevenex needs access to your Downloads to read project files stored there.",
         "NSRemovableVolumesUsageDescription": "Elevenex needs access to project files on removable volumes.",
         "NSNetworkVolumesUsageDescription": "Elevenex needs access to project files on network volumes.",
-        "NSAppleEventsUsageDescription": "Elevenex uses Apple Events to integrate with your shell and external tools."
+        "NSAppleEventsUsageDescription": "Elevenex uses Apple Events to integrate with your shell and external tools.",
+        "NSMicrophoneUsageDescription": "Elevenex uses your microphone to dictate prompts to coding agents."
       },
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.inherit.plist"

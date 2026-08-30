@@ -1,0 +1,32 @@
+<button
+  type="button"
+  class="mic"
+  [class.mic--md]="size() === 'md'"
+  [class.mic--recording]="recording()"
+  [attr.aria-label]="label()"
+  [attr.aria-pressed]="recording()"
+  [title]="label()"
+  [disabled]="isDisabled()"
+  (pointerdown)="onPointerDown($event)"
+  (pointerup)="onPointerUp()"
+  (pointerleave)="onPointerLeave()"
+  (pointercancel)="onPointerLeave()"
+  (keydown)="onKeydown($event)"
+>
+  @if (transcribing()) {
+    <ng-icon name="lucideLoaderCircle" class="mic__icon mic__icon--spin" />
+  } @else if (recording()) {
+    <span class="mic__meter" aria-hidden="true">
+      @for (bar of bars(); track $index) {
+        <span class="mic__bar" [style.transform]="'scaleY(' + bar + ')'"></span>
+      }
+    </span>
+  } @else {
+    <ng-icon name="lucideMic" class="mic__icon" />
+  }
+
+  @if (recording()) {
+    <span class="mic__pulse" aria-hidden="true"></span>
+    <span class="sr-only">Recording. Press Escape to cancel.</span>
+  }
+</button>

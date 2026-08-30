@@ -12,6 +12,8 @@ import { lucideArrowUp, lucideLoader2, lucidePlus, lucideSparkles } from '@ng-ic
 import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
+import { DictateTargetDirective } from '@/shared/speech/dictate-target.directive';
+import { DictationButtonComponent } from '@/shared/speech/dictation-button.component';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 /**
@@ -24,7 +26,12 @@ import { AgentControlStateService } from '@/features/agent-control/agent-control
 @Component({
   selector: 'app-first-project-prompt',
   standalone: true,
-  imports: [NgIcon, ZardButtonComponent],
+  imports: [
+    NgIcon,
+    ZardButtonComponent,
+    DictateTargetDirective,
+    DictationButtonComponent,
+  ],
   templateUrl: './first-project-prompt.component.html',
   styleUrl: './first-project-prompt.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

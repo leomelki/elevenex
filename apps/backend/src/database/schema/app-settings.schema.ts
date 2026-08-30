@@ -13,6 +13,16 @@ export const appSettings = sqliteTable('app_settings', {
   defaultModelByProvider: text('default_model_by_provider'),
   defaultReasoningEffortByProvider: text('default_reasoning_effort_by_provider'),
   sessionToolbarButtons: text('session_toolbar_buttons'),
+  // Non-secret dictation config as a single JSON object, for the same reason as
+  // the maps above: adding a knob or a new STT provider needs no migration.
+  speechToText: text('speech_to_text'),
+  /**
+   * Dictation API key. Deliberately its own column and never merged into the
+   * JSON above: `SettingsService.toResponse()` builds the API payload from
+   * `speechToText` alone, so the secret cannot leak into `GET /api/settings`
+   * by someone later adding a field to the config object.
+   */
+  speechToTextApiKey: text('speech_to_text_api_key'),
   onboardingCompletedAt: text('onboarding_completed_at'),
   createdAt: text('created_at')
     .notNull()

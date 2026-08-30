@@ -1,6 +1,18 @@
 import { BadRequestException } from '@nestjs/common';
 import type { DrizzleDB } from '../database/database.provider.js';
 import { SettingsService } from './settings.service.js';
+import { DEFAULT_SPEECH_TO_TEXT_SETTINGS } from './settings.types.js';
+
+/**
+ * The dictation key can come from the environment, so a developer with
+ * ELEVENLABS_API_KEY exported would otherwise see these tests fail.
+ */
+const SPEECH_ENV_VARS = [
+  'ELEVENEX_STT_API_KEY',
+  'ELEVENLABS_API_KEY',
+  'OPENAI_API_KEY',
+  'OPENROUTER_API_KEY',
+];
 
 function createDbMock(initialRows: unknown[] = []) {
   const rows = [...initialRows];
@@ -51,6 +63,26 @@ function createDbMock(initialRows: unknown[] = []) {
 }
 
 describe('SettingsService', () => {
+  const savedEnv = new Map<string, string | undefined>();
+
+  beforeEach(() => {
+    for (const name of SPEECH_ENV_VARS) {
+      savedEnv.set(name, process.env[name]);
+      delete process.env[name];
+    }
+  });
+
+  afterEach(() => {
+    for (const [name, value] of savedEnv) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+    savedEnv.clear();
+  });
+
   it('returns default settings before the singleton row exists', async () => {
     const { db } = createDbMock();
     const service = new SettingsService(db);
@@ -61,6 +93,9 @@ describe('SettingsService', () => {
       sessionToolbarButtons: null,
       defaultModelByProvider: {},
       defaultReasoningEffortByProvider: {},
+      speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+      speechToTextApiKeyConfigured: false,
+      speechToTextApiKeyFromEnv: false,
       onboardingCompletedAt: null,
       createdAt: null,
       updatedAt: null,
@@ -179,6 +214,126 @@ describe('SettingsService', () => {
         defaultAgentProvider: 'opencode',
       } as Parameters<SettingsService['update']>[0]),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  describe('speech-to-text settings', () => {
+    it('never exposes the API key through the settings API', async () => {
+      const { db, getRows } = createDbMock();
+      const service = new SettingsService(db);
+
+      await service.update({ speechToTextApiKey: 'sk-super-secret' });
+
+      // Stored...
+      expect(getRows()[0]).toMatchObject({
+        speechToTextApiKey: 'sk-super-secret',
+      });
+
+      // ...but absent from every read path the controller can return.
+      const settings = await service.findOne();
+      expect(settings).not.toHaveProperty('speechToTextApiKey');
+      expect(JSON.stringify(settings)).not.toContain('sk-super-secret');
+      expect(settings.speechToTextApiKeyConfigured).toBe(true);
+      expect(settings.speechToTextApiKeyFromEnv).toBe(false);
+    });
+
+    it('keeps the stored key when the patch omits it and clears it on empty string', async () => {
+      const { db, getRows } = createDbMock();
+      const service = new SettingsService(db);
+
+      await service.update({ speechToTextApiKey: 'sk-keep-me' });
+      await service.update({ speechToText: { enabled: true } });
+      expect(getRows()[0]).toMatchObject({ speechToTextApiKey: 'sk-keep-me' });
+
+      await service.update({ speechToTextApiKey: '' });
+      expect(getRows()[0]).toMatchObject({ speechToTextApiKey: null });
+      await expect(service.findOne()).resolves.toMatchObject({
+        speechToTextApiKeyConfigured: false,
+      });
+    });
+
+    it('prefers an environment key and reports where it came from', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+      await service.update({ speechToTextApiKey: 'sk-from-db' });
+
+      process.env.ELEVENEX_STT_API_KEY = 'sk-from-env';
+
+      await expect(service.findOne()).resolves.toMatchObject({
+        speechToTextApiKeyConfigured: true,
+        speechToTextApiKeyFromEnv: true,
+      });
+      await expect(service.getSpeechToTextConfig()).resolves.toMatchObject({
+        apiKey: 'sk-from-env',
+        apiKeyFromEnv: true,
+      });
+    });
+
+    it('falls back to the stored key when no environment key is set', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+      await service.update({ speechToTextApiKey: 'sk-from-db' });
+
+      await expect(service.getSpeechToTextConfig()).resolves.toMatchObject({
+        apiKey: 'sk-from-db',
+        apiKeyFromEnv: false,
+      });
+    });
+
+    it('merges partial patches without clobbering other fields', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+
+      await service.update({
+        speechToText: { enabled: true, provider: 'openrouter' },
+      });
+      const settings = await service.update({
+        speechToText: { autoSend: true },
+      });
+
+      expect(settings.speechToText).toEqual({
+        ...DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+        enabled: true,
+        provider: 'openrouter',
+        autoSend: true,
+      });
+    });
+
+    it('rejects unsupported providers, cleanup modes and base URLs', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+
+      await expect(
+        service.update({ speechToText: { provider: 'deepgram' } } as Parameters<
+          SettingsService['update']
+        >[0]),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      await expect(
+        service.update({
+          speechToText: { cleanupMode: 'magic' },
+        } as Parameters<SettingsService['update']>[0]),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      await expect(
+        service.update({ speechToText: { baseUrl: 'ftp://nope' } }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('falls back to defaults for a hand-edited settings row', async () => {
+      const { db } = createDbMock([
+        {
+          id: 1,
+          defaultClaudeSessionSurface: 'claude-ui',
+          defaultAgentProvider: 'claude',
+          speechToText: '{not json',
+        },
+      ]);
+      const service = new SettingsService(db);
+
+      await expect(service.findOne()).resolves.toMatchObject({
+        speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+      });
+    });
   });
 
   it('completes onboarding with Claude surface and timestamp', async () => {

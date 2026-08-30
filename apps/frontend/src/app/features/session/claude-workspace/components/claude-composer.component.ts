@@ -37,6 +37,8 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
 import type { SessionMention, SessionMentionCandidate } from '@/shared/models/session-mention.model';
 import { SESSION_MENTION_DRAG_TYPE } from '@/shared/models/session-mention.model';
 import { parseSessionMentions } from '@/shared/utils/session-mention';
+import { DictateTargetDirective } from '@/shared/speech/dictate-target.directive';
+import { DictationButtonComponent } from '@/shared/speech/dictation-button.component';
 
 interface Range {
   start: number;
@@ -80,7 +82,13 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 @Component({
   selector: 'cw-composer',
   standalone: true,
-  imports: [CommonModule, FormsModule, NgIcon],
+  imports: [
+    CommonModule,
+    FormsModule,
+    NgIcon,
+    DictateTargetDirective,
+    DictationButtonComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     '(document:mousedown)': 'onDocumentMousedown($event)',
@@ -239,6 +247,11 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         }
         <textarea
           #input
+          appDictateTarget
+          #dictate="dictateTarget"
+          [sessionId]="sessionId()"
+          [worktreePath]="worktreePath()"
+          (dictationSubmit)="submit()"
           class="cw-comp__ta"
           [placeholder]="placeholder()"
           [ngModel]="value()"
@@ -273,6 +286,10 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
           </span>
 
           <div class="cw-comp__btns">
+            <app-dictation-button
+              [target]="dictate"
+              [disabled]="disconnected()"
+            />
             @if (allowImages()) {
               <button
                 type="button"
@@ -725,6 +742,9 @@ export class ClaudeComposerComponent {
   // The main turn can be idle while these run, but a submitted message will
   // still be queued behind them, so the composer must reflect that.
   readonly backgroundAgentCount = input<number>(0);
+  /** Dictation context: biases transcription towards this repo's vocabulary. */
+  readonly sessionId = input<number | null>(null);
+  readonly worktreePath = input<string | null>(null);
 
   readonly queueing = computed(() => this.running() || this.backgroundAgentCount() > 0);
 

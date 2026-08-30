@@ -1,0 +1,129 @@
+:host {
+  display: inline-flex;
+}
+
+// Sized to sit in the session composer's ghost-button row by default, and in
+// the command bar's 2rem circular control at `md`. Colours come from the
+// semantic tokens so both themes work without a single `dark:` override.
+.mic {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.mic:hover:not(:disabled) {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+
+.mic:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.mic:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mic--md {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+}
+
+// Destructive rather than primary: recording is a state the user needs to
+// notice and end, and it must not read as the send button.
+.mic--recording,
+.mic--recording:hover:not(:disabled) {
+  color: var(--destructive);
+  background: color-mix(in oklab, var(--destructive) 12%, transparent);
+  border-color: color-mix(in oklab, var(--destructive) 40%, transparent);
+}
+
+.mic__icon {
+  font-size: 0.875rem;
+  line-height: 0;
+}
+
+.mic--md .mic__icon {
+  font-size: 1.125rem;
+}
+
+.mic__icon--spin {
+  animation: mic-spin 900ms linear infinite;
+}
+
+// Live input level. Three bars scaled independently so the meter reads as a
+// level, not as one value repeated.
+.mic__meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  height: 0.875rem;
+}
+
+.mic__bar {
+  width: 0.1875rem;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: center;
+  transition: transform 80ms linear;
+}
+
+// Expanding ring, so recording is visible even at a glance away from the meter.
+.mic__pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid var(--destructive);
+  animation: mic-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes mic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes mic-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+// Respect a reduced-motion preference: keep the colour state, drop the motion.
+@media (prefers-reduced-motion: reduce) {
+  .mic__pulse {
+    animation: none;
+    opacity: 0.6;
+  }
+
+  .mic__bar {
+    transition: none;
+  }
+
+  .mic__icon--spin {
+    animation-duration: 2s;
+  }
+}

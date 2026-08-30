@@ -745,6 +745,8 @@
               [diffMentions]="pendingDiffMentions()"
               [imageAttachments]="composerImages()"
               [disconnected]="hydrated() && !wsConnected()"
+              [sessionId]="sessionId"
+              [worktreePath]="worktreePath"
               (valueChange)="onPromptChange($event)"
               (imageAttachmentsChange)="onComposerImagesChange($event)"
               (send)="submitPrompt($event)"

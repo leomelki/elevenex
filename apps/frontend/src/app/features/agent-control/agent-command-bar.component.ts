@@ -13,13 +13,15 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideArrowUp, lucideLoader2, lucideSparkles, lucideLayoutDashboard } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 
+import { DictateTargetDirective } from '@/shared/speech/dictate-target.directive';
+import { DictationButtonComponent } from '@/shared/speech/dictation-button.component';
 import { AgentCommandBarService } from './agent-command-bar.service';
 import { AgentControlStateService } from './agent-control-state.service';
 
 @Component({
   selector: 'app-agent-command-bar',
   standalone: true,
-  imports: [NgIcon],
+  imports: [NgIcon, DictateTargetDirective, DictationButtonComponent],
   templateUrl: './agent-command-bar.component.html',
   styleUrl: './agent-command-bar.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

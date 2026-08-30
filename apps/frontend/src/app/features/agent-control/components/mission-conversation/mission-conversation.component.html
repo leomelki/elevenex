@@ -113,6 +113,10 @@
   <form class="mc-compose" (submit)="$event.preventDefault(); submit()">
     <textarea
       #composerRef
+      appDictateTarget
+      #dictate="dictateTarget"
+      [sessionId]="mission().sessionId"
+      (dictationSubmit)="submit()"
       rows="1"
       placeholder="Message the agent…"
       [ngModel]="draft()"
@@ -121,6 +125,7 @@
       (keydown)="onComposeKeydown($event)"
     ></textarea>
     <div class="mc-compose__actions">
+      <app-dictation-button [target]="dictate" />
       <span class="mc-compose__hint">
         <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for newline
       </span>

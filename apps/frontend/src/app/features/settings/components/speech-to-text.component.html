@@ -1,0 +1,350 @@
+<div class="grid gap-5 p-5">
+  @if (!recordingSupported) {
+    <div
+      class="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-foreground"
+      role="status"
+    >
+      <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 text-warning" />
+      <span>This browser cannot record audio, so dictation is unavailable here.</span>
+    </div>
+  }
+
+  <!-- Master switch -->
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Enable dictation</div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        Adds a microphone to every prompt box. Hold it to talk, or press
+        <kbd class="rounded border border-border bg-muted px-1 font-mono text-xs">Ctrl</kbd>
+        +<kbd class="rounded border border-border bg-muted px-1 font-mono text-xs">Shift</kbd>
+        +<kbd class="rounded border border-border bg-muted px-1 font-mono text-xs">M</kbd>.
+      </div>
+    </div>
+    <z-checkbox
+      [zDisabled]="appSettings.saving() || !recordingSupported"
+      [ngModel]="settings().enabled"
+      (ngModelChange)="setEnabled($event)"
+    >
+      Enabled
+    </z-checkbox>
+  </div>
+
+  <div class="h-px bg-border"></div>
+
+  <!-- Provider -->
+  <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-start">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Transcription service</div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        Where recordings are sent to be turned into text.
+      </div>
+    </div>
+    <app-option-select
+      ariaLabel="Transcription service"
+      [options]="providerOptions"
+      [value]="settings().provider"
+      [disabled]="appSettings.saving()"
+      (valueChange)="setProvider($event)"
+    />
+  </div>
+
+  @if (settings().provider === 'openrouter') {
+    <div
+      class="flex items-start gap-2 rounded-lg border border-border bg-muted/45 px-4 py-3 text-sm text-muted-foreground"
+    >
+      <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 text-warning" />
+      <span>
+        OpenRouter has no dedicated transcription endpoint, so this asks an
+        audio-capable chat model to transcribe. Pick a model that accepts audio
+        input, and expect slightly less consistent results than a dedicated
+        speech model. Recordings are converted to WAV for this service.
+      </span>
+    </div>
+  }
+
+  @if (isOpenAiCompatible()) {
+    <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-center">
+      <div class="min-w-0">
+        <div class="text-sm font-medium text-foreground">Base URL</div>
+        <div class="mt-1 text-sm text-muted-foreground">
+          Anything serving <code class="font-mono text-xs">/audio/transcriptions</code>.
+          Leave empty for OpenAI.
+        </div>
+      </div>
+      <input
+        z-input
+        type="url"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="https://api.openai.com/v1"
+        aria-label="Transcription base URL"
+        [disabled]="appSettings.saving()"
+        [ngModel]="settings().baseUrl"
+        (ngModelChange)="setBaseUrl($event)"
+      />
+    </div>
+  }
+
+  <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-center">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Model</div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        Leave empty to use the service default.
+      </div>
+    </div>
+    <input
+      z-input
+      type="text"
+      autocomplete="off"
+      spellcheck="false"
+      [placeholder]="modelPlaceholder()"
+      aria-label="Transcription model"
+      [disabled]="appSettings.saving()"
+      [ngModel]="settings().model"
+      (ngModelChange)="setModel($event)"
+    />
+  </div>
+
+  <!-- API key: write-only -->
+  <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-start">
+    <div class="min-w-0">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-medium text-foreground">API key</span>
+        @if (keyConfigured()) {
+          <span
+            class="inline-flex items-center gap-1 rounded-full border border-success/40 bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+          >
+            <ng-icon name="lucideCheck" size="12" />
+            {{ keyFromEnv() ? 'From environment' : 'Configured' }}
+          </span>
+        }
+      </div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        @if (keyFromEnv()) {
+          Provided by an environment variable, which takes precedence over
+          anything saved here.
+        } @else {
+          Stored on the backend and never sent back to this page. Note that the
+          Elevenex backend is an unauthenticated local service, so any process
+          that can reach it can use this key.
+        }
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-2">
+      <input
+        z-input
+        type="password"
+        autocomplete="off"
+        spellcheck="false"
+        [placeholder]="keyConfigured() ? 'Replace the stored key' : 'Paste your API key'"
+        aria-label="Dictation API key"
+        [disabled]="appSettings.saving() || keyFromEnv()"
+        [ngModel]="apiKeyDraft()"
+        (ngModelChange)="apiKeyDraft.set($event)"
+        (keydown.enter)="saveApiKey()"
+      />
+      <div class="flex items-center gap-2">
+        <button
+          z-button
+          zSize="sm"
+          type="button"
+          [zDisabled]="appSettings.saving() || keyFromEnv() || !apiKeyDraft().trim()"
+          (click)="saveApiKey()"
+        >
+          Save key
+        </button>
+        @if (keyConfigured() && !keyFromEnv()) {
+          <button
+            z-button
+            zType="ghost"
+            zSize="sm"
+            type="button"
+            [zDisabled]="appSettings.saving()"
+            (click)="clearApiKey()"
+          >
+            Remove
+          </button>
+        }
+      </div>
+    </div>
+  </div>
+
+  <div class="h-px bg-border"></div>
+
+  <!-- Recognition tuning -->
+  <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-center">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Language</div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        An ISO code such as <code class="font-mono text-xs">en</code> or
+        <code class="font-mono text-xs">fr</code>. Leave empty to auto-detect.
+      </div>
+    </div>
+    <input
+      z-input
+      type="text"
+      autocomplete="off"
+      spellcheck="false"
+      placeholder="Auto-detect"
+      aria-label="Dictation language"
+      [disabled]="appSettings.saving()"
+      [ngModel]="settings().language"
+      (ngModelChange)="setLanguage($event)"
+    />
+  </div>
+
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Bias towards repository names</div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        Sends branch and changed-file names as hints so identifiers come out
+        spelled correctly.
+        @if (isElevenLabs()) {
+          ElevenLabs charges 20% extra for this.
+        }
+      </div>
+    </div>
+    <z-checkbox
+      [zDisabled]="appSettings.saving()"
+      [ngModel]="settings().keytermsEnabled"
+      (ngModelChange)="setKeyterms($event)"
+    >
+      Enabled
+    </z-checkbox>
+  </div>
+
+  <div class="h-px bg-border"></div>
+
+  <!-- Cleanup -->
+  <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-start">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Clean up transcripts</div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        Runs the transcript through a model to remove filler words and rebuild
+        spoken code identifiers. The raw text appears immediately and is swapped
+        when cleanup finishes, so this never delays dictation.
+      </div>
+    </div>
+    <app-option-select
+      ariaLabel="Transcript cleanup"
+      [options]="cleanupOptions"
+      [value]="settings().cleanupMode"
+      [disabled]="appSettings.saving()"
+      (valueChange)="setCleanupMode($event)"
+    />
+  </div>
+
+  @if (isFixedCleanup()) {
+    <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-center">
+      <div class="min-w-0 text-sm font-medium text-foreground">Cleanup agent</div>
+      <app-option-select
+        ariaLabel="Cleanup agent"
+        placeholder="Pick an agent"
+        [options]="agentOptions"
+        [value]="settings().cleanupProvider ?? ''"
+        [disabled]="appSettings.saving()"
+        (valueChange)="setCleanupProvider($event)"
+      />
+    </div>
+
+    <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] md:items-center">
+      <div class="min-w-0">
+        <div class="text-sm font-medium text-foreground">Cleanup model</div>
+        <div class="mt-1 text-sm text-muted-foreground">
+          Leave empty for a fast default. A small model is the right choice here.
+        </div>
+      </div>
+      <input
+        z-input
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="haiku"
+        aria-label="Cleanup model"
+        [disabled]="appSettings.saving()"
+        [ngModel]="settings().cleanupModel"
+        (ngModelChange)="setCleanupModel($event)"
+      />
+    </div>
+  }
+
+  <div class="h-px bg-border"></div>
+
+  <!-- Behaviour -->
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Stop on silence</div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        End the recording automatically after a couple of seconds of quiet.
+      </div>
+    </div>
+    <z-checkbox
+      [zDisabled]="appSettings.saving()"
+      [ngModel]="settings().silenceAutoStop"
+      (ngModelChange)="setSilenceAutoStop($event)"
+    >
+      Enabled
+    </z-checkbox>
+  </div>
+
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Send after dictating</div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        Submit the prompt as soon as the transcript lands, without pressing Enter.
+      </div>
+    </div>
+    <z-checkbox
+      [zDisabled]="appSettings.saving()"
+      [ngModel]="settings().autoSend"
+      (ngModelChange)="setAutoSend($event)"
+    >
+      Enabled
+    </z-checkbox>
+  </div>
+
+  <div class="h-px bg-border"></div>
+
+  <!-- Round-trip test -->
+  <div class="rounded-lg border border-border bg-background p-4">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="min-w-0">
+        <div class="text-sm font-medium text-foreground">Test microphone and transcription</div>
+        <div class="mt-1 text-sm text-muted-foreground">
+          Records four seconds and runs the full round trip.
+        </div>
+      </div>
+      <button
+        z-button
+        zType="outline"
+        zSize="sm"
+        type="button"
+        [zDisabled]="!canTest()"
+        (click)="runTest()"
+      >
+        @if (testPhase() === 'recording') {
+          <ng-icon name="lucideMic" size="14" class="text-destructive" />
+          <span>Listening…</span>
+        } @else if (testPhase() === 'transcribing') {
+          <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
+          <span>Transcribing…</span>
+        } @else {
+          <ng-icon name="lucideMic" size="14" />
+          <span>Start test</span>
+        }
+      </button>
+    </div>
+
+    @if (testResult(); as result) {
+      <div class="mt-4 rounded-lg border border-success/40 bg-success/10 p-3">
+        <div class="text-xs font-medium text-muted-foreground">
+          {{ result.provider }} · {{ result.model }} · {{ result.transcribeMs }} ms
+        </div>
+        <p class="mt-1 text-sm text-foreground">
+          {{ result.text || 'No speech was detected in the recording.' }}
+        </p>
+      </div>
+    }
+  </div>
+</div>

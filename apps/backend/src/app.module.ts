@@ -28,6 +28,7 @@ import { WorktreeContextModule } from './worktree-context/worktree-context.modul
 import { BackendLogsModule } from './backend-logs/backend-logs.module.js';
 import { ServerConnectionModule } from './server-connection/server-connection.module.js';
 import { SettingsModule } from './settings/settings.module.js';
+import { SpeechToTextModule } from './speech-to-text/speech-to-text.module.js';
 import { ElevenexMcpModule } from './mcp/elevenex-mcp.module.js';
 import { ElevenexAgentModule } from './elevenex-agent/elevenex-agent.module.js';
 import { AgentFocusModule } from './agent-focus/agent-focus.module.js';
@@ -62,6 +63,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     BackendLogsModule,
     ServerConnectionModule,
     SettingsModule,
+    SpeechToTextModule,
     ElevenexMcpModule,
     ElevenexAgentModule,
     AgentFocusModule,

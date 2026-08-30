@@ -15,6 +15,8 @@ import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
+import { DictateTargetDirective } from '@/shared/speech/dictate-target.directive';
+import { DictationButtonComponent } from '@/shared/speech/dictation-button.component';
 import { AgentChannelWebsocketService } from './agent-channel-websocket.service';
 import { AgentControlStateService } from './agent-control-state.service';
 import {
@@ -45,6 +47,8 @@ import { MissionConversationComponent } from './components/mission-conversation/
     MissionConversationComponent,
     LiveEscalationCardComponent,
     LiveFilePickerCardComponent,
+    DictateTargetDirective,
+    DictationButtonComponent,
   ],
   templateUrl: './agent-control-drawer.component.html',
   styleUrl: './agent-control-drawer.component.scss',

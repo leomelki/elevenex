@@ -18,6 +18,9 @@
 
     <textarea
       #input
+      appDictateTarget
+      #dictate="dictateTarget"
+      (dictationSubmit)="submit()"
       class="first-project__input"
       rows="1"
       autocomplete="off"
@@ -31,6 +34,12 @@
       (input)="query.set($any($event.target).value); autoGrow($any($event.target))"
       (keydown)="onKeydown($event)"
     ></textarea>
+
+    <app-dictation-button
+      size="md"
+      [target]="dictate"
+      [disabled]="submitting()"
+    />
 
     <button
       type="submit"

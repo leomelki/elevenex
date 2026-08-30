@@ -97,6 +97,9 @@
           />
           <textarea
             z-input
+            appDictateTarget
+            #dictate="dictateTarget"
+            (dictationSubmit)="submitNewMission()"
             rows="4"
             class="new-mission__textarea"
             placeholder="e.g. Create a project called Demo, add the repo at ~/code/app, then summarize its codebase."
@@ -106,6 +109,7 @@
             (keydown)="onComposerKeydown($event)"
           ></textarea>
           <div class="new-mission__actions">
+            <app-dictation-button [target]="dictate" />
             <span class="new-mission__kbd">Cmd/Ctrl + Enter</span>
             <div class="new-mission__buttons">
               @if (state.missions().length > 0) {

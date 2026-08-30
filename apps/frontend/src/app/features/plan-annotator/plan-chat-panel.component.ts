@@ -33,6 +33,8 @@ import type {
 } from '@/shared/models/claude-runtime.model';
 import type { PlanChatFork } from '@/shared/models/session.model';
 import { MarkdownPipe } from '../session/claude-workspace/pipes/markdown.pipe';
+import { DictateTargetDirective } from '@/shared/speech/dictate-target.directive';
+import { DictationButtonComponent } from '@/shared/speech/dictation-button.component';
 import { PlanReviewRequest } from './plan-review.model';
 import { PlanChatService } from './plan-chat.service';
 
@@ -52,7 +54,14 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
 @Component({
   selector: 'app-plan-chat-panel',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownPipe, NgIcon],
+  imports: [
+    CommonModule,
+    FormsModule,
+    MarkdownPipe,
+    NgIcon,
+    DictateTargetDirective,
+    DictationButtonComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
@@ -145,6 +154,9 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
               <div class="pc-field">
                 <textarea
                   #composerRef
+                  appDictateTarget
+                  #dictate="dictateTarget"
+                  (dictationSubmit)="sendQuestion(activeReview)"
                   rows="1"
                   placeholder="Ask a question about the plan…"
                   [disabled]="sending() || resetting()"
@@ -154,6 +166,10 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
                   (keydown)="onComposeKeydown($event, activeReview)"
                 ></textarea>
                 <div class="pc-compose__actions">
+                  <app-dictation-button
+                    [target]="dictate"
+                    [disabled]="sending() || resetting()"
+                  />
                   @if (canInterrupt()) {
                     <button type="button" class="pc-btn pc-btn--ghost" (click)="interrupt()">
                       <ng-icon name="lucideSquare" size="12" />
