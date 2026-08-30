@@ -99,6 +99,12 @@ Start Electron with frontend debug mode:
 pnpm electron:debug
 ```
 
+Start backend, frontend, and Electron together in one command (cross-platform, no tmux required):
+
+```bash
+pnpm dev
+```
+
 Start backend, frontend, and Electron together in a tmux dev session:
 
 ```bash
