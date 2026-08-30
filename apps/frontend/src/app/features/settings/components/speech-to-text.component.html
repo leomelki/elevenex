@@ -275,21 +275,40 @@
       <div class="min-w-0">
         <div class="text-sm font-medium text-foreground">Cleanup model</div>
         <div class="mt-1 text-sm text-muted-foreground">
-          Leave empty for a fast default. A small model is the right choice here.
+          A small, fast model is the right choice here.
         </div>
       </div>
-      <input
-        z-input
-        type="text"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="haiku"
-        aria-label="Cleanup model"
-        [disabled]="appSettings.saving()"
-        [ngModel]="settings().cleanupModel"
-        (ngModelChange)="setCleanupModel($event)"
-      />
+      <div class="flex flex-col gap-1.5">
+        <app-option-select
+          ariaLabel="Cleanup model"
+          placeholder="Agent default"
+          emptyText="No models reported by this agent"
+          [options]="cleanupModelOptions()"
+          [value]="settings().cleanupModel ?? ''"
+          [disabled]="appSettings.saving() || !cleanupModelSelectable()"
+          (valueChange)="setCleanupModel($event)"
+        />
+        @if (cleanupModelNote(); as note) {
+          <span class="text-xs text-muted-foreground">{{ note }}</span>
+        }
+      </div>
     </div>
+
+    @if (catalog.error()) {
+      <div
+        class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3"
+        role="alert"
+      >
+        <span class="flex items-center gap-2 text-sm text-destructive">
+          <ng-icon name="lucideTriangleAlert" size="16" />
+          {{ catalog.error() }}
+        </span>
+        <button z-button zType="outline" zSize="sm" type="button" (click)="reloadCatalog()">
+          <ng-icon name="lucideRefreshCw" size="14" />
+          <span>Retry</span>
+        </button>
+      </div>
+    }
   }
 
   <div class="h-px bg-border"></div>

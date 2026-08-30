@@ -12,6 +12,7 @@ import {
   lucideCheck,
   lucideLoaderCircle,
   lucideMic,
+  lucideRefreshCw,
   lucideTriangleAlert,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
@@ -28,10 +29,13 @@ import type {
   SpeechCleanupMode,
   SpeechToTextProviderId,
 } from '@/shared/models/app-settings.model';
+import type { AgentProviderModelCatalog } from '@/shared/models/agent-model-catalog.model';
+import { agentModelOptions } from '@/shared/models/agent-model-options';
 import {
   detectComputerLanguageCode,
   SPEECH_LANGUAGES,
 } from '@/shared/models/speech-language.model';
+import { AgentModelCatalogService } from '@/shared/services/agent-model-catalog.service';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { LocalWhisperService } from '@/shared/services/local-whisper.service';
 import { LocalWhisperSettingsComponent } from './local-whisper.component';
@@ -140,12 +144,14 @@ interface TestResult {
       lucideCheck,
       lucideLoaderCircle,
       lucideMic,
+      lucideRefreshCw,
       lucideTriangleAlert,
     }),
   ],
 })
 export class SpeechToTextSettingsComponent {
   readonly appSettings = inject(AppSettingsService);
+  readonly catalog = inject(AgentModelCatalogService);
   private readonly api = inject(SpeechToTextApiService);
   private readonly localWhisper = inject(LocalWhisperService);
 
@@ -186,6 +192,50 @@ export class SpeechToTextSettingsComponent {
     () => this.settings().cleanupMode === 'fixed',
   );
 
+  /** The chosen agent's entry in the catalog, absent until one is picked. */
+  private readonly cleanupCatalog = computed<AgentProviderModelCatalog | null>(
+    () => {
+      const provider = this.settings().cleanupProvider;
+      return provider
+        ? (this.catalog
+            .catalogs()
+            .find((entry) => entry.provider === provider) ?? null)
+        : null;
+    },
+  );
+
+  readonly cleanupModelOptions = computed<OptionSelectItem[]>(() =>
+    agentModelOptions(this.cleanupCatalog(), this.settings().cleanupModel ?? ''),
+  );
+
+  readonly cleanupModelSelectable = computed(() => {
+    const catalog = this.cleanupCatalog();
+    if (!catalog || !catalog.supportsModelSelection) {
+      return false;
+    }
+    return catalog.models.length > 0 || !!this.settings().cleanupModel;
+  });
+
+  /** Explains an empty or disabled picker rather than leaving it inert. */
+  readonly cleanupModelNote = computed(() => {
+    if (!this.settings().cleanupProvider) {
+      return 'Pick an agent first.';
+    }
+    const catalog = this.cleanupCatalog();
+    if (!catalog) {
+      return this.catalog.loading() || !this.catalog.loaded()
+        ? 'Loading available models…'
+        : 'This agent is not available on the backend right now.';
+    }
+    if (!catalog.supportsModelSelection) {
+      return `${catalog.displayName} does not let a model be chosen ahead of a session.`;
+    }
+    return catalog.models.length
+      ? null
+      : (catalog.unavailableReason ??
+        `${catalog.displayName} has not reported any models.`);
+  });
+
   /** Only the cloud providers have a key or a free-text model id to configure. */
   readonly needsApiKey = computed(
     () => this.appSettings.settings().speechToTextRequiresApiKey,
@@ -217,6 +267,10 @@ export class SpeechToTextSettingsComponent {
   });
 
   constructor() {
+    // Populates the cleanup model picker. Cached per backend origin, so this is
+    // a no-op when the defaults page already loaded it.
+    void this.catalog.load().catch(() => undefined);
+
     // Auto-detect works poorly on the small/tiny local builds, so a fresh
     // install defaults local dictation to English or this machine's own
     // language rather than leaving it to guess. Cloud providers keep
@@ -287,13 +341,20 @@ export class SpeechToTextSettingsComponent {
   }
 
   setCleanupProvider(provider: string): void {
+    // Model ids do not carry across agents, so a pinned Claude model must not
+    // survive a switch to Codex.
     void this.patch({
       cleanupProvider: (provider || null) as DefaultAgentProvider | null,
+      cleanupModel: null,
     });
   }
 
   setCleanupModel(cleanupModel: string): void {
     void this.patch({ cleanupModel: cleanupModel.trim() || null });
+  }
+
+  reloadCatalog(): void {
+    void this.catalog.refresh().catch(() => undefined);
   }
 
   async saveApiKey(): Promise<void> {
