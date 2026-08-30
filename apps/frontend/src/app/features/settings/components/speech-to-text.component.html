@@ -186,20 +186,21 @@
     <div class="min-w-0">
       <div class="text-sm font-medium text-foreground">Language</div>
       <div class="mt-1 text-sm text-muted-foreground">
-        An ISO code such as <code class="font-mono text-xs">en</code> or
-        <code class="font-mono text-xs">fr</code>. Leave empty to auto-detect.
+        The spoken language dictation should expect.
+        @if (isLocal()) {
+          Local Whisper builds detect the language poorly on their own, so
+          this defaults to your computer's language.
+        } @else {
+          Leave on Auto-detect unless it keeps guessing wrong.
+        }
       </div>
     </div>
-    <input
-      z-input
-      type="text"
-      autocomplete="off"
-      spellcheck="false"
-      placeholder="Auto-detect"
-      aria-label="Dictation language"
+    <app-option-select
+      ariaLabel="Dictation language"
+      [options]="languageOptions"
+      [value]="settings().language ?? ''"
       [disabled]="appSettings.saving()"
-      [ngModel]="settings().language"
-      (ngModelChange)="setLanguage($event)"
+      (valueChange)="setLanguage($event)"
     />
   </div>
 

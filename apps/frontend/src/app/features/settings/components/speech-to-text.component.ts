@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -27,6 +28,10 @@ import type {
   SpeechCleanupMode,
   SpeechToTextProviderId,
 } from '@/shared/models/app-settings.model';
+import {
+  detectComputerLanguageCode,
+  SPEECH_LANGUAGES,
+} from '@/shared/models/speech-language.model';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { LocalWhisperService } from '@/shared/services/local-whisper.service';
 import { LocalWhisperSettingsComponent } from './local-whisper.component';
@@ -87,6 +92,28 @@ const CLEANUP_OPTIONS: OptionSelectItem[] = [
   },
 ];
 
+const LANGUAGE_OPTIONS: OptionSelectItem[] = [
+  {
+    value: '',
+    label: 'Auto-detect',
+    description: 'Let the transcription service identify the spoken language.',
+  },
+  ...SPEECH_LANGUAGES.map(
+    (language): OptionSelectItem => ({
+      value: language.code,
+      label: language.label,
+    }),
+  ),
+];
+
+/**
+ * Applied at most once per browser profile, so it sets a sensible starting
+ * point without fighting a user who deliberately picks Auto-detect afterwards
+ * — that choice would otherwise look identical to "never touched" and get
+ * silently overwritten on the next visit.
+ */
+const LOCAL_LANGUAGE_DEFAULTED_KEY = 'elevenex.localWhisperLanguageDefaulted';
+
 interface TestResult {
   text: string;
   provider: string;
@@ -124,9 +151,13 @@ export class SpeechToTextSettingsComponent {
 
   readonly providerOptions = PROVIDER_OPTIONS;
   readonly cleanupOptions = CLEANUP_OPTIONS;
+  readonly languageOptions = LANGUAGE_OPTIONS;
   readonly agentOptions: OptionSelectItem[] = AGENT_PROVIDER_PRESENTATIONS.map(
     (provider) => ({ value: provider.id, label: provider.label }),
   );
+
+  /** This machine's language, mapped to a code Whisper recognises. */
+  private readonly detectedLanguageCode = detectComputerLanguageCode();
 
   readonly recordingSupported = isRecordingSupported();
 
@@ -184,6 +215,35 @@ export class SpeechToTextSettingsComponent {
       ? this.localWhisper.selectedModelReady()
       : this.keyConfigured();
   });
+
+  constructor() {
+    // Auto-detect works poorly on the small/tiny local builds, so a fresh
+    // install defaults local dictation to English or this machine's own
+    // language rather than leaving it to guess. Cloud providers keep
+    // auto-detect as their default since they handle it well.
+    //
+    // Gated on `loading`/`error` rather than just the settings value: this
+    // component renders before `AppSettingsService.load()` resolves, and its
+    // placeholder state looks identical to a genuine unconfigured install
+    // (local-whisper, no language). Firing on that placeholder would patch
+    // real stored settings with a locally-guessed merge.
+    effect(() => {
+      const settings = this.appSettings.settings();
+      const stillResolving =
+        this.appSettings.loading() || this.appSettings.error() !== null;
+      if (
+        stillResolving
+        || this.appSettings.saving()
+        || settings.speechToText.provider !== 'local-whisper'
+        || settings.speechToText.language !== null
+        || localStorage.getItem(LOCAL_LANGUAGE_DEFAULTED_KEY)
+      ) {
+        return;
+      }
+      localStorage.setItem(LOCAL_LANGUAGE_DEFAULTED_KEY, '1');
+      void this.patch({ language: this.detectedLanguageCode });
+    });
+  }
 
   setEnabled(enabled: boolean): void {
     void this.patch({ enabled });
