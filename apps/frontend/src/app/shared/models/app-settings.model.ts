@@ -58,7 +58,7 @@ export interface SpeechToTextSettings {
 }
 
 export const DEFAULT_SPEECH_TO_TEXT_SETTINGS: SpeechToTextSettings = {
-  enabled: false,
+  enabled: true,
   provider: 'local-whisper',
   baseUrl: null,
   localModel: DEFAULT_LOCAL_WHISPER_MODEL,

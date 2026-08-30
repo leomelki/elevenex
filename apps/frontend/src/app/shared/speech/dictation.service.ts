@@ -120,6 +120,27 @@ export class DictationService {
     () => this.state() === 'recording' || this.state() === 'transcribing',
   );
 
+  /**
+   * True when dictation is otherwise ready to go except the local engine's
+   * selected build has never been fetched (or a previous fetch failed). The mic
+   * button uses this to offer a download inline instead of just refusing —
+   * distinct from `unavailableReason`, which also covers cases (feature off,
+   * unsupported browser, missing cloud key) that have no one-click fix here.
+   */
+  readonly localModelSetupNeeded = computed(() => {
+    const settings = this.appSettings.settings();
+    if (
+      !settings.speechToText.enabled ||
+      settings.speechToText.provider !== 'local-whisper'
+    ) {
+      return false;
+    }
+    if (!this.localWhisper.status().engineAvailable) {
+      return false;
+    }
+    return !this.localWhisper.selectedModelReady();
+  });
+
   isActive(targetId: string): boolean {
     return this.activeTargetId() === targetId;
   }

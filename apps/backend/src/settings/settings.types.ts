@@ -122,7 +122,7 @@ export interface SpeechToTextSettings {
 }
 
 export const DEFAULT_SPEECH_TO_TEXT_SETTINGS: SpeechToTextSettings = {
-  enabled: false,
+  enabled: true,
   // Runs on this machine and costs nothing, so it is the only provider that
   // works before the user has pasted a key anywhere.
   provider: 'local-whisper',

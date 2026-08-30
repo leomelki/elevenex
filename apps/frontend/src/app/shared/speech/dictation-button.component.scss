@@ -67,6 +67,23 @@
   animation: mic-spin 900ms linear infinite;
 }
 
+// Marks a mic that works except the model isn't downloaded yet, so it doesn't
+// read identically to a mic that's simply ready to record.
+.mic__badge {
+  position: absolute;
+  top: -0.0625rem;
+  right: -0.0625rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: 1.5px solid var(--background);
+}
+
 // Live input level. Three bars scaled independently so the meter reads as a
 // level, not as one value repeated.
 .mic__meter {
