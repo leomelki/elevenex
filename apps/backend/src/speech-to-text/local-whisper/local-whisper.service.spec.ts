@@ -142,6 +142,113 @@ describe('LocalWhisperService', () => {
     await service.cancelDownload('tiny');
   });
 
+  describe('pipeline serialization', () => {
+    /**
+     * Stands in for a loaded pipeline, recording whether it was disposed while
+     * an inference was still running — the failure mode these guard.
+     */
+    function fakePipeline() {
+      const state = { disposed: false, disposedDuringRun: false, running: false };
+      const transcriber = async () => {
+        state.running = true;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        state.running = false;
+        return { text: 'hello' };
+      };
+      (transcriber as unknown as { dispose: () => void }).dispose = () => {
+        if (state.running) {
+          state.disposedDuringRun = true;
+        }
+        state.disposed = true;
+      };
+      return { state, transcriber };
+    }
+
+    function install(target: Service, pipeline: ReturnType<typeof fakePipeline>) {
+      const internals = target as unknown as {
+        loadedModel: string;
+        pipelinePromise: Promise<unknown>;
+      };
+      internals.loadedModel = 'small';
+      internals.pipelinePromise = Promise.resolve(pipeline.transcriber);
+    }
+
+    it('does not release the weights a dictation is still using', async () => {
+      await markDownloaded('onnx-community/whisper-small');
+      const pipeline = fakePipeline();
+      install(service, pipeline);
+
+      const speaking = service.transcribe({
+        samples: new Float32Array(16_000),
+        model: 'small',
+        language: null,
+      });
+      // Deleting the resident model is a real entry point that evicts. Before
+      // the queue it disposed immediately, pulling the weights out from under
+      // the transcription that was mid-flight.
+      const deleting = service.remove('small');
+
+      await Promise.all([speaking, deleting]);
+
+      expect(pipeline.state.disposed).toBe(true);
+      expect(pipeline.state.disposedDuringRun).toBe(false);
+    });
+
+    it('runs dictations one at a time rather than thrashing the CPU', async () => {
+      await markDownloaded('onnx-community/whisper-small');
+      let concurrent = 0;
+      let peak = 0;
+
+      const internals = service as unknown as {
+        loadedModel: string;
+        pipelinePromise: Promise<unknown>;
+      };
+      internals.loadedModel = 'small';
+      internals.pipelinePromise = Promise.resolve(async () => {
+        concurrent += 1;
+        peak = Math.max(peak, concurrent);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        concurrent -= 1;
+        return { text: 'hi' };
+      });
+
+      await Promise.all([
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
+      ]);
+
+      expect(peak).toBe(1);
+    });
+
+    it('keeps serving later dictations after one fails', async () => {
+      await markDownloaded('onnx-community/whisper-small');
+      let call = 0;
+
+      const internals = service as unknown as {
+        loadedModel: string;
+        pipelinePromise: Promise<unknown>;
+      };
+      internals.loadedModel = 'small';
+      internals.pipelinePromise = Promise.resolve(async () => {
+        call += 1;
+        if (call === 1) {
+          throw new Error('inference blew up');
+        }
+        return { text: 'second' };
+      });
+
+      await expect(
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
+      ).rejects.toThrow(/blew up/);
+
+      // A rejected task must not poison the shared queue.
+      await expect(
+        service.transcribe({ samples: new Float32Array(16_000), model: 'small', language: null }),
+      ).resolves.toBe('second');
+    });
+  });
+
   it('will not delete a model out from under a running download', async () => {
     service.download('tiny');
 

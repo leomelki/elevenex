@@ -30,17 +30,16 @@
 <!-- With no engine there is nothing actionable in the list: every row would
      offer a download that cannot be used. The banner above says why. -->
 @if (engineAvailable()) {
-<ul class="grid gap-2" role="radiogroup" aria-label="Local speech model">
+<!-- A plain list, not a radiogroup: every row carries its own buttons, and
+     `radio` is a leaf role that may not contain focusable children. Selection
+     is reachable from the keyboard through those buttons instead. -->
+<ul class="grid gap-2" aria-label="Local speech model">
   @for (model of models(); track model.id) {
     <li>
       <div
-        role="radio"
-        tabindex="0"
-        [attr.aria-checked]="isSelected(model)"
         [class]="rowClasses(model)"
+        [attr.aria-current]="isSelected(model) ? 'true' : null"
         (click)="choose(model)"
-        (keydown.enter)="choose(model)"
-        (keydown.space)="choose(model)"
       >
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
@@ -120,6 +119,21 @@
                 </button>
               }
               @case ('ready') {
+                <!-- Without this the row itself is the only way to switch
+                     models, which a keyboard never reaches. -->
+                @if (!isSelected(model)) {
+                  <button
+                    z-button
+                    zType="outline"
+                    zSize="sm"
+                    type="button"
+                    [attr.aria-label]="'Dictate with ' + model.label"
+                    [zDisabled]="pending() === model.id"
+                    (click)="select(model.id)"
+                  >
+                    Use
+                  </button>
+                }
                 <button
                   z-button
                   zType="ghost"

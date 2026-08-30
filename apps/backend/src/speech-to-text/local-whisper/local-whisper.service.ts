@@ -98,8 +98,16 @@ export class LocalWhisperService implements OnModuleDestroy {
   private pipelinePromise: Promise<WhisperPipeline> | null = null;
   private evictTimer: NodeJS.Timeout | null = null;
 
-  /** Serializes inference: two concurrent runs would just thrash the CPU. */
-  private transcribeChain: Promise<unknown> = Promise.resolve();
+  /**
+   * Serializes everything that touches the resident pipeline — inference, the
+   * post-download validation load, and idle eviction.
+   *
+   * Two concurrent inferences would only thrash the CPU, but the dangerous
+   * pair is a *load* racing an inference: loading a different model disposes
+   * the current one, and a download finishing while the user dictates would
+   * pull the weights out from under a running transcription.
+   */
+  private pipelineQueue: Promise<unknown> = Promise.resolve();
 
   /**
    * Set at construction on a machine ONNX Runtime has no build for, and
@@ -252,7 +260,9 @@ export class LocalWhisperService implements OnModuleDestroy {
     }
 
     if (this.loadedModel === model) {
-      await this.evictPipeline();
+      // Queued so deleting the model someone is dictating with waits for that
+      // dictation rather than disposing its weights mid-run.
+      await this.runExclusive(() => this.evictPipeline());
     }
 
     await rm(join(this.cacheDir, ...spec.repo.split('/')), {
@@ -270,13 +280,20 @@ export class LocalWhisperService implements OnModuleDestroy {
    * requests are serialized to keep one dictation from starving another.
    */
   async transcribe(input: LocalWhisperTranscribeInput): Promise<string> {
-    const run = this.transcribeChain.then(
-      () => this.runTranscription(input),
-      () => this.runTranscription(input),
+    return this.runExclusive(() => this.runTranscription(input));
+  }
+
+  /**
+   * Queues `task` behind anything else using the pipeline. The queue survives a
+   * failing task — a rejection must not stop later work — and never keeps an
+   * unhandled rejection on the shared tail.
+   */
+  private runExclusive<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.pipelineQueue.then(task, task);
+    this.pipelineQueue = run.then(
+      () => undefined,
+      () => undefined,
     );
-    // Keep the chain alive regardless of this run's outcome, and never leave an
-    // unhandled rejection on the shared tail.
-    this.transcribeChain = run.catch(() => undefined);
     return run;
   }
 
@@ -295,7 +312,6 @@ export class LocalWhisperService implements OnModuleDestroy {
     }
 
     const transcriber = await this.loadPipeline(input.model);
-    this.scheduleEviction();
 
     try {
       const output = await transcriber(input.samples, {
@@ -312,6 +328,11 @@ export class LocalWhisperService implements OnModuleDestroy {
       throw new SpeechToTextProviderError(
         `Local transcription failed: ${describeError(error)}`,
       );
+    } finally {
+      // Started only once inference is done: arming it beforehand would let the
+      // idle timer dispose the pipeline underneath a dictation that simply took
+      // longer than the timeout.
+      this.scheduleEviction();
     }
   }
 
@@ -413,7 +434,9 @@ export class LocalWhisperService implements OnModuleDestroy {
       clearTimeout(this.evictTimer);
     }
     this.evictTimer = setTimeout(() => {
-      void this.evictPipeline();
+      // Through the queue: a dictation that started between the timer being
+      // armed and it firing must finish before the weights are released.
+      void this.runExclusive(() => this.evictPipeline());
     }, PIPELINE_IDLE_EVICT_MS);
     // Never hold the process open just to expire a cache entry.
     this.evictTimer.unref?.();
@@ -468,7 +491,13 @@ export class LocalWhisperService implements OnModuleDestroy {
 
     // Proves the files on disk actually produce a working pipeline before this
     // model is advertised as ready, and leaves it warm for the first dictation.
-    await this.loadPipeline(spec.id);
+    //
+    // Queued rather than called directly: loading a different model evicts the
+    // resident one, and a background download finishing mid-dictation would
+    // otherwise dispose the weights that dictation is using.
+    await this.runExclusive(async () => {
+      await this.loadPipeline(spec.id);
+    });
     await writeFile(join(modelDir, COMPLETE_MARKER), spec.repo, 'utf8');
     this.scheduleEviction();
   }
@@ -490,7 +519,7 @@ export class LocalWhisperService implements OnModuleDestroy {
       // download does not restart the progress bar at zero.
       const stats = await stat(destination);
       job.loadedByFile.set(file, stats.size);
-      this.emitProgress(spec.id, job);
+      this.emitProgress(job);
       return;
     }
 
@@ -527,7 +556,7 @@ export class LocalWhisperService implements OnModuleDestroy {
     body.on('data', (chunk: Buffer) => {
       loaded += chunk.length;
       job.loadedByFile.set(file, loaded);
-      this.emitProgress(spec.id, job);
+      this.emitProgress(job);
     });
 
     try {
@@ -591,7 +620,11 @@ export class LocalWhisperService implements OnModuleDestroy {
     return weights.every(Boolean);
   }
 
-  private emitProgress(model: LocalWhisperModelId, job: DownloadJob): void {
+  /**
+   * Throttled globally rather than per model: each emission carries a full
+   * status snapshot covering every model, so one is enough for all of them.
+   */
+  private emitProgress(job: DownloadJob): void {
     if (job.cancelled) {
       return;
     }

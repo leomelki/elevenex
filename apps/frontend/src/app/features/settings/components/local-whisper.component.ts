@@ -123,10 +123,13 @@ export class LocalWhisperSettingsComponent {
   /**
    * Built here rather than as `[class.x]` bindings because Tailwind's opacity
    * syntax (`bg-primary/5`) is not a valid class-binding name.
+   *
+   * No focus styles: the row is a mouse convenience, and every action it offers
+   * also has a real button that takes focus.
    */
   rowClasses(model: LocalWhisperModel): string {
     return mergeClasses(
-      'block w-full rounded-lg border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+      'block w-full rounded-lg border px-4 py-3 text-left transition-colors',
       this.isSelected(model)
         ? 'border-primary bg-primary/5'
         : 'border-border hover:bg-accent/40',
