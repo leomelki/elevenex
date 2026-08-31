@@ -222,7 +222,20 @@ export class AntigravityProcessClient extends EventEmitter {
 
     const record = parsed as Record<string, unknown>;
     const kind = String(record['type'] ?? record['event'] ?? '');
-    const event = { ...record, type: kind } as AntigravityStreamEvent;
+
+    // `agy` nests each payload under a key named after the event —
+    // `{"event":"step_update","step_update":{...}}` — so the interesting
+    // fields (`text_delta`, `tool_info`, `status`, `response`) live one level
+    // down. Flatten the payload onto the envelope before emitting so
+    // consumers see a single flat event. Envelope keys (notably `init`'s
+    // `conversation_id`) are kept as a fallback for fields the payload omits.
+    const payload = record[kind];
+    const flattened =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? { ...record, ...(payload as Record<string, unknown>) }
+        : record;
+
+    const event = { ...flattened, type: kind } as AntigravityStreamEvent;
     this.emit('step_event', event);
 
     if (kind === 'result' && this.pendingTurn) {

@@ -16,12 +16,13 @@ export type AntigravityRunPhase = 'idle' | 'running' | 'waiting' | 'error';
 /* -------------------------------------------------------------------------- */
 /* `agy --input-format stream-json --output-format stream-json` wire types     */
 /*                                                                              */
-/* NOT verified against a live binary — field names are the best reading of   */
-/* Google's public docs at the time this was written. `handleStepEvent` in    */
-/* antigravity-transcript.ts is written defensively (missing/renamed fields   */
-/* are skipped rather than throwing) so a wrong guess here degrades instead   */
-/* of crashing a session. Correct this file first once a real `agy` process   */
-/* has been observed. See docs/antigravity-provider-flow.md.                  */
+/* Verified against `agy` 1.1.22 on Windows. Every line is an envelope of the  */
+/* shape `{"event": "<name>", "<name>": { ...payload }}` — the payload is      */
+/* nested under a key named after the event, NOT flattened onto the envelope.  */
+/* `init` additionally repeats `conversation_id` on the envelope itself.       */
+/* `AntigravityProcessClient.handleLine` unwraps this before emitting, so      */
+/* everything downstream of it sees the payload types below directly.          */
+/* See docs/antigravity-provider-flow.md.                                      */
 /* -------------------------------------------------------------------------- */
 
 export type AntigravityTurnStatus =
@@ -33,11 +34,31 @@ export type AntigravityTurnStatus =
   | 'WAITING'
   | 'RUNNING';
 
+/**
+ * Lifecycle of a single step. A tool step goes `ACTIVE` → `DONE` | `ERROR`.
+ * The open `(string & {})` arm keeps completions for the known values while
+ * still accepting a state this version of `agy` does not emit yet.
+ */
+export type AntigravityStepState =
+  | 'ACTIVE'
+  | 'DONE'
+  | 'ERROR'
+  | (string & NonNullable<unknown>);
+
+/**
+ * A tool error is an object (`{type, message}`), not a string — reading it as
+ * a string silently drops every tool failure.
+ */
+export interface AntigravityToolError {
+  type?: string;
+  message?: string;
+}
+
 export interface AntigravityToolInfo {
   name?: string;
   parameters?: unknown;
   output?: string;
-  error?: string;
+  error?: AntigravityToolError | string;
 }
 
 /** The first line a process emits after startup. */
@@ -50,16 +71,37 @@ export interface AntigravityInitEvent {
   model?: string;
 }
 
-/** A streamed step within a turn: text delta, tool call, or usage update. */
+/**
+ * A streamed step within a turn.
+ *
+ * `step_index` is stable across the updates for one step, so it — not a
+ * synthesized id — is what correlates a tool call's `ACTIVE` start with its
+ * later `DONE`/`ERROR` completion.
+ */
 export interface AntigravityStepUpdateEvent {
   type: 'step_update';
   conversation_id?: string;
-  /** Assistant prose delta, when this update carries one. */
-  delta?: string;
-  /** Set when the delta is reasoning/thinking rather than user-facing prose. */
+  step_index?: number;
+  state?: AntigravityStepState;
+  step_type?:
+    | 'user_input'
+    | 'agent_response'
+    | 'tool'
+    | (string & NonNullable<unknown>);
+  /** Assistant prose, delivered on `agent_response` steps. */
+  text_delta?: string;
+  /** Set when the text is reasoning/thinking rather than user-facing prose. */
   thought?: boolean;
+  tool_name?: string;
   tool_info?: AntigravityToolInfo;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  duration_seconds?: number;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    thinking_tokens?: number;
+    cache_read_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 /** Terminal event for a turn. */
@@ -69,6 +111,7 @@ export interface AntigravityResultEvent {
   status: AntigravityTurnStatus;
   response?: string;
   error?: string;
+  num_turns?: number;
 }
 
 export type AntigravityStreamEvent =

@@ -28,14 +28,36 @@ export function canonicalizeAntigravityTool(
   return { ...canonical, providerToolName: name ?? 'Tool' };
 }
 
+/**
+ * Normalizes `tool_info.error` to a message string.
+ *
+ * `agy` reports tool failures as an object (`{type, message}`), not a string —
+ * e.g. `{"type":"TOOL_ERROR","message":"permission check failed ..."}`. A
+ * string is still accepted so a future/plain-string shape keeps rendering.
+ */
+export function toolInfoErrorMessage(info: AntigravityToolInfo): string | null {
+  const error = info.error;
+  if (!error) return null;
+  if (typeof error === 'string') return error || null;
+  if (typeof error === 'object') {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message) return message;
+    const type = (error as { type?: unknown }).type;
+    if (typeof type === 'string' && type) return type;
+    return 'Tool call failed.';
+  }
+  return null;
+}
+
 /** Renders the result side of a tool call: `output` on success, `error` on failure. */
 export function toolInfoResultText(info: AntigravityToolInfo): string {
-  if (typeof info.error === 'string' && info.error) return info.error;
+  const error = toolInfoErrorMessage(info);
+  if (error) return error;
   if (typeof info.output === 'string') return info.output;
   return '';
 }
 
 /** True once a `tool_info` payload has settled (has output or an error). */
 export function toolInfoIsComplete(info: AntigravityToolInfo): boolean {
-  return typeof info.output === 'string' || typeof info.error === 'string';
+  return typeof info.output === 'string' || toolInfoErrorMessage(info) !== null;
 }

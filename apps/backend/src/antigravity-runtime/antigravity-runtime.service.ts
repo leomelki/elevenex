@@ -28,6 +28,7 @@ import {
 } from './antigravity-process-client.js';
 import {
   canonicalizeAntigravityTool,
+  toolInfoErrorMessage,
   toolInfoIsComplete,
   toolInfoResultText,
 } from './antigravity-transcript.js';
@@ -86,6 +87,13 @@ export class AntigravityRuntimeService
   private readonly activeRuns = new Map<number, AntigravityActiveRun>();
   private readonly initializingRuns = new Set<number>();
   private readonly clientCounts = new Map<number, number>();
+  /**
+   * Live `agy` `step_index` → transcript `toolUseId`, per session. A tool call
+   * spans several `step_update` events sharing one `step_index`; this maps
+   * them onto a single card. Entries are removed as each call settles and the
+   * whole per-session map is dropped when a turn ends.
+   */
+  private readonly toolCallIds = new Map<number, Map<number, string>>();
   private readonly runtimeStartInFlight = new Map<
     number,
     Promise<AntigravityProcessClient>
@@ -330,19 +338,28 @@ export class AntigravityRuntimeService
   ): void {
     const state = this.ensureRuntimeState(sessionId);
     if (result.status === 'ERROR' || result.status === 'INVALID') {
-      this.emitError(
-        sessionId,
-        result.error || 'Antigravity turn failed.',
-      );
+      this.emitError(sessionId, result.error || 'Antigravity turn failed.');
       return;
     }
-    if (result.status === 'CANCELED' || result.status === 'INTERRUPTED') {
+    // `agy` reports both a user-requested stop and its own mid-turn abort as
+    // CANCELED. Only the former is an interrupt; the latter is what happens
+    // when headless mode auto-denies a tool the agent needed, and reporting
+    // it as a clean interrupt is what makes the chat look silently broken.
+    const interrupted = this.activeRuns.get(sessionId)?.interruptRequested;
+    if (
+      result.status === 'INTERRUPTED' ||
+      (result.status === 'CANCELED' && interrupted)
+    ) {
       this.finalizeInterruptedRun(sessionId);
       return;
     }
-    // Defensive: if no text streamed via `step_update` deltas this turn (the
-    // exact split between streamed deltas and the final `result.response` is
-    // unconfirmed), fall back to showing the full response once.
+    if (result.status === 'CANCELED') {
+      this.emitError(sessionId, this.describeEmptyTurn(sessionId));
+      return;
+    }
+    // `agy` streams prose as `text_delta` on `agent_response` steps and then
+    // repeats the whole thing in `result.response`. Only fall back to the
+    // final response when nothing streamed, so the text is not shown twice.
     if (!state.streamingAssistantMessageId && result.response) {
       this.pushItem(sessionId, {
         id: randomUUID(),
@@ -351,8 +368,42 @@ export class AntigravityRuntimeService
         content: result.response,
         timestamp: new Date().toISOString(),
       });
+      this.finishRun(sessionId);
+      return;
+    }
+
+    // A turn where every tool call was auto-denied ends `SUCCESS` with an
+    // empty response and no prose — the run just stops with nothing rendered.
+    // Explain why instead of leaving the chat blank.
+    if (!state.streamingAssistantMessageId && !result.response) {
+      this.emitError(sessionId, this.describeEmptyTurn(sessionId));
+      return;
     }
     this.finishRun(sessionId);
+  }
+
+  /**
+   * Builds the message shown when a turn produced no output at all.
+   *
+   * The overwhelmingly common cause is `agy`'s headless permission policy:
+   * outside `--dangerously-skip-permissions`, any tool needing approval is
+   * auto-denied (there is no prompt channel in headless mode), so an agent
+   * that decided to use a tool ends the turn empty.
+   */
+  private describeEmptyTurn(sessionId: number): string {
+    const state = this.ensureRuntimeState(sessionId);
+    const bypassing =
+      state.permissionMode === 'bypassPermissions' ||
+      state.permissionMode === 'dontAsk';
+    if (bypassing) {
+      return 'Antigravity finished the turn without producing any output.';
+    }
+    return (
+      'Antigravity produced no output: it tried to use a tool, and `agy` ' +
+      'auto-denies tool calls in headless mode unless permissions are ' +
+      'bypassed. Switch this session\'s permission mode to "Bypass ' +
+      'permissions" to let it run tools.'
+    );
   }
 
   private queuePendingPrompt(
@@ -483,7 +534,7 @@ export class AntigravityRuntimeService
     const options: AntigravityProcessOptions = {
       cwd: session.worktreePath,
       env: this.authService.getRuntimeEnv(),
-      extraArgs: this.resolveSpawnArgs(state),
+      extraArgs: this.resolveSpawnArgs(state, session.worktreePath),
     };
     const client = new AntigravityProcessClient(options);
     const entry: AntigravityRuntimeEntry = {
@@ -516,17 +567,30 @@ export class AntigravityRuntimeService
   }
 
   /** Maps the session's permission/model/effort selection onto spawn flags. */
-  private resolveSpawnArgs(state: AntigravityRuntimeState): string[] {
-    const args: string[] = [];
-    // Plan mode and the safe permission styles fall back to `agy`'s default
-    // policy (soft-deny unless pre-approved); only the explicit "don't ask"
-    // styles map to a flag, mirroring Gemini's `yolo` mapping.
-    if (
-      !state.planMode &&
-      (state.permissionMode === 'bypassPermissions' ||
-        state.permissionMode === 'dontAsk')
+  private resolveSpawnArgs(
+    state: AntigravityRuntimeState,
+    worktreePath: string,
+  ): string[] {
+    // `agy` does not treat its own process cwd as the workspace: without an
+    // explicit `--add-dir` it works out of an empty scratch directory
+    // (`~/.gemini/antigravity-cli/scratch`), so the agent cannot see the
+    // repository at all and reports it as empty. Adding the worktree is what
+    // makes file and command tools operate on the session's code.
+    const args: string[] = ['--add-dir', worktreePath];
+    // `agy` has no headless approval channel: outside
+    // `--dangerously-skip-permissions` every tool call needing approval is
+    // auto-denied and the turn ends empty. `--mode` still selects the agent's
+    // execution posture, so plan mode maps to `plan` and edit-accepting modes
+    // to `accept-edits`.
+    if (state.planMode) {
+      args.push('--mode', 'plan');
+    } else if (
+      state.permissionMode === 'bypassPermissions' ||
+      state.permissionMode === 'dontAsk'
     ) {
       args.push('--dangerously-skip-permissions');
+    } else if (state.permissionMode === 'acceptEdits') {
+      args.push('--mode', 'accept-edits');
     }
     if (state.selectedModel) args.push('--model', state.selectedModel);
     if (state.reasoningEffort) args.push('--effort', state.reasoningEffort);
@@ -607,6 +671,7 @@ export class AntigravityRuntimeService
     this.sessionHistories.delete(sessionId);
     this.clientCounts.delete(sessionId);
     this.activeRuns.delete(sessionId);
+    this.toolCallIds.delete(sessionId);
   }
 
   onClientAttached(sessionId: number): void {
@@ -671,11 +736,20 @@ export class AntigravityRuntimeService
     event: AntigravityStepUpdateEvent,
   ): void {
     if (event.tool_info) {
-      this.handleToolInfo(sessionId, event.tool_info);
+      this.handleToolInfo(
+        sessionId,
+        event.tool_info,
+        event.step_index,
+        event.state,
+      );
       return;
     }
-    if (typeof event.delta === 'string' && event.delta) {
-      this.handleTextChunk(sessionId, event.delta, event.thought ? 'thinking' : 'assistant');
+    if (typeof event.text_delta === 'string' && event.text_delta) {
+      this.handleTextChunk(
+        sessionId,
+        event.text_delta,
+        event.thought ? 'thinking' : 'assistant',
+      );
     }
   }
 
@@ -722,44 +796,71 @@ export class AntigravityRuntimeService
   }
 
   /**
-   * `tool_info` carries no call id, so each event is rendered as its own
-   * self-contained card: a `tool_use` (always) plus an immediate
-   * `tool_result` when `output`/`error` is already present on the same
-   * event. If a real turn streams a tool call across multiple events (start,
-   * then a later event with output), this will render two separate cards
-   * rather than one updating card — a known gap to close once the real
-   * shape is observed (see docs/antigravity-provider-flow.md).
+   * Renders one `agy` tool call as one card.
+   *
+   * A tool call arrives as at least two `step_update` events sharing a
+   * `step_index`: `state: 'ACTIVE'` when it starts (parameters only) and
+   * `state: 'DONE' | 'ERROR'` when it settles (adding `output` or `error`).
+   * `step_index` is therefore the correlation key — emitting a fresh
+   * `tool_use` per event would show the same call twice.
    */
   private handleToolInfo(
     sessionId: number,
     info: NonNullable<AntigravityStepUpdateEvent['tool_info']>,
+    stepIndex: number | undefined,
+    stepState: string | undefined,
   ): void {
     const state = this.ensureRuntimeState(sessionId);
     state.streamingAssistantMessageId = null;
     state.streamingThoughtMessageId = null;
 
-    const canonical = canonicalizeAntigravityTool(info);
-    const toolUseId = randomUUID();
     const timestamp = new Date().toISOString();
+    // A step without an index cannot be correlated, so it falls back to a
+    // one-off card rather than merging into an unrelated call.
+    const key = typeof stepIndex === 'number' ? stepIndex : null;
+    const existing =
+      key === null ? undefined : this.toolCallIds.get(sessionId)?.get(key);
 
-    this.pushItem(
-      sessionId,
-      {
-        id: toolUseId,
-        kind: 'tool_use',
-        toolUseId,
-        toolName: canonical.toolDisplayName,
-        providerToolName: canonical.providerToolName,
-        toolKind: canonical.toolKind,
-        toolDisplayName: canonical.toolDisplayName,
-        toolInput: canonical.toolInput,
-        providerToolInput: info.parameters,
-        timestamp,
-      },
-      'tool_use',
-    );
+    let toolUseId = existing;
+    if (!toolUseId) {
+      const canonical = canonicalizeAntigravityTool(info);
+      toolUseId = randomUUID();
+      if (key !== null) {
+        let perSession = this.toolCallIds.get(sessionId);
+        if (!perSession) {
+          perSession = new Map<number, string>();
+          this.toolCallIds.set(sessionId, perSession);
+        }
+        perSession.set(key, toolUseId);
+      }
+      this.pushItem(
+        sessionId,
+        {
+          id: toolUseId,
+          kind: 'tool_use',
+          toolUseId,
+          toolName: canonical.toolDisplayName,
+          providerToolName: canonical.providerToolName,
+          toolKind: canonical.toolKind,
+          toolDisplayName: canonical.toolDisplayName,
+          toolInput: canonical.toolInput,
+          providerToolInput: info.parameters,
+          timestamp,
+        },
+        'tool_use',
+      );
+    }
 
-    if (!toolInfoIsComplete(info)) return;
+    // `ACTIVE` carries parameters only. Close the card on the settling event —
+    // keying off `state` rather than the presence of `output`/`error`, because
+    // a tool that headless mode auto-denied settles as `DONE` carrying
+    // neither, which would otherwise leave the card spinning forever.
+    const settled =
+      stepState === 'DONE' || stepState === 'ERROR' || toolInfoIsComplete(info);
+    if (stepState === 'ACTIVE' || !settled) return;
+
+    const errorMessage = toolInfoErrorMessage(info);
+    const isError = Boolean(errorMessage) || stepState === 'ERROR';
     this.pushItem(
       sessionId,
       {
@@ -767,11 +868,12 @@ export class AntigravityRuntimeService
         kind: 'tool_result',
         toolUseId,
         content: toolInfoResultText(info),
-        ...(info.error ? { isError: true } : {}),
+        ...(isError ? { isError: true } : {}),
         timestamp,
       },
       'tool_result',
     );
+    if (key !== null) this.toolCallIds.get(sessionId)?.delete(key);
   }
 
   /* ---------------------------------------------------------------------- */
@@ -834,6 +936,8 @@ export class AntigravityRuntimeService
     state.canInterrupt = false;
     state.streamingAssistantMessageId = null;
     state.streamingThoughtMessageId = null;
+    // `step_index` restarts per turn, so stale entries would collide.
+    this.toolCallIds.delete(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
     this.emitRunState(sessionId);
   }

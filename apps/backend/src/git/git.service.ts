@@ -35,6 +35,15 @@ const COMMIT_CONVENTION_DOC_FILENAMES = [
   'CONTRIBUTING.md',
 ];
 const MAX_COMMIT_MESSAGE_CONVENTION_DOC_CHARS = 6_000;
+/** Shape `buildCommitMessagePrompt` asks for, for providers that can enforce it. */
+const COMMIT_MESSAGE_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    subject: { type: 'string' },
+    body: { type: ['string', 'null'] },
+  },
+  required: ['subject', 'body'],
+} as const satisfies Record<string, unknown>;
 const COMMIT_MESSAGE_CLAUDE_SYSTEM_PROMPT =
   'You generate git commit messages. You have no tool access. Follow the ' +
   'user instructions exactly and respond with nothing but the requested JSON.';
@@ -1060,6 +1069,12 @@ export class GitService {
         worktreePath: input.worktreePath,
         prompt: this.buildCommitMessagePrompt({ ...input, retryHint }),
         taskName: 'commit-message',
+        antigravity: {
+          // `agy` otherwise wraps the JSON in prose or markdown fences, which
+          // costs a retry per suggestion. `--json-schema` makes it return a
+          // validated object instead.
+          jsonSchema: COMMIT_MESSAGE_JSON_SCHEMA,
+        },
       }),
     );
   }

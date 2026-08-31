@@ -13,11 +13,8 @@ Elevenex deliberately does not depend on (supply-chain risk for a tool that
 mediates every prompt, file edit, and credential in a session). Instead, this
 provider drives `agy`'s own native headless protocol directly.
 
-**Nothing below has been verified against a live `agy` process.** It is the best
-reading of Google's public docs (`antigravity.google/docs/cli/*`), cross-checked
-across independent fetches where possible, at the time this was written. Treat
-every "Not confirmed" item as the first thing to correct once a real session runs
-against an installed binary — see the section at the bottom.
+**Verified against `agy` 1.1.22 on Windows.** The sections below describe observed
+behavior. Items still unconfirmed are called out explicitly.
 
 ## Runtime Flow
 
@@ -27,8 +24,8 @@ against an installed binary — see the section at the bottom.
 3. `AntigravityAgentRuntimeProvider` delegates execution to
    `AntigravityRuntimeService`.
 4. `AntigravityRuntimeService` starts an `AntigravityProcessClient`, which spawns
-   `agy --input-format stream-json --output-format stream-json` (plus permission/
-   model/effort flags — see below) in the session worktree.
+   `agy --input-format stream-json --output-format stream-json --add-dir <worktree>`
+   (plus permission/model/effort flags — see below) in the session worktree.
 5. Every process start is a fresh conversation — there is no confirmed resume
    mechanism (`--conversation <id>` exists as a flag but is unverified), so
    `session/load`-style replay is not implemented.
@@ -36,63 +33,99 @@ against an installed binary — see the section at the bottom.
    {"content":"..."}}`) and reads back a stream of `init` / `step_update` /
    `result` lines, translated into the same transcript item shape rendered by
    the existing workspace UI.
-7. `agy`'s own conversation id (from the `init` event, when present) is stored in
+7. `agy`'s own conversation id (from the `init` event) is stored in
    `sessions.antigravity_session_id` for future use, but is not currently used to
    resume anything.
 
 One `agy` process runs per Elevenex session rather than one shared server,
 mirroring the old Gemini provider rather than Codex's shared app-server: `agy`'s
-`cwd` is fixed at spawn (no per-turn cwd parameter in the stream protocol), and
-sessions live in different worktrees. Processes are reference-counted against
+workspace is fixed at spawn (no per-turn cwd parameter in the stream protocol),
+and sessions live in different worktrees. Processes are reference-counted against
 attached clients, shut down after `ANTIGRAVITY_RUNTIME_IDLE_MS` (default 5 min)
 idle, and capped at `ANTIGRAVITY_RUNTIME_IDLE_CAP` (default 20) idle instances.
+
+## Workspace: `--add-dir` is required
+
+**`agy` does not treat its process cwd as the workspace.** Spawned without an
+explicit `--add-dir`, it works out of an empty scratch directory
+(`~/.gemini/antigravity-cli/scratch`): `list_dir .` fails with "path is not
+absolute", the agent resolves `.` to the scratch path, and it reports the
+repository as empty. Every file and command tool then operates on the wrong
+directory.
+
+Both entry points therefore pass `--add-dir <worktreePath>`:
+`AntigravityRuntimeService.resolveSpawnArgs` for chat sessions, and
+`TextAgentGenerationService.generateWithAntigravity` for the one-shot text
+flows. Passing `cwd` to `spawn` is not sufficient and never was.
 
 ## Stream Protocol
 
 Confirmed flags: `-p`/`--print` (one-shot), `--output-format text|json|stream-json`,
 `--input-format stream-json` (paired with `--output-format stream-json`, keeps one
 process alive reading one JSON line per turn from stdin), `--model`, `--effort`
-(low/medium/high), `--continue`/`-c`, `--conversation <id>`, `--print-timeout`
-(default 5m), `--dangerously-skip-permissions`, `--sandbox`.
+(low/medium/high), `--mode accept-edits|plan`, `--add-dir` (repeatable),
+`--continue`/`-c`, `--conversation <id>`, `--print-timeout` (default 5m),
+`--dangerously-skip-permissions`, `--sandbox`, `--disable-slash-commands`,
+`--json-schema`.
 
-`stream-json` output is documented as: one `init` event, many `step_update` events
-(text deltas, `tool_info: {name, parameters, output, error}`, token usage), one
-`result` event per turn with a `status` field (`SUCCESS`, `ERROR`, `CANCELED`,
-`INTERRUPTED`, `INVALID`, `WAITING`, `RUNNING`).
+Every output line is an **envelope whose payload is nested under a key named
+after the event**, not flattened onto the envelope:
 
-**Not confirmed:** the exact field names above (`antigravity-runtime.types.ts` is
-written defensively — `type` is read from either `type` or `event`, unknown fields
-are optional — so a wrong guess degrades rather than crashes a session); whether
-`tool_info` streams incrementally (start, then a later update with output) or
-arrives as one complete record. `AntigravityRuntimeService.handleToolInfo`
-currently treats every `tool_info`-bearing event as a self-contained call (no id to
-correlate multiple events for one call), which will show two cards instead of one
-updating card if the real protocol streams tool output incrementally.
+```jsonc
+{"event":"init","conversation_id":"...","init":{"cwd":"...","tools":[...],"permission_mode":"request-review"}}
+{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"Hi\n","usage":{...}}}
+{"event":"result","result":{"conversation_id":"...","status":"SUCCESS","response":"Hi\n","num_turns":1,"usage":{...}}}
+```
+
+`AntigravityProcessClient.handleLine` flattens the payload onto the envelope
+before emitting, so everything downstream sees one flat event. Reading
+`status`/`response`/`text_delta`/`tool_info` off the envelope directly — as the
+first implementation did — yields `undefined` for every field, which is why the
+chat rendered nothing at all.
+
+Field notes:
+
+- Assistant prose arrives as `text_delta` on `agent_response` steps (not `delta`),
+  and is then repeated in full in `result.response`. Only fall back to
+  `result.response` when nothing streamed, or the message renders twice.
+- `step_type` is `user_input` | `agent_response` | `tool`.
+- **Tool calls stream incrementally and `step_index` is the correlation key**: a
+  call arrives as `state: "ACTIVE"` (parameters only), then `state: "DONE"` or
+  `"ERROR"` carrying `output`/`error`. `handleToolInfo` keys its transcript card
+  on `step_index` so one call renders as one updating card.
+- **`tool_info.error` is an object** (`{type, message}`), not a string.
+- A tool that headless mode auto-denied settles as `DONE` with **neither**
+  `output` nor `error`, so the card must be closed on `state`, not on the
+  presence of a result.
 
 `AntigravityProcessClient.interrupt()` sends `SIGINT` as a best-effort mid-turn
-cancel — `agy`'s stream protocol documents no cancel event (unlike ACP's
-`session/cancel` or a JSON-RPC notification) — and the caller falls back to
-killing/respawning the process if that doesn't unblock it.
+cancel — `agy`'s stream protocol documents no cancel event — and the caller falls
+back to killing/respawning the process if that doesn't unblock it.
 
 ## Permission Model
 
-**There is no confirmed bidirectional permission-request channel** in `agy`'s
-stream protocol — nothing permission-shaped appears in the documented event list.
-Headless mode instead runs on a policy chosen at spawn time:
+**There is no bidirectional permission-request channel** in `agy`'s stream
+protocol. Headless mode runs on a policy chosen at spawn time:
 
-- Default: unapproved tool calls are **soft-denied** (the turn continues, exits 0,
-  a warning goes to stderr) unless pre-approved via `permissions.allow` rules in
-  `~/.gemini/antigravity-cli/settings.json`. Elevenex does not currently write
-  those rules.
+- Default (`permission_mode: "request-review"`): a tool call needing approval is
+  **auto-denied**, because there is no way to prompt. `agy` writes a warning to
+  stderr (`jetski: no output produced — a tool required the "command" permission
+  that headless mode cannot prompt for...`).
 - `--dangerously-skip-permissions`: auto-approves everything.
 
-Elevenex maps its permission-mode picker onto these two states rather than a live
-approve/deny UI: `default`/`acceptEdits`/`auto` → default policy (no flag),
-`bypassPermissions`/`dontAsk` → `--dangerously-skip-permissions` (the closest
-equivalent to Gemini's `yolo` mode). "Plan mode" has no `agy` equivalent — enabling
-it just forces the default (safest) policy rather than unlocking any special
-read-only enforcement. Because posture is chosen at spawn time, changing it
-restarts a warm process so the next prompt picks up the new flags.
+The consequence matters: **an auto-denied tool call ends the turn with an empty
+response**, reported as either `status: "CANCELED"` or even `status: "SUCCESS"`
+with `response: ""`. Neither is an error, so a naive implementation just stops
+with a blank chat. `AntigravityRuntimeService` treats both as a failure and
+surfaces an actionable message pointing at the permission-mode picker; a
+`CANCELED` turn is only reported as a clean interrupt when the user actually
+requested one.
+
+Elevenex maps its permission-mode picker onto `agy`'s spawn-time flags:
+`bypassPermissions`/`dontAsk` → `--dangerously-skip-permissions`, `acceptEdits` →
+`--mode accept-edits`, plan mode → `--mode plan`, and `default` → no flag. Only
+the bypass modes can actually run tools. Because posture is chosen at spawn time,
+changing it restarts a warm process so the next prompt picks up the new flags.
 
 Because there is no permission channel, `AntigravityAgentRuntimeProvider` declares
 `capabilities.permissions: false` and does not implement `approvePermission`/
@@ -100,21 +133,24 @@ Because there is no permission channel, `AntigravityAgentRuntimeProvider` declar
 
 ## Models
 
-**Not confirmed:** the real model id list. No catalog page was found during
-research, so `getModelCatalog()` honestly reports `supportsModelSelection: false`
-and an empty model list rather than fabricate ids that could send a broken
-`--model` value. `--model`/`--effort` flags are still wired up and used if a
-session ever gets a `selectedModel`/`reasoningEffort` some other way (e.g. once a
-real catalog is confirmed and this is revisited).
+`agy models` lists real ids (`gemini-3.7-flash-high`, `gemini-3.1-pro-high`,
+`claude-sonnet-4-6`, `gpt-oss-120b-medium`, …), so a catalog is now obtainable.
+`getModelCatalog()` still reports `supportsModelSelection: false` and an empty
+list: it is synchronous, and wiring a real catalog needs the async refresh-and-
+cache plumbing the Claude and Pi providers have. `--model`/`--effort` are wired
+up and used if a session gets a `selectedModel`/`reasoningEffort`. Note that
+reasoning effort is baked into most model ids (`-high`/`-medium`/`-low`), which
+overlaps with `--effort`; that interaction is unverified.
 
 ## Auth
 
-**Not confirmed:** login subcommands, credential storage location, or a cheap way
-to probe "is this authenticated" the way `GeminiAuthService` probed via an ACP
-`session/new` call. `AntigravityAuthService` only reports whether `agy` is
-installed (`agy --version`, cached 1h); `startLogin`/`cancelLogin`/`continueLogin`
-reject with a message pointing the user at running `agy` interactively once to
-sign in.
+**Not confirmed:** login subcommands or credential storage location.
+`AntigravityAuthService` only reports whether `agy` is installed (`agy --version`,
+cached 1h); `startLogin`/`cancelLogin`/`continueLogin` reject with a message
+pointing the user at running `agy` interactively once to sign in.
+
+`agy models` performs a server round-trip and so would work as a real
+authentication probe, but it is not wired up as one yet.
 
 Because `authenticated` can never honestly report `true`, `antigravity` is
 deliberately **not** in the frontend's `LOGIN_CARD_PROVIDERS` set (unlike Codex,
@@ -122,8 +158,7 @@ Pi, and the old Gemini provider) — gating the workspace on
 `providerAuthStatus().authenticated === true` would lock every Antigravity
 session out permanently with no way through. Instead, the chat UI is always
 shown; a genuinely unauthenticated `agy` process simply fails its first prompt,
-which surfaces through the normal run-error path. Revisit this once a real auth
-probe exists.
+which surfaces through the normal run-error path.
 
 ## MCP
 
@@ -178,35 +213,45 @@ it's false everywhere except Claude — that path is Claude-specific
 ## Auxiliary AI Flows
 
 Commit messages, session titles, and worktree context analysis run through
-`TextAgentGenerationService.generateWithAntigravity`, using `agy`'s non-interactive
-print mode rather than the stream-json session machinery:
+`TextAgentGenerationService.generateWithAntigravity`.
+
+These want a single block of text, so print mode (`agy -p <prompt>`) looks like
+the natural fit — but **print mode only accepts the prompt as a command-line
+argument and does not read stdin**. A commit-message prompt embeds a diff (up to
+24k chars) plus convention docs (up to 6k), which on Windows exceeds the ~32k
+command-line limit: the spawn fails outright with `ENAMETOOLONG`, deterministically,
+for any non-trivial change. This is why commit-message generation appeared broken
+while working fine on tiny diffs.
+
+The one-shot flows therefore reuse `AntigravityProcessClient` and send the prompt
+as one NDJSON line on stdin, where size is a non-issue:
 
 ```text
-agy -p <prompt> --output-format json [--model <model>]
+agy --input-format stream-json --output-format stream-json \
+    --add-dir <worktree> --disable-slash-commands [--json-schema <schema>] [--model <model>]
 ```
 
-No `--dangerously-skip-permissions` flag is passed, so these read-only text tasks
-run under `agy`'s default (soft-deny) policy. The JSON envelope shape is
-unconfirmed — `parseAntigravityEnvelope` scans stdout defensively (first/last
-top-level `{`) rather than assuming a fixed prefix, the same way the old Gemini
-parser did for gemini-cli's envelope.
+- `--disable-slash-commands` stops a diff line beginning with `/` from being
+  expanded as a slash command.
+- `--json-schema` makes `agy` return a validated object in `structured_output`,
+  which `readAntigravityText` prefers over `response` (the latter carries markdown
+  fences, a restated copy of the JSON, and trailing tool chatter). `git.service`
+  passes `COMMIT_MESSAGE_JSON_SCHEMA` for commit messages.
+- No `--dangerously-skip-permissions`, so tool calls are auto-denied. Since a
+  denied call ends the turn empty, the prompt is prefixed with
+  `ANTIGRAVITY_NO_TOOLS_PREAMBLE` instructing the model to answer directly from
+  the message. Without it the model reaches for `run_command`, gets denied, and
+  returns nothing.
 
-## Not Yet Verified Against a Live Install
+## Still Unverified
 
-None of this document has been checked against a running `agy` process — the
-binary was not available on the machine this was written on. Before relying on
-this provider in production, confirm (roughly in priority order):
-
-1. The exact `stream-json` event field names (`init`/`step_update`/`result` and
-   `tool_info`), and whether tool calls stream incrementally.
-2. Whether `--output-format json` in print mode returns the envelope shape
-   `parseAntigravityEnvelope` expects (run `agy -p "say hi" --output-format json`
-   directly — the cheapest possible check).
-3. Real login/auth flow and credential storage, so `AntigravityAuthService` can
-   report actual authentication status and implement `startLogin` for real.
-4. The real model id list, so `getModelCatalog()` can stop reporting
-   `supportsModelSelection: false`.
-5. Whether `agy` maintains a parseable on-disk conversation log, to build a real
+1. Real login/auth flow and credential storage, so `AntigravityAuthService` can
+   report actual authentication status and implement `startLogin` for real
+   (`agy models` is a candidate probe).
+2. An async model catalog, so `getModelCatalog()` can offer the ids `agy models`
+   returns, and how `--effort` interacts with effort-suffixed model ids.
+3. Whether `agy` maintains a parseable on-disk conversation log, to build a real
    history/fork/rewind implementation instead of the in-memory accumulator.
-6. Whether `--conversation <id>` reliably resumes a prior conversation, to wire up
+4. Whether `--conversation <id>` reliably resumes a prior conversation, to wire up
    session resume instead of always starting fresh.
+5. Whether `SIGINT` is really the right mid-turn cancel.
