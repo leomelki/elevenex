@@ -721,6 +721,74 @@ describe('setup tool group', () => {
       const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
       expect((res.data as any).jobId).toBe('job-r');
     });
+
+    it('offers the worktree that already holds the requested branch instead of creating a doomed job', async () => {
+      const startJob = jest.fn();
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(poolItem({ id: 60, owner: null, currentBranch: 'feature/x', isDirty: false }));
+        return 1;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+        worktreeJobs: { startJob },
+        worktreePool: { streamForRepo },
+      });
+      const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
+      const data = res.data as any;
+      expect(data.poolCheckResult).toBe('branch_already_checked_out');
+      expect(data.candidates).toEqual([
+        expect.objectContaining({ worktreeId: 60, branch: 'feature/x', reclaimAction: 'link_worktree' }),
+      ]);
+      expect(startJob).not.toHaveBeenCalled();
+    });
+
+    it('throws branch_checked_out_elsewhere when the branch owner cannot be reclaimed', async () => {
+      const startJob = jest.fn();
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(
+          poolItem({
+            id: 61,
+            name: 'busy',
+            currentBranch: 'feature/x',
+            owner: { projectName: 'P', workspaceName: 'W', workspaceId: 9 },
+            activeSessionCount: 1,
+          }),
+        );
+        return 1;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+        worktreeJobs: { startJob },
+        worktreePool: { streamForRepo },
+      });
+      await expect(
+        createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx),
+      ).rejects.toMatchObject({ code: 'branch_checked_out_elsewhere' });
+      expect(startJob).not.toHaveBeenCalled();
+    });
+
+    it('still refuses to create when force:true and the branch is already checked out elsewhere', async () => {
+      const startJob = jest.fn();
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(poolItem({ id: 62, owner: null, currentBranch: 'feature/x', isDirty: false }));
+        return 1;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+        worktreeJobs: { startJob },
+        worktreePool: { streamForRepo },
+      });
+      const res = await createWorktreeTool.handler(
+        { repoId: 1, branchName: 'feature/x', force: true, forceReason: 'user_confirmed' },
+        ctx,
+      );
+      const data = res.data as any;
+      expect(data.poolCheckResult).toBe('branch_already_checked_out');
+      expect(startJob).not.toHaveBeenCalled();
+    });
   });
 
   describe('get_worktree_job', () => {

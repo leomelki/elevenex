@@ -81,6 +81,16 @@ function blockedReason(item: WorktreePoolItem, now: number): string | null {
  * out come back with a physical `reason` — the caller never has to infer
  * suitability from names or branches. `force` requires a `forceReason` from a
  * closed enum so "these look unrelated to my task" cannot be expressed.
+ *
+ * Branch-ownership check: runs BEFORE the reuse gate and even when `force` is
+ * set, because it is not a preference but a git constraint — the same branch
+ * cannot be checked out in two worktrees at once. If branchName is already
+ * checked out somewhere in the pool: a clean, free worktree holding it is
+ * returned immediately as the (single) candidate — no ranking needed, it is
+ * already the best possible reuse since it needs no switch_branch — while a
+ * busy one (sessions attached, dirty, locked, mid-conflict) throws a
+ * `branch_checked_out_elsewhere` ToolError instead of spawning a job that
+ * would only fail once `git worktree add` runs.
  */
 export const createWorktreeTool = defineTool({
   name: 'create_worktree',
@@ -92,6 +102,7 @@ export const createWorktreeTool = defineTool({
     'IMPORTANT: reusing an existing worktree is the default and this tool enforces it — if any clean, session-free worktree exists (unowned, or owned but idle >72 h) it returns those as candidates instead of creating anything, and you are expected to link_worktree/steal_worktree one of them. ' +
     'A worktree is disposable infrastructure, not a record of what it was used for: the branch it holds, its name, and the task it was created for do NOT make it unsuitable — rename_worktree + switch_branch reset it completely. The only real blockers (uncommitted changes, conflicts, lock, attached sessions) are already filtered out for you, and reported in the response so you do not have to guess. ' +
     'force:true is therefore not a way to override a judgement call: it requires forceReason and is limited to the human asking for a new worktree, candidates that actually failed to link, or needing several worktrees at once. ' +
+    'If branchName is already checked out in another worktree in the pool, this call never spawns a doomed job (git refuses the same branch in two worktrees): a free one is returned as the candidate to reuse, or, if it is busy, the call errors with branch_checked_out_elsewhere instead. ' +
     'If branchName has no local ref and neither from_origin nor startPoint is set, the tool auto-detects the repo default branch (origin/HEAD) and uses it as startPoint — no extra call needed for the common "new branch off main" case. ' +
     'Pass startPoint explicitly to fork from a specific ref (e.g. "origin/release/2.0"). ' +
     'Pass fetch_start_point: true (recommended for new feature branches) to fetch the base ref from origin before forking, so the new branch starts from the latest upstream commit rather than a potentially stale local tracking ref. ' +
@@ -148,7 +159,8 @@ export const createWorktreeTool = defineTool({
       .optional()
       .describe(
         'Skip the pool pre-check and create a new worktree unconditionally. Requires forceReason. ' +
-        'Not for overriding your own judgement of the candidates: a clean, session-free worktree is always reusable no matter what branch, name or past task it carries.',
+        'Not for overriding your own judgement of the candidates: a clean, session-free worktree is always reusable no matter what branch, name or past task it carries. ' +
+        'Does NOT bypass the branch-ownership check — that is a git constraint, not a preference, and still applies.',
       ),
     forceReason: z
       .enum(FORCE_REASONS)
@@ -186,34 +198,84 @@ export const createWorktreeTool = defineTool({
       });
     }
 
+    // Branch-ownership check: git physically refuses to check the same branch
+    // out in two worktrees at once, so this runs even when force is set —
+    // force can skip the *reuse-preference* gate below, but it cannot skip a
+    // constraint git itself enforces. Without this, the job would be spawned,
+    // run `git worktree add`, and fail minutes later with a raw git error.
+    const now = Date.now();
+    let branchOwner:
+      | { item: ReturnType<typeof poolItemHandle>; reason: string | null }
+      | undefined;
+    const reclaimable: Array<
+      ReturnType<typeof poolItemHandle> & {
+        reclaimAction: ReclaimAction;
+        idleSince?: string;
+      }
+    > = [];
+    const blocked: Array<{
+      worktreeId: number;
+      name: string;
+      reason: string;
+    }> = [];
+
+    await worktreePool.streamForRepo(repo, (item) => {
+      const reason = blockedReason(item, now);
+      if (item.currentBranch === branchName) {
+        branchOwner = { item: poolItemHandle(item), reason };
+      }
+      if (args.force) return;
+      if (reason) {
+        blocked.push({ worktreeId: item.id, name: item.name, reason });
+        return;
+      }
+      reclaimable.push({
+        ...poolItemHandle(item),
+        reclaimAction: item.owner ? 'steal_worktree' : 'link_worktree',
+        idleSince: lastActivityAt(item) ?? undefined,
+      });
+    });
+
+    if (branchOwner) {
+      const reclaimAction: ReclaimAction = branchOwner.item.owner
+        ? 'steal_worktree'
+        : 'link_worktree';
+
+      if (!branchOwner.reason) {
+        // Free and clean: this is not just A candidate, it is THE candidate —
+        // it already holds the exact branch requested, so no switch_branch
+        // is even needed after reclaiming it.
+        return {
+          data: {
+            poolCheckResult: 'branch_already_checked_out',
+            candidateCount: 1,
+            candidates: [{ ...branchOwner.item, reclaimAction }],
+          },
+          nextStep:
+            `Branch "${branchName}" is already checked out in worktree #${branchOwner.item.worktreeId} ` +
+            `(${branchOwner.item.path}). Git does not allow the same branch to be checked out in two ` +
+            `worktrees at once, so creating a new worktree for it would fail. That worktree is clean and ` +
+            `free — ${reclaimAction} it directly; it already holds the branch you want, so switch_branch is not needed.`,
+        };
+      }
+
+      throw new ToolError({
+        code: 'branch_checked_out_elsewhere',
+        message:
+          `Branch "${branchName}" is already checked out in worktree #${branchOwner.item.worktreeId} ` +
+          `(${branchOwner.item.path}), which is currently "${branchOwner.reason}". Git does not allow the ` +
+          'same branch to be checked out in two worktrees at once, so create_worktree would fail once the job runs.',
+        remediation:
+          branchOwner.reason === 'sessions_still_attached'
+            ? 'A session is already attached to that worktree — use it instead of creating a new one for the same branch.'
+            : `That worktree cannot be reclaimed right now (${branchOwner.reason}). Wait for it to free up and reuse it, ` +
+              'or pass a different branchName if this genuinely needs to be an independent branch.',
+        retryable: true,
+      });
+    }
+
     // Pool pre-check: surface reclaimable worktrees before spawning a new one.
     if (!args.force) {
-      const now = Date.now();
-      const reclaimable: Array<
-        ReturnType<typeof poolItemHandle> & {
-          reclaimAction: ReclaimAction;
-          idleSince?: string;
-        }
-      > = [];
-      const blocked: Array<{
-        worktreeId: number;
-        name: string;
-        reason: string;
-      }> = [];
-
-      await worktreePool.streamForRepo(repo, (item) => {
-        const reason = blockedReason(item, now);
-        if (reason) {
-          blocked.push({ worktreeId: item.id, name: item.name, reason });
-          return;
-        }
-        reclaimable.push({
-          ...poolItemHandle(item),
-          reclaimAction: item.owner ? 'steal_worktree' : 'link_worktree',
-          idleSince: lastActivityAt(item) ?? undefined,
-        });
-      });
-
       if (reclaimable.length > 0) {
         // Rank so the truncated list holds the *best* candidates rather than
         // whichever ones the concurrent pool scan happened to finish first:
