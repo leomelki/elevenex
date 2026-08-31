@@ -157,12 +157,15 @@ export class AntigravityProcessClient extends EventEmitter {
   }
 
   /**
-   * Best-effort mid-turn interrupt. `agy`'s stream protocol documents no
-   * cancel event (unlike ACP's `session/cancel`), so this sends SIGINT —
-   * the common CLI convention for "stop the current turn, keep the process
-   * alive" — and relies on the caller falling back to `stop()` (killing and
-   * respawning) if the process doesn't recover. Unverified against a live
-   * binary; correct this once observed.
+   * Mid-turn interrupt. `agy`'s stream protocol has no cancel event (unlike
+   * ACP's `session/cancel`), so this sends SIGINT.
+   *
+   * Verified against `agy` 1.1.22: SIGINT does *not* leave the process alive
+   * the way the usual CLI convention would. `agy` aborts the in-flight
+   * request, emits a final `result` with `status: "ERROR"` and
+   * `error: "timeout waiting for response"`, and exits with code 1. The
+   * caller therefore has to treat that ERROR as the interrupt it asked for,
+   * and the next prompt respawns (resuming via `--conversation`).
    */
   interrupt(): void {
     if (!this.child || this.exited) return;

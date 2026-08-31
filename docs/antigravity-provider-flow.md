@@ -13,8 +13,11 @@ Elevenex deliberately does not depend on (supply-chain risk for a tool that
 mediates every prompt, file edit, and credential in a session). Instead, this
 provider drives `agy`'s own native headless protocol directly.
 
-**Verified against `agy` 1.1.22 on Windows.** The sections below describe observed
-behavior. Items still unconfirmed are called out explicitly.
+**Verified against `agy` 1.1.22 on Windows, and re-verified end to end on macOS**
+by replaying live captured stream-json sessions (text-only turns, read/list/grep/
+glob/edit/write/command/web tools, tool failures, auto-denied tools, interrupts,
+and resume) through the real parsing pipeline. The sections below describe
+observed behavior. Items still unconfirmed are called out explicitly.
 
 ## Runtime Flow
 
@@ -98,9 +101,46 @@ Field notes:
   `output` nor `error`, so the card must be closed on `state`, not on the
   presence of a result.
 
-`AntigravityProcessClient.interrupt()` sends `SIGINT` as a best-effort mid-turn
-cancel — `agy`'s stream protocol documents no cancel event — and the caller falls
-back to killing/respawning the process if that doesn't unblock it.
+- **`thought: true` was never observed.** `usage.thinking_tokens` is reported, but
+  reasoning text is not streamed, so the thinking-bubble path is currently dead
+  code kept for a future `agy` that does stream it.
+- **`ask_question` is invisible.** When the agent asks the user something, `agy`
+  emits a bare `{"step_type":"unknown","state":"DONE"}` step with no `tool_info`
+  and no text — the question itself never reaches the stream. Nothing can be
+  rendered for it, which is why `pendingUserInputRequest` is never populated and
+  `capabilities.userInput` is `false`.
+
+### Interrupt: SIGINT kills the process
+
+`AntigravityProcessClient.interrupt()` sends `SIGINT`, because `agy`'s stream
+protocol has no cancel event. What `agy` actually does with it is **not** the
+usual "abort the turn, keep the REPL alive":
+
+```text
+result { status: "ERROR", error: "timeout waiting for response", response: "" }
+child exits with code 1
+```
+
+Two consequences the implementation has to absorb. `handleTurnResult` checks the
+interrupt flag *before* the status, or every stop-button press renders as a red
+`timeout waiting for response` error; and `handleRuntimeExit` does the same,
+since the process death arrives as an unexpected exit. The next prompt respawns
+and picks the thread back up via `--conversation` (below).
+
+### Conversation resume works
+
+`--conversation <id>` **does** resume: a fresh process started with a prior
+conversation id reports that same id in its `init` event and the model still has
+the thread (verified by asking it to recall a number from a killed process).
+`--continue` resumes the most recent conversation. An unknown id is not fatal —
+`agy` warns `conversation "…" not found` on stderr and starts fresh.
+
+`resolveSpawnArgs` therefore passes `--conversation <state.antigravitySessionId>`
+whenever the session has one. Without it, the 5-minute idle shutdown, any
+model/effort/permission change (which restarts the warm process), and every
+interrupt silently started a brand-new conversation mid-session. Resume restores
+the *model's* thread only; `agy` replays no past steps into the stream, so
+Elevenex's own transcript is still the in-memory one described below.
 
 ## Permission Model
 
@@ -121,15 +161,80 @@ surfaces an actionable message pointing at the permission-mode picker; a
 `CANCELED` turn is only reported as a clean interrupt when the user actually
 requested one.
 
+`agy` exposes **no "auto" posture** on the CLI: the only permission-related flags
+are `--dangerously-skip-permissions`, `--mode accept-edits|plan`, and `--sandbox`.
+The binary does carry a richer internal policy model (`autoExecPolicy`,
+`TERMINAL_COMMAND_AUTO_EXECUTION_POLICY_{REQUIRE_REVIEW,PROCEED_IN_SANDBOX,NOT_ENFORCED}`,
+`permissionsV2` grants), but none of it is reachable through a flag.
+
+**`--mode accept-edits` does not help headlessly.** Its own flag help says
+"auto-approve file edits, prompt for commands", but verified on `agy` 1.1.22
+(macOS) both creating a new file and editing an existing one under `--add-dir`
+are auto-denied with the same `write_file` message; the turn ends `SUCCESS` with
+`response: ""`. Only the bypass modes can actually run write/command tools. Read-only
+tools (`list_dir`, `read_file`) do work without any flag.
+
 Elevenex maps its permission-mode picker onto `agy`'s spawn-time flags:
 `bypassPermissions`/`dontAsk` → `--dangerously-skip-permissions`, `acceptEdits` →
-`--mode accept-edits`, plan mode → `--mode plan`, and `default` → no flag. Only
-the bypass modes can actually run tools. Because posture is chosen at spawn time,
-changing it restarts a warm process so the next prompt picks up the new flags.
+`--mode accept-edits`, plan mode → `--mode plan`, and `default` → no flag. Because
+posture is chosen at spawn time, changing it restarts a warm process so the next
+prompt picks up the new flags.
+
+**New sessions start in `bypassPermissions`** (`ensureRuntimeState`). Starting in
+`default` meant every fresh Antigravity session failed on its first write or
+command tool with the empty-turn diagnostic, and no other mode can run those
+tools, so bypass is the only usable default for this provider.
+
+### Unimplemented alternative: `permissions.allow` grants
+
+`agy`'s auto-deny message points at a third path Elevenex does not use yet: an
+allow-rule under `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`.
+Rules must match `^(command|read_file|write_file|read_url|mcp|execute_url|unsandboxed)\s*\(.*\)$`
+— i.e. `write_file(<target>)`, `command(git)`, `read_file(*)`; a bare tool name is
+not a valid rule. The binary's changelog also notes per-project permission config
+in `~/.gemini/config/projects/` takes precedence over the global settings file.
+Wiring this up would make `default`/`acceptEdits` genuinely meaningful instead of
+dead ends, but it means Elevenex writing into the user's global `agy` config, so it
+is deliberately not done here.
 
 Because there is no permission channel, `AntigravityAgentRuntimeProvider` declares
 `capabilities.permissions: false` and does not implement `approvePermission`/
 `denyPermission` — the workspace does not show a permission UI for this provider.
+
+## Tool Taxonomy
+
+`agy` reports 57 tools in its `init` event and names **none** of them the way
+Claude/Codex/Gemini do. It also spells every parameter in PascalCase. Captured
+live:
+
+| `agy` tool | parameters | renders as |
+| --- | --- | --- |
+| `view_file` | `AbsolutePath` | Read |
+| `list_dir` | `DirectoryPath` | List |
+| `find_by_name` | `Pattern`, `SearchDirectory` | Glob |
+| `grep_search` | `Query`, `SearchPath` | Grep |
+| `run_command` | `CommandLine`, `Cwd` | Bash |
+| `write_to_file` | `TargetFile` | Write |
+| `replace_file_content` | `TargetFile` | Edit |
+| `read_url_content` | `Url` | WebFetch |
+| `search_web` | `query` (the one lowercase outlier) | WebSearch |
+
+`AGY_TOOL_MAP` in `antigravity-transcript.ts` maps names onto aliases the shared
+`canonicalizeAgentTool` understands and renames parameters onto the keys the tool
+cards read (`file_path`, `command`, `pattern`, `path`, `url`), keeping the
+originals so the raw parameter view stays complete. Without it exactly one tool
+(`notebook_edit`) matched the shared table and every other Antigravity tool call
+rendered as a generic `unknown` card full of raw JSON.
+
+Tools with no counterpart in the shared taxonomy — the `browser_*` family,
+subagent and task management, `command_status`, `finish`, `wait` — deliberately
+stay `unknown`, which shows the raw name and parameters.
+
+Two payload notes that matter for rendering: parameters are **redacted to
+identifiers**, so `write_to_file` carries no content and `replace_file_content`
+carries no diff (the Write/Edit cards therefore show a path and no body), and
+`view_file`'s `output` is a summary line like `"8 lines, 93 bytes"` rather than
+the file text.
 
 ## Models
 
@@ -252,6 +357,11 @@ agy --input-format stream-json --output-format stream-json \
    returns, and how `--effort` interacts with effort-suffixed model ids.
 3. Whether `agy` maintains a parseable on-disk conversation log, to build a real
    history/fork/rewind implementation instead of the in-memory accumulator.
-4. Whether `--conversation <id>` reliably resumes a prior conversation, to wire up
-   session resume instead of always starting fresh.
-5. Whether `SIGINT` is really the right mid-turn cancel.
+   (`--conversation <id>` resume is now verified and wired up, but it restores the
+   model's thread, not Elevenex's transcript.)
+4. Parameter spellings for the tools that never came up live —
+   `multi_replace_file_content`, `sed_file`, `notebook_edit`, `call_mcp_tool`.
+   Their entries in `AGY_TOOL_MAP` are inferred; a wrong key just leaves the
+   card's target blank rather than breaking it.
+5. Whether there is a cleaner mid-turn cancel than `SIGINT`, which kills the
+   process outright.

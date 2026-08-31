@@ -65,10 +65,11 @@ interface AntigravityRuntimeEntry {
  * event stream instead of ACP.
  *
  * Two structural differences from Gemini worth calling out:
- * - There is no `session/load` resume: every process start is a fresh
- *   conversation. `state.antigravitySessionId` is captured from the `init`
- *   event (when present) purely for future use once `--conversation <id>`
- *   resume is verified against a live binary — it is not used to resume yet.
+ * - There is no `session/load` resume, but `agy`'s own `--conversation <id>`
+ *   does work: `state.antigravitySessionId` is captured from the `init` event
+ *   and passed back on every respawn, so the model's thread survives idle
+ *   shutdown and config changes. What it does not restore is Elevenex's
+ *   transcript — `agy` replays no past steps into the stream.
  * - There is no interactive permission channel, so history/transcript state
  *   is accumulated in-memory per session (`sessionHistories`) rather than
  *   read back from an on-disk conversation log the way Gemini/Codex do.
@@ -337,22 +338,29 @@ export class AntigravityRuntimeService
     result: AntigravityResultEvent,
   ): void {
     const state = this.ensureRuntimeState(sessionId);
-    if (result.status === 'ERROR' || result.status === 'INVALID') {
-      this.emitError(sessionId, result.error || 'Antigravity turn failed.');
-      return;
-    }
-    // `agy` reports both a user-requested stop and its own mid-turn abort as
-    // CANCELED. Only the former is an interrupt; the latter is what happens
-    // when headless mode auto-denies a tool the agent needed, and reporting
-    // it as a clean interrupt is what makes the chat look silently broken.
+    // A user-requested stop has to be recognized before the status is read.
+    // `agy` has no cancel event, so `interrupt()` sends SIGINT — and SIGINT
+    // makes `agy` abort the in-flight request and report the turn as
+    // `ERROR: "timeout waiting for response"` (then exit) rather than as
+    // CANCELED or INTERRUPTED. Checking the status first is what turned every
+    // stop button press into a red error in the chat.
     const interrupted = this.activeRuns.get(sessionId)?.interruptRequested;
     if (
       result.status === 'INTERRUPTED' ||
-      (result.status === 'CANCELED' && interrupted)
+      (interrupted &&
+        (result.status === 'CANCELED' || result.status === 'ERROR'))
     ) {
       this.finalizeInterruptedRun(sessionId);
       return;
     }
+    if (result.status === 'ERROR' || result.status === 'INVALID') {
+      this.emitError(sessionId, result.error || 'Antigravity turn failed.');
+      return;
+    }
+    // `agy` also reports its own mid-turn abort as CANCELED — that is what
+    // happens when headless mode auto-denies a tool the agent needed, and
+    // reporting it as a clean interrupt is what makes the chat look silently
+    // broken.
     if (result.status === 'CANCELED') {
       this.emitError(sessionId, this.describeEmptyTurn(sessionId));
       return;
@@ -577,6 +585,15 @@ export class AntigravityRuntimeService
     // repository at all and reports it as empty. Adding the worktree is what
     // makes file and command tools operate on the session's code.
     const args: string[] = ['--add-dir', worktreePath];
+    // Resume the session's own `agy` conversation when there is one. Without
+    // this every respawn — the 5-minute idle shutdown, a model/effort/
+    // permission change, or the process dying on an interrupt — silently
+    // started a brand-new conversation, so the agent lost the whole thread
+    // mid-session. An id `agy` no longer knows is not fatal: it warns on
+    // stderr and starts fresh, which is exactly the desired fallback.
+    if (state.antigravitySessionId) {
+      args.push('--conversation', state.antigravitySessionId);
+    }
     // `agy` has no headless approval channel: outside
     // `--dangerously-skip-permissions` every tool call needing approval is
     // auto-denied and the turn ends empty. `--mode` still selects the agent's
@@ -656,6 +673,12 @@ export class AntigravityRuntimeService
     this.runtimes.delete(sessionId);
     const run = this.activeRuns.get(sessionId);
     if (!run) return;
+    // SIGINT kills `agy` outright, so a user-requested stop reaches here as an
+    // unexpected exit. Report it as the interrupt it is.
+    if (run.interruptRequested) {
+      this.finalizeInterruptedRun(sessionId);
+      return;
+    }
     const stderr = details.stderr?.trim();
     this.emitError(
       sessionId,
@@ -918,7 +941,13 @@ export class AntigravityRuntimeService
       selectedModel: startup.selectedModel,
       reasoningEffort: startup.reasoningEffort,
       fastMode: false,
-      permissionMode: 'default',
+      // `agy` has no headless approval channel and no "auto" posture: outside
+      // `--dangerously-skip-permissions` every write/command tool call is
+      // auto-denied and the turn ends empty (verified: `--mode accept-edits`
+      // still denies `write_file`). Starting in `default` therefore made every
+      // fresh session fail on its first real tool call, so bypass is the only
+      // usable default here.
+      permissionMode: 'bypassPermissions',
       planMode: false,
       availableModels: catalog.models,
       contextUsage: null,

@@ -154,7 +154,10 @@ export interface AntigravitySessionSnapshotPayload
 }
 
 export interface AntigravityRuntimeState {
-  /** `agy`'s own conversation id, persisted to `sessions.antigravity_session_id`. */
+  /**
+   * `agy`'s own conversation id, persisted to `sessions.antigravity_session_id`
+   * and passed back as `--conversation <id>` on respawn to resume the thread.
+   */
   antigravitySessionId: string | null;
   cachedWorktreePath: string | null;
   runPhase: AntigravityRunPhase;
