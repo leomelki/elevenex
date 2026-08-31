@@ -148,6 +148,23 @@ contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
   externalLinks: {
     open: (url) => ipcRenderer.invoke('elevenex-external-links:open', url),
   },
+  updates: {
+    getState: () => ipcRenderer.invoke('elevenex-updates:get-state'),
+    check: (payload) => ipcRenderer.invoke('elevenex-updates:check', payload),
+    install: () => ipcRenderer.invoke('elevenex-updates:install'),
+    openReleasePage: () => ipcRenderer.invoke('elevenex-updates:open-release-page'),
+    onStateChanged: (callback) => {
+      if (typeof callback !== 'function') {
+        return () => {};
+      }
+
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('elevenex-updates:state-changed', listener);
+      return () => {
+        ipcRenderer.removeListener('elevenex-updates:state-changed', listener);
+      };
+    },
+  },
   authWindow: {
     open: (payload) => ipcRenderer.invoke('elevenex-auth-window:open', payload),
   },

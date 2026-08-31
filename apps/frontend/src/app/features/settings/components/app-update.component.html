@@ -1,0 +1,124 @@
+<!-- Hidden entirely in the browser build and on platforms with no published
+     artifact: there is no action the user could take from here. -->
+@if (state(); as update) {
+  @if (update.supported) {
+    <section class="rounded-lg border border-border bg-card">
+      <div class="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+        <div class="min-w-0">
+          <h2 class="text-sm font-semibold text-foreground">Updates</h2>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Elevenex installs the newest desktop build published for this platform.
+          </p>
+        </div>
+
+        <button
+          z-button
+          zType="outline"
+          zSize="sm"
+          type="button"
+          [zDisabled]="busy()"
+          [zLoading]="update.status === 'checking'"
+          (click)="check()"
+        >
+          @if (update.status !== 'checking') {
+            <ng-icon name="lucideRefreshCw" size="14" />
+          }
+          <span>Check for updates</span>
+        </button>
+      </div>
+
+      <div class="grid gap-4 p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="min-w-0">
+            <div class="text-sm font-medium text-foreground">Installed build</div>
+            <div class="mt-1 text-sm text-muted-foreground">
+              <code class="font-mono font-semibold text-foreground">{{ update.currentVersionShort ?? 'unknown' }}</code>
+            </div>
+          </div>
+
+          @switch (update.status) {
+            @case ('up-to-date') {
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-success/40 bg-success/10 px-2.5 py-1 text-xs font-medium text-success">
+                <ng-icon name="lucideCircleCheck" size="13" />
+                Up to date
+              </span>
+            }
+            @case ('ready-to-restart') {
+              <button z-button zType="default" zSize="sm" type="button" (click)="restart()">
+                <ng-icon name="lucideRotateCcw" size="14" />
+                <span>Restart to finish</span>
+              </button>
+            }
+            @default {
+              @if (update.status !== 'checking' && update.latestVersion && update.status !== 'error') {
+                <button
+                  z-button
+                  zType="default"
+                  zSize="sm"
+                  type="button"
+                  [zDisabled]="busy()"
+                  [zLoading]="busy()"
+                  (click)="install()"
+                >
+                  @if (!busy()) {
+                    <ng-icon name="lucideDownload" size="14" />
+                  }
+                  <span>Update to {{ update.latestVersionShort }}</span>
+                </button>
+              }
+            }
+          }
+        </div>
+
+        @if (update.status === 'available') {
+          <div class="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+            <span class="text-foreground">Build {{ update.latestVersionShort }}</span>
+            @if (formatPublishedAt(update.publishedAt); as published) {
+              <span> published {{ published }}</span>
+            }
+            <span>. {{ handoffNote() }}</span>
+          </div>
+        }
+
+        @if (update.status === 'downloading' || update.status === 'verifying') {
+          <div>
+            <z-progress-bar
+              zSize="sm"
+              [zValue]="progress()"
+              [zLabel]="'Downloading update ' + (update.latestVersionShort ?? '')"
+            />
+            <div class="mt-1.5 text-xs text-muted-foreground">{{ update.message }}</div>
+          </div>
+        }
+
+        @if (update.status === 'installing' && update.message) {
+          <div class="text-sm text-muted-foreground">{{ update.message }}</div>
+        }
+
+        @if (update.status === 'error' && update.error) {
+          <div
+            class="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-foreground"
+            role="alert"
+          >
+            <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 shrink-0 text-destructive" />
+            <div class="min-w-0">
+              <div>{{ update.error }}</div>
+              <a
+                z-button
+                zType="ghost"
+                zSize="sm"
+                class="mt-2 -ml-3"
+                [href]="update.releaseUrl"
+                rel="noreferrer"
+                (click)="openReleasePage($event)"
+              >
+                <span>Download it manually</span>
+                <ng-icon name="lucideArrowUpRight" size="14" />
+              </a>
+            </div>
+          </div>
+        }
+      </div>
+    </section>
+  }
+}

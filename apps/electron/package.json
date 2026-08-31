@@ -34,6 +34,8 @@
       "main.cjs",
       "preload.cjs",
       "settings-preload.cjs",
+      "app-updater.cjs",
+      "download-utils.cjs",
       "remote-server-utils.cjs",
       "wsl-utils.cjs",
       "assets/**/*",

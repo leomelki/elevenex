@@ -1,7 +1,6 @@
 const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, session, shell } = require('electron');
-const { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } = require('fs');
+const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } = require('fs');
 const http = require('http');
-const https = require('https');
 const net = require('net');
 const os = require('os');
 const path = require('path');
@@ -29,6 +28,8 @@ const {
   listWslDistros,
   getDefaultWslDistro,
 } = require('./wsl-utils.cjs');
+const { downloadToFile, formatBytes } = require('./download-utils.cjs');
+const { createAppUpdater } = require('./app-updater.cjs');
 
 // Common install directories for user-facing binaries (tmux, claude, plannotator,
 // cursor). macOS Electron apps launched from Finder/DMG get a stripped PATH
@@ -816,12 +817,6 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function formatBytes(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function updateInstallProgress({ status, percent }) {
   if (!installWindow || installWindow.isDestroyed()) {
     return;
@@ -830,73 +825,6 @@ function updateInstallProgress({ status, percent }) {
     ? `document.getElementById('progress').classList.remove('indeterminate');document.getElementById('progress').setAttribute('aria-valuenow','${percent}');document.getElementById('progress').setAttribute('aria-valuemin','0');document.getElementById('progress').setAttribute('aria-valuemax','100');document.getElementById('fill').style.width='${percent}%';document.getElementById('status').textContent=${JSON.stringify(status || '')};`
     : `document.getElementById('progress').classList.add('indeterminate');document.getElementById('progress').removeAttribute('aria-valuenow');document.getElementById('progress').removeAttribute('aria-valuemin');document.getElementById('progress').removeAttribute('aria-valuemax');document.getElementById('fill').style.width='';document.getElementById('status').textContent=${JSON.stringify(status || '')};`;
   installWindow.webContents.executeJavaScript(js).catch(() => {});
-}
-
-const MAX_DOWNLOAD_REDIRECTS = 5;
-const PROGRESS_THROTTLE_MS = 150;
-
-function downloadToFile(url, destinationPath, onProgress, _redirectCount = 0) {
-  if (_redirectCount > MAX_DOWNLOAD_REDIRECTS) {
-    return Promise.reject(new Error(`Too many redirects downloading ${url}`));
-  }
-
-  return new Promise((resolve, reject) => {
-    mkdirSync(path.dirname(destinationPath), { recursive: true });
-    const file = createWriteStream(destinationPath);
-    let settled = false;
-
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      file.close(() => {
-        rmSync(destinationPath, { force: true });
-        reject(error);
-      });
-    };
-
-    const get = url.startsWith('https') ? https.get : http.get;
-
-    get(url, (response) => {
-      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-        response.resume();
-        file.close();
-        rmSync(destinationPath, { force: true });
-        downloadToFile(response.headers.location, destinationPath, onProgress, _redirectCount + 1)
-          .then(resolve, reject);
-        return;
-      }
-
-      if (response.statusCode !== 200) {
-        response.resume();
-        fail(new Error(`Download failed (HTTP ${response.statusCode}): ${url}`));
-        return;
-      }
-
-      const totalBytes = parseInt(response.headers['content-length'], 10) || 0;
-      let receivedBytes = 0;
-      let lastProgressAt = 0;
-
-      if (onProgress && totalBytes > 0) {
-        response.on('data', (chunk) => {
-          receivedBytes += chunk.length;
-          const now = Date.now();
-          if (now - lastProgressAt >= PROGRESS_THROTTLE_MS || receivedBytes >= totalBytes) {
-            lastProgressAt = now;
-            onProgress(receivedBytes, totalBytes);
-          }
-        });
-      }
-
-      response.on('error', fail);
-      response.pipe(file);
-      file.on('finish', () => {
-        if (settled) return;
-        settled = true;
-        file.close(resolve);
-      });
-      file.on('error', fail);
-    }).on('error', fail);
-  });
 }
 
 const NATIVE_BINARY_EXTENSIONS = ['.node', '.dylib'];
@@ -3956,6 +3884,41 @@ ipcMain.handle('elevenex-app:restart', () => {
   // next launch the backend re-detects tmux.
   app.relaunch();
   requestAppQuit();
+});
+
+// Built lazily: the constructor touches app.getPath('userData'), which is only
+// meaningful after app.setPath() has run, and there is no reason to hit disk for
+// a feature the user may never open.
+let appUpdater = null;
+
+function getAppUpdater() {
+  if (!appUpdater) {
+    appUpdater = createAppUpdater({
+      app,
+      shell,
+      getCurrentVersion: getBundledVersion,
+      onStateChanged: (state) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('elevenex-updates:state-changed', state);
+        }
+      },
+      requestQuit: requestAppQuit,
+    });
+  }
+
+  return appUpdater;
+}
+
+ipcMain.handle('elevenex-updates:get-state', () => getAppUpdater().getState());
+
+ipcMain.handle('elevenex-updates:check', (_event, payload) =>
+  getAppUpdater().check({ force: payload?.force === true }));
+
+ipcMain.handle('elevenex-updates:install', () => getAppUpdater().downloadAndInstall());
+
+ipcMain.handle('elevenex-updates:open-release-page', async () => {
+  await getAppUpdater().openReleasePage();
+  return true;
 });
 
 ipcMain.handle('elevenex-browser:is-supported', () => true);
