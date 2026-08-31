@@ -4,18 +4,36 @@ import { ToolError } from '../../tool-registry/tool.types.js';
 import type { ToolContext } from '../../tool-registry/tool.types.js';
 
 export type WorktreeCategory = 'available' | 'yours' | 'all';
+export type DerivedCategory = 'available' | 'yours' | 'main';
+
+/**
+ * True for the repository's own main working tree, which `git worktree list`
+ * reports alongside the real pool worktrees. Git refuses to move it and the
+ * human works in it directly, so it is never reusable — reusing it would
+ * switch the branch under the checkout the user is sitting in.
+ */
+export function isMainWorktree(item: WorktreePoolItem): boolean {
+  return item.path === item.repoRootPath;
+}
 
 /**
  * Derive a coarse category for a pool item from its link/owner flags:
+ *  - `main`      — the repo's main working tree; visible, but never reusable.
  *  - `available` — no owning workspace (unlinked & unowned), free to take.
  *  - `yours`     — has a linked owning workspace (owned by a project here).
  * The pool item carries no per-agent identity, so "yours" means "owned by an
  * elevenex project" rather than a specific caller.
  */
-export function deriveCategory(item: WorktreePoolItem): 'available' | 'yours' {
+export function deriveCategory(item: WorktreePoolItem): DerivedCategory {
+  if (isMainWorktree(item)) return 'main';
   return item.owner ? 'yours' : 'available';
 }
 
+/**
+ * The main working tree deliberately matches only 'all': listing it under
+ * 'available' invites an agent to link it and switch the branch of the
+ * repository's primary checkout.
+ */
 export function matchesCategory(
   item: WorktreePoolItem,
   category: WorktreeCategory,
@@ -56,6 +74,9 @@ export function poolItemHandle(item: WorktreePoolItem) {
     hasConflicts: item.hasConflicts,
     isLocked: item.isLocked,
     isMissing: item.isMissing,
+    // Only present when true — a hard "do not reuse this one" marker that no
+    // combination of the other flags conveys.
+    ...(isMainWorktree(item) ? { isMainWorktree: true as const } : {}),
     // Sessions still bound to this worktree: >0 means someone is using it and
     // its files must stay put. 0 means it is free regardless of what it holds.
     activeSessionCount: item.activeSessionCount,

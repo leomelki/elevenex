@@ -41,6 +41,18 @@ export const deleteWorktreeTool = defineTool({
       });
     }
 
+    // Refuse the main working tree BEFORE tearing anything down: removeWorktree
+    // rejects it too, but only after the sessions below have been deleted, and
+    // that deletion is not recoverable.
+    if (await worktrees.isMainWorktree(repo.path, worktreePath)) {
+      throw new ToolError({
+        code: 'cannot_delete_main_worktree',
+        message: `${worktreePath} is the repository's main working tree — git cannot remove it.`,
+        remediation:
+          'Pass the path of a pool worktree instead; assess_worktree_pool marks the main one with isMainWorktree:true.',
+      });
+    }
+
     // Stop sessions bound to this worktree before the directory disappears.
     await sessions
       .deleteByRepoAndWorktreePath(repo.id, worktreePath)

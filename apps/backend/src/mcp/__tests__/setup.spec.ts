@@ -68,6 +68,11 @@ function emptyPool() {
   return { streamForRepo: jest.fn(async () => 0) };
 }
 
+/** The common case: the path under test is a pool worktree, not the main tree. */
+function notMainWorktree() {
+  return jest.fn().mockResolvedValue(false);
+}
+
 describe('setup tool group', () => {
   it('registers all 16 setup tools', () => {
     expect(SETUP_TOOLS.map((t) => t.name).sort()).toEqual(
@@ -262,7 +267,7 @@ describe('setup tool group', () => {
       const ctx = makeCtx({
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, path: '/repo' }) },
         sessions: { deleteByRepoAndWorktreePath },
-        worktrees: { removeWorktree },
+        worktrees: { removeWorktree, isMainWorktree: notMainWorktree() },
       });
       const res = await deleteWorktreeTool.handler(
         { repoId: 1, worktreePath: '/repo/.worktrees/feature' },
@@ -290,7 +295,7 @@ describe('setup tool group', () => {
         sessions: {
           deleteByRepoAndWorktreePath: jest.fn().mockRejectedValue(new Error('boom')),
         },
-        worktrees: { removeWorktree },
+        worktrees: { removeWorktree, isMainWorktree: notMainWorktree() },
       });
       await deleteWorktreeTool.handler(
         { repoId: 1, worktreePath: '/repo/.worktrees/feature' },
@@ -305,6 +310,7 @@ describe('setup tool group', () => {
         sessions: { deleteByRepoAndWorktreePath: jest.fn().mockResolvedValue(undefined) },
         worktrees: {
           removeWorktree: jest.fn().mockRejectedValue(new Error('not a worktree')),
+          isMainWorktree: notMainWorktree(),
         },
       });
       await expect(
@@ -313,6 +319,26 @@ describe('setup tool group', () => {
           ctx,
         ),
       ).rejects.toBeInstanceOf(ToolError);
+    });
+
+    it('refuses the main working tree without destroying its sessions first', async () => {
+      const deleteByRepoAndWorktreePath = jest.fn();
+      const removeWorktree = jest.fn();
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, path: '/repo' }) },
+        sessions: { deleteByRepoAndWorktreePath },
+        worktrees: {
+          removeWorktree,
+          isMainWorktree: jest.fn().mockResolvedValue(true),
+        },
+      });
+      await expect(
+        deleteWorktreeTool.handler({ repoId: 1, worktreePath: '/repo' }, ctx),
+      ).rejects.toMatchObject({ code: 'cannot_delete_main_worktree' });
+      // git would refuse the removal anyway; the point is that the session
+      // teardown must not have already run by then.
+      expect(deleteByRepoAndWorktreePath).not.toHaveBeenCalled();
+      expect(removeWorktree).not.toHaveBeenCalled();
     });
   });
 
@@ -788,6 +814,140 @@ describe('setup tool group', () => {
       const data = res.data as any;
       expect(data.poolCheckResult).toBe('branch_already_checked_out');
       expect(startJob).not.toHaveBeenCalled();
+    });
+
+    it('fetches from origin and returns a snapshot on the reuse path, not just when creating', async () => {
+      const fetchBranch = jest.fn().mockResolvedValue(undefined);
+      const getBranchSnapshot = jest
+        .fn()
+        .mockResolvedValue({ ahead: 0, behind: 3, remoteExists: true });
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(poolItem({ id: 70, owner: null, currentBranch: 'other/thing' }));
+        return 1;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: {
+          localBranchExists: jest.fn().mockResolvedValue(true),
+          fetchBranch,
+          getBranchSnapshot,
+        },
+        worktreeJobs: { startJob: jest.fn() },
+        worktreePool: { streamForRepo },
+      });
+      const res = await createWorktreeTool.handler(
+        { repoId: 1, branchName: 'feature/x', from_origin: true },
+        ctx,
+      );
+      const data = res.data as any;
+      expect(data.poolCheckResult).toBe('reclaimable_worktrees_found');
+      // The branch must be refreshed even though no worktree is being created.
+      expect(fetchBranch).toHaveBeenCalledWith('/repo', 'feature/x', false);
+      expect(data.branchSnapshot).toEqual({ ahead: 0, behind: 3, remoteExists: true });
+      expect(data.branchReady).toBe(true);
+    });
+
+    it('creates the local branch before handing back a reuse candidate for a new branch', async () => {
+      const createLocalBranch = jest.fn().mockResolvedValue(undefined);
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(poolItem({ id: 71, owner: null, currentBranch: 'other/thing' }));
+        return 1;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: {
+          localBranchExists: jest.fn().mockResolvedValue(false),
+          getDefaultBranch: jest.fn().mockResolvedValue('origin/main'),
+          createLocalBranch,
+        },
+        worktreeJobs: { startJob: jest.fn() },
+        worktreePool: { streamForRepo },
+      });
+      const res = await createWorktreeTool.handler(
+        { repoId: 1, branchName: 'user/brand-new', startPoint: 'origin/main' },
+        ctx,
+      );
+      const data = res.data as any;
+      // Without this, link_worktree's plain `git checkout` would fail: the
+      // branch has no ref yet.
+      expect(createLocalBranch).toHaveBeenCalledWith('/repo', 'user/brand-new', 'origin/main');
+      expect(data.createdBranchFrom).toBe('origin/main');
+      expect(data.branchReady).toBe(true);
+    });
+
+    it('tolerates a concurrently created branch instead of failing the reuse path', async () => {
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(poolItem({ id: 72, owner: null, currentBranch: 'other/thing' }));
+        return 1;
+      });
+      // Absent on the pre-check, present by the time we try to create it.
+      const localBranchExists = jest
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValue(true);
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: {
+          localBranchExists,
+          getDefaultBranch: jest.fn().mockResolvedValue('origin/main'),
+          createLocalBranch: jest
+            .fn()
+            .mockRejectedValue(new Error("fatal: a branch named 'x' already exists")),
+        },
+        worktreeJobs: { startJob: jest.fn() },
+        worktreePool: { streamForRepo },
+      });
+      const res = await createWorktreeTool.handler(
+        { repoId: 1, branchName: 'user/raced', startPoint: 'origin/main' },
+        ctx,
+      );
+      expect((res.data as any).poolCheckResult).toBe('reclaimable_worktrees_found');
+      expect((res.data as any).branchReady).toBe(true);
+    });
+
+    it('never offers the repo main working tree as a reclaim candidate', async () => {
+      const startJob = jest.fn().mockReturnValue({ id: 'job-m', status: 'pending' });
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        // Main working tree: pool path === repo root path.
+        await onItem(
+          poolItem({ id: 80, name: 'repo', path: '/repo', repoRootPath: '/repo', owner: null }),
+        );
+        return 1;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+        worktreeJobs: { startJob },
+        worktreePool: { streamForRepo },
+      });
+      const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
+      // Falls through to creation rather than proposing to hijack the main checkout.
+      expect((res.data as any).jobId).toBe('job-m');
+    });
+
+    it('refuses rather than proposing takeover when the branch sits in the main working tree', async () => {
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(
+          poolItem({
+            id: 81,
+            name: 'repo',
+            path: '/repo',
+            repoRootPath: '/repo',
+            currentBranch: 'main',
+            owner: null,
+          }),
+        );
+        return 1;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+        worktreeJobs: { startJob: jest.fn() },
+        worktreePool: { streamForRepo },
+      });
+      await expect(
+        createWorktreeTool.handler({ repoId: 1, branchName: 'main' }, ctx),
+      ).rejects.toMatchObject({ code: 'branch_checked_out_elsewhere' });
     });
   });
 

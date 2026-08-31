@@ -217,6 +217,42 @@ export class WorktreesService {
   }
 
   /**
+   * True when `worktreePath` is the repo's own main working tree. Callers that
+   * tear down state before removing a worktree must check this up front:
+   * removeWorktree refuses the main tree, but by then the teardown has already
+   * happened and cannot be undone.
+   */
+  async isMainWorktree(
+    repoPath: string,
+    worktreePath: string,
+  ): Promise<boolean> {
+    return (
+      (await this.realPathOrRaw(repoPath)) ===
+      (await this.realPathOrRaw(worktreePath))
+    );
+  }
+
+  /**
+   * Create a local branch ref from a start point WITHOUT checking it out
+   * anywhere. Needed when an existing worktree is being reused for a brand-new
+   * branch: reuse checks the branch out with a plain `git checkout`, which
+   * fails on a branch that has no ref yet, so the ref has to exist first.
+   */
+  async createLocalBranch(
+    repoPath: string,
+    branchName: string,
+    startPoint: string,
+  ): Promise<void> {
+    const git = worktreeSimpleGit(repoPath);
+    try {
+      await git.raw(['branch', branchName, startPoint]);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(`Failed to create branch: ${message}`);
+    }
+  }
+
+  /**
    * Return ahead/behind counts vs origin and the tip commit for a local branch.
    * Does not require the branch to be checked out in a worktree.
    */

@@ -25,6 +25,7 @@ export const assessWorktreePoolTool = defineTool({
   description:
     "List a repo's worktrees as compact handles, scoped by category and capped (the git-status scan is expensive — always scope). 🟢cached. Use 'available' to find a free worktree, 'yours' for owned ones. " +
     'Judge reusability from the flags, not the names: a worktree with isDirty/hasConflicts/isLocked/isMissing false and activeSessionCount 0 is free to take whatever branch it holds or task it was made for, because rename_worktree + switch_branch reset it. ' +
+    "The one exception is isMainWorktree:true — the repository's own checkout, which only appears under category 'all' and must never be linked, stolen, renamed or switched. " +
     'Next: link_worktree to reuse, create_worktree for a new one, or steal_worktree to take an owned one.',
   annotations: { readOnlyHint: true },
   inputShape: {

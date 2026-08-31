@@ -3,12 +3,16 @@ import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import {
   defaultWorktreePath,
   isInUse,
+  isMainWorktree,
   lastActivityAt,
   poolItemHandle,
   resolveRepo,
 } from './worktree.util.js';
 import type { WorktreePoolItem } from '../../../worktrees/worktree-pool.service.js';
-import type { BranchSnapshot } from '../../../worktrees/worktrees.service.js';
+import type {
+  BranchSnapshot,
+  WorktreesService,
+} from '../../../worktrees/worktrees.service.js';
 
 /** Worktrees unused for longer than this are candidates to steal/reuse. */
 const STALE_THRESHOLD_MS = 72 * 60 * 60 * 1000; // 72 hours
@@ -38,6 +42,10 @@ type ReclaimAction = 'link_worktree' | 'steal_worktree';
  * under it), never a judgement about what the worktree was previously for.
  */
 function blockedReason(item: WorktreePoolItem, now: number): string | null {
+  // The repo's own main working tree is in the pool too (`git worktree list`
+  // reports it). It must never be handed out for reuse: git refuses to move it,
+  // and switching its branch hijacks the checkout the human works in directly.
+  if (isMainWorktree(item)) return 'main_working_tree';
   if (item.isMissing) return 'missing_on_disk';
   if (item.isLocked) return 'locked';
   if (item.hasConflicts) return 'unresolved_conflicts';
@@ -53,6 +61,100 @@ function blockedReason(item: WorktreePoolItem, now: number): string | null {
   const idleMs = now - new Date(activity).getTime();
   if (Number.isNaN(idleMs)) return null;
   return idleMs > STALE_THRESHOLD_MS ? null : 'owner_recently_active';
+}
+
+interface BranchPreparation {
+  /** True once the branch has a local ref — possibly created by this call. */
+  localExists: boolean;
+  /** Base ref a still-missing branch must be forked from. */
+  resolvedStartPoint?: string;
+  branchSnapshot?: BranchSnapshot;
+}
+
+/**
+ * Bring the requested branch to the state the caller asked for — fetch it from
+ * origin, refresh the base ref, resolve a start point — and report what is
+ * still missing.
+ *
+ * Deliberately runs on the reuse paths as well as the create path. `from_origin`
+ * and `fetch_start_point` describe the *branch*, not the worktree, so skipping
+ * them when a worktree is reused would silently hand back a branch stuck at a
+ * stale local ref while the identical call that happened to find an empty pool
+ * got a freshly fetched one.
+ */
+async function prepareBranch(
+  worktrees: WorktreesService,
+  repoPath: string,
+  branchName: string,
+  args: {
+    from_origin?: boolean;
+    startPoint?: string;
+    fetch_start_point?: boolean;
+  },
+): Promise<BranchPreparation> {
+  const localExists = await worktrees.localBranchExists(repoPath, branchName);
+
+  // Resolved start point: explicit arg wins; otherwise auto-detect default branch.
+  let resolvedStartPoint = args.startPoint?.trim() || undefined;
+
+  if (!localExists) {
+    if (!args.from_origin && !resolvedStartPoint) {
+      // Auto-detect the repo's default branch from refs/remotes/origin/HEAD.
+      const detected = await worktrees.getDefaultBranch(repoPath);
+      if (detected) {
+        resolvedStartPoint = detected;
+      } else {
+        // Detection failed (no remote, shallow clone, etc.) — ask the agent.
+        const remoteExists = await worktrees.remoteBranchExists(repoPath, branchName);
+        throw new ToolError({
+          code: 'branch_not_found_locally',
+          message: `Branch "${branchName}" does not exist locally and the repo default branch could not be detected.`,
+          remediation: remoteExists
+            ? `origin/${branchName} exists. Re-call with from_origin: true to fetch and create a local tracking branch, or pass startPoint to create a fresh branch from a different base.`
+            : `No local or remote branch named "${branchName}" was found. Pass startPoint (e.g. "origin/main") to create a new branch from that base.`,
+          retryable: true,
+        });
+      }
+    }
+
+    if (args.from_origin) {
+      // from_origin=true: fetch creates the local tracking branch
+      const remoteExists = await worktrees.remoteBranchExists(repoPath, branchName);
+      if (!remoteExists) {
+        throw new ToolError({
+          code: 'remote_branch_not_found',
+          message: `Branch "${branchName}" does not exist on origin and has no local ref.`,
+          remediation: `Pass startPoint (e.g. "origin/main") to create a new branch from a base ref instead.`,
+        });
+      }
+
+      await worktrees.fetchBranch(repoPath, branchName, true);
+    }
+  } else if (args.from_origin) {
+    // Branch exists locally; refresh the remote tracking ref
+    await worktrees.fetchBranch(repoPath, branchName, false);
+  }
+
+  // Refresh the base ref so the new branch starts from the latest upstream commit.
+  if (!localExists && !args.from_origin && args.fetch_start_point && resolvedStartPoint) {
+    const baseRemoteBranch = resolvedStartPoint.startsWith('origin/')
+      ? resolvedStartPoint.slice('origin/'.length)
+      : resolvedStartPoint;
+    await worktrees.fetchBranch(repoPath, baseRemoteBranch, false);
+  }
+
+  let branchSnapshot: BranchSnapshot | undefined;
+  if (args.from_origin) {
+    branchSnapshot = await worktrees.getBranchSnapshot(repoPath, branchName);
+  }
+
+  return {
+    // A from_origin fetch uses the `branch:branch` refspec, so by this point it
+    // has created the local ref itself.
+    localExists: localExists || Boolean(args.from_origin),
+    resolvedStartPoint,
+    branchSnapshot,
+  };
 }
 
 /**
@@ -80,7 +182,15 @@ function blockedReason(item: WorktreePoolItem, now: number): string | null {
  * the truncated list is the best of the pool, and the worktrees that were ruled
  * out come back with a physical `reason` — the caller never has to infer
  * suitability from names or branches. `force` requires a `forceReason` from a
- * closed enum so "these look unrelated to my task" cannot be expressed.
+ * closed enum so "these look unrelated to my task" cannot be expressed. The
+ * repo's own main working tree is never a candidate: git will not move it and
+ * switching its branch would hijack the checkout the human works in.
+ *
+ * Branch preparation is identical on every path (see prepareBranch): reuse
+ * fetches, refreshes and snapshots exactly as creation does, and additionally
+ * creates the local branch ref when it does not exist yet. Reuse checks the
+ * branch out with a plain `git checkout`, so without that ref every "new branch
+ * off main" mission would fail the moment the pool held a spare worktree.
  *
  * Branch-ownership check: runs BEFORE the reuse gate and even when `force` is
  * set, because it is not a preference but a git constraint — the same branch
@@ -103,6 +213,7 @@ export const createWorktreeTool = defineTool({
     'A worktree is disposable infrastructure, not a record of what it was used for: the branch it holds, its name, and the task it was created for do NOT make it unsuitable — rename_worktree + switch_branch reset it completely. The only real blockers (uncommitted changes, conflicts, lock, attached sessions) are already filtered out for you, and reported in the response so you do not have to guess. ' +
     'force:true is therefore not a way to override a judgement call: it requires forceReason and is limited to the human asking for a new worktree, candidates that actually failed to link, or needing several worktrees at once. ' +
     'If branchName is already checked out in another worktree in the pool, this call never spawns a doomed job (git refuses the same branch in two worktrees): a free one is returned as the candidate to reuse, or, if it is busy, the call errors with branch_checked_out_elsewhere instead. ' +
+    'Reuse is never a downgrade: whichever way this call resolves, the branch is fetched/refreshed exactly as requested and created when it does not exist yet, so a returned candidate is ready to link_worktree straight away — do not re-call this tool to "really" get the branch. ' +
     'If branchName has no local ref and neither from_origin nor startPoint is set, the tool auto-detects the repo default branch (origin/HEAD) and uses it as startPoint — no extra call needed for the common "new branch off main" case. ' +
     'Pass startPoint explicitly to fork from a specific ref (e.g. "origin/release/2.0"). ' +
     'Pass fetch_start_point: true (recommended for new feature branches) to fetch the base ref from origin before forking, so the new branch starts from the latest upstream commit rather than a potentially stale local tracking ref. ' +
@@ -221,7 +332,12 @@ export const createWorktreeTool = defineTool({
 
     await worktreePool.streamForRepo(repo, (item) => {
       const reason = blockedReason(item, now);
-      if (item.currentBranch === branchName) {
+      // Keep the first match, but let a reclaimable one displace a blocked one:
+      // a stale pool row must not mask the worktree that can actually be reused.
+      if (
+        item.currentBranch === branchName &&
+        (!branchOwner || (branchOwner.reason && !reason))
+      ) {
         branchOwner = { item: poolItemHandle(item), reason };
       }
       if (args.force) return;
@@ -235,6 +351,14 @@ export const createWorktreeTool = defineTool({
         idleSince: lastActivityAt(item) ?? undefined,
       });
     });
+
+    // Fetch/refresh the branch itself before any return below, so a reused
+    // worktree is never handed back staler than a newly created one would be.
+    const prep = await prepareBranch(worktrees, repo.path, branchName, args);
+    const snapshot =
+      prep.branchSnapshot !== undefined
+        ? { branchSnapshot: prep.branchSnapshot }
+        : {};
 
     if (branchOwner) {
       const reclaimAction: ReclaimAction = branchOwner.item.owner
@@ -250,6 +374,7 @@ export const createWorktreeTool = defineTool({
             poolCheckResult: 'branch_already_checked_out',
             candidateCount: 1,
             candidates: [{ ...branchOwner.item, reclaimAction }],
+            ...snapshot,
           },
           nextStep:
             `Branch "${branchName}" is already checked out in worktree #${branchOwner.item.worktreeId} ` +
@@ -266,10 +391,12 @@ export const createWorktreeTool = defineTool({
           `(${branchOwner.item.path}), which is currently "${branchOwner.reason}". Git does not allow the ` +
           'same branch to be checked out in two worktrees at once, so create_worktree would fail once the job runs.',
         remediation:
-          branchOwner.reason === 'sessions_still_attached'
-            ? 'A session is already attached to that worktree — use it instead of creating a new one for the same branch.'
-            : `That worktree cannot be reclaimed right now (${branchOwner.reason}). Wait for it to free up and reuse it, ` +
-              'or pass a different branchName if this genuinely needs to be an independent branch.',
+          branchOwner.reason === 'main_working_tree'
+            ? `That is the repository's main working tree, which is never reusable. Check out a different branch there by hand, or pass a different branchName.`
+            : branchOwner.reason === 'sessions_still_attached'
+              ? 'A session is already attached to that worktree — use it instead of creating a new one for the same branch.'
+              : `That worktree cannot be reclaimed right now (${branchOwner.reason}). Wait for it to free up and reuse it, ` +
+                'or pass a different branchName if this genuinely needs to be an independent branch.',
         retryable: true,
       });
     }
@@ -287,6 +414,49 @@ export const createWorktreeTool = defineTool({
           return (left.idleSince ?? '').localeCompare(right.idleSince ?? '');
         });
 
+        // Reuse checks the branch out with a plain `git checkout`, which fails
+        // outright on a branch that has no ref yet. Creating the ref here is
+        // what makes reuse a real substitute for creation: without it the
+        // reuse-first policy would break every "new branch off main" mission
+        // the moment the pool happened to hold a spare worktree.
+        let createdBranchFrom: string | undefined;
+        if (!prep.localExists) {
+          if (!prep.resolvedStartPoint) {
+            throw new ToolError({
+              code: 'branch_not_found_locally',
+              message: `Branch "${branchName}" does not exist locally and no start point could be resolved, so a reusable worktree cannot be switched to it.`,
+              remediation:
+                'Pass startPoint (e.g. "origin/main") to fork the branch from that base, or from_origin: true if it already exists on origin.',
+              retryable: true,
+            });
+          }
+          try {
+            await worktrees.createLocalBranch(
+              repo.path,
+              branchName,
+              prep.resolvedStartPoint,
+            );
+            createdBranchFrom = prep.resolvedStartPoint;
+          } catch (error) {
+            // Another agent may have created the same branch between our
+            // existence check and this call. That is the state we wanted, so
+            // only a genuine failure is worth reporting.
+            if (!(await worktrees.localBranchExists(repo.path, branchName))) {
+              throw new ToolError({
+                code: 'branch_creation_failed',
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : `Could not create branch "${branchName}".`,
+                remediation:
+                  `The worktree candidates below are reusable, but "${branchName}" could not be created from ` +
+                  `${prep.resolvedStartPoint}. Check the branch name is valid and the start point exists, then re-call.`,
+                retryable: true,
+              });
+            }
+          }
+        }
+
         return {
           data: {
             poolCheckResult: 'reclaimable_worktrees_found',
@@ -296,9 +466,15 @@ export const createWorktreeTool = defineTool({
             // ruled out for you — no need to reason about them yourself.
             blockedCount: blocked.length,
             blocked: blocked.slice(0, MAX_CANDIDATES),
+            // The branch is ready to be checked out: fetched when you asked for
+            // it, and created when it did not exist yet.
+            branchReady: true,
+            ...(createdBranchFrom !== undefined ? { createdBranchFrom } : {}),
+            ...snapshot,
           },
           nextStep:
             'Reuse one of these instead of creating a new worktree — that is the expected outcome of this call, not an option. ' +
+            `Branch "${branchName}" has already been prepared for you${createdBranchFrom ? ` (created from ${createdBranchFrom})` : ''}, so it is ready to check out — do NOT re-call create_worktree to get it. ` +
             'Every candidate listed is clean, unlocked and has no sessions attached, which is the whole test: a worktree is disposable infrastructure, ' +
             'so the branch it currently holds, the name it carries, and the task it was created for are all irrelevant to whether you may take it. ' +
             'Do NOT reject a candidate for looking unrelated to your task; anything you were about to worry about (someone still needs it, work would be lost) ' +
@@ -311,62 +487,6 @@ export const createWorktreeTool = defineTool({
 
     const worktreePath = args.worktreePath?.trim() || defaultWorktreePath(repo, branchName);
 
-    const localExists = await worktrees.localBranchExists(repo.path, branchName);
-
-    // Resolved start point: explicit arg wins; otherwise auto-detect default branch.
-    let resolvedStartPoint = args.startPoint?.trim() || undefined;
-
-    if (!localExists) {
-      if (!args.from_origin && !resolvedStartPoint) {
-        // Auto-detect the repo's default branch from refs/remotes/origin/HEAD.
-        const detected = await worktrees.getDefaultBranch(repo.path);
-        if (detected) {
-          resolvedStartPoint = detected;
-        } else {
-          // Detection failed (no remote, shallow clone, etc.) — ask the agent.
-          const remoteExists = await worktrees.remoteBranchExists(repo.path, branchName);
-          throw new ToolError({
-            code: 'branch_not_found_locally',
-            message: `Branch "${branchName}" does not exist locally and the repo default branch could not be detected.`,
-            remediation: remoteExists
-              ? `origin/${branchName} exists. Re-call with from_origin: true to fetch and create a local tracking branch, or pass startPoint to create a fresh branch from a different base.`
-              : `No local or remote branch named "${branchName}" was found. Pass startPoint (e.g. "origin/main") to create a new branch from that base.`,
-            retryable: true,
-          });
-        }
-      }
-
-      if (args.from_origin) {
-        // from_origin=true: fetch creates the local tracking branch
-        const remoteExists = await worktrees.remoteBranchExists(repo.path, branchName);
-        if (!remoteExists) {
-          throw new ToolError({
-            code: 'remote_branch_not_found',
-            message: `Branch "${branchName}" does not exist on origin and has no local ref.`,
-            remediation: `Pass startPoint (e.g. "origin/main") to create a new branch from a base ref instead.`,
-          });
-        }
-
-        await worktrees.fetchBranch(repo.path, branchName, true);
-      }
-    } else if (args.from_origin) {
-      // Branch exists locally; refresh the remote tracking ref
-      await worktrees.fetchBranch(repo.path, branchName, false);
-    }
-
-    // Refresh the base ref so the new branch starts from the latest upstream commit.
-    if (!localExists && !args.from_origin && args.fetch_start_point && resolvedStartPoint) {
-      const baseRemoteBranch = resolvedStartPoint.startsWith('origin/')
-        ? resolvedStartPoint.slice('origin/'.length)
-        : resolvedStartPoint;
-      await worktrees.fetchBranch(repo.path, baseRemoteBranch, false);
-    }
-
-    let branchSnapshot: BranchSnapshot | undefined;
-    if (args.from_origin) {
-      branchSnapshot = await worktrees.getBranchSnapshot(repo.path, branchName);
-    }
-
     const job = worktreeJobs.startJob(
       repo.id,
       repo.path,
@@ -375,7 +495,7 @@ export const createWorktreeTool = defineTool({
       // resolvedStartPoint is set for new branches (explicit or auto-detected).
       // After a from_origin fetch the local branch already points at the right
       // commit, so startPoint would be ignored by git anyway.
-      !localExists && !args.from_origin ? resolvedStartPoint : undefined,
+      !prep.localExists ? prep.resolvedStartPoint : undefined,
     );
 
     return {
@@ -385,7 +505,7 @@ export const createWorktreeTool = defineTool({
         repoId: repo.id,
         branchName,
         worktreePath,
-        ...(branchSnapshot !== undefined ? { branchSnapshot } : {}),
+        ...snapshot,
       },
       touched: { jobId: job.id },
       nextStep:
