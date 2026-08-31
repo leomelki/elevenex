@@ -17,7 +17,7 @@ export const renameWorktreeTool = defineTool({
   costClass: 'scoped',
   mutates: true,
   description:
-    "Rename a pool worktree: moves its directory to .worktrees/<repo>/<slug(name)> (git worktree move) and updates its pool record, linked workspace, and context row to match. 🟡scoped. " +
+    'Rename a pool worktree: moves its directory to .worktrees/<repo>/<slug(name)> (git worktree move) and repoints everything keyed on the old path — pool record, linked workspace (name included), sessions, terminals, actions and context row. 🟡scoped. ' +
     'Use this whenever you take over or reuse an existing worktree (via link_worktree or steal_worktree) — treat it as a brand-new worktree with an identity of its own, not a continuation of whatever branch/task it previously held. ' +
     "Give it a name for what YOU are about to do with it, not the branch it currently happens to hold. Get worktreeId from assess_worktree_pool.",
   inputShape: {
@@ -65,7 +65,7 @@ export const renameWorktreeTool = defineTool({
           code: 'rename_failed',
           message: error.message,
           remediation:
-            'Pick a different name, or verify the worktreeId via assess_worktree_pool — the worktree may be locked, missing, or the name may collide with an existing directory.',
+            "Pick a different name, or verify the worktreeId via assess_worktree_pool — the worktree may be locked, missing, the repo's main working tree (which cannot be moved), or the name may collide with an existing directory.",
           retryable: false,
         });
       }

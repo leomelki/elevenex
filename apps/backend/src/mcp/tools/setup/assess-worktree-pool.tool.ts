@@ -23,7 +23,9 @@ export const assessWorktreePoolTool = defineTool({
   costClass: 'cached',
   paginated: true,
   description:
-    "List a repo's worktrees as compact handles, scoped by category and capped (the git-status scan is expensive — always scope). 🟢cached. Use 'available' to find a free worktree, 'yours' for owned ones. Next: link_worktree to reuse, create_worktree for a new one, or steal_worktree to take an owned one.",
+    "List a repo's worktrees as compact handles, scoped by category and capped (the git-status scan is expensive — always scope). 🟢cached. Use 'available' to find a free worktree, 'yours' for owned ones. " +
+    'Judge reusability from the flags, not the names: a worktree with isDirty/hasConflicts/isLocked/isMissing false and activeSessionCount 0 is free to take whatever branch it holds or task it was made for, because rename_worktree + switch_branch reset it. ' +
+    'Next: link_worktree to reuse, create_worktree for a new one, or steal_worktree to take an owned one.',
   annotations: { readOnlyHint: true },
   inputShape: {
     repoId: z
@@ -73,7 +75,7 @@ export const assessWorktreePoolTool = defineTool({
       truncated,
       nextStep: truncated
         ? 'More worktrees match: raise limit or narrow category. To act: link_worktree, create_worktree, or steal_worktree.'
-        : 'Reuse one with link_worktree, make a new one with create_worktree, or take an owned one with steal_worktree.',
+        : 'Prefer reusing: link_worktree for a clean unowned one, steal_worktree for a clean idle owned one (then rename_worktree). create_worktree only when none is reusable.',
     };
   },
 });

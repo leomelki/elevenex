@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
+import * as path from 'node:path';
 import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { eq } from 'drizzle-orm';
 import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
@@ -12,102 +14,33 @@ import {
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 
+/**
+ * Absolute paths resolved for the host platform: the service normalizes every
+ * path through `path.resolve`, so hard-coded literals for one OS make the
+ * suite fail everywhere else.
+ */
+const REPO_PATH = path.resolve('/repo');
+const FEATURE_PATH = path.resolve('/repo-feature');
+const DETACHED_PATH = path.resolve('/repo-detached');
+
 jest.mock('../config/system-paths.js', () => ({
   ...jest.requireActual('../config/system-paths.js'),
   worktreeSimpleGit: jest.fn(),
 }));
 
+/**
+ * The real migrations, not a hand-rolled copy of the schema: a stale copy
+ * drifts silently and fails on columns and tables the service legitimately
+ * uses.
+ */
 function createTestDb() {
   const sqlite = new Database(':memory:');
   sqlite.pragma('foreign_keys = ON');
-  sqlite.exec(`
-    CREATE TABLE projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      hidden INTEGER NOT NULL DEFAULT 0,
-      agent_instructions TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      archived_at TEXT
-    );
-    CREATE TABLE repos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      color TEXT,
-      preferred_context_root_ref TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(project_id, path)
-    );
-    CREATE TABLE repo_worktrees (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_root_path TEXT NOT NULL,
-      path TEXT NOT NULL,
-      name TEXT NOT NULL,
-      created_from_ref TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(repo_root_path, path)
-    );
-    CREATE TABLE workspaces (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      pool_worktree_id INTEGER REFERENCES repo_worktrees(id) ON DELETE SET NULL,
-      is_default INTEGER NOT NULL DEFAULT 0,
-      created_from_ref TEXT,
-      link_status TEXT NOT NULL DEFAULT 'linked',
-      desired_branch TEXT,
-      unlinked_at TEXT,
-      unlinked_by_project_id INTEGER,
-      pending_stash_commit TEXT,
-      pending_stash_message TEXT,
-      pending_stash_created_at TEXT,
-      pending_stash_status TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(repo_id, name),
-      UNIQUE(repo_id, path)
-    );
-    CREATE TABLE sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-      workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
-      branch_name TEXT NOT NULL,
-      worktree_path TEXT NOT NULL,
-      name TEXT,
-      surface TEXT NOT NULL DEFAULT 'session',
-      status TEXT NOT NULL DEFAULT 'created',
-      active_agent_provider TEXT NOT NULL DEFAULT 'claude',
-      claude_session_id TEXT DEFAULT '-1',
-      codex_session_id TEXT DEFAULT '-1',
-      pi_session_path TEXT DEFAULT '-1',
-      has_injected_worktree_context INTEGER NOT NULL DEFAULT 0,
-      has_unreviewed_completion INTEGER NOT NULL DEFAULT 0,
-      last_completion_at TEXT,
-      last_completion_kind TEXT,
-      last_state_change_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE worktree_contexts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-      worktree_path TEXT NOT NULL,
-      root_ref TEXT,
-      context_sentence TEXT,
-      generation_status TEXT NOT NULL DEFAULT 'idle',
-      context_enabled INTEGER NOT NULL DEFAULT 1,
-      generated_at TEXT,
-      last_used_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(repo_id, worktree_path)
-    );
-  `);
-  return { db: drizzle(sqlite, { schema }), sqlite };
+  const db = drizzle(sqlite, { schema });
+  migrate(db, {
+    migrationsFolder: path.resolve(__dirname, '..', '..', 'drizzle'),
+  });
+  return { db, sqlite };
 }
 
 describe('WorktreePoolService', () => {
@@ -131,7 +64,7 @@ describe('WorktreePoolService', () => {
   };
 
   const mainWorktree: WorktreeInfo = {
-    path: 'C:\\repo',
+    path: REPO_PATH,
     head: 'aaa',
     branch: 'main',
     isDetached: false,
@@ -140,7 +73,7 @@ describe('WorktreePoolService', () => {
     lockReason: null,
   };
   const featureWorktree: WorktreeInfo = {
-    path: 'C:\\repo-feature',
+    path: FEATURE_PATH,
     head: 'bbb',
     branch: 'feature',
     isDetached: false,
@@ -157,11 +90,11 @@ describe('WorktreePoolService', () => {
     const [otherProject] = await db.insert(schema.projects).values({ name: 'Two' }).returning();
     [repo] = await db
       .insert(schema.repos)
-      .values({ projectId: project.id, name: 'repo', path: 'C:\\repo' })
+      .values({ projectId: project.id, name: 'repo', path: REPO_PATH })
       .returning();
     [otherRepo] = await db
       .insert(schema.repos)
-      .values({ projectId: otherProject.id, name: 'repo', path: 'C:\\repo' })
+      .values({ projectId: otherProject.id, name: 'repo', path: REPO_PATH })
       .returning();
 
     worktreesServiceMock = {
@@ -211,7 +144,7 @@ describe('WorktreePoolService', () => {
       .values({
         repoId: repo.id,
         name: 'feature',
-        path: 'C:\\repo-feature',
+        path: FEATURE_PATH,
       })
       .returning();
 
@@ -219,8 +152,8 @@ describe('WorktreePoolService', () => {
 
     const poolRows = await db.select().from(schema.repoWorktrees);
     expect(poolRows.map((row) => row.path).sort()).toEqual([
-      'C:\\repo',
-      'C:\\repo-feature',
+      REPO_PATH,
+      FEATURE_PATH,
     ]);
     const [updated] = await db
       .select()
@@ -232,7 +165,7 @@ describe('WorktreePoolService', () => {
   it('links an available pool worktree to the project', async () => {
     await service.reconcileRepo(repo);
     const pool = (await db.select().from(schema.repoWorktrees)).find(
-      (row) => row.path === 'C:\\repo-feature',
+      (row) => row.path === FEATURE_PATH,
     )!;
 
     const linked = await service.linkToProject(repo, pool.id, {
@@ -248,7 +181,7 @@ describe('WorktreePoolService', () => {
   it('renames a pool worktree, moving it and repointing its workspace and context row', async () => {
     await service.reconcileRepo(repo);
     const pool = (await db.select().from(schema.repoWorktrees)).find(
-      (row) => row.path === 'C:\\repo-feature',
+      (row) => row.path === FEATURE_PATH,
     )!;
 
     const [workspace] = await db
@@ -297,7 +230,7 @@ describe('WorktreePoolService', () => {
   it('uses one status call per worktree to populate branch, dirty, and conflict fields', async () => {
     const pathExists = jest.spyOn(service as any, 'pathExists').mockResolvedValue(true);
     await service.reconcileRepo(repo);
-    const featurePath = 'C:\\repo-feature';
+    const featurePath = FEATURE_PATH;
     gitMock.status
       .mockReset()
       .mockResolvedValueOnce({ current: 'main', isClean: () => true, conflicted: [] })
@@ -307,7 +240,7 @@ describe('WorktreePoolService', () => {
     pathExists.mockRestore();
 
     expect(gitMock.status).toHaveBeenCalledTimes(2);
-    const mainItem = items.find((item) => item.path === 'C:\\repo');
+    const mainItem = items.find((item) => item.path === REPO_PATH);
     const featureItem = items.find((item) => item.path === featurePath);
     expect(mainItem?.currentBranch).toBe('main');
     expect(mainItem?.isDirty).toBe(false);
@@ -367,7 +300,7 @@ describe('WorktreePoolService', () => {
     );
 
     const snapshot = await (service as any).getWorktreeStatusSnapshot(
-      'C:\\repo-feature',
+      FEATURE_PATH,
     );
 
     expect(gitMock.status).not.toHaveBeenCalled();
@@ -389,7 +322,7 @@ describe('WorktreePoolService', () => {
 
   it('uses status.current as branch and treats null as detached', async () => {
     const detachedWorktree: WorktreeInfo = {
-      path: 'C:\\repo-detached',
+      path: DETACHED_PATH,
       head: 'detached-head',
       branch: null,
       isDetached: true,
@@ -415,7 +348,7 @@ describe('WorktreePoolService', () => {
     const items = await service.listForRepo(repo);
     pathExists.mockRestore();
 
-    const detached = items.find((item) => item.path === 'C:\\repo-detached');
+    const detached = items.find((item) => item.path === DETACHED_PATH);
     expect(detached).toBeTruthy();
     expect(detached?.currentBranch).toBeNull();
     expect(detached?.isDirty).toBe(false);
@@ -442,14 +375,14 @@ describe('WorktreePoolService', () => {
   it('surfaces the number of active agents on a linked worktree', async () => {
     await service.reconcileRepo(repo);
     const pool = (await db.select().from(schema.repoWorktrees)).find(
-      (row) => row.path === 'C:\\repo-feature',
+      (row) => row.path === FEATURE_PATH,
     )!;
     const [workspace] = await db
       .insert(schema.workspaces)
       .values({
         repoId: repo.id,
         name: 'feature',
-        path: 'C:\\repo-feature',
+        path: FEATURE_PATH,
         poolWorktreeId: pool.id,
         linkStatus: 'linked',
       })
@@ -459,14 +392,14 @@ describe('WorktreePoolService', () => {
         repoId: repo.id,
         workspaceId: workspace.id,
         branchName: 'feature',
-        worktreePath: 'C:\\repo-feature',
+        worktreePath: FEATURE_PATH,
         status: 'active',
       },
       {
         repoId: repo.id,
         workspaceId: workspace.id,
         branchName: 'feature',
-        worktreePath: 'C:\\repo-feature',
+        worktreePath: FEATURE_PATH,
         status: 'created',
       },
     ]);
@@ -481,14 +414,14 @@ describe('WorktreePoolService', () => {
   it('does not count active-but-idle sessions as running agents', async () => {
     await service.reconcileRepo(repo);
     const pool = (await db.select().from(schema.repoWorktrees)).find(
-      (row) => row.path === 'C:\\repo-feature',
+      (row) => row.path === FEATURE_PATH,
     )!;
     const [workspace] = await db
       .insert(schema.workspaces)
       .values({
         repoId: repo.id,
         name: 'feature',
-        path: 'C:\\repo-feature',
+        path: FEATURE_PATH,
         poolWorktreeId: pool.id,
         linkStatus: 'linked',
       })
@@ -498,7 +431,7 @@ describe('WorktreePoolService', () => {
         repoId: repo.id,
         workspaceId: workspace.id,
         branchName: 'feature',
-        worktreePath: 'C:\\repo-feature',
+        worktreePath: FEATURE_PATH,
         status: 'active',
       },
     ]);
@@ -515,14 +448,14 @@ describe('WorktreePoolService', () => {
   it('takes over a dirty worktree, archives old sessions, and records the stash', async () => {
     await service.reconcileRepo(repo);
     const pool = (await db.select().from(schema.repoWorktrees)).find(
-      (row) => row.path === 'C:\\repo-feature',
+      (row) => row.path === FEATURE_PATH,
     )!;
     const [oldWorkspace] = await db
       .insert(schema.workspaces)
       .values({
         repoId: repo.id,
         name: 'feature',
-        path: 'C:\\repo-feature',
+        path: FEATURE_PATH,
         poolWorktreeId: pool.id,
         linkStatus: 'linked',
       })
@@ -544,7 +477,7 @@ describe('WorktreePoolService', () => {
     expect(unlinked.pendingStashStatus).toBe('pending');
     expect(sessionsServiceMock.archiveAndStopByRepoAndWorktreePath).toHaveBeenCalledWith(
       repo.id,
-      'C:\\repo-feature',
+      FEATURE_PATH,
     );
   });
 });

@@ -45,7 +45,20 @@ export interface WorktreePoolItem {
   hasConflicts: boolean;
   statusLoading: boolean;
   runningAgentCount: number;
+  /**
+   * Sessions still attached to this worktree, whether or not their agent is
+   * currently running. A worktree with active sessions is *in use* — reusing it
+   * would move the files out from under a session that may still be needed.
+   */
+  activeSessionCount: number;
   lastUsedAt: string | null;
+  /**
+   * Most recent session activity on this worktree (state change / completion /
+   * row update). Unlike `lastUsedAt` — which is only touched when worktree
+   * context is injected into a session's first prompt — this is refreshed by
+   * ordinary session activity, so it is the reliable idleness signal.
+   */
+  lastSessionActivityAt: string | null;
   owner: WorktreePoolOwner | null;
   projectWorkspace: {
     id: number;
@@ -58,6 +71,18 @@ export interface WorktreePoolItem {
     pendingStashStatus: PendingStashStatus | null;
   } | null;
 }
+
+interface SessionActivity {
+  activeSessionCount: number;
+  runningAgentCount: number;
+  lastSessionActivityAt: string | null;
+}
+
+const NO_SESSION_ACTIVITY: SessionActivity = {
+  activeSessionCount: 0,
+  runningAgentCount: 0,
+  lastSessionActivityAt: null,
+};
 
 @Injectable()
 export class WorktreePoolService {
@@ -180,9 +205,11 @@ export class WorktreePoolService {
       this.pathExists(pool.path),
     ]);
     const gitInfo = gitByRealPath.get(realPath) ?? null;
-    const runningAgentCount = owner
-      ? await this.countRunningAgents(owner.workspaceId)
-      : 0;
+    // Unlinking a worktree archives and stops its sessions, so only an owned
+    // worktree can still have sessions attached to it.
+    const sessionActivity = owner
+      ? await this.summarizeWorkspaceSessions(owner.workspaceId)
+      : NO_SESSION_ACTIVITY;
     const currentBranch = gitInfo?.branch ?? null;
 
     const contextRows = await this.db
@@ -216,8 +243,10 @@ export class WorktreePoolService {
         isDirty: false,
         hasConflicts: false,
         statusLoading: exists,
-        runningAgentCount,
+        runningAgentCount: sessionActivity.runningAgentCount,
+        activeSessionCount: sessionActivity.activeSessionCount,
         lastUsedAt,
+        lastSessionActivityAt: sessionActivity.lastSessionActivityAt,
         owner,
         projectWorkspace,
       } satisfies WorktreePoolItem,
@@ -360,9 +389,10 @@ export class WorktreePoolService {
   /**
    * Physically move a pool worktree to a new `.worktrees/<repo>/<slug(name)>`
    * path and rename its pool record, so it stops carrying whatever
-   * branch/task it was originally created for. Also repoints any workspace
-   * currently linked to it and any generated worktree-context row, so
-   * nothing is left pointing at the old path.
+   * branch/task it was originally created for. Also repoints everything else
+   * keyed by the old path — workspaces, sessions, user terminals, actions and
+   * the generated worktree-context row — so nothing is left pointing at a
+   * directory that no longer exists.
    */
   async rename(
     repo: typeof schema.repos.$inferSelect,
@@ -385,6 +415,15 @@ export class WorktreePoolService {
         .set({ name, updatedAt: new Date().toISOString() })
         .where(eq(schema.repoWorktrees.id, pool.id));
     } else {
+      // The main working tree is in the pool too, and git will not move it.
+      // Say so before touching anything, so the caller stops instead of
+      // retrying with another name.
+      if (await this.samePath(pool.path, repo.path)) {
+        throw new BadRequestException(
+          "This is the repository's main working tree — it cannot be renamed or moved. Rename a pool worktree instead.",
+        );
+      }
+
       if (await this.pathExists(newPath)) {
         throw new BadRequestException(
           `A worktree already exists at "${newPath}" — pick a different name.`,
@@ -410,6 +449,25 @@ export class WorktreePoolService {
         .set({ path: realNewPath, updatedAt: now })
         .where(eq(schema.workspaces.poolWorktreeId, pool.id));
 
+      // Sessions, terminals and actions are keyed by the worktree path alone,
+      // so they are repointed by path rather than through the workspace: an
+      // absolute worktree path is unique, and rows left on the old path would
+      // fail with "worktree path does not exist" the next time they are used.
+      await this.db
+        .update(schema.sessions)
+        .set({ worktreePath: realNewPath, updatedAt: now })
+        .where(eq(schema.sessions.worktreePath, pool.path));
+
+      await this.db
+        .update(schema.userTerminals)
+        .set({ worktreePath: realNewPath })
+        .where(eq(schema.userTerminals.worktreePath, pool.path));
+
+      await this.db
+        .update(schema.actions)
+        .set({ worktreePath: realNewPath, updatedAt: now })
+        .where(eq(schema.actions.worktreePath, pool.path));
+
       for (const rootRepo of await this.findReposForRoot(pool.repoRootPath)) {
         await this.db
           .update(schema.worktreeContexts)
@@ -421,6 +479,24 @@ export class WorktreePoolService {
             ),
           );
       }
+    }
+
+    // The label the user actually reads in the sidebar and tab bar is the
+    // linked workspace's name, not the pool name — rename it too, or the
+    // rename looks like it did nothing everywhere outside the worktree sheet.
+    const linked = await this.findLinkedWorkspace(pool.id);
+    if (linked && linked.workspace.name !== name) {
+      await this.db
+        .update(schema.workspaces)
+        .set({
+          name: await this.uniqueWorkspaceName(
+            linked.workspace.repoId,
+            name,
+            linked.workspace.id,
+          ),
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.workspaces.id, linked.workspace.id));
     }
 
     const item = (await this.listForRepo(repo)).find(
@@ -438,12 +514,15 @@ export class WorktreePoolService {
     const root = await this.realPathOrRaw(repo.path);
     const worktrees = await this.safeListWorktrees(repo.path);
     for (const worktree of worktrees) {
-      await this.upsertPoolWorktree({
-        repoRootPath: root,
-        path: await this.realPathOrRaw(worktree.path),
-        name: worktree.branch ?? path.basename(worktree.path),
-        createdFromRef: worktree.branch ?? worktree.head,
-      });
+      await this.upsertPoolWorktree(
+        {
+          repoRootPath: root,
+          path: await this.realPathOrRaw(worktree.path),
+          name: worktree.branch ?? path.basename(worktree.path),
+          createdFromRef: worktree.branch ?? worktree.head,
+        },
+        { keepExistingName: true },
+      );
     }
 
     const reposForRoot = await this.findReposForRoot(root);
@@ -764,9 +843,22 @@ export class WorktreePoolService {
     };
   }
 
-  private async countRunningAgents(workspaceId: number): Promise<number> {
+  /**
+   * One query, three signals about the sessions bound to a workspace: how many
+   * are attached at all (`activeSessionCount` — the worktree is in use), how
+   * many have a non-idle agent right now (`runningAgentCount`), and when any of
+   * them last did something (`lastSessionActivityAt` — the idleness signal).
+   */
+  private async summarizeWorkspaceSessions(
+    workspaceId: number,
+  ): Promise<SessionActivity> {
     const rows = await this.db
-      .select({ id: schema.sessions.id })
+      .select({
+        id: schema.sessions.id,
+        lastStateChangeAt: schema.sessions.lastStateChangeAt,
+        lastCompletionAt: schema.sessions.lastCompletionAt,
+        updatedAt: schema.sessions.updatedAt,
+      })
       .from(schema.sessions)
       .where(
         and(
@@ -775,9 +867,30 @@ export class WorktreePoolService {
           eq(schema.sessions.status, 'active'),
         ),
       );
-    return rows.filter(
-      (row) => this.claudeHooksService.getStatus(row.id) !== 'idle',
-    ).length;
+
+    let lastSessionActivityAt: string | null = null;
+    for (const row of rows) {
+      for (const stamp of [
+        row.lastStateChangeAt,
+        row.lastCompletionAt,
+        row.updatedAt,
+      ]) {
+        if (
+          stamp &&
+          (!lastSessionActivityAt || stamp > lastSessionActivityAt)
+        ) {
+          lastSessionActivityAt = stamp;
+        }
+      }
+    }
+
+    return {
+      activeSessionCount: rows.length,
+      runningAgentCount: rows.filter(
+        (row) => this.claudeHooksService.getStatus(row.id) !== 'idle',
+      ).length,
+      lastSessionActivityAt,
+    };
   }
 
   private async findReposForRoot(root: string) {
@@ -791,7 +904,17 @@ export class WorktreePoolService {
     return result;
   }
 
-  private async upsertPoolWorktree(values: typeof schema.repoWorktrees.$inferInsert) {
+  /**
+   * `keepExistingName` is for discovery paths (reconcile): the derived name is
+   * only a seed for rows we have never seen, and must not overwrite the name a
+   * worktree already carries. A pool name is the worktree's own identity,
+   * decorrelated from the branch it currently holds — clobbering it here would
+   * silently undo every rename on the next listing.
+   */
+  private async upsertPoolWorktree(
+    values: typeof schema.repoWorktrees.$inferInsert,
+    options: { keepExistingName?: boolean } = {},
+  ) {
     const now = new Date().toISOString();
     return this.db
       .insert(schema.repoWorktrees)
@@ -799,7 +922,7 @@ export class WorktreePoolService {
       .onConflictDoUpdate({
         target: [schema.repoWorktrees.repoRootPath, schema.repoWorktrees.path],
         set: {
-          name: values.name,
+          ...(options.keepExistingName ? {} : { name: values.name }),
           createdFromRef: values.createdFromRef,
           updatedAt: now,
         },
@@ -911,13 +1034,20 @@ export class WorktreePoolService {
     return { currentBranch, isDirty, hasConflicts };
   }
 
-  private async uniqueWorkspaceName(repoId: number, baseName: string) {
+  private async uniqueWorkspaceName(
+    repoId: number,
+    baseName: string,
+    /** Workspace being renamed — its own current name is not a collision. */
+    excludeWorkspaceId?: number,
+  ) {
     const existing = await this.db
       .select()
       .from(schema.workspaces)
       .where(eq(schema.workspaces.repoId, repoId));
     const names = new Set(
-      existing.map((workspace) => workspace.name.toLowerCase()),
+      existing
+        .filter((workspace) => workspace.id !== excludeWorkspaceId)
+        .map((workspace) => workspace.name.toLowerCase()),
     );
     let candidate = baseName || 'Workspace';
     let index = 2;

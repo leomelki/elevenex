@@ -125,6 +125,11 @@ export class WorktreesService {
     newWorktreePath: string,
   ): Promise<void> {
     const git: SimpleGit = worktreeSimpleGit(repoPath);
+    // `git worktree move` refuses to create leading directories (unlike
+    // `git worktree add`), so moving a worktree that lives outside
+    // `.worktrees/<repo>/` into it fails with a bare ENOENT. Create the parent
+    // ourselves first.
+    await fs.mkdir(path.dirname(newWorktreePath), { recursive: true });
     try {
       await git.raw(['worktree', 'move', worktreePath, newWorktreePath]);
     } catch (error: unknown) {

@@ -24,6 +24,24 @@ export function matchesCategory(
   return deriveCategory(item) === category;
 }
 
+/**
+ * Effective last-activity timestamp for a pool item: the newer of the
+ * context-injection stamp and real session activity. `null` means "unknown" —
+ * NOT "never used" — so callers must not treat it as infinitely stale.
+ */
+export function lastActivityAt(item: WorktreePoolItem): string | null {
+  const stamps = [item.lastUsedAt, item.lastSessionActivityAt].filter(
+    (stamp): stamp is string => !!stamp,
+  );
+  if (stamps.length === 0) return null;
+  return stamps.reduce((newest, stamp) => (stamp > newest ? stamp : newest));
+}
+
+/** True when sessions are still attached to this worktree — it is in use. */
+export function isInUse(item: WorktreePoolItem): boolean {
+  return item.activeSessionCount > 0 || item.runningAgentCount > 0;
+}
+
 /** Compact, model-facing handle for a pool item — no DB noise. */
 export function poolItemHandle(item: WorktreePoolItem) {
   return {
@@ -38,7 +56,11 @@ export function poolItemHandle(item: WorktreePoolItem) {
     hasConflicts: item.hasConflicts,
     isLocked: item.isLocked,
     isMissing: item.isMissing,
-    lastUsedAt: item.lastUsedAt ?? undefined,
+    // Sessions still bound to this worktree: >0 means someone is using it and
+    // its files must stay put. 0 means it is free regardless of what it holds.
+    activeSessionCount: item.activeSessionCount,
+    runningAgentCount: item.runningAgentCount,
+    lastActivityAt: lastActivityAt(item) ?? undefined,
   };
 }
 

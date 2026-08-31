@@ -54,7 +54,9 @@ function poolItem(overrides: Record<string, unknown> = {}) {
     isDirty: false,
     hasConflicts: false,
     runningAgentCount: 0,
+    activeSessionCount: 0,
     lastUsedAt: null,
+    lastSessionActivityAt: null,
     owner: null,
     projectWorkspace: null,
     ...overrides,
@@ -67,24 +69,26 @@ function emptyPool() {
 }
 
 describe('setup tool group', () => {
-  it('registers all 15 setup tools', () => {
-    expect(SETUP_TOOLS).toHaveLength(15);
-    expect(SETUP_TOOLS.map((t) => t.name)).toEqual(
-      expect.arrayContaining([
-        'find_or_create_project',
+  it('registers all 16 setup tools', () => {
+    expect(SETUP_TOOLS.map((t) => t.name).sort()).toEqual(
+      [
         'add_repo',
-        'remove_repo',
         'assess_worktree_pool',
+        'create_session',
         'create_worktree',
+        'delete_project',
         'delete_worktree',
+        'find_or_create_project',
+        'generate_worktree_context',
         'get_worktree_job',
         'link_worktree',
-        'steal_worktree',
-        'create_session',
-        'generate_worktree_context',
-        'set_todo',
+        'remove_repo',
+        'rename_worktree',
         'set_scratchpad',
-      ]),
+        'set_todo',
+        'steal_worktree',
+        'switch_branch',
+      ].sort(),
     );
     expect(stealWorktreeTool.destructive).toBe(true);
     expect(deleteWorktreeTool.destructive).toBe(true);
@@ -585,11 +589,113 @@ describe('setup tool group', () => {
         worktreePool: { streamForRepo },
       });
       const res = await createWorktreeTool.handler(
-        { repoId: 1, branchName: 'feature/x', force: true },
+        {
+          repoId: 1,
+          branchName: 'feature/x',
+          force: true,
+          forceReason: 'user_confirmed',
+        },
         ctx,
       );
       expect((res.data as any).jobId).toBe('job-f');
       expect(startJob).toHaveBeenCalled();
+    });
+
+    it('rejects force:true without a forceReason instead of creating', async () => {
+      const startJob = jest.fn();
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+        worktreeJobs: { startJob },
+        worktreePool: emptyPool(),
+      });
+      await expect(
+        createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x', force: true }, ctx),
+      ).rejects.toMatchObject({ code: 'force_reason_required' });
+      expect(startJob).not.toHaveBeenCalled();
+    });
+
+    it('excludes a worktree with sessions attached and reports why', async () => {
+      const startJob = jest.fn().mockReturnValue({ id: 'job-b', status: 'pending' });
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(
+          poolItem({
+            id: 40,
+            name: 'scout',
+            owner: { projectName: 'P', workspaceName: 'W', workspaceId: 9 },
+            // Idle agent, but the session is still attached — the worktree is
+            // in use and must not be offered for reuse.
+            runningAgentCount: 0,
+            activeSessionCount: 1,
+            lastSessionActivityAt: new Date(Date.now() - 96 * 60 * 60 * 1000).toISOString(),
+          }),
+        );
+        return 1;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+        worktreeJobs: { startJob },
+        worktreePool: { streamForRepo },
+      });
+      const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
+      // No reclaimable candidate left, so creation proceeds without force.
+      expect((res.data as any).jobId).toBe('job-b');
+    });
+
+    it('offers an owned session-free worktree with no recorded activity', async () => {
+      const startJob = jest.fn();
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(
+          poolItem({
+            id: 50,
+            owner: { projectName: 'P', workspaceName: 'W', workspaceId: 9 },
+            lastUsedAt: null,
+            lastSessionActivityAt: null,
+          }),
+        );
+        return 1;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+        worktreeJobs: { startJob },
+        worktreePool: { streamForRepo },
+      });
+      const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
+      const data = res.data as any;
+      expect(data.candidates[0]).toMatchObject({
+        worktreeId: 50,
+        reclaimAction: 'steal_worktree',
+      });
+      expect(startJob).not.toHaveBeenCalled();
+    });
+
+    it('ranks candidates unowned-first then longest-idle, independent of stream order', async () => {
+      const hoursAgo = (hours: number) =>
+        new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+      const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+        await onItem(
+          poolItem({
+            id: 1,
+            owner: { projectName: 'P', workspaceName: 'W', workspaceId: 9 },
+            lastSessionActivityAt: hoursAgo(100),
+          }),
+        );
+        await onItem(poolItem({ id: 2, owner: null, lastUsedAt: hoursAgo(1) }));
+        await onItem(poolItem({ id: 3, owner: null, lastUsedAt: hoursAgo(50) }));
+        return 3;
+      });
+      const ctx = makeCtx({
+        repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+        worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+        worktreeJobs: { startJob: jest.fn() },
+        worktreePool: { streamForRepo },
+      });
+      const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
+      const data = res.data as any;
+      expect(data.candidateCount).toBe(3);
+      expect(data.candidates.map((c: any) => c.worktreeId)).toEqual([3, 2, 1]);
     });
 
     it('skips owned worktree that was recently used (within 72 h)', async () => {
@@ -621,7 +727,7 @@ describe('setup tool group', () => {
     it('maps a succeeded job to a compact handle', async () => {
       const ctx = makeCtx({
         worktreeJobs: {
-          getJob: jest.fn().mockReturnValue({
+          waitForCompletion: jest.fn().mockResolvedValue({
             id: 'j',
             status: 'succeeded',
             branchName: 'feature/x',
@@ -638,7 +744,7 @@ describe('setup tool group', () => {
     it('raises a structured error when the job is gone', async () => {
       const ctx = makeCtx({
         worktreeJobs: {
-          getJob: jest.fn(() => {
+          waitForCompletion: jest.fn(() => {
             throw new Error('not found');
           }),
         },

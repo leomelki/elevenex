@@ -24,7 +24,9 @@ describe('WorktreesService', () => {
 
     // Initialize a git repo
     fs.mkdirSync(mainRepoPath);
-    execSync('git init', { cwd: mainRepoPath });
+    // Pin the initial branch: the suite asserts on "main", which is only the
+    // default where init.defaultBranch is configured.
+    execSync('git init -b main', { cwd: mainRepoPath });
     execSync('git config user.email "test@test.com"', { cwd: mainRepoPath });
     execSync('git config user.name "Test User"', { cwd: mainRepoPath });
 
@@ -227,6 +229,24 @@ describe('WorktreesService', () => {
         }
       });
       expect(moved?.branch).toBe('feature-branch');
+    });
+
+    it('should create missing parent directories of the destination', async () => {
+      const worktreePath = path.join(tmpDir, 'feature-wt');
+      execSync(`git worktree add "${worktreePath}" feature-branch`, {
+        cwd: mainRepoPath,
+      });
+      // `git worktree move` alone fails with ENOENT here: unlike
+      // `worktree add`, it does not create leading directories.
+      const newPath = path.join(tmpDir, '.worktrees', 'main-repo', 'renamed');
+
+      await service.moveWorktree(mainRepoPath, worktreePath, newPath);
+
+      expect(fs.existsSync(newPath)).toBe(true);
+      const worktrees = await service.listWorktrees(mainRepoPath);
+      expect(worktrees.map((w) => fs.realpathSync(w.path))).toContain(
+        fs.realpathSync(newPath),
+      );
     });
 
     it('should throw BadRequestException for non-existent worktree', async () => {
