@@ -26,10 +26,10 @@ import {
 
 /** What actually happens to the running app once the artifact is downloaded. */
 const HANDOFF_NOTES: Record<AppUpdateInstallKind, string> = {
-  nsis: 'Elevenex closes and the installer takes over. It reopens when the install finishes.',
+  nsis: 'Elevenex closes, installs the update in the background, and reopens automatically.',
   dmg: 'Elevenex closes, swaps itself for the new build, and reopens automatically.',
   appimage: 'Elevenex closes, replaces its AppImage in place, and reopens automatically.',
-  deb: 'Your system package manager asks for a password, then Elevenex restarts when you are ready.',
+  deb: 'Your system asks for a password to install the package, then Elevenex restarts automatically.',
 };
 
 const BUSY_STATUSES = new Set<AppUpdateState['status']>([

@@ -10,11 +10,16 @@
 // baked into the app at package time (`resources/version`).
 //
 // Each platform is then updated the way that platform expects:
-//   win32   NSIS installer relaunched with --updated, app quits so files unlock
+//   win32   NSIS installer run silently by a detached script once the app has
+//           exited, then relaunched
 //   darwin  DMG mounted, signature + team id checked, bundle swapped by a
 //           detached script once the app has exited, then relaunched
 //   linux   AppImage replaced in place (when running as one), otherwise the .deb
 //           is installed through pkexec/dpkg with a file-manager fallback
+//
+// Every flow that can apply the update unattended also relaunches Elevenex
+// itself: the app the user was working in disappears, so it has to come back
+// without them hunting for the launcher.
 //
 // Every artifact is verified against the `.sha256` sidecar the release workflows
 // publish before anything is executed.
@@ -53,7 +58,10 @@ const RELEASE_PAGE_SIZE = 30;
 // repeatedly doesn't burn the 60/hour unauthenticated GitHub rate limit.
 const CHECK_CACHE_TTL_MS = 5 * 60 * 1000;
 const QUIT_AFTER_HANDOFF_MS = 800;
+// Both handoff scripts give the app roughly two minutes to exit before applying
+// the update anyway; the bash one sleeps 0.2s per turn.
 const PROCESS_EXIT_POLL_ATTEMPTS = 600;
+const WINDOWS_EXIT_WAIT_SECONDS = 120;
 
 const REQUEST_HEADERS = {
   Accept: 'application/vnd.github+json',
@@ -137,6 +145,15 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
 
+/** Value of a `set "NAME=…"` line in a batch file: only `%` needs escaping. */
+function cmdVariableValue(value) {
+  return String(value).replaceAll('%', '%%');
+}
+
+function toCrlf(text) {
+  return text.replaceAll('\n', '\r\n');
+}
+
 /**
  * The macOS and AppImage flows quit the app before touching disk, so a
  * permission problem discovered by the handoff script is invisible to the user.
@@ -161,6 +178,17 @@ function waitForPidSnippet(pid) {
   sleep 0.2
 done
 sleep 0.5`;
+}
+
+/**
+ * Start Elevenex from a handoff script. The AppImage runtime exports APPDIR &
+ * friends into our environment pointing at the mount of the AppImage being
+ * replaced — that mount is gone by the time we relaunch, so a child inheriting
+ * them fails to start. `setsid` keeps the new app alive after the script exits.
+ */
+function launchSnippet(executablePath) {
+  return `unset APPIMAGE APPDIR ARGV0 OWD LD_LIBRARY_PATH LD_PRELOAD
+setsid ${shellQuote(executablePath)} >/dev/null 2>&1 &`;
 }
 
 function createAppUpdater({ app, shell, getCurrentVersion, onStateChanged, requestQuit }) {
@@ -391,11 +419,51 @@ function createAppUpdater({ app, shell, getCurrentVersion, onStateChanged, reque
   // --- Windows -------------------------------------------------------------
 
   // electron-builder's NSIS installer understands `--updated`: it reuses the
-  // recorded install location and closes the running instance itself. We hand
-  // off and quit so the installer can replace locked files.
+  // recorded install location and skips the license/directory pages. It only
+  // starts the app for us when it is *both* silent and passed `--force-run`
+  // (installSection.nsh), and this build is an assisted (`oneClick: false`)
+  // installer, so without `/S` the user is left clicking through a wizard and
+  // then launching Elevenex by hand.
+  //
+  // Run the whole handoff from a detached batch script instead: it waits for us
+  // to exit so the installer can replace locked files, installs silently, and
+  // then starts whatever is on disk — the new build normally, the old one if the
+  // install failed — so a failed update never leaves the user with no app. The
+  // script launches Elevenex rather than `--force-run` so a partially applied
+  // update can't end up with two instances (there is no single-instance lock).
   function installNsis(installerPath) {
-    setState({ status: 'installing', percent: null, message: 'Starting the installer…' });
-    spawnDetached(installerPath, ['--updated'], { windowsHide: false });
+    setState({ status: 'installing', percent: null, message: 'Installing update…' });
+
+    const scriptPath = path.join(getUpdatesDir(), 'apply-windows-update.cmd');
+    const logPath = path.join(getUpdatesDir(), 'apply-windows-update.log');
+
+    // cmd is only reliable with CRLF line endings — LF alone can lose a label.
+    writeFileSync(scriptPath, toCrlf(`@echo off
+setlocal
+set "INSTALLER=${cmdVariableValue(installerPath)}"
+set "APP_EXE=${cmdVariableValue(app.getPath('exe'))}"
+set "LOG=${cmdVariableValue(logPath)}"
+
+rem Wait for Elevenex to exit: the installer cannot replace files it still holds
+rem open. Polling with "tasklist | find" deadlocks in a script started without
+rem stdio, so let PowerShell do the waiting; if it is missing we simply fall
+rem through and the installer applies its own "app is still running" handling.
+powershell -NoProfile -NonInteractive -Command "try { Wait-Process -Id ${process.pid} -Timeout ${WINDOWS_EXIT_WAIT_SECONDS} -ErrorAction Stop } catch { }"
+
+>>"%LOG%" echo [%DATE% %TIME%] installing "%INSTALLER%"
+rem Called directly rather than through "start /wait", which needs a console we
+rem do not have here: a batch file waits for a program it launches itself.
+"%INSTALLER%" /S --updated
+>>"%LOG%" echo [%DATE% %TIME%] installer exit code %ERRORLEVEL%
+
+rem Whatever is on disk now: the new build, or the old one if the install failed.
+start "" "%APP_EXE%"
+`));
+
+    // `call <script>` rather than passing the path as the whole command: cmd
+    // strips the outer quotes off a command line that *starts* with one, which
+    // breaks as soon as the userData path contains a space.
+    spawnDetached('cmd.exe', ['/d', '/c', 'call', scriptPath], { windowsHide: true });
     quitSoon();
   }
 
@@ -556,37 +624,63 @@ set -u
 exec >>${shellQuote(logPath)} 2>&1
 ${waitForPidSnippet(process.pid)}
 
-if ! mv -f ${shellQuote(downloadedPath)} ${shellQuote(targetPath)}; then
-  exit 1
+if mv -f ${shellQuote(downloadedPath)} ${shellQuote(targetPath)}; then
+  chmod 0755 ${shellQuote(targetPath)}
 fi
-chmod 0755 ${shellQuote(targetPath)}
-setsid ${shellQuote(targetPath)} >/dev/null 2>&1 &
+
+# Start the AppImage either way: on failure the old one is still in place, and
+# leaving the user with nothing running is worse than an un-applied update.
+${launchSnippet(targetPath)}
 `, { mode: 0o700 });
 
     spawnDetached('/bin/bash', [scriptPath]);
     quitSoon();
   }
 
-  // dpkg can replace the files of a running process, so unlike every other
-  // platform the app stays up and the user restarts when convenient.
+  /**
+   * dpkg happily replaces the files of a running process, but that process is
+   * still the old build — hand off to a detached script that waits for us to
+   * exit and starts the newly installed binary.
+   */
+  function relaunchAfterExit() {
+    const scriptPath = path.join(getUpdatesDir(), 'restart-elevenex.sh');
+    const logPath = path.join(getUpdatesDir(), 'restart-elevenex.log');
+
+    writeFileSync(scriptPath, `#!/bin/bash
+set -u
+exec >>${shellQuote(logPath)} 2>&1
+${waitForPidSnippet(process.pid)}
+
+${launchSnippet(app.getPath('exe'))}
+`, { mode: 0o700 });
+
+    spawnDetached('/bin/bash', [scriptPath]);
+  }
+
   async function installDeb(debPath) {
     setState({ status: 'installing', percent: null, message: 'Installing update…' });
 
-    const canElevate = await commandExists('pkexec');
-    if (canElevate) {
+    let installed = false;
+
+    if (await commandExists('pkexec')) {
       try {
         const { stdout: dpkgPath } = await execFileAsync('which', ['dpkg']);
         await execFileAsync('pkexec', [dpkgPath.trim(), '-i', debPath], { timeout: 5 * 60 * 1000 });
-        setState({
-          status: 'ready-to-restart',
-          message: 'Update installed. Restart Elevenex to finish.',
-        });
-        return;
+        installed = true;
       } catch (error) {
         // Falls through to the file-manager handoff: the user may have dismissed
         // the polkit prompt, or there may be no authentication agent running.
         setState({ message: `Automatic install failed (${error?.message || 'unknown error'}).` });
       }
+    }
+
+    if (installed) {
+      // dpkg replaced the files under the running app, so restarting into the
+      // new build is all that is left to do.
+      setState({ message: 'Update installed. Restarting Elevenex…' });
+      relaunchAfterExit();
+      quitSoon();
+      return;
     }
 
     await shell.openPath(debPath);
