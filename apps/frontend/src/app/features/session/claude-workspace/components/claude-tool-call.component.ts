@@ -182,7 +182,7 @@ type Todo = ToolTodoItem;
           <span class="cw-tool__verb">{{ display().verb }}</span>
 
           @if (display().target) {
-            <span class="cw-tool__target" [title]="display().target">{{ display().target }}</span>
+            <span class="cw-tool__target" [title]="targetTitle()">{{ display().target }}</span>
           }
 
           @if (summary(); as s) {
@@ -1144,6 +1144,13 @@ export class ClaudeToolCallComponent {
     if (this.display().kind !== 'bash') return '';
     const input = this.call().toolInput as { command?: string } | undefined;
     return input?.command ?? '';
+  });
+
+  // Bash shows a human-readable description as the target text; hovering reveals the
+  // literal command so it stays verifiable without expanding the tool call.
+  readonly targetTitle = computed(() => {
+    const cmd = this.bashCommand();
+    return cmd || this.display().target;
   });
 
   readonly editFilePath = computed(() => {

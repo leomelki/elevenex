@@ -270,8 +270,9 @@ function describeCanonicalTool(
     }
     case 'bash': {
       const cmd = String(data['command'] ?? '').trim();
+      const description = String(data['description'] ?? '').trim();
       const firstLine = cmd.split('\n')[0] || cmd;
-      return { kind, icon: 'lucideTerminal', verb: 'Run', target: truncate(firstLine, 120) };
+      return { kind, icon: 'lucideTerminal', verb: 'Run', target: truncate(description || firstLine, 120) };
     }
     case 'grep': {
       const pattern = String(data['pattern'] ?? '');
@@ -416,12 +417,13 @@ export function describeTool(
   // Bash / PowerShell
   if (n === 'bash' || n === 'powershell' || n === 'execcommand') {
     const cmd = String(data['command'] ?? data['cmd'] ?? '').trim();
+    const description = String(data['description'] ?? '').trim();
     const readPath = n === 'bash' || n === 'execcommand' ? codexReadActionPath(data) : null;
     if (readPath) {
       return { kind: 'read', icon: 'lucideFileText', verb: 'Read', target: displayPath(readPath) };
     }
     const firstLine = cmd.split('\n')[0] || cmd;
-    return { kind: 'bash', icon: 'lucideTerminal', verb: 'Run', target: truncate(firstLine, 120) };
+    return { kind: 'bash', icon: 'lucideTerminal', verb: 'Run', target: truncate(description || firstLine, 120) };
   }
   // Grep
   if (n === 'grep') {
