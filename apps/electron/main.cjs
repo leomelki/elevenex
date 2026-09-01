@@ -985,6 +985,11 @@ function isAddressInUseError(message) {
   return /EADDRINUSE|address already in use/i.test(message || '');
 }
 
+// Exit code the backend uses to ask its launcher for a restart (see
+// apps/backend/src/runtime-control/runtime-control.service.ts). Anything else is
+// a real shutdown.
+const BACKEND_RESTART_EXIT_CODE = 75;
+
 // A freshly-extracted node.exe is often briefly locked on Windows: real-time AV
 // scans the new executable, and the tar/file handles may not be fully released
 // yet. Spawning during that window fails with one of these codes. The lock is
@@ -1004,7 +1009,8 @@ function isTransientSpawnLockError(error) {
 // that resolves once it reports ready (or rejects with the captured stderr; the
 // rejection carries `.addressInUse` so the caller can decide whether to retry on
 // a different port).
-function launchEmbeddedBackend({ backendExecutable, backendArgs, env, cwd, backendUrl }) {
+function launchEmbeddedBackend(launchOptions) {
+  const { backendExecutable, backendArgs, env, cwd, backendUrl } = launchOptions;
   const child = spawn(backendExecutable, backendArgs, {
     cwd,
     env,
@@ -1062,12 +1068,26 @@ function launchEmbeddedBackend({ backendExecutable, backendArgs, env, cwd, backe
     // Non-fatal: the pid file only helps clean up a stale backend on next launch.
   }
 
-  child.once('exit', () => {
+  child.once('exit', (code) => {
     // Guard against a superseded launch (e.g. a retry already replaced the
     // runtime) clobbering the live one when this older child finally exits.
     if (embeddedBackendRuntime?.child !== child) {
       return;
     }
+
+    // Settings -> "Restart backend" makes the backend exit with this code. It
+    // deliberately does not respawn itself: a self-spawned process would escape
+    // the pid tracking that lets us kill the whole tree on quit. Relaunch it
+    // here instead, on the same port so the renderer's backend origin still
+    // points at it.
+    if (code === BACKEND_RESTART_EXIT_CODE && !isAppQuitting) {
+      console.info('[embedded-backend] restart requested by the app, relaunching');
+      launchEmbeddedBackend(launchOptions).catch((error) => {
+        console.error(`[embedded-backend] relaunch after restart failed: ${error.message}`);
+      });
+      return;
+    }
+
     embeddedBackendRuntime = null;
     try {
       rmSync(getEmbeddedBackendPidPath(), { force: true });
@@ -1130,6 +1150,9 @@ async function startEmbeddedBackend() {
       DB_PATH: packagedDatabasePath,
       ELEVENEX_PROXY_PORT: resolvedPort,
       FRONTEND_PORT: resolvedPort,
+      // Tells the backend a launcher is watching it, so Settings can offer a
+      // restart (it exits with BACKEND_RESTART_EXIT_CODE and we relaunch it).
+      ELEVENEX_BACKEND_SUPERVISED: '1',
     };
     if (!bundledNodeExecutable) {
       env.ELECTRON_RUN_AS_NODE = '1';

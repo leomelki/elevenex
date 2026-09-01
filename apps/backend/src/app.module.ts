@@ -27,6 +27,7 @@ import { AgentRuntimeModule } from './agent-runtime/agent-runtime.module.js';
 import { WorktreeContextModule } from './worktree-context/worktree-context.module.js';
 import { BackendLogsModule } from './backend-logs/backend-logs.module.js';
 import { ServerConnectionModule } from './server-connection/server-connection.module.js';
+import { RuntimeControlModule } from './runtime-control/runtime-control.module.js';
 import { SettingsModule } from './settings/settings.module.js';
 import { SpeechToTextModule } from './speech-to-text/speech-to-text.module.js';
 import { ElevenexMcpModule } from './mcp/elevenex-mcp.module.js';
@@ -62,6 +63,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     WorktreeContextModule,
     BackendLogsModule,
     ServerConnectionModule,
+    RuntimeControlModule,
     SettingsModule,
     SpeechToTextModule,
     ElevenexMcpModule,

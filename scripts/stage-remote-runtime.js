@@ -19,6 +19,11 @@ const remoteRuntimeRoot = path.join(stageBaseRoot, 'remote-runtime');
 const tempRoot = path.join(stageBaseRoot, 'remote-runtime-tmp');
 const backendPackageJson = require(path.join(backendRoot, 'package.json'));
 const NODE_MAJOR = 22;
+// Exit code the backend uses to ask its launcher for a restart (see
+// apps/backend/src/runtime-control/runtime-control.service.ts). The launchers
+// below supervise the process so Settings -> "Restart backend" works on a
+// remote host, where quitting the desktop app cannot restart anything.
+const BACKEND_RESTART_EXIT_CODE = 75;
 const TARGETS = [
   { key: 'linux-x64', platform: 'linux', arch: 'x64', nodeArch: 'x64' },
   { key: 'linux-arm64', platform: 'linux', arch: 'arm64', nodeArch: 'arm64' },
@@ -638,9 +643,16 @@ function writeLauncher(targetRoot, target) {
       // Must match the pid file the start/preflight scripts read, otherwise a
       // stale backend is never detected or cleaned up before a restart.
       `$pidPath = Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\backend.pid"`,
-      '$process = Start-Process -FilePath $node -ArgumentList @($entry) -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru',
-      'Set-Content -LiteralPath $pidPath -Value $process.Id',
-      'Wait-Process -Id $process.Id',
+      '$env:ELEVENEX_BACKEND_SUPERVISED = "1"',
+      // Loop instead of a single Wait-Process so a restart requested from the
+      // app comes back on the same port, with the pid file kept current for the
+      // preflight that decides whether a fresh start is needed.
+      'while ($true) {',
+      '  $process = Start-Process -FilePath $node -ArgumentList @($entry) -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru',
+      '  Set-Content -LiteralPath $pidPath -Value $process.Id',
+      '  $process.WaitForExit()',
+      `  if ($process.ExitCode -ne ${BACKEND_RESTART_EXIT_CODE}) { exit $process.ExitCode }`,
+      '}',
     ].join('\r\n');
     const cmdScript = '@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-backend.ps1" %*\r\n';
     ensureDir(path.dirname(powershellLauncherPath));
@@ -668,7 +680,17 @@ function writeLauncher(targetRoot, target) {
     `export ELEVENEX_WHISPER_CACHE_DIR="$HOME/${REMOTE_HOME_DIRNAME}/whisper-models"`,
     'export ELEVENEX_PROXY_PORT="$PORT"',
     'export FRONTEND_PORT="$PORT"',
-    `exec "$RUNTIME_ROOT/node/bin/node" "$RUNTIME_ROOT/main.cjs" >> "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log" 2>&1`,
+    'export ELEVENEX_BACKEND_SUPERVISED=1',
+    `LOG_FILE="$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log"`,
+    // Supervise rather than exec: a restart requested from the app must come
+    // back inside this same tmux session, otherwise the next connect's
+    // `tmux kill-session` would leave an untracked backend holding the port.
+    'while :; do',
+    '  STATUS=0',
+    '  "$RUNTIME_ROOT/node/bin/node" "$RUNTIME_ROOT/main.cjs" >> "$LOG_FILE" 2>&1 || STATUS=$?',
+    `  if [ "$STATUS" -ne ${BACKEND_RESTART_EXIT_CODE} ]; then exit "$STATUS"; fi`,
+    '  printf "\\n[%s] Restarting Elevenex backend on request\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"',
+    'done',
   ].join('\n');
   ensureDir(path.dirname(launcherPath));
   writeFileSync(launcherPath, `${script}\n`, 'utf8');

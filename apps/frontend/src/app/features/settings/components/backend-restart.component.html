@@ -1,0 +1,44 @@
+<section class="rounded-lg border border-border bg-card">
+  <div class="border-b border-border px-5 py-4">
+    <h2 class="text-sm font-semibold text-foreground">Backend</h2>
+    <p class="mt-1 text-sm text-muted-foreground">
+      The Elevenex service this workspace is connected to.
+    </p>
+  </div>
+
+  <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Restart backend</div>
+      <div class="mt-1 text-sm text-muted-foreground">
+        Stops the backend and starts it again, then reconnects. Useful on a remote
+        server, where quitting the app cannot restart anything.
+      </div>
+
+      @if (status() && !restartSupported()) {
+        <div class="mt-3 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-foreground">
+          <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 shrink-0 text-warning" />
+          <span>
+            This backend was started without a launcher that can bring it back, so
+            restarting it from here would leave the workspace disconnected. Restart
+            it where you started it instead.
+          </span>
+        </div>
+      }
+    </div>
+
+    <button
+      z-button
+      zType="outline"
+      zSize="sm"
+      type="button"
+      [zDisabled]="!restartSupported() || restarting()"
+      [zLoading]="restarting()"
+      (click)="restart()"
+    >
+      @if (!restarting()) {
+        <ng-icon name="lucidePower" size="14" />
+      }
+      <span>{{ restarting() ? 'Restarting…' : 'Restart backend' }}</span>
+    </button>
+  </div>
+</section>

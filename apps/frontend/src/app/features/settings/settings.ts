@@ -36,6 +36,7 @@ import { AGENT_PROVIDER_PRESENTATIONS } from '@/shared/models/agent-provider-pre
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardCheckboxComponent } from '@/shared/components/checkbox';
 import { AgentDefaults } from './components/agent-defaults.component';
+import { BackendRestartComponent } from './components/backend-restart.component';
 import { AppUpdateComponent } from './components/app-update.component';
 import { SpeechToTextSettingsComponent } from './components/speech-to-text.component';
 import { getElectronExternalLinksApi } from '@/shared/runtime/electron-external-links';
@@ -50,6 +51,7 @@ import {
   imports: [
     AgentDefaults,
     AppUpdateComponent,
+    BackendRestartComponent,
     DragDropModule,
     FormsModule,
     NgIcon,

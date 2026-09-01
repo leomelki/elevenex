@@ -7,6 +7,7 @@ import { Settings } from './settings';
 vi.mock('ngx-sonner', () => ({
   toast: {
     error: vi.fn(),
+    success: vi.fn(),
   },
 }));
 
@@ -86,6 +87,17 @@ describe('Settings', () => {
   });
 
   afterEach(() => {
+    // The backend section asks whether this backend can restart itself as soon
+    // as it mounts; none of these tests are about that answer.
+    for (const request of httpMock.match('/api/runtime')) {
+      request.flush({
+        restartSupported: true,
+        restarting: false,
+        pid: 4242,
+        startedAt: '2026-01-01T00:00:00.000Z',
+      });
+    }
+
     // The dictation panel watches offline model status while it is mounted.
     // jsdom has no EventSource, so it falls back to polling — drain whatever
     // that produced rather than asserting on a cadence.

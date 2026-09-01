@@ -22,6 +22,7 @@ import { AgentRuntimeGateway } from './agent-runtime/agent-runtime.gateway.js';
 import { BackendLogsGateway } from './backend-logs/backend-logs.gateway.js';
 import { ServerConnectionGateway } from './server-connection/server-connection.gateway.js';
 import { ClaudeRuntimeService } from './claude-runtime/claude-runtime.service.js';
+import { RuntimeControlService } from './runtime-control/runtime-control.service.js';
 import { ElevenexMcpHttpTransport } from './mcp/transport/elevenex-mcp-http.transport.js';
 import { AgentChannelGateway } from './mcp/human-channel/agent-channel.gateway.js';
 import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
@@ -66,6 +67,11 @@ function listenServer(
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.setGlobalPrefix('api');
+
+  // A user-requested restart (Settings → Backend) exits with a code the
+  // launcher relaunches on. Hand the service the app so it can run the module
+  // shutdown hooks first instead of orphaning PTY tails and watchers.
+  app.get(RuntimeControlService).bindApplication(app);
   const runtimeRoot = getBackendRuntimeRoot();
 
   // Trigger a throttled async refresh of the cached login-shell environment
