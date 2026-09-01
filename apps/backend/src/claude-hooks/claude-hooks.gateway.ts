@@ -7,8 +7,19 @@ import { NavigationEventsService } from '../navigation/navigation-events.service
 
 @Injectable()
 export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
+  /**
+   * Heartbeat cadence. Serves both directions: `ping` reaps sockets whose peer
+   * is gone, and the `heartbeat` message lets the client notice silence.
+   * Without it a half-open socket (SSH tunnel blip, host sleep, network
+   * switch) stays `OPEN` on both ends forever and the sidebar silently stops
+   * updating for the rest of the window's life.
+   */
+  private static readonly HEARTBEAT_INTERVAL_MS = 25_000;
+
   private wss: WebSocketServer | null = null;
   private clients = new Set<WebSocket>();
+  private readonly awaitingPong = new WeakSet<WebSocket>();
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly hooksService: ClaudeHooksService,
@@ -25,6 +36,7 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
         activityStatus?: string;
         actionKind?: string | null;
         actionLabel?: string | null;
+        backgroundActive?: boolean;
       }) => {
         this.broadcast({
           type: 'status-changed',
@@ -33,6 +45,7 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
           activityStatus: data.activityStatus ?? data.status,
           actionKind: data.actionKind ?? null,
           actionLabel: data.actionLabel ?? null,
+          backgroundActive: data.backgroundActive ?? false,
         });
       },
     );
@@ -100,6 +113,17 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
 
     this.wss.on('connection', async (ws) => {
       this.clients.add(ws);
+      this.awaitingPong.delete(ws);
+      ws.on('pong', () => this.awaitingPong.delete(ws));
+      // Registered before the await below: a client that disconnects while the
+      // initial snapshot is being fetched would otherwise never be removed.
+      ws.on('close', () => {
+        this.removeClient(ws);
+      });
+      ws.on('error', () => {
+        this.removeClient(ws);
+      });
+      this.ensureHeartbeat();
 
       // Fetch DB data first, then snapshot in-memory status. Any status-changed
       // broadcasts that arrive at this client during the DB fetch will be queued
@@ -138,15 +162,51 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
           worktreeContexts,
         }),
       );
-
-      ws.on('close', () => {
-        this.clients.delete(ws);
-      });
-
-      ws.on('error', () => {
-        this.clients.delete(ws);
-      });
     });
+  }
+
+  private ensureHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      return;
+    }
+
+    this.heartbeatTimer = setInterval(
+      () => this.sweep(),
+      ClaudeHooksGateway.HEARTBEAT_INTERVAL_MS,
+    );
+  }
+
+  private removeClient(ws: WebSocket): void {
+    this.clients.delete(ws);
+    if (this.clients.size === 0 && this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  /**
+   * Drops clients that missed a full heartbeat round-trip, then pings the rest.
+   * A `send` to a half-open socket succeeds for as long as the OS keeps
+   * retransmitting, so an unanswered ping is the only timely signal we get.
+   */
+  private sweep(): void {
+    for (const client of this.clients) {
+      if (client.readyState !== WebSocket.OPEN) {
+        this.removeClient(client);
+        continue;
+      }
+
+      if (this.awaitingPong.has(client)) {
+        this.removeClient(client);
+        client.terminate();
+        continue;
+      }
+
+      this.awaitingPong.add(client);
+      client.ping();
+    }
+
+    this.broadcast({ type: 'heartbeat' });
   }
 
   private broadcast(data: object): void {
@@ -159,6 +219,10 @@ export class ClaudeHooksGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     for (const client of this.clients) {
       client.close(1001, 'Server shutting down');
     }

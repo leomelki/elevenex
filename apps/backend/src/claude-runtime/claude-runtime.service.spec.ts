@@ -360,6 +360,7 @@ describe('ClaudeRuntimeService', () => {
       activityStatus: 'running',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: false,
     });
 
     state.pendingPermissionRequest = {
@@ -376,6 +377,7 @@ describe('ClaudeRuntimeService', () => {
       activityStatus: 'waiting',
       actionKind: 'permission',
       actionLabel: 'Permission needed',
+      backgroundActive: false,
     });
 
     state.pendingPermissionRequest = null;
@@ -390,6 +392,7 @@ describe('ClaudeRuntimeService', () => {
       activityStatus: 'waiting',
       actionKind: 'user_input',
       actionLabel: 'Input needed',
+      backgroundActive: false,
     });
 
     state.pendingUserInputRequest = null;
@@ -400,6 +403,7 @@ describe('ClaudeRuntimeService', () => {
       activityStatus: 'running',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: false,
     });
 
     state.runPhase = 'idle';
@@ -409,6 +413,7 @@ describe('ClaudeRuntimeService', () => {
       activityStatus: 'idle',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: false,
     });
 
     const runStates = emittedEvents.filter(

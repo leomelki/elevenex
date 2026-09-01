@@ -494,18 +494,24 @@ export class Sidebar implements OnInit, OnDestroy {
     return activity.activityStatus === 'waiting' ? activity.actionLabel : null;
   }
 
+  /** Background agents still running, whatever the main turn is doing. */
+  hasSessionBackgroundWork(session: SessionInTree): boolean {
+    return this.claudeStatus.getActivity(session.id).backgroundActive;
+  }
+
   getSessionActivityTitle(session: SessionInTree): string {
     const activity = this.claudeStatus.getActivity(session.id);
-    if (activity.actionLabel) {
-      return activity.actionLabel;
-    }
-    if (activity.activityStatus === 'running') {
-      return 'Claude is working';
-    }
-    if (activity.activityStatus === 'waiting') {
-      return 'Claude is awaiting input';
-    }
-    return 'Claude is idle';
+    const base = activity.actionLabel
+      ? activity.actionLabel
+      : activity.activityStatus === 'running'
+        ? 'Claude is working'
+        : activity.activityStatus === 'waiting'
+          ? 'Claude is awaiting input'
+          : 'Claude is idle';
+
+    return activity.backgroundActive && activity.activityStatus !== 'running'
+      ? `${base} · background work running`
+      : base;
   }
 
   getSessionLastStateChangeLabel(session: SessionInTree): string | null {

@@ -219,6 +219,7 @@ describe('ClaudeHooksService', () => {
       activityStatus: 'waiting',
       actionKind: 'permission',
       actionLabel: 'Permission needed',
+      backgroundActive: false,
     });
 
     expect(service.getStatus(5)).toBe('waiting');
@@ -226,11 +227,13 @@ describe('ClaudeHooksService', () => {
       activityStatus: 'waiting',
       actionKind: 'permission',
       actionLabel: 'Permission needed',
+      backgroundActive: false,
     });
     expect(service.getAllActivities()[5]).toEqual({
       activityStatus: 'waiting',
       actionKind: 'permission',
       actionLabel: 'Permission needed',
+      backgroundActive: false,
     });
   });
 
@@ -240,18 +243,21 @@ describe('ClaudeHooksService', () => {
       activityStatus: 'waiting',
       actionKind: 'user_input',
       actionLabel: 'Input needed',
+      backgroundActive: false,
     });
 
     service.updateRuntimeActivity(5, {
       activityStatus: 'idle',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: false,
     });
 
     expect(service.getActivity(5)).toEqual({
       activityStatus: 'running',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: false,
     });
   });
 

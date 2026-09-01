@@ -1283,6 +1283,7 @@ export class PiRuntimeService
         activityStatus: 'waiting',
         actionKind: 'user_input',
         actionLabel: 'Input needed',
+      backgroundActive: false,
       };
     }
     return {
@@ -1292,6 +1293,7 @@ export class PiRuntimeService
           : 'idle',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: false,
     };
   }
 

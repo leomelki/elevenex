@@ -4647,11 +4647,17 @@ export class ClaudeRuntimeService
   }
 
   private toSidebarActivity(state: RuntimeState): ClaudeSessionActivity {
+    // Reported alongside the main-turn status rather than folded into it: a
+    // pending question still needs the user even while agents run behind it,
+    // and background work alone must not read as an unattended busy session.
+    const backgroundActive = state.backgroundWork.length > 0;
+
     if (state.pendingPermissionRequest) {
       return {
         activityStatus: 'waiting',
         actionKind: 'permission',
         actionLabel: 'Permission needed',
+        backgroundActive,
       };
     }
 
@@ -4660,6 +4666,7 @@ export class ClaudeRuntimeService
         activityStatus: 'waiting',
         actionKind: 'user_input',
         actionLabel: 'Input needed',
+        backgroundActive,
       };
     }
 
@@ -4670,6 +4677,7 @@ export class ClaudeRuntimeService
           : 'idle',
       actionKind: null,
       actionLabel: null,
+      backgroundActive,
     };
   }
 

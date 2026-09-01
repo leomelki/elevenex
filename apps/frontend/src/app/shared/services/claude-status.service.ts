@@ -1,5 +1,6 @@
 import { Injectable, NgZone, OnDestroy, signal } from '@angular/core';
-import { getWebSocketUrl } from '../runtime/runtime-config';
+import { getBackendOrigin, getWebSocketUrl, isBackendOriginReady } from '../runtime/runtime-config';
+import { readOnboardingStateSnapshot } from './onboarding-state.service';
 
 export type ClaudeActivityStatus = 'running' | 'idle' | 'waiting';
 export type ClaudeActivityActionKind = 'permission' | 'user_input' | null;
@@ -8,6 +9,12 @@ export interface ClaudeSessionActivity {
   activityStatus: ClaudeActivityStatus;
   actionKind: ClaudeActivityActionKind;
   actionLabel: string | null;
+  /**
+   * Work still running in the background, independently of `activityStatus`.
+   * A session parked on a question with agents still working is both
+   * `waiting` and `backgroundActive`.
+   */
+  backgroundActive: boolean;
 }
 
 export interface SessionCompletionState {
@@ -19,9 +26,26 @@ export interface SessionCompletionState {
 
 @Injectable({ providedIn: 'root' })
 export class ClaudeStatusService implements OnDestroy {
+  /**
+   * Silence after which the socket is assumed dead. The gateway heartbeats
+   * every 25s, so this is three missed beats. A half-open TCP socket (tunnel
+   * blip, host sleep, network switch) stays `OPEN` with no `close` event, so
+   * silence is the only signal the client gets.
+   */
+  private static readonly SILENCE_TIMEOUT_MS = 75_000;
+  /** How often the socket is checked against the currently selected backend. */
+  private static readonly ORIGIN_WATCH_INTERVAL_MS = 15_000;
+  /** Retry cadence while the selected backend has no reachable origin yet. */
+  private static readonly ORIGIN_PENDING_RETRY_MS = 1000;
+
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
+  private silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private originWatchTimer: ReturnType<typeof setInterval> | null = null;
+  /** Origin the live socket was opened against, so a backend switch is detectable. */
+  private connectedOrigin: string | null = null;
+  private destroyed = false;
 
   private _statuses = signal(new Map<number, ClaudeActivityStatus>());
   readonly statuses = this._statuses.asReadonly();
@@ -49,6 +73,10 @@ export class ClaudeStatusService implements OnDestroy {
 
   constructor(private readonly ngZone: NgZone) {
     this.connect();
+    this.originWatchTimer = setInterval(
+      () => this.auditBackendOrigin(),
+      ClaudeStatusService.ORIGIN_WATCH_INTERVAL_MS,
+    );
   }
 
   getStatus(sessionId: number): ClaudeActivityStatus {
@@ -60,6 +88,7 @@ export class ClaudeStatusService implements OnDestroy {
       activityStatus: this._statuses().get(sessionId) ?? 'idle',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: false,
     };
   }
 
@@ -104,9 +133,42 @@ export class ClaudeStatusService implements OnDestroy {
   }
 
   private connect(): void {
-    const wsUrl = getWebSocketUrl('/claude-status');
+    if (this.destroyed) {
+      return;
+    }
 
-    this.ws = new WebSocket(wsUrl);
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    const snapshot = readOnboardingStateSnapshot();
+    if (!isBackendOriginReady(snapshot)) {
+      // The selected backend is remote and its tunnel is not up yet. Opening
+      // now would bind this socket to whatever answers on the local fallback
+      // origin — a different backend that knows none of these sessions — and
+      // since that socket connects cleanly it would never close, never
+      // reconnect, and leave every session stuck on its default 'idle'.
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        this.connect();
+      }, ClaudeStatusService.ORIGIN_PENDING_RETRY_MS);
+      return;
+    }
+
+    const origin = getBackendOrigin(snapshot);
+    if (this.connectedOrigin !== null && this.connectedOrigin !== origin) {
+      // Session ids are per-backend, so anything held from the previous one is
+      // meaningless against the new one.
+      this.clearState();
+    }
+    this.connectedOrigin = origin;
+
+    const ws = new WebSocket(getWebSocketUrl('/claude-status', undefined, origin));
+    this.ws = ws;
+    // Armed before `open` so a connect that hangs without ever opening is torn
+    // down too, instead of sitting there forever.
+    this.armSilenceTimeout(ws);
 
     this.ws.onopen = () => {
       this.reconnectDelay = 1000;
@@ -114,6 +176,7 @@ export class ClaudeStatusService implements OnDestroy {
     };
 
     this.ws.onmessage = (event) => {
+      this.armSilenceTimeout(ws);
       this.ngZone.run(() => {
         try {
           const data = JSON.parse(event.data);
@@ -133,6 +196,7 @@ export class ClaudeStatusService implements OnDestroy {
                   activityStatus: status,
                   actionKind: null,
                   actionLabel: null,
+                  backgroundActive: false,
                 });
               }
             }
@@ -190,11 +254,15 @@ export class ClaudeStatusService implements OnDestroy {
     };
 
     this.ws.onclose = () => {
+      this.ws = null;
+      this.clearSilenceTimer();
       this.scheduleReconnect();
     };
 
     this.ws.onerror = () => {
-      this.ws?.close();
+      if (this.ws === ws) {
+        ws.close();
+      }
     };
   }
 
@@ -218,11 +286,16 @@ export class ClaudeStatusService implements OnDestroy {
           ? 'Input needed'
           : null;
 
-    return { activityStatus: status, actionKind, actionLabel };
+    return {
+      activityStatus: status,
+      actionKind,
+      actionLabel,
+      backgroundActive: record['backgroundActive'] === true,
+    };
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
+    if (this.reconnectTimer || this.destroyed) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
@@ -230,10 +303,97 @@ export class ClaudeStatusService implements OnDestroy {
     }, this.reconnectDelay);
   }
 
+  /**
+   * Closes a socket that has gone quiet. Closing rather than reconnecting
+   * directly keeps the single reconnect path in `onclose`.
+   */
+  private armSilenceTimeout(ws: WebSocket): void {
+    this.clearSilenceTimer();
+    this.silenceTimer = setTimeout(() => {
+      this.silenceTimer = null;
+      if (this.ws === ws) {
+        ws.close();
+      }
+    }, ClaudeStatusService.SILENCE_TIMEOUT_MS);
+  }
+
+  private clearSilenceTimer(): void {
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
+  }
+
+  /**
+   * Repoints the socket when the selected backend changes. Switching
+   * environment does not reload the app, so without this the sidebar keeps
+   * reporting the previous machine's sessions for the rest of the session.
+   */
+  private auditBackendOrigin(): void {
+    if (this.destroyed) return;
+
+    const snapshot = readOnboardingStateSnapshot();
+    if (!isBackendOriginReady(snapshot)) {
+      // connect() is already retrying on its own cadence.
+      return;
+    }
+
+    if (!this.ws) {
+      if (!this.reconnectTimer) this.connect();
+      return;
+    }
+
+    if (
+      this.connectedOrigin !== null &&
+      getBackendOrigin(snapshot) !== this.connectedOrigin
+    ) {
+      this.teardownSocket();
+      this.reconnectDelay = 1000;
+      this.connect();
+    }
+  }
+
+  private teardownSocket(): void {
+    this.clearSilenceTimer();
+    const ws = this.ws;
+    this.ws = null;
+    if (!ws) return;
+
+    // Detach first: closing a socket we are deliberately replacing must not
+    // run the onclose reconnect path on top of the one we are starting.
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onclose = null;
+    ws.onerror = null;
+    try {
+      ws.close();
+    } catch {
+      // Already gone.
+    }
+  }
+
+  /** Everything held here is keyed by session id, which is per-backend. */
+  private clearState(): void {
+    this.ngZone.run(() => {
+      this._statuses.set(new Map());
+      this._activities.set(new Map());
+      this._sessionStatuses.set(new Map());
+      this._sessionCompletions.set(new Map());
+      this._sessionTitles.set(new Map());
+      this._sessionWorktreeContexts.set(new Map());
+    });
+  }
+
   ngOnDestroy(): void {
+    this.destroyed = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
-    this.ws?.close();
+    if (this.originWatchTimer) {
+      clearInterval(this.originWatchTimer);
+      this.originWatchTimer = null;
+    }
+    this.teardownSocket();
   }
 }

@@ -306,6 +306,7 @@
 }
 
 .sidebar-status-dot {
+  position: relative;
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -328,6 +329,31 @@
     opacity: 0.3;
     width: 6px;
     height: 6px;
+  }
+
+  // Background agents are still working while the main turn is blocked on the
+  // user or already done. `status-running` spins by itself, so it needs no ring.
+  &.has-background-work:not(.status-running)::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid oklch(0.72 0.17 142 / 0.3);
+    border-top-color: oklch(0.72 0.17 142);
+    animation: status-spin 0.6s linear infinite;
+  }
+
+  // The pulse animates the element's opacity, which would fade the ring in and
+  // out with it. The spinner already carries the motion.
+  &.status-waiting.has-background-work {
+    animation: none;
+  }
+
+  // Dim the dot through its colour instead of `opacity`, which would fade the
+  // ring with it.
+  &.status-idle.has-background-work {
+    opacity: 1;
+    background-color: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
   }
 }
 

@@ -11,6 +11,13 @@ export interface ClaudeSessionActivity {
   activityStatus: ClaudeActivityStatus;
   actionKind: ClaudeActivityActionKind;
   actionLabel: string | null;
+  /**
+   * Work still executing in the background while `activityStatus` describes the
+   * main turn. The two are independent: a session can be parked on a question
+   * (`waiting`) with several agents still running behind it. Without this the
+   * sidebar reports only the blocked turn and the session reads as stalled.
+   */
+  backgroundActive: boolean;
 }
 
 interface StatusEntry {
@@ -134,10 +141,13 @@ export class ClaudeHooksService extends EventEmitter {
       return runtimeActivity;
     }
 
+    // An idle runtime activity is still retained when it carries background
+    // work, so let the hook-driven status win while keeping that flag.
     return {
       activityStatus: this.statuses.get(sessionId)?.status ?? 'idle',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: runtimeActivity?.backgroundActive ?? false,
     };
   }
 
@@ -146,7 +156,7 @@ export class ClaudeHooksService extends EventEmitter {
     activity: ClaudeSessionActivity,
   ): void {
     const previous = this.getActivity(sessionId);
-    if (activity.activityStatus === 'idle') {
+    if (activity.activityStatus === 'idle' && !activity.backgroundActive) {
       this.runtimeActivities.delete(sessionId);
     } else {
       this.runtimeActivities.set(sessionId, activity);
@@ -156,7 +166,8 @@ export class ClaudeHooksService extends EventEmitter {
     if (
       previous.activityStatus === current.activityStatus &&
       previous.actionKind === current.actionKind &&
-      previous.actionLabel === current.actionLabel
+      previous.actionLabel === current.actionLabel &&
+      previous.backgroundActive === current.backgroundActive
     ) {
       return;
     }

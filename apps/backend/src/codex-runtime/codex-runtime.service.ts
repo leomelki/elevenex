@@ -1153,6 +1153,7 @@ export class CodexRuntimeService
         activityStatus: 'waiting',
         actionKind: 'permission',
         actionLabel: 'Permission needed',
+      backgroundActive: false,
       };
     }
     if (state.pendingUserInputRequest) {
@@ -1160,6 +1161,7 @@ export class CodexRuntimeService
         activityStatus: 'waiting',
         actionKind: 'user_input',
         actionLabel: 'Input needed',
+      backgroundActive: false,
       };
     }
     return {
@@ -1169,6 +1171,7 @@ export class CodexRuntimeService
           : 'idle',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: false,
     };
   }
 

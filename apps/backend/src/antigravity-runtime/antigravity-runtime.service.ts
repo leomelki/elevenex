@@ -1046,6 +1046,7 @@ export class AntigravityRuntimeService
           : 'idle',
       actionKind: null,
       actionLabel: null,
+      backgroundActive: false,
     };
   }
 

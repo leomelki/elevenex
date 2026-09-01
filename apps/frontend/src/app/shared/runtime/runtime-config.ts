@@ -10,6 +10,7 @@ export interface ElevenexRuntimeConfig {
   mode?: 'browser' | 'electron-local' | 'electron-debug';
 }
 
+import type { OnboardingStateSnapshot } from '../models/onboarding.model';
 import { getActiveOnboardingServer, getOnboardingBackendOrigin, readOnboardingStateSnapshot } from '../services/onboarding-state.service';
 
 function normalizeBaseUrl(value: string | undefined): string {
@@ -48,8 +49,10 @@ export function getBackendServerId(): string {
   return 'local';
 }
 
-export function getBackendOrigin(): string {
-  const onboardingOrigin = getOnboardingBackendOrigin(readOnboardingStateSnapshot());
+export function getBackendOrigin(
+  snapshot: OnboardingStateSnapshot = readOnboardingStateSnapshot(),
+): string {
+  const onboardingOrigin = getOnboardingBackendOrigin(snapshot);
   if (onboardingOrigin) {
     return normalizeBaseUrl(onboardingOrigin);
   }
@@ -70,6 +73,33 @@ export function getBackendOrigin(): string {
   return 'http://127.0.0.1:11111';
 }
 
+/**
+ * Whether `getBackendOrigin()` currently resolves to the backend the user
+ * actually selected.
+ *
+ * In `ssh`/`wsl` mode the origin is a tunnel port that only exists once the
+ * connection is up. Until then, inside Electron, `getBackendOrigin()` falls
+ * back to this machine's own port — a different backend entirely, one that
+ * knows nothing about the remote sessions. One-shot requests retry and recover
+ * from that, but a long-lived WebSocket opened against the fallback connects
+ * happily, never errors and therefore never reconnects: it stays silently
+ * bound to the wrong host for the lifetime of the window. Such sockets must
+ * wait for this to be true before connecting.
+ *
+ * Served over http there is no such trap — the fallback is the page's own
+ * origin, which is the backend serving the app and is what every REST call
+ * already targets.
+ */
+export function isBackendOriginReady(
+  snapshot: OnboardingStateSnapshot = readOnboardingStateSnapshot(),
+): boolean {
+  if (snapshot.mode !== 'ssh' && snapshot.mode !== 'wsl') {
+    return true;
+  }
+
+  return !hasElectronBridge() || snapshot.remoteConnectionReady;
+}
+
 export function getApiBaseUrl(): string {
   const runtimeApiBase = normalizeBaseUrl(getRuntimeConfig().apiBaseUrl);
   if (runtimeApiBase) {
@@ -79,8 +109,12 @@ export function getApiBaseUrl(): string {
   return `${getBackendOrigin()}/api`;
 }
 
-export function getWebSocketUrl(path: string, params?: URLSearchParams): string {
-  const url = new URL(path, getBackendOrigin());
+export function getWebSocketUrl(
+  path: string,
+  params?: URLSearchParams,
+  origin: string = getBackendOrigin(),
+): string {
+  const url = new URL(path, origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
 
   if (params) {
