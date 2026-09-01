@@ -198,10 +198,26 @@ export class PiRuntimeService
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
-    if (!state.piSessionPath) return [];
-    const history = await this.readHistoryFromSessionFile(state.piSessionPath);
-    state.liveItems = [];
-    return history;
+
+    if (state.piSessionPath) {
+      try {
+        const persisted = await this.readHistoryFromSessionFile(
+          state.piSessionPath,
+        );
+        return this.overlayLiveItems(state, persisted);
+      } catch (error) {
+        // Pi only writes its session file once the first assistant message of
+        // the session completes, so during the first turn the recorded path
+        // legitimately does not exist on disk yet. Fall back to the live RPC
+        // process instead of reporting an empty transcript while the run is
+        // still streaming.
+        this.logger.warn(
+          `Pi session file not readable session=${sessionId} path=${JSON.stringify(state.piSessionPath)}: ${String(error)}`,
+        );
+      }
+    }
+
+    return this.readLiveHistory(sessionId, state);
   }
 
   async getRuntimeState(sessionId: number): Promise<PiRuntimeStatePayload> {
@@ -1403,28 +1419,83 @@ export class PiRuntimeService
     path: string,
   ): Promise<ClaudeTranscriptItem[]> {
     if (!path || path === '-1') return [];
-    const result: ClaudeTranscriptItem[] = [];
+    const entries = await this.readPiSessionRecords(path);
+    return this.transcriptItemsFromEntries(entries);
+  }
+
+  /**
+   * Recovers history for a session whose file is missing (pi defers the
+   * first write until an assistant message completes) or whose path is not
+   * recorded yet: reads the in-memory entries from the already-running RPC
+   * process and overlays whatever is currently streaming. Never spawns a
+   * runtime on its own.
+   */
+  private async readLiveHistory(
+    sessionId: number,
+    state: PiRuntimeState,
+  ): Promise<ClaudeTranscriptItem[]> {
+    const runtime = this.runtimes.get(sessionId)?.runtime;
+    if (!runtime) return this.overlayLiveItems(state, []);
     try {
-      const entries = await this.readPiSessionRecords(path);
-      for (const [index, entry] of entries.entries()) {
-        const type = entry.type;
-        // Accept both Pi SDK format ("message") and Claude Code CLI format ("user"/"assistant").
-        if (type !== 'message' && type !== 'user' && type !== 'assistant')
-          continue;
-        const rawMessage = asRecord(entry.message);
-        if (!rawMessage) continue;
-        // Claude Code CLI entries carry timestamp on the top-level entry, not inside message.
-        const message =
-          typeof entry.timestamp === 'string' && !rawMessage['timestamp']
-            ? { ...rawMessage, timestamp: entry.timestamp }
-            : rawMessage;
-        const entryId = this.piEntryAnchorId(entry, index);
-        result.push(
-          ...this.messageToTranscriptItems(message, entryId, entryId),
-        );
-      }
-    } catch {
-      return [];
+      const response = await runtime.send<{ entries?: unknown }>({
+        type: 'get_entries',
+      });
+      const entries = Array.isArray(response?.entries)
+        ? (response.entries as Record<string, unknown>[])
+        : [];
+      return this.overlayLiveItems(
+        state,
+        this.transcriptItemsFromEntries(entries),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Pi live entries unavailable session=${sessionId}: ${String(error)}`,
+      );
+      return this.overlayLiveItems(state, []);
+    }
+  }
+
+  /**
+   * Overlays in-memory streamed items on persisted history. The session file
+   * lags the stream while a run is active (pi appends entries as messages
+   * complete), and streamed items deliberately reuse the ids of their
+   * persisted counterparts so the final message_end snapshot reconciles with
+   * the in-progress one. Merging by id with the live copy winning therefore
+   * yields one copy of each item with the freshest content. Unlike the old
+   * behavior this never clears `liveItems`: reattaching clients receive them
+   * through runtime snapshots, and clearing them mid-run would blank the
+   * in-flight assistant message until the next delta arrives.
+   */
+  private overlayLiveItems(
+    state: PiRuntimeState,
+    history: ClaudeTranscriptItem[],
+  ): ClaudeTranscriptItem[] {
+    if (!state.liveItems.length) return history;
+    const byId = new Map(history.map((item) => [item.id, item]));
+    for (const item of state.liveItems) byId.set(item.id, item);
+    return [...byId.values()].sort((l, r) =>
+      l.timestamp.localeCompare(r.timestamp),
+    );
+  }
+
+  private transcriptItemsFromEntries(
+    entries: Record<string, unknown>[],
+  ): ClaudeTranscriptItem[] {
+    const result: ClaudeTranscriptItem[] = [];
+    for (const [index, entry] of entries.entries()) {
+      const type = entry.type;
+      // Accept both Pi SDK format ("message") and Claude Code CLI format ("user"/"assistant").
+      if (type !== 'message' && type !== 'user' && type !== 'assistant')
+        continue;
+      const rawMessage = asRecord(entry.message);
+      if (!rawMessage) continue;
+      // Claude Code CLI entries carry timestamp on the top-level entry, not inside message.
+      const message =
+        typeof entry.timestamp === 'string' && !rawMessage['timestamp']
+          ? { ...rawMessage, timestamp: entry.timestamp }
+          : rawMessage;
+      const entryId = this.piEntryAnchorId(entry, index);
+      result.push(...this.messageToTranscriptItems(message, entryId, entryId));
     }
     return result.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   }

@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PiRuntimeService } from './pi-runtime.service.js';
+import type { PiSessionRuntimeEvent } from './pi-runtime.types.js';
 import { buildAugmentedEnvAsync } from '../config/system-paths.js';
 
 jest.mock('../session-title/session-title.service.js', () => ({
@@ -60,7 +61,26 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-function createPiProcess(sessionFile: string): MockPiProcess {
+/**
+ * Emits a raw RPC event into the service the same way a live pi process
+ * would, without going through a spawned runtime.
+ */
+function emitPiEvent(
+  service: PiRuntimeService,
+  sessionId: number,
+  event: PiSessionRuntimeEvent,
+): void {
+  (
+    service as unknown as {
+      handlePiEvent(sessionId: number, event: PiSessionRuntimeEvent): void;
+    }
+  ).handlePiEvent(sessionId, event);
+}
+
+function createPiProcess(
+  sessionFile: string,
+  options?: { entries?: Record<string, unknown>[] },
+): MockPiProcess {
   const child = new EventEmitter() as MockPiProcess;
   child.stdin = new MockWritable();
   child.stdout = new EventEmitter();
@@ -89,6 +109,21 @@ function createPiProcess(sessionFile: string): MockPiProcess {
               sessionFile,
               model: { provider: 'anthropic', id: 'claude-sonnet' },
             },
+          }) + '\n',
+        ),
+      );
+      return;
+    }
+    if (command.type === 'get_entries') {
+      child.stdout.emit(
+        'data',
+        Buffer.from(
+          JSON.stringify({
+            type: 'response',
+            id: command.id,
+            command: 'get_entries',
+            success: true,
+            data: { entries: options?.entries ?? [] },
           }) + '\n',
         ),
       );
@@ -480,6 +515,185 @@ describe('PiRuntimeService lifecycle', () => {
     expect(thinkingItems[0]?.content).toBe('full reasoning');
     expect(assistantItems).toHaveLength(1);
     expect(assistantItems[0]?.content).toBe('full answer');
+  });
+
+  it('recovers history from the live RPC process when the session file has not been flushed yet', async () => {
+    const missingSessionFile = join(
+      tmpdir(),
+      `pi-missing-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+    );
+    const child = createPiProcess(missingSessionFile, {
+      entries: [
+        {
+          id: 'user-entry',
+          type: 'message',
+          message: {
+            role: 'user',
+            timestamp: Date.parse('2026-05-22T10:00:00.000Z'),
+            content: [{ type: 'text', text: 'hello' }],
+          },
+        },
+        {
+          id: 'assistant-entry',
+          type: 'message',
+          message: {
+            role: 'assistant',
+            timestamp: Date.parse('2026-05-22T10:01:00.000Z'),
+            content: [
+              {
+                type: 'thinking',
+                thinking: 'persisted reasoning',
+                textSignature: 'sig-live',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    mockSpawn.mockReturnValue(child as never);
+    const { service } = createService({
+      piSessionPath: missingSessionFile,
+      idleMs: '60000',
+    });
+
+    await service.submitPrompt(1, 'hello');
+
+    // Simulate the in-flight assistant message streaming after reattach: the
+    // entries above are not on disk yet, and the live stream holds fresher
+    // content under the same item id.
+    const streamingMessage = {
+      role: 'assistant',
+      timestamp: Date.parse('2026-05-22T10:01:00.000Z'),
+      content: [{ type: 'thinking', thinking: '', textSignature: 'sig-live' }],
+    };
+    emitPiEvent(service, 1, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 },
+      message: streamingMessage,
+    });
+    emitPiEvent(service, 1, {
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'thinking_delta',
+        contentIndex: 0,
+        delta: 'streamed reasoning',
+      },
+      message: streamingMessage,
+    });
+
+    const history = await service.getHistory(1);
+
+    expect(history.map((item) => item.kind)).toEqual(['user', 'thinking']);
+    expect(history[0]?.content).toBe('hello');
+    // The live copy wins over the persisted snapshot for the same id.
+    expect(history[1]?.content).toBe('streamed reasoning');
+
+    // Reading history must not wipe the in-flight streamed items: runtime
+    // snapshots sent to reattaching clients still need them.
+    const state = await service.getRuntimeState(1);
+    expect(state.liveItems.map((item) => item.kind)).toEqual(['thinking']);
+    expect(state.liveItems[0]?.content).toBe('streamed reasoning');
+  });
+
+  it('overlays streamed live items on flushed file history without duplicating them', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-history-overlay-'));
+    try {
+      const sessionPath = join(root, 'session.jsonl');
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            id: 'user-entry',
+            type: 'message',
+            message: {
+              role: 'user',
+              timestamp: Date.parse('2026-05-22T10:00:00.000Z'),
+              content: [{ type: 'text', text: 'hello' }],
+            },
+          }),
+          JSON.stringify({
+            id: 'assistant-entry',
+            type: 'message',
+            message: {
+              role: 'assistant',
+              timestamp: Date.parse('2026-05-22T10:01:00.000Z'),
+              content: [
+                {
+                  type: 'thinking',
+                  thinking: 'persisted reasoning',
+                  textSignature: 'sig-file',
+                },
+              ],
+            },
+          }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+      const { service } = createService({ piSessionPath: sessionPath });
+
+      const streamingMessage = {
+        role: 'assistant',
+        timestamp: Date.parse('2026-05-22T10:01:00.000Z'),
+        content: [
+          { type: 'thinking', thinking: '', textSignature: 'sig-file' },
+        ],
+      };
+      emitPiEvent(service, 1, {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 },
+        message: streamingMessage,
+      });
+      emitPiEvent(service, 1, {
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'thinking_delta',
+          contentIndex: 0,
+          delta: 'fresher streamed reasoning',
+        },
+        message: streamingMessage,
+      });
+
+      const history = await service.getHistory(1);
+
+      expect(history.map((item) => item.kind)).toEqual(['user', 'thinking']);
+      expect(history[1]?.id).toBe('sig-file:thinking_start:0');
+      expect(history[1]?.content).toBe('fresher streamed reasoning');
+
+      const state = await service.getRuntimeState(1);
+      expect(state.liveItems).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns the streamed live items when neither session file nor runtime exists', async () => {
+    const { service } = createService();
+
+    const streamingMessage = {
+      role: 'assistant',
+      timestamp: Date.parse('2026-05-22T10:01:00.000Z'),
+      content: [{ type: 'thinking', thinking: '', textSignature: 'sig-cold' }],
+    };
+    emitPiEvent(service, 1, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 },
+      message: streamingMessage,
+    });
+    emitPiEvent(service, 1, {
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'thinking_delta',
+        contentIndex: 0,
+        delta: 'orphaned stream',
+      },
+      message: streamingMessage,
+    });
+
+    const history = await service.getHistory(1);
+
+    expect(history.map((item) => item.kind)).toEqual(['thinking']);
+    expect(history[0]?.content).toBe('orphaned stream');
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it('does not spawn a runtime or persist a Pi session path when fetching autocomplete for a session with no active run', async () => {
