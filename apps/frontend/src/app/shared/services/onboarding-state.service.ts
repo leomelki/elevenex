@@ -1,4 +1,6 @@
 import { Injectable, signal } from '@angular/core';
+import { getElectronWindowsApi } from '../runtime/electron-windows';
+import { getInjectedWindowEnvironment, getWindowId } from '../runtime/window-context';
 import {
   OnboardingLastSshDefaults,
   OnboardingMode,
@@ -8,7 +10,31 @@ import {
   WslConnectionState,
 } from '../models/onboarding.model';
 
+/**
+ * Pre-split key. Still read as a fallback so an existing install migrates
+ * cleanly, and rewritten by neither half once the split keys exist.
+ */
 export const ONBOARDING_STORAGE_KEY = 'elevenex-onboarding';
+
+/**
+ * Saved SSH servers and last-used SSH defaults: app-global, exactly like the
+ * theme. Adding a server in one window makes it available in all of them.
+ */
+export const ENVIRONMENT_CATALOGUE_STORAGE_KEY = 'elevenex-environments';
+
+/**
+ * Which environment *this window* is on. Per-window by construction: two
+ * windows pointing at different backends is the whole point of multi-window,
+ * and this is the value `getBackendOrigin()` reads to decide where requests go.
+ */
+export const WINDOW_SESSION_STORAGE_KEY_BASE = 'elevenex-onboarding-session';
+
+function getWindowSessionStorageKey(): string {
+  return `${WINDOW_SESSION_STORAGE_KEY_BASE}@${getWindowId()}`;
+}
+
+let cachedSnapshot: OnboardingStateSnapshot | null = null;
+let cachedRawState: { catalogue: string | null; session: string | null } | null = null;
 
 const DEFAULT_SNAPSHOT: OnboardingStateSnapshot = {
   mode: null,
@@ -115,6 +141,114 @@ function sanitizeDefaults(value: unknown): OnboardingLastSshDefaults | null {
   };
 }
 
+function parseJson(raw: string | null): Record<string, unknown> | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function readCatalogue(raw: string | null): Pick<OnboardingStateSnapshot, 'servers' | 'lastSshDefaults'> {
+  const parsed = parseJson(raw);
+
+  return {
+    servers: Array.isArray(parsed?.['servers'])
+      ? (parsed['servers'] as unknown[]).map(sanitizeServer).filter((value): value is SavedServer => value !== null)
+      : [],
+    lastSshDefaults: sanitizeDefaults(parsed?.['lastSshDefaults']),
+  };
+}
+
+type WindowSession = Omit<OnboardingStateSnapshot, 'servers' | 'lastSshDefaults'>;
+
+/**
+ * Session for a window that has never written its own state: a brand-new window,
+ * or one restored from the saved layout.
+ *
+ * The main process injects the environment it opened the window on, so the
+ * window comes up on the right backend immediately instead of flashing the
+ * local workspace (or the onboarding screen) first. `remoteConnectionReady`
+ * stays false for remotes — the tunnel has to be claimed before requests may go
+ * anywhere — but the connection flow reuses a live tunnel, so it is brief.
+ */
+function seedSessionFromInjectedEnvironment(): WindowSession | null {
+  const injected = getInjectedWindowEnvironment();
+  if (!injected) {
+    return null;
+  }
+
+  if (injected.mode === 'ssh' && Number.isInteger(injected.serverId) && (injected.serverId ?? 0) > 0) {
+    return {
+      mode: 'ssh',
+      currentStep: 'project',
+      activeServerId: injected.serverId,
+      remoteConnectionReady: false,
+      projectHandoffAcknowledged: true,
+      wsl: null,
+    };
+  }
+
+  if (injected.mode === 'wsl') {
+    return {
+      mode: 'wsl',
+      currentStep: 'project',
+      activeServerId: null,
+      remoteConnectionReady: false,
+      projectHandoffAcknowledged: true,
+      wsl: null,
+    };
+  }
+
+  if (injected.mode === 'local') {
+    return {
+      mode: 'local',
+      currentStep: 'project',
+      activeServerId: null,
+      remoteConnectionReady: true,
+      projectHandoffAcknowledged: true,
+      wsl: null,
+    };
+  }
+
+  return null;
+}
+
+function readWindowSession(raw: string | null): WindowSession {
+  const parsed = parseJson(raw);
+
+  if (!parsed) {
+    return seedSessionFromInjectedEnvironment() ?? {
+      mode: DEFAULT_SNAPSHOT.mode,
+      currentStep: DEFAULT_SNAPSHOT.currentStep,
+      activeServerId: DEFAULT_SNAPSHOT.activeServerId,
+      remoteConnectionReady: DEFAULT_SNAPSHOT.remoteConnectionReady,
+      projectHandoffAcknowledged: DEFAULT_SNAPSHOT.projectHandoffAcknowledged,
+      wsl: DEFAULT_SNAPSHOT.wsl,
+    };
+  }
+
+  const mode = parsed['mode'];
+  const currentStep = parsed['currentStep'];
+  const activeServerId = Number(parsed['activeServerId']);
+
+  return {
+    mode: mode === 'local' || mode === 'ssh' || mode === 'wsl' ? mode : null,
+    currentStep:
+      currentStep === 'choice' || currentStep === 'ssh' || currentStep === 'install' || currentStep === 'project'
+        ? currentStep
+        : 'choice',
+    activeServerId: Number.isInteger(activeServerId) && activeServerId > 0 ? activeServerId : null,
+    remoteConnectionReady: parsed['remoteConnectionReady'] === true,
+    projectHandoffAcknowledged: parsed['projectHandoffAcknowledged'] === true,
+    wsl: sanitizeWslState(parsed['wsl']),
+  };
+}
+
 export function readOnboardingStateSnapshot(
   storage: Pick<Storage, 'getItem'> | null = typeof localStorage === 'undefined' ? null : localStorage,
 ): OnboardingStateSnapshot {
@@ -122,36 +256,79 @@ export function readOnboardingStateSnapshot(
     return DEFAULT_SNAPSHOT;
   }
 
+  // Both halves fall back to the pre-split key so an existing install keeps its
+  // servers and its active environment on the first launch after upgrading.
+  // Guarded because this runs on every HTTP request: an unavailable storage
+  // must degrade to defaults, not take the whole app down.
+  let legacyRaw: string | null;
+  let catalogueRaw: string | null;
+  let sessionRaw: string | null;
   try {
-    const raw = storage.getItem(ONBOARDING_STORAGE_KEY);
-    if (!raw) {
-      return DEFAULT_SNAPSHOT;
-    }
-
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const mode = parsed['mode'];
-    const currentStep = parsed['currentStep'];
-    const activeServerId = Number(parsed['activeServerId']);
-    const servers = Array.isArray(parsed['servers'])
-      ? parsed['servers'].map(sanitizeServer).filter((value): value is SavedServer => value !== null)
-      : [];
-
-    return {
-      mode: mode === 'local' || mode === 'ssh' || mode === 'wsl' ? mode : null,
-      currentStep:
-        currentStep === 'choice' || currentStep === 'ssh' || currentStep === 'install' || currentStep === 'project'
-          ? currentStep
-          : 'choice',
-      activeServerId: Number.isInteger(activeServerId) && activeServerId > 0 ? activeServerId : null,
-      remoteConnectionReady: parsed['remoteConnectionReady'] === true,
-      projectHandoffAcknowledged: parsed['projectHandoffAcknowledged'] === true,
-      servers,
-      lastSshDefaults: sanitizeDefaults(parsed['lastSshDefaults']),
-      wsl: sanitizeWslState(parsed['wsl']),
-    };
+    legacyRaw = storage.getItem(ONBOARDING_STORAGE_KEY);
+    catalogueRaw = storage.getItem(ENVIRONMENT_CATALOGUE_STORAGE_KEY) ?? legacyRaw;
+    sessionRaw = storage.getItem(getWindowSessionStorageKey()) ?? legacyRaw;
   } catch {
     return DEFAULT_SNAPSHOT;
   }
+
+  // This runs on every HTTP request (see api-base.interceptor) and now reads
+  // two keys, so the parse is memoised against the raw strings rather than
+  // behind an invalidation flag: getItem is cheap, JSON.parse is not, and
+  // comparing the source text cannot go stale on an external write.
+  if (
+    cachedSnapshot
+    && cachedRawState
+    && cachedRawState.catalogue === catalogueRaw
+    && cachedRawState.session === sessionRaw
+  ) {
+    return cachedSnapshot;
+  }
+
+  const snapshot: OnboardingStateSnapshot = {
+    ...readWindowSession(sessionRaw),
+    ...readCatalogue(catalogueRaw),
+  };
+
+  cachedRawState = { catalogue: catalogueRaw, session: sessionRaw };
+  cachedSnapshot = snapshot;
+
+  return snapshot;
+}
+
+/** IPC channel used to tell the other windows the server list changed. */
+export const ENVIRONMENT_CATALOGUE_CHANGED_CHANNEL = 'environments:changed';
+
+export function writeOnboardingStateSnapshot(snapshot: OnboardingStateSnapshot): void {
+  if (typeof localStorage === 'undefined') {
+    return;
+  }
+
+  try {
+    localStorage.setItem(
+      ENVIRONMENT_CATALOGUE_STORAGE_KEY,
+      JSON.stringify({ servers: snapshot.servers, lastSshDefaults: snapshot.lastSshDefaults }),
+    );
+    localStorage.setItem(
+      getWindowSessionStorageKey(),
+      JSON.stringify({
+        mode: snapshot.mode,
+        currentStep: snapshot.currentStep,
+        activeServerId: snapshot.activeServerId,
+        remoteConnectionReady: snapshot.remoteConnectionReady,
+        projectHandoffAcknowledged: snapshot.projectHandoffAcknowledged,
+        wsl: snapshot.wsl,
+      }),
+    );
+    // The pre-split key has now been superseded on both axes; leaving it around
+    // would resurrect stale state for any window created later.
+    localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+  } catch {
+    // Storage failures must not break a connection switch.
+  }
+
+  // Force the next read to re-derive from storage rather than trusting an
+  // in-memory copy that may not match what actually landed on disk.
+  cachedRawState = null;
 }
 
 export function getActiveOnboardingServer(
@@ -319,7 +496,23 @@ export class OnboardingStateService {
   }
 
   private writeSnapshot(snapshot: OnboardingStateSnapshot) {
-    localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(snapshot));
+    const previous = this.snapshot();
+    writeOnboardingStateSnapshot(snapshot);
     this.snapshot.set(snapshot);
+
+    // The catalogue is app-global: the other windows' server lists have to
+    // follow, and localStorage's `storage` event is not dependable between
+    // Electron BrowserWindows.
+    if (
+      previous.servers !== snapshot.servers
+      || previous.lastSshDefaults !== snapshot.lastSshDefaults
+    ) {
+      void getElectronWindowsApi()?.broadcast(ENVIRONMENT_CATALOGUE_CHANGED_CHANNEL);
+    }
+  }
+
+  /** Re-reads storage after another window changed the shared catalogue. */
+  refreshFromStorage() {
+    this.snapshot.set(readOnboardingStateSnapshot());
   }
 }

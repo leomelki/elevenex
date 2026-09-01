@@ -50,7 +50,8 @@ import {
   PlanReviewRailMode,
   PlanReviewRequest,
 } from '@/features/plan-annotator';
-import { getBackendOrigin, getBackendServerId } from '@/shared/runtime/runtime-config';
+import { getBackendOrigin } from '@/shared/runtime/runtime-config';
+import { migrateScopedKey, migratedWindowScopedKey, serverScopedKey } from '@/shared/services/scoped-storage';
 import { ActionsPanelComponent, ActionsStateService } from '@/features/actions';
 import { UserTerminalPanelComponent, UserTerminalStateService } from '@/features/user-terminal';
 import {
@@ -132,16 +133,30 @@ type ClaudeSurfaceMode = 'workspace' | 'terminal';
   host: { class: 'flex-1 min-h-0' },
 })
 export class SessionContainer implements OnInit, OnDestroy {
+  // All three are window layout: which surface a session shows, whether the
+  // changes panel is open, how the panes are split. Two windows on the same
+  // backend arrange themselves independently.
   private static readonly SIDEBAR_MODE_STORAGE_KEY = 'elevenex-layout-preferences';
   private static readonly CLAUDE_SURFACE_MODE_STORAGE_KEY = 'elevenex-claude-surface-modes';
   private static readonly CHANGES_PANEL_STATE_KEY = 'elevenex-changes-panel-state';
 
+  private get sidebarModeStorageKey(): string {
+    return migratedWindowScopedKey(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
+  }
+
   private get claudeSurfaceStorageKey(): string {
-    return `${SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY}@${getBackendServerId()}`;
+    // Previously backend-scoped only, so that is the key to migrate from.
+    return migratedWindowScopedKey(
+      SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY,
+      serverScopedKey(SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY),
+    );
   }
 
   private get changesPanelStorageKey(): string {
-    return `${SessionContainer.CHANGES_PANEL_STATE_KEY}@${getBackendServerId()}`;
+    return migratedWindowScopedKey(
+      SessionContainer.CHANGES_PANEL_STATE_KEY,
+      serverScopedKey(SessionContainer.CHANGES_PANEL_STATE_KEY),
+    );
   }
 
   private route = inject(ActivatedRoute);
@@ -345,7 +360,7 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   private getSidePanelPreference(): SidePanelMode {
     try {
-      const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
+      const stored = localStorage.getItem(this.sidebarModeStorageKey);
       if (stored) {
         const prefs = JSON.parse(stored);
         if (
@@ -375,7 +390,7 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   private saveSidePanelPreference(mode: SidePanelMode): void {
     try {
-      const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
+      const stored = localStorage.getItem(this.sidebarModeStorageKey);
       const current = stored ? JSON.parse(stored) : {};
       const persistedMode =
         mode === 'changes' ||
@@ -384,7 +399,7 @@ export class SessionContainer implements OnInit, OnDestroy {
           ? 'none'
           : mode;
       localStorage.setItem(
-        SessionContainer.SIDEBAR_MODE_STORAGE_KEY,
+        this.sidebarModeStorageKey,
         JSON.stringify({
           ...current,
           filesPanelVisible: persistedMode === 'files',
@@ -420,16 +435,11 @@ export class SessionContainer implements OnInit, OnDestroy {
   private getClaudeSurfaceModePreference(): ReadonlyMap<number, ClaudeSurfaceMode> {
     const modes = new Map<number, ClaudeSurfaceMode>();
     try {
-      // One-time migration from unscoped key to per-backend scoped key.
-      const unscopedKey = SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY;
+      // Two generations to carry over: the original unscoped key, and the
+      // backend-scoped key that replaced it before windows existed. The getter
+      // handles the second; this handles the first.
       const scopedKey = this.claudeSurfaceStorageKey;
-      const legacy = localStorage.getItem(unscopedKey);
-      if (legacy) {
-        if (!localStorage.getItem(scopedKey)) {
-          localStorage.setItem(scopedKey, legacy);
-        }
-        localStorage.removeItem(unscopedKey);
-      }
+      migrateScopedKey(SessionContainer.CLAUDE_SURFACE_MODE_STORAGE_KEY, scopedKey);
 
       const stored = localStorage.getItem(scopedKey);
       if (!stored) return modes;
@@ -726,10 +736,10 @@ export class SessionContainer implements OnInit, OnDestroy {
     prefs: Partial<{ terminalSize: number; editorSize: number; userTerminalSize: number }>,
   ): void {
     try {
-      const stored = localStorage.getItem(SessionContainer.SIDEBAR_MODE_STORAGE_KEY);
+      const stored = localStorage.getItem(this.sidebarModeStorageKey);
       const current = stored ? JSON.parse(stored) : {};
       localStorage.setItem(
-        SessionContainer.SIDEBAR_MODE_STORAGE_KEY,
+        this.sidebarModeStorageKey,
         JSON.stringify({ ...current, ...prefs }),
       );
     } catch {

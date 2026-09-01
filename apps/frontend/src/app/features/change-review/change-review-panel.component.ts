@@ -68,6 +68,7 @@ import {
   inlineChangeHtml,
 } from '@/features/session/claude-workspace/util/code-highlight';
 import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
+import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
 import {
   CHANGE_REVIEW_HEADER_ROWS,
   ChangeReviewVirtualAnchor,
@@ -189,8 +190,19 @@ const WINDOW_LOAD_CONCURRENCY = 1;
 const MAX_WINDOW_CACHE_ROWS = 120_000;
 const MAX_WINDOW_CACHE_WINDOWS = 400;
 const MAX_ROW_HTML_CACHE = 8_000;
-const VIEWED_STORAGE_KEY = 'elevenex-change-review-viewed-file-fingerprints-v1';
-const SIDEBAR_STORAGE_KEY = 'elevenex-change-review-sidebar-pref-v1';
+// Reviewing is a per-window activity: the inner keys are worktree paths,
+// which are only meaningful on one backend, and two windows reviewing the
+// same branch should track what each of them has looked at.
+const VIEWED_STORAGE_KEY_BASE = 'elevenex-change-review-viewed-file-fingerprints-v1';
+const SIDEBAR_STORAGE_KEY_BASE = 'elevenex-change-review-sidebar-pref-v1';
+
+function viewedStorageKey(): string {
+  return migratedWindowScopedKey(VIEWED_STORAGE_KEY_BASE);
+}
+
+function sidebarStorageKey(): string {
+  return migratedWindowScopedKey(SIDEBAR_STORAGE_KEY_BASE);
+}
 // Below this panel width, the file sidebar auto-collapses to a compact rail so
 // the diff keeps enough room. Users can still pin it open/closed via the toggle.
 const SIDEBAR_AUTO_COLLAPSE_PX = 560;
@@ -2253,7 +2265,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   private readViewedFingerprints(): Record<string, string> {
     try {
-      const raw = localStorage.getItem(VIEWED_STORAGE_KEY);
+      const raw = localStorage.getItem(viewedStorageKey());
       if (!raw) return {};
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === 'object' ? parsed : {};
@@ -2264,7 +2276,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   private writeViewedFingerprints(value: Record<string, string>): void {
     try {
-      localStorage.setItem(VIEWED_STORAGE_KEY, JSON.stringify(value));
+      localStorage.setItem(viewedStorageKey(), JSON.stringify(value));
     } catch {
       // Ignore storage errors.
     }
@@ -2272,7 +2284,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   private readSidebarPref(): SidebarPref {
     try {
-      const raw = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+      const raw = localStorage.getItem(sidebarStorageKey());
       return raw === 'collapsed' || raw === 'expanded' || raw === 'auto' ? raw : 'auto';
     } catch {
       return 'auto';
@@ -2281,7 +2293,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   private writeSidebarPref(value: SidebarPref): void {
     try {
-      localStorage.setItem(SIDEBAR_STORAGE_KEY, value);
+      localStorage.setItem(sidebarStorageKey(), value);
     } catch {
       // Ignore storage errors.
     }

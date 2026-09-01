@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideAppWindow,
   lucideArrowLeft,
   lucideCheck,
   lucideChevronsUpDown,
@@ -35,6 +36,7 @@ import {
   EnvironmentConnectionManagerService,
   SavedServerDraft,
 } from '@/shared/services/environment-connection-manager.service';
+import { OpenWindowsService } from '@/shared/services/open-windows.service';
 import { OnboardingConnectionService } from '@/shared/services/onboarding-connection.service';
 import { RemoteInstallFlowService } from '@/shared/services/remote-install-flow.service';
 import {
@@ -68,6 +70,7 @@ function createEmptyDraft(): SavedServerDraft {
   styleUrl: './environment-switcher.component.scss',
   viewProviders: [
     provideIcons({
+      lucideAppWindow,
       lucideArrowLeft,
       lucideCheck,
       lucideChevronsUpDown,
@@ -91,6 +94,7 @@ export class EnvironmentSwitcherComponent {
   private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private readonly remoteInstallFlow = inject(RemoteInstallFlowService);
   private readonly wslInstallFlow = inject(WslInstallFlowService);
+  private readonly openWindows = inject(OpenWindowsService);
   private readonly host = inject(ElementRef<HTMLElement>);
 
   @ViewChild('trigger') triggerEl?: ElementRef<HTMLButtonElement>;
@@ -309,7 +313,8 @@ export class EnvironmentSwitcherComponent {
 
   // ----- Row actions -----
 
-  async selectLocal() {
+  async selectLocal(event?: Event) {
+    if (event && this.handleRowActivate('local', event)) return;
     if (this.isLocalActive()) {
       this.close();
       return;
@@ -323,7 +328,8 @@ export class EnvironmentSwitcherComponent {
     }
   }
 
-  async selectWsl() {
+  async selectWsl(event?: Event) {
+    if (event && this.handleRowActivate('wsl', event)) return;
     if (this.isWslActive() && this.snapshot().remoteConnectionReady) {
       this.close();
       return;
@@ -337,7 +343,8 @@ export class EnvironmentSwitcherComponent {
     }
   }
 
-  async selectServer(server: SavedServer) {
+  async selectServer(server: SavedServer, event?: Event) {
+    if (event && this.handleRowActivate(server, event)) return;
     if (this.isCurrent(server) && this.snapshot().remoteConnectionReady) {
       this.close();
       return;
@@ -435,14 +442,47 @@ export class EnvironmentSwitcherComponent {
   requestDelete(server: SavedServer, event: Event) {
     event.stopPropagation();
     if (this.isCurrent(server)) return;
+
+    // Refuse up front rather than after the confirmation step — asking the user
+    // to confirm something that will then be rejected is worse than not
+    // offering it.
+    const blocker = this.connectionManager.serverDeletionBlocker(server.id);
+    if (blocker) {
+      this.showDeletionBlockedToast(server, blocker.windowId);
+      return;
+    }
+
     this.expansion.set({ kind: 'delete', serverId: server.id });
   }
 
   confirmDelete(server: SavedServer, event: Event) {
     event.stopPropagation();
-    this.connectionManager.deleteServer(server.id);
+    const result = this.connectionManager.deleteServer(server.id);
     this.expansion.set(null);
+
+    if (!result.ok) {
+      // A window may have opened this server between the request and the
+      // confirmation.
+      this.showDeletionBlockedToast(server, result.windowId);
+      return;
+    }
+
     toast.success('Server removed');
+  }
+
+  private showDeletionBlockedToast(server: SavedServer, windowId?: string) {
+    const name = server.name || server.sshHost;
+    toast.error(`“${name}” is open in another window`, {
+      description: 'Close that window, or switch it to another environment, before removing this server.',
+      ...(windowId
+        ? {
+          action: {
+            label: 'Show window',
+            onClick: () => void this.focusOtherWindow(windowId),
+          },
+        }
+        : {}),
+    });
   }
 
   // ----- Expansion helpers -----
@@ -454,5 +494,76 @@ export class EnvironmentSwitcherComponent {
 
   trackServer(_index: number, server: SavedServer) {
     return server.id;
+  }
+
+  // ----- Multiple windows -----
+
+  readonly multiWindowSupported = this.openWindows.isMultiWindowSupported;
+  readonly openWindowList = this.openWindows.windows;
+  readonly hasOtherWindows = this.openWindows.hasOtherWindows;
+  readonly currentWindowId = this.openWindows.currentWindowId;
+
+  /**
+   * Windows *other than this one* already showing an environment. Drives the
+   * "Open" chip, which is what makes the shared-tunnel and blocked-delete
+   * behaviours legible rather than mysterious.
+   */
+  private otherWindowsOn(server: SavedServer | 'local' | 'wsl'): string[] {
+    const env = server === 'local'
+      ? ({ mode: 'local', serverId: null } as const)
+      : server === 'wsl'
+        ? ({ mode: 'wsl', serverId: null } as const)
+        : ({ mode: 'ssh', serverId: server.id } as const);
+
+    return this.openWindows.othersOn(env).map(entry => entry.label);
+  }
+
+  openElsewhereLabels(server: SavedServer | 'local' | 'wsl'): string[] {
+    return this.otherWindowsOn(server);
+  }
+
+  isOpenElsewhere(server: SavedServer | 'local' | 'wsl'): boolean {
+    return this.otherWindowsOn(server).length > 0;
+  }
+
+  openElsewhereTooltip(server: SavedServer | 'local' | 'wsl'): string {
+    const labels = this.otherWindowsOn(server);
+    return labels.length === 0
+      ? ''
+      : `Already open in ${labels.length} other window${labels.length > 1 ? 's' : ''}`;
+  }
+
+  async openInNewWindow(target: 'current' | 'local' | 'wsl' | SavedServer, event?: Event) {
+    event?.stopPropagation();
+    const result = await this.connectionManager.openInNewWindow(target);
+    if (!result.ok) {
+      toast.error(result.error ?? 'Could not open a new window.');
+      return;
+    }
+    this.close();
+  }
+
+  /**
+   * Alt/Option-click opens the row in a new window instead of switching this
+   * one — the same modifier VS Code uses for "open to the side".
+   */
+  handleRowActivate(target: 'local' | 'wsl' | SavedServer, event: Event) {
+    // Angular types keydown/click handlers as a bare Event, so read the
+    // modifier defensively rather than casting.
+    const altKey = 'altKey' in event && (event as MouseEvent | KeyboardEvent).altKey;
+    if (this.multiWindowSupported && altKey) {
+      void this.openInNewWindow(target, event);
+      return true;
+    }
+    return false;
+  }
+
+  async focusOtherWindow(windowId: string) {
+    await this.openWindows.focusWindow(windowId);
+    this.close();
+  }
+
+  trackWindow(_index: number, entry: { windowId: string }) {
+    return entry.windowId;
   }
 }

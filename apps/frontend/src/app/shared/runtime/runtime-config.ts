@@ -8,10 +8,16 @@ export interface ElevenexRuntimeConfig {
   apiBaseUrl?: string;
   backendOrigin?: string;
   mode?: 'browser' | 'electron-local' | 'electron-debug';
+  /** Desktop window this renderer runs in — injected by preload.cjs. */
+  windowId?: string;
+  /** Environment the main process opened this window on. */
+  windowEnvironment?: ElectronEnvironmentRef | null;
 }
 
 import type { OnboardingStateSnapshot } from '../models/onboarding.model';
+import type { ElectronEnvironmentRef } from './electron-windows';
 import { getActiveOnboardingServer, getOnboardingBackendOrigin, readOnboardingStateSnapshot } from '../services/onboarding-state.service';
+import { getWindowId } from './window-context';
 
 function normalizeBaseUrl(value: string | undefined): string {
   return value ? value.replace(/\/+$/, '') : '';
@@ -37,6 +43,10 @@ export function getRuntimeConfig(): ElevenexRuntimeConfig {
   return getWindowRuntime() ?? {};
 }
 
+/**
+ * Which backend this window talks to. Used to namespace state that belongs to
+ * a workspace rather than to a window.
+ */
 export function getBackendServerId(): string {
   const snapshot = readOnboardingStateSnapshot();
   if (snapshot?.mode === 'ssh') {
@@ -47,6 +57,14 @@ export function getBackendServerId(): string {
     return 'wsl';
   }
   return 'local';
+}
+
+/**
+ * Backend *and* window. Two windows on the same backend are two independent
+ * workspaces, so their open tabs and layouts must not share a key.
+ */
+export function getWindowScopeId(): string {
+  return `${getBackendServerId()}#${getWindowId()}`;
 }
 
 export function getBackendOrigin(

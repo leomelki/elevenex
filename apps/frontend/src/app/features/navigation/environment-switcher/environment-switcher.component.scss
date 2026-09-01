@@ -219,6 +219,10 @@
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
+  /* Takes the slack so the open-windows list and the footer stay pinned to the
+     bottom of the popover instead of scrolling away with the environments. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .env-list__divider {
@@ -384,12 +388,106 @@
   font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.01em;
+  /* Neutral default: marks an environment already open in another window. */
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--muted) 55%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
 }
 
 .env-chip--warn {
   color: color-mix(in oklch, var(--warning) 78%, var(--foreground));
   background: color-mix(in oklch, var(--warning) 14%, var(--background));
   border: 1px solid color-mix(in oklch, var(--warning) 32%, var(--border));
+}
+
+.env-chip--current {
+  color: color-mix(in oklch, var(--success) 76%, var(--foreground));
+  background: color-mix(in oklch, var(--success) 14%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--success) 30%, var(--border));
+}
+
+/* ====== Open windows ====== */
+
+.env-windows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.4rem 0.35rem 0.15rem;
+  border-top: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
+}
+
+.env-windows__label {
+  padding: 0.15rem 0.45rem 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--muted-foreground) 90%, transparent);
+}
+
+.env-window-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.34rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 0.55rem;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.76rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+
+.env-window-row:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--muted) 62%, transparent);
+}
+
+.env-window-row:focus-visible {
+  outline: none;
+  border-color: color-mix(in oklch, var(--primary) 40%, var(--border));
+}
+
+.env-window-row--current {
+  cursor: default;
+  color: var(--muted-foreground);
+}
+
+.env-window-row__dot {
+  flex-shrink: 0;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+}
+
+.env-window-row__dot--remote {
+  background: color-mix(in oklch, var(--success) 70%, var(--foreground));
+}
+
+.env-window-row__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-popover__footer {
+  padding: 0.35rem 0.55rem 0.55rem;
+  border-top: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
+}
+
+.env-windows + .env-popover__footer {
+  border-top: none;
+  padding-top: 0.15rem;
+}
+
+.env-btn--block {
+  width: 100%;
+  justify-content: center;
 }
 
 /* ====== Empty state ====== */

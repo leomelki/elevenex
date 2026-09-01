@@ -10,6 +10,7 @@
   "license": "CC-BY-NC-4.0",
   "main": "main.cjs",
   "scripts": {
+    "test": "node --test \"test/**/*.test.cjs\"",
     "start": "electron .",
     "start:debug": "ELECTRON_DEBUG_FRONTEND=1 electron .",
     "package": "electron-builder",

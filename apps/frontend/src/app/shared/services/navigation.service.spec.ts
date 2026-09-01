@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { of, Subject } from 'rxjs';
 import { NavigationProject } from '../models/navigation-tree.model';
 import { NavigationService } from './navigation.service';
+import { windowScopedKey } from './scoped-storage';
 
 describe('NavigationService', () => {
   let service: NavigationService;
@@ -320,7 +321,7 @@ describe('NavigationService', () => {
       new Set(['project-1', 'repo-2', 'workspace-2-3', 'workspace-2-4', 'repo-3', 'project-4']),
     );
     expect(localStorageMock.setItem).toHaveBeenCalledWith(
-      'elevenex-nav-expanded',
+      windowScopedKey('elevenex-nav-expanded'),
       JSON.stringify([
         'project-1',
         'repo-2',

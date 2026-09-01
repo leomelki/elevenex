@@ -5,6 +5,7 @@ import { finalize } from 'rxjs';
 import { NavigationProject } from '../models/navigation-tree.model';
 import { Session } from '../models/session.model';
 import { ClaudeStatusService } from './claude-status.service';
+import { migratedWindowScopedKey } from './scoped-storage';
 
 type SessionCompletionPatch = Pick<
   Session,
@@ -13,7 +14,15 @@ type SessionCompletionPatch = Pick<
 
 @Injectable({ providedIn: 'root' })
 export class NavigationService {
-  private static STORAGE_KEY = 'elevenex-nav-expanded';
+  // Which project tree nodes are expanded is per window: the tree itself comes
+  // from the backend, but two windows browse it independently — and project ids
+  // are only unique within one backend, so an unscoped key would also mix up
+  // expansion state between environments.
+  private static STORAGE_KEY_BASE = 'elevenex-nav-expanded';
+
+  private static storageKey(): string {
+    return migratedWindowScopedKey(NavigationService.STORAGE_KEY_BASE);
+  }
 
   private http = inject(HttpClient);
   private router = inject(Router);
@@ -217,7 +226,7 @@ export class NavigationService {
 
   private loadExpandedKeys(): Set<string> {
     try {
-      const stored = localStorage.getItem(NavigationService.STORAGE_KEY);
+      const stored = localStorage.getItem(NavigationService.storageKey());
       if (stored) {
         return new Set(JSON.parse(stored));
       }
@@ -229,7 +238,7 @@ export class NavigationService {
 
   private saveExpandedKeys(keys: Set<string>): void {
     try {
-      localStorage.setItem(NavigationService.STORAGE_KEY, JSON.stringify([...keys]));
+      localStorage.setItem(NavigationService.storageKey(), JSON.stringify([...keys]));
     } catch {
       // Ignore storage errors
     }

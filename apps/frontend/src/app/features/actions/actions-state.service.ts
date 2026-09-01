@@ -2,13 +2,20 @@ import { Injectable, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { Action } from '@/shared/models/action.model';
 import { ActionsApiService } from '@/shared/services/actions-api.service';
+import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
 
 interface WorktreeActionState {
   actions: Action[];
   selectedActionId: number | null;
 }
 
-const STORAGE_KEY = 'elevenex-actions-state';
+// Selected action and panel visibility are per window: the actions
+// themselves live in the backend and stay shared.
+const STORAGE_KEY_BASE = 'elevenex-actions-state';
+
+function storageKey(): string {
+  return migratedWindowScopedKey(STORAGE_KEY_BASE);
+}
 
 @Injectable({ providedIn: 'root' })
 export class ActionsStateService {
@@ -120,7 +127,7 @@ export class ActionsStateService {
 
   private loadPanelState(): Map<string, boolean> {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = localStorage.getItem(storageKey());
       if (stored) {
         const data = JSON.parse(stored);
         return new Map(Object.entries(data.panelOpen ?? {}));
@@ -134,7 +141,7 @@ export class ActionsStateService {
 
   private savePanelState(panelOpen: Map<string, boolean>): void {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      localStorage.setItem(storageKey(), JSON.stringify({
         panelOpen: Object.fromEntries(panelOpen),
       }));
     } catch {

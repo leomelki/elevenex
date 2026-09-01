@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron');
 const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } = require('fs');
 const http = require('http');
 const net = require('net');
@@ -30,6 +30,21 @@ const {
 } = require('./wsl-utils.cjs');
 const { downloadToFile, formatBytes } = require('./download-utils.cjs');
 const { createAppUpdater } = require('./app-updater.cjs');
+const {
+  LOCAL_ENVIRONMENT_REF,
+  environmentRefKey,
+  normalizeEnvironmentRef,
+} = require('./environment-ref.cjs');
+const { createConnectionRegistry } = require('./connection-registry.cjs');
+const { rewriteLocalhostToProxy: rewriteMcpCallbackToProxy } = require('./mcp-proxy-url.cjs');
+const { createWindowRegistry } = require('./window-manager.cjs');
+const {
+  DEFAULT_WINDOW_BOUNDS,
+  MIN_WINDOW_SIZE,
+  cascadeBounds,
+  clampBoundsToDisplays,
+  createWindowStateStore,
+} = require('./window-state-store.cjs');
 
 // Common install directories for user-facing binaries (tmux, claude, plannotator,
 // cursor). macOS Electron apps launched from Finder/DMG get a stripped PATH
@@ -163,7 +178,6 @@ const explicitProxyPort = process.env.ELEVENEX_PROXY_PORT || process.env.FRONTEN
 const FALLBACK_BACKEND_PORT = '11111';
 let embeddedBackendPort = explicitProxyPort || null;
 const defaultFrontendUrl = process.env.ELECTRON_FRONTEND_URL || '';
-let currentBackendUrl = getDefaultBackendUrl();
 const debugFrontend = process.env.ELECTRON_DEBUG_FRONTEND === '1';
 const EMBEDDED_BACKEND_READY_TIMEOUT_MS = 20000;
 const EMBEDDED_BACKEND_READY_POLL_INTERVAL_MS = 250;
@@ -194,27 +208,97 @@ async function ensureEmbeddedBackendPort() {
   return embeddedBackendPort;
 }
 
-let mainWindow = null;
 let settingsWindow = null;
 let installWindow = null;
+// Browser views are keyed by `${windowId}::${browserKey}` — the renderer's keys
+// (project:<id>:tab:<n>) are only unique within one window, and two windows on
+// the same project must not fight over a single WebContentsView.
 const browserViews = new Map();
-let attachedBrowserKey = null;
+// windowId -> currently attached view key. Each window shows at most one
+// browser view at a time, but the windows are independent of each other.
+const attachedBrowserKeys = new Map();
 const sshForwardRuntimes = new Map();
 const remoteInstallerSessions = new Map();
 let nextRemoteInstallerSessionId = 1;
+// serverId -> Set<windowId> for windows that are *connecting* to a remote and
+// therefore do not hold its lease yet. Remote install/phase events must still
+// reach them, otherwise the window driving the install sees no progress.
+const remoteServerInterest = new Map();
 // Sentinel "server id" for the singleton WSL backend connection. Negative so it
 // never collides with a real saved SSH server's id (those are positive,
 // Date.now()-based). There is only ever one WSL target — it is not a saved,
 // named connection the way SSH servers are (see remote-install-flow docs).
 const WSL_SERVER_ID = -1;
 let embeddedBackendRuntime = null;
+let embeddedBackendStartPromise = null;
 let isAppQuitting = false;
-let isReloadingMainWindow = false;
+const reloadingWindowIds = new Set();
 let hasRunShutdownCleanup = false;
 let shutdownForceExitTimer = null;
 
 app.setName(APP_DISPLAY_NAME);
-app.setPath('userData', path.join(app.getPath('appData'), APP_DISPLAY_NAME));
+// ELEVENEX_USER_DATA_DIR lets a test run (or a second debugging profile) use an
+// isolated Chromium profile, window layout and settings file instead of the
+// user's real ones.
+app.setPath(
+  'userData',
+  process.env.ELEVENEX_USER_DATA_DIR
+    || path.join(app.getPath('appData'), APP_DISPLAY_NAME),
+);
+
+const windowRegistry = createWindowRegistry();
+
+// Leases decide when a shared resource is actually torn down. Two windows on
+// one SSH server share a single tunnel; every local window shares the single
+// embedded backend. Only the last holder letting go stops anything.
+const connectionRegistry = createConnectionRegistry({
+  onRelease: (envRef) => {
+    if (envRef.mode === 'ssh' || envRef.mode === 'wsl') {
+      return stopSshForwardRuntime(envRef.serverId);
+    }
+    // The embedded backend is intentionally left running when the last local
+    // window closes: restarting it costs seconds, and on macOS the app stays
+    // alive with no windows. It is stopped for real in runShutdownCleanup().
+    return undefined;
+  },
+  onError: (error, envRef) => {
+    console.warn('[windows] environment teardown failed', {
+      environment: environmentRefKey(envRef),
+      message: error instanceof Error ? error.message : `${error}`,
+    });
+  },
+});
+
+const windowStateStore = createWindowStateStore({
+  filePath: path.join(app.getPath('userData'), 'windows.json'),
+  onError: (error) => {
+    console.warn(`[windows] layout persistence failed: ${error instanceof Error ? error.message : error}`);
+  },
+});
+
+// Frozen once shutdown starts. Quitting closes every window in turn, and each
+// close would otherwise shrink the saved layout until it was empty — the next
+// launch would restore nothing. The layout captured at the moment of quit is
+// the one the user expects to come back to.
+let isWindowLayoutFrozen = false;
+
+function persistWindowLayout() {
+  if (isWindowLayoutFrozen) {
+    return;
+  }
+  windowStateStore.save(windowRegistry.toPersistedState());
+}
+
+function freezeWindowLayout() {
+  if (isWindowLayoutFrozen) {
+    return;
+  }
+  // Synchronous on purpose: the process is about to exit (with a hard
+  // force-exit a few seconds out), and an awaited async write is not
+  // guaranteed to land. Quitting is exactly when the layout must survive.
+  windowStateStore.saveSync(windowRegistry.toPersistedState());
+  isWindowLayoutFrozen = true;
+}
 
 function findExistingPath(candidates) {
   return candidates.find((candidate) => existsSync(candidate)) || candidates[0];
@@ -247,16 +331,75 @@ function getMacAppIconPath() {
   ]);
 }
 
-function emitMainWindowState() {
-  if (!mainWindow || mainWindow.isDestroyed()) {
+function toWindowState(win) {
+  if (!win || win.isDestroyed()) {
+    return { isMaximized: false, isFullScreen: false, isFocused: false };
+  }
+
+  return {
+    isMaximized: win.isMaximized(),
+    isFullScreen: win.isFullScreen(),
+    isFocused: win.isFocused(),
+  };
+}
+
+function emitWindowState(win) {
+  if (!win || win.isDestroyed()) {
     return;
   }
 
-  mainWindow.webContents.send('elevenex-window:state-changed', {
-    isMaximized: mainWindow.isMaximized(),
-    isFullScreen: mainWindow.isFullScreen(),
-    isFocused: mainWindow.isFocused(),
-  });
+  win.webContents.send('elevenex-window:state-changed', toWindowState(win));
+}
+
+// The environment ref a remote serverId maps to. WSL is a singleton connection
+// with a sentinel id (see WSL_SERVER_ID), everything else is a saved SSH server.
+function environmentRefForServerId(serverId) {
+  return serverId === WSL_SERVER_ID
+    ? { mode: 'wsl', serverId: WSL_SERVER_ID }
+    : { mode: 'ssh', serverId };
+}
+
+function addRemoteServerInterest(serverId, windowId) {
+  if (!windowId) {
+    return;
+  }
+  const existing = remoteServerInterest.get(serverId);
+  if (existing) {
+    existing.add(windowId);
+    return;
+  }
+  remoteServerInterest.set(serverId, new Set([windowId]));
+}
+
+function removeRemoteServerInterest(serverId, windowId) {
+  const existing = remoteServerInterest.get(serverId);
+  if (!existing || !windowId) {
+    return;
+  }
+  existing.delete(windowId);
+  if (existing.size === 0) {
+    remoteServerInterest.delete(serverId);
+  }
+}
+
+function dropRemoteServerInterestForWindow(windowId) {
+  for (const [serverId, windowIds] of remoteServerInterest) {
+    windowIds.delete(windowId);
+    if (windowIds.size === 0) {
+      remoteServerInterest.delete(serverId);
+    }
+  }
+}
+
+// Everything watching a remote: the windows already bound to it plus the ones
+// currently connecting. Both need the install/phase stream.
+function sendToRemoteServerAudience(serverId, channel, payload) {
+  windowRegistry.sendToEnv(
+    environmentRefForServerId(serverId),
+    channel,
+    payload,
+    [...(remoteServerInterest.get(serverId) ?? [])],
+  );
 }
 
 function getMacAppIcon() {
@@ -603,8 +746,8 @@ function scheduleShutdownForceExit() {
   shutdownForceExitTimer = setTimeout(() => {
     try {
       closeAuxiliaryWindows();
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.destroy();
+      for (const entry of windowRegistry.all()) {
+        entry.win.destroy();
       }
     } catch {
       // Ignore best-effort window teardown errors.
@@ -651,10 +794,11 @@ function runShutdownCleanup() {
 
   hasRunShutdownCleanup = true;
   scheduleShutdownForceExit();
+  freezeWindowLayout();
   closeAuxiliaryWindows();
 
-  for (const browserKey of Array.from(browserViews.keys())) {
-    destroyBrowserView(browserKey);
+  for (const viewKey of Array.from(browserViews.keys())) {
+    destroyBrowserView(viewKey);
   }
 
   for (const id of sshForwardRuntimes.keys()) {
@@ -674,6 +818,7 @@ function requestAppQuit() {
   }
 
   isAppQuitting = true;
+  freezeWindowLayout();
   scheduleShutdownForceExit();
   app.quit();
 }
@@ -1036,7 +1181,7 @@ function launchEmbeddedBackend(launchOptions) {
   // extracted node.exe is still locked by AV on Windows) via an asynchronous
   // 'error' event, not by throwing. Without this listener Node would rethrow it
   // as an uncaught exception in the main process — escaping the try/catch in
-  // createMainWindow and breaking startup until the next relaunch.
+  // createAppWindow and breaking startup until the next relaunch.
   const spawnFailed = new Promise((_resolve, reject) => {
     child.once('error', (error) => {
       const wrapped = new Error(`Failed to launch embedded backend: ${error.message}`);
@@ -1100,12 +1245,24 @@ function launchEmbeddedBackend(launchOptions) {
 }
 
 // Starts the embedded backend and returns the backend origin it actually bound.
-async function startEmbeddedBackend() {
+// Every local window shares this one backend, and restoring several of them at
+// once would otherwise race several spawns (and several install splashes) over
+// the same port and PID file — so concurrent callers share one attempt.
+function startEmbeddedBackend() {
   if (embeddedBackendRuntime) {
-    await embeddedBackendRuntime.ready;
-    return embeddedBackendRuntime.backendUrl;
+    return embeddedBackendRuntime.ready.then(() => embeddedBackendRuntime.backendUrl);
   }
 
+  if (!embeddedBackendStartPromise) {
+    embeddedBackendStartPromise = launchEmbeddedBackendWithRetries().finally(() => {
+      embeddedBackendStartPromise = null;
+    });
+  }
+
+  return embeddedBackendStartPromise;
+}
+
+async function launchEmbeddedBackendWithRetries() {
   const embeddedBackendRoot = getEmbeddedBackendRoot();
   // Clear out a backend orphaned by a previous/crashed session before it can
   // lock the runtime directory or hold the backend port.
@@ -1867,15 +2024,18 @@ function runSshCommand(forward, command, options = {}) {
   }
 }
 
-function emitRemoteInstallerEvent(sessionId, payload) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
+function emitRemoteInstallerEvent(sessionId, payload, serverIdHint) {
+  const serverId = serverIdHint ?? remoteInstallerSessions.get(sessionId)?.serverId;
+  const message = { sessionId, ...payload };
+
+  if (serverId === undefined) {
+    // Session already gone and no hint: broadcast rather than drop, so a
+    // terminal that is still mounted somewhere gets its closing frame.
+    windowRegistry.broadcast('elevenex-remote-server:installer-event', message);
     return;
   }
 
-  mainWindow.webContents.send('elevenex-remote-server:installer-event', {
-    sessionId,
-    ...payload,
-  });
+  sendToRemoteServerAudience(serverId, 'elevenex-remote-server:installer-event', message);
 }
 
 function destroyRemoteInstallerSession(sessionId) {
@@ -1888,7 +2048,9 @@ function destroyRemoteInstallerSession(sessionId) {
 
   cleanupSshArtifacts(existing);
   remoteInstallerSessions.delete(sessionId);
-  emitRemoteInstallerEvent(sessionId, { type: 'closed' });
+  // Pass the server id explicitly: the session is gone from the map, so the
+  // audience can no longer be resolved from it.
+  emitRemoteInstallerEvent(sessionId, { type: 'closed' }, existing.serverId);
 }
 
 function destroyRemoteInstallerSessionForServer(serverId) {
@@ -2171,11 +2333,32 @@ async function tryRemoteDownloadAsync(forward, url, remoteDestination, remotePla
 
 function emitRemoteServerPhaseEvent(serverId, phase) {
   console.info('[remote-runtime] phase', { serverId, phase });
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
+  // Every window watching this server sees the same progress — two windows
+  // waiting on one install must not have to guess what the other is doing.
+  sendToRemoteServerAudience(serverId, 'elevenex-remote-server:phase-update', { serverId, phase });
+}
+
+// Last successful readiness result per server. Lets a second window join a
+// server another window already brought up without re-running preflight,
+// install and probing over SSH — the tunnel is shared, so the answer is too.
+const readyRemoteServers = new Map();
+
+function reuseReadyRemoteServer(serverId) {
+  const cached = readyRemoteServers.get(serverId);
+  const runtime = sshForwardRuntimes.get(serverId);
+  if (!cached || runtime?.status !== 'active' || !runtime.localPort) {
+    return null;
   }
 
-  mainWindow.webContents.send('elevenex-remote-server:phase-update', { serverId, phase });
+  return { ...cached, localPort: runtime.localPort, sessionId: null };
+}
+
+function recordRemoteServerResult(serverId, result) {
+  if (result?.status === 'ready') {
+    readyRemoteServers.set(serverId, result);
+  } else {
+    readyRemoteServers.delete(serverId);
+  }
 }
 
 async function ensureRemoteServerReady(forward) {
@@ -2826,6 +3009,10 @@ async function startSshForwardRuntime(forward, resolvedSshOutput) {
 }
 
 async function stopSshForwardRuntime(id) {
+  // The cached readiness result is only valid while the tunnel it was measured
+  // through is alive.
+  readyRemoteServers.delete(id);
+
   const runtime = sshForwardRuntimes.get(id);
   if (!runtime) {
     return toSshRuntimeView(id, null);
@@ -2875,18 +3062,52 @@ function isInternalBrowserUrl(targetUrl) {
   }
 }
 
-function getProjectIdFromBrowserKey(browserKey) {
-  const match = /^project:(\d+)(?::tab:.+)?$/.exec(`${browserKey || ''}`);
+// Browser views live in a process-wide map but their keys (project:<id>:tab:<n>)
+// are only unique inside one renderer. Namespacing them by window keeps two
+// windows showing the same project from stealing each other's view; the
+// renderer never sees the prefix.
+function toBrowserViewKey(windowId, browserKey) {
+  return `${windowId}::${browserKey}`;
+}
+
+function splitBrowserViewKey(viewKey) {
+  const separatorIndex = `${viewKey || ''}`.indexOf('::');
+  if (separatorIndex === -1) {
+    return { windowId: null, browserKey: `${viewKey || ''}` };
+  }
+  return {
+    windowId: viewKey.slice(0, separatorIndex),
+    browserKey: viewKey.slice(separatorIndex + 2),
+  };
+}
+
+function getProjectIdFromBrowserKey(viewKey) {
+  const { browserKey } = splitBrowserViewKey(viewKey);
+  const match = /^project:(\d+)(?::tab:.+)?$/.exec(browserKey);
   return match ? Number(match[1]) : null;
 }
 
-function getIsolatedPartition(browserKey) {
-  const projectId = getProjectIdFromBrowserKey(browserKey);
+// Partitions stay keyed on the project alone, deliberately: they hold real
+// logged-in sessions, and re-keying them by window (or by backend) would sign
+// the user out of every site open in a browser panel.
+function getIsolatedPartition(viewKey) {
+  const projectId = getProjectIdFromBrowserKey(viewKey);
   return projectId === null ? SHARED_PARTITION : `persist:elevenex-browser:${projectId}`;
 }
 
-function getPartitionForRuntimeContext(browserKey, runtimeContext) {
-  return runtimeContext === 'shared' ? SHARED_PARTITION : getIsolatedPartition(browserKey);
+function getPartitionForRuntimeContext(viewKey, runtimeContext) {
+  return runtimeContext === 'shared' ? SHARED_PARTITION : getIsolatedPartition(viewKey);
+}
+
+function getBrowserViewOwner(viewKey) {
+  const entry = browserViews.get(viewKey);
+  const win = entry?.ownerWindow;
+  return win && !win.isDestroyed() ? win : null;
+}
+
+function getBrowserViewBackendOrigin(viewKey) {
+  const { windowId } = splitBrowserViewKey(viewKey);
+  return (windowId && windowRegistry.backendOriginOf(windowId)) || getDefaultBackendUrl();
 }
 
 function normalizePatternValue(pattern) {
@@ -2925,22 +3146,11 @@ function toUrlPatternVariants(pattern) {
   return [`http://${normalized}/*`, `https://${normalized}/*`];
 }
 
-function rewriteLocalhostToProxy(url) {
-  try {
-    const parsed = new URL(url);
-    if (
-      (parsed.hostname === 'localhost'
-        || parsed.hostname === '127.0.0.1'
-        || parsed.hostname === '[::1]'
-        || parsed.hostname === '::1')
-      && parsed.port
-    ) {
-      return `${currentBackendUrl}/api/mcp-auth-proxy/${parsed.port}${parsed.pathname}${parsed.search}${parsed.hash}`;
-    }
-  } catch {
-    // not a valid URL, return as-is
-  }
-  return url;
+// `backendUrl` must be the origin of the window that owns the view or auth
+// window (see mcp-proxy-url.cjs); falling back to the process default only
+// covers callers that have no window context at all.
+function rewriteLocalhostToProxy(url, backendUrl) {
+  return rewriteMcpCallbackToProxy(url, backendUrl || getDefaultBackendUrl());
 }
 
 function matchesSharedPattern(targetUrl, sharedGlobs) {
@@ -2985,8 +3195,8 @@ function ensureBrowserLayout(payload) {
   };
 }
 
-function getBrowserState(browserKey) {
-  const entry = browserViews.get(browserKey);
+function getBrowserState(viewKey) {
+  const entry = browserViews.get(viewKey);
   if (!entry) {
     return null;
   }
@@ -2994,7 +3204,8 @@ function getBrowserState(browserKey) {
   const { webContents, lastError } = entry.view;
 
   return {
-    key: browserKey,
+    // The renderer only knows its own unprefixed key.
+    key: splitBrowserViewKey(viewKey).browserKey,
     url: webContents.getURL() || 'about:blank',
     title: webContents.getTitle() || '',
     canGoBack: webContents.navigationHistory.canGoBack(),
@@ -3006,77 +3217,83 @@ function getBrowserState(browserKey) {
   };
 }
 
-function broadcastBrowserState(browserKey) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
+function broadcastBrowserState(viewKey) {
+  const ownerWindow = getBrowserViewOwner(viewKey);
+  if (!ownerWindow) {
     return;
   }
 
-  const state = getBrowserState(browserKey);
+  const state = getBrowserState(viewKey);
   if (state) {
-    mainWindow.webContents.send('elevenex-browser:state-changed', state);
+    ownerWindow.webContents.send('elevenex-browser:state-changed', state);
   }
 }
 
-function detachBrowserView(browserKey) {
-  if (!mainWindow) {
-    return;
+function clearAttachedBrowserKey(viewKey) {
+  const { windowId } = splitBrowserViewKey(viewKey);
+  if (windowId && attachedBrowserKeys.get(windowId) === viewKey) {
+    attachedBrowserKeys.delete(windowId);
   }
+}
 
-  const entry = browserViews.get(browserKey);
+function detachBrowserView(viewKey) {
+  const entry = browserViews.get(viewKey);
   if (!entry) {
     return;
   }
 
-  detachDevToolsView(browserKey);
+  detachDevToolsView(viewKey);
 
-  if (!entry.attached) {
-    if (attachedBrowserKey === browserKey) {
-      attachedBrowserKey = null;
-    }
+  const ownerWindow = getBrowserViewOwner(viewKey);
+  if (!entry.attached || !ownerWindow) {
+    entry.attached = false;
+    clearAttachedBrowserKey(viewKey);
     return;
   }
 
   try {
-    mainWindow.contentView.removeChildView(entry.view);
+    ownerWindow.contentView.removeChildView(entry.view);
   } catch {
     // Ignore duplicate detach attempts.
   }
 
   entry.attached = false;
-
-  if (attachedBrowserKey === browserKey) {
-    attachedBrowserKey = null;
-  }
+  clearAttachedBrowserKey(viewKey);
 }
 
-function attachBrowserView(browserKey, layout) {
-  if (!mainWindow) {
-    throw new Error('Main window is not available');
+function attachBrowserView(viewKey, layout, ownerWindow) {
+  const entry = ensureBrowserView(viewKey, undefined, { ownerWindow });
+  const targetWindow = ownerWindow ?? getBrowserViewOwner(viewKey);
+  if (!targetWindow) {
+    throw new Error('Window is not available');
   }
 
-  const entry = ensureBrowserView(browserKey);
   entry.layout = layout;
 
-  if (attachedBrowserKey && attachedBrowserKey !== browserKey) {
-    detachBrowserView(attachedBrowserKey);
+  const { windowId } = splitBrowserViewKey(viewKey);
+  const previousKey = windowId ? attachedBrowserKeys.get(windowId) : null;
+  if (previousKey && previousKey !== viewKey) {
+    detachBrowserView(previousKey);
   }
 
   if (entry.attached) {
     try {
-      mainWindow.contentView.removeChildView(entry.view);
+      targetWindow.contentView.removeChildView(entry.view);
     } catch {
       // Ignore duplicate detach attempts while refreshing z-order.
     }
   }
 
-  mainWindow.contentView.addChildView(entry.view);
+  targetWindow.contentView.addChildView(entry.view);
   entry.attached = true;
 
   entry.view.setBounds(layout.browserBounds);
-  syncBrowserDevToolsView(browserKey, layout);
-  attachedBrowserKey = browserKey;
+  syncBrowserDevToolsView(viewKey, layout);
+  if (windowId) {
+    attachedBrowserKeys.set(windowId, viewKey);
+  }
 
-  return getBrowserState(browserKey);
+  return getBrowserState(viewKey);
 }
 
 function toSafeBrowserBounds(bounds) {
@@ -3088,8 +3305,8 @@ function toSafeBrowserBounds(bounds) {
   };
 }
 
-function getBrowserEntryNavigationState(browserKey) {
-  const entry = browserViews.get(browserKey);
+function getBrowserEntryNavigationState(viewKey) {
+  const entry = browserViews.get(viewKey);
   if (!entry) {
     return null;
   }
@@ -3102,11 +3319,15 @@ function getBrowserEntryNavigationState(browserKey) {
   };
 }
 
-async function loadBrowserUrl(browserKey, targetUrl, options = {}) {
-  const normalizedUrl = rewriteLocalhostToProxy(normalizeBrowserUrl(targetUrl));
-  const existing = browserViews.get(browserKey);
+async function loadBrowserUrl(viewKey, targetUrl, options = {}) {
+  const ownerWindow = options.ownerWindow ?? getBrowserViewOwner(viewKey);
+  const normalizedUrl = rewriteLocalhostToProxy(
+    normalizeBrowserUrl(targetUrl),
+    getBrowserViewBackendOrigin(viewKey),
+  );
+  const existing = browserViews.get(viewKey);
   const navigationState = options.navigationState
-    || getBrowserEntryNavigationState(browserKey)
+    || getBrowserEntryNavigationState(viewKey)
     || {
       attached: false,
       devtoolsVisible: false,
@@ -3114,8 +3335,8 @@ async function loadBrowserUrl(browserKey, targetUrl, options = {}) {
       isolationConfig: options.isolationConfig || null,
     };
   const isolationConfig = options.isolationConfig ?? navigationState.isolationConfig ?? existing?.isolationConfig ?? null;
-  const runtimeContext = options.runtimeContext ?? resolveRuntimeContext(browserKey, isolationConfig, normalizedUrl);
-  const entry = ensureBrowserView(browserKey, isolationConfig, { runtimeContext });
+  const runtimeContext = options.runtimeContext ?? resolveRuntimeContext(viewKey, isolationConfig, normalizedUrl);
+  const entry = ensureBrowserView(viewKey, isolationConfig, { runtimeContext, ownerWindow });
 
   entry.view.lastError = null;
   entry.devtoolsVisible = navigationState.devtoolsVisible;
@@ -3125,14 +3346,14 @@ async function loadBrowserUrl(browserKey, targetUrl, options = {}) {
   }
 
   if (navigationState.attached && entry.layout) {
-    attachBrowserView(browserKey, {
+    attachBrowserView(viewKey, {
       ...entry.layout,
       devtoolsVisible: entry.devtoolsVisible,
-    });
+    }, ownerWindow);
   }
 
   await entry.view.webContents.loadURL(normalizedUrl);
-  return getBrowserState(browserKey);
+  return getBrowserState(viewKey);
 }
 
 function handleNavigationOutsideApp(url) {
@@ -3143,44 +3364,48 @@ function shouldIgnoreMainFrameFlag(isMainFrame) {
   return typeof isMainFrame === 'boolean' && !isMainFrame;
 }
 
-function routeTopLevelNavigation(browserKey, targetUrl, options = {}) {
+function routeTopLevelNavigation(viewKey, targetUrl, options = {}) {
   if (!isInternalBrowserUrl(targetUrl)) {
     handleNavigationOutsideApp(targetUrl);
     return;
   }
 
-  const entry = browserViews.get(browserKey);
+  const entry = browserViews.get(viewKey);
+  const ownerWindow = options.ownerWindow ?? getBrowserViewOwner(viewKey);
   const isolationConfig = options.isolationConfig ?? entry?.isolationConfig ?? null;
-  const nextRuntimeContext = resolveRuntimeContext(browserKey, isolationConfig, targetUrl);
-  const currentRuntimeContext = entry?.runtimeContext ?? resolveRuntimeContext(browserKey, isolationConfig);
+  const nextRuntimeContext = resolveRuntimeContext(viewKey, isolationConfig, targetUrl);
+  const currentRuntimeContext = entry?.runtimeContext ?? resolveRuntimeContext(viewKey, isolationConfig);
 
   if (!entry || currentRuntimeContext === nextRuntimeContext) {
     if (options.source === 'window-open') {
-      void loadBrowserUrl(browserKey, targetUrl, {
+      void loadBrowserUrl(viewKey, targetUrl, {
         isolationConfig,
         runtimeContext: nextRuntimeContext,
+        ownerWindow,
       });
     }
     return;
   }
 
-  const navigationState = getBrowserEntryNavigationState(browserKey);
-  destroyBrowserView(browserKey);
-  void loadBrowserUrl(browserKey, targetUrl, {
+  const navigationState = getBrowserEntryNavigationState(viewKey);
+  destroyBrowserView(viewKey);
+  void loadBrowserUrl(viewKey, targetUrl, {
     isolationConfig,
     runtimeContext: nextRuntimeContext,
     navigationState,
+    ownerWindow,
   }).catch(() => {});
 }
 
-function registerBrowserViewEvents(browserKey, view) {
-  const syncState = () => broadcastBrowserState(browserKey);
+function registerBrowserViewEvents(viewKey, view) {
+  const syncState = () => broadcastBrowserState(viewKey);
+  const proxyUrl = (url) => rewriteLocalhostToProxy(url, getBrowserViewBackendOrigin(viewKey));
 
   view.lastError = null;
   view.webContents.setWindowOpenHandler(({ url }) => {
-    const proxied = rewriteLocalhostToProxy(url);
+    const proxied = proxyUrl(url);
     if (isInternalBrowserUrl(proxied)) {
-      routeTopLevelNavigation(browserKey, proxied, { source: 'window-open' });
+      routeTopLevelNavigation(viewKey, proxied, { source: 'window-open' });
     } else {
       handleNavigationOutsideApp(proxied);
     }
@@ -3193,7 +3418,7 @@ function registerBrowserViewEvents(browserKey, view) {
       return;
     }
 
-    const proxied = rewriteLocalhostToProxy(url);
+    const proxied = proxyUrl(url);
     if (proxied !== url) {
       event.preventDefault();
       void view.webContents.loadURL(proxied);
@@ -3206,15 +3431,15 @@ function registerBrowserViewEvents(browserKey, view) {
       return;
     }
 
-    const entry = browserViews.get(browserKey);
+    const entry = browserViews.get(viewKey);
     if (!entry) {
       return;
     }
 
-    const nextRuntimeContext = resolveRuntimeContext(browserKey, entry.isolationConfig, url);
+    const nextRuntimeContext = resolveRuntimeContext(viewKey, entry.isolationConfig, url);
     if (entry.runtimeContext !== nextRuntimeContext) {
       event.preventDefault();
-      routeTopLevelNavigation(browserKey, url, { source: 'will-navigate' });
+      routeTopLevelNavigation(viewKey, url, { source: 'will-navigate' });
     }
   });
 
@@ -3223,22 +3448,22 @@ function registerBrowserViewEvents(browserKey, view) {
       return;
     }
 
-    const proxied = rewriteLocalhostToProxy(url);
+    const proxied = proxyUrl(url);
     if (proxied !== url) {
       event.preventDefault();
       void view.webContents.loadURL(proxied);
       return;
     }
 
-    const entry = browserViews.get(browserKey);
+    const entry = browserViews.get(viewKey);
     if (!entry) {
       return;
     }
 
-    const nextRuntimeContext = resolveRuntimeContext(browserKey, entry.isolationConfig, url);
+    const nextRuntimeContext = resolveRuntimeContext(viewKey, entry.isolationConfig, url);
     if (entry.runtimeContext !== nextRuntimeContext) {
       event.preventDefault();
-      routeTopLevelNavigation(browserKey, url, { source: 'will-redirect' });
+      routeTopLevelNavigation(viewKey, url, { source: 'will-redirect' });
     }
   });
 
@@ -3263,33 +3488,37 @@ function registerBrowserViewEvents(browserKey, view) {
   });
   view.webContents.on('devtools-opened', syncState);
   view.webContents.on('devtools-closed', () => {
-    const entry = browserViews.get(browserKey);
+    const entry = browserViews.get(viewKey);
     if (entry) {
       entry.devtoolsVisible = false;
-      detachDevToolsView(browserKey);
+      detachDevToolsView(viewKey);
     }
     syncState();
   });
 }
 
-function ensureBrowserView(browserKey, isolationConfig, options = {}) {
-  const existing = browserViews.get(browserKey);
+function ensureBrowserView(viewKey, isolationConfig, options = {}) {
+  const existing = browserViews.get(viewKey);
   const runtimeContext = options.runtimeContext
     || existing?.runtimeContext
-    || resolveRuntimeContext(browserKey, isolationConfig);
+    || resolveRuntimeContext(viewKey, isolationConfig);
 
   if (existing && existing.runtimeContext === runtimeContext) {
     if (isolationConfig) {
       existing.isolationConfig = isolationConfig;
     }
+    if (options.ownerWindow) {
+      existing.ownerWindow = options.ownerWindow;
+    }
     return existing;
   }
 
+  const ownerWindow = options.ownerWindow ?? existing?.ownerWindow ?? null;
   if (existing) {
-    destroyBrowserView(browserKey);
+    destroyBrowserView(viewKey);
   }
 
-  const partition = getPartitionForRuntimeContext(browserKey, runtimeContext);
+  const partition = getPartitionForRuntimeContext(viewKey, runtimeContext);
   const view = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
@@ -3299,9 +3528,12 @@ function ensureBrowserView(browserKey, isolationConfig, options = {}) {
     },
   });
 
-  registerBrowserViewEvents(browserKey, view);
+  registerBrowserViewEvents(viewKey, view);
   const entry = {
     view,
+    // The window this view is parented to. Views are process-wide, windows are
+    // not: attaching, detaching and state pushes all have to target this one.
+    ownerWindow,
     attached: false,
     devtoolsView: null,
     devtoolsAttached: false,
@@ -3311,14 +3543,14 @@ function ensureBrowserView(browserKey, isolationConfig, options = {}) {
     isolationConfig: isolationConfig || null,
     layout: null,
   };
-  browserViews.set(browserKey, entry);
+  browserViews.set(viewKey, entry);
   view.webContents.loadURL('about:blank');
 
   return entry;
 }
 
-function ensureBrowserDevToolsView(browserKey) {
-  const entry = ensureBrowserView(browserKey);
+function ensureBrowserDevToolsView(viewKey) {
+  const entry = ensureBrowserView(viewKey);
   if (entry.devtoolsView && !entry.devtoolsView.webContents.isDestroyed()) {
     return entry;
   }
@@ -3337,32 +3569,31 @@ function ensureBrowserDevToolsView(browserKey) {
   return entry;
 }
 
-function detachDevToolsView(browserKey) {
-  if (!mainWindow) {
-    return;
-  }
-
-  const entry = browserViews.get(browserKey);
+function detachDevToolsView(viewKey) {
+  const entry = browserViews.get(viewKey);
   if (!entry?.devtoolsView || !entry.devtoolsAttached) {
     return;
   }
 
-  try {
-    mainWindow.contentView.removeChildView(entry.devtoolsView);
-  } catch {
-    // Ignore duplicate detach attempts.
+  const ownerWindow = getBrowserViewOwner(viewKey);
+  if (ownerWindow) {
+    try {
+      ownerWindow.contentView.removeChildView(entry.devtoolsView);
+    } catch {
+      // Ignore duplicate detach attempts.
+    }
   }
 
   entry.devtoolsAttached = false;
 }
 
-function destroyDevToolsView(browserKey) {
-  const entry = browserViews.get(browserKey);
+function destroyDevToolsView(viewKey) {
+  const entry = browserViews.get(viewKey);
   if (!entry?.devtoolsView) {
     return;
   }
 
-  detachDevToolsView(browserKey);
+  detachDevToolsView(viewKey);
 
   if (!entry.devtoolsView.webContents.isDestroyed()) {
     entry.devtoolsView.webContents.destroy();
@@ -3372,24 +3603,25 @@ function destroyDevToolsView(browserKey) {
   entry.devtoolsAttached = false;
 }
 
-function syncBrowserDevToolsView(browserKey, layout) {
-  const entry = browserViews.get(browserKey);
-  if (!entry || !layout.devtoolsVisible || !layout.devtoolsBounds) {
-    detachDevToolsView(browserKey);
+function syncBrowserDevToolsView(viewKey, layout) {
+  const entry = browserViews.get(viewKey);
+  const ownerWindow = getBrowserViewOwner(viewKey);
+  if (!entry || !ownerWindow || !layout.devtoolsVisible || !layout.devtoolsBounds) {
+    detachDevToolsView(viewKey);
     return;
   }
 
-  ensureBrowserDevToolsView(browserKey);
+  ensureBrowserDevToolsView(viewKey);
 
   if (entry.devtoolsAttached) {
     try {
-      mainWindow.contentView.removeChildView(entry.devtoolsView);
+      ownerWindow.contentView.removeChildView(entry.devtoolsView);
     } catch {
       // Ignore duplicate detach attempts while refreshing z-order.
     }
   }
 
-  mainWindow.contentView.addChildView(entry.devtoolsView);
+  ownerWindow.contentView.addChildView(entry.devtoolsView);
   entry.devtoolsAttached = true;
 
   if (!entry.view.webContents.isDevToolsOpened()) {
@@ -3399,24 +3631,77 @@ function syncBrowserDevToolsView(browserKey, layout) {
   entry.devtoolsView.setBounds(layout.devtoolsBounds);
 }
 
-function destroyBrowserView(browserKey) {
-  const entry = browserViews.get(browserKey);
+function destroyBrowserView(viewKey) {
+  const entry = browserViews.get(viewKey);
   if (!entry) {
     return;
   }
 
-  detachBrowserView(browserKey);
+  detachBrowserView(viewKey);
   if (entry.view.webContents.isDevToolsOpened()) {
     entry.view.webContents.closeDevTools();
   }
-  destroyDevToolsView(browserKey);
-  browserViews.delete(browserKey);
+  destroyDevToolsView(viewKey);
+  browserViews.delete(viewKey);
   if (!entry.view.webContents.isDestroyed()) {
     entry.view.webContents.destroy();
   }
 }
 
-async function createMainWindow() {
+function destroyBrowserViewsForWindow(windowId) {
+  const prefix = `${windowId}::`;
+  for (const viewKey of Array.from(browserViews.keys())) {
+    if (viewKey.startsWith(prefix)) {
+      destroyBrowserView(viewKey);
+    }
+  }
+  attachedBrowserKeys.delete(windowId);
+}
+
+// Where a brand-new window should open. Sizing/positioning is derived from the
+// windows already on screen so a second window is visibly a second window
+// rather than a pixel-perfect overlay of the first.
+function resolveNewWindowBounds(restored) {
+  const displays = screen.getAllDisplays();
+  if (restored?.bounds) {
+    return { bounds: clampBoundsToDisplays(restored.bounds, displays) };
+  }
+
+  const reference = windowRegistry.focused()?.win ?? null;
+  const workArea = (reference
+    ? screen.getDisplayMatching(reference.getBounds())
+    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  ).workArea;
+
+  const base = reference
+    ? reference.getNormalBounds()
+    : { ...DEFAULT_WINDOW_BOUNDS };
+  const taken = windowRegistry.all().map((entry) => entry.win.getBounds());
+  const cascaded = cascadeBounds(taken, base, workArea);
+
+  return { bounds: clampBoundsToDisplays(cascaded, displays) };
+}
+
+function applyWindowTitle(win, envRef) {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+
+  const label = normalizeEnvironmentRef(envRef).label;
+  // Mission Control, Alt-Tab, the taskbar and the Window menu all read this —
+  // it is the only way to tell two windows apart without focusing them.
+  win.setTitle(label ? `${label} — ${APP_DISPLAY_NAME}` : APP_DISPLAY_NAME);
+}
+
+function notifyWindowsChanged() {
+  const payload = windowRegistry.list();
+  windowRegistry.broadcast('elevenex-windows:changed', payload);
+  installMenu();
+}
+
+async function createAppWindow(options = {}) {
+  const envRef = normalizeEnvironmentRef(options.env ?? LOCAL_ENVIRONMENT_REF);
+
   // Allocate the embedded backend's port before resolving the frontend target so
   // the backend URL handed to the renderer/preload reflects the real (random) port.
   if (shouldUseEmbeddedBackend()) {
@@ -3424,21 +3709,15 @@ async function createMainWindow() {
   }
 
   const frontendTarget = getFrontendTarget();
-  currentBackendUrl = frontendTarget.backendUrl;
   const isMac = process.platform === 'darwin';
   const appIconPath = getAppIconPath();
-
-  if (!frontendTarget.useEmbeddedBackend) {
-    stopEmbeddedBackend();
-  }
 
   if (frontendTarget.useEmbeddedBackend) {
     try {
       // The backend may bind a different port than first computed (retry on
       // EADDRINUSE), so adopt the origin it actually bound for the renderer.
-      const boundBackendUrl = await startEmbeddedBackend();
-      frontendTarget.backendUrl = boundBackendUrl;
-      currentBackendUrl = boundBackendUrl;
+      // Concurrent restores share one start (see startEmbeddedBackend).
+      frontendTarget.backendUrl = await startEmbeddedBackend();
     } catch (error) {
       dialog.showErrorBox(
         'Embedded Backend Failed to Start',
@@ -3448,12 +3727,15 @@ async function createMainWindow() {
     }
   }
 
-  mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 1024,
-    minHeight: 720,
-    title: 'Elevenex',
+  const windowId = options.windowId || windowRegistry.nextWindowId();
+  const placement = resolveNewWindowBounds(options.restore);
+
+  const win = new BrowserWindow({
+    ...(placement.bounds ?? DEFAULT_WINDOW_BOUNDS),
+    minWidth: MIN_WINDOW_SIZE.width,
+    minHeight: MIN_WINDOW_SIZE.height,
+    show: false,
+    title: APP_DISPLAY_NAME,
     ...(isMac
       ? {
           titleBarStyle: 'hiddenInset',
@@ -3472,19 +3754,32 @@ async function createMainWindow() {
       additionalArguments: [
         `--elevenex-backend-origin=${frontendTarget.backendUrl}`,
         `--elevenex-runtime-mode=${getRuntimeMode(frontendTarget)}`,
+        // Lets the renderer namespace its per-window state (open tabs, layout,
+        // active environment) without colliding with the other windows, which
+        // share one Chromium profile and therefore one localStorage.
+        `--elevenex-window-id=${windowId}`,
+        `--elevenex-window-environment=${encodeURIComponent(JSON.stringify(envRef))}`,
       ],
     },
   });
 
+  windowRegistry.register(win, {
+    id: windowId,
+    env: envRef,
+    backendOrigin: frontendTarget.backendUrl,
+  });
+  connectionRegistry.acquire(windowId, envRef);
+  applyWindowTitle(win, envRef);
+
   if (frontendTarget.kind === 'file') {
-    mainWindow.loadFile(frontendTarget.value);
+    win.loadFile(frontendTarget.value);
   } else {
-    mainWindow.loadURL(frontendTarget.value);
+    win.loadURL(frontendTarget.value);
   }
 
   // Intercept all new-window requests (target="_blank" links) and open them in
   // the system browser instead of a new Electron window.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url).catch(() => {});
     return { action: 'deny' };
   });
@@ -3494,7 +3789,7 @@ async function createMainWindow() {
   const appOrigin =
     frontendTarget.kind === 'file' ? null : new URL(frontendTarget.value).origin;
 
-  mainWindow.webContents.on('will-navigate', (event, url) => {
+  win.webContents.on('will-navigate', (event, url) => {
     if (frontendTarget.kind === 'file' && url.startsWith('file://')) {
       return;
     }
@@ -3506,37 +3801,75 @@ async function createMainWindow() {
   });
 
   if (debugFrontend) {
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    win.webContents.openDevTools({ mode: 'detach' });
   }
 
-  mainWindow.on('maximize', emitMainWindowState);
-  mainWindow.on('unmaximize', emitMainWindowState);
-  mainWindow.on('enter-full-screen', emitMainWindowState);
-  mainWindow.on('leave-full-screen', emitMainWindowState);
-  mainWindow.once('ready-to-show', () => {
-    closeInstallWindow();
-    emitMainWindowState();
+  const onWindowState = () => {
+    emitWindowState(win);
+    persistWindowLayout();
+  };
+
+  win.on('maximize', onWindowState);
+  win.on('unmaximize', onWindowState);
+  win.on('enter-full-screen', onWindowState);
+  win.on('leave-full-screen', onWindowState);
+  win.on('resize', persistWindowLayout);
+  win.on('move', persistWindowLayout);
+  win.on('focus', () => {
+    windowRegistry.markFocused(windowId);
+    emitWindowState(win);
+    persistWindowLayout();
   });
-  mainWindow.on('close', (event) => {
-    if (isReloadingMainWindow || isAppQuitting) {
+  win.on('blur', () => emitWindowState(win));
+
+  win.once('ready-to-show', () => {
+    closeInstallWindow();
+    if (options.restore?.maximized) {
+      win.maximize();
+    }
+    if (options.restore?.fullScreen) {
+      win.setFullScreen(true);
+    }
+    win.show();
+    emitWindowState(win);
+  });
+
+  win.on('close', (event) => {
+    if (reloadingWindowIds.has(windowId) || isAppQuitting) {
       return;
     }
 
-    // On macOS, closing the main window (red traffic light, Cmd+W) should
-    // quit the whole app rather than leave a headless process alive — this
-    // app has no persistent dock-only state worth keeping.
-    if (process.platform === 'darwin') {
+    // Closing the *last* window on macOS quits, matching this app's long-
+    // standing behaviour and its lack of dock-only state. Closing any other
+    // window just closes that window — quitting the whole app because one of
+    // several windows was dismissed would be a serious surprise.
+    if (process.platform === 'darwin' && windowRegistry.count() <= 1) {
       event.preventDefault();
       requestAppQuit();
     }
   });
 
-  mainWindow.on('closed', () => {
-    for (const browserKey of Array.from(browserViews.keys())) {
-      destroyBrowserView(browserKey);
+  win.on('closed', () => {
+    destroyBrowserViewsForWindow(windowId);
+    windowRegistry.unregister(windowId);
+
+    // A reload destroys and immediately rebuilds the same window id. Releasing
+    // its lease in between would drop the refcount to zero and tear down a
+    // tunnel the window is about to reconnect to.
+    if (reloadingWindowIds.has(windowId)) {
+      return;
     }
-    mainWindow = null;
+
+    dropRemoteServerInterestForWindow(windowId);
+    connectionRegistry.releaseAll(windowId);
+    persistWindowLayout();
+    notifyWindowsChanged();
   });
+
+  persistWindowLayout();
+  notifyWindowsChanged();
+
+  return { win, windowId };
 }
 
 function buildSettingsHtml() {
@@ -3681,14 +4014,15 @@ function openSettingsWindow() {
     return;
   }
 
+  const parentWindow = windowRegistry.focused()?.win ?? null;
   settingsWindow = new BrowserWindow({
     width: 520,
     height: 360,
     resizable: false,
     minimizable: false,
     maximizable: false,
-    modal: !!mainWindow,
-    parent: mainWindow ?? undefined,
+    modal: !!parentWindow,
+    parent: parentWindow ?? undefined,
     title: 'Connection Settings',
     webPreferences: {
       preload: path.join(__dirname, 'settings-preload.cjs'),
@@ -3703,51 +4037,98 @@ function openSettingsWindow() {
   });
 }
 
-async function reloadMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) {
+// Tears a window down and rebuilds it in place, keeping its geometry and its
+// environment. Used by "Reload App" and by a Connection Settings change, both
+// of which need the preload's injected backend origin re-evaluated.
+async function reloadAppWindow(target) {
+  const entry = target ?? windowRegistry.focused();
+  if (!entry || entry.win.isDestroyed()) {
     return;
   }
 
-  const bounds = mainWindow.getBounds();
-  const wasDevToolsOpen = mainWindow.webContents.isDevToolsOpened();
+  const { id: windowId, win, env } = entry;
+  const bounds = win.getBounds();
+  const wasDevToolsOpen = win.webContents.isDevToolsOpened();
 
-  isReloadingMainWindow = true;
+  reloadingWindowIds.add(windowId);
 
+  let created = null;
   try {
-    mainWindow.destroy();
-    await createMainWindow();
+    win.destroy();
+    // Reuse the id so the window keeps its per-window renderer state (open
+    // tabs, layout) and its slot in the persisted layout.
+    created = await createAppWindow({ env, windowId, restore: { bounds } });
   } finally {
-    isReloadingMainWindow = false;
+    reloadingWindowIds.delete(windowId);
   }
 
-  if (!mainWindow || mainWindow.isDestroyed()) {
+  if (!created || created.win.isDestroyed()) {
     return;
   }
 
-  mainWindow.setBounds(bounds);
+  created.win.setBounds(bounds);
 
-  if (wasDevToolsOpen && !mainWindow.webContents.isDevToolsOpened()) {
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  if (wasDevToolsOpen && !created.win.webContents.isDevToolsOpened()) {
+    created.win.webContents.openDevTools({ mode: 'detach' });
   }
+}
+
+function reloadAllAppWindows() {
+  return windowRegistry.all().reduce(
+    (chain, entry) => chain.then(() => reloadAppWindow(entry)),
+    Promise.resolve(),
+  );
+}
+
+// New windows inherit the focused window's environment: its tunnel is already
+// up, so the window opens instantly, and "another window on what I'm working
+// on" is overwhelmingly the common case. A window on a *different* environment
+// is one click away in the environment switcher.
+function openWindowForFocusedEnvironment() {
+  const env = windowRegistry.focused()?.env ?? LOCAL_ENVIRONMENT_REF;
+  return createAppWindow({ env }).catch((error) => {
+    console.error('[windows] could not open a new window', error);
+  });
+}
+
+function buildWindowListMenuItems() {
+  const windows = windowRegistry.list();
+  if (windows.length < 2) {
+    return [];
+  }
+
+  return [
+    { type: 'separator' },
+    ...windows.map((entry) => ({
+      label: entry.label || APP_DISPLAY_NAME,
+      type: 'radio',
+      checked: entry.focused,
+      click: () => windowRegistry.focusWindow(entry.windowId),
+    })),
+  ];
 }
 
 function installMenu() {
   const isMac = process.platform === 'darwin';
+  const appMenuItems = [
+    {
+      label: 'Connection Settings...',
+      click: () => openSettingsWindow(),
+    },
+    {
+      label: 'Reload Window',
+      ...(!app.isPackaged ? { accelerator: 'CmdOrCtrl+R' } : {}),
+      click: () => void reloadAppWindow(),
+    },
+  ];
+
   const template = [
     ...(isMac ? [{
       label: app.name,
       submenu: [
         { role: 'about' },
         { type: 'separator' },
-        {
-          label: 'Connection Settings...',
-          click: () => openSettingsWindow(),
-        },
-        {
-          label: 'Reload App',
-          ...(!app.isPackaged ? { accelerator: 'CmdOrCtrl+R' } : {}),
-          click: () => void reloadMainWindow(),
-        },
+        ...appMenuItems,
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -3760,19 +4141,26 @@ function installMenu() {
     }] : [{
       label: 'Elevenex',
       submenu: [
-        {
-          label: 'Connection Settings...',
-          click: () => openSettingsWindow(),
-        },
-        {
-          label: 'Reload App',
-          ...(!app.isPackaged ? { accelerator: 'CmdOrCtrl+R' } : {}),
-          click: () => void reloadMainWindow(),
-        },
+        ...appMenuItems,
         { type: 'separator' },
         { role: 'quit' },
       ],
     }]),
+    {
+      // Windows/Linux render no menu bar (the app is frameless there), so this
+      // is a macOS convenience and an accelerator host — the discoverable
+      // entry points for multi-window live in the environment switcher UI.
+      label: 'File',
+      submenu: [
+        {
+          label: 'New Window',
+          accelerator: 'CmdOrCtrl+Shift+N',
+          click: () => void openWindowForFocusedEnvironment(),
+        },
+        { type: 'separator' },
+        { role: 'close', label: 'Close Window' },
+      ],
+    },
     {
       label: 'Edit',
       submenu: [
@@ -3809,10 +4197,11 @@ function installMenu() {
           ? [
               { type: 'separator' },
               { role: 'front' },
-              { type: 'separator' },
-              { role: 'window' },
             ]
           : [{ role: 'close' }]),
+        // Named by environment so the list is actually useful with several
+        // windows open — "Elevenex, Elevenex, Elevenex" would not be.
+        ...buildWindowListMenuItems(),
       ],
     },
   ];
@@ -3830,7 +4219,9 @@ ipcMain.handle('elevenex-settings:save', (_event, nextSettings) => {
     };
 
     writeSettings(normalized);
-    void reloadMainWindow();
+    // The backend/frontend override is process-wide, so every window has to
+    // pick up the new origin, not just the one that opened Settings.
+    void reloadAllAppWindows();
 
     return { ok: true };
   } catch (error) {
@@ -3841,65 +4232,128 @@ ipcMain.handle('elevenex-settings:save', (_event, nextSettings) => {
   }
 });
 
-ipcMain.handle('elevenex-window:get-environment', () => ({
+// Every window-scoped handler resolves the *calling* window. Reaching for a
+// global "main window" would make the custom title bar controls of one window
+// act on another.
+function senderWindowEntry(event) {
+  return windowRegistry.fromWebContents(event?.sender) ?? null;
+}
+
+function senderWindow(event) {
+  return senderWindowEntry(event)?.win ?? null;
+}
+
+ipcMain.handle('elevenex-window:get-environment', (event) => ({
   isElectron: true,
   platform: process.platform,
   usesNativeMacControls: process.platform === 'darwin',
+  windowId: senderWindowEntry(event)?.id ?? null,
 }));
 
-ipcMain.handle('elevenex-window:minimize', () => {
-  mainWindow?.minimize();
+ipcMain.handle('elevenex-window:minimize', (event) => {
+  senderWindow(event)?.minimize();
 });
 
-ipcMain.handle('elevenex-window:maximize', () => {
-  if (mainWindow && !mainWindow.isMaximized()) {
-    mainWindow.maximize();
+ipcMain.handle('elevenex-window:maximize', (event) => {
+  const win = senderWindow(event);
+  if (win && !win.isMaximized()) {
+    win.maximize();
   }
-  return {
-    isMaximized: mainWindow?.isMaximized() ?? false,
-    isFullScreen: mainWindow?.isFullScreen() ?? false,
-    isFocused: mainWindow?.isFocused() ?? false,
-  };
+  return toWindowState(win);
 });
 
-ipcMain.handle('elevenex-window:unmaximize', () => {
-  if (mainWindow && mainWindow.isMaximized()) {
-    mainWindow.unmaximize();
+ipcMain.handle('elevenex-window:unmaximize', (event) => {
+  const win = senderWindow(event);
+  if (win && win.isMaximized()) {
+    win.unmaximize();
   }
-  return {
-    isMaximized: mainWindow?.isMaximized() ?? false,
-    isFullScreen: mainWindow?.isFullScreen() ?? false,
-    isFocused: mainWindow?.isFocused() ?? false,
-  };
+  return toWindowState(win);
 });
 
-ipcMain.handle('elevenex-window:toggle-maximize', () => {
-  if (!mainWindow) {
-    return { isMaximized: false };
+ipcMain.handle('elevenex-window:toggle-maximize', (event) => {
+  const win = senderWindow(event);
+  if (!win) {
+    return toWindowState(null);
   }
 
-  if (mainWindow.isMaximized()) {
-    mainWindow.unmaximize();
+  if (win.isMaximized()) {
+    win.unmaximize();
   } else {
-    mainWindow.maximize();
+    win.maximize();
   }
 
-  return {
-    isMaximized: mainWindow.isMaximized(),
-    isFullScreen: mainWindow.isFullScreen(),
-    isFocused: mainWindow.isFocused(),
-  };
+  return toWindowState(win);
 });
 
-ipcMain.handle('elevenex-window:close', () => {
-  mainWindow?.close();
+ipcMain.handle('elevenex-window:close', (event) => {
+  senderWindow(event)?.close();
 });
 
-ipcMain.handle('elevenex-window:is-maximized', () => ({
-  isMaximized: mainWindow?.isMaximized() ?? false,
-  isFullScreen: mainWindow?.isFullScreen() ?? false,
-  isFocused: mainWindow?.isFocused() ?? false,
-}));
+ipcMain.handle('elevenex-window:is-maximized', (event) => toWindowState(senderWindow(event)));
+
+// ─── Multi-window ──────────────────────────────────────────────────────────────
+
+ipcMain.handle('elevenex-windows:list', () => windowRegistry.list());
+
+ipcMain.handle('elevenex-windows:open-new', async (event, payload) => {
+  const env = payload?.env
+    ? normalizeEnvironmentRef(payload.env)
+    : (senderWindowEntry(event)?.env ?? LOCAL_ENVIRONMENT_REF);
+
+  const { windowId } = await createAppWindow({ env });
+  return windowId;
+});
+
+ipcMain.handle('elevenex-windows:focus', (_event, windowId) =>
+  windowRegistry.focusWindow(`${windowId || ''}`));
+
+// Called by the renderer on every environment switch. Without it the lease of
+// the environment the window just left would never be released (its tunnel
+// would stay up forever) and the persisted layout would restore the window on
+// the wrong backend.
+ipcMain.handle('elevenex-windows:set-environment', (event, payload) => {
+  const entry = senderWindowEntry(event);
+  if (!entry) {
+    return false;
+  }
+
+  const env = normalizeEnvironmentRef(payload?.env);
+  windowRegistry.setEnv(entry.id, env);
+  windowRegistry.setBackendOrigin(entry.id, payload?.backendOrigin);
+  connectionRegistry.setEnvironment(entry.id, env);
+  // The connection is established: stop treating this window as merely
+  // interested in the remote's install stream.
+  if (env.mode === 'ssh' || env.mode === 'wsl') {
+    removeRemoteServerInterest(env.serverId, entry.id);
+  }
+  applyWindowTitle(entry.win, env);
+  persistWindowLayout();
+  notifyWindowsChanged();
+  return true;
+});
+
+// Fan-out channel for state that is global to the app but lives in renderer
+// storage (theme, the saved-server catalogue). The DOM `storage` event is not
+// dependable across separate BrowserWindows, so the main process relays.
+ipcMain.handle('elevenex-windows:broadcast', (event, payload) => {
+  const senderId = senderWindowEntry(event)?.id ?? null;
+  const channel = `${payload?.channel || ''}`;
+  if (!channel) {
+    return false;
+  }
+
+  for (const entry of windowRegistry.all()) {
+    if (entry.id === senderId) {
+      continue;
+    }
+    windowRegistry.sendTo(entry.id, 'elevenex-windows:broadcast', {
+      channel,
+      payload: payload?.payload ?? null,
+    });
+  }
+
+  return true;
+});
 
 ipcMain.handle('elevenex-app:restart', () => {
   // Relaunch a fresh instance, then quit the current one through the normal
@@ -3920,11 +4374,8 @@ function getAppUpdater() {
       app,
       shell,
       getCurrentVersion: getBundledVersion,
-      onStateChanged: (state) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('elevenex-updates:state-changed', state);
-        }
-      },
+      // App updates are process-wide: every window shows the same state.
+      onStateChanged: (state) => windowRegistry.broadcast('elevenex-updates:state-changed', state),
       requestQuit: requestAppQuit,
     });
   }
@@ -3957,9 +4408,11 @@ ipcMain.handle('elevenex-external-links:open', async (_event, url) => {
 
 const authWindows = new Map();
 
-function registerAuthWindowNavigationHandlers(authWindow) {
+function registerAuthWindowNavigationHandlers(authWindow, getBackendOrigin) {
+  const proxyUrl = (url) => rewriteLocalhostToProxy(url, getBackendOrigin());
+
   authWindow.webContents.setWindowOpenHandler(({ url }) => {
-    const proxied = rewriteLocalhostToProxy(url);
+    const proxied = proxyUrl(url);
     if (proxied !== url) {
       void authWindow.loadURL(proxied);
       return { action: 'deny' };
@@ -3969,7 +4422,7 @@ function registerAuthWindowNavigationHandlers(authWindow) {
   });
 
   authWindow.webContents.on('will-navigate', (event, url) => {
-    const proxied = rewriteLocalhostToProxy(url);
+    const proxied = proxyUrl(url);
     if (proxied !== url) {
       event.preventDefault();
       void authWindow.loadURL(proxied);
@@ -3977,7 +4430,7 @@ function registerAuthWindowNavigationHandlers(authWindow) {
   });
 
   authWindow.webContents.on('will-redirect', (event, url) => {
-    const proxied = rewriteLocalhostToProxy(url);
+    const proxied = proxyUrl(url);
     if (proxied !== url) {
       event.preventDefault();
       void authWindow.loadURL(proxied);
@@ -3985,18 +4438,23 @@ function registerAuthWindowNavigationHandlers(authWindow) {
   });
 }
 
-ipcMain.handle('elevenex-auth-window:open', async (_event, payload) => {
+ipcMain.handle('elevenex-auth-window:open', async (event, payload) => {
   const url = typeof payload === 'string' ? payload : payload?.url;
   if (typeof url !== 'string' || !url.trim()) {
     return false;
   }
 
   const key = `${payload?.key || 'default'}`;
+  const requestingEntry = senderWindowEntry(event);
+  // The OAuth callback has to reach the backend of the window that started the
+  // flow. Resolved lazily so a mid-flow environment switch is picked up.
+  const resolveBackendOrigin = () =>
+    (requestingEntry && windowRegistry.backendOriginOf(requestingEntry.id)) || getDefaultBackendUrl();
 
   let authWindow = authWindows.get(key);
   if (authWindow && !authWindow.isDestroyed()) {
     authWindow.focus();
-    void authWindow.loadURL(rewriteLocalhostToProxy(url));
+    void authWindow.loadURL(rewriteLocalhostToProxy(url, resolveBackendOrigin()));
     return true;
   }
 
@@ -4005,7 +4463,7 @@ ipcMain.handle('elevenex-auth-window:open', async (_event, payload) => {
     height: 720,
     minWidth: 400,
     minHeight: 500,
-    parent: mainWindow ?? undefined,
+    parent: requestingEntry?.win ?? undefined,
     title: typeof payload?.title === 'string' && payload.title ? payload.title : 'Authentication',
     autoHideMenuBar: true,
     webPreferences: {
@@ -4016,40 +4474,56 @@ ipcMain.handle('elevenex-auth-window:open', async (_event, payload) => {
   });
 
   authWindows.set(key, authWindow);
-  registerAuthWindowNavigationHandlers(authWindow);
+  registerAuthWindowNavigationHandlers(authWindow, resolveBackendOrigin);
   authWindow.on('closed', () => {
     if (authWindows.get(key) === authWindow) {
       authWindows.delete(key);
     }
   });
 
-  await authWindow.loadURL(rewriteLocalhostToProxy(url));
+  await authWindow.loadURL(rewriteLocalhostToProxy(url, resolveBackendOrigin()));
   return true;
 });
 
-ipcMain.handle('elevenex-browser:show', (_event, payload) => {
-  const browserKey = `${payload?.key || ''}`;
-  if (!browserKey) {
+// Turns a renderer-scoped browser key into the process-wide view key, and
+// hands back the window that owns it.
+function resolveBrowserView(event, rawKey, { required = true } = {}) {
+  const browserKey = `${rawKey || ''}`;
+  if (!browserKey && required) {
     throw new Error('Browser key is required');
   }
 
-  ensureBrowserView(browserKey, payload?.isolationConfig);
-  return attachBrowserView(browserKey, ensureBrowserLayout(payload));
-});
-
-ipcMain.handle('elevenex-browser:hide', (_event, browserKey) => {
-  detachBrowserView(`${browserKey || ''}`);
-});
-
-ipcMain.handle('elevenex-browser:close', (_event, browserKey) => {
-  destroyBrowserView(`${browserKey || ''}`);
-});
-
-ipcMain.handle('elevenex-browser:navigate', async (_event, payload) => {
-  const browserKey = `${payload?.key || ''}`;
-  if (!browserKey) {
-    throw new Error('Browser key is required');
+  const entry = senderWindowEntry(event);
+  if (!entry && required) {
+    throw new Error('Window is not available');
   }
+
+  return {
+    viewKey: entry ? toBrowserViewKey(entry.id, browserKey) : browserKey,
+    ownerWindow: entry?.win ?? null,
+    windowId: entry?.id ?? null,
+  };
+}
+
+ipcMain.handle('elevenex-browser:show', (event, payload) => {
+  const { viewKey, ownerWindow } = resolveBrowserView(event, payload?.key);
+
+  ensureBrowserView(viewKey, payload?.isolationConfig, { ownerWindow });
+  return attachBrowserView(viewKey, ensureBrowserLayout(payload), ownerWindow);
+});
+
+ipcMain.handle('elevenex-browser:hide', (event, browserKey) => {
+  const { viewKey } = resolveBrowserView(event, browserKey, { required: false });
+  detachBrowserView(viewKey);
+});
+
+ipcMain.handle('elevenex-browser:close', (event, browserKey) => {
+  const { viewKey } = resolveBrowserView(event, browserKey, { required: false });
+  destroyBrowserView(viewKey);
+});
+
+ipcMain.handle('elevenex-browser:navigate', async (event, payload) => {
+  const { viewKey, ownerWindow } = resolveBrowserView(event, payload?.key);
 
   const layout = payload?.bounds || payload?.browserBounds ? ensureBrowserLayout(payload) : null;
   const navigationState = layout
@@ -4061,51 +4535,52 @@ ipcMain.handle('elevenex-browser:navigate', async (_event, payload) => {
     }
     : undefined;
 
-  return loadBrowserUrl(browserKey, payload?.url, {
+  return loadBrowserUrl(viewKey, payload?.url, {
     isolationConfig: payload?.isolationConfig,
     navigationState,
+    ownerWindow,
   });
 });
 
-ipcMain.handle('elevenex-browser:back', (_event, browserKey) => {
-  const entry = ensureBrowserView(`${browserKey || ''}`);
+ipcMain.handle('elevenex-browser:back', (event, browserKey) => {
+  const { viewKey, ownerWindow } = resolveBrowserView(event, browserKey);
+  const entry = ensureBrowserView(viewKey, undefined, { ownerWindow });
   if (entry.view.webContents.navigationHistory.canGoBack()) {
     entry.view.webContents.navigationHistory.goBack();
   }
-  return getBrowserState(`${browserKey || ''}`);
+  return getBrowserState(viewKey);
 });
 
-ipcMain.handle('elevenex-browser:forward', (_event, browserKey) => {
-  const entry = ensureBrowserView(`${browserKey || ''}`);
+ipcMain.handle('elevenex-browser:forward', (event, browserKey) => {
+  const { viewKey, ownerWindow } = resolveBrowserView(event, browserKey);
+  const entry = ensureBrowserView(viewKey, undefined, { ownerWindow });
   if (entry.view.webContents.navigationHistory.canGoForward()) {
     entry.view.webContents.navigationHistory.goForward();
   }
-  return getBrowserState(`${browserKey || ''}`);
+  return getBrowserState(viewKey);
 });
 
-ipcMain.handle('elevenex-browser:reload', (_event, browserKey) => {
-  const entry = ensureBrowserView(`${browserKey || ''}`);
+ipcMain.handle('elevenex-browser:reload', (event, browserKey) => {
+  const { viewKey, ownerWindow } = resolveBrowserView(event, browserKey);
+  const entry = ensureBrowserView(viewKey, undefined, { ownerWindow });
   entry.view.lastError = null;
   entry.view.webContents.reload();
-  return getBrowserState(`${browserKey || ''}`);
+  return getBrowserState(viewKey);
 });
 
-ipcMain.handle('elevenex-browser:get-state', (_event, browserKey) => {
-  const key = `${browserKey || ''}`;
-  if (!key || !browserViews.has(key)) {
+ipcMain.handle('elevenex-browser:get-state', (event, browserKey) => {
+  const { viewKey } = resolveBrowserView(event, browserKey, { required: false });
+  if (!viewKey || !browserViews.has(viewKey)) {
     return null;
   }
 
-  return getBrowserState(key);
+  return getBrowserState(viewKey);
 });
 
-ipcMain.handle('elevenex-browser:set-devtools-visible', (_event, payload) => {
-  const browserKey = `${payload?.key || ''}`;
-  if (!browserKey) {
-    throw new Error('Browser key is required');
-  }
+ipcMain.handle('elevenex-browser:set-devtools-visible', (event, payload) => {
+  const { viewKey, ownerWindow, windowId } = resolveBrowserView(event, payload?.key);
 
-  const entry = ensureBrowserView(browserKey);
+  const entry = ensureBrowserView(viewKey, undefined, { ownerWindow });
   const layout = ensureBrowserLayout(payload);
   entry.devtoolsVisible = layout.devtoolsVisible;
 
@@ -4113,24 +4588,30 @@ ipcMain.handle('elevenex-browser:set-devtools-visible', (_event, payload) => {
     entry.view.webContents.closeDevTools();
   }
   if (!layout.devtoolsVisible) {
-    destroyDevToolsView(browserKey);
+    destroyDevToolsView(viewKey);
   }
 
-  if (attachedBrowserKey === browserKey && entry.attached) {
-    attachBrowserView(browserKey, layout);
+  if (attachedBrowserKeys.get(windowId) === viewKey && entry.attached) {
+    attachBrowserView(viewKey, layout, ownerWindow);
   }
 
-  broadcastBrowserState(browserKey);
-  return getBrowserState(browserKey);
+  broadcastBrowserState(viewKey);
+  return getBrowserState(viewKey);
 });
 
-ipcMain.handle('elevenex-browser:update-isolation-config', (_event, payload) => {
+ipcMain.handle('elevenex-browser:update-isolation-config', (event, payload) => {
   const { projectId } = payload || {};
   if (!projectId) return;
-  const browserKeyPrefix = `project:${projectId}:tab:`;
-  for (const browserKey of Array.from(browserViews.keys())) {
-    if (browserKey.startsWith(browserKeyPrefix)) {
-      destroyBrowserView(browserKey);
+
+  // Scoped to the calling window: another window may be showing the same
+  // project against a different backend and must not have its tabs recycled.
+  const windowId = senderWindowEntry(event)?.id;
+  if (!windowId) return;
+
+  const viewKeyPrefix = toBrowserViewKey(windowId, `project:${projectId}:tab:`);
+  for (const viewKey of Array.from(browserViews.keys())) {
+    if (viewKey.startsWith(viewKeyPrefix)) {
+      destroyBrowserView(viewKey);
     }
   }
 });
@@ -4179,10 +4660,30 @@ ipcMain.handle('elevenex-ssh-forwarding:start', async (_event, payload) => {
   return startSshForwardRuntime(forward);
 });
 
-ipcMain.handle('elevenex-ssh-forwarding:stop', async (_event, id) => {
+// "Stop" from a window means "I no longer need this tunnel" — not "kill it".
+// With several windows open the tunnel may still be carrying another window's
+// entire session, so it is only really torn down once nobody is left on it.
+ipcMain.handle('elevenex-ssh-forwarding:stop', async (event, id) => {
   const numericId = Number(id);
   if (!Number.isFinite(numericId) || numericId <= 0) {
     throw new Error('Forward id is required');
+  }
+
+  const entry = senderWindowEntry(event);
+  const envRef = environmentRefForServerId(numericId);
+
+  if (entry) {
+    removeRemoteServerInterest(numericId, entry.id);
+    connectionRegistry.release(entry.id, envRef);
+  }
+
+  const remainingHolders = connectionRegistry.holders(envRef)
+    .filter((windowId) => windowId !== entry?.id);
+  const remainingInterest = [...(remoteServerInterest.get(numericId) ?? [])]
+    .filter((windowId) => windowId !== entry?.id);
+
+  if (remainingHolders.length > 0 || remainingInterest.length > 0) {
+    return toSshRuntimeView(numericId, sshForwardRuntimes.get(numericId) ?? null);
   }
 
   return stopSshForwardRuntime(numericId);
@@ -4197,8 +4698,8 @@ ipcMain.handle('elevenex-ssh-forwarding:get-state', (_event, id) => {
   return toSshRuntimeView(numericId, sshForwardRuntimes.get(numericId) ?? null);
 });
 
-ipcMain.handle('elevenex-ssh-forwarding:pick-identity-file', async () => {
-  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+ipcMain.handle('elevenex-ssh-forwarding:pick-identity-file', async (event) => {
+  const result = await dialog.showOpenDialog(senderWindow(event) ?? undefined, {
     title: 'Choose an SSH private key',
     properties: ['openFile'],
   });
@@ -4210,7 +4711,7 @@ ipcMain.handle('elevenex-ssh-forwarding:pick-identity-file', async () => {
   return result.filePaths[0];
 });
 
-ipcMain.handle('elevenex-remote-server:ensure-ready', async (_event, payload) => {
+ipcMain.handle('elevenex-remote-server:ensure-ready', async (event, payload) => {
   const serverId = Number(payload?.id);
   if (!Number.isFinite(serverId) || serverId <= 0) {
     throw new Error('Remote server id is required');
@@ -4219,6 +4720,20 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (_event, payload) =>
   const sshHost = `${payload?.sshHost || ''}`.trim();
   if (!sshHost) {
     throw new Error('SSH host is required');
+  }
+
+  const requestingWindowId = senderWindowEntry(event)?.id ?? null;
+  // Register interest *before* any phase event can fire, so the window driving
+  // the connection sees its own progress even though it does not hold the
+  // environment's lease yet.
+  addRemoteServerInterest(serverId, requestingWindowId);
+
+  // A tunnel that is already up (another window is on this server) is reused
+  // as-is: no reinstall, no second `ssh -L`, and the window opens instantly.
+  const reused = reuseReadyRemoteServer(serverId);
+  if (reused) {
+    emitRemoteServerPhaseEvent(serverId, 'ready');
+    return reused;
   }
 
   const localPort = await allocateLocalPort(serverId);
@@ -4240,7 +4755,13 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (_event, payload) =>
 
   let result;
   try {
-    result = await ensureRemoteServerReady(forward);
+    // Two windows connecting to the same server share one run: a duplicated
+    // preflight/install/probe over SSH would be slow, noisy on the remote, and
+    // would race a second `ssh -L` onto the same port.
+    result = await connectionRegistry.run(
+      environmentRefForServerId(serverId),
+      () => ensureRemoteServerReady(forward),
+    );
   } catch (error) {
     console.error('[remote-runtime] ensure-ready failed', {
       serverId: forward.id,
@@ -4261,8 +4782,12 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (_event, payload) =>
       version: getRemoteRuntimeVersion(),
     };
   }
+  recordRemoteServerResult(serverId, result);
   if (result.status === 'ready' || result.status === 'error' || result.status === 'unsupported') {
     destroyRemoteInstallerSessionForServer(forward.id);
+  }
+  if (result.status !== 'ready') {
+    removeRemoteServerInterest(serverId, requestingWindowId);
   }
   return result;
 });
@@ -4297,6 +4822,7 @@ ipcMain.handle('elevenex-remote-server:recheck', async (_event, payload) => {
       version: getRemoteRuntimeVersion(),
     };
   }
+  recordRemoteServerResult(sessionState.forward.id, result);
   if (result.status === 'ready' || result.status === 'error' || result.status === 'unsupported') {
     destroyRemoteInstallerSession(sessionId);
   }
@@ -4351,12 +4877,17 @@ ipcMain.handle('elevenex-wsl-server:list-distros', () => {
   return listWslDistros();
 });
 
-ipcMain.handle('elevenex-wsl-server:ensure-ready', async (_event, payload) => {
+ipcMain.handle('elevenex-wsl-server:ensure-ready', async (event, payload) => {
   const distroName = `${payload?.distroName || ''}`.trim() || null;
+  const requestingWindowId = senderWindowEntry(event)?.id ?? null;
+  addRemoteServerInterest(WSL_SERVER_ID, requestingWindowId);
 
   let result;
   try {
-    result = await ensureWslServerReady(distroName);
+    result = await connectionRegistry.run(
+      environmentRefForServerId(WSL_SERVER_ID),
+      () => ensureWslServerReady(distroName),
+    );
   } catch (error) {
     console.error('[wsl-runtime] ensure-ready failed', {
       distroName,
@@ -4378,8 +4909,12 @@ ipcMain.handle('elevenex-wsl-server:ensure-ready', async (_event, payload) => {
       distroName,
     };
   }
+  recordRemoteServerResult(WSL_SERVER_ID, result);
   if (result.status === 'ready' || result.status === 'error' || result.status === 'unsupported') {
     destroyRemoteInstallerSessionForServer(WSL_SERVER_ID);
+  }
+  if (result.status !== 'ready') {
+    removeRemoteServerInterest(WSL_SERVER_ID, requestingWindowId);
   }
   return result;
 });
@@ -4472,7 +5007,62 @@ function installMicrophonePermissionHandler() {
   );
 }
 
+// Restores the layout from the previous run. Windows bound to a remote open
+// straight away in their reconnecting state rather than blocking startup on
+// SSH — the renderer's existing recovery flow takes it from there, including
+// prompting for a password when the server needs one.
+async function restoreSavedWindows() {
+  const saved = await windowStateStore.load();
+  if (saved.length === 0) {
+    await createAppWindow({ env: LOCAL_ENVIRONMENT_REF });
+    return;
+  }
+
+  for (const entry of saved) {
+    try {
+      await createAppWindow({
+        env: entry.env,
+        windowId: entry.id,
+        restore: {
+          bounds: entry.bounds,
+          maximized: entry.maximized,
+          fullScreen: entry.fullScreen,
+        },
+      });
+    } catch (error) {
+      console.error('[windows] could not restore a window', error);
+    }
+  }
+
+  // Every restore failed (eg. the embedded backend refused to start for one of
+  // them): never leave the user with a running app and no window.
+  if (windowRegistry.count() === 0) {
+    await createAppWindow({ env: LOCAL_ENVIRONMENT_REF });
+  }
+}
+
+// Without the lock, launching the binary twice spawns a second process that
+// fights the first over ~/.elevenex/elevenex.db and kills its backend through
+// terminateStaleEmbeddedBackend(). Now that multiple windows are a first-class
+// feature, a second launch simply means "open another window".
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  const focusedEntry = windowRegistry.focused();
+  if (focusedEntry) {
+    windowRegistry.focusWindow(focusedEntry.id);
+  }
+  void openWindowForFocusedEnvironment();
+});
+
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) {
+    return;
+  }
+
   app.setName('Elevenex');
 
   if (process.platform === 'win32') {
@@ -4491,11 +5081,11 @@ app.whenReady().then(async () => {
 
   installMicrophonePermissionHandler();
   installMenu();
-  await createMainWindow();
+  await restoreSavedWindows();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createMainWindow();
+    if (windowRegistry.count() === 0) {
+      void createAppWindow({ env: LOCAL_ENVIRONMENT_REF });
     }
   });
 }).catch((error) => {

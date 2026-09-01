@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideX, lucideRefreshCw, lucideCheckCircle, lucideXCircle, lucideFileText, lucideGitBranch, lucideArchive, lucideMinus, lucideMessageSquare, lucideMaximize2, lucideMinimize2 } from '@ng-icons/lucide';
+import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
 
 @Component({
   selector: 'app-plannotator-panel',
@@ -29,7 +30,12 @@ export class PlannotatorPanelComponent implements OnInit, OnDestroy {
   private static readonly MIN_WIDTH = 600;
   private static readonly DEFAULT_WIDTH_RATIO = 0.7;
   private static readonly MAX_WIDTH_RATIO = 0.92;
-  private static readonly STORAGE_KEY = 'plannotator-panel-width';
+  // Panel width is window layout, not shared preference.
+  private static readonly STORAGE_KEY_BASE = 'plannotator-panel-width';
+
+  private static storageKey(): string {
+    return migratedWindowScopedKey(PlannotatorPanelComponent.STORAGE_KEY_BASE);
+  }
 
   @Input() sessionId!: number;
   @Input() proxyUrl!: string;
@@ -180,7 +186,7 @@ export class PlannotatorPanelComponent implements OnInit, OnDestroy {
     const defaultWidth = this.clampWidth(window.innerWidth * PlannotatorPanelComponent.DEFAULT_WIDTH_RATIO);
 
     try {
-      const stored = localStorage.getItem(PlannotatorPanelComponent.STORAGE_KEY);
+      const stored = localStorage.getItem(PlannotatorPanelComponent.storageKey());
       if (stored) {
         const value = Number.parseFloat(stored);
         if (Number.isFinite(value) && value > 0) {
@@ -208,7 +214,7 @@ export class PlannotatorPanelComponent implements OnInit, OnDestroy {
     try {
       const clampedWidth = this.clampWidth(width);
       const widthPercentage = (clampedWidth / window.innerWidth) * 100;
-      localStorage.setItem(PlannotatorPanelComponent.STORAGE_KEY, widthPercentage.toFixed(2));
+      localStorage.setItem(PlannotatorPanelComponent.storageKey(), widthPercentage.toFixed(2));
     } catch {}
   }
 

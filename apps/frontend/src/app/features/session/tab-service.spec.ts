@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { TabService, readLastOpenedSessionId, LAST_OPENED_SESSION_STORAGE_KEY } from './tab-service';
 import { Session } from '../../shared/models/session.model';
+import { windowScopedKey } from '@/shared/services/scoped-storage';
 
 describe('TabService', () => {
   let service: TabService;
@@ -296,7 +297,9 @@ describe('TabService', () => {
       service.openTab(mockSession(2));
       service.selectTab(1);
 
-      expect(localStorage.getItem(LAST_OPENED_SESSION_STORAGE_KEY)).toBe('1');
+      // Scoped per window and per backend, so two windows never resume each
+      // other's session.
+      expect(localStorage.getItem(windowScopedKey(LAST_OPENED_SESSION_STORAGE_KEY))).toBe('1');
       expect(readLastOpenedSessionId()).toBe(1);
       expect(service.getLastOpenedSessionId()).toBe(1);
     });

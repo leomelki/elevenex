@@ -95,6 +95,18 @@
             <div class="desktop-chrome__meta">
               <span class="desktop-chrome__eyebrow">Workspace</span>
               <a routerLink="/projects" class="desktop-chrome__home-link">Elevenex</a>
+              <!-- With several windows open, this is what tells them apart at a
+                   glance. The native window title carries the same label for
+                   Alt-Tab / Mission Control. -->
+              <span
+                class="desktop-chrome__env"
+                [class.desktop-chrome__env--remote]="environmentStatus() === 'remote'"
+                [class.desktop-chrome__env--degraded]="environmentStatus() === 'degraded'"
+                [title]="'Connected to ' + environmentLabel() + ' — change it from the environment switcher in the sidebar'"
+              >
+                <span class="desktop-chrome__env-dot" aria-hidden="true"></span>
+                <span class="desktop-chrome__env-label">{{ environmentLabel() }}</span>
+              </span>
             </div>
           </div>
 

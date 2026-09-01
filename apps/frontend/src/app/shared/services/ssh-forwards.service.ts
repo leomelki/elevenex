@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { defer, from, Observable } from 'rxjs';
 import { SshForward } from '../models/ssh-forward.model';
+import { migrateScopedKey, serverScopedKey } from './scoped-storage';
 import {
   ElectronSshForwardRuntimeState,
   getElectronSshForwardingApi,
@@ -45,8 +46,18 @@ interface StoredSshForward {
 
 type SshForwardStore = Record<string, StoredSshForward[]>;
 
-const STORAGE_KEY = 'elevenex-ssh-forwards';
+// Forwards are declared per project, and project ids only mean something
+// within one backend — so this is scoped per environment rather than per
+// window: two windows on the same server share the same forwards.
+const STORAGE_KEY_BASE = 'elevenex-ssh-forwards';
+// Defaults are a user preference, and stay app-global.
 const DEFAULTS_STORAGE_KEY = 'elevenex-ssh-forward-defaults';
+
+function forwardsStorageKey(): string {
+  const scoped = serverScopedKey(STORAGE_KEY_BASE);
+  migrateScopedKey(STORAGE_KEY_BASE, scoped);
+  return scoped;
+}
 
 @Injectable({ providedIn: 'root' })
 export class SshForwardsService {
@@ -256,7 +267,7 @@ export class SshForwardsService {
 
   private readStore(): SshForwardStore {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(forwardsStorageKey());
       if (!raw) {
         return {};
       }
@@ -268,7 +279,7 @@ export class SshForwardsService {
   }
 
   private writeStore(store: SshForwardStore) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    localStorage.setItem(forwardsStorageKey(), JSON.stringify(store));
   }
 
   private writeDefaults(payload: CreateSshForwardPayload) {

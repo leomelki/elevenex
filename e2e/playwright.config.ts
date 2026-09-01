@@ -38,6 +38,15 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      // The desktop shell is driven through Electron, not a browser context.
+      testIgnore: /multi-window\.spec\.ts/,
+    },
+    {
+      // Multi-window behaviour only exists in the desktop shell, which is
+      // launched against the same dev servers rather than a packaged build.
+      name: 'electron',
+      testMatch: /multi-window\.spec\.ts/,
+      dependencies: ['chromium'],
     },
   ],
   webServer: [

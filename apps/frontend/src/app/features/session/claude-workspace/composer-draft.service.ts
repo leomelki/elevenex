@@ -2,9 +2,12 @@ import { Injectable } from '@angular/core';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { ComposerImageAttachment } from './components/claude-composer.component';
 import type { SessionMention } from '@/shared/models/session-mention.model';
+import { getBackendServerId } from '@/shared/runtime/runtime-config';
 
 export interface ComposerDraft {
   version: 1;
+  /** `<backendServerId>:<sessionId>` — the IndexedDB key path. */
+  draftKey: string;
   sessionId: number;
   text: string;
   diffMentions: DiffSelectionMention[];
@@ -14,8 +17,15 @@ export interface ComposerDraft {
 }
 
 const DB_NAME = 'elevenex-composer-drafts';
-const DB_VERSION = 1;
+// v2 re-keys drafts by backend + session. Session ids are only unique within
+// one backend, so with two backends open at once (or even just switched
+// between) drafts written against one could silently overwrite another's.
+const DB_VERSION = 2;
 const STORE_NAME = 'drafts';
+
+function buildDraftKey(sessionId: number): string {
+  return `${getBackendServerId()}:${sessionId}`;
+}
 
 @Injectable({ providedIn: 'root' })
 export class ComposerDraftService {
@@ -28,7 +38,7 @@ export class ComposerDraftService {
       const db = await this.openDb();
       if (!db) return null;
       const raw = await this.request<unknown>(
-        db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(sessionId),
+        db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(buildDraftKey(sessionId)),
       );
       const draft = this.parseDraft(raw, sessionId);
       if (!draft && raw !== undefined) {
@@ -42,7 +52,9 @@ export class ComposerDraftService {
   }
 
   async save(
-    draft: Omit<ComposerDraft, 'version' | 'updatedAt' | 'sessionMentions'> & {
+    // `draftKey` is derived here from the caller's sessionId — callers have no
+    // reason to know about the backend namespace.
+    draft: Omit<ComposerDraft, 'version' | 'updatedAt' | 'sessionMentions' | 'draftKey'> & {
       sessionMentions?: SessionMention[];
     },
   ): Promise<void> {
@@ -57,6 +69,7 @@ export class ComposerDraftService {
       if (!db) return;
       const next: ComposerDraft = {
         version: 1,
+        draftKey: buildDraftKey(draft.sessionId),
         sessionId: draft.sessionId,
         text: draft.text,
         diffMentions: draft.diffMentions,
@@ -79,7 +92,7 @@ export class ComposerDraftService {
       const db = await this.openDb();
       if (!db) return;
       await this.request(
-        db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(sessionId),
+        db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(buildDraftKey(sessionId)),
       );
     } catch (error) {
       this.warn('Could not delete composer draft.', error);
@@ -93,10 +106,33 @@ export class ComposerDraftService {
     this.dbPromise = new Promise<IDBDatabase | null>((resolve) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = (event) => {
         const db = request.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME, { keyPath: 'sessionId' });
+          db.createObjectStore(STORE_NAME, { keyPath: 'draftKey' });
+          return;
+        }
+
+        if ((event.oldVersion ?? 0) < 2) {
+          // Re-key the v1 store, which was keyed on sessionId alone. Existing
+          // drafts are attributed to the backend this window is on — the only
+          // information available, and better than discarding the user's
+          // unsent text. Runs inside the versionchange transaction, so the
+          // read, the drop and the rewrite are atomic.
+          const upgradeTransaction = request.transaction;
+          const legacyStore = upgradeTransaction?.objectStore(STORE_NAME);
+          const readAll = legacyStore?.getAll();
+          if (!readAll) return;
+
+          readAll.onsuccess = () => {
+            const legacyDrafts = (readAll.result ?? []) as ComposerDraft[];
+            db.deleteObjectStore(STORE_NAME);
+            const store = db.createObjectStore(STORE_NAME, { keyPath: 'draftKey' });
+            for (const legacyDraft of legacyDrafts) {
+              if (!Number.isInteger(legacyDraft?.sessionId)) continue;
+              store.put({ ...legacyDraft, draftKey: buildDraftKey(legacyDraft.sessionId) });
+            }
+          };
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -144,6 +180,7 @@ export class ComposerDraftService {
 
     return {
       version: 1,
+      draftKey: buildDraftKey(sessionId),
       sessionId,
       text: value.text,
       diffMentions: value.diffMentions as DiffSelectionMention[],

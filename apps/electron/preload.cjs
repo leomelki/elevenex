@@ -18,15 +18,66 @@ const mode =
   getArgumentValue('elevenex-runtime-mode') ||
   (process.env.ELECTRON_DEBUG_FRONTEND === '1' ? 'electron-debug' : 'electron-local');
 
+// All windows share one Chromium profile, and therefore one localStorage. The
+// window id is what lets the renderer namespace its per-window state (active
+// environment, open tabs, layout) instead of clobbering the other windows'.
+const windowId = getArgumentValue('elevenex-window-id') || 'w0';
+
+function readInjectedEnvironment() {
+  const raw = getArgumentValue('elevenex-window-environment');
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(decodeURIComponent(raw));
+  } catch {
+    return null;
+  }
+}
+
 contextBridge.exposeInMainWorld('__ELEVENEX_RUNTIME__', {
   backendOrigin,
   apiBaseUrl: `${backendOrigin}/api`,
   mode,
+  windowId,
+  // The environment this window was opened on. Authoritative on first paint,
+  // before the renderer has read its own per-window storage.
+  windowEnvironment: readInjectedEnvironment(),
 });
+
+function subscribe(channel, callback) {
+  if (typeof callback !== 'function') {
+    return () => {};
+  }
+
+  const listener = (_event, payload) => callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
 
 contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
   app: {
     restart: () => ipcRenderer.invoke('elevenex-app:restart'),
+  },
+  windows: {
+    // The id itself is exposed on __ELEVENEX_RUNTIME__ (single source of
+    // truth); this namespace is only the operations.
+    list: () => ipcRenderer.invoke('elevenex-windows:list'),
+    openNew: (env) => ipcRenderer.invoke('elevenex-windows:open-new', { env: env ?? null }),
+    focus: (targetWindowId) => ipcRenderer.invoke('elevenex-windows:focus', targetWindowId),
+    // Must be called on every environment switch: the main process owns the
+    // refcounted tunnel leases and the persisted layout, and neither can follow
+    // a switch it is not told about.
+    setEnvironment: (payload) => ipcRenderer.invoke('elevenex-windows:set-environment', payload),
+    onChanged: (callback) => subscribe('elevenex-windows:changed', callback),
+    // Relay for app-global renderer state (theme, saved-server catalogue). The
+    // DOM `storage` event is not dependable across BrowserWindows.
+    broadcast: (channel, payload) =>
+      ipcRenderer.invoke('elevenex-windows:broadcast', { channel, payload: payload ?? null }),
+    onBroadcast: (callback) => subscribe('elevenex-windows:broadcast', callback),
   },
   windowControls: {
     getEnvironment: () => ipcRenderer.invoke('elevenex-window:get-environment'),

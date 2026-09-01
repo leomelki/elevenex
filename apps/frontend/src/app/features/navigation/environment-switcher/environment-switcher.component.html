@@ -111,9 +111,9 @@
           class="env-row"
           [class.env-row--active]="isLocalActive()"
           [class.env-row--disabled]="switching()"
-          (click)="!switching() && selectLocal()"
-          (keydown.enter)="!switching() && selectLocal()"
-          (keydown.space)="$event.preventDefault(); !switching() && selectLocal()"
+          (click)="!switching() && selectLocal($event)"
+          (keydown.enter)="!switching() && selectLocal($event)"
+          (keydown.space)="$event.preventDefault(); !switching() && selectLocal($event)"
         >
           <span class="env-row__leading">
             <span class="env-row__iconframe env-row__iconframe--local">
@@ -121,10 +121,28 @@
             </span>
           </span>
           <span class="env-row__body">
-            <span class="env-row__title">Local workspace</span>
+            <span class="env-row__title-row">
+              <span class="env-row__title">Local workspace</span>
+              @if (isOpenElsewhere('local')) {
+                <span class="env-chip" [title]="openElsewhereTooltip('local')">Open</span>
+              }
+            </span>
             <span class="env-row__subtitle">Embedded backend</span>
           </span>
           <span class="env-row__trailing">
+            @if (multiWindowSupported) {
+              <span class="env-row__actions">
+                <button
+                  type="button"
+                  class="env-iconbtn env-iconbtn--tiny"
+                  aria-label="Open local workspace in a new window"
+                  title="Open in a new window (Alt-click the row)"
+                  (click)="openInNewWindow('local', $event)"
+                >
+                  <ng-icon name="lucideAppWindow" size="12" />
+                </button>
+              </span>
+            }
             @if (switchingId() === 'local') {
               <ng-icon name="lucideRefreshCw" size="13" class="env-row__spin" />
             } @else if (isLocalActive()) {
@@ -146,9 +164,9 @@
             [class.env-row--warn]="!wslAvailable()"
             [class.env-row--disabled]="switching()"
             [title]="wslAvailable() ? '' : 'WSL is not installed — select to see setup instructions'"
-            (click)="!switching() && selectWsl()"
-            (keydown.enter)="!switching() && selectWsl()"
-            (keydown.space)="$event.preventDefault(); !switching() && selectWsl()"
+            (click)="!switching() && selectWsl($event)"
+            (keydown.enter)="!switching() && selectWsl($event)"
+            (keydown.space)="$event.preventDefault(); !switching() && selectWsl($event)"
           >
             <span class="env-row__leading">
               <span class="env-row__iconframe env-row__iconframe--remote">
@@ -160,6 +178,8 @@
                 <span class="env-row__title">WSL backend</span>
                 @if (!wslAvailable()) {
                   <span class="env-chip env-chip--warn">Not installed</span>
+                } @else if (isOpenElsewhere('wsl')) {
+                  <span class="env-chip" [title]="openElsewhereTooltip('wsl')">Open</span>
                 }
               </span>
               <span class="env-row__subtitle">
@@ -167,6 +187,19 @@
               </span>
             </span>
             <span class="env-row__trailing">
+              @if (multiWindowSupported && wslAvailable()) {
+                <span class="env-row__actions">
+                  <button
+                    type="button"
+                    class="env-iconbtn env-iconbtn--tiny"
+                    aria-label="Open WSL backend in a new window"
+                    title="Open in a new window (Alt-click the row)"
+                    (click)="openInNewWindow('wsl', $event)"
+                  >
+                    <ng-icon name="lucideAppWindow" size="12" />
+                  </button>
+                </span>
+              }
               @if (switchingId() === 'wsl') {
                 <ng-icon name="lucideRefreshCw" size="13" class="env-row__spin" />
               } @else if (isWslActive()) {
@@ -194,9 +227,9 @@
               [class.env-row--active]="isCurrent(server)"
               [class.env-row--warn]="server.installStatus !== 'available' && server.installStatus !== 'unknown'"
               [class.env-row--disabled]="switching() && switchingId() !== server.id"
-              (click)="!(switching() && switchingId() !== server.id) && selectServer(server)"
-              (keydown.enter)="!(switching() && switchingId() !== server.id) && selectServer(server)"
-              (keydown.space)="$event.preventDefault(); !(switching() && switchingId() !== server.id) && selectServer(server)"
+              (click)="!(switching() && switchingId() !== server.id) && selectServer(server, $event)"
+              (keydown.enter)="!(switching() && switchingId() !== server.id) && selectServer(server, $event)"
+              (keydown.space)="$event.preventDefault(); !(switching() && switchingId() !== server.id) && selectServer(server, $event)"
             >
               <span class="env-row__leading">
                 <span class="env-row__iconframe env-row__iconframe--remote">
@@ -208,6 +241,8 @@
                   <span class="env-row__title">{{ server.name || server.sshHost }}</span>
                   @if (server.installStatus !== 'available' && server.installStatus !== 'unknown') {
                     <span class="env-chip env-chip--warn">{{ installStatusLabel(server.installStatus) }}</span>
+                  } @else if (isOpenElsewhere(server)) {
+                    <span class="env-chip" [title]="openElsewhereTooltip(server)">Open</span>
                   }
                 </span>
                 <span class="env-row__subtitle">
@@ -218,6 +253,17 @@
               </span>
               <span class="env-row__trailing">
                 <span class="env-row__actions">
+                  @if (multiWindowSupported) {
+                    <button
+                      type="button"
+                      class="env-iconbtn env-iconbtn--tiny"
+                      [attr.aria-label]="'Open ' + (server.name || server.sshHost) + ' in a new window'"
+                      title="Open in a new window (Alt-click the row)"
+                      (click)="openInNewWindow(server, $event)"
+                    >
+                      <ng-icon name="lucideAppWindow" size="12" />
+                    </button>
+                  }
                   <button
                     type="button"
                     class="env-iconbtn env-iconbtn--tiny"
@@ -323,6 +369,48 @@
           </div>
         }
       </div>
+
+      @if (multiWindowSupported) {
+        <!-- Only surfaced once a second window exists: with one window this
+             section would be noise, and one window is the common case. -->
+        @if (hasOtherWindows()) {
+          <div class="env-windows" role="group" aria-label="Open windows">
+            <div class="env-windows__label">Open windows</div>
+            @for (entry of openWindowList(); track trackWindow($index, entry)) {
+              <button
+                type="button"
+                class="env-window-row"
+                [class.env-window-row--current]="entry.windowId === currentWindowId"
+                [disabled]="entry.windowId === currentWindowId"
+                [title]="entry.windowId === currentWindowId ? 'This window' : 'Bring this window to the front'"
+                (click)="focusOtherWindow(entry.windowId)"
+              >
+                <span
+                  class="env-window-row__dot"
+                  [class.env-window-row__dot--remote]="entry.envRef.mode !== 'local'"
+                  aria-hidden="true"
+                ></span>
+                <span class="env-window-row__label">{{ entry.label }}</span>
+                @if (entry.windowId === currentWindowId) {
+                  <span class="env-chip env-chip--current">This window</span>
+                }
+              </button>
+            }
+          </div>
+        }
+
+        <div class="env-popover__footer">
+          <button
+            type="button"
+            class="env-btn env-btn--ghost env-btn--block"
+            title="Open another window on the current environment"
+            (click)="openInNewWindow('current', $event)"
+          >
+            <ng-icon name="lucideAppWindow" size="12" />
+            <span>New window</span>
+          </button>
+        </div>
+      }
     } @else {
       <div class="env-editor">
         <label class="env-field">

@@ -4,6 +4,7 @@ import { Router } from '@angular/router';
 
 import { canAccessAppRoute, getDefaultRedirectPath, routes } from './app.routes';
 import { LAST_OPENED_SESSION_STORAGE_KEY } from './features/session/tab-service';
+import { windowScopedKey } from './shared/services/scoped-storage';
 import { ONBOARDING_STORAGE_KEY } from './shared/services/onboarding-state.service';
 import { AppSettingsService } from './shared/services/app-settings.service';
 
@@ -64,7 +65,9 @@ describe('getDefaultRedirectPath', () => {
       servers: [],
       lastSshDefaults: null,
     }));
-    localStorage.setItem(LAST_OPENED_SESSION_STORAGE_KEY, '42');
+    // Per-window scoping: the redirect resumes this window's last session on
+    // this backend, not whatever another window last opened.
+    localStorage.setItem(windowScopedKey(LAST_OPENED_SESSION_STORAGE_KEY), '42');
 
     expect(TestBed.runInInjectionContext(() => getDefaultRedirectPath())).toBe('/sessions/42');
   });

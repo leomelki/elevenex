@@ -1,14 +1,28 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { Session } from '../../shared/models/session.model';
 import type { AgentProviderId } from '../../shared/models/agent-runtime.model';
-import { getBackendServerId } from '../../shared/runtime/runtime-config';
+import { migratedWindowScopedKey, serverScopedKey } from '../../shared/services/scoped-storage';
 
 export const LAST_OPENED_SESSION_STORAGE_KEY = 'elevenex-last-opened-session';
 export const OPEN_TABS_STORAGE_KEY = 'elevenex-open-tabs';
 
+/**
+ * Open tabs belong to a window, not just to a backend: two windows on the same
+ * server are two independent workspaces, and sharing one tab list would make
+ * every tab opened in one appear in the other.
+ *
+ * The pre-multi-window key was backend-scoped only, so it is migrated into the
+ * first window that asks for it.
+ */
+function scopedTabKey(baseKey: string): string {
+  return migratedWindowScopedKey(baseKey, serverScopedKey(baseKey));
+}
+
 export function readLastOpenedSessionId(
   storage: Pick<Storage, 'getItem'> | null = typeof localStorage === 'undefined' ? null : localStorage,
-  key = LAST_OPENED_SESSION_STORAGE_KEY,
+  // Default to the scoped key so the startup redirect resumes *this* window's
+  // last session on *this* backend, not whatever another window last opened.
+  key = scopedTabKey(LAST_OPENED_SESSION_STORAGE_KEY),
 ): number | null {
   if (!storage) {
     return null;
@@ -53,11 +67,11 @@ export interface TabCloseResult {
 @Injectable({ providedIn: 'root' })
 export class TabService {
   private get currentStorageKey(): string {
-    return `${OPEN_TABS_STORAGE_KEY}@${getBackendServerId()}`;
+    return scopedTabKey(OPEN_TABS_STORAGE_KEY);
   }
 
   private get currentLastSessionKey(): string {
-    return `${LAST_OPENED_SESSION_STORAGE_KEY}@${getBackendServerId()}`;
+    return scopedTabKey(LAST_OPENED_SESSION_STORAGE_KEY);
   }
 
   private _tabs = signal<Tab[]>([]);
@@ -428,8 +442,9 @@ export class TabService {
     const closedSessionIds = this._tabs().map(tab => tab.sessionId);
     this._tabs.set([]);
     this._activeSessionId.set(null);
-    // Scoped keys are per-backend — no need to clear localStorage; each backend
-    // retains its own tab history and the correct key is read on next init.
+    // Keys are scoped per window *and* per backend — no need to clear
+    // localStorage; each combination keeps its own tab history and the correct
+    // key is read on next init.
     return {
       activeSessionId: null,
       closedSessionIds,

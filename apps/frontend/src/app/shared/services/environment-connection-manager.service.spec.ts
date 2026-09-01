@@ -13,6 +13,7 @@ import { NavigationService } from './navigation.service';
 import { OnboardingConnectionService } from './onboarding-connection.service';
 import { OnboardingStartupService } from './onboarding-startup.service';
 import { OnboardingStateService } from './onboarding-state.service';
+import { OpenWindowsService } from './open-windows.service';
 import { SshRuntimeRecoveryService } from './ssh-runtime-recovery.service';
 import { OnboardingStateSnapshot } from '../models/onboarding.model';
 
@@ -143,8 +144,15 @@ describe('EnvironmentConnectionManagerService', () => {
     refreshTree: vi.fn(),
   };
 
+  // The main process's view of the open windows, which the manager consults
+  // for the "open elsewhere" guards.
+  let openWindows: { windowId: string; envRef: { mode: string; serverId: number | null }; label: string; focused: boolean }[];
+
   beforeEach(() => {
     vi.clearAllMocks();
+    openWindows = [
+      { windowId: 'w-test', envRef: { mode: 'local', serverId: null }, label: 'Local', focused: true },
+    ];
     snapshotState.set({
       mode: 'local',
       currentStep: 'project',
@@ -173,12 +181,25 @@ describe('EnvironmentConnectionManagerService', () => {
 
     const windowMock = (globalThis as typeof globalThis & { window?: any }).window ?? {};
     (globalThis as typeof globalThis & { window?: any }).window = windowMock;
+    // The window id comes from the preload-injected runtime config, which is
+    // also what scopes this window's storage.
+    windowMock.__ELEVENEX_RUNTIME__ = { windowId: 'w-test' };
     windowMock.__ELEVENEX_ELECTRON__ = {
       sshForwarding: {
         stop: vi.fn().mockResolvedValue(undefined),
       },
       browser: {
         close: vi.fn().mockResolvedValue(undefined),
+      },
+      windows: {
+        // Resolved lazily so a test can reassign `openWindows` after setup.
+        list: vi.fn(() => Promise.resolve(openWindows)),
+        openNew: vi.fn().mockResolvedValue('w-new'),
+        focus: vi.fn().mockResolvedValue(true),
+        setEnvironment: vi.fn().mockResolvedValue(true),
+        onChanged: vi.fn(() => () => {}),
+        broadcast: vi.fn().mockResolvedValue(true),
+        onBroadcast: vi.fn(() => () => {}),
       },
     };
 
@@ -273,5 +294,99 @@ describe('EnvironmentConnectionManagerService', () => {
     expect(onboardingStateMock.upsertServer).toHaveBeenCalled();
     expect(onboardingStateMock.deleteServer).toHaveBeenCalledWith(saved.id);
     expect(onboardingStateMock.saveLastSshDefaults).toHaveBeenCalled();
+  });
+
+  describe('multi-window', () => {
+    function windowsApi() {
+      return (globalThis as any).window.__ELEVENEX_ELECTRON__.windows;
+    }
+
+    it('tells the main process where the window ended up after a switch', async () => {
+      // Without this the main process keeps the lease on the environment the
+      // window just left, so its tunnel is never released and the saved layout
+      // restores it on the wrong backend.
+      const service = TestBed.inject(EnvironmentConnectionManagerService);
+
+      await service.switchToServer(server);
+
+      expect(windowsApi().setEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          env: expect.objectContaining({ mode: 'ssh', serverId: server.id, label: 'Prod' }),
+        }),
+      );
+    });
+
+    it('reports the environment even when the switch failed', async () => {
+      // A failed switch can still leave the window somewhere else (the
+      // restore-previous path), so the bookkeeping must not be skipped.
+      snapshotState.update(current => ({ ...current, mode: 'ssh', activeServerId: server.id }));
+      onboardingConnectionMock.connect.mockResolvedValueOnce({ kind: 'error', message: 'nope' });
+      const alternate = { ...server, id: 18, name: 'Stage' };
+      snapshotState.update(current => ({ ...current, servers: [server, alternate] }));
+
+      const service = TestBed.inject(EnvironmentConnectionManagerService);
+      const result = await service.switchToServer(alternate);
+
+      expect(result.ok).toBe(false);
+      expect(windowsApi().setEnvironment).toHaveBeenCalled();
+    });
+
+    it('opens a new window on an explicit environment', async () => {
+      const service = TestBed.inject(EnvironmentConnectionManagerService);
+
+      const result = await service.openInNewWindow(server);
+
+      expect(result.ok).toBe(true);
+      expect(windowsApi().openNew).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'ssh', serverId: server.id }),
+      );
+    });
+
+    it('opens a new window on the current environment', async () => {
+      const service = TestBed.inject(EnvironmentConnectionManagerService);
+
+      await service.openInNewWindow('current');
+
+      expect(windowsApi().openNew).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'local' }),
+      );
+    });
+
+    it('refuses to delete a server another window is connected to', async () => {
+      openWindows = [
+        { windowId: 'w-test', envRef: { mode: 'local', serverId: null }, label: 'Local', focused: true },
+        { windowId: 'w-other', envRef: { mode: 'ssh', serverId: server.id }, label: 'Prod', focused: false },
+      ];
+
+      const service = TestBed.inject(EnvironmentConnectionManagerService);
+      await TestBed.inject(OpenWindowsService).refresh();
+
+      const result = service.deleteServer(server.id);
+
+      expect(result.ok).toBe(false);
+      expect(result.windowId).toBe('w-other');
+      expect(onboardingStateMock.deleteServer).not.toHaveBeenCalled();
+    });
+
+    it('allows deleting a server no other window is using', async () => {
+      const service = TestBed.inject(EnvironmentConnectionManagerService);
+      await TestBed.inject(OpenWindowsService).refresh();
+
+      expect(service.deleteServer(server.id).ok).toBe(true);
+      expect(onboardingStateMock.deleteServer).toHaveBeenCalledWith(server.id);
+    });
+
+    it('ignores this window when deciding whether a server is in use', async () => {
+      // Being connected to a server yourself must not block deleting it — the
+      // existing UI already hides delete for the active server.
+      openWindows = [
+        { windowId: 'w-test', envRef: { mode: 'ssh', serverId: server.id }, label: 'Prod', focused: true },
+      ];
+
+      const service = TestBed.inject(EnvironmentConnectionManagerService);
+      await TestBed.inject(OpenWindowsService).refresh();
+
+      expect(service.serverDeletionBlocker(server.id)).toBeNull();
+    });
   });
 });

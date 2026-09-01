@@ -37,15 +37,21 @@ import { ServerConnectionService } from './shared/services/server-connection.ser
 import { AgentControlDrawerComponent } from './features/agent-control/agent-control-drawer.component';
 import { AgentCommandBarComponent } from './features/agent-control/agent-command-bar.component';
 import { ZardInputDirective } from './shared/components/input';
+import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
 
 const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 260;
-const STORAGE_KEY = 'sidebar-width';
+// Sidebar width is window layout: each window keeps its own.
+const SIDEBAR_WIDTH_STORAGE_KEY_BASE = 'sidebar-width';
+
+function sidebarWidthStorageKey(): string {
+  return migratedWindowScopedKey(SIDEBAR_WIDTH_STORAGE_KEY_BASE);
+}
 
 function readSidebarWidth(): number {
   try {
-    return +(globalThis.localStorage?.getItem(STORAGE_KEY) ?? SIDEBAR_DEFAULT);
+    return +(globalThis.localStorage?.getItem(sidebarWidthStorageKey()) ?? SIDEBAR_DEFAULT);
   } catch {
     return SIDEBAR_DEFAULT;
   }
@@ -188,6 +194,18 @@ export class App implements OnInit, OnDestroy {
     this.removeRouteListener?.();
     this.sshRuntimeRecovery.stopMonitoring();
   }
+
+  /**
+   * Label and status of the backend this window is on, shown in the custom
+   * title bar. With multiple windows open it is the fastest way to tell them
+   * apart without focusing each one.
+   */
+  readonly environmentLabel = computed(() => this.connectionManager.environmentLabel());
+  readonly environmentStatus = computed<'local' | 'remote' | 'degraded'>(() => {
+    if (this.sshRuntimeRecovery.remoteDisconnect()) return 'degraded';
+    const mode = this.connectionManager.snapshot().mode;
+    return mode === 'ssh' || mode === 'wsl' ? 'remote' : 'local';
+  });
 
   get shouldShowWindowControls(): boolean {
     return this.windowEnvironmentReady() && this.isElectronDesktop() && !this.usesNativeMacControls();
@@ -364,7 +382,7 @@ export class App implements OnInit, OnDestroy {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       try {
-        globalThis.localStorage?.setItem(STORAGE_KEY, String(this.sidebarWidth()));
+        globalThis.localStorage?.setItem(sidebarWidthStorageKey(), String(this.sidebarWidth()));
       } catch {
         // Ignore unavailable storage in restricted runtimes.
       }

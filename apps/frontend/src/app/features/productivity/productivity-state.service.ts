@@ -1,11 +1,19 @@
 import { Injectable, signal, computed } from '@angular/core';
+import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
 
 export interface PanelState {
   scratchpad: boolean;
   todos: boolean;
 }
 
-const STORAGE_KEY = 'elevenex-panel-states';
+// Which side panels are expanded is window layout, not shared state: two
+// windows on the same project should be able to arrange themselves
+// differently.
+const STORAGE_KEY_BASE = 'elevenex-panel-states';
+
+function storageKey(): string {
+  return migratedWindowScopedKey(STORAGE_KEY_BASE);
+}
 
 @Injectable({ providedIn: 'root' })
 export class ProductivityStateService {
@@ -14,7 +22,7 @@ export class ProductivityStateService {
 
   private loadFromStorage(): Map<number, PanelState> {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = localStorage.getItem(storageKey());
       if (stored) {
         const parsed = JSON.parse(stored) as Record<string, PanelState>;
         const map = new Map<number, PanelState>();
@@ -30,7 +38,7 @@ export class ProductivityStateService {
       console.warn('Failed to load panel states from localStorage:', e);
       // Clear corrupted data
       try {
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(storageKey());
       } catch {}
     }
     return new Map();
@@ -42,7 +50,7 @@ export class ProductivityStateService {
       this.panelStates().forEach((state, projectId) => {
         obj[projectId.toString()] = state;
       });
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+      localStorage.setItem(storageKey(), JSON.stringify(obj));
     } catch (e) {
       console.warn('Failed to persist panel states to localStorage:', e);
     }

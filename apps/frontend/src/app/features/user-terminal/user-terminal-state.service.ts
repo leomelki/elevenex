@@ -1,13 +1,20 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { UserTerminalApiService, UserTerminal } from '@/shared/services/user-terminal-api.service';
 import { firstValueFrom } from 'rxjs';
+import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
 
 interface WorktreeTerminalState {
   terminals: UserTerminal[];
   activeTerminalId: number | null;
 }
 
-const STORAGE_KEY = 'elevenex-user-terminal-state';
+// Which terminals a window has open, and whether its terminal panel is
+// expanded, is that window's own layout.
+const STORAGE_KEY_BASE = 'elevenex-user-terminal-state';
+
+function storageKey(): string {
+  return migratedWindowScopedKey(STORAGE_KEY_BASE);
+}
 
 @Injectable({ providedIn: 'root' })
 export class UserTerminalStateService {
@@ -99,7 +106,7 @@ export class UserTerminalStateService {
 
   private loadPanelState(): Map<string, boolean> {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = localStorage.getItem(storageKey());
       if (stored) {
         const data = JSON.parse(stored);
         return new Map(Object.entries(data.panelOpen ?? {}));
@@ -113,7 +120,7 @@ export class UserTerminalStateService {
   private savePanelState(map: Map<string, boolean>): void {
     try {
       const data = { panelOpen: Object.fromEntries(map) };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(storageKey(), JSON.stringify(data));
     } catch {
       // Ignore
     }

@@ -1,4 +1,4 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
 import {
@@ -13,11 +13,14 @@ import { OnboardingLastSshDefaults, SavedServer, ServerAuthMode } from '@/shared
 import { getElectronWslServerApi } from '@/shared/runtime/electron-wsl-server';
 import { getElectronBrowserApi } from '@/shared/runtime/electron-browser';
 import { getElectronSshForwardingApi } from '@/shared/runtime/electron-ssh-forwarding';
+import { ElectronEnvironmentRef, getElectronWindowsApi } from '@/shared/runtime/electron-windows';
+import { getBackendOrigin } from '@/shared/runtime/runtime-config';
 
 import { NavigationService } from './navigation.service';
 import { OnboardingConnectionService } from './onboarding-connection.service';
 import { OnboardingStartupService } from './onboarding-startup.service';
 import { OnboardingStateService } from './onboarding-state.service';
+import { OpenWindowsService } from './open-windows.service';
 import { SshRuntimeRecoveryService } from './ssh-runtime-recovery.service';
 
 export interface SavedServerDraft {
@@ -54,11 +57,24 @@ export class EnvironmentConnectionManagerService {
   private readonly browserTabsState = inject(BrowserTabsStateService);
   private readonly navigationService = inject(NavigationService);
   private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
+  private readonly openWindows = inject(OpenWindowsService);
 
   readonly switching = signal(false);
   readonly switchError = signal('');
   readonly pendingTargetLabel = signal('');
   readonly snapshot = this.onboardingState.snapshotState;
+
+  private publishedEnvironment: string | null = null;
+
+  constructor() {
+    // Catches every path that changes this window's environment without going
+    // through switchTo*(): the startup reconnect, tunnel recovery, and
+    // finishing onboarding all move the window to a different backend.
+    effect(() => {
+      this.snapshot();
+      void this.publishEnvironmentToMainProcess();
+    });
+  }
 
   readonly activeServer = computed(() => this.onboardingState.getActiveServer(this.snapshot()));
   readonly savedServers = computed(() =>
@@ -207,8 +223,33 @@ export class EnvironmentConnectionManagerService {
     return nextServer;
   }
 
-  deleteServer(id: number): void {
+  /**
+   * A server another window is currently connected to cannot be removed: the
+   * catalogue is shared, so deleting it here would pull the environment out
+   * from under a window the user can still see.
+   */
+  serverDeletionBlocker(id: number): { windowLabel: string; windowId: string } | null {
+    const others = this.openWindows.othersOn({ mode: 'ssh', serverId: id });
+    const blocker = others[0];
+    return blocker ? { windowLabel: blocker.label, windowId: blocker.windowId } : null;
+  }
+
+  deleteServer(id: number): { ok: boolean; error?: string; windowId?: string } {
+    const blocker = this.serverDeletionBlocker(id);
+    if (blocker) {
+      return {
+        ok: false,
+        error: `“${blocker.windowLabel}” is open in another window. Close that window first.`,
+        windowId: blocker.windowId,
+      };
+    }
+
     this.onboardingState.deleteServer(id);
+    return { ok: true };
+  }
+
+  focusWindow(windowId: string): Promise<boolean> {
+    return this.openWindows.focusWindow(windowId);
   }
 
   async stopTunnelForServer(id: number): Promise<void> {
@@ -235,15 +276,98 @@ export class EnvironmentConnectionManagerService {
 
     try {
       await action();
+      await this.publishEnvironmentToMainProcess();
       return { ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not switch environments.';
       this.switchError.set(message);
+      // A failed switch may still have left this window somewhere else (the
+      // restore-previous path), so the main process is told either way.
+      await this.publishEnvironmentToMainProcess();
       return { ok: false, error: message };
     } finally {
       this.switching.set(false);
       this.pendingTargetLabel.set('');
     }
+  }
+
+  /** The environment this window is currently on, as the main process sees it. */
+  currentEnvironmentRef(): ElectronEnvironmentRef {
+    const snapshot = this.snapshot();
+    if (snapshot.mode === 'ssh') {
+      const server = this.onboardingState.getActiveServer(snapshot);
+      if (server) {
+        return { mode: 'ssh', serverId: server.id, label: server.name || server.sshHost };
+      }
+    }
+    if (snapshot.mode === 'wsl') {
+      return { mode: 'wsl', serverId: null, label: this.environmentLabel() };
+    }
+
+    return { mode: 'local', serverId: null, label: 'Local' };
+  }
+
+  environmentRefForServer(server: SavedServer): ElectronEnvironmentRef {
+    return { mode: 'ssh', serverId: server.id, label: server.name || server.sshHost };
+  }
+
+  /**
+   * Tells the main process where this window ended up.
+   *
+   * Load-bearing rather than cosmetic: the refcounted SSH tunnel leases, the
+   * window title, the MCP callback origin and the layout persisted for the next
+   * launch all live in the main process, and none of them can follow a change
+   * they are not told about.
+   *
+   * De-duplicated because two paths reach it: an explicit switch (which reports
+   * as soon as it settles, deterministically) and a snapshot effect that
+   * catches everything else — startup reconnects, tunnel recovery, onboarding.
+   */
+  private async publishEnvironmentToMainProcess(): Promise<void> {
+    const api = getElectronWindowsApi();
+    if (!api) {
+      return;
+    }
+
+    const env = this.currentEnvironmentRef();
+    const backendOrigin = getBackendOrigin();
+    const fingerprint = `${env.mode}:${env.serverId ?? ''}:${env.label}:${backendOrigin}`;
+    if (fingerprint === this.publishedEnvironment) {
+      return;
+    }
+    this.publishedEnvironment = fingerprint;
+
+    try {
+      await api.setEnvironment({ env, backendOrigin });
+    } catch {
+      // Retry on the next change rather than pinning a stale fingerprint.
+      this.publishedEnvironment = null;
+    }
+  }
+
+  /**
+   * Opens another window on `target`, leaving this one exactly as it is. When
+   * the environment is already connected the tunnel is reused, so the window
+   * appears immediately with no connection overlay.
+   */
+  async openInNewWindow(target: 'current' | 'local' | 'wsl' | SavedServer): Promise<{ ok: boolean; error?: string }> {
+    if (!this.openWindows.isMultiWindowSupported) {
+      return { ok: false, error: 'Multiple windows are only available in the desktop app.' };
+    }
+
+    let env: ElectronEnvironmentRef;
+    if (target === 'current') {
+      env = this.currentEnvironmentRef();
+    } else if (target === 'local') {
+      env = { mode: 'local', serverId: null, label: 'Local' };
+    } else if (target === 'wsl') {
+      env = { mode: 'wsl', serverId: null, label: 'WSL backend' };
+    } else {
+      env = this.environmentRefForServer(target);
+    }
+
+    const ok = await this.openWindows.openWindow(env);
+    return ok ? { ok: true } : { ok: false, error: 'Could not open a new window.' };
   }
 
   private async stopActiveRemoteTunnel(): Promise<void> {
