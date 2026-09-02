@@ -69,6 +69,8 @@ export class GitController {
     @Query('context') context?: string,
     @Query('forceLoad') forceLoad?: string,
     @Query('forceFileLoad') forceFileLoad?: string,
+    @Query('fullFile') fullFile?: string,
+    @Query('allowUnchanged') allowUnchanged?: string,
   ): Promise<ChangeReviewFileWindow> {
     return this.changeReviewService.getFileWindow(
       decodeURIComponent(worktreePath),
@@ -80,6 +82,8 @@ export class GitController {
         context: context ? Number.parseInt(context, 10) : undefined,
         forceLoad: forceLoad === 'true',
         forceFileLoad: forceFileLoad === 'true',
+        fullFile: fullFile === 'true',
+        allowUnchanged: allowUnchanged === 'true',
       },
     );
   }
@@ -94,6 +98,8 @@ export class GitController {
     @Query('context') context?: string,
     @Query('forceLoad') forceLoad?: string,
     @Query('forceFileLoad') forceFileLoad?: string,
+    @Query('fullFile') fullFile?: string,
+    @Query('allowUnchanged') allowUnchanged?: string,
   ): Promise<ChangeReviewFileWindow> {
     return this.getChangeReviewFile(
       worktreePath,
@@ -104,6 +110,8 @@ export class GitController {
       context,
       forceLoad,
       forceFileLoad,
+      fullFile,
+      allowUnchanged,
     );
   }
 

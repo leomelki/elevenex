@@ -1,0 +1,168 @@
+:host {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.rw-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 3.25rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--card) 40%, var(--background));
+}
+
+.rw-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--background);
+  color: var(--foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 650;
+  padding: 0.3rem 0.55rem;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.rw-back:hover,
+.rw-back:focus-visible {
+  outline: none;
+  border-color: color-mix(in oklch, var(--primary) 45%, var(--border));
+  background: color-mix(in oklch, var(--primary) 8%, var(--background));
+}
+
+.rw-back:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 18%, transparent);
+}
+
+.rw-back kbd {
+  border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+  border-radius: 0.25rem;
+  background: color-mix(in oklch, var(--muted) 48%, transparent);
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: 0.6rem;
+  padding: 0.02rem 0.25rem;
+}
+
+.rw-title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.rw-view-toggle {
+  display: inline-flex;
+  gap: 0.15rem;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: color-mix(in oklch, var(--muted) 45%, transparent);
+  padding: 0.12rem;
+}
+
+.rw-view-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  padding: 0.25rem 0.5rem;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.rw-view-toggle button:hover,
+.rw-view-toggle button:focus-visible {
+  outline: none;
+  color: var(--foreground);
+}
+
+.rw-view-toggle button:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 40%, transparent);
+}
+
+.rw-view-toggle__active {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+
+.rw-open-file {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--background);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  padding: 0.28rem 0.5rem;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.rw-open-file:hover,
+.rw-open-file:focus-visible {
+  outline: none;
+  border-color: color-mix(in oklch, var(--primary) 45%, var(--border));
+  background: color-mix(in oklch, var(--primary) 8%, var(--background));
+  color: var(--foreground);
+}
+
+.rw-open-file:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 18%, transparent);
+}
+
+.rw-count {
+  flex-shrink: 0;
+  border: 1px solid color-mix(in oklch, var(--primary) 35%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--primary) 10%, var(--background));
+  color: color-mix(in oklch, var(--primary) 80%, var(--foreground));
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.12rem 0.5rem;
+}
+
+.rw-notice {
+  flex-shrink: 0;
+  margin: 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--warning) 30%, transparent);
+  background: color-mix(in oklch, var(--warning) 10%, var(--background));
+  color: color-mix(in oklch, var(--warning) 78%, var(--foreground));
+  font-size: 0.72rem;
+  line-height: 1.45;
+  padding: 0.5rem 0.75rem;
+}
+
+.rw-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}

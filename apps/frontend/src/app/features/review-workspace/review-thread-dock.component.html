@@ -1,0 +1,149 @@
+<div class="rd-tabs" role="tablist" aria-label="Review discussions">
+  <button
+    type="button"
+    role="tab"
+    class="rd-tab"
+    [class.rd-tab--active]="state.activeThreadId() === sessionTabId"
+    [attr.aria-selected]="state.activeThreadId() === sessionTabId"
+    (click)="selectTab(sessionTabId)"
+  >
+    Session
+  </button>
+
+  @for (chat of state.openChats(); track chat.id) {
+    <div class="rd-tab-wrap">
+      <button
+        type="button"
+        role="tab"
+        class="rd-tab"
+        [class.rd-tab--active]="state.activeThreadId() === chat.id"
+        [attr.aria-selected]="state.activeThreadId() === chat.id"
+        [title]="chat.title"
+        (click)="selectTab(chat.id)"
+      >
+        @if (isUnread(chat)) {
+          <span class="rd-unread" aria-label="New reply"></span>
+        }
+        <span class="rd-tab__label">{{ chat.title }}</span>
+        @if (chat.mode === 'write') {
+          <ng-icon name="lucideLockOpen" size="11" class="rd-tab__icon rd-tab__icon--write" />
+        }
+        @if (isStale(chat)) {
+          <ng-icon
+            name="lucideTriangleAlert"
+            size="11"
+            class="rd-tab__icon rd-tab__icon--stale"
+            title="The code has changed since this discussion started"
+          />
+        }
+      </button>
+
+      <button
+        type="button"
+        class="rd-tab-menu-button"
+        [attr.aria-label]="'Actions for ' + chat.title"
+        [attr.aria-expanded]="menuOpenFor() === chat.id"
+        (click)="toggleMenu(chat.id, $event)"
+      >
+        <ng-icon name="lucideEllipsis" size="13" />
+      </button>
+
+      @if (menuOpenFor() === chat.id) {
+        <div class="rd-menu" role="menu">
+          @if (chat.mode === 'readonly') {
+            <button type="button" role="menuitem" (click)="unlockEdits(chat)">
+              <ng-icon name="lucideLockOpen" size="13" />
+              Allow edits
+            </button>
+          } @else {
+            <button type="button" role="menuitem" (click)="lockEdits(chat)">
+              <ng-icon name="lucideLock" size="13" />
+              Make read-only
+            </button>
+          }
+          @if (chat.status !== 'promoted') {
+            <button type="button" role="menuitem" (click)="promote(chat)">
+              <ng-icon name="lucideExternalLink" size="13" />
+              Open as session
+            </button>
+          }
+          <button type="button" role="menuitem" (click)="resolve(chat)">
+            <ng-icon name="lucideCheck" size="13" />
+            Resolve
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            class="rd-menu__danger"
+            (click)="remove(chat)"
+          >
+            <ng-icon name="lucideTrash2" size="13" />
+            Delete
+          </button>
+        </div>
+      }
+    </div>
+  }
+</div>
+
+@if (state.activeChat(); as chat) {
+  <header class="rd-anchor">
+    <div class="rd-anchor__files">
+      @for (label of activeAnchorLabels(); track label) {
+        <span class="rd-anchor__chip">{{ label }}</span>
+      }
+    </div>
+    <span
+      class="rd-mode"
+      [class.rd-mode--write]="chat.mode === 'write'"
+      [title]="
+        chat.mode === 'write'
+          ? 'This discussion can edit files in the worktree'
+          : 'This discussion can read the code but not change it'
+      "
+    >
+      <ng-icon [name]="chat.mode === 'write' ? 'lucideLockOpen' : 'lucideLock'" size="11" />
+      {{ chat.mode === 'write' ? 'Can edit' : 'Read-only' }}
+    </span>
+  </header>
+
+  @if (isStale(chat)) {
+    <p class="rd-stale" role="status">
+      <ng-icon name="lucideTriangleAlert" size="13" />
+      The code has changed since this discussion started, so its anchor may no longer
+      point at the same lines.
+    </p>
+  }
+} @else {
+  <header class="rd-anchor rd-anchor--session">
+    <span class="rd-anchor__title">Main session</span>
+    <span class="rd-anchor__hint">Messages here go to your session</span>
+  </header>
+}
+
+@if (state.error(); as error) {
+  <p class="rd-error" role="alert">{{ error }}</p>
+}
+
+@if (state.crowded()) {
+  <p class="rd-warning" role="status">
+    Several discussions are open. Each one runs its own agent — resolve the ones you
+    are done with to keep things responsive.
+  </p>
+}
+
+<app-forked-chat
+  [target]="activeTarget()"
+  [lens]="activeLens()"
+  [sending]="sending()"
+  [draftSeed]="draftSeed()"
+  [placeholder]="
+    state.activeChat() ? 'Ask about this code…' : 'Message your session…'
+  "
+  [emptyState]="
+    state.activeChat()
+      ? 'Ask a focused question about the selected code.'
+      : 'Talk to your session without leaving the review.'
+  "
+  (submitPrompt)="onSubmit($event)"
+/>

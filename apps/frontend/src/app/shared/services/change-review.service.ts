@@ -9,6 +9,19 @@ import {
   ChangeReviewSummary,
 } from '@/shared/models/change-review.model';
 
+export interface FileWindowOptions {
+  offset?: number;
+  limit?: number;
+  context?: number;
+  forceFileLoad?: boolean;
+  /** Render the whole file instead of hunks with limited context. */
+  fullFile?: boolean;
+  /** Allow opening a file that has no diff in the current scope. */
+  allowUnchanged?: boolean;
+}
+
+type NormalizedFileWindowOptions = Required<FileWindowOptions>;
+
 @Injectable({ providedIn: 'root' })
 export class ChangeReviewService {
   private readonly http = inject(HttpClient);
@@ -57,20 +70,10 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     path: string,
-    options: {
-      offset?: number;
-      limit?: number;
-      context?: number;
-      forceFileLoad?: boolean;
-    } = {},
+    options: FileWindowOptions = {},
     forceLoad = false,
   ) {
-    const normalized = {
-      offset: options.offset ?? 0,
-      limit: options.limit ?? 600,
-      context: options.context ?? 8,
-      forceFileLoad: Boolean(options.forceFileLoad),
-    };
+    const normalized = this.normalizeFileWindowOptions(options);
     const key = this.fileWindowKey(worktreePath, scope, path, normalized, forceLoad);
     const cached = this.fileWindowCache.get(key);
     if (cached) return cached;
@@ -88,6 +91,8 @@ export class ChangeReviewService {
           context: String(normalized.context),
           forceLoad: String(forceLoad),
           forceFileLoad: String(normalized.forceFileLoad),
+          fullFile: String(normalized.fullFile),
+          allowUnchanged: String(normalized.allowUnchanged),
         },
       })
       .pipe(
@@ -177,12 +182,7 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     path: string,
-    options: {
-      offset?: number;
-      limit?: number;
-      context?: number;
-      forceFileLoad?: boolean;
-    } = {},
+    options: FileWindowOptions = {},
     forceLoad = false,
   ): boolean {
     return this.fileWindowCache.has(
@@ -190,15 +190,28 @@ export class ChangeReviewService {
         worktreePath,
         scope,
         path,
-        {
-          offset: options.offset ?? 0,
-          limit: options.limit ?? 600,
-          context: options.context ?? 8,
-          forceFileLoad: Boolean(options.forceFileLoad),
-        },
+        this.normalizeFileWindowOptions(options),
         forceLoad,
       ),
     );
+  }
+
+  /**
+   * Single source of truth for window defaults. `getFileWindow` and
+   * `hasFileWindowCache` must normalize identically or they compute different
+   * cache keys for the same request.
+   */
+  private normalizeFileWindowOptions(
+    options: FileWindowOptions,
+  ): NormalizedFileWindowOptions {
+    return {
+      offset: options.offset ?? 0,
+      limit: options.limit ?? 600,
+      context: options.context ?? 8,
+      forceFileLoad: Boolean(options.forceFileLoad),
+      fullFile: Boolean(options.fullFile),
+      allowUnchanged: Boolean(options.allowUnchanged),
+    };
   }
 
   clearCache(worktreePath?: string, scope?: ChangeReviewScope): void {
@@ -243,12 +256,7 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     path: string,
-    options: {
-      offset: number;
-      limit: number;
-      context: number;
-      forceFileLoad: boolean;
-    },
+    options: NormalizedFileWindowOptions,
     forceLoad: boolean,
   ): string {
     return [
@@ -260,6 +268,8 @@ export class ChangeReviewService {
       options.context,
       options.forceFileLoad ? 'force-file' : 'guarded-file',
       forceLoad ? 'force' : 'guarded',
+      options.fullFile ? 'full-file' : 'hunks',
+      options.allowUnchanged ? 'any-file' : 'changed-only',
     ].join('\0');
   }
 

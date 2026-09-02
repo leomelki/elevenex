@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ModuleRef } from '@nestjs/core';
-import Database from 'better-sqlite3';
-import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import type Database from 'better-sqlite3';
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { DRIZZLE } from '../database/database.provider.js';
+import { createTestDb } from '../database/testing/create-test-db.js';
 import * as schema from '../database/schema/index.js';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import { AGENT_RUNTIME_CLEANUP_SERVICE } from '../agent-runtime/agent-runtime.tokens.js';
@@ -11,77 +12,6 @@ import { TmuxManager } from '../terminal/tmux-manager.service.js';
 import { PlanChatForksService } from './plan-chat-forks.service.js';
 import { SessionsService } from './sessions.service.js';
 import { SettingsService } from '../settings/settings.service.js';
-
-function createTestDb() {
-  const sqlite = new Database(':memory:');
-  sqlite.pragma('foreign_keys = ON');
-  sqlite.exec(`
-    CREATE TABLE projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE repos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      color TEXT,
-      preferred_context_root_ref TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(project_id, path)
-    );
-    CREATE TABLE workspaces (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      is_default INTEGER NOT NULL DEFAULT 0,
-      created_from_ref TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(repo_id, name),
-      UNIQUE(repo_id, path)
-    );
-    CREATE TABLE sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-      workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
-      branch_name TEXT NOT NULL,
-      worktree_path TEXT NOT NULL,
-      name TEXT,
-      surface TEXT NOT NULL DEFAULT 'session',
-      status TEXT NOT NULL DEFAULT 'created',
-      active_agent_provider TEXT NOT NULL DEFAULT 'claude',
-      claude_session_id TEXT DEFAULT '-1',
-      codex_session_id TEXT DEFAULT '-1',
-      pi_session_path TEXT DEFAULT '-1',
-      has_injected_worktree_context INTEGER NOT NULL DEFAULT 0,
-      has_unreviewed_completion INTEGER NOT NULL DEFAULT 0,
-      last_completion_at TEXT,
-      last_completion_kind TEXT,
-      last_state_change_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE plan_chat_forks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      parent_session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      child_session_id INTEGER NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
-      provider TEXT NOT NULL,
-      review_id TEXT NOT NULL,
-      anchor_message_id TEXT NOT NULL,
-      anchor_message_kind TEXT NOT NULL,
-      anchor_excerpt TEXT,
-      plan_excerpt TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(parent_session_id, review_id)
-    );
-  `);
-  return { db: drizzle(sqlite, { schema }), sqlite };
-}
 
 describe('PlanChatForksService', () => {
   let sessionsService: SessionsService;

@@ -89,6 +89,23 @@ export const routes: Routes = [
         loadComponent: () =>
           // Empty component - session-container handles display
           import('./features/session/session-route-wrapper/session-route-wrapper').then(m => m.SessionRouteWrapper),
+        // These children exist only to make the URLs matchable; none of them is
+        // ever instantiated, because session-container renders everything and
+        // there is no <router-outlet> below it. The empty path is REQUIRED:
+        // once a route has children, Angular insists the URL is fully consumed,
+        // so without it `/sessions/:id` itself would stop matching.
+        children: [
+          {
+            path: '',
+            loadComponent: () =>
+              import('./features/session/session-route-wrapper/session-route-wrapper').then(m => m.SessionRouteWrapper),
+          },
+          {
+            path: 'review',
+            loadComponent: () =>
+              import('./features/session/session-route-wrapper/session-route-wrapper').then(m => m.SessionRouteWrapper),
+          },
+        ],
       },
     ],
   },

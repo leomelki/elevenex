@@ -62,6 +62,9 @@ import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.serv
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
 import { SessionsService } from '@/shared/services/sessions.service';
 import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
+import { ReviewChatsService } from '@/shared/services/review-chats.service';
+import type { ReviewChat } from '@/shared/models/review-chat.model';
+import { ReviewThreadsCardComponent } from './components/cw-review-threads-card.component';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
 import { ClaudeMessageComponent } from './components/claude-message.component';
@@ -164,6 +167,7 @@ type TranscriptRenderItem =
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
     ClaudeTurnChangesComponent,
+    ReviewThreadsCardComponent,
     ClaudeInstallCardComponent,
     CodexLoginCardComponent,
     PiLoginCardComponent,
@@ -210,6 +214,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly activeAgentProviderChange = output<AgentProviderId>();
   readonly agentRuntimeStarted = output<void>();
   readonly conversationForkCreated = output<CreateSessionForkResponse>();
+  /** Ask the container to open the review workspace, optionally deep-linked. */
+  readonly openReviewWorkspace = output<{ path?: string; thread?: number }>();
   readonly conversationForkOpened = output<SessionFork>();
   readonly unarchive = output<void>();
 
@@ -221,6 +227,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly providerSelection = inject(AgentRuntimeProviderService);
   private readonly sessionsService = inject(SessionsService);
   private readonly forkDrafts = inject(ConversationForkDraftService);
+  private readonly reviewChats = inject(ReviewChatsService);
+
+  /** Review discussions started from this session, grouped by their turn. */
+  readonly reviewThreads = signal<readonly ReviewChat[]>([]);
+  readonly unreadReviewThreadIds = signal<ReadonlySet<number>>(new Set<number>());
   private readonly claudeStatusService = inject(ClaudeStatusService);
   private readonly worktreeContextService = inject(WorktreeContextService);
   private readonly composerDrafts = inject(ComposerDraftService);
@@ -1734,6 +1745,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (!this.readOnlyTranscript) {
       void this.refreshAutocomplete(version).catch(() => undefined);
       void this.loadForks(version);
+      void this.loadReviewThreads();
     }
     if (version === this.bootstrapVersion) this.loading.set(false);
   }
@@ -1752,6 +1764,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       if (version !== this.bootstrapVersion) return;
       this.historyItems.set(history);
       void this.loadForks(version);
+      void this.loadReviewThreads();
       this.liveItems.set([]);
       this.optimisticUserItems.set([]);
       this.runPhase.set('idle');
@@ -2521,6 +2534,27 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       }
       return result;
     });
+  }
+
+  /**
+   * Discussions anchored to a given turn. A thread records both the assistant
+   * uuid it forked from and the turn it belongs to, because the two differ.
+   */
+  reviewThreadsForTurn(turnId: string): readonly ReviewChat[] {
+    return this.reviewThreads().filter(
+      (thread) => thread.turnKey === turnId && thread.status !== 'resolved',
+    );
+  }
+
+  private async loadReviewThreads(): Promise<void> {
+    if (this.readOnlyTranscript) return;
+    try {
+      const threads = await firstValueFrom(this.reviewChats.list(this.sessionId));
+      this.reviewThreads.set(threads);
+    } catch {
+      // A missing discussions list must never break the transcript.
+      this.reviewThreads.set([]);
+    }
   }
 
   trackByRenderItem(_i: number, item: TranscriptRenderItem): string {

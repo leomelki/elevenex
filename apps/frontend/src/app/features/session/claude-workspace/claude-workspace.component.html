@@ -372,8 +372,26 @@
                   @if (item.changeDetails && isTurnChangesExpanded(item.turnId)) {
                     <cw-turn-changes
                       [details]="item.changeDetails"
+                      [threadCount]="reviewThreadsForTurn(item.turnId).length"
                       (close)="closeTurnChanges(item.turnId)"
+                      (review)="openReviewWorkspace.emit($event)"
                     />
+                  }
+
+                  <!--
+                    Rendered here rather than injected into renderItems: that
+                    computed is a pure function of the paired transcript, and
+                    recomputing thousands of entries for a presentational card
+                    would also collide with its generated ids.
+                  -->
+                  @if (reviewThreadsForTurn(item.turnId); as threads) {
+                    @if (threads.length) {
+                      <cw-review-threads-card
+                        [threads]="threads"
+                        [unreadIds]="unreadReviewThreadIds()"
+                        (open)="openReviewWorkspace.emit({ thread: $event })"
+                      />
+                    }
                   }
 
                   @if (isTurnExpanded(item.turnId)) {

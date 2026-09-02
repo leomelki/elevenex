@@ -1,0 +1,285 @@
+:host {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.fc-messages {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.55rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.75rem;
+  scroll-behavior: smooth;
+}
+
+.fc-message {
+  max-width: 90%;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  padding: 0.55rem 0.7rem;
+  color: var(--foreground);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.fc-message[data-kind='user'] {
+  align-self: flex-end;
+  border-color: color-mix(in oklab, var(--primary) 26%, var(--border));
+  border-bottom-right-radius: 0.2rem;
+  background: color-mix(in oklab, var(--primary) 10%, var(--card));
+  white-space: pre-wrap;
+}
+
+.fc-message[data-kind='assistant'] {
+  align-self: flex-start;
+  border-bottom-left-radius: 0.2rem;
+  background: var(--card);
+}
+
+.fc-message[data-kind='error'] {
+  align-self: stretch;
+  max-width: 100%;
+  border-color: color-mix(in oklab, var(--destructive) 38%, var(--border));
+  background: color-mix(in oklab, var(--destructive) 8%, var(--background));
+  color: var(--destructive);
+}
+
+.fc-md :first-child {
+  margin-top: 0;
+}
+
+.fc-md :last-child {
+  margin-bottom: 0;
+}
+
+.fc-md p,
+.fc-md ul,
+.fc-md ol {
+  margin: 0.45rem 0;
+}
+
+.fc-md ul,
+.fc-md ol {
+  padding-left: 1.1rem;
+}
+
+.fc-empty {
+  display: flex;
+  min-height: 8rem;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: auto 0;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.fc-empty p {
+  max-width: 16rem;
+  margin: 0;
+}
+
+.fc-empty__icon {
+  display: inline-flex;
+  width: 2.25rem;
+  height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted) 58%, transparent);
+  color: var(--primary);
+}
+
+.fc-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem 0.75rem;
+  border-top: 1px solid color-mix(in oklab, var(--border) 62%, transparent);
+  background: color-mix(in oklab, var(--card) 38%, transparent);
+}
+
+.fc-error {
+  margin: 0;
+  border: 1px solid color-mix(in oklab, var(--destructive) 36%, var(--border));
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--destructive) 8%, var(--background));
+  color: var(--destructive);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 0.5rem 0.6rem;
+}
+
+.fc-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.fc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--input);
+  border-radius: 0.65rem;
+  background: var(--background);
+  padding: 0.5rem;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.fc-field:focus-within {
+  border-color: color-mix(in oklab, var(--primary) 66%, var(--input));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 16%, transparent);
+}
+
+textarea {
+  width: 100%;
+  max-height: 7rem;
+  min-height: 1.7rem;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 0.15rem 0.2rem;
+}
+
+textarea:focus {
+  outline: none;
+}
+
+textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+.fc-compose__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.fc-hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.66rem;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.fc-hint kbd {
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--muted) 48%, transparent);
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: 0.62rem;
+  padding: 0.02rem 0.28rem;
+}
+
+.fc-btn {
+  display: inline-flex;
+  gap: 0.38rem;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0 0.85rem;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.fc-btn--primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.fc-btn--ghost:hover:not(:disabled),
+.fc-btn--ghost:focus-visible {
+  outline: none;
+  border-color: color-mix(in oklab, var(--primary) 42%, var(--border));
+  background: color-mix(in oklab, var(--primary) 8%, var(--background));
+}
+
+.fc-btn--primary:hover:not(:disabled),
+.fc-btn--primary:focus-visible {
+  outline: none;
+  background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+}
+
+.fc-btn:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 18%, transparent);
+}
+
+button:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.fc-running {
+  display: flex;
+  flex-shrink: 0;
+  align-self: flex-start;
+  gap: 0.28rem;
+  padding: 0.35rem 0.2rem;
+}
+
+.fc-running span {
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+  animation: fc-bounce 800ms ease-in-out infinite;
+}
+
+.fc-running span:nth-child(2) {
+  animation-delay: 100ms;
+}
+
+.fc-running span:nth-child(3) {
+  animation-delay: 200ms;
+}
+
+@keyframes fc-bounce {
+  50% {
+    transform: translateY(-0.18rem);
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-messages {
+    scroll-behavior: auto;
+  }
+
+  .fc-running span {
+    animation: none;
+  }
+}

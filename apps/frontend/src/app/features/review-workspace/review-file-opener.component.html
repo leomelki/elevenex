@@ -1,0 +1,57 @@
+<div class="fo-backdrop" (click)="dismiss.emit()"></div>
+
+<div class="fo-panel" role="dialog" aria-label="Open a file from the worktree">
+  <header class="fo-head">
+    <h2>Open a file</h2>
+    <button type="button" class="fo-close" aria-label="Close" (click)="dismiss.emit()">
+      <ng-icon name="lucideX" size="14" />
+    </button>
+  </header>
+
+  <div class="fo-crumbs">
+    <button type="button" (click)="goTo(-1)">repo</button>
+    @for (part of breadcrumb(); track $index) {
+      <span aria-hidden="true">/</span>
+      <button type="button" (click)="goTo($index)">{{ part }}</button>
+    }
+  </div>
+
+  <div class="fo-search">
+    <ng-icon name="lucideSearch" size="13" />
+    <input
+      #searchRef
+      type="text"
+      placeholder="Filter this folder…"
+      aria-label="Filter files in this folder"
+      [ngModel]="query()"
+      (ngModelChange)="query.set($event)"
+    />
+  </div>
+
+  <div class="fo-list">
+    @if (loading()) {
+      <p class="fo-status">Loading…</p>
+    } @else if (error(); as message) {
+      <p class="fo-status fo-status--error" role="alert">{{ message }}</p>
+    } @else {
+      @if (dir()) {
+        <button type="button" class="fo-entry" (click)="goUp()">
+          <ng-icon name="lucideChevronLeft" size="13" />
+          <span>..</span>
+        </button>
+      }
+      @for (entry of visible(); track entry.key) {
+        <button type="button" class="fo-entry" (click)="enter(entry)">
+          <ng-icon
+            [name]="entry.data.type === 'directory' ? 'lucideFolder' : 'lucideFile'"
+            size="13"
+            [class.fo-entry__dir]="entry.data.type === 'directory'"
+          />
+          <span class="fo-entry__label">{{ entry.label }}</span>
+        </button>
+      } @empty {
+        <p class="fo-status">Nothing here.</p>
+      }
+    }
+  </div>
+</div>

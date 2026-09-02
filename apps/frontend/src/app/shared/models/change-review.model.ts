@@ -99,6 +99,13 @@ export interface ChangeReviewFileWindow {
   totalRows: number;
   hasMore: boolean;
   context: number;
+  /** True when this window was rendered with whole-file context rather than hunks. */
+  fullFile: boolean;
+  /**
+   * True when the file has no diff in this scope and was synthesized from the
+   * worktree contents (an "open any file" request).
+   */
+  unchanged: boolean;
   changeHash: string;
   /** Fingerprint of the file content as of this response, included only for offset=0 windows. */
   fingerprint: string | null;

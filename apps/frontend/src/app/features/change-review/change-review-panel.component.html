@@ -111,6 +111,27 @@
           <ng-icon name="lucideRefreshCw" size="15" [class.cr-spin]="loadingSummary()" />
         </button>
       }
+      @if (chromeVariant() === 'panel') {
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          type="button"
+          class="gap-1.5"
+          aria-label="Open the review workspace"
+          title="Review whole files and discuss them side by side"
+          (click)="openReviewWorkspace.emit()"
+        >
+          <ng-icon name="lucideMessagesSquare" size="15" />
+          <span class="text-[0.72rem] font-semibold">Review</span>
+          @if (reviewThreadCount() > 0) {
+            <span
+              class="ml-0.5 inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[0.6rem] font-bold leading-4 text-primary-foreground"
+              [attr.aria-label]="reviewThreadCount() + ' open discussions'"
+            >{{ reviewThreadCount() }}</span>
+          }
+        </button>
+      }
       <button
         z-button
         zType="ghost"
@@ -765,6 +786,7 @@
                     [class.cr-diff-row--meta]="renderRow.row?.type === 'meta'"
                     [class.cr-diff-row--loading]="!renderRow.row"
                     [class.cr-diff-row--mentioned]="isMentionedDiffRow(renderRow)"
+                    [class.cr-diff-row--anchored]="threadIdsForRow(renderRow).length > 0"
                     [class.cr-diff-row--search-match]="isSearchMatchedRow(renderRow)"
                     [class.cr-diff-row--search-match-current]="isCurrentSearchMatchRow(renderRow)"
                   >
@@ -780,6 +802,30 @@
                           ~
                         } @else {
                           &nbsp;
+                        }
+                        @if (threadIdsForRow(renderRow); as threadIds) {
+                          @if (threadIds.length) {
+                            <button
+                              type="button"
+                              class="cr-thread-marker"
+                              [title]="
+                                threadIds.length === 1
+                                  ? 'Open the discussion on this line'
+                                  : threadIds.length + ' discussions on this line'
+                              "
+                              [attr.aria-label]="
+                                threadIds.length === 1
+                                  ? 'Open the discussion on this line'
+                                  : 'Open ' + threadIds.length + ' discussions on this line'
+                              "
+                              (click)="threadAnchorClick.emit(threadIds[0])"
+                            >
+                              <ng-icon name="lucideMessageSquare" size="10" />
+                              @if (threadIds.length > 1) {
+                                <span>{{ threadIds.length }}</span>
+                              }
+                            </button>
+                          }
                         }
                       </span>
                       @if (row.type === 'expand') {
@@ -830,20 +876,13 @@
               }
             </div>
             @if (selectionMentionAction(); as action) {
-              <button
-                type="button"
-                class="cr-mention-action"
-                [style.top.px]="action.top"
-                [style.left.px]="action.left"
-                (mousedown)="$event.preventDefault()"
-                (click)="mentionCurrentSelection()"
-              >
-                <ng-icon name="lucideMessageSquarePlus" size="14" />
-                <span>Mention in chat</span>
-                @if (action.mentions.length > 1) {
-                  <span class="cr-mention-action__count">{{ action.mentions.length }}</span>
-                }
-              </button>
+              <cr-selection-menu
+                [top]="action.top"
+                [left]="action.left"
+                [mentions]="action.mentions"
+                [actions]="selectionActions()"
+                (invoke)="onSelectionMenuAction($event)"
+              />
             }
           </div>
         }

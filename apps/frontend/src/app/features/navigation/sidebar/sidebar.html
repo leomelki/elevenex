@@ -426,6 +426,32 @@
                           }
                         </span>
                       </div>
+
+                      @if (reviewThreadsFor(session.id); as threads) {
+                        @if (threads.length) {
+                          <button
+                            class="sidebar-archive-toggle"
+                            [style.padding-left]="'82px'"
+                            (click)="$event.stopPropagation(); navService.toggleExpand('threads-' + session.id)">
+                            <ng-icon [name]="isExpanded('threads-' + session.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
+                            <ng-icon name="lucideMessagesSquare" class="!w-3.5 !h-3.5 text-muted-foreground shrink-0" />
+                            <span class="text-xs font-medium text-muted-foreground">Discussions</span>
+                            <span class="sidebar-archive-count">{{ threads.length }}</span>
+                          </button>
+
+                          @if (isExpanded('threads-' + session.id)) {
+                            @for (thread of threads; track thread.id) {
+                              <div
+                                class="sidebar-tree-row w-full cursor-pointer group"
+                                [style.padding-left]="'100px'"
+                                [attr.title]="'Open the discussion ' + thread.title"
+                                (click)="$event.stopPropagation(); openReviewThread(session, thread)">
+                                <span class="text-xs text-muted-foreground truncate">{{ thread.title }}</span>
+                              </div>
+                            }
+                          }
+                        }
+                      }
                    }
 
                    @if ((workspace.archivedSessions?.length ?? 0) > 0) {

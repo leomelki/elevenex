@@ -1,0 +1,86 @@
+@if (transcript(); as chat) {
+  <div
+    #messagesRef
+    class="fc-messages"
+    aria-live="polite"
+    aria-label="Discussion messages"
+    (scroll)="onMessagesScroll()"
+  >
+    @if (!items.length) {
+      <div class="fc-empty">
+        <span class="fc-empty__icon" aria-hidden="true">
+          <ng-icon name="lucideMessageSquare" size="16" />
+        </span>
+        <p>{{ emptyState() }}</p>
+      </div>
+    } @else {
+      @for (item of items; track item.id) {
+        <article class="fc-message" [attr.data-kind]="item.kind">
+          @if (item.kind === 'assistant') {
+            <div class="fc-md" [innerHTML]="itemContent(item) | cwMarkdown"></div>
+          } @else {
+            <p>{{ itemContent(item) }}</p>
+          }
+        </article>
+      }
+
+      @if (chat.runPhase() === 'running' || sending()) {
+        <div class="fc-running" aria-label="Generating response">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      }
+    }
+  </div>
+
+  <div class="fc-footer">
+    @if (chat.lastError(); as error) {
+      <p class="fc-error" role="alert">{{ error }}</p>
+    }
+
+    <form class="fc-compose" (submit)="$event.preventDefault(); send()">
+      <div class="fc-field">
+        <textarea
+          #composerRef
+          appDictateTarget
+          #dictate="dictateTarget"
+          (dictationSubmit)="send()"
+          rows="1"
+          [placeholder]="placeholder()"
+          [disabled]="disabled() || sending()"
+          [ngModel]="draft()"
+          name="forked-chat-prompt"
+          (ngModelChange)="draft.set($event)"
+          (keydown)="onComposeKeydown($event)"
+        ></textarea>
+        <div class="fc-compose__actions">
+          <app-dictation-button [target]="dictate" [disabled]="disabled() || sending()" />
+          @if (chat.canInterrupt()) {
+            <button type="button" class="fc-btn fc-btn--ghost" (click)="interrupt()">
+              <ng-icon name="lucideSquare" size="12" />
+              Stop
+            </button>
+          }
+          <button
+            type="submit"
+            class="fc-btn fc-btn--primary"
+            [disabled]="!draft().trim() || disabled() || sending()"
+          >
+            <ng-icon name="lucideSend" size="13" />
+            Send
+          </button>
+        </div>
+      </div>
+      <p class="fc-hint">
+        <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line
+      </p>
+    </form>
+  </div>
+} @else {
+  <div class="fc-messages">
+    <div class="fc-empty">
+      <p>{{ emptyState() }}</p>
+    </div>
+  </div>
+}

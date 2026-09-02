@@ -235,6 +235,277 @@ describe('ChangeReviewService', () => {
     expect(fileWindow.rows.some((row) => row.type === 'add')).toBe(false);
   });
 
+  describe('full-file rendering', () => {
+    function writeNumberedFile(relativePath: string, lineCount: number): void {
+      const lines = Array.from(
+        { length: lineCount },
+        (_unused, index) => `line ${index + 1}`,
+      );
+      write(relativePath, `${lines.join('\n')}\n`);
+    }
+
+    /**
+     * The invariant full-file mode promises: every line of the new file is
+     * present exactly once. Asserting this rather than a raw row count keeps
+     * the test honest about *what matters* while staying immune to whether a
+     * given edit collapses into one `change` row or a `delete`/`add` pair.
+     */
+    function renderedNewLines(rows: readonly { newLine: number | null }[]) {
+      return rows
+        .map((row) => row.newLine)
+        .filter((line): line is number => line !== null);
+    }
+
+    it('returns every line of a modified file and leaves no expandable gaps', async () => {
+      writeNumberedFile('src/big.ts', 300);
+      git('add .');
+      git('commit -m "add big"');
+      write(
+        'src/big.ts',
+        fs
+          .readFileSync(path.join(repoPath, 'src/big.ts'), 'utf8')
+          .replace('line 150', 'line 150 changed'),
+      );
+
+      const fileWindow = await service.getFileWindow(
+        repoPath,
+        'uncommitted',
+        'src/big.ts',
+        { offset: 0, limit: 1_000, fullFile: true },
+      );
+
+      expect(fileWindow.fullFile).toBe(true);
+      expect(renderedNewLines(fileWindow.rows)).toEqual(
+        Array.from({ length: 300 }, (_unused, index) => index + 1),
+      );
+      expect(fileWindow.contextRanges).toEqual([]);
+      expect(
+        fileWindow.rows.some((row) => row.content === 'line 150 changed'),
+      ).toBe(true);
+    });
+
+    it('shows only nearby context when full-file mode is off', async () => {
+      writeNumberedFile('src/big.ts', 300);
+      git('add .');
+      git('commit -m "add big"');
+      write(
+        'src/big.ts',
+        fs
+          .readFileSync(path.join(repoPath, 'src/big.ts'), 'utf8')
+          .replace('line 150', 'line 150 changed'),
+      );
+
+      const fileWindow = await service.getFileWindow(
+        repoPath,
+        'uncommitted',
+        'src/big.ts',
+        { offset: 0, limit: 1_000, context: 3 },
+      );
+
+      expect(fileWindow.fullFile).toBe(false);
+      expect(fileWindow.totalRows).toBeLessThan(30);
+      expect(fileWindow.contextRanges.length).toBeGreaterThan(0);
+    });
+
+    it('renders whole files for the last-commit scope, which uses diff-tree', async () => {
+      writeNumberedFile('src/big.ts', 120);
+      git('add .');
+      git('commit -m "add big"');
+      write(
+        'src/big.ts',
+        fs
+          .readFileSync(path.join(repoPath, 'src/big.ts'), 'utf8')
+          .replace('line 60', 'line 60 changed'),
+      );
+      git('add .');
+      git('commit -m "tweak big"');
+
+      const fileWindow = await service.getFileWindow(
+        repoPath,
+        'last-commit',
+        'src/big.ts',
+        { offset: 0, limit: 1_000, fullFile: true },
+      );
+
+      expect(renderedNewLines(fileWindow.rows)).toEqual(
+        Array.from({ length: 120 }, (_unused, index) => index + 1),
+      );
+      expect(fileWindow.contextRanges).toEqual([]);
+    });
+
+    it('renders whole files for the branch scope', async () => {
+      const remotePath = path.join(tmpDir, 'remote.git');
+      fs.mkdirSync(remotePath);
+      git('init --bare', remotePath);
+      git(`remote add origin ${remotePath}`);
+      git('push -u origin main');
+      git('symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
+      git('checkout -b feature');
+      writeNumberedFile('src/big.ts', 90);
+      git('add .');
+      git('commit -m "add big on feature"');
+
+      const fileWindow = await service.getFileWindow(
+        repoPath,
+        'branch',
+        'src/big.ts',
+        { offset: 0, limit: 1_000, fullFile: true },
+      );
+
+      expect(renderedNewLines(fileWindow.rows)).toEqual(
+        Array.from({ length: 90 }, (_unused, index) => index + 1),
+      );
+      expect(fileWindow.contextRanges).toEqual([]);
+    });
+
+    it('falls back to wide context when a full-file request is too large', async () => {
+      writeNumberedFile('src/huge.ts', 9_000);
+      git('add .');
+      git('commit -m "add huge"');
+      write(
+        'src/huge.ts',
+        fs
+          .readFileSync(path.join(repoPath, 'src/huge.ts'), 'utf8')
+          .replace('line 4500', 'line 4500 changed'),
+      );
+
+      const fileWindow = await service.getFileWindow(
+        repoPath,
+        'uncommitted',
+        'src/huge.ts',
+        { offset: 0, limit: 1_500, fullFile: true },
+      );
+
+      expect(fileWindow.truncated).toBe(true);
+      expect(fileWindow.message).toMatch(/capped/i);
+      expect(fileWindow.totalRows).toBeLessThan(9_000);
+    });
+
+    it('shows the whole file for a metadata-only change instead of a no-diff placeholder', async () => {
+      // A mode change produces a patch with no hunks at all. The hunk view
+      // rightly shows "no textual diff", but that reads as a failure when the
+      // user explicitly asked to see the whole file.
+      writeNumberedFile('src/tool.sh', 40);
+      git('add .');
+      git('commit -m "add tool"');
+      fs.chmodSync(path.join(repoPath, 'src/tool.sh'), 0o755);
+
+      const fileWindow = await service.getFileWindow(
+        repoPath,
+        'uncommitted',
+        'src/tool.sh',
+        { offset: 0, limit: 1_000, fullFile: true },
+      );
+
+      expect(fileWindow.rows.some((row) => row.type === 'meta')).toBe(false);
+      expect(renderedNewLines(fileWindow.rows)).toEqual(
+        Array.from({ length: 40 }, (_unused, index) => index + 1),
+      );
+      expect(fileWindow.rows[0]).toMatchObject({
+        type: 'context',
+        content: 'line 1',
+      });
+    });
+
+    it('leaves the hunk view showing only patch metadata for a mode change', async () => {
+      writeNumberedFile('src/tool.sh', 40);
+      git('add .');
+      git('commit -m "add tool"');
+      fs.chmodSync(path.join(repoPath, 'src/tool.sh'), 0o755);
+
+      const fileWindow = await service.getFileWindow(
+        repoPath,
+        'uncommitted',
+        'src/tool.sh',
+        { offset: 0, limit: 1_000 },
+      );
+
+      // Unchanged pre-existing behaviour: no hunks means no file content.
+      expect(renderedNewLines(fileWindow.rows)).toEqual([]);
+      expect(fileWindow.rows.map((row) => row.content)).toEqual(
+        expect.arrayContaining(['old mode 100644', 'new mode 100755']),
+      );
+    });
+  });
+
+  describe('opening files with no diff', () => {
+    it('serves an unchanged file as context rows when allowUnchanged is set', async () => {
+      write('src/untouched.ts', 'export const a = 1;\nexport const b = 2;\n');
+      git('add .');
+      git('commit -m "add untouched"');
+
+      const fileWindow = await service.getFileWindow(
+        repoPath,
+        'uncommitted',
+        'src/untouched.ts',
+        { offset: 0, limit: 100, allowUnchanged: true },
+      );
+
+      expect(fileWindow.unchanged).toBe(true);
+      expect(fileWindow.status).toBe('modified');
+      expect(fileWindow.totalRows).toBe(2);
+      expect(fileWindow.rows).toEqual([
+        expect.objectContaining({
+          type: 'context',
+          oldLine: 1,
+          newLine: 1,
+          content: 'export const a = 1;',
+        }),
+        expect.objectContaining({
+          type: 'context',
+          oldLine: 2,
+          newLine: 2,
+          content: 'export const b = 2;',
+        }),
+      ]);
+      expect(fileWindow.fingerprint).toBeTruthy();
+    });
+
+    it('still rejects an unchanged file without the flag', async () => {
+      write('src/untouched.ts', 'export const a = 1;\n');
+      git('add .');
+      git('commit -m "add untouched"');
+
+      await expect(
+        service.getFileWindow(repoPath, 'uncommitted', 'src/untouched.ts'),
+      ).rejects.toThrow(/not changed in this scope/i);
+    });
+
+    it('rejects a path that does not exist in the worktree', async () => {
+      await expect(
+        service.getFileWindow(repoPath, 'uncommitted', 'src/missing.ts', {
+          allowUnchanged: true,
+        }),
+      ).rejects.toThrow(/not found in worktree/i);
+    });
+
+    it('paginates an unchanged file through offset and limit', async () => {
+      write(
+        'src/untouched.ts',
+        `${Array.from({ length: 10 }, (_u, i) => `line ${i + 1}`).join('\n')}\n`,
+      );
+      git('add .');
+      git('commit -m "add untouched"');
+
+      const second = await service.getFileWindow(
+        repoPath,
+        'uncommitted',
+        'src/untouched.ts',
+        { offset: 4, limit: 3, allowUnchanged: true },
+      );
+
+      expect(second.totalRows).toBe(10);
+      expect(second.hasMore).toBe(true);
+      expect(second.rows.map((row) => row.content)).toEqual([
+        'line 5',
+        'line 6',
+        'line 7',
+      ]);
+      // Fingerprints are only computed for the first window.
+      expect(second.fingerprint).toBeNull();
+    });
+  });
+
   it('keeps unrelated delete/add pairs split', async () => {
     write('README.md', 'zzzzzzzzzzzzzzzz\n');
 

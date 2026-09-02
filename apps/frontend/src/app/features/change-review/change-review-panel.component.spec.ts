@@ -18,6 +18,7 @@ import { ChangeReviewService } from '@/shared/services/change-review.service';
 import { FilesService } from '@/shared/services/files.service';
 import { GitService } from '@/shared/services/git.service';
 import { MonacoEditorLoaderService } from '@/shared/services/monaco-editor-loader.service';
+import { diffMentionRowKey } from '@/shared/utils/diff-row-key';
 import { ChangeReviewPanelComponent } from './change-review-panel.component';
 
 const flush = () => new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -139,6 +140,8 @@ const fileWindow = (
   totalRows: rows.length,
   hasMore: false,
   context: 8,
+  fullFile: false,
+  unchanged: false,
   changeHash: `${path}:hash`,
   fingerprint: null,
   rows,
@@ -971,7 +974,9 @@ describe('ChangeReviewPanelComponent', () => {
     fixture.componentInstance.captureDiffSelection();
     fixture.detectChanges();
 
-    const action = fixture.nativeElement.querySelector('.cr-mention-action') as HTMLButtonElement;
+    const action = fixture.nativeElement.querySelector(
+      '.cr-selection-menu__button',
+    ) as HTMLButtonElement;
     expect(action).not.toBeNull();
     action.click();
 
@@ -1029,5 +1034,115 @@ describe('ChangeReviewPanelComponent', () => {
     expect(changedRow?.querySelector('.cr-marker')?.textContent).toContain('~');
     expect(changedRow?.querySelector('.diff-inline-del')?.textContent).toContain('previous');
     expect(changedRow?.querySelector('.diff-inline-add')?.textContent).toContain('next');
+  });
+
+  describe('review workspace integration', () => {
+    it('offers only the mention action by default', async () => {
+      await flushSummary(summary([file('src/a.ts')]));
+      windowCalls[0].response.next(fileWindow('src/a.ts'));
+      windowCalls[0].response.complete();
+      await flush();
+
+      fixture.componentInstance.selectionMentionAction.set({
+        top: 0,
+        left: 0,
+        mentions: [diffMention('src/a.ts', [row('src/a.ts', 0)])],
+      });
+      fixture.detectChanges();
+
+      const labels = Array.from(
+        (fixture.nativeElement as HTMLElement).querySelectorAll('.cr-selection-menu__button'),
+      ).map((element) => element.textContent?.trim());
+      expect(labels).toEqual(['Mention in chat']);
+    });
+
+    it('emits host-owned selection actions without mentioning in chat', async () => {
+      const emitted: Array<{ id: string }> = [];
+      fixture.componentInstance.selectionAction.subscribe((event) => emitted.push(event));
+      const mentioned: unknown[] = [];
+      fixture.componentInstance.mentionSelection.subscribe((event) => mentioned.push(event));
+
+      await flushSummary(summary([file('src/a.ts')]));
+      windowCalls[0].response.next(fileWindow('src/a.ts'));
+      windowCalls[0].response.complete();
+      await flush();
+
+      fixture.componentRef.setInput('selectionActions', [
+        { id: 'new-thread', label: 'New discussion', icon: 'lucideSparkles' },
+      ]);
+      fixture.componentInstance.selectionMentionAction.set({
+        top: 0,
+        left: 0,
+        mentions: [diffMention('src/a.ts', [row('src/a.ts', 0)])],
+      });
+      fixture.detectChanges();
+
+      (
+        fixture.nativeElement as HTMLElement
+      ).querySelector<HTMLButtonElement>('.cr-selection-menu__button')!.click();
+
+      expect(emitted.map((event) => event.id)).toEqual(['new-thread']);
+      expect(mentioned).toHaveLength(0);
+    });
+
+    it('marks rows that carry a discussion and emits its id when clicked', async () => {
+      const path = 'src/a.ts';
+      const anchored = addRow(path, 1, 'const anchored = true;');
+      await flushSummary(summary([file(path)]));
+      windowCalls[0].response.next(
+        fileWindow(path, 'branch', 0, [row(path, 0), anchored]),
+      );
+      windowCalls[0].response.complete();
+      await flush();
+
+      const key = diffMentionRowKey(
+        'branch',
+        path,
+        `${path}:hash`,
+        anchored.type,
+        anchored.oldLine,
+        anchored.newLine,
+        anchored.content,
+      );
+      fixture.componentRef.setInput('threadAnchors', new Map([[key, [7]]]));
+      fixture.detectChanges();
+
+      const opened: number[] = [];
+      fixture.componentInstance.threadAnchorClick.subscribe((id) => opened.push(id));
+
+      const rows = Array.from(
+        (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('.cr-diff-row'),
+      );
+      const anchoredRow = rows.find((element) =>
+        element.textContent?.includes('const anchored = true;'),
+      );
+      expect(anchoredRow?.classList.contains('cr-diff-row--anchored')).toBe(true);
+
+      anchoredRow?.querySelector<HTMLButtonElement>('.cr-thread-marker')?.click();
+      expect(opened).toEqual([7]);
+
+      const plainRow = rows.find((element) => element.textContent?.includes('line 1'));
+      expect(plainRow?.querySelector('.cr-thread-marker')).toBeNull();
+    });
+
+    it('requests whole files and does not extrapolate the row estimate from context', async () => {
+      const path = 'src/big.ts';
+      fixture.componentRef.setInput('fullFileMode', true);
+      await flushSummary(summary([file(path, 2, 1, { size: 4_500 })]));
+
+      // 4500 bytes / ~45 bytes per line, not `changedLines + hunks * context * 2`
+      // with a million-wide context.
+      expect(fixture.componentInstance.totalHeightPx()).toBeLessThan(10_000);
+
+      const call = windowCalls.at(-1)!;
+      expect(call.path).toBe(path);
+      expect(serviceMock.getFileWindow).toHaveBeenCalledWith(
+        '/tmp/repo',
+        'branch',
+        path,
+        expect.objectContaining({ fullFile: true }),
+        false,
+      );
+    });
   });
 });

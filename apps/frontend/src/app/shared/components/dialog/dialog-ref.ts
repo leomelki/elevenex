@@ -2,7 +2,7 @@ import type { OverlayRef } from '@angular/cdk/overlay';
 import { isPlatformBrowser } from '@angular/common';
 import { EventEmitter, Inject, PLATFORM_ID } from '@angular/core';
 
-import { filter, fromEvent, Subject, takeUntil } from 'rxjs';
+import { filter, fromEvent, Observable, Subject, takeUntil } from 'rxjs';
 
 import type { ZardDialogComponent, ZardDialogOptions } from './dialog.component';
 
@@ -13,9 +13,20 @@ const enum eTriggerAction {
 
 export class ZardDialogRef<T = any, R = any, U = any> {
   private destroy$ = new Subject<void>();
+  private closed$ = new Subject<R | undefined>();
   private isClosing = false;
   protected result?: R;
   componentInstance: T | null = null;
+
+  /**
+   * Emits once when the dialog closes, whatever closed it.
+   *
+   * `zOnOk` / `zOnCancel` only fire for the footer buttons, so callers that
+   * await a decision need this to also learn about Escape and mask dismissal.
+   */
+  afterClosed(): Observable<R | undefined> {
+    return this.closed$.asObservable();
+  }
 
   constructor(
     private overlayRef: OverlayRef,
@@ -50,6 +61,8 @@ export class ZardDialogRef<T = any, R = any, U = any> {
 
     this.isClosing = true;
     this.result = result;
+    this.closed$.next(result);
+    this.closed$.complete();
 
     if (isPlatformBrowser(this.platformId)) {
       const hostElement = this.containerInstance.getNativeElement();

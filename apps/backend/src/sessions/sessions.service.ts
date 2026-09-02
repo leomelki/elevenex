@@ -23,6 +23,9 @@ type SessionStatus = (typeof VALID_STATUSES)[number];
 const VALID_SURFACES = [
   'session',
   'embedded_plan_chat',
+  // Side discussions opened from the code review workspace. Hidden like
+  // plan chats until the user promotes one into a standalone session.
+  'embedded_review_chat',
   'agent_query',
   // The meta-agent's own brain session ("a mission IS an agent session"). Hidden
   // everywhere normal sessions are listed (visibleWhere keys on 'session').
@@ -309,6 +312,27 @@ export class SessionsService extends EventEmitter {
       .update(schema.sessions)
       .set({
         ...data,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
+  /**
+   * Move a session between surfaces. Used to promote a hidden fork (a review
+   * chat, say) into a normal session so it shows up in listings and tabs.
+   */
+  async updateSurface(id: number, surface: SessionSurface) {
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        surface: this.normalizeSurface(surface),
         updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.sessions.id, id))

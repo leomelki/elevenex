@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { SessionsController } from './sessions.controller.js';
 import { PlanChatForksService } from './plan-chat-forks.service.js';
+import { ReviewChatsService } from './review-chats.service.js';
 import { SessionForksService } from './session-forks.service.js';
 import { SessionsService } from './sessions.service.js';
 import { TerminalModule } from '../terminal/terminal.module.js';
@@ -14,7 +15,17 @@ import { SettingsModule } from '../settings/settings.module.js';
     SettingsModule,
   ],
   controllers: [SessionsController],
-  providers: [SessionsService, SessionForksService, PlanChatForksService],
-  exports: [SessionsService, SessionForksService, PlanChatForksService],
+  providers: [
+    SessionsService,
+    SessionForksService,
+    PlanChatForksService,
+    ReviewChatsService,
+  ],
+  exports: [
+    SessionsService,
+    SessionForksService,
+    PlanChatForksService,
+    ReviewChatsService,
+  ],
 })
 export class SessionsModule {}

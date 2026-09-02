@@ -6,6 +6,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideChevronRight,
   lucideFilePen,
+  lucideMessagesSquare,
   lucideX,
 } from '@ng-icons/lucide';
 import {
@@ -40,6 +41,7 @@ interface RenderedFile extends TurnChangedFile {
     provideIcons({
       lucideChevronRight,
       lucideFilePen,
+      lucideMessagesSquare,
       lucideX,
     }),
   ],
@@ -59,15 +61,30 @@ interface RenderedFile extends TurnChangedFile {
             </span>
           </div>
         </div>
-        <button
-          type="button"
-          class="cw-turn-changes__close"
-          aria-label="Close changes"
-          title="Close changes"
-          (click)="close.emit()"
-        >
-          <ng-icon name="lucideX" size="14" />
-        </button>
+        <div class="cw-turn-changes__actions">
+          <button
+            type="button"
+            class="cw-turn-changes__review"
+            aria-label="Open these changes in the review workspace"
+            title="Review whole files and discuss them"
+            (click)="review.emit({})"
+          >
+            <ng-icon name="lucideMessagesSquare" size="13" />
+            <span>Review</span>
+            @if (threadCount() > 0) {
+              <span class="cw-turn-changes__badge">{{ threadCount() }}</span>
+            }
+          </button>
+          <button
+            type="button"
+            class="cw-turn-changes__close"
+            aria-label="Close changes"
+            title="Close changes"
+            (click)="close.emit()"
+          >
+            <ng-icon name="lucideX" size="14" />
+          </button>
+        </div>
       </header>
 
       <div class="cw-turn-changes__files">
@@ -182,6 +199,54 @@ interface RenderedFile extends TurnChangedFile {
       color: var(--muted-foreground);
       font-size: 0.72rem;
       white-space: nowrap;
+    }
+
+    .cw-turn-changes__actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .cw-turn-changes__review {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      height: 1.75rem;
+      border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+      border-radius: 0.45rem;
+      background: var(--background);
+      color: var(--muted-foreground);
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 0 0.45rem;
+      transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+
+    .cw-turn-changes__review:hover,
+    .cw-turn-changes__review:focus-visible {
+      outline: none;
+      border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+      background: color-mix(in oklab, var(--primary) 8%, var(--background));
+      color: var(--foreground);
+    }
+
+    .cw-turn-changes__review:focus-visible {
+      box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 18%, transparent);
+    }
+
+    .cw-turn-changes__badge {
+      display: inline-flex;
+      min-width: 1rem;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: var(--primary);
+      color: var(--primary-foreground);
+      font-size: 0.6rem;
+      line-height: 1;
+      padding: 0.1rem 0.25rem;
     }
 
     .cw-turn-changes__close {
@@ -364,7 +429,11 @@ interface RenderedFile extends TurnChangedFile {
 })
 export class ClaudeTurnChangesComponent {
   readonly details = input.required<TurnChangeDetails>();
+  /** Open discussions anchored to this turn, shown as a badge. */
+  readonly threadCount = input(0);
   readonly close = output<void>();
+  /** Open these changes in the review workspace, optionally on one file. */
+  readonly review = output<{ path?: string }>();
 
   private readonly sanitizer = inject(DomSanitizer);
   private readonly openFiles = signal<Record<string, boolean>>({});

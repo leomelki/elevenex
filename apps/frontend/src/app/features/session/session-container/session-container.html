@@ -45,6 +45,18 @@
 
     <!-- Main Content with Vertical + Horizontal Resizable Split -->
     <div class="flex-1 min-h-0 relative">
+      <!--
+        The review workspace covers the split rather than replacing it. Hiding
+        with `invisible` (not `@if` / `display:none`) keeps the session mounted,
+        so its agent WebSocket, transcript and composer draft all survive, and
+        z-resizable keeps measuring real sizes instead of collapsing to zero.
+      -->
+      <div
+        class="h-full"
+        [class.invisible]="reviewRouteActive()"
+        [class.pointer-events-none]="reviewRouteActive()"
+        [attr.aria-hidden]="reviewRouteActive() ? 'true' : null"
+      >
       <z-resizable zLayout="vertical" class="h-full" (zResizeEnd)="onVerticalResizeEnd($event)">
         <!-- Top: Main panels -->
         <z-resizable-panel [zDefaultSize]="bottomPanelVisible() ? 70 : 100" [zMin]="30">
@@ -113,6 +125,7 @@
                         (planReviewClosed)="onPlanReviewClosed($event)"
                         (activeAgentProviderChange)="onSessionProviderChange(tab.sessionId, $event)"
                         (agentRuntimeStarted)="onSessionRuntimeStarted(tab.sessionId)"
+                        (openReviewWorkspace)="openReviewWorkspace($event)"
                         (conversationForkCreated)="onConversationForkCreated($event)"
                         (conversationForkOpened)="onConversationForkOpened($event)"
                         (unarchive)="onTabUnarchiveRequest(tab.sessionId)"
@@ -140,8 +153,10 @@
                   <app-change-review-panel
                     [worktreePath]="worktreePath()!"
                     [highlightedMentions]="activePendingDiffMentions()"
+                    [reviewThreadCount]="reviewWorkspaceState.openChats().length"
                     (mentionSelection)="mentionDiffSelection($event)"
                     (openFileInEditor)="openDiffFileInEditor($event)"
+                    (openReviewWorkspace)="openReviewWorkspace()"
                     class="h-full"
                   />
                 } @else if (showPlanAnnotatorPanel() && activePlanReview()) {
@@ -260,6 +275,20 @@
       }
       @if (showTodos() && projectId()) {
         <app-todo-panel [projectId]="projectId()!" [isOpen]="true" (close)="toggleTodos()" />
+      }
+      </div>
+
+      @if (reviewRouteActive() && activeReviewTarget(); as review) {
+        <app-review-workspace
+          class="absolute inset-0 z-30"
+          [sessionId]="review.sessionId"
+          [worktreePath]="review.worktreePath"
+          [provider]="review.provider"
+          [focusThreadId]="reviewThreadParam()"
+          [focusFilePath]="reviewFileParam()"
+          (exit)="closeReviewWorkspace()"
+          (promoted)="onConversationForkCreated($event)"
+        />
       }
     </div>
   } @else {

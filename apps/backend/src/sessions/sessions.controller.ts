@@ -16,6 +16,13 @@ import {
   type EnsurePlanChatForkDto,
   type SubmitPlanChatQuestionDto,
 } from './plan-chat-forks.service.js';
+import {
+  ReviewChatsService,
+  type CreateReviewChatDto,
+  type ReviewAnchorDto,
+  type SubmitReviewChatMessageDto,
+  type UpdateReviewChatDto,
+} from './review-chats.service.js';
 import { CreateSessionDto } from './dto/create-session.dto.js';
 
 @Controller('sessions')
@@ -24,6 +31,7 @@ export class SessionsController {
     private readonly sessionsService: SessionsService,
     private readonly sessionForksService: SessionForksService,
     private readonly planChatForksService: PlanChatForksService,
+    private readonly reviewChatsService: ReviewChatsService,
   ) {}
 
   @Post()
@@ -138,6 +146,62 @@ export class SessionsController {
     @Param('planChatId') planChatId: string,
   ) {
     return this.planChatForksService.delete(Number(id), Number(planChatId));
+  }
+
+  // Review-chat routes must stay above `@Get(':id')` so `:id/review-chats` is
+  // not swallowed by the single-segment session lookup.
+  @Get(':id/review-chats')
+  findReviewChats(@Param('id') id: string, @Query('filePath') filePath?: string) {
+    return this.reviewChatsService.findByParent(Number(id), filePath);
+  }
+
+  @Post(':id/review-chats')
+  createReviewChat(@Param('id') id: string, @Body() body: CreateReviewChatDto) {
+    return this.reviewChatsService.create(Number(id), body);
+  }
+
+  @Post(':id/review-chats/:chatId/messages')
+  submitReviewChatMessage(
+    @Param('id') id: string,
+    @Param('chatId') chatId: string,
+    @Body() body: SubmitReviewChatMessageDto,
+  ) {
+    return this.reviewChatsService.submitMessage(
+      Number(id),
+      Number(chatId),
+      body,
+    );
+  }
+
+  @Post(':id/review-chats/:chatId/anchors')
+  addReviewChatAnchors(
+    @Param('id') id: string,
+    @Param('chatId') chatId: string,
+    @Body() body: { anchors?: ReviewAnchorDto[] },
+  ) {
+    return this.reviewChatsService.addAnchors(Number(id), Number(chatId), body);
+  }
+
+  @Patch(':id/review-chats/:chatId')
+  updateReviewChat(
+    @Param('id') id: string,
+    @Param('chatId') chatId: string,
+    @Body() body: UpdateReviewChatDto,
+  ) {
+    return this.reviewChatsService.update(Number(id), Number(chatId), body);
+  }
+
+  @Post(':id/review-chats/:chatId/promote')
+  promoteReviewChat(
+    @Param('id') id: string,
+    @Param('chatId') chatId: string,
+  ) {
+    return this.reviewChatsService.promote(Number(id), Number(chatId));
+  }
+
+  @Delete(':id/review-chats/:chatId')
+  deleteReviewChat(@Param('id') id: string, @Param('chatId') chatId: string) {
+    return this.reviewChatsService.delete(Number(id), Number(chatId));
   }
 
   @Get(':id')

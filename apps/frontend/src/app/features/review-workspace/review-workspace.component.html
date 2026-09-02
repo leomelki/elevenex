@@ -1,0 +1,92 @@
+<header class="rw-header">
+  <button type="button" class="rw-back" (click)="exit.emit()">
+    <ng-icon name="lucideArrowLeft" size="14" />
+    <span>Back to session</span>
+    <kbd>Esc</kbd>
+  </button>
+
+  <h1 class="rw-title">Review</h1>
+
+  <div class="rw-view-toggle" role="group" aria-label="Diff detail">
+    <button
+      type="button"
+      [class.rw-view-toggle__active]="!fullFileMode()"
+      [attr.aria-pressed]="!fullFileMode()"
+      (click)="fullFileMode.set(false)"
+    >
+      Changes only
+    </button>
+    <button
+      type="button"
+      [class.rw-view-toggle__active]="fullFileMode()"
+      [attr.aria-pressed]="fullFileMode()"
+      (click)="fullFileMode.set(true)"
+    >
+      <ng-icon name="lucideFileCode" size="12" />
+      Whole files
+    </button>
+  </div>
+
+  <button
+    type="button"
+    class="rw-open-file"
+    title="Open any file from the worktree, even without changes"
+    (click)="fileOpenerVisible.set(true)"
+  >
+    <ng-icon name="lucideFilePlus" size="13" />
+    <span>Open file</span>
+  </button>
+
+  @if (state.openChats().length) {
+    <span class="rw-count" [attr.aria-label]="state.openChats().length + ' open discussions'">
+      {{ state.openChats().length }}
+      {{ state.openChats().length === 1 ? 'discussion' : 'discussions' }}
+    </span>
+  }
+</header>
+
+@if (!canFork()) {
+  <p class="rw-notice" role="status">
+    Discussions need an agent that can fork a conversation. You can still review the
+    diff and send selections to your session.
+  </p>
+}
+
+<z-resizable class="rw-body" [zLayout]="'horizontal'">
+  <z-resizable-panel [zDefaultSize]="62" [zMin]="35">
+    <app-change-review-panel
+      class="h-full"
+      chromeVariant="workspace"
+      [worktreePath]="worktreePath()"
+      [fullFileMode]="fullFileMode()"
+      [extraFiles]="extraFiles()"
+      [initialFileFilter]="fileFilter()"
+      [threadAnchors]="state.anchorRowIndex()"
+      [selectionActions]="selectionActions()"
+      (selectionAction)="onSelectionAction($event)"
+      (mentionSelection)="onMentionInSession($event)"
+      (threadAnchorClick)="state.focusThread($event)"
+    />
+  </z-resizable-panel>
+
+  <z-resizable-handle />
+
+  <z-resizable-panel [zDefaultSize]="38" [zMin]="24" [zMax]="60">
+    <app-review-thread-dock
+      [sessionId]="sessionId()"
+      [provider]="provider()"
+      [canFork]="canFork()"
+      [staleThreadIds]="staleThreadIds()"
+      [draftSeed]="draftSeed()"
+      (promoted)="onPromoted($event)"
+    />
+  </z-resizable-panel>
+</z-resizable>
+
+@if (fileOpenerVisible()) {
+  <app-review-file-opener
+    [worktreePath]="worktreePath()"
+    (openFile)="openWorktreeFile($event)"
+    (dismiss)="fileOpenerVisible.set(false)"
+  />
+}

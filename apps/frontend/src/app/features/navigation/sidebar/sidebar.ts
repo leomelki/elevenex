@@ -15,6 +15,7 @@ import {
   lucideRefreshCw,
   lucideTrash2,
   lucideArchive,
+  lucideMessagesSquare,
   lucideArchiveRestore,
   lucideCircleMinus,
   lucideServer,
@@ -25,6 +26,7 @@ import {
   lucideSun,
   lucideSparkles,
 } from '@ng-icons/lucide';
+import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import { NavigationService } from '../../../shared/services/navigation.service';
 import { SessionsService } from '../../../shared/services/sessions.service';
@@ -46,6 +48,8 @@ import { SshForward } from '@/shared/models/ssh-forward.model';
 import { CursorService } from '@/shared/services/cursor.service';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
 import { SshRuntimeRecoveryService } from '@/shared/services/ssh-runtime-recovery.service';
+import { ReviewChatsService } from '@/shared/services/review-chats.service';
+import type { ReviewChat } from '@/shared/models/review-chat.model';
 import { TodosService } from '@/features/productivity/todos.service';
 import { getElectronWindowControlsApi } from '@/shared/runtime/electron-window-controls';
 import { Project } from '@/shared/models/project.model';
@@ -78,6 +82,7 @@ import { AgentControlStateService } from '@/features/agent-control/agent-control
       lucideRefreshCw,
       lucideTrash2,
       lucideArchive,
+      lucideMessagesSquare,
       lucideArchiveRestore,
       lucideCircleMinus,
       lucideServer,
@@ -105,6 +110,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private workspacesService = inject(WorkspacesService);
   private sessionsService = inject(SessionsService);
   private tabService = inject(TabService);
+  private reviewChatsApi = inject(ReviewChatsService);
   private vscodeWebState = inject(VSCodeWebStateService);
   private colorService = inject(TabColorService);
   plannotatorState = inject(PlannotatorStateService);
@@ -123,12 +129,18 @@ export class Sidebar implements OnInit, OnDestroy {
   readonly timeTick = signal(Date.now());
 
   activeSessionId = this.tabService.activeSessionId;
+  /** Review discussions for the active session, for the Discussions node. */
+  readonly reviewThreads = signal<readonly ReviewChat[]>([]);
   sshProjectStats = signal<Map<number, { active: number; saved: number; error: number }>>(new Map());
   private sshStatsTimer: number | null = null;
   private sessionTimeTickTimer: number | null = null;
   private readonly sshStatsEffect = effect(() => {
     const projects = this.navService.tree();
     void this.refreshSshProjectStats(projects);
+  });
+
+  private readonly reviewThreadsEffect = effect(() => {
+    void this.loadReviewThreads(this.activeSessionId());
   });
 
   private readonly todosLoadEffect = effect(() => {
@@ -394,6 +406,37 @@ export class Sidebar implements OnInit, OnDestroy {
   onSessionClick(session: SessionInTree) {
     // Just navigate - SessionContainer will load the full session and open the tab
     this.router.navigate(['/sessions', session.id]);
+  }
+
+  /**
+   * Review discussions for a session.
+   *
+   * Only the active session is fetched: listing every session's discussions
+   * would mean one request per row on a tree that can hold hundreds of them.
+   */
+  reviewThreadsFor(sessionId: number): readonly ReviewChat[] {
+    return sessionId === this.activeSessionId() ? this.reviewThreads() : [];
+  }
+
+  openReviewThread(session: SessionInTree, thread: ReviewChat): void {
+    void this.router.navigate(['/sessions', session.id, 'review'], {
+      queryParams: { thread: thread.id },
+    });
+  }
+
+  private async loadReviewThreads(sessionId: number | null): Promise<void> {
+    if (sessionId === null) {
+      this.reviewThreads.set([]);
+      return;
+    }
+    try {
+      const threads = await firstValueFrom(this.reviewChatsApi.list(sessionId));
+      if (this.activeSessionId() !== sessionId) return;
+      this.reviewThreads.set(threads.filter((thread) => thread.status !== 'resolved'));
+    } catch {
+      // The tree must render even when discussions cannot be listed.
+      this.reviewThreads.set([]);
+    }
   }
 
   onRefresh() {

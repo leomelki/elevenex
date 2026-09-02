@@ -70,6 +70,10 @@ import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { toast } from 'ngx-sonner';
 import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
 import {
+  ReviewWorkspaceComponent,
+  ReviewWorkspaceStateService,
+} from '@/features/review-workspace';
+import {
   ClaudeStatusService,
   type ClaudeActivityStatus,
 } from '@/shared/services/claude-status.service';
@@ -127,6 +131,7 @@ type ClaudeSurfaceMode = 'workspace' | 'terminal';
     ActionsPanelComponent,
     UserTerminalPanelComponent,
     ChangeReviewPanelComponent,
+    ReviewWorkspaceComponent,
     TrackNativeModalDirective,
   ],
   templateUrl: './session-container.html',
@@ -164,6 +169,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   private tabService = inject(TabService);
   private sessionsService = inject(SessionsService);
   private forkDrafts = inject(ConversationForkDraftService);
+  readonly reviewWorkspaceState = inject(ReviewWorkspaceStateService);
   private providerSelection = inject(AgentRuntimeProviderService);
   private navService = inject(NavigationService);
   private productivityState = inject(ProductivityStateService);
@@ -950,6 +956,9 @@ export class SessionContainer implements OnInit, OnDestroy {
         takeUntil(this.destroy$),
       )
       .subscribe(() => {
+        // Route-derived signals read the router snapshot, which has no signal
+        // of its own; bumping this makes them recompute on every navigation.
+        this.routeTick.update((tick) => tick + 1);
         const newSessionId = this.getSessionIdFromUrl();
         if (newSessionId) {
           if (!this.tabService.getOpenSessionIds().includes(newSessionId)) {
@@ -1109,6 +1118,61 @@ export class SessionContainer implements OnInit, OnDestroy {
       },
       { injector: this.injector },
     );
+  }
+
+  /** Bumped on every NavigationEnd so route-derived computeds re-evaluate. */
+  private readonly routeTick = signal(0);
+
+  /**
+   * True while the URL is `/sessions/:id/review`.
+   *
+   * Recomputed on every NavigationEnd via `routeTick`; reading the snapshot is
+   * safe there because the router has already committed the new state.
+   */
+  readonly reviewRouteActive = computed(() => {
+    this.routeTick();
+    return this.route.snapshot.firstChild?.firstChild?.routeConfig?.path === 'review';
+  });
+
+  /** `?file=` deep link onto a specific file. */
+  readonly reviewFileParam = computed(() => {
+    this.routeTick();
+    return this.router.routerState.snapshot.root.queryParamMap.get('file');
+  });
+
+  /** `?thread=` deep link into a specific discussion. */
+  readonly reviewThreadParam = computed(() => {
+    this.routeTick();
+    const raw = this.router.routerState.snapshot.root.queryParamMap.get('thread');
+    const parsed = raw ? Number(raw) : Number.NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+  });
+
+  readonly activeReviewTarget = computed(() => {
+    const tab = this.activeTab();
+    if (!tab?.worktreePath) return null;
+    return {
+      sessionId: tab.sessionId,
+      worktreePath: tab.worktreePath,
+      provider: tab.activeAgentProvider,
+    };
+  });
+
+  openReviewWorkspace(options: { path?: string; thread?: number } = {}): void {
+    const sessionId = this.activeSessionId();
+    if (sessionId === null) return;
+    const queryParams: Record<string, string> = {};
+    if (options.path) queryParams['file'] = options.path;
+    if (options.thread !== undefined) queryParams['thread'] = String(options.thread);
+    void this.router.navigate(['/sessions', sessionId, 'review'], {
+      queryParams: Object.keys(queryParams).length ? queryParams : null,
+    });
+  }
+
+  closeReviewWorkspace(): void {
+    const sessionId = this.activeSessionId();
+    if (sessionId === null) return;
+    void this.router.navigate(['/sessions', sessionId]);
   }
 
   private getSessionIdFromUrl(): number | null {

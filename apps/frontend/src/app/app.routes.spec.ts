@@ -169,3 +169,25 @@ describe('getDefaultRedirectPath', () => {
     expect(infoRoute?.redirectTo).toBe('settings');
   });
 });
+
+describe('session routes', () => {
+  const sessionRoute = routes.find(route => route.path === 'sessions');
+  const idRoute = sessionRoute?.children?.find(child => child.path === ':id');
+
+  it('keeps :id as the first child so session id resolution keeps working', () => {
+    // SessionContainer.getSessionIdFromUrl() matches on `path === ':id'`.
+    // A flat ':id/review' sibling would make it return null and break tab restore.
+    expect(idRoute).toBeTruthy();
+  });
+
+  it('registers the review route under :id', () => {
+    expect(idRoute?.children?.some(child => child.path === 'review')).toBe(true);
+  });
+
+  it('keeps an empty child so /sessions/:id itself still matches', () => {
+    // Angular requires a route with children to fully consume the URL. Without
+    // an empty-path child, '/sessions/5' would fail to match at all and every
+    // existing session URL would break.
+    expect(idRoute?.children?.some(child => child.path === '')).toBe(true);
+  });
+});

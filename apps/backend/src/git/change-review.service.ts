@@ -36,6 +36,19 @@ const DEFAULT_CHANGE_REVIEW_FILE_LIMIT = 2_000;
 const LARGE_FILE_BYTES = 1_000_000;
 const LARGE_FILE_LINES = 25_000;
 const DEFAULT_CONTEXT = 8;
+/**
+ * Context width that makes git emit an entire file as a single hunk. Anything
+ * comfortably larger than the biggest file we are willing to render works.
+ */
+const FULL_FILE_CONTEXT = 1_000_000;
+/**
+ * Whole-file rendering is capped well below `LARGE_FILE_LINES`: the `large`
+ * guard keys off *changed* lines, so a 20k-line file with three edits is not
+ * "large" and would otherwise stream 20k rows on a full-file request.
+ */
+const FULL_FILE_MAX_LINES = 8_000;
+/** Context width used when a full-file request exceeds `FULL_FILE_MAX_LINES`. */
+const FULL_FILE_FALLBACK_CONTEXT = 200;
 const DEFAULT_LIMIT = 400;
 const DEFAULT_CONTEXT_RANGE_LIMIT = 120;
 const MAX_LIMIT = 1_500;
@@ -219,6 +232,10 @@ export class ChangeReviewService {
       offset?: number;
       limit?: number;
       context?: number;
+      /** Render the whole file instead of hunks with limited context. */
+      fullFile?: boolean;
+      /** Allow opening a file that has no diff in this scope. */
+      allowUnchanged?: boolean;
       forceLoad?: boolean;
       forceFileLoad?: boolean;
     } = {},
@@ -229,10 +246,10 @@ export class ChangeReviewService {
       MAX_LIMIT,
       Math.max(1, Number(options.limit) || DEFAULT_LIMIT),
     );
-    const context = Math.max(
-      0,
-      Math.min(200, Number(options.context) || DEFAULT_CONTEXT),
-    );
+    const fullFile = Boolean(options.fullFile);
+    const context = fullFile
+      ? FULL_FILE_CONTEXT
+      : Math.max(0, Math.min(200, Number(options.context) || DEFAULT_CONTEXT));
 
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, false);
@@ -254,6 +271,9 @@ export class ChangeReviewService {
       false,
       loadCheck.status,
     );
+    // An "open any file" request targets a path with no diff in this scope, so
+    // the diff-driven summary lookup has nothing to return. Fall back to
+    // synthesizing a window straight from the worktree contents.
     const lookup = await this.readFileSummary(
       git,
       worktreePath,
@@ -261,7 +281,17 @@ export class ChangeReviewService {
       base,
       filePath,
       worktreeState,
-    );
+    ).catch((error: unknown) => {
+      if (!options.allowUnchanged) throw error;
+      return null;
+    });
+    if (!lookup) {
+      return this.buildUnchangedFileWindow(worktreePath, scope, filePath, {
+        offset,
+        limit,
+        forceFileLoad: Boolean(options.forceFileLoad),
+      });
+    }
     const summary = lookup.summary;
     const cacheKey = [
       worktreePath,
@@ -286,6 +316,7 @@ export class ChangeReviewService {
       context,
       worktreeState.fingerprint,
       Boolean(options.forceFileLoad),
+      fullFile,
     );
     const fingerprintPromise =
       offset === 0
@@ -311,6 +342,8 @@ export class ChangeReviewService {
       totalRows: full.rows.length,
       hasMore: offset + rows.length < full.rows.length,
       context,
+      fullFile,
+      unchanged: false,
       changeHash: full.changeHash,
       fingerprint: fingerprintResult?.fingerprint ?? null,
       rows,
@@ -982,6 +1015,7 @@ export class ChangeReviewService {
     context: number,
     worktreeFingerprint: string,
     forceFileLoad: boolean,
+    fullFile: boolean,
   ): Promise<CachedRows> {
     const cached = this.getCachedRows(cacheKey);
     if (cached) return cached;
@@ -999,6 +1033,7 @@ export class ChangeReviewService {
       cacheKey,
       worktreeFingerprint,
       forceFileLoad,
+      fullFile,
     ).finally(() => {
       this.rowBuilds.delete(cacheKey);
     });
@@ -1016,6 +1051,7 @@ export class ChangeReviewService {
     cacheKey: string,
     worktreeFingerprint: string,
     forceFileLoad: boolean,
+    fullFile = false,
   ): Promise<CachedRows> {
     let result: CachedRows;
     const summary = lookup.summary;
@@ -1056,15 +1092,8 @@ export class ChangeReviewService {
       return result;
     }
 
-    const patch = await git.raw([
-      ...this.buildDiffArgs(scope, base, [
-        '--diff-algorithm=histogram',
-        `--unified=${context}`,
-        '--find-renames',
-      ]),
-      '--',
-      summary.path,
-    ]);
+    // Read the file contents first: a full-file request needs the line count to
+    // decide how wide a context it can afford before asking git for the patch.
     const fileLines = await this.readReviewFileLines(
       git,
       worktreePath,
@@ -1073,18 +1102,175 @@ export class ChangeReviewService {
       summary,
       worktreeFingerprint,
     );
+
+    const fileLineCount = Math.max(
+      fileLines.newLines.length,
+      fileLines.oldLines.length,
+    );
+    const cappedFullFile =
+      fullFile && !forceFileLoad && fileLineCount > FULL_FILE_MAX_LINES;
+    const effectiveContext = cappedFullFile
+      ? FULL_FILE_FALLBACK_CONTEXT
+      : context;
+
+    const patch = await git.raw([
+      ...this.buildDiffArgs(scope, base, [
+        '--diff-algorithm=histogram',
+        `--unified=${effectiveContext}`,
+        '--find-renames',
+      ]),
+      '--',
+      summary.path,
+    ]);
     const parsed = this.parsePatchRows(summary.path, patch, fileLines);
+
+    // Patches that carry no hunks — pure renames, mode changes — still emit
+    // preamble lines, so "no rows" is the wrong test. What full-file mode
+    // promises is *coverage*: every line of the file is shown. When the patch
+    // doesn't deliver that, synthesize the file from its contents instead.
+    const rows = this.ensureFullFileCoverage(
+      parsed.rows,
+      summary,
+      fileLines,
+      fullFile && !cappedFullFile,
+    );
+
     result = this.cached(cacheKey, {
-      rows: parsed.rows.length
-        ? parsed.rows
+      rows: rows.length
+        ? rows
         : [this.metaRow(summary.path, 'No textual diff for this file.')],
       contextRanges: parsed.contextRanges,
-      message: null,
+      message: cappedFullFile
+        ? `Whole-file view is capped at ${FULL_FILE_MAX_LINES.toLocaleString()} lines; showing wide context instead.`
+        : null,
+      binary: false,
+      large: false,
+      truncated: cappedFullFile,
+    });
+    return result;
+  }
+
+  /**
+   * In full-file mode, guarantee the returned rows cover every line of the new
+   * file. Falls back to rendering the file as plain context when the patch does
+   * not (a rename or mode change carries preamble but no hunks).
+   */
+  private ensureFullFileCoverage(
+    rows: ChangeReviewRow[],
+    summary: ChangeReviewFileSummary,
+    fileLines: { oldLines: string[]; newLines: string[] },
+    fullFile: boolean,
+  ): ChangeReviewRow[] {
+    if (!fullFile || summary.status === 'deleted') return rows;
+
+    const lineCount = fileLines.newLines.length;
+    if (lineCount === 0) return rows;
+
+    const covered = new Set<number>();
+    for (const row of rows) {
+      if (row.newLine !== null) covered.add(row.newLine);
+    }
+    if (covered.size >= lineCount) return rows;
+
+    return this.buildContextRows(summary.path, fileLines, 1, 1, lineCount);
+  }
+
+  /**
+   * Window for a file with no diff in the current scope — the "open any file"
+   * path. Every row is plain context, so the same renderer handles it without
+   * knowing the difference.
+   */
+  private async buildUnchangedFileWindow(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    filePath: string,
+    options: { offset: number; limit: number; forceFileLoad: boolean },
+  ): Promise<ChangeReviewFileWindow> {
+    const absolutePath = path.join(worktreePath, filePath);
+    const stat = await fs.stat(absolutePath).catch(() => null);
+    if (!stat?.isFile()) {
+      throw new BadRequestException(`File not found in worktree: ${filePath}`);
+    }
+
+    const base = this.unchangedWindowBase(scope, filePath, options);
+    if (stat.size > LARGE_FILE_BYTES && !options.forceFileLoad) {
+      return {
+        ...base,
+        message: 'Large file omitted from automatic rendering.',
+        large: true,
+        truncated: true,
+        totalRows: 1,
+        rows: [this.metaRow(filePath, 'Large file is hidden by default.')],
+      };
+    }
+
+    const buffer = await fs.readFile(absolutePath);
+    if (buffer.includes(0)) {
+      return {
+        ...base,
+        message: 'Binary file.',
+        binary: true,
+        totalRows: 1,
+        rows: [this.metaRow(filePath, 'Binary file')],
+      };
+    }
+
+    const lines = this.splitFileLines(buffer.toString('utf8'));
+    const truncated = lines.length > FULL_FILE_MAX_LINES;
+    const visible = truncated ? lines.slice(0, FULL_FILE_MAX_LINES) : lines;
+    const allRows = visible.map((content, index) => ({
+      id: `${filePath}:context:${index + 1}:${index + 1}`,
+      type: 'context' as const,
+      oldLine: index + 1,
+      newLine: index + 1,
+      content,
+      path: filePath,
+    }));
+    const rows = allRows.slice(options.offset, options.offset + options.limit);
+
+    return {
+      ...base,
+      message: truncated
+        ? `File view is capped at ${FULL_FILE_MAX_LINES.toLocaleString()} lines.`
+        : null,
+      truncated,
+      totalRows: allRows.length,
+      hasMore: options.offset + rows.length < allRows.length,
+      changeHash: this.hashRows(allRows),
+      fingerprint:
+        options.offset === 0
+          ? await this.readWorktreeContentIdentity(worktreePath, filePath)
+          : null,
+      rows,
+    };
+  }
+
+  private unchangedWindowBase(
+    scope: ChangeReviewScope,
+    filePath: string,
+    options: { offset: number; limit: number },
+  ): ChangeReviewFileWindow {
+    return {
+      scope,
+      path: filePath,
+      oldPath: null,
+      status: 'modified',
       binary: false,
       large: false,
       truncated: false,
-    });
-    return result;
+      message: null,
+      offset: options.offset,
+      limit: options.limit,
+      totalRows: 0,
+      hasMore: false,
+      context: FULL_FILE_CONTEXT,
+      fullFile: true,
+      unchanged: true,
+      changeHash: '',
+      fingerprint: null,
+      rows: [],
+      contextRanges: [],
+    };
   }
 
   private buildDiffArgs(

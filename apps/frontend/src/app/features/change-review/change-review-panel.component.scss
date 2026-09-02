@@ -312,8 +312,67 @@
   text-align: right;
 }
 
+/* Thread markers sit inside the existing marker cell so the fixed 24px row
+   height and the 4-column grid are untouched. */
 .cr-marker {
+  position: relative;
   text-align: center;
+}
+
+.cr-thread-marker {
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.15rem;
+  transform: translateY(-50%);
+  border: 1px solid color-mix(in oklch, var(--primary) 45%, var(--border));
+  border-radius: 999px;
+  background: var(--popover);
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+.cr-thread-marker:hover,
+.cr-thread-marker:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 16%, var(--popover));
+  transform: translateY(-50%) scale(1.08);
+}
+
+.cr-thread-marker:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 40%, transparent);
+}
+
+/* Anchored lines get an accent rail. Kept distinct from the warning-toned
+   `--mentioned` state so a line can be both without becoming unreadable. */
+.cr-diff-row--anchored {
+  box-shadow: inset 3px 0 0 color-mix(in oklch, var(--primary) 80%, var(--foreground));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cr-thread-marker {
+    transition: none;
+  }
+
+  .cr-thread-marker:hover,
+  .cr-thread-marker:focus-visible {
+    transform: translateY(-50%);
+  }
 }
 
 .cr-code {
@@ -530,44 +589,7 @@
   background: color-mix(in oklch, var(--primary) 10%, var(--background));
 }
 
-.cr-mention-action {
-  position: absolute;
-  z-index: 10;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  height: 30px;
-  padding: 0 0.65rem;
-  border: 1px solid color-mix(in oklch, var(--primary) 34%, var(--border));
-  border-radius: 0.5rem;
-  background: var(--popover);
-  color: var(--popover-foreground);
-  box-shadow: 0 12px 30px -18px color-mix(in oklch, var(--foreground) 54%, transparent);
-  font: inherit;
-  font-size: 0.74rem;
-  font-weight: 750;
-  cursor: pointer;
-}
 
-.cr-mention-action:hover,
-.cr-mention-action:focus-visible {
-  outline: none;
-  border-color: color-mix(in oklch, var(--primary) 56%, var(--border));
-  background: color-mix(in oklch, var(--primary) 7%, var(--popover));
-}
-
-.cr-mention-action__count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.05rem;
-  height: 1.05rem;
-  border-radius: 999px;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  font-size: 0.62rem;
-  line-height: 1;
-}
 
 .cr-code--loading {
   display: inline-flex;

@@ -31,7 +31,9 @@ import {
   lucideGitPullRequest,
   lucideLoader,
   lucideMaximize2,
+  lucideMessageSquare,
   lucideMessageSquarePlus,
+  lucideMessagesSquare,
   lucideMinimize2,
   lucideRefreshCw,
   lucideSearch,
@@ -68,7 +70,13 @@ import {
   inlineChangeHtml,
 } from '@/features/session/claude-workspace/util/code-highlight';
 import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
+import {
+  DEFAULT_DIFF_SELECTION_ACTIONS,
+  DiffSelectionMenuComponent,
+  type DiffSelectionMenuAction,
+} from './diff-selection-menu.component';
 import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
+import { diffMentionRowKey } from '@/shared/utils/diff-row-key';
 import {
   CHANGE_REVIEW_HEADER_ROWS,
   ChangeReviewVirtualAnchor,
@@ -206,6 +214,14 @@ function sidebarStorageKey(): string {
 // Below this panel width, the file sidebar auto-collapses to a compact rail so
 // the diff keeps enough room. Users can still pin it open/closed via the toggle.
 const SIDEBAR_AUTO_COLLAPSE_PX = 560;
+/**
+ * Context width sent for whole-file requests. The backend maps anything this
+ * large onto its own full-file constant; the value only has to be far beyond
+ * any real file.
+ */
+const FULL_FILE_REQUEST_CONTEXT = 1_000_000;
+/** Rough bytes-per-line used to size the scrollbar before rows arrive. */
+const APPROX_BYTES_PER_LINE = 45;
 
 type SidebarPref = 'auto' | 'collapsed' | 'expanded';
 
@@ -219,6 +235,7 @@ type SidebarPref = 'auto' | 'collapsed' | 'expanded';
     ZardButtonComponent,
     ZardInputDirective,
     MergeConflictsPanelComponent,
+    DiffSelectionMenuComponent,
   ],
   templateUrl: './change-review-panel.component.html',
   styleUrl: './change-review-panel.component.scss',
@@ -238,7 +255,9 @@ type SidebarPref = 'auto' | 'collapsed' | 'expanded';
       lucideGitPullRequest,
       lucideLoader,
       lucideMaximize2,
+      lucideMessageSquare,
       lucideMessageSquarePlus,
+      lucideMessagesSquare,
       lucideMinimize2,
       lucideRefreshCw,
       lucideSearch,
@@ -252,6 +271,36 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly highlightedMentions = input<readonly DiffSelectionMention[]>([]);
   readonly mentionSelection = output<DiffSelectionMention[]>();
   readonly openFileInEditor = output<string>();
+
+  // --- Review workspace integration -------------------------------------
+  // The panel stays the single diff implementation; the workspace layers its
+  // own chrome, actions and thread markers on top through these.
+
+  /** `workspace` hides chrome the review workspace supplies itself. */
+  readonly chromeVariant = input<'panel' | 'workspace'>('panel');
+  /** Render every file whole rather than as hunks. */
+  readonly fullFileMode = input(false);
+  /** Per-file whole-file overrides, independent of `fullFileMode`. */
+  readonly fullFilePaths = input<ReadonlySet<string>>(new Set<string>());
+  /** Files with no diff, opened explicitly by the user. */
+  readonly extraFiles = input<readonly string[]>([]);
+  /** Row key → ids of the discussions anchored to that row. */
+  readonly threadAnchors = input<ReadonlyMap<string, number[]>>(new Map());
+  readonly selectionActions = input<readonly DiffSelectionMenuAction[]>(
+    DEFAULT_DIFF_SELECTION_ACTIONS,
+  );
+
+  readonly selectionAction = output<{
+    id: string;
+    mentions: DiffSelectionMention[];
+  }>();
+  readonly threadAnchorClick = output<number>();
+  /** Ask the host to open the full review workspace. */
+  readonly openReviewWorkspace = output<void>();
+  /** Open-discussion count, shown as a badge on the Review button. */
+  readonly reviewThreadCount = input(0);
+  /** Pre-filter the file rail, e.g. from a `?file=` deep link. */
+  readonly initialFileFilter = input<string | null>(null);
 
   private readonly changeReview = inject(ChangeReviewService);
   private readonly gitService = inject(GitService);
@@ -441,13 +490,37 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     return file ? [file] : [];
   });
 
+  /**
+   * Files opened explicitly by the user that have no diff in this scope. They
+   * are synthesized as zero-change summaries so they flow through the same
+   * rail, windowing and rendering as real diff entries.
+   */
+  readonly extraFileSummaries = computed<ChangeReviewFileSummary[]>(() => {
+    const diffPaths = new Set((this.summary()?.files ?? []).map((file) => file.path));
+    return this.extraFiles()
+      .filter((path) => !diffPaths.has(path))
+      .map((path) => ({
+        path,
+        oldPath: null,
+        status: 'modified' as const,
+        additions: 0,
+        deletions: 0,
+        binary: false,
+        large: false,
+        size: null,
+      }));
+  });
+
   readonly filteredFiles = computed(() => {
     const summary = this.summary();
     if (!summary) return [];
     const query = this.search().trim().toLowerCase();
     const status = this.statusFilter();
-    return summary.files.filter((file) => {
-      if (status !== 'all' && file.status !== status) return false;
+    // Opened files are listed first: the user asked for them explicitly.
+    return [...this.extraFileSummaries(), ...summary.files].filter((file) => {
+      if (status !== 'all' && file.status !== status && !this.isExtraFilePath(file.path)) {
+        return false;
+      }
       if (!query) return true;
       return (
         file.path.toLowerCase().includes(query) ||
@@ -880,6 +953,23 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     );
   }
 
+  /**
+   * Route a selection-menu action. `mention` keeps its existing behaviour so
+   * the Changes panel is unchanged; anything else is the host's to handle.
+   */
+  onSelectionMenuAction(event: {
+    id: string;
+    mentions: DiffSelectionMention[];
+  }): void {
+    if (event.id === 'mention') {
+      this.mentionCurrentSelection();
+      return;
+    }
+    this.selectionAction.emit(event);
+    this.selectionMentionAction.set(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
   forwardMentionSelection(mentions: DiffSelectionMention[]): void {
     this.mentionSelection.emit(mentions);
   }
@@ -1012,18 +1102,31 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   isMentionedDiffRow(renderRow: RenderRow): boolean {
+    const key = this.diffRowKey(renderRow);
+    return key !== null && this.mentionedRowKeys().has(key);
+  }
+
+  /** Discussions anchored to this row, for the inline marker. */
+  threadIdsForRow(renderRow: RenderRow): readonly number[] {
+    const key = this.diffRowKey(renderRow);
+    return key === null ? [] : (this.threadAnchors().get(key) ?? []);
+  }
+
+  isExtraFilePath(filePath: string): boolean {
+    return this.extraFiles().includes(filePath);
+  }
+
+  private diffRowKey(renderRow: RenderRow): string | null {
     const row = renderRow.row;
-    if (renderRow.kind !== 'diff' || !row) return false;
-    return this.mentionedRowKeys().has(
-      diffMentionRowKey(
-        this.scope(),
-        renderRow.file.path,
-        renderRow.state.changeHash,
-        row.type,
-        row.oldLine,
-        row.newLine,
-        row.content,
-      ),
+    if (renderRow.kind !== 'diff' || !row) return null;
+    return diffMentionRowKey(
+      this.scope(),
+      renderRow.file.path,
+      renderRow.state.changeHash,
+      row.type,
+      row.oldLine,
+      row.newLine,
+      row.content,
     );
   }
 
@@ -1356,8 +1459,32 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     };
   }
 
+  /** Context width to request for a file, honouring any whole-file override. */
+  private readonly fileFilterEffect = effect(() => {
+    const path = this.initialFileFilter();
+    if (path) this.setSearch(path);
+  });
+
+  contextForPath(filePath: string): number {
+    return this.isFullFilePath(filePath) ? FULL_FILE_REQUEST_CONTEXT : this.context();
+  }
+
+  isFullFilePath(filePath: string): boolean {
+    return this.fullFileMode() || this.fullFilePaths().has(filePath);
+  }
+
   private initialDiffRowCount(file: ChangeReviewFileSummary): number {
-    return this.shouldGateFileDiff(file) ? 1 : estimateChangeReviewDiffRows(file, this.context());
+    if (this.shouldGateFileDiff(file)) return 1;
+
+    // `estimateChangeReviewDiffRows` extrapolates from the context width, which
+    // is meaningless in whole-file mode — it would reserve millions of rows of
+    // phantom scroll height before the first window lands. Estimate from the
+    // file size instead until the real `totalRows` arrives.
+    if (this.isFullFilePath(file.path)) {
+      return Math.max(1, Math.ceil((file.size ?? 0) / APPROX_BYTES_PER_LINE));
+    }
+
+    return estimateChangeReviewDiffRows(file, this.context());
   }
 
   private applyFilters(scrollToTop: boolean): void {
@@ -1643,7 +1770,9 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
           {
             offset: request.offset,
             limit: WINDOW_LIMIT,
-            context: this.context(),
+            context: this.contextForPath(request.filePath),
+            fullFile: this.isFullFilePath(request.filePath),
+            allowUnchanged: this.isExtraFilePath(request.filePath),
             forceFileLoad: this.isFileDiffForceLoadedPath(request.filePath),
           },
           this.forceLoadLargeChangeSet(),
@@ -2505,14 +2634,3 @@ function baseIndexToDiffIndex(state: FileRenderState, targetBaseIndex: number): 
   return targetBaseIndex + shift;
 }
 
-function diffMentionRowKey(
-  scope: DiffSelectionMention['scope'],
-  filePath: string,
-  changeHash: string | null,
-  type: ChangeReviewRow['type'],
-  oldLine: number | null,
-  newLine: number | null,
-  content: string,
-): string {
-  return JSON.stringify([scope, filePath, changeHash, type, oldLine, newLine, content]);
-}
