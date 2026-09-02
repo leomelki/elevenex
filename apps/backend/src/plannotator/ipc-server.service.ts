@@ -51,6 +51,20 @@ export class IpcServerService
         },
       );
 
+      const listenOnRandomPort = (): void => {
+        this.server!.listen(0, '127.0.0.1', () => {
+          const address = this.server!.address();
+          if (address && typeof address === 'object') {
+            this.port = address.port;
+            void this.saveLastPort(this.port);
+            this.logger.log(`IPC server listening on port ${this.port}`);
+            resolve();
+          } else {
+            reject(new Error('Failed to get server address'));
+          }
+        });
+      };
+
       this.server.listen(tryPort, '127.0.0.1', () => {
         const address = this.server!.address();
         if (address && typeof address === 'object') {
@@ -63,18 +77,24 @@ export class IpcServerService
         }
       });
 
+      let fellBackToRandomPort = false;
       this.server.on('error', (err: NodeJS.ErrnoException) => {
-        if (err.code === 'EADDRINUSE' && tryPort !== 0) {
-          this.logger.warn(`Port ${tryPort} in use, trying random port`);
-          this.server!.listen(0, '127.0.0.1', () => {
-            const address = this.server!.address();
-            if (address && typeof address === 'object') {
-              this.port = address.port;
-              void this.saveLastPort(this.port);
-              this.logger.log(`IPC server listening on port ${this.port}`);
-              resolve();
-            }
-          });
+        if (tryPort !== 0 && !fellBackToRandomPort) {
+          // The pinned port can be unusable even when nothing listens on it:
+          // besides EADDRINUSE (a live listener), Windows reports EACCES/EPERM
+          // when the port sits inside a Hyper-V/winnat excluded port range
+          // (`netsh interface ipv4 show excludedportrange protocol=tcp`).
+          // Those reservations shift across reboots, so a port that bound fine
+          // last run may be permanently reserved today — and since the port is
+          // persisted and retried on every launch, without this fallback the
+          // backend could never boot again. Fall back to an OS-assigned port
+          // for any pinned-port bind failure; the new port is persisted so the
+          // registry picks it up like an EADDRINUSE fallback already did.
+          fellBackToRandomPort = true;
+          this.logger.warn(
+            `Port ${tryPort} unusable (${err.code ?? err.message}), falling back to a random port`,
+          );
+          listenOnRandomPort();
         } else {
           reject(err);
         }
