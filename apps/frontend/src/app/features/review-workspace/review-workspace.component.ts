@@ -8,6 +8,8 @@ import {
   input,
   output,
   signal,
+  untracked,
+  viewChild,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -31,6 +33,12 @@ import {
 import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
 import type { DiffSelectionMenuAction } from '@/features/change-review/diff-selection-menu.component';
 import { ReviewFileOpenerComponent } from './review-file-opener.component';
+import {
+  ReviewFileTabsComponent,
+  isMarkdownPath,
+  type ReviewFileTab,
+} from './review-file-tabs.component';
+import { ReviewMarkdownPreviewComponent } from './review-markdown-preview.component';
 import { ReviewThreadDockComponent } from './review-thread-dock.component';
 import {
   ReviewWorkspaceStateService,
@@ -51,6 +59,8 @@ const FORKABLE_PROVIDERS: readonly AgentProviderId[] = ['claude', 'codex'];
     ZardResizablePanelComponent,
     ChangeReviewPanelComponent,
     ReviewFileOpenerComponent,
+    ReviewFileTabsComponent,
+    ReviewMarkdownPreviewComponent,
     ReviewThreadDockComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -79,6 +89,7 @@ export class ReviewWorkspaceComponent {
   readonly promoted = output<CreateSessionForkResponse>();
 
   readonly state = inject(ReviewWorkspaceStateService);
+  private readonly diffPanel = viewChild(ChangeReviewPanelComponent);
 
   readonly fullFileMode = signal(true);
   /** Text handed to the session composer by "Ask in session". */
@@ -86,8 +97,23 @@ export class ReviewWorkspaceComponent {
   /** Worktree files opened explicitly, on top of the ones with a diff. */
   readonly extraFiles = signal<readonly string[]>([]);
   readonly fileOpenerVisible = signal(false);
-  /** Rail filter, driven by the `?file=` deep link. */
-  readonly fileFilter = signal<string | null>(null);
+  /**
+   * Files open as tabs. Each remembers its own scroll offset and, for markdown,
+   * whether it was left on rendered preview — so switching back restores where
+   * you were rather than dumping you at the top.
+   */
+  readonly tabs = signal<readonly ReviewFileTab[]>([]);
+  readonly activeTabPath = signal<string | null>(null);
+
+  readonly activeTab = computed(
+    () => this.tabs().find((tab) => tab.path === this.activeTabPath()) ?? null,
+  );
+
+  /** Markdown tabs left on preview render the document instead of the diff. */
+  readonly showMarkdownPreview = computed(() => {
+    const tab = this.activeTab();
+    return tab !== null && tab.preview && isMarkdownPath(tab.path);
+  });
 
   readonly canFork = computed(() =>
     FORKABLE_PROVIDERS.includes(this.provider()),
@@ -146,16 +172,21 @@ export class ReviewWorkspaceComponent {
       void this.state.load(sessionId);
     });
 
-    // A deep-linked file is filtered in the rail rather than merely scrolled
-    // to, so it is unambiguous which file the link meant — including when the
-    // file has no diff and was never in the list.
+    // A deep-linked file opens as a tab, so it behaves like any other file the
+    // user opened rather than being a special filtered mode.
     effect(() => {
       const path = this.focusFilePath();
       if (!path) return;
-      this.fileFilter.set(path);
-      this.extraFiles.update((files) =>
-        files.includes(path) ? files : [...files, path],
-      );
+      untracked(() => {
+        // Also register it as an extra file: a deep link may point at a file
+        // with no diff in this scope, which would otherwise render blank.
+        // `extraFileSummaries` drops paths that are already in the diff, so
+        // this is a no-op for changed files.
+        this.extraFiles.update((files) =>
+          files.includes(path) ? files : [...files, path],
+        );
+        this.openTab(path);
+      });
     });
 
     effect(() => {
@@ -215,10 +246,87 @@ export class ReviewWorkspaceComponent {
     this.extraFiles.update((files) =>
       files.includes(path) ? files : [...files, path],
     );
+    this.openTab(path, { extra: true });
   }
 
-  closeWorktreeFile(path: string): void {
+  /** Open a file as a tab, or focus it if it is already open. */
+  openTab(path: string, options: { extra?: boolean } = {}): void {
+    this.captureActiveScroll();
+    if (!this.tabs().some((tab) => tab.path === path)) {
+      this.tabs.update((tabs) => [
+        ...tabs,
+        {
+          path,
+          scrollTop: 0,
+          // Markdown opens rendered: that is how you want to read a document,
+          // and the toggle is one click away when you want the diff.
+          preview: isMarkdownPath(path),
+          extra: Boolean(options.extra),
+        },
+      ]);
+    }
+    this.activeTabPath.set(path);
+    this.restoreActiveScroll();
+  }
+
+  /** `null` selects the "All changes" pseudo-tab (continuous stacked scroll). */
+  selectTab(path: string | null): void {
+    if (path === this.activeTabPath()) return;
+    this.captureActiveScroll();
+    this.activeTabPath.set(path);
+    this.restoreActiveScroll();
+  }
+
+  closeTab(path: string): void {
+    const tabs = this.tabs();
+    const index = tabs.findIndex((tab) => tab.path === path);
+    if (index < 0) return;
+
+    const remaining = tabs.filter((tab) => tab.path !== path);
+    this.tabs.set(remaining);
     this.extraFiles.update((files) => files.filter((file) => file !== path));
+
+    if (this.activeTabPath() === path) {
+      // Focus the neighbour, the way an editor does.
+      const next = remaining[index] ?? remaining[index - 1] ?? null;
+      this.activeTabPath.set(next?.path ?? null);
+      this.restoreActiveScroll();
+    }
+  }
+
+  toggleTabPreview(path: string): void {
+    // Diff and preview scroll independently, so reset rather than restoring an
+    // offset measured in the other view.
+    this.tabs.update((tabs) =>
+      tabs.map((tab) =>
+        tab.path === path ? { ...tab, preview: !tab.preview, scrollTop: 0 } : tab,
+      ),
+    );
+  }
+
+  onPreviewScrolled(offset: number): void {
+    this.rememberScroll(offset);
+  }
+
+  private captureActiveScroll(): void {
+    if (this.showMarkdownPreview()) return; // the preview reports its own offset
+    const panel = this.diffPanel();
+    if (!panel) return;
+    this.rememberScroll(panel.readScrollTop());
+  }
+
+  private restoreActiveScroll(): void {
+    const tab = this.activeTab();
+    if (!tab || this.showMarkdownPreview()) return;
+    this.diffPanel()?.restoreScrollTop(tab.scrollTop);
+  }
+
+  private rememberScroll(offset: number): void {
+    const active = this.activeTabPath();
+    if (!active) return;
+    this.tabs.update((tabs) =>
+      tabs.map((tab) => (tab.path === active ? { ...tab, scrollTop: offset } : tab)),
+    );
   }
 
   onPromoted(response: unknown): void {

@@ -166,3 +166,31 @@
   min-height: 0;
   flex: 1;
 }
+
+.rw-code {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+}
+
+.rw-code__body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+/* Kept in the layout but not painted, so the panel holds its measurements. */
+.rw-code__hidden {
+  visibility: hidden;
+}
+
+.rw-code__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}

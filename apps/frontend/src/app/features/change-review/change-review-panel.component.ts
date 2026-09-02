@@ -297,10 +297,16 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly threadAnchorClick = output<number>();
   /** Ask the host to open the full review workspace. */
   readonly openReviewWorkspace = output<void>();
+  /** A file was picked in the rail; a tabbed host opens it as a tab. */
+  readonly fileActivated = output<string>();
   /** Open-discussion count, shown as a badge on the Review button. */
   readonly reviewThreadCount = input(0);
-  /** Pre-filter the file rail, e.g. from a `?file=` deep link. */
-  readonly initialFileFilter = input<string | null>(null);
+  /**
+   * Render only this file in the diff area, turning the stacked scroll into a
+   * single-file view. The rail still lists everything so files stay openable.
+   * Null keeps the original continuous-scroll behaviour.
+   */
+  readonly activePath = input<string | null>(null);
 
   private readonly changeReview = inject(ChangeReviewService);
   private readonly gitService = inject(GitService);
@@ -403,7 +409,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     const collapsedPaths = this.collapsedPaths();
     const matches: SearchMatch[] = [];
 
-    for (const file of this.filteredFiles()) {
+    for (const file of this.renderedFiles()) {
       if (collapsedPaths.has(file.path)) continue;
       const state = fileStates.get(file.path);
       if (!state) continue;
@@ -481,7 +487,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     if (!activePath) return null;
     return (
       this.fileStates().get(activePath)?.file ??
-      this.filteredFiles().find((file) => file.path === activePath) ??
+      this.renderedFiles().find((file) => file.path === activePath) ??
       null
     );
   });
@@ -527,6 +533,18 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
         Boolean(file.oldPath?.toLowerCase().includes(query))
       );
     });
+  });
+
+  /**
+   * The files actually laid out in the diff area.
+   *
+   * Separate from `filteredFiles` (which drives the rail) so a tabbed host can
+   * render one file at a time while still listing the rest.
+   */
+  readonly renderedFiles = computed(() => {
+    const active = this.activePath();
+    if (!active) return this.filteredFiles();
+    return this.filteredFiles().filter((file) => file.path === active);
   });
 
   readonly statusFilters = computed<Array<{ value: StatusFilter; label: string; count: number }>>(
@@ -750,6 +768,12 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     scrollEl.scrollTop = Math.max(0, rowTop - scrollEl.clientHeight / 2 + ROW_HEIGHT_PX / 2);
     this.refreshRenderedRows();
     this.ensureVisibleRangeLoaded();
+  }
+
+  /** Rail click: tell the host, then scroll (a no-op in single-file mode). */
+  activateFile(file: ChangeReviewFileSummary): void {
+    this.fileActivated.emit(file.path);
+    this.scrollToFile(file);
   }
 
   scrollToFile(file: ChangeReviewFileSummary): void {
@@ -1303,7 +1327,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     this.now.set(Date.now());
 
     this.rebuildLayout();
-    const files = this.filteredFiles();
+    const files = this.renderedFiles();
     this.activeFilePath.set(
       snapshot.activeFilePath && files.some((file) => file.path === snapshot.activeFilePath)
         ? snapshot.activeFilePath
@@ -1460,10 +1484,32 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   /** Context width to request for a file, honouring any whole-file override. */
-  private readonly fileFilterEffect = effect(() => {
-    const path = this.initialFileFilter();
-    if (path) this.setSearch(path);
+  /** Re-lay out when the host switches which file is rendered. */
+  private readonly activePathEffect = effect(() => {
+    this.activePath();
+    untracked(() => {
+      this.rebuildLayout();
+      this.refreshRenderedRows();
+    });
   });
+
+  /** Current scroll offset of the diff area, for per-tab state preservation. */
+  readScrollTop(): number {
+    return this.diffScroll()?.nativeElement.scrollTop ?? 0;
+  }
+
+  /**
+   * Restore a previously captured scroll offset. Applied on the next frame so
+   * it lands after the new file's layout has been measured.
+   */
+  restoreScrollTop(value: number): void {
+    requestAnimationFrame(() => {
+      const element = this.diffScroll()?.nativeElement;
+      if (!element) return;
+      element.scrollTop = value;
+      this.refreshRenderedRows();
+    });
+  }
 
   contextForPath(filePath: string): number {
     return this.isFullFilePath(filePath) ? FULL_FILE_REQUEST_CONTEXT : this.context();
@@ -1489,7 +1535,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
   private applyFilters(scrollToTop: boolean): void {
     this.rebuildLayout();
-    const files = this.filteredFiles();
+    const files = this.renderedFiles();
     this.activeFilePath.set(files[0]?.path ?? null);
     if (scrollToTop) {
       window.setTimeout(() => {
@@ -1510,7 +1556,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     const states = this.fileStates();
     this.layout.set(
       new ChangeReviewVirtualLayout(
-        this.filteredFiles().map((file) => ({
+        this.renderedFiles().map((file) => ({
           path: file.path,
           headerRows: this.isFileCollapsed(file) ? 1 : 2,
           diffRows: this.isFileCollapsed(file)
@@ -1991,7 +2037,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   private scrollToAdjacentFile(delta: 1 | -1): void {
-    const files = this.filteredFiles();
+    const files = this.renderedFiles();
     if (files.length === 0) return;
     const activePath = this.activeFilePath();
     if (!activePath) {
@@ -2006,7 +2052,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   private scrollToNextUnviewedFile(currentPath: string): void {
-    const files = this.filteredFiles();
+    const files = this.renderedFiles();
     if (files.length === 0) return;
     const currentIndex = files.findIndex((file) => file.path === currentPath);
     const ordered = [

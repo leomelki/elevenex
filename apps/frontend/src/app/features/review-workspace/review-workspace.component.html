@@ -54,19 +54,51 @@
 
 <z-resizable class="rw-body" [zLayout]="'horizontal'">
   <z-resizable-panel [zDefaultSize]="62" [zMin]="35">
-    <app-change-review-panel
-      class="h-full"
-      chromeVariant="workspace"
-      [worktreePath]="worktreePath()"
-      [fullFileMode]="fullFileMode()"
-      [extraFiles]="extraFiles()"
-      [initialFileFilter]="fileFilter()"
-      [threadAnchors]="state.anchorRowIndex()"
-      [selectionActions]="selectionActions()"
-      (selectionAction)="onSelectionAction($event)"
-      (mentionSelection)="onMentionInSession($event)"
-      (threadAnchorClick)="state.focusThread($event)"
-    />
+    <div class="rw-code">
+      <app-review-file-tabs
+        [tabs]="tabs()"
+        [activePath]="activeTabPath()"
+        (select)="selectTab($event)"
+        (selectAll)="selectTab(null)"
+        (close)="closeTab($event)"
+        (togglePreview)="toggleTabPreview($event)"
+      />
+
+      <div class="rw-code__body">
+        <!--
+          The diff panel stays mounted under the markdown preview rather than
+          being swapped out: remounting would refetch the summary and lose every
+          loaded window and scroll offset just for a preview toggle.
+        -->
+        <app-change-review-panel
+          class="h-full"
+          chromeVariant="workspace"
+          [class.rw-code__hidden]="showMarkdownPreview()"
+          [worktreePath]="worktreePath()"
+          [fullFileMode]="fullFileMode()"
+          [extraFiles]="extraFiles()"
+          [activePath]="activeTabPath()"
+          [threadAnchors]="state.anchorRowIndex()"
+          [selectionActions]="selectionActions()"
+          (selectionAction)="onSelectionAction($event)"
+          (mentionSelection)="onMentionInSession($event)"
+          (threadAnchorClick)="state.focusThread($event)"
+          (fileActivated)="openTab($event)"
+        />
+
+        @if (showMarkdownPreview()) {
+          @if (activeTab(); as tab) {
+            <app-review-markdown-preview
+              class="rw-code__overlay"
+              [worktreePath]="worktreePath()"
+              [path]="tab.path"
+              [restoreScrollTop]="tab.scrollTop"
+              (scrolled)="onPreviewScrolled($event)"
+            />
+          }
+        }
+      </div>
+    </div>
   </z-resizable-panel>
 
   <z-resizable-handle />

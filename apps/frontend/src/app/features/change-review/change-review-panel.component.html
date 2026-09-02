@@ -281,7 +281,7 @@
                 class="cr-rail-file"
                 [class.cr-rail-file--selected]="isSelectedFile(file)"
                 [class.cr-rail-file--viewed]="isFileViewed(file)"
-                (click)="scrollToFile(file)"
+                (click)="activateFile(file)"
                 (mouseenter)="prefetchFile(file)"
                 (focus)="prefetchFile(file)"
                 [title]="file.path"
@@ -386,7 +386,7 @@
                     isSelectedFile(file),
                   'opacity-55': isFileViewed(file) && !isSelectedFile(file),
                 }"
-                (click)="scrollToFile(file)"
+                (click)="activateFile(file)"
                 (mouseenter)="prefetchFile(file)"
                 (focus)="prefetchFile(file)"
                 [title]="file.path"
