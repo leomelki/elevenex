@@ -1126,8 +1126,15 @@ async function waitForBackendReady(backendUrl, timeoutMs) {
   throw new Error(`Embedded backend did not become ready within ${timeoutMs}ms`);
 }
 
-function isAddressInUseError(message) {
-  return /EADDRINUSE|address already in use/i.test(message || '');
+function isPortUnavailableError(message) {
+  // EADDRINUSE: another process grabbed the port between our free-port probe
+  // and the backend's bind. On Windows, EACCES / "permission denied" means the
+  // port fell inside a Hyper-V/winnat excluded port range (`netsh interface
+  // ipv4 show excludedportrange protocol=tcp`) — WSL/Hyper-V reserve these
+  // blocks dynamically and can claim one containing the probed port at any
+  // moment. Both mean "this specific port is unusable": the launcher should
+  // drop it and retry on a fresh one.
+  return /EADDRINUSE|address already in use|EACCES|permission denied/i.test(message || '');
 }
 
 // Exit code the backend uses to ask its launcher for a restart (see
@@ -1152,8 +1159,8 @@ function isTransientSpawnLockError(error) {
 
 // Spawn the backend process, wire logging/pid/exit tracking, and return a promise
 // that resolves once it reports ready (or rejects with the captured stderr; the
-// rejection carries `.addressInUse` so the caller can decide whether to retry on
-// a different port).
+// rejection carries `.portUnavailable` so the caller can decide whether to retry
+// on a different port).
 function launchEmbeddedBackend(launchOptions) {
   const { backendExecutable, backendArgs, env, cwd, backendUrl } = launchOptions;
   const child = spawn(backendExecutable, backendArgs, {
@@ -1190,16 +1197,33 @@ function launchEmbeddedBackend(launchOptions) {
     });
   });
 
+  // The backend exits before ever answering /api when its bootstrap fails
+  // (unusable port, missing runtime files, …). Without this race the launcher
+  // keeps polling a port that will never open until the full ready timeout
+  // elapses, then reports a generic "did not become ready" whose appended
+  // stderr tail may not even mention the real cause. Reject as soon as the
+  // child is gone so retries start immediately.
+  const exitedBeforeReady = new Promise((_resolve, reject) => {
+    child.once('exit', (code) => {
+      const wrapped = new Error(
+        `Embedded backend exited before becoming ready (code ${code ?? 'unknown'})`,
+      );
+      wrapped.portUnavailable = isPortUnavailableError(stderrBuffer);
+      reject(wrapped);
+    });
+  });
+
   const ready = Promise.race([
     waitForBackendReady(backendUrl, EMBEDDED_BACKEND_READY_TIMEOUT_MS),
     spawnFailed,
+    exitedBeforeReady,
   ]).then(
     () => undefined,
     (error) => {
       terminateChildProcess(child);
       const details = stderrBuffer.trim();
       const wrapped = new Error(details ? `${error.message}\n\n${details}` : error.message);
-      wrapped.addressInUse = error.addressInUse || isAddressInUseError(stderrBuffer);
+      wrapped.portUnavailable = error.portUnavailable || isPortUnavailableError(stderrBuffer);
       wrapped.transientLock = Boolean(error.transientLock);
       throw wrapped;
     },
@@ -1289,9 +1313,11 @@ async function launchEmbeddedBackendWithRetries() {
   const backendArgs = [embeddedBackendEntry];
 
   // Two transient failures justify a retry here:
-  //  - EADDRINUSE: a random free port can be grabbed between getFreePort()
-  //    releasing the probe socket and the backend binding it. Reallocate a fresh
-  //    port and retry (only when the port wasn't explicitly pinned).
+  //  - An unusable port: EADDRINUSE means a random free port was grabbed
+  //    between getFreePort() releasing the probe socket and the backend binding
+  //    it; on Windows, EACCES/permission denied means the port fell inside a
+  //    Hyper-V/winnat excluded range reserved after the probe. Reallocate a
+  //    fresh port and retry (only when the port wasn't explicitly pinned).
   //  - A Windows file lock on a freshly-extracted node.exe (AV scan / unreleased
   //    tar handles). Back off briefly and retry the same port so the very first
   //    launch after a download/update succeeds instead of requiring a relaunch.
@@ -1326,11 +1352,11 @@ async function launchEmbeddedBackendWithRetries() {
       return backendUrl;
     } catch (error) {
       lastError = error;
-      const canRetry = attempt < maxAttempts && (error.addressInUse || error.transientLock);
+      const canRetry = attempt < maxAttempts && (error.portUnavailable || error.transientLock);
       if (!canRetry) {
         break;
       }
-      if (error.addressInUse) {
+      if (error.portUnavailable) {
         // Drop the contested port so the next attempt allocates a fresh one.
         embeddedBackendPort = null;
       } else {

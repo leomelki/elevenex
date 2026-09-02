@@ -306,6 +306,12 @@ async function bootstrap() {
 
   const httpServer = app.getHttpServer();
 
+  // A dozen gateways each attach their own `upgrade` listener to this server
+  // (see the attachToServer calls below), which legitimately exceeds Node's
+  // default warning threshold of 10. Lift the cap instead of booting with a
+  // MaxListenersExceededWarning on stderr that ends up masking real errors.
+  httpServer.setMaxListeners(0);
+
   const terminalGateway = app.get(TerminalGateway);
   terminalGateway.attachToServer(httpServer);
 
@@ -350,4 +356,13 @@ async function bootstrap() {
   });
   await listenServer(edgeProxyServer, getElevenexProxyPort(), '0.0.0.0');
 }
-bootstrap();
+bootstrap().catch((error) => {
+  // A failed bootstrap (e.g. the edge proxy cannot bind its port) must kill the
+  // process. Without this the rejection stays unhandled, the process lingers
+  // as a half-initialized zombie that never opens its port, and the launcher
+  // times out with an unrelated "did not become ready" error. Print the real
+  // cause on stderr (the Electron launcher surfaces it in its retry/error
+  // dialogs) and exit non-zero.
+  console.error('Elevenex backend failed to start:', error);
+  process.exit(1);
+});
