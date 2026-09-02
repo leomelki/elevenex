@@ -36,8 +36,13 @@
       "preload.cjs",
       "settings-preload.cjs",
       "app-updater.cjs",
+      "connection-registry.cjs",
       "download-utils.cjs",
+      "environment-ref.cjs",
+      "mcp-proxy-url.cjs",
       "remote-server-utils.cjs",
+      "window-manager.cjs",
+      "window-state-store.cjs",
       "wsl-utils.cjs",
       "assets/**/*",
       {
