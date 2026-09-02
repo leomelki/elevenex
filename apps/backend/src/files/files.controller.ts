@@ -9,7 +9,9 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FilesService } from './files.service.js';
 import * as path from 'node:path';
 import { GetPathSuggestionsDto } from './dto/get-path-suggestions.dto.js';
@@ -152,6 +154,39 @@ export class FilesController {
 
     try {
       return await this.filesService.readFile(absolutePath, decodedWorktree);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('does not exist')) {
+        throw new NotFoundException(error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * GET /worktrees/:worktreePath/raw/*path
+   * Returns raw file bytes with a detected Content-Type header.
+   * Used to embed local images (e.g. from chat markdown) that the browser
+   * can't read from disk directly.
+   * worktreePath and filePath are URL-encoded.
+   */
+  @Get(':worktreePath/raw/*path')
+  async readFileRaw(
+    @Param('worktreePath') worktreePath: string,
+    @Param('path') filePath: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Buffer> {
+    const decodedWorktree = decodeURIComponent(worktreePath);
+    const decodedFile = decodeURIComponent(filePath);
+    const absolutePath = path.join(decodedWorktree, decodedFile);
+
+    try {
+      const { buffer, mimeType } = await this.filesService.readFileRaw(
+        absolutePath,
+        decodedWorktree,
+      );
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Cache-Control', 'private, max-age=60');
+      return buffer;
     } catch (error) {
       if (error instanceof Error && error.message.includes('does not exist')) {
         throw new NotFoundException(error.message);

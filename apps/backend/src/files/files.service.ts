@@ -103,6 +103,29 @@ export function detectLanguage(filename: string): string {
 }
 
 /**
+ * Map file extensions to MIME types for raw binary serving (e.g. images embedded in chat markdown).
+ */
+const MIME_TYPE_MAP: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.avif': 'image/avif',
+};
+
+/**
+ * Detect MIME type from file extension
+ */
+export function detectMimeType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  return MIME_TYPE_MAP[ext] || 'application/octet-stream';
+}
+
+/**
  * Validate that a file path is within the worktree directory.
  * Prevents path traversal attacks.
  */
@@ -864,6 +887,32 @@ export class FilesService {
     const language = detectLanguage(filePath);
 
     return { content, language };
+  }
+
+  /**
+   * Read raw file bytes with a detected MIME type.
+   * Used to serve binary content (e.g. images referenced from chat markdown).
+   */
+  async readFileRaw(
+    filePath: string,
+    worktreePath: string,
+  ): Promise<{ buffer: Buffer; mimeType: string }> {
+    // Validate path is within worktree
+    if (!isWithinWorktree(worktreePath, filePath)) {
+      throw new BadRequestException('Access denied: path outside worktree');
+    }
+
+    // Check file exists
+    try {
+      await fs.access(filePath);
+    } catch {
+      throw new BadRequestException(`File does not exist: ${filePath}`);
+    }
+
+    const buffer = await fs.readFile(filePath);
+    const mimeType = detectMimeType(filePath);
+
+    return { buffer, mimeType };
   }
 
   /**

@@ -199,6 +199,7 @@
                   @case ('message') {
                     <cw-message
                       [item]="item.unit.item"
+                      [worktreePath]="worktreePath"
                       [streaming]="isStreamingMessage(item.unit.item.id)"
                       [showCopy]="canCopyMessage(item.unit.item)"
                       [showEdit]="canEditMessage(item.unit.item)"
@@ -242,7 +243,7 @@
                     />
                   }
                   @case ('system') {
-                    <cw-message [item]="item.unit.item" />
+                    <cw-message [item]="item.unit.item" [worktreePath]="worktreePath" />
                   }
                 }
               }
@@ -401,6 +402,7 @@
                           @case ('message') {
                             <cw-message
                               [item]="hiddenUnit.item"
+                              [worktreePath]="worktreePath"
                               [streaming]="isStreamingMessage(hiddenUnit.item.id)"
                               [showCopy]="canCopyMessage(hiddenUnit.item)"
                               [showEdit]="canEditMessage(hiddenUnit.item)"
@@ -447,7 +449,7 @@
                             />
                           }
                           @case ('system') {
-                            <cw-message [item]="hiddenUnit.item" />
+                            <cw-message [item]="hiddenUnit.item" [worktreePath]="worktreePath" />
                           }
                         }
                       }

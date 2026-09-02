@@ -44,7 +44,7 @@ import { MarkdownPipe } from '@/features/session/claude-workspace/pipes/markdown
         </div>
       } @else {
         <article #scrollRef class="mp-doc" (scroll)="scrolled.emit(scrollRef.scrollTop)">
-          <div class="mp-md" [innerHTML]="content() | cwMarkdown"></div>
+          <div class="mp-md" [innerHTML]="content() | cwMarkdown: worktreePath()"></div>
         </article>
       }
     </div>

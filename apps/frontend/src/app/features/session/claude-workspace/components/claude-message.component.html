@@ -320,10 +320,13 @@
               </div>
             </section>
           } @else if (streaming()) {
-            <div class="cw-md cw-md--streaming" [innerHTML]="item().content | cwMarkdown"></div>
+            <div
+              class="cw-md cw-md--streaming"
+              [innerHTML]="item().content | cwMarkdown: worktreePath()"
+            ></div>
             <span class="cw-caret"></span>
           } @else {
-            <div class="cw-md" [innerHTML]="item().content | cwMarkdown"></div>
+            <div class="cw-md" [innerHTML]="item().content | cwMarkdown: worktreePath()"></div>
           }
         } @else if (streaming()) {
           <span class="cw-caret cw-caret--waiting"></span>

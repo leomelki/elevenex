@@ -76,6 +76,7 @@ export class ClaudeMessageComponent {
   private readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
 
   readonly item = input.required<ClaudeTranscriptItem>();
+  readonly worktreePath = input<string | null>(null);
   readonly streaming = input<boolean>(false);
   readonly showActions = input<boolean>(false);
   readonly showCopy = input<boolean>(false);
