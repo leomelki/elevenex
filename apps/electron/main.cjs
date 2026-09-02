@@ -2713,10 +2713,12 @@ function probeElevenexBackend(localPort) {
   });
 }
 
-// Used by the WSL path instead of an SSH tunnel: WSL2 forwards `localhost`
-// to Windows automatically once the backend inside the distro is listening,
-// but that hop can lag the wait-command's own in-distro readiness poll by a
-// beat, so retry briefly instead of probing once.
+// Shared by the WSL path (localhost forwarding to Windows can lag the
+// wait-command's in-distro readiness poll by a beat) and the SSH tunnel path
+// (the first request through a freshly bound -L listener still has to open a
+// new forwarded channel and round-trip the real remote host). Both hops can
+// outlast a single probe's timeout even though the backend itself is ready,
+// so retry briefly instead of concluding it is missing after one attempt.
 async function probeElevenexBackendWithRetries(localPort, attempts, delayMs) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (await probeElevenexBackend(localPort)) {
@@ -2991,7 +2993,14 @@ async function startSshForwardRuntime(forward, resolvedSshOutput) {
     && current.status === 'active'
     && forward.probeType === 'elevenex-backend'
   ) {
-    const probeSucceeded = await probeElevenexBackend(forward.localPort);
+    // A bound local listener only means ssh accepted the -L socket, not that
+    // the first request through it will complete quickly: routing it forwards
+    // a brand-new SSH channel to the real remote host, which pays a full
+    // network round trip the single-shot 1.8s probe timeout can lose even
+    // though the backend (already confirmed ready via the wait command run
+    // over the same SSH connection) is perfectly healthy. Retry briefly
+    // instead of concluding the backend is missing and tearing it down.
+    const probeSucceeded = await probeElevenexBackendWithRetries(forward.localPort, 5, 500);
     current.installStatus = probeSucceeded ? 'available' : 'missing';
     if (!probeSucceeded) {
       current.status = 'error';
