@@ -2,14 +2,18 @@
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 
 /**
- * create_session â€” create an inner coding session in a worktree, ready to be
- * triggered with prompt_session. âš¡instant, mutating. This is the bridge between
- * provisioning (link_worktree / create_worktree) and driving (prompt_session):
- * you cannot prompt work into existence without a session.
+ * create_session â€” create an inner coding session, ready to be triggered with
+ * prompt_session. âš¡instant, mutating. This is the bridge between provisioning
+ * (link_worktree / create_worktree) and driving (prompt_session): you cannot
+ * prompt work into existence without a session.
  *
  * Accepts a workspaceId (the natural output of link_worktree) OR an explicit
- * worktreePath + branchName (e.g. from a finished create_worktree job). The
- * session is NOT started here â€” prompt_session starts it on the first prompt.
+ * worktreePath + branchName. The latter usually comes from a finished
+ * create_worktree job, but a dedicated worktree is not required: worktreePath
+ * can also be a repo's own main checkout (the `path` returned by add_repo /
+ * project_overview) when the task does not need isolation â€” see that field's
+ * description. The session is NOT started here â€” prompt_session starts it on
+ * the first prompt.
  */
 export const createSessionTool = defineTool({
   name: 'create_session',
@@ -17,7 +21,7 @@ export const createSessionTool = defineTool({
   costClass: 'instant',
   mutates: true,
   description:
-    'Create an inner coding session in a worktree (does not start it). âš¡instant. Pass a workspaceId from link_worktree, or a worktreePath+branchName from a finished create_worktree job. Next: prompt_session to trigger work, then await_session_event to watch it.',
+    'Create an inner coding session (does not start it). âš¡instant. Pass a workspaceId from link_worktree, or a worktreePath+branchName from a finished create_worktree job â€” or point worktreePath straight at a repo\'s main checkout when the task does not need its own worktree (e.g. quick exploration, a read-mostly look-around). Next: prompt_session to trigger work, then await_session_event to watch it.',
   inputShape: {
     repoId: z
       .number()
@@ -34,12 +38,17 @@ export const createSessionTool = defineTool({
       .string()
       .min(1)
       .optional()
-      .describe('Absolute worktree path to run in (use when you have no workspaceId, e.g. from a create_worktree job result). Requires branchName.'),
+      .describe(
+        'Absolute path to run the session in. Normally a dedicated worktree (use when you have no workspaceId, e.g. from a create_worktree job result). ' +
+        "Worktrees are not mandatory though: you can instead pass the repo's own main checkout path (the `path` field from add_repo / project_overview) when the task genuinely does not need isolation â€” a quick exploration, a read-only look-around, or anything you judge fine to run directly against the repo as checked out. " +
+        'That session then shares the single main checkout with everything else that touches it directly (no worktree, no dedicated branch), so it is responsible for its own git state before doing real work: check status, checkout/pull/resolve conflicts as needed â€” often a no-op on a clean tree, but not guaranteed. ' +
+        'Reach for a real worktree instead whenever the work will commit, needs its own branch, or could collide with other in-flight work on the same repo. Requires branchName.',
+      ),
     branchName: z
       .string()
       .min(1)
       .optional()
-      .describe('Branch the worktree is on. Required when using worktreePath instead of workspaceId.'),
+      .describe('Branch the session runs on. Required when using worktreePath instead of workspaceId â€” pass the checkout\'s actual current branch when pointing worktreePath at a repo\'s main checkout.'),
     name: z
       .string()
       .min(1)

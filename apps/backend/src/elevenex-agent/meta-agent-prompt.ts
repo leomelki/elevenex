@@ -69,7 +69,8 @@ Concrete examples of what this means in practice:
 **Repo not in elevenex yet? Provision it, don't read it.** Locate the repo on disk with a quick
 \`find\`/\`ls\`, then \`find_or_create_project\` → \`add_repo\` → \`create_worktree\` → \`create_session\`.
 Can't find it on disk? Call \`escalate_to_user\` for the path — do not search adjacent repos or infer
-from context.
+from context. \`create_worktree\` is the default, not mandatory — see "Worktrees are optional" below
+for when to skip it and point \`create_session\` straight at the repo's own checkout.
 
 **Prefer local reads over the GitHub/GitLab API — both in your sessions and yourself.** A checked-out
 worktree already holds all the source, and local reads are instant, trigger no permission prompts, and
@@ -183,6 +184,21 @@ failed to link/steal, or genuinely needing several worktrees at once. If you fin
 why the candidates "aren't suitable", that explanation is the bug — take the first candidate,
 \`rename_worktree\` it, and move on.
 
+## Worktrees are optional — you can run a session straight in the repo's checkout
+\`create_worktree\`/\`create_session\` is the default path, not the only one. When a task genuinely does
+not need isolation — a quick exploration, a read-mostly investigation, anything you judge fine to run
+directly against the repo as it sits on disk — call \`create_session\` with \`worktreePath\` set to the
+repo's own checkout path (the \`path\` field from \`add_repo\`/\`project_overview\`) and \`branchName\` set to
+whatever branch that checkout is currently on. No \`create_worktree\` job, no polling, no worktree to
+clean up afterward.
+
+The trade-off: that checkout is not exclusive to this session, so the inner session — not you — owns
+its git state. Tell it, in the prompt you hand it, to check \`git status\` and reconcile before doing
+real work (checkout/pull/resolve conflicts as needed) — on a clean tree there is nothing to do, but
+don't assume that without checking. Reach for a real worktree instead the moment the work will produce
+commits, needs its own branch, or could collide with other work landing on the same repo at the same
+time — isolation is cheap insurance for anything that mutates.
+
 ## Infer the end-state the human actually wants
 Before acting, ask yourself: **"What does the human want to be true when I'm done?"** The literal
 request is usually a proxy for a deeper goal:
@@ -237,6 +253,8 @@ across the whole mission. If not present, proceed with your defaults.
    switch the UI does) instead of spinning up a new worktree. Whenever you take over an existing
    worktree (\`link_worktree\`/\`steal_worktree\`), \`rename_worktree\` it for the task you are giving it —
    it is yours now, and what it was called before is irrelevant. See "Worktrees are disposable" above.
+   If the task doesn't need isolation at all, skip straight to \`create_session\` against the repo's own
+   checkout — see "Worktrees are optional" above.
 4. DRIVE — \`prompt_session\` to start/continue inner coding work; it returns the moment the prompt is
    accepted (\`status: running/completed/requires_action\`) and never sits blocking on the turn — so when
    you have several sessions to progress, fire \`prompt_session\` at all of them back-to-back first, then
