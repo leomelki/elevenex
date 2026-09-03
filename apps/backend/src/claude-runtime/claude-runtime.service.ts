@@ -585,6 +585,20 @@ export class ClaudeRuntimeService
     const interactionsByToolUseId =
       await this.getInteractionSummaryMap(sessionId);
 
+    // The on-disk transcript is the complete append-only log. The SDK reader
+    // rebuilds a single parentUuid chain instead, which silently drops every
+    // turn that ended up on a side branch, so it only serves sessions whose
+    // transcript we cannot locate.
+    const transcriptHistory = await this.loadHistoryFromTranscript(
+      sessionId,
+      session.worktreePath,
+      session.claudeSessionId,
+      interactionsByToolUseId,
+    );
+    if (transcriptHistory.length > 0) {
+      return transcriptHistory;
+    }
+
     try {
       const messages = await getSessionMessages(session.claudeSessionId, {
         dir: session.worktreePath,
@@ -607,12 +621,7 @@ export class ClaudeRuntimeService
       );
     }
 
-    return this.loadHistoryFromTranscript(
-      sessionId,
-      session.worktreePath,
-      session.claudeSessionId,
-      interactionsByToolUseId,
-    );
+    return transcriptHistory;
   }
 
   async getRuntimeState(sessionId: number): Promise<ClaudeRuntimeStatePayload> {
@@ -5931,63 +5940,158 @@ export class ClaudeRuntimeService
     return this.normalizeHistory(messages, interactionsByToolUseId);
   }
 
+  /**
+   * Rebuilds the conversation a transcript recorded.
+   *
+   * Claude Code appends every event to the JSONL in the order it happened, but
+   * `parentUuid` is written by several independent producers — the model
+   * stream, the tool executor, hook runners, the retry layer — that each track
+   * their own head. A 429 retry storm, an out-of-order tool result or a
+   * background task notification therefore forks the tree even though nothing
+   * was rewound, and the fork routinely bypasses whole answered turns. Walking
+   * one parent chain drops everything that ended up off that chain, so we
+   * replay append order instead: it is what the session actually produced, and
+   * it matches wall-clock order to within a couple of seconds.
+   *
+   * The one branch worth pruning is an edited prompt. Re-submitting anchors the
+   * new prompt beside the original and abandons it, and those abandoned prompts
+   * are never answered — that is what separates them from a real turn whose
+   * head pointer went stale afterwards.
+   */
   private selectActiveTranscriptRecords(
     records: ClaudeTranscriptRecord[],
   ): ClaudeTranscriptRecord[] {
-    const renderableRecords = records.filter((record) =>
-      this.isRenderableTranscriptRecord(record),
-    );
-    if (
-      renderableRecords.length === 0 ||
-      !renderableRecords.some((record) => this.hasTranscriptParentUuid(record))
-    ) {
-      return renderableRecords;
-    }
+    const uniqueRecords = this.dedupeTranscriptRecords(records);
+    const supersededUuids = this.collectSupersededPromptUuids(uniqueRecords);
 
-    const recordsByUuid = new Map<string, ClaudeTranscriptRecord>();
+    return uniqueRecords.filter(
+      (record) =>
+        this.isRenderableTranscriptRecord(record) &&
+        record.isSidechain !== true &&
+        !supersededUuids.has(record.uuid as string),
+    );
+  }
+
+  /**
+   * Keeps the first copy of every uuid. Transcripts occasionally get a segment
+   * replayed into them, and a duplicate of an early record would otherwise
+   * reappear in the middle of a later turn.
+   */
+  private dedupeTranscriptRecords(
+    records: ClaudeTranscriptRecord[],
+  ): ClaudeTranscriptRecord[] {
+    const seenUuids = new Set<string>();
+    const uniqueRecords: ClaudeTranscriptRecord[] = [];
+
     for (const record of records) {
       if (typeof record.uuid === 'string') {
-        recordsByUuid.set(record.uuid, record);
+        if (seenUuids.has(record.uuid)) continue;
+        seenUuids.add(record.uuid);
+      }
+      uniqueRecords.push(record);
+    }
+
+    return uniqueRecords;
+  }
+
+  /**
+   * Collects the uuids of prompts that a re-submission replaced, plus
+   * everything hanging off them. A prompt only counts as replaced when a later
+   * prompt shares its anchor and no assistant ever answered it.
+   */
+  private collectSupersededPromptUuids(
+    records: ClaudeTranscriptRecord[],
+  ): Set<string> {
+    // Keyed on `string | null` so the root anchor needs no sentinel value: a
+    // prompt edited before the session had any history meets its replacement
+    // under the null key.
+    const childrenByParent = new Map<string | null, ClaudeTranscriptRecord[]>();
+    for (const record of records) {
+      // A record without the field carries no anchor at all, so it can neither
+      // replace another prompt nor be replaced.
+      if (!this.hasTranscriptParentUuid(record)) continue;
+      const parentUuid = this.getTranscriptParentUuid(record);
+      const siblings = childrenByParent.get(parentUuid);
+      if (siblings) siblings.push(record);
+      else childrenByParent.set(parentUuid, [record]);
+    }
+
+    const supersededUuids = new Set<string>();
+
+    for (const siblings of childrenByParent.values()) {
+      const prompts = siblings.filter((record) =>
+        this.isTranscriptUserPrompt(record),
+      );
+      if (prompts.length < 2) continue;
+
+      // The last prompt at an anchor is the live one, so it is never dropped.
+      for (const prompt of prompts.slice(0, -1)) {
+        if (this.transcriptSubtreeHasReply(prompt, childrenByParent)) continue;
+        this.collectTranscriptSubtreeUuids(
+          prompt,
+          childrenByParent,
+          supersededUuids,
+        );
       }
     }
 
-    const leafRecord = [...renderableRecords]
-      .reverse()
-      .find((record) => record.isSidechain !== true);
-    if (
-      !leafRecord ||
-      typeof leafRecord.uuid !== 'string' ||
-      !this.hasTranscriptParentUuid(leafRecord)
-    ) {
-      return renderableRecords;
-    }
+    return supersededUuids;
+  }
 
-    const activeUuids = new Set<string>();
-    const visitedUuids = new Set<string>();
-    let cursorUuid: string | null = leafRecord.uuid;
+  /**
+   * A prompt the user submitted, as opposed to a tool result or an injected
+   * meta record, both of which also arrive as `user` entries.
+   */
+  private isTranscriptUserPrompt(record: ClaudeTranscriptRecord): boolean {
+    if (record.type !== 'user' || !record.message) return false;
+    if (record.isSidechain === true || record.isMeta === true) return false;
 
-    while (cursorUuid && !visitedUuids.has(cursorUuid)) {
-      visitedUuids.add(cursorUuid);
-      const record = recordsByUuid.get(cursorUuid);
-      if (!record) break;
+    const content = (record.message as { content?: unknown }).content;
+    if (!Array.isArray(content)) return true;
 
-      if (
-        this.isRenderableTranscriptRecord(record) &&
-        record.isSidechain !== true
-      ) {
-        activeUuids.add(cursorUuid);
-      }
-      cursorUuid = this.getTranscriptParentUuid(record);
-    }
-
-    if (activeUuids.size === 0) {
-      return renderableRecords;
-    }
-
-    return renderableRecords.filter(
-      (record) =>
-        typeof record.uuid === 'string' && activeUuids.has(record.uuid),
+    return !content.some(
+      (part) => (part as { type?: unknown } | null)?.type === 'tool_result',
     );
+  }
+
+  private transcriptSubtreeHasReply(
+    root: ClaudeTranscriptRecord,
+    childrenByParent: Map<string | null, ClaudeTranscriptRecord[]>,
+  ): boolean {
+    const pending: ClaudeTranscriptRecord[] = [root];
+    const visitedUuids = new Set<string>();
+
+    while (pending.length) {
+      const record = pending.pop() as ClaudeTranscriptRecord;
+      const uuid = typeof record.uuid === 'string' ? record.uuid : null;
+      if (uuid) {
+        if (visitedUuids.has(uuid)) continue;
+        visitedUuids.add(uuid);
+      }
+      if (record !== root && record.type === 'assistant' && record.message) {
+        return true;
+      }
+      if (uuid) pending.push(...(childrenByParent.get(uuid) ?? []));
+    }
+
+    return false;
+  }
+
+  private collectTranscriptSubtreeUuids(
+    root: ClaudeTranscriptRecord,
+    childrenByParent: Map<string | null, ClaudeTranscriptRecord[]>,
+    collected: Set<string>,
+  ): void {
+    const pending: ClaudeTranscriptRecord[] = [root];
+
+    while (pending.length) {
+      const record = pending.pop() as ClaudeTranscriptRecord;
+      if (typeof record.uuid !== 'string' || collected.has(record.uuid)) {
+        continue;
+      }
+      collected.add(record.uuid);
+      pending.push(...(childrenByParent.get(record.uuid) ?? []));
+    }
   }
 
   private isRenderableTranscriptRecord(

@@ -2155,8 +2155,7 @@ describe('ClaudeRuntimeService', () => {
     ]);
   });
 
-  it('normalizes transcript fallback history from the active parentUuid branch', async () => {
-    (getSessionMessages as jest.Mock).mockResolvedValue([]);
+  const mockTranscript = (records: unknown[]) => {
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
       .mockResolvedValue(
@@ -2164,82 +2163,315 @@ describe('ClaudeRuntimeService', () => {
       );
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
-      .mockResolvedValue([
-        {
-          type: 'user',
-          uuid: 'user-1',
-          parentUuid: null,
-          timestamp: '2026-04-24T09:00:00.000Z',
-          message: { content: [{ type: 'text', text: 'First prompt' }] },
-        },
-        {
-          type: 'assistant',
-          uuid: 'assistant-1',
-          parentUuid: 'user-1',
-          timestamp: '2026-04-24T09:00:01.000Z',
-          message: { content: [{ type: 'text', text: 'First answer' }] },
-        },
-        {
-          type: 'user',
-          uuid: 'user-2',
-          parentUuid: 'assistant-1',
-          timestamp: '2026-04-24T09:00:02.000Z',
-          message: { content: [{ type: 'text', text: 'Stale prompt' }] },
-        },
-        {
-          type: 'assistant',
-          uuid: 'assistant-2',
-          parentUuid: 'user-2',
-          timestamp: '2026-04-24T09:00:03.000Z',
-          message: { content: [{ type: 'text', text: 'Stale answer' }] },
-        },
-        {
-          type: 'user',
-          uuid: 'user-3',
-          parentUuid: 'assistant-1',
-          timestamp: '2026-04-24T09:00:04.000Z',
-          message: { content: [{ type: 'text', text: 'Restored prompt' }] },
-        },
-        {
-          type: 'assistant',
-          uuid: 'assistant-3',
-          parentUuid: 'user-3',
-          timestamp: '2026-04-24T09:00:05.000Z',
-          message: { content: [{ type: 'text', text: 'Restored answer' }] },
-        },
-      ]);
+      .mockResolvedValue(records as never);
+  };
+
+  it('keeps an answered turn that a retry storm pushed off the parent chain', async () => {
+    // A 429 burst writes its own records against the prompt, and the prompt
+    // that follows anchors on the last of them. The assistant turn is then only
+    // reachable from a sibling branch.
+    mockTranscript([
+      {
+        type: 'user',
+        uuid: 'user-1',
+        parentUuid: null,
+        timestamp: '2026-04-24T09:00:00.000Z',
+        message: { content: [{ type: 'text', text: 'First prompt' }] },
+      },
+      {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        parentUuid: 'user-1',
+        timestamp: '2026-04-24T09:01:00.000Z',
+        message: { content: [{ type: 'text', text: 'First answer' }] },
+      },
+      {
+        type: 'system',
+        subtype: 'api_error',
+        uuid: 'api-error-1',
+        parentUuid: 'user-1',
+        timestamp: '2026-04-24T09:00:01.000Z',
+      },
+      {
+        type: 'system',
+        subtype: 'stop_hook_summary',
+        uuid: 'stop-hook-1',
+        parentUuid: 'api-error-1',
+        timestamp: '2026-04-24T09:01:01.000Z',
+      },
+      {
+        type: 'user',
+        uuid: 'user-2',
+        parentUuid: 'stop-hook-1',
+        timestamp: '2026-04-24T09:02:00.000Z',
+        message: { content: [{ type: 'text', text: 'Second prompt' }] },
+      },
+      {
+        type: 'assistant',
+        uuid: 'assistant-2',
+        parentUuid: 'user-2',
+        timestamp: '2026-04-24T09:03:00.000Z',
+        message: { content: [{ type: 'text', text: 'Second answer' }] },
+      },
+    ]);
 
     const history = await service.getHistory(7);
 
     expect(history.map((item) => item.content)).toEqual([
       'First prompt',
       'First answer',
-      'Restored prompt',
-      'Restored answer',
+      'Second prompt',
+      'Second answer',
     ]);
   });
 
-  it('falls back to transcript records when SDK history lookup throws', async () => {
-    (getSessionMessages as jest.Mock).mockRejectedValue(
-      new Error('lookup failed'),
-    );
-    jest
-      .spyOn(service as never, 'findTranscriptPath' as never)
-      .mockResolvedValue(
-        '/tmp/.claude/projects/project/claude-session-1.jsonl',
-      );
-    jest
-      .spyOn(service as never, 'loadTranscriptRecords' as never)
-      .mockResolvedValue([
-        {
-          type: 'assistant',
-          uuid: 'assistant-fallback-1',
-          timestamp: '2026-04-24T09:00:02.000Z',
-          message: {
-            content: [{ type: 'text', text: 'Recovered assistant reply' }],
-          },
+  it('keeps both halves of a turn whose parallel tool results came back out of order', async () => {
+    mockTranscript([
+      {
+        type: 'user',
+        uuid: 'user-1',
+        parentUuid: null,
+        timestamp: '2026-04-24T09:00:00.000Z',
+        message: { content: [{ type: 'text', text: 'Run both' }] },
+      },
+      {
+        type: 'assistant',
+        uuid: 'assistant-tool-a',
+        parentUuid: 'user-1',
+        timestamp: '2026-04-24T09:00:01.000Z',
+        message: {
+          id: 'msg_1',
+          content: [
+            { type: 'tool_use', id: 'tool-a', name: 'Bash', input: {} },
+          ],
         },
-      ]);
+      },
+      {
+        type: 'assistant',
+        uuid: 'assistant-tool-b',
+        parentUuid: 'assistant-tool-a',
+        timestamp: '2026-04-24T09:00:02.000Z',
+        message: {
+          id: 'msg_1',
+          content: [
+            { type: 'tool_use', id: 'tool-b', name: 'Bash', input: {} },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        uuid: 'result-b',
+        parentUuid: 'assistant-tool-b',
+        timestamp: '2026-04-24T09:00:03.000Z',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'tool-b', content: 'b done' },
+          ],
+        },
+      },
+      {
+        // Resolves against tool A, so the chain continues off the sibling.
+        type: 'user',
+        uuid: 'result-a',
+        parentUuid: 'assistant-tool-a',
+        timestamp: '2026-04-24T09:00:04.000Z',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'tool-a', content: 'a done' },
+          ],
+        },
+      },
+      {
+        type: 'assistant',
+        uuid: 'assistant-final',
+        parentUuid: 'result-a',
+        timestamp: '2026-04-24T09:00:05.000Z',
+        message: {
+          id: 'msg_2',
+          content: [{ type: 'text', text: 'Both done' }],
+        },
+      },
+    ]);
+
+    const history = await service.getHistory(7);
+
+    expect(
+      history.map((item) => [item.kind, item.toolUseId ?? item.content]),
+    ).toEqual([
+      ['user', 'Run both'],
+      ['tool_use', 'tool-a'],
+      ['tool_use', 'tool-b'],
+      ['tool_result', 'tool-b'],
+      ['tool_result', 'tool-a'],
+      ['assistant', 'Both done'],
+    ]);
+  });
+
+  it('drops a prompt that was edited and re-submitted before anything answered it', async () => {
+    mockTranscript([
+      {
+        type: 'user',
+        uuid: 'draft-prompt',
+        parentUuid: null,
+        timestamp: '2026-04-24T09:00:00.000Z',
+        message: { content: [{ type: 'text', text: 'Half-typed prompt' }] },
+      },
+      {
+        type: 'attachment',
+        uuid: 'draft-attachment',
+        parentUuid: 'draft-prompt',
+        timestamp: '2026-04-24T09:00:00.000Z',
+      },
+      {
+        type: 'user',
+        uuid: 'final-prompt',
+        parentUuid: null,
+        timestamp: '2026-04-24T09:00:20.000Z',
+        message: {
+          content: [{ type: 'text', text: 'Half-typed prompt, fixed' }],
+        },
+      },
+      {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        parentUuid: 'final-prompt',
+        timestamp: '2026-04-24T09:00:25.000Z',
+        message: { content: [{ type: 'text', text: 'Answer' }] },
+      },
+    ]);
+
+    const history = await service.getHistory(7);
+
+    expect(history.map((item) => item.content)).toEqual([
+      'Half-typed prompt, fixed',
+      'Answer',
+    ]);
+  });
+
+  it('keeps an earlier prompt at the same anchor once it has been answered', async () => {
+    // An interrupt leaves the head pointer stale, so later prompts re-anchor
+    // beside a turn that really ran. Only unanswered prompts were replaced.
+    mockTranscript([
+      {
+        type: 'system',
+        subtype: 'turn_duration',
+        uuid: 'anchor',
+        parentUuid: null,
+        timestamp: '2026-04-24T09:00:00.000Z',
+      },
+      {
+        type: 'user',
+        uuid: 'answered-prompt',
+        parentUuid: 'anchor',
+        timestamp: '2026-04-24T09:00:01.000Z',
+        message: { content: [{ type: 'text', text: 'commit and push' }] },
+      },
+      {
+        type: 'assistant',
+        uuid: 'answered-reply',
+        parentUuid: 'answered-prompt',
+        timestamp: '2026-04-24T09:00:02.000Z',
+        message: { content: [{ type: 'text', text: 'Committed' }] },
+      },
+      {
+        type: 'user',
+        uuid: 'next-prompt',
+        parentUuid: 'anchor',
+        timestamp: '2026-04-24T09:01:00.000Z',
+        message: { content: [{ type: 'text', text: 'Did that work?' }] },
+      },
+      {
+        type: 'assistant',
+        uuid: 'next-reply',
+        parentUuid: 'next-prompt',
+        timestamp: '2026-04-24T09:01:01.000Z',
+        message: { content: [{ type: 'text', text: 'Yes' }] },
+      },
+    ]);
+
+    const history = await service.getHistory(7);
+
+    expect(history.map((item) => item.content)).toEqual([
+      'commit and push',
+      'Committed',
+      'Did that work?',
+      'Yes',
+    ]);
+  });
+
+  it('ignores records replayed into the transcript a second time', async () => {
+    const prompt = {
+      type: 'user',
+      uuid: 'user-1',
+      parentUuid: null,
+      timestamp: '2026-04-24T09:00:00.000Z',
+      message: { content: [{ type: 'text', text: 'Only once' }] },
+    };
+    mockTranscript([
+      prompt,
+      {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        parentUuid: 'user-1',
+        timestamp: '2026-04-24T09:00:01.000Z',
+        message: { content: [{ type: 'text', text: 'Answer' }] },
+      },
+      prompt,
+    ]);
+
+    const history = await service.getHistory(7);
+
+    expect(history.map((item) => item.content)).toEqual([
+      'Only once',
+      'Answer',
+    ]);
+  });
+
+  it('leaves sidechain records to the subagent history', async () => {
+    mockTranscript([
+      {
+        type: 'user',
+        uuid: 'user-1',
+        parentUuid: null,
+        timestamp: '2026-04-24T09:00:00.000Z',
+        message: { content: [{ type: 'text', text: 'Main prompt' }] },
+      },
+      {
+        type: 'assistant',
+        uuid: 'subagent-1',
+        parentUuid: 'user-1',
+        isSidechain: true,
+        timestamp: '2026-04-24T09:00:01.000Z',
+        message: { content: [{ type: 'text', text: 'Subagent chatter' }] },
+      },
+      {
+        type: 'assistant',
+        uuid: 'assistant-1',
+        parentUuid: 'user-1',
+        timestamp: '2026-04-24T09:00:02.000Z',
+        message: { content: [{ type: 'text', text: 'Main answer' }] },
+      },
+    ]);
+
+    const history = await service.getHistory(7);
+
+    expect(history.map((item) => item.content)).toEqual([
+      'Main prompt',
+      'Main answer',
+    ]);
+  });
+
+  it('reads history from the transcript without consulting the SDK reader', async () => {
+    mockTranscript([
+      {
+        type: 'assistant',
+        uuid: 'assistant-fallback-1',
+        timestamp: '2026-04-24T09:00:02.000Z',
+        message: {
+          content: [{ type: 'text', text: 'Recovered assistant reply' }],
+        },
+      },
+    ]);
 
     const history = await service.getHistory(7);
 
@@ -2250,6 +2482,42 @@ describe('ClaudeRuntimeService', () => {
         content: 'Recovered assistant reply',
       }),
     ]);
+    expect(getSessionMessages as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the SDK reader when the session has no transcript on disk', async () => {
+    jest
+      .spyOn(service as never, 'findTranscriptPath' as never)
+      .mockResolvedValue(null as never);
+    (getSessionMessages as jest.Mock).mockResolvedValue([
+      {
+        type: 'assistant',
+        uuid: 'sdk-assistant-1',
+        message: {
+          content: [{ type: 'text', text: 'From the SDK reader' }],
+        },
+      },
+    ]);
+
+    const history = await service.getHistory(7);
+
+    expect(history).toEqual([
+      expect.objectContaining({
+        kind: 'assistant',
+        content: 'From the SDK reader',
+      }),
+    ]);
+  });
+
+  it('logs and returns empty when neither the transcript nor the SDK reader resolves', async () => {
+    jest
+      .spyOn(service as never, 'findTranscriptPath' as never)
+      .mockResolvedValue(null as never);
+    (getSessionMessages as jest.Mock).mockRejectedValue(
+      new Error('lookup failed'),
+    );
+
+    await expect(service.getHistory(7)).resolves.toEqual([]);
     expect(loggerWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Failed to load Claude history for session 7'),
     );
