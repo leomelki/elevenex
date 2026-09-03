@@ -1,9 +1,24 @@
 import { computed, signal } from '@angular/core';
 import type {
+  ClaudeBackgroundWorkItem,
+  ClaudeHookEvent,
+  ClaudePendingPrompt,
+  ClaudePermissionRequest,
   ClaudeRunPhase,
   ClaudeRuntimeEvent,
+  ClaudeSubagentState,
+  ClaudeToolProgress,
   ClaudeTranscriptItem,
+  ClaudeUserInputRequest,
 } from '@/shared/models/claude-runtime.model';
+import {
+  PairedTranscriptUnit,
+  pairTranscript,
+} from '@/features/session/claude-workspace/util/paired-transcript';
+import {
+  TranscriptRenderItem,
+  buildTranscriptRenderItems,
+} from '@/features/session/claude-workspace/util/transcript-render-items';
 
 export type ForkedChatVisibleItem = Pick<
   ClaudeTranscriptItem,
@@ -39,9 +54,11 @@ export const OPTIMISTIC_ID_PREFIX = 'forked-chat-opt-';
 /**
  * Reducer for an embedded chat on a forked session.
  *
- * Extracted from the plan Q&A panel so review discussions share one
- * implementation. Deliberately a plain class rather than a component so the
- * fiddly live-vs-history reconciliation can be unit tested directly.
+ * Holds the same runtime state the session workspace does — tool calls,
+ * thinking, background work, permission prompts — so an embedded chat renders
+ * with the full transcript UI rather than a stripped-down bubble list.
+ * Deliberately a plain class rather than a component so the fiddly
+ * live-vs-history reconciliation can be unit tested directly.
  */
 export class ForkedChatTranscript {
   readonly history = signal<ClaudeTranscriptItem[]>([]);
@@ -50,8 +67,20 @@ export class ForkedChatTranscript {
   readonly runPhase = signal<ClaudeRunPhase>('idle');
   readonly canInterrupt = signal(false);
   readonly lastError = signal<string | null>(null);
+  readonly backgroundWork = signal<ClaudeBackgroundWorkItem[]>([]);
+  readonly pendingPrompts = signal<ClaudePendingPrompt[]>([]);
+  readonly pendingPermissionRequest = signal<ClaudePermissionRequest | null>(null);
+  readonly pendingUserInputRequest = signal<ClaudeUserInputRequest | null>(null);
+  readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
+  readonly subagents = signal<ClaudeSubagentState[]>([]);
+  readonly recentHookEvents = signal<ClaudeHookEvent[]>([]);
 
-  readonly items = computed<ForkedChatVisibleItem[]>(() => {
+  /**
+   * Every item this surface owns, guard wrappers already stripped. Includes
+   * tool calls, thinking and system notices — the transcript view decides what
+   * to show, exactly as it does for a full session.
+   */
+  readonly items = computed<ClaudeTranscriptItem[]>(() => {
     const history = this.history();
 
     // Live and persisted items use different id formats but share
@@ -63,23 +92,82 @@ export class ForkedChatTranscript {
       (item) => !item.sourceMessageId || !persisted.has(this.key(item)),
     );
 
-    const merged = [...history, ...this.optimistic(), ...live]
-      .filter(
-        (item): item is ForkedChatVisibleItem =>
-          item.kind === 'user' ||
-          item.kind === 'assistant' ||
-          item.kind === 'error',
-      )
-      .sort((left, right) =>
-        (left.timestamp || '').localeCompare(right.timestamp || ''),
-      );
+    const merged: ClaudeTranscriptItem[] = [
+      ...history,
+      ...this.optimistic(),
+      ...live,
+    ].sort((left, right) => (left.timestamp || '').localeCompare(right.timestamp || ''));
 
     // Drop the inherited parent conversation.
     const start = merged.findIndex((item) => this.isOwnPrompt(item));
-    return start < 0 ? [] : merged.slice(start);
+    if (start < 0) return [];
+
+    return merged.slice(start).map((item) => this.sanitized(item));
   });
 
+  readonly topLevelItems = computed(() =>
+    this.items().filter((item) => !item.parentToolUseId),
+  );
+
+  /** Subagent transcripts, keyed by the Agent tool call that spawned them. */
+  readonly childItemsByParentToolUseId = computed(() => {
+    const grouped: Record<string, ClaudeTranscriptItem[]> = {};
+    for (const item of this.items()) {
+      if (!item.parentToolUseId) continue;
+      grouped[item.parentToolUseId] = [...(grouped[item.parentToolUseId] ?? []), item];
+    }
+    return grouped;
+  });
+
+  readonly units = computed<PairedTranscriptUnit[]>(() =>
+    pairTranscript(this.topLevelItems()),
+  );
+
+  readonly renderItems = computed<TranscriptRenderItem[]>(() =>
+    buildTranscriptRenderItems({
+      units: this.units(),
+      settled: this.runPhase() === 'idle',
+      childItemsByParentToolUseId: this.childItemsByParentToolUseId(),
+      subagents: this.subagents(),
+      hookEvents: this.recentHookEvents(),
+    }),
+  );
+
+  readonly liveToolUseIds = computed(
+    () =>
+      new Set(
+        this.live()
+          .filter((item) => item.kind === 'tool_use' && item.toolUseId)
+          .map((item) => item.toolUseId as string),
+      ),
+  );
+
+  readonly lastLiveMessageId = computed(() => {
+    const live = this.live();
+    for (let i = live.length - 1; i >= 0; i--) {
+      const item = live[i];
+      if (item.kind === 'assistant' || item.kind === 'thinking') return item.id;
+    }
+    return null;
+  });
+
+  /** Only the newest live item is still receiving deltas. */
+  readonly streamingMessageId = computed(() =>
+    this.runPhase() === 'running' ? this.lastLiveMessageId() : null,
+  );
+
+  /** True before the first token of a reply lands, so the bubble can pulse. */
+  readonly awaitingFirstToken = computed(
+    () =>
+      this.runPhase() === 'running' &&
+      !this.live().some((item) => item.kind === 'assistant' || item.kind === 'thinking'),
+  );
+
   constructor(private readonly lens: ForkedChatLens) {}
+
+  childItemsForToolUse(toolUseId: string): ClaudeTranscriptItem[] {
+    return this.childItemsByParentToolUseId()[toolUseId] ?? [];
+  }
 
   apply(event: ClaudeRuntimeEvent): void {
     switch (event.type) {
@@ -99,19 +187,77 @@ export class ForkedChatTranscript {
         this.runPhase.set(event.payload.runPhase);
         this.canInterrupt.set(event.payload.canInterrupt);
         this.lastError.set(event.payload.lastError);
+        this.backgroundWork.set(event.payload.backgroundWork ?? []);
+        this.pendingPrompts.set(event.payload.pendingPrompts ?? []);
+        this.pendingPermissionRequest.set(event.payload.pendingPermissionRequest);
+        this.pendingUserInputRequest.set(event.payload.pendingUserInputRequest);
         return;
       case 'message_start':
+      case 'thinking_start':
+      case 'tool_use':
+      case 'tool_result':
         this.upsertLive(event.payload.item);
         return;
       case 'message_delta':
+      case 'thinking_delta':
         this.appendDelta(event.payload.itemId, event.payload.delta);
         return;
-      case 'error':
-        this.lastError.set(event.payload.message);
+      case 'tool_progress':
+        this.toolProgressByToolUseId.update((items) => ({
+          ...items,
+          [event.payload.progress.toolUseId]: event.payload.progress,
+        }));
         return;
+      case 'background_work':
+        this.backgroundWork.set(event.payload.backgroundWork ?? []);
+        return;
+      case 'subagent_lifecycle':
+        this.subagents.update((items) => [
+          event.payload.subagent,
+          ...items.filter((agent) => agent.agentId !== event.payload.subagent.agentId),
+        ]);
+        return;
+      case 'hook_event':
+        this.recentHookEvents.update((items) =>
+          [event.payload.hookEvent, ...items].slice(0, 50),
+        );
+        return;
+      case 'permission_request':
+        this.pendingPermissionRequest.set(event.payload.request);
+        return;
+      case 'permission_resolved':
+        this.pendingPermissionRequest.set(null);
+        this.live.update((items) =>
+          items.map((item) =>
+            item.kind === 'tool_use' && item.toolUseId === event.payload.toolUseId
+              ? { ...item, interaction: event.payload.interaction }
+              : item,
+          ),
+        );
+        return;
+      case 'user_input_request':
+        this.pendingUserInputRequest.set(event.payload.request);
+        return;
+      case 'error': {
+        const now = new Date().toISOString();
+        this.lastError.set(event.payload.message);
+        this.live.update((items) => [
+          ...items,
+          {
+            id: `forked-chat-err-${Date.now()}`,
+            kind: 'error',
+            content: event.payload.message,
+            timestamp: now,
+            receivedAt: now,
+          },
+        ]);
+        return;
+      }
       case 'complete':
         this.runPhase.set('idle');
         this.canInterrupt.set(false);
+        this.pendingPermissionRequest.set(null);
+        this.pendingUserInputRequest.set(null);
         return;
       default:
         return;
@@ -152,13 +298,6 @@ export class ForkedChatTranscript {
     );
   }
 
-  displayContent(item: ForkedChatVisibleItem): string {
-    if (item.kind === 'user') {
-      return this.lens.sanitizeUserContent(item.content);
-    }
-    return item.content?.trim() || '';
-  }
-
   reset(): void {
     this.history.set([]);
     this.live.set([]);
@@ -166,6 +305,19 @@ export class ForkedChatTranscript {
     this.runPhase.set('idle');
     this.canInterrupt.set(false);
     this.lastError.set(null);
+    this.backgroundWork.set([]);
+    this.pendingPrompts.set([]);
+    this.pendingPermissionRequest.set(null);
+    this.pendingUserInputRequest.set(null);
+    this.toolProgressByToolUseId.set({});
+    this.subagents.set([]);
+    this.recentHookEvents.set([]);
+  }
+
+  private sanitized(item: ClaudeTranscriptItem): ClaudeTranscriptItem {
+    if (item.kind !== 'user') return item;
+    const content = this.lens.sanitizeUserContent(item.content);
+    return content === item.content ? item : { ...item, content };
   }
 
   private isOwnPrompt(item: ForkedChatVisibleItem): boolean {
@@ -180,11 +332,23 @@ export class ForkedChatTranscript {
     runPhase?: ClaudeRunPhase;
     canInterrupt?: boolean;
     lastError?: string | null;
+    backgroundWork?: ClaudeBackgroundWorkItem[];
+    pendingPrompts?: ClaudePendingPrompt[];
+    pendingPermissionRequest?: ClaudePermissionRequest | null;
+    pendingUserInputRequest?: ClaudeUserInputRequest | null;
+    subagents?: ClaudeSubagentState[];
+    recentHookEvents?: ClaudeHookEvent[];
   }): void {
     this.live.set(state.liveItems ?? []);
     this.runPhase.set(state.runPhase ?? 'idle');
     this.canInterrupt.set(Boolean(state.canInterrupt));
     this.lastError.set(state.lastError ?? null);
+    this.backgroundWork.set(state.backgroundWork ?? []);
+    this.pendingPrompts.set(state.pendingPrompts ?? []);
+    this.pendingPermissionRequest.set(state.pendingPermissionRequest ?? null);
+    this.pendingUserInputRequest.set(state.pendingUserInputRequest ?? null);
+    this.subagents.set(state.subagents ?? []);
+    this.recentHookEvents.set(state.recentHookEvents ?? []);
   }
 
   private upsertLive(item: ClaudeTranscriptItem): void {

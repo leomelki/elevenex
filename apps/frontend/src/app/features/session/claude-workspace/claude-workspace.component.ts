@@ -64,12 +64,8 @@ import { SessionsService } from '@/shared/services/sessions.service';
 import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
 import { ReviewChatsService } from '@/shared/services/review-chats.service';
 import type { ReviewChat } from '@/shared/models/review-chat.model';
-import { ReviewThreadsCardComponent } from './components/cw-review-threads-card.component';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { WorktreeContextService } from '@/shared/services/worktree-context.service';
-import { ClaudeMessageComponent } from './components/claude-message.component';
-import { ClaudeThinkingComponent } from './components/claude-thinking.component';
-import { ClaudeToolCallComponent } from './components/claude-tool-call.component';
 import { ClaudePermissionInlineComponent } from './components/claude-permission-inline.component';
 import { ClaudeUserInputComponent } from './components/claude-user-input.component';
 import { AgentShowCardComponent } from './components/agent-show-card.component';
@@ -103,10 +99,16 @@ import {
   ClaudeAgentInspectorComponent,
   ClaudeSubagentHistoryState,
 } from './components/claude-agent-inspector.component';
-import { ClaudeTurnChangesComponent } from './components/claude-turn-changes.component';
+import { ClaudeContextNoteComponent } from './components/claude-context-note.component';
+import {
+  ClaudeTranscriptComponent,
+  type TranscriptMessageAffordances,
+} from './components/claude-transcript.component';
 import { PairedTranscriptUnit, pairTranscript } from './util/paired-transcript';
-import { TurnAgentSummary, buildTurnAgentSummary } from './util/agent-deep-dive';
-import { TurnChangeDetails, computeTurnChangeDetails } from './util/turn-change-stats';
+import {
+  TranscriptRenderItem,
+  buildTranscriptRenderItems,
+} from './util/transcript-render-items';
 import {
   PlanFeedbackPayload,
   PlanReviewRequest,
@@ -136,27 +138,11 @@ import {
 import { appendSessionMentions, parseSessionMentions } from '@/shared/utils/session-mention';
 import { ComposerDraftService } from './composer-draft.service';
 
-type TranscriptRenderItem =
-  | { kind: 'unit'; id: string; unit: PairedTranscriptUnit }
-  | {
-      kind: 'collapsed-turn';
-      id: string;
-      turnId: string;
-      hiddenUnits: PairedTranscriptUnit[];
-      durationLabel: string;
-      changeDetails: TurnChangeDetails | null;
-      stepCount: number;
-      agentSummary: TurnAgentSummary | null;
-    };
-
 @Component({
   selector: 'app-claude-workspace',
   standalone: true,
   imports: [
     CommonModule,
-    ClaudeMessageComponent,
-    ClaudeThinkingComponent,
-    ClaudeToolCallComponent,
     ClaudePermissionInlineComponent,
     ClaudeUserInputComponent,
     ClaudeComposerComponent,
@@ -166,8 +152,8 @@ type TranscriptRenderItem =
     ClaudeTasksDrawerComponent,
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
-    ClaudeTurnChangesComponent,
-    ReviewThreadsCardComponent,
+    ClaudeTranscriptComponent,
+    ClaudeContextNoteComponent,
     ClaudeInstallCardComponent,
     CodexLoginCardComponent,
     PiLoginCardComponent,
@@ -485,12 +471,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     return { sentence, rootRef: ctx?.rootRef ?? null };
   });
 
-  readonly firstMessageContextExpanded = signal(false);
-
-  toggleFirstMessageContext(): void {
-    this.firstMessageContextExpanded.update((v) => !v);
-  }
-
   toggleContextExpanded(): void {
     this.contextExpanded.update((v) => !v);
   }
@@ -583,107 +563,57 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     pairTranscript(this.topLevelTranscriptItems()),
   );
 
-  readonly renderItems = computed<TranscriptRenderItem[]>(() => {
-    const units = this.pairedTranscript();
-    const out: TranscriptRenderItem[] = [];
-    const isSessionSettled = this.runPhase() === 'idle';
+  readonly renderItems = computed<TranscriptRenderItem[]>(() =>
+    buildTranscriptRenderItems({
+      units: this.pairedTranscript(),
+      settled: this.runPhase() === 'idle',
+      childItemsByParentToolUseId: this.childTranscriptItemsByParentToolUseId(),
+      subagents: this.subagents(),
+      hookEvents: this.recentHookEvents(),
+    }),
+  );
 
-    for (let i = 0; i < units.length; ) {
-      const unit = units[i];
-      if (!isUserMessageUnit(unit)) {
-        out.push({ kind: 'unit', id: unit.id, unit });
-        i += 1;
-        continue;
-      }
+  readonly liveToolUseIds = computed(
+    () =>
+      new Set(
+        this.liveItems()
+          .filter((item) => item.kind === 'tool_use' && item.toolUseId)
+          .map((item) => item.toolUseId as string),
+      ),
+  );
 
-      const nextUserOffset = units.slice(i + 1).findIndex(isUserMessageUnit);
-      const nextUserIndex = nextUserOffset === -1 ? units.length : i + 1 + nextUserOffset;
-
-      const turnUnits = units.slice(i, nextUserIndex);
-      const lastAssistantIndex = findLastAssistantIndex(turnUnits);
-      if (lastAssistantIndex === -1) {
-        for (const turnUnit of turnUnits) {
-          out.push({ kind: 'unit', id: turnUnit.id, unit: turnUnit });
-        }
-        i = nextUserIndex;
-        continue;
-      }
-
-      const lastAssistantUnit = turnUnits[lastAssistantIndex] as Extract<
-        PairedTranscriptUnit,
-        { kind: 'message' }
-      >;
-      // Split intermediate units two ways, preserving original chronological order
-      // within each bucket:
-      //   - sibling thinking shares the final assistant message's sourceMessageId, so
-      //     it belongs right before that message as a content block of the same reply.
-      //   - everything else (intermediate thinking, intermediate assistant text, tool
-      //     calls, system messages) is the work that happened during the turn. When
-      //     the turn settles it collapses into the "Worked for X" pill in natural
-      //     order; expanding the pill replays the work as it actually happened.
-      const lastAssistantSourceId = lastAssistantUnit.item.sourceMessageId;
-      const intermediateUnits = turnUnits.slice(1, lastAssistantIndex);
-      const siblingThinkingUnits: PairedTranscriptUnit[] = [];
-      const collapsibleUnits: PairedTranscriptUnit[] = [];
-      for (const intermediate of intermediateUnits) {
-        if (
-          intermediate.kind === 'thinking' &&
-          lastAssistantSourceId &&
-          intermediate.item.sourceMessageId === lastAssistantSourceId
-        ) {
-          siblingThinkingUnits.push(intermediate);
-          continue;
-        }
-        collapsibleUnits.push(intermediate);
-      }
-      const tailUnits = turnUnits.slice(lastAssistantIndex + 1);
-      const isCurrentTurn = nextUserIndex === units.length;
-      const hasToolCalls = collapsibleUnits.some((u) => u.kind === 'tool');
-      const canCollapse = hasToolCalls && (!isCurrentTurn || isSessionSettled);
-
-      out.push({ kind: 'unit', id: unit.id, unit });
-
-      if (canCollapse) {
-        const changeUnits = this.collectTurnChangeUnits(collapsibleUnits);
-        out.push({
-          kind: 'collapsed-turn',
-          id: `collapsed-${unit.id}`,
-          turnId: unit.id,
-          hiddenUnits: collapsibleUnits,
-          durationLabel: formatTurnDuration(
-            getItemStartTimestamp(unit.item),
-            getItemCompletionTimestamp(lastAssistantUnit.item),
-          ),
-          changeDetails: computeTurnChangeDetails(changeUnits),
-          stepCount: collapsibleUnits.length,
-          agentSummary: buildTurnAgentSummary(
-            unit.id,
-            getItemStartTimestamp(unit.item),
-            getItemCompletionTimestamp(lastAssistantUnit.item),
-            collapsibleUnits.length,
-            this.subagents(),
-            this.recentHookEvents(),
-          ),
-        });
-      } else {
-        for (const hiddenUnit of collapsibleUnits) {
-          out.push({ kind: 'unit', id: hiddenUnit.id, unit: hiddenUnit });
-        }
-      }
-
-      for (const siblingThinkingUnit of siblingThinkingUnits) {
-        out.push({ kind: 'unit', id: siblingThinkingUnit.id, unit: siblingThinkingUnit });
-      }
-      out.push({ kind: 'unit', id: lastAssistantUnit.id, unit: lastAssistantUnit });
-      for (const tailUnit of tailUnits) {
-        out.push({ kind: 'unit', id: tailUnit.id, unit: tailUnit });
-      }
-
-      i = nextUserIndex;
+  readonly reviewThreadsByTurnId = computed(() => {
+    const grouped: Record<string, ReviewChat[]> = {};
+    for (const thread of this.reviewThreads()) {
+      if (!thread.turnKey || thread.status === 'resolved') continue;
+      grouped[thread.turnKey] = [...(grouped[thread.turnKey] ?? []), thread];
     }
-
-    return out;
+    return grouped;
   });
+
+  /** Only the streaming item pulses; everything else renders settled. */
+  readonly streamingMessageId = computed(() =>
+    this.runPhase() === 'running' ? this.lastLiveMessageId() : null,
+  );
+
+  /**
+   * Per-message capabilities handed to the transcript view. Arrow properties so
+   * the object identity stays stable while each lookup still reads live state.
+   */
+  readonly messageAffordances: TranscriptMessageAffordances = {
+    canCopy: (item) => this.canCopyMessage(item),
+    canEdit: (item) => this.canEditMessage(item),
+    canFork: (item) => this.canForkMessage(item),
+    isForking: (item) => this.isForkingItem(item),
+    isEditArmed: (item) => this.isEditArmed(item),
+    forks: (item) => this.forksForItem(item),
+    forksExpanded: (item) => this.forksExpandedForItem(item),
+    canReviewPlan: (item) => this.canReviewPlan(item),
+    planReview: (item) => this.planReviewForMessage(item),
+    actionsDisabled: () => this.messageActionsDisabled(),
+    forkDisabled: () => this.forkActionsDisabled(),
+    forkDisabledReason: () => this.forkDisabledReason(),
+  };
 
   readonly lastLiveMessageId = computed(() => {
     const live = this.liveItems();
@@ -1401,51 +1331,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       });
   }
 
-  isLiveToolUse(toolUseId: string): boolean {
-    return this.liveItems().some(
-      (item) => item.kind === 'tool_use' && item.toolUseId === toolUseId,
-    );
-  }
-
-  toolProgressForToolUse(toolUseId: string): ClaudeToolProgress | null {
-    return this.toolProgressByToolUseId()[toolUseId] ?? null;
-  }
-
-  childItemsForToolUse(toolUseId: string): ClaudeTranscriptItem[] {
-    return this.childTranscriptItemsByParentToolUseId()[toolUseId] ?? [];
-  }
-
-  private collectTurnChangeUnits(units: PairedTranscriptUnit[]): PairedTranscriptUnit[] {
-    const collected: PairedTranscriptUnit[] = [];
-    const childItemsByParent = this.childTranscriptItemsByParentToolUseId();
-    const visit = (entries: PairedTranscriptUnit[]) => {
-      for (const entry of entries) {
-        collected.push(entry);
-        if (entry.kind !== 'tool') continue;
-        const children = childItemsByParent[entry.toolUseId] ?? [];
-        if (children.length) {
-          visit(pairTranscript(children));
-        }
-      }
-    };
-    visit(units);
-    return collected;
-  }
-
   isStreamingMessage(itemId: string): boolean {
     return this.runPhase() === 'running' && this.lastLiveMessageId() === itemId;
   }
 
-  isTurnExpanded(turnId: string): boolean {
-    return !!this.expandedTurns()[turnId];
-  }
-
   toggleTurn(turnId: string): void {
     this.expandedTurns.update((state) => ({ ...state, [turnId]: !state[turnId] }));
-  }
-
-  isTurnChangesExpanded(turnId: string): boolean {
-    return !!this.expandedTurnChanges()[turnId];
   }
 
   toggleTurnChanges(turnId: string): void {
@@ -2540,12 +2431,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
    * Discussions anchored to a given turn. A thread records both the assistant
    * uuid it forked from and the turn it belongs to, because the two differ.
    */
-  reviewThreadsForTurn(turnId: string): readonly ReviewChat[] {
-    return this.reviewThreads().filter(
-      (thread) => thread.turnKey === turnId && thread.status !== 'resolved',
-    );
-  }
-
   private async loadReviewThreads(): Promise<void> {
     if (this.readOnlyTranscript) return;
     try {
@@ -2555,10 +2440,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       // A missing discussions list must never break the transcript.
       this.reviewThreads.set([]);
     }
-  }
-
-  trackByRenderItem(_i: number, item: TranscriptRenderItem): string {
-    return item.id;
   }
 
   private async ensureAgentHistory(agentId: string): Promise<void> {
@@ -2622,45 +2503,3 @@ function buildWorktreeContextPrompt(contextSentence: string, prompt: string): st
   ].join('\n');
 }
 
-function isUserMessageUnit(
-  unit: PairedTranscriptUnit,
-): unit is Extract<PairedTranscriptUnit, { kind: 'message' }> {
-  return unit.kind === 'message' && unit.item.kind === 'user';
-}
-
-function isAssistantMessageUnit(
-  unit: PairedTranscriptUnit,
-): unit is Extract<PairedTranscriptUnit, { kind: 'message' }> {
-  return unit.kind === 'message' && unit.item.kind === 'assistant';
-}
-
-function findLastAssistantIndex(units: PairedTranscriptUnit[]): number {
-  for (let i = units.length - 1; i >= 0; i--) {
-    if (isAssistantMessageUnit(units[i])) return i;
-  }
-  return -1;
-}
-
-function formatTurnDuration(startedAt: string, completedAt: string): string {
-  const ms = Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
-  const totalSeconds = Math.round(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-
-  if (minutes <= 0) return `${Math.max(1, totalSeconds)}s`;
-  if (seconds === 0) return `${minutes}m`;
-  if (minutes >= 60) {
-    const hours = Math.floor(minutes / 60);
-    const remainingMinutes = minutes % 60;
-    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
-  }
-  return `${minutes}m ${seconds}s`;
-}
-
-function getItemStartTimestamp(item: ClaudeTranscriptItem): string {
-  return item.authoredAt || item.receivedAt || item.timestamp;
-}
-
-function getItemCompletionTimestamp(item: ClaudeTranscriptItem): string {
-  return item.receivedAt || item.authoredAt || item.timestamp;
-}

@@ -6,77 +6,104 @@
     aria-label="Discussion messages"
     (scroll)="onMessagesScroll()"
   >
-    @if (!items.length) {
+    @if (contextNote(); as note) {
+      <cw-context-note
+        class="fc-note"
+        label="Context"
+        [summary]="note.summary"
+        ariaLabel="What this discussion already knows"
+      >
+        <ng-icon note-icon name="lucideGitFork" size="13" />
+
+        <p class="m-0 text-[0.82rem] leading-[1.5] text-foreground">{{ note.detail }}</p>
+        @if (note.caveat) {
+          <p class="m-0 text-[0.7rem] leading-[1.45] text-muted-foreground italic">
+            {{ note.caveat }}
+          </p>
+        }
+      </cw-context-note>
+    }
+
+    @if (!chat.renderItems().length && !showPendingReply()) {
       <div class="fc-empty">
         <span class="fc-empty__icon" aria-hidden="true">
           <ng-icon name="lucideMessageSquare" size="16" />
         </span>
-        <p>{{ emptyState() }}</p>
+        @if (chat.lastError(); as error) {
+          <p class="fc-empty__error" role="alert">{{ error }}</p>
+        } @else {
+          <p>{{ emptyState() }}</p>
+        }
       </div>
     } @else {
-      @for (item of items; track item.id) {
-        <article class="fc-message" [attr.data-kind]="item.kind">
-          @if (item.kind === 'assistant') {
-            <div class="fc-md" [innerHTML]="itemContent(item) | cwMarkdown"></div>
-          } @else {
-            <p>{{ itemContent(item) }}</p>
-          }
-        </article>
-      }
-
-      @if (chat.runPhase() === 'running' || sending()) {
-        <div class="fc-running" aria-label="Generating response">
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
-      }
+      <cw-transcript
+        [items]="chat.renderItems()"
+        [worktreePath]="worktreePath()"
+        [streamingMessageId]="streamingMessageId()"
+        [pendingReply]="showPendingReply()"
+        [childItemsByParentToolUseId]="chat.childItemsByParentToolUseId()"
+        [liveToolUseIds]="chat.liveToolUseIds()"
+        [toolProgressByToolUseId]="chat.toolProgressByToolUseId()"
+        [expandedTurns]="expandedTurns()"
+        [expandedTurnChanges]="expandedTurnChanges()"
+        (approve)="approvePermission($event)"
+        (deny)="denyPermission($event)"
+        (toggleTurn)="toggleTurn($event)"
+        (toggleTurnChanges)="toggleTurnChanges($event)"
+        (closeTurnChanges)="closeTurnChanges($event)"
+        (inspectTurn)="openAgentInspector($event)"
+      />
     }
   </div>
 
   <div class="fc-footer">
-    @if (chat.lastError(); as error) {
-      <p class="fc-error" role="alert">{{ error }}</p>
+    @if (chat.backgroundWork().length) {
+      <cw-background-activity [items]="chat.backgroundWork()" />
     }
 
-    <form class="fc-compose" (submit)="$event.preventDefault(); send()">
-      <div class="fc-field">
-        <textarea
-          #composerRef
-          appDictateTarget
-          #dictate="dictateTarget"
-          (dictationSubmit)="send()"
-          rows="1"
-          [placeholder]="placeholder()"
-          [disabled]="disabled() || sending()"
-          [ngModel]="draft()"
-          name="forked-chat-prompt"
-          (ngModelChange)="draft.set($event)"
-          (keydown)="onComposeKeydown($event)"
-        ></textarea>
-        <div class="fc-compose__actions">
-          <app-dictation-button [target]="dictate" [disabled]="disabled() || sending()" />
-          @if (chat.canInterrupt()) {
-            <button type="button" class="fc-btn fc-btn--ghost" (click)="interrupt()">
-              <ng-icon name="lucideSquare" size="12" />
-              Stop
-            </button>
-          }
-          <button
-            type="submit"
-            class="fc-btn fc-btn--primary"
-            [disabled]="!draft().trim() || disabled() || sending()"
-          >
-            <ng-icon name="lucideSend" size="13" />
-            Send
-          </button>
-        </div>
-      </div>
-      <p class="fc-hint">
-        <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line
-      </p>
-    </form>
+    @if (chat.pendingUserInputRequest(); as request) {
+      <cw-user-input [request]="request" (answer)="answerUserInput($event)" />
+    }
+
+    @if (chat.pendingPermissionRequest(); as request) {
+      <cw-permission-inline
+        [request]="request"
+        appearance="dock"
+        (approve)="approvePermission($event)"
+        (deny)="denyPermission($event)"
+      />
+    }
+
+    <cw-composer
+      [value]="draft()"
+      [submitting]="sending()"
+      [running]="chat.runPhase() === 'running'"
+      [canInterrupt]="chat.canInterrupt()"
+      [backgroundAgentCount]="chat.backgroundWork().length"
+      [blockedByPermission]="!!chat.pendingPermissionRequest()"
+      [attachedPanelOpen]="!!chat.pendingPermissionRequest()"
+      [pendingPrompts]="chat.pendingPrompts()"
+      [autocompleteItems]="autocompleteItems()"
+      [placeholderText]="placeholder()"
+      [allowImages]="false"
+      [disconnected]="disabled()"
+      [sessionId]="target()?.sessionId ?? null"
+      [worktreePath]="worktreePath()"
+      (valueChange)="draft.set($event)"
+      (send)="send($event)"
+      (interrupt)="interrupt()"
+    />
   </div>
+
+  <cw-agent-inspector
+    [open]="!!selectedAgentInspectorTurn()"
+    [turn]="selectedAgentInspectorTurn()"
+    [selectedAgentId]="agentInspectorSelectedAgentId()"
+    [historyByAgent]="agentHistoryById()"
+    [hookEvents]="chat.recentHookEvents()"
+    (selectAgent)="selectAgentInspectorAgent($event)"
+    (close)="closeAgentInspector()"
+  />
 } @else {
   <div class="fc-messages">
     <div class="fc-empty">

@@ -1,0 +1,89 @@
+import { TestBed } from '@angular/core/testing';
+import { provideZonelessChangeDetection } from '@angular/core';
+import { of } from 'rxjs';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ReviewChatsService } from '@/shared/services/review-chats.service';
+import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import type { ReviewChat } from '@/shared/models/review-chat.model';
+import { ReviewThreadDockComponent } from './review-thread-dock.component';
+import {
+  ReviewWorkspaceStateService,
+  SESSION_TAB_ID,
+} from './review-workspace-state.service';
+
+function chat(overrides: Partial<ReviewChat> = {}): ReviewChat {
+  return {
+    id: 7,
+    parentSessionId: 1,
+    childSessionId: 42,
+    provider: 'claude',
+    title: 'a.ts:10',
+    mode: 'readonly',
+    status: 'open',
+    scope: 'branch',
+    filePath: 'src/a.ts',
+    anchors: [],
+    changeHash: null,
+    fingerprint: null,
+    anchorMessageId: 'msg-1',
+    anchorMessageKind: 'assistant',
+    turnKey: null,
+    promotedForkId: null,
+    lastReadAt: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('ReviewThreadDockComponent inherited context', () => {
+  let component: ReviewThreadDockComponent;
+  let state: ReviewWorkspaceStateService;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [ReviewThreadDockComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        { provide: ReviewChatsService, useValue: { list: vi.fn(() => of([])) } },
+        {
+          provide: AgentRuntimeWebsocketService,
+          useValue: { borrow: vi.fn(() => of()), releaseBorrow: vi.fn(), send: vi.fn() },
+        },
+        {
+          provide: AgentRuntimeApiService,
+          useValue: {
+            getHistory: vi.fn(() => of([])),
+            getAutocompleteItems: vi.fn(() => of([])),
+          },
+        },
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ReviewThreadDockComponent);
+    component = fixture.componentInstance;
+    fixture.componentRef.setInput('sessionId', 1);
+    fixture.componentRef.setInput('provider', 'claude');
+
+    state = TestBed.inject(ReviewWorkspaceStateService);
+    state.reset();
+  });
+
+  it('tells the user a discussion already carries the session conversation', () => {
+    state.chats.set([chat()]);
+    state.activeThreadId.set(7);
+
+    const note = component.contextNote();
+    expect(note?.summary).toBe('Continues from your session');
+    // The fork is a snapshot, so the note must not promise a live view.
+    expect(note?.caveat).toContain('when this discussion started');
+  });
+
+  it('shows no inherited-context note on the session tab', () => {
+    state.chats.set([chat()]);
+    state.activeThreadId.set(SESSION_TAB_ID);
+
+    expect(component.contextNote()).toBeNull();
+  });
+});

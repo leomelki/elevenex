@@ -1,0 +1,131 @@
+<!--
+  One unit — a message, a thinking block, a tool call or a system notice.
+  Rendered both at the top level and inside an expanded turn, so it lives in a
+  template rather than being written out twice.
+-->
+<ng-template #unitTpl let-rawUnit="unit" let-rawTurn="turn">
+  @let unit = asUnit(rawUnit);
+  @let turn = asTurn(rawTurn);
+  @let affordances = messageAffordances();
+
+  @switch (unit.kind) {
+    @case ('message') {
+      <cw-message
+        [item]="unit.item"
+        [worktreePath]="worktreePath()"
+        [streaming]="isStreaming(unit.item.id)"
+        [showCopy]="affordances.canCopy(unit.item)"
+        [showEdit]="affordances.canEdit(unit.item)"
+        [showFork]="affordances.canFork(unit.item)"
+        [actionsDisabled]="affordances.actionsDisabled()"
+        [forkDisabled]="affordances.forkDisabled()"
+        [forkDisabledReason]="affordances.forkDisabledReason()"
+        [forking]="affordances.isForking(unit.item)"
+        [forks]="affordances.forks(unit.item)"
+        [forksExpanded]="affordances.forksExpanded(unit.item)"
+        [editArmed]="affordances.isEditArmed(unit.item)"
+        [planReviewEnabled]="affordances.canReviewPlan(unit.item)"
+        [planReview]="affordances.planReview(unit.item)"
+        (messageCopy)="messageCopy.emit({ item: unit.item, text: $event })"
+        (fork)="fork.emit(unit.item)"
+        (armEdit)="armEdit.emit(unit.item)"
+        (confirmEdit)="confirmEdit.emit(unit.item)"
+        (cancelEdit)="cancelEdit.emit()"
+        (toggleForks)="toggleForks.emit(unit.item)"
+        (openFork)="openFork.emit($event)"
+        (forkAgain)="fork.emit(unit.item)"
+        (openPlanReview)="openPlanReview.emit($event)"
+        (openPlanChat)="openPlanChat.emit($event)"
+      />
+    }
+    @case ('thinking') {
+      <cw-thinking [item]="unit.item" [streaming]="isStreaming(unit.item.id)" />
+    }
+    @case ('tool') {
+      <cw-tool-call
+        [call]="unit.call"
+        [result]="unit.result"
+        [childItems]="childItemsFor(unit.toolUseId)"
+        [isLive]="isLiveToolUse(unit.toolUseId)"
+        [progress]="progressFor(unit.toolUseId)"
+        [turnId]="turn?.turnId ?? null"
+        [hasAgentHistory]="!!turn?.agentSummary"
+        (approve)="approve.emit($event)"
+        (deny)="deny.emit($event)"
+        (inspect)="inspectTurn.emit($event)"
+      />
+    }
+    @case ('system') {
+      <cw-message [item]="unit.item" [worktreePath]="worktreePath()" />
+    }
+  }
+</ng-template>
+
+@for (item of items(); track trackItem($index, item)) {
+  @switch (item.kind) {
+    @case ('unit') {
+      <ng-container
+        [ngTemplateOutlet]="unitTpl"
+        [ngTemplateOutletContext]="{ unit: item.unit, turn: null }"
+      />
+    }
+    @case ('collapsed-turn') {
+      <div class="flex flex-col gap-3 -my-0.5">
+        <cw-turn-summary
+          [durationLabel]="item.durationLabel"
+          [stepCount]="item.stepCount"
+          [agentSummary]="item.agentSummary"
+          [changeDetails]="item.changeDetails"
+          [expanded]="isTurnExpanded(item.turnId)"
+          [changesExpanded]="isTurnChangesExpanded(item.turnId)"
+          (toggle)="toggleTurn.emit(item.turnId)"
+          (toggleChanges)="toggleTurnChanges.emit(item.turnId)"
+          (inspect)="inspectTurn.emit(item.turnId)"
+        />
+
+        @if (item.changeDetails && isTurnChangesExpanded(item.turnId)) {
+          <cw-turn-changes
+            [details]="item.changeDetails"
+            [threadCount]="reviewThreadsFor(item.turnId).length"
+            (close)="closeTurnChanges.emit(item.turnId)"
+            (review)="openReview.emit($event)"
+          />
+        }
+
+        <!--
+          Rendered here rather than injected into the render items: that list is
+          a pure function of the paired transcript, and recomputing thousands of
+          entries for a presentational card would also collide with its
+          generated ids.
+        -->
+        @if (reviewThreadsFor(item.turnId); as threads) {
+          @if (threads.length) {
+            <cw-review-threads-card
+              [threads]="threads"
+              [unreadIds]="unreadReviewThreadIds()"
+              (open)="openReview.emit({ thread: $event })"
+            />
+          }
+        }
+
+        @if (isTurnExpanded(item.turnId)) {
+          <div class="flex flex-col gap-3.5 mb-0.5 py-0.5 pl-4 border-l border-border/80">
+            @for (hiddenUnit of item.hiddenUnits; track hiddenUnit.id) {
+              <ng-container
+                [ngTemplateOutlet]="unitTpl"
+                [ngTemplateOutletContext]="{ unit: hiddenUnit, turn: item }"
+              />
+            }
+          </div>
+        }
+      </div>
+    }
+  }
+}
+
+@if (pendingReply()) {
+  <cw-message
+    [item]="{ id: 'awaiting-first-token', kind: 'assistant', content: '', timestamp: '' }"
+    [streaming]="true"
+  />
+}

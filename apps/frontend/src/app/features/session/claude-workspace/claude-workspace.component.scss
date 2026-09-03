@@ -9,31 +9,5 @@
   container-name: cw-workspace;
 }
 
-/* Multi-stop gradient helpers — cannot be expressed as single Tailwind utilities */
-.cw-turn-line {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in oklab, var(--border) 95%, transparent) 18%,
-    color-mix(in oklab, var(--border) 95%, transparent) 82%,
-    transparent
-  );
-}
-
-.cw-pill-bg {
-  background: linear-gradient(
-    180deg,
-    color-mix(in oklab, var(--card) 96%, white 4%),
-    color-mix(in oklab, var(--card) 92%, var(--background))
-  );
-}
-
-.cw-agents-bg {
-  background:
-    radial-gradient(circle at top right, color-mix(in oklab, var(--primary) 6%, transparent), transparent 55%),
-    color-mix(in oklab, var(--card) 95%, transparent);
-}
-
-@container cw-workspace (max-width: 760px) {
-  .cw-pill-meta { display: none; }
-}
+/* The turn-summary band owns its own gradients and breakpoints — see
+   cw-turn-summary, which the review dock renders too. */

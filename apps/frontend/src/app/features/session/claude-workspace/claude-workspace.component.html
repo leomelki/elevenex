@@ -124,353 +124,75 @@
       } @else {
         <div class="flex flex-col gap-3.5 max-w-[52rem] mx-auto">
           @if (firstMessageContext(); as fmc) {
-            <section
-              [attr.data-open]="firstMessageContextExpanded() || null"
-              class="group/fmc mb-1 rounded-xl border border-border/85 bg-card/92 overflow-hidden transition-[border-color,box-shadow] duration-[160ms] ease-in-out hover:border-primary/22 data-[open]:shadow-[0_10px_28px_-22px_color-mix(in_oklab,var(--foreground)_45%,transparent)]"
-              aria-label="Context attached to this conversation"
+            <cw-context-note
+              class="mb-1"
+              label="Context"
+              [summary]="fmc.sentence"
+              ariaLabel="Context attached to this conversation"
             >
-              <button
-                type="button"
-                class="flex items-center gap-[0.55rem] w-full pl-[0.85rem] pr-[0.7rem] py-2 border-0 bg-transparent text-foreground font-[inherit] text-left cursor-pointer transition-[background-color] duration-[140ms] hover:bg-foreground/3 focus-visible:outline-none"
-                [attr.aria-expanded]="firstMessageContextExpanded()"
-                (click)="toggleFirstMessageContext()"
-              >
+              <ng-icon note-icon name="lucideWandSparkles" size="13" />
+              @if (fmc.rootRef) {
                 <span
-                  class="inline-flex items-center justify-center w-[1.15rem] h-[1.15rem] shrink-0 rounded-[0.35rem] bg-primary/14 text-[color-mix(in_oklab,var(--primary)_85%,var(--foreground))]"
-                  aria-hidden="true"
+                  note-chip
+                  class="inline-flex items-center gap-[0.3rem] px-[0.4rem] py-[0.1rem] rounded-full bg-foreground/6 text-muted-foreground text-[0.68rem] shrink-0 max-w-56"
+                  title="Compared against"
                 >
-                  <ng-icon name="lucideWandSparkles" size="13" />
-                </span>
-                <span
-                  class="text-[0.68rem] font-semibold tracking-[0.06em] uppercase text-[color-mix(in_oklab,var(--primary)_72%,var(--muted-foreground))] shrink-0"
-                  >Context</span
-                >
-                <span
-                  class="text-[0.8rem] leading-[1.4] text-foreground min-w-0 flex-1 whitespace-nowrap overflow-hidden text-ellipsis group-data-[open]/fmc:hidden"
-                  >{{ fmc.sentence }}</span
-                >
-                @if (fmc.rootRef) {
-                  <span
-                    class="inline-flex items-center gap-[0.3rem] px-[0.4rem] py-[0.1rem] rounded-full bg-foreground/6 text-muted-foreground text-[0.68rem] shrink-0 max-w-56"
-                    title="Compared against"
+                  <ng-icon name="lucideGitBranch" size="10" aria-hidden="true" />
+                  <code
+                    class="font-mono text-[0.68rem] text-foreground whitespace-nowrap overflow-hidden text-ellipsis"
+                    >{{ fmc.rootRef }}</code
                   >
-                    <ng-icon name="lucideGitBranch" size="10" aria-hidden="true" />
+                </span>
+              }
+
+              <p class="m-0 text-[0.82rem] leading-[1.5] text-foreground">{{ fmc.sentence }}</p>
+              @if (fmc.rootRef) {
+                <dl class="m-0 flex items-center gap-2 text-[0.72rem]">
+                  <dt class="text-muted-foreground font-medium">Comparing against</dt>
+                  <dd class="m-0">
                     <code
-                      class="font-mono text-[0.68rem] text-foreground whitespace-nowrap overflow-hidden text-ellipsis"
+                      class="font-mono text-[0.72rem] px-[0.35rem] py-[0.05rem] rounded-[0.3rem] bg-foreground/6 text-foreground"
                       >{{ fmc.rootRef }}</code
                     >
-                  </span>
-                }
-                <ng-icon
-                  class="text-muted-foreground shrink-0 ml-auto transition-transform duration-[180ms] group-data-[open]/fmc:rotate-180"
-                  name="lucideChevronDown"
-                  size="12"
-                  aria-hidden="true"
-                />
-              </button>
-              @if (firstMessageContextExpanded()) {
-                <div
-                  class="flex flex-col gap-[0.55rem] px-[0.95rem] pt-[0.7rem] pb-[0.85rem] border-t border-dashed border-border/70 mt-[0.15rem]"
-                >
-                  <p class="m-0 text-[0.82rem] leading-[1.5] text-foreground">{{ fmc.sentence }}</p>
-                  @if (fmc.rootRef) {
-                    <dl class="m-0 flex items-center gap-2 text-[0.72rem]">
-                      <dt class="text-muted-foreground font-medium">Comparing against</dt>
-                      <dd class="m-0">
-                        <code
-                          class="font-mono text-[0.72rem] px-[0.35rem] py-[0.05rem] rounded-[0.3rem] bg-foreground/6 text-foreground"
-                          >{{ fmc.rootRef }}</code
-                        >
-                      </dd>
-                    </dl>
-                  }
-                  <p class="m-0 text-[0.7rem] text-muted-foreground italic">
-                    This summary was attached to the first prompt to orient the assistant.
-                  </p>
-                </div>
+                  </dd>
+                </dl>
               }
-            </section>
+              <p class="m-0 text-[0.7rem] text-muted-foreground italic">
+                This summary was attached to the first prompt to orient the assistant.
+              </p>
+            </cw-context-note>
           }
 
-          @for (item of renderItems(); track trackByRenderItem($index, item)) {
-            @switch (item.kind) {
-              @case ('unit') {
-                @switch (item.unit.kind) {
-                  @case ('message') {
-                    <cw-message
-                      [item]="item.unit.item"
-                      [worktreePath]="worktreePath"
-                      [streaming]="isStreamingMessage(item.unit.item.id)"
-                      [showCopy]="canCopyMessage(item.unit.item)"
-                      [showEdit]="canEditMessage(item.unit.item)"
-                      [showFork]="canForkMessage(item.unit.item)"
-                      [actionsDisabled]="messageActionsDisabled()"
-                      [forkDisabled]="forkActionsDisabled()"
-                      [forkDisabledReason]="forkDisabledReason()"
-                      [forking]="isForkingItem(item.unit.item)"
-                      [forks]="forksForItem(item.unit.item)"
-                      [forksExpanded]="forksExpandedForItem(item.unit.item)"
-                      [editArmed]="isEditArmed(item.unit.item)"
-                      [planReviewEnabled]="canReviewPlan(item.unit.item)"
-                      [planReview]="planReviewForMessage(item.unit.item)"
-                      (messageCopy)="copyMessage(item.unit.item, $event)"
-                      (fork)="forkMessage(item.unit.item)"
-                      (armEdit)="armEditMessage(item.unit.item)"
-                      (confirmEdit)="confirmEditMessage(item.unit.item)"
-                      (cancelEdit)="cancelArmedEdit()"
-                      (toggleForks)="toggleForksForItem(item.unit.item)"
-                      (openFork)="openFork($event)"
-                      (forkAgain)="forkMessage(item.unit.item)"
-                      (openPlanReview)="openPlanReview($event)"
-                      (openPlanChat)="openPlanQuestion($event)"
-                    />
-                  }
-                  @case ('thinking') {
-                    <cw-thinking
-                      [item]="item.unit.item"
-                      [streaming]="isStreamingMessage(item.unit.item.id)"
-                    />
-                  }
-                  @case ('tool') {
-                    <cw-tool-call
-                      [call]="item.unit.call"
-                      [result]="item.unit.result"
-                      [childItems]="childItemsForToolUse(item.unit.toolUseId)"
-                      [isLive]="isLiveToolUse(item.unit.toolUseId)"
-                      [progress]="toolProgressForToolUse(item.unit.toolUseId)"
-                      (approve)="approvePermission($event)"
-                      (deny)="denyPermission($event)"
-                    />
-                  }
-                  @case ('system') {
-                    <cw-message [item]="item.unit.item" [worktreePath]="worktreePath" />
-                  }
-                }
-              }
-              @case ('collapsed-turn') {
-                <div class="flex flex-col gap-3 -my-0.5">
-                  <div class="flex flex-col gap-[0.65rem]">
-                    <!-- worked-for pill toggle -->
-                    <button
-                      type="button"
-                      class="group flex items-center gap-3.5 w-full p-0 border-0 bg-transparent text-muted-foreground cursor-pointer focus-visible:outline-none"
-                      [attr.aria-expanded]="isTurnExpanded(item.turnId)"
-                      (click)="toggleTurn(item.turnId)"
-                    >
-                      <span class="flex-1 min-w-6 h-px cw-turn-line"></span>
-                      <span
-                        class="inline-flex items-center flex-wrap justify-center gap-2.5 min-w-0 px-3.5 py-[0.475rem] border border-border/92 rounded-full cw-pill-bg shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_24px_-18px_color-mix(in_oklab,var(--foreground)_22%,transparent)] transition-[border-color,background,color,box-shadow] duration-[140ms] group-hover:border-primary/35 group-hover:bg-primary/7 group-hover:bg-none group-hover:text-foreground group-focus-visible:border-primary/35 group-focus-visible:bg-primary/7 group-focus-visible:bg-none group-focus-visible:text-foreground"
-                      >
-                        <span
-                          [attr.data-open]="isTurnExpanded(item.turnId) || null"
-                          class="w-[0.475rem] h-[0.475rem] shrink-0 border-r-[1.5px] border-b-[1.5px] border-current -rotate-45 data-[open]:rotate-45 transition-transform duration-[140ms] ease-in-out opacity-75"
-                        ></span>
-                        <span
-                          class="text-[0.8125rem] font-semibold text-foreground whitespace-nowrap"
-                          >Worked for {{ item.durationLabel }}</span
-                        >
-                        <span class="cw-pill-meta text-[0.75rem] whitespace-nowrap">
-                          {{ isTurnExpanded(item.turnId) ? 'Hide activity' : 'Show activity' }}
-                        </span>
-                        <span
-                          class="px-[0.4rem] py-0.5 rounded-full bg-foreground/6 text-[0.6875rem] tracking-[0.01em] whitespace-nowrap"
-                        >
-                          {{ item.stepCount }} step{{ item.stepCount === 1 ? '' : 's' }}
-                        </span>
-                        @if (item.agentSummary; as summary) {
-                          <span
-                            class="px-[0.4rem] py-0.5 rounded-full bg-foreground/6 text-[0.6875rem] tracking-[0.01em] whitespace-nowrap"
-                          >
-                            {{ summary.agents.length }} agent{{
-                              summary.agents.length === 1 ? '' : 's'
-                            }}
-                          </span>
-                        }
-                      </span>
-                      <span class="flex-1 min-w-6 h-px cw-turn-line"></span>
-                    </button>
-
-                    <!-- view changes pill -->
-                    @if (item.changeDetails; as changeDetails) {
-                      <div class="flex justify-center -mt-[0.2rem]">
-                        <button
-                          type="button"
-                          class="cw-turn-gap__changes cw-turn-gap__changes-button inline-flex items-center gap-[0.55rem] min-h-[1.8rem] px-[0.7rem] py-1 border border-border/86 rounded-full bg-background/74 text-foreground font-[inherit] cursor-pointer shadow-[0_8px_20px_-18px_color-mix(in_oklab,var(--foreground)_35%,transparent)] transition-[border-color,background-color,box-shadow] duration-[130ms] ease-in-out hover:border-primary/34 hover:bg-primary/7 hover:shadow-[0_10px_24px_-18px_color-mix(in_oklab,var(--primary)_40%,transparent)] focus-visible:outline-none focus-visible:border-primary/34 focus-visible:bg-primary/7"
-                          [attr.aria-expanded]="isTurnChangesExpanded(item.turnId)"
-                          (click)="toggleTurnChanges(item.turnId)"
-                        >
-                          <span class="text-[0.74rem] font-[650]">
-                            {{
-                              isTurnChangesExpanded(item.turnId) ? 'Hide changes' : 'View changes'
-                            }}
-                          </span>
-                          <span
-                            class="inline-flex items-baseline gap-1 text-muted-foreground text-[0.68rem] font-semibold whitespace-nowrap"
-                          >
-                            {{ changeDetails.files }} file{{ changeDetails.files === 1 ? '' : 's' }}
-                            <span
-                              class="text-[color-mix(in_oklab,var(--success)_82%,var(--foreground))]"
-                              >+{{ changeDetails.additions }}</span
-                            >
-                            <span
-                              class="text-[color-mix(in_oklab,var(--destructive)_78%,var(--foreground))]"
-                              >-{{ changeDetails.deletions }}</span
-                            >
-                          </span>
-                        </button>
-                      </div>
-                    }
-
-                    <!-- agents summary -->
-                    @if (item.agentSummary; as summary) {
-                      <div
-                        class="flex flex-col gap-2 mx-auto w-full px-[0.875rem] py-[0.625rem] border border-[color-mix(in_oklab,var(--primary)_20%,var(--border))] rounded-xl cw-agents-bg"
-                      >
-                        <div class="flex items-center justify-between gap-3">
-                          <span class="text-[0.75rem] font-semibold text-foreground">
-                            {{
-                              summary.agents.length === 1
-                                ? '1 agent ran'
-                                : summary.agents.length + ' agents ran'
-                            }}
-                          </span>
-                          <button
-                            type="button"
-                            class="cw-turn-gap__inspect inline-flex items-center gap-1.5 px-3 py-[0.3rem] rounded-full border border-primary/38 bg-primary/9 text-[color-mix(in_oklab,var(--primary)_80%,var(--foreground))] text-[0.75rem] font-semibold cursor-pointer whitespace-nowrap transition-[background,border-color] duration-[120ms] hover:bg-primary/15 hover:border-primary/55 focus-visible:outline-none"
-                            (click)="openAgentInspector(item.turnId)"
-                          >
-                            Deep Dive →
-                          </button>
-                        </div>
-                        <div class="flex flex-col gap-1.5">
-                          @for (agent of summary.agents; track agent.agentId) {
-                            <button
-                              type="button"
-                              class="flex items-center gap-2 min-w-0 w-full rounded-lg border border-border/80 bg-background/70 px-[0.625rem] py-[0.4rem] text-foreground cursor-pointer text-left transition-[background,border-color] duration-100 hover:bg-primary/6 hover:border-primary/28 focus-visible:outline-none"
-                              [attr.data-state]="agent.status"
-                              (click)="openAgentInspector(item.turnId)"
-                            >
-                              <span
-                                class="w-[0.4375rem] h-[0.4375rem] rounded-full shrink-0 bg-muted-foreground data-[state=started]:bg-primary data-[state=started]:shadow-[0_0_0_2px_color-mix(in_oklab,var(--primary)_25%,transparent)] data-[state=stopped]:bg-[#0f9f6e]"
-                                [attr.data-state]="agent.status"
-                              ></span>
-                              <span class="text-[0.8125rem] font-semibold capitalize shrink-0">{{
-                                agent.agentType
-                              }}</span>
-                              @if (agent.summary) {
-                                <span
-                                  class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.75rem] text-muted-foreground"
-                                  >{{ agent.summary }}</span
-                                >
-                              }
-                            </button>
-                          }
-                        </div>
-                      </div>
-                    }
-                  </div>
-
-                  @if (item.changeDetails && isTurnChangesExpanded(item.turnId)) {
-                    <cw-turn-changes
-                      [details]="item.changeDetails"
-                      [threadCount]="reviewThreadsForTurn(item.turnId).length"
-                      (close)="closeTurnChanges(item.turnId)"
-                      (review)="openReviewWorkspace.emit($event)"
-                    />
-                  }
-
-                  <!--
-                    Rendered here rather than injected into renderItems: that
-                    computed is a pure function of the paired transcript, and
-                    recomputing thousands of entries for a presentational card
-                    would also collide with its generated ids.
-                  -->
-                  @if (reviewThreadsForTurn(item.turnId); as threads) {
-                    @if (threads.length) {
-                      <cw-review-threads-card
-                        [threads]="threads"
-                        [unreadIds]="unreadReviewThreadIds()"
-                        (open)="openReviewWorkspace.emit({ thread: $event })"
-                      />
-                    }
-                  }
-
-                  @if (isTurnExpanded(item.turnId)) {
-                    <div class="flex flex-col gap-3.5 mb-0.5 py-0.5 pl-4 border-l border-border/80">
-                      @for (hiddenUnit of item.hiddenUnits; track hiddenUnit.id) {
-                        @switch (hiddenUnit.kind) {
-                          @case ('message') {
-                            <cw-message
-                              [item]="hiddenUnit.item"
-                              [worktreePath]="worktreePath"
-                              [streaming]="isStreamingMessage(hiddenUnit.item.id)"
-                              [showCopy]="canCopyMessage(hiddenUnit.item)"
-                              [showEdit]="canEditMessage(hiddenUnit.item)"
-                              [showFork]="canForkMessage(hiddenUnit.item)"
-                              [actionsDisabled]="messageActionsDisabled()"
-                              [forkDisabled]="forkActionsDisabled()"
-                              [forkDisabledReason]="forkDisabledReason()"
-                              [forking]="isForkingItem(hiddenUnit.item)"
-                              [forks]="forksForItem(hiddenUnit.item)"
-                              [forksExpanded]="forksExpandedForItem(hiddenUnit.item)"
-                              [editArmed]="isEditArmed(hiddenUnit.item)"
-                              [planReviewEnabled]="canReviewPlan(hiddenUnit.item)"
-                              [planReview]="planReviewForMessage(hiddenUnit.item)"
-                              (messageCopy)="copyMessage(hiddenUnit.item, $event)"
-                              (fork)="forkMessage(hiddenUnit.item)"
-                              (armEdit)="armEditMessage(hiddenUnit.item)"
-                              (confirmEdit)="confirmEditMessage(hiddenUnit.item)"
-                              (cancelEdit)="cancelArmedEdit()"
-                              (toggleForks)="toggleForksForItem(hiddenUnit.item)"
-                              (openFork)="openFork($event)"
-                              (forkAgain)="forkMessage(hiddenUnit.item)"
-                              (openPlanReview)="openPlanReview($event)"
-                              (openPlanChat)="openPlanQuestion($event)"
-                            />
-                          }
-                          @case ('thinking') {
-                            <cw-thinking
-                              [item]="hiddenUnit.item"
-                              [streaming]="isStreamingMessage(hiddenUnit.item.id)"
-                            />
-                          }
-                          @case ('tool') {
-                            <cw-tool-call
-                              [call]="hiddenUnit.call"
-                              [result]="hiddenUnit.result"
-                              [childItems]="childItemsForToolUse(hiddenUnit.toolUseId)"
-                              [isLive]="isLiveToolUse(hiddenUnit.toolUseId)"
-                              [progress]="toolProgressForToolUse(hiddenUnit.toolUseId)"
-                              [turnId]="item.turnId"
-                              [hasAgentHistory]="!!item.agentSummary"
-                              (approve)="approvePermission($event)"
-                              (deny)="denyPermission($event)"
-                              (inspect)="openAgentInspector($event)"
-                            />
-                          }
-                          @case ('system') {
-                            <cw-message [item]="hiddenUnit.item" [worktreePath]="worktreePath" />
-                          }
-                        }
-                      }
-                    </div>
-                  }
-                </div>
-              }
-            }
-          }
-
-          @if (isAwaitingFirstAssistantToken()) {
-            <cw-message
-              [item]="{
-                id: 'awaiting-first-token',
-                kind: 'assistant',
-                content: '',
-                timestamp: '',
-              }"
-              [streaming]="true"
-            />
-          }
+          <cw-transcript
+            [items]="renderItems()"
+            [worktreePath]="worktreePath"
+            [streamingMessageId]="streamingMessageId()"
+            [pendingReply]="isAwaitingFirstAssistantToken()"
+            [childItemsByParentToolUseId]="childTranscriptItemsByParentToolUseId()"
+            [liveToolUseIds]="liveToolUseIds()"
+            [toolProgressByToolUseId]="toolProgressByToolUseId()"
+            [expandedTurns]="expandedTurns()"
+            [expandedTurnChanges]="expandedTurnChanges()"
+            [messageAffordances]="messageAffordances"
+            [reviewThreadsByTurnId]="reviewThreadsByTurnId()"
+            [unreadReviewThreadIds]="unreadReviewThreadIds()"
+            (approve)="approvePermission($event)"
+            (deny)="denyPermission($event)"
+            (toggleTurn)="toggleTurn($event)"
+            (toggleTurnChanges)="toggleTurnChanges($event)"
+            (closeTurnChanges)="closeTurnChanges($event)"
+            (inspectTurn)="openAgentInspector($event)"
+            (messageCopy)="copyMessage($event.item, $event.text)"
+            (fork)="forkMessage($event)"
+            (armEdit)="armEditMessage($event)"
+            (confirmEdit)="confirmEditMessage($event)"
+            (cancelEdit)="cancelArmedEdit()"
+            (toggleForks)="toggleForksForItem($event)"
+            (openFork)="openFork($event)"
+            (openPlanReview)="openPlanReview($event)"
+            (openPlanChat)="openPlanQuestion($event)"
+            (openReview)="openReviewWorkspace.emit($event)"
+          />
 
           @if (liveShows().length > 0) {
             <div class="flex flex-col gap-2">

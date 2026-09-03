@@ -26,6 +26,7 @@ import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
 import type { ReviewChat } from '@/shared/models/review-chat.model';
 import {
   ForkedChatComponent,
+  type ForkedChatContextNote,
   type ForkedChatLens,
   type ForkedChatTarget,
 } from '@/shared/agent-chat';
@@ -79,6 +80,8 @@ const SESSION_LENS: ForkedChatLens = {
 export class ReviewThreadDockComponent {
   readonly sessionId = input.required<number>();
   readonly provider = input.required<AgentProviderId>();
+  /** Lets tool cards and messages shorten paths against the session worktree. */
+  readonly worktreePath = input<string | null>(null);
   /** False when the provider cannot fork, so thread creation is unavailable. */
   readonly canFork = input(true);
   /** Anchors whose file has changed since the discussion started. */
@@ -120,6 +123,26 @@ export class ReviewThreadDockComponent {
   readonly activeAnchorLabels = computed(() => {
     const chat = this.state.activeChat();
     return chat ? chat.anchors.map((anchor) => anchorLabel(anchor)) : [];
+  });
+
+  /**
+   * A discussion is a fork, so the agent starts out knowing the session's
+   * conversation without any of it being shown. Say so — and say where it
+   * stops, because the fork is taken when the discussion starts and never
+   * catches up with the session afterwards.
+   */
+  readonly contextNote = computed<ForkedChatContextNote | null>(() => {
+    // The Session tab is the session itself — nothing is being inherited there.
+    if (!this.state.activeChat()) return null;
+    return {
+      summary: 'Continues from your session',
+      detail:
+        'This discussion branched off your session, so the agent already knows the ' +
+        'conversation you had — you just do not have to scroll past it here.',
+      caveat:
+        'It sees the conversation as it stood when this discussion started, not ' +
+        'anything you have said in the session since. Replies here stay in this thread.',
+    };
   });
 
   readonly sending = computed(() => {
