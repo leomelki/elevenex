@@ -1176,7 +1176,11 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     if (row.file.oldPath) return `renamed from ${row.file.oldPath}`;
     if (row.state.loadingOffsets.size > 0) return 'Loading diff window';
     if (!row.state.changeHash) return 'Diff not loaded yet';
-    return row.state.baseRowCount === null ? '' : `${row.state.baseRowCount} diff rows`;
+    if (row.state.baseRowCount === null) return '';
+    // An opened-but-unchanged file is rendered as its own contents, not a diff.
+    return this.isExtraFilePath(row.file.path)
+      ? `${row.state.baseRowCount} lines`
+      : `${row.state.baseRowCount} diff rows`;
   }
 
   statusLabel(status: ChangeReviewFileStatus): string {
@@ -1490,6 +1494,35 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     untracked(() => {
       this.rebuildLayout();
       this.refreshRenderedRows();
+    });
+  });
+
+  /**
+   * Give explicitly opened files a render state of their own.
+   *
+   * Only files from the diff summary get one at load time, so without this an
+   * opened-but-unchanged file lays out rows that the renderer then skips and
+   * whose windows are never requested — the file reads as empty.
+   */
+  private readonly extraFileStateEffect = effect(() => {
+    const extras = this.extraFileSummaries();
+    untracked(() => {
+      const states = this.fileStates();
+      const extraPaths = new Set(extras.map((file) => file.path));
+      const summaryPaths = new Set((this.summary()?.files ?? []).map((file) => file.path));
+      const missing = extras.filter((file) => !states.has(file.path));
+      const dropped = [...states.keys()].filter(
+        (path) => !summaryPaths.has(path) && !extraPaths.has(path),
+      );
+      if (!missing.length && !dropped.length) return;
+
+      const next = new Map(states);
+      for (const path of dropped) next.delete(path);
+      for (const file of missing) next.set(file.path, this.createFileState(file));
+      this.fileStates.set(next);
+      this.rebuildLayout();
+      this.refreshRenderedRows();
+      this.ensureVisibleRangeLoaded();
     });
   });
 

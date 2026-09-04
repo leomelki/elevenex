@@ -1125,6 +1125,40 @@ describe('ChangeReviewPanelComponent', () => {
       expect(plainRow?.querySelector('.cr-thread-marker')).toBeNull();
     });
 
+    it('renders an explicitly opened file that has no diff in this scope', async () => {
+      const path = 'docs/notes.md';
+      await flushSummary(summary([file('src/a.ts')]));
+      windowCalls[0].response.next(fileWindow('src/a.ts'));
+      windowCalls[0].response.complete();
+      await flush();
+
+      fixture.componentRef.setInput('extraFiles', [path]);
+      fixture.componentRef.setInput('activePath', path);
+      fixture.detectChanges();
+      await flush();
+      fixture.detectChanges();
+
+      const call = windowCalls.find((item) => item.path === path);
+      expect(call).toBeDefined();
+      expect(serviceMock.getFileWindow).toHaveBeenCalledWith(
+        '/tmp/repo',
+        'branch',
+        path,
+        expect.objectContaining({ allowUnchanged: true }),
+        false,
+      );
+
+      call!.response.next(fileWindow(path, 'branch', 0, [row(path, 0), row(path, 1)]));
+      call!.response.complete();
+      await flush();
+      fixture.detectChanges();
+
+      const element = fixture.nativeElement as HTMLElement;
+      expect(element.textContent).toContain('line 1');
+      // +0 −0 says nothing useful about a file that was opened, not changed.
+      expect(element.textContent).toContain('no changes in this scope');
+    });
+
     it('requests whole files and does not extrapolate the row estimate from context', async () => {
       const path = 'src/big.ts';
       fixture.componentRef.setInput('fullFileMode', true);

@@ -64,6 +64,8 @@ describe('ReviewWorkspaceComponent tabs', () => {
       restoreScrollTop: (value: number) => {
         scrollTop = value;
       },
+      scope: () => 'branch',
+      fileChangeHashes: () => new Map([['README.md', 'hash-readme']]),
     });
   });
 
@@ -176,6 +178,45 @@ describe('ReviewWorkspaceComponent tabs', () => {
     component.closeTab('src/a.ts');
 
     expect(component.activeTabPath()).toBe('src/b.ts');
+  });
+
+  it('hands the markdown preview the diff panel’s anchor metadata', () => {
+    component.openTab('README.md');
+
+    expect(component.previewScope()).toBe('branch');
+    expect(component.previewChangeHash()).toBe('hash-readme');
+  });
+
+  it('routes a preview “Ask in session” into the session composer', async () => {
+    component.openTab('README.md');
+
+    await component.onPreviewSelectionAction({
+      id: 'mention',
+      mentions: [
+        {
+          id: 'md-1',
+          version: 1,
+          scope: 'branch',
+          compareLabel: null,
+          baseSha: null,
+          headSha: null,
+          filePath: 'README.md',
+          oldPath: null,
+          status: 'modified',
+          changeHash: null,
+          oldLineStart: 3,
+          oldLineEnd: 4,
+          newLineStart: 3,
+          newLineEnd: 4,
+          selectedText: 'a paragraph',
+          context: { before: [], selected: [], after: [] },
+          truncated: false,
+        },
+      ],
+    });
+
+    expect(component.draftSeed()).toContain('README.md');
+    expect(component.draftSeed()).toContain('a paragraph');
   });
 
   it('stops tracking a closed file as an explicitly opened extra file', () => {

@@ -22,7 +22,10 @@ import {
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
-import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import type {
+  DiffSelectionMention,
+  DiffSelectionMentionScope,
+} from '@/shared/models/diff-selection-mention.model';
 import type { CreateSessionForkResponse } from '@/shared/models/session.model';
 import { appendDiffSelectionMentions } from '@/shared/utils/diff-selection-mention';
 import {
@@ -113,6 +116,20 @@ export class ReviewWorkspaceComponent {
   readonly showMarkdownPreview = computed(() => {
     const tab = this.activeTab();
     return tab !== null && tab.preview && isMarkdownPath(tab.path);
+  });
+
+  /**
+   * Selection metadata for the markdown preview, taken from the diff panel so a
+   * discussion started while reading a document anchors like a diff-made one.
+   */
+  readonly previewScope = computed<DiffSelectionMentionScope>(
+    () => this.diffPanel()?.scope() ?? 'branch',
+  );
+
+  readonly previewChangeHash = computed(() => {
+    const path = this.activeTabPath();
+    if (!path) return null;
+    return this.diffPanel()?.fileChangeHashes().get(path) ?? null;
   });
 
   readonly canFork = computed(() =>
@@ -228,6 +245,21 @@ export class ReviewWorkspaceComponent {
       await this.state.addAnchors(target.id, event.mentions);
       toast.success('Added to discussion', { description: target.title });
     }
+  }
+
+  /**
+   * The preview has no diff panel underneath to handle "Ask in session" for it,
+   * so route that here and send everything else down the shared path.
+   */
+  async onPreviewSelectionAction(event: {
+    id: string;
+    mentions: DiffSelectionMention[];
+  }): Promise<void> {
+    if (event.id === 'mention') {
+      this.onMentionInSession(event.mentions);
+      return;
+    }
+    await this.onSelectionAction(event);
   }
 
   /**

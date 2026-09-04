@@ -41,13 +41,18 @@ describe('ReviewThreadDockComponent inherited context', () => {
   let component: ReviewThreadDockComponent;
   let fixture: ComponentFixture<ReviewThreadDockComponent>;
   let state: ReviewWorkspaceStateService;
+  let deleteSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
+    deleteSpy = vi.fn(() => of({ id: 7, deleted: true }));
     await TestBed.configureTestingModule({
       imports: [ReviewThreadDockComponent],
       providers: [
         provideZonelessChangeDetection(),
-        { provide: ReviewChatsService, useValue: { list: vi.fn(() => of([])) } },
+        {
+          provide: ReviewChatsService,
+          useValue: { list: vi.fn(() => of([])), delete: deleteSpy },
+        },
         {
           provide: AgentRuntimeWebsocketService,
           useValue: { borrow: vi.fn(() => of()), releaseBorrow: vi.fn(), send: vi.fn() },
@@ -100,5 +105,26 @@ describe('ReviewThreadDockComponent inherited context', () => {
     // Inside .rd-tabs the menu would be clipped to the strip's ~30px height.
     expect(fixture.nativeElement.querySelector('.rd-tabs .rd-menu')).toBeNull();
     expect(document.querySelector('.cdk-overlay-container .rd-menu')).not.toBeNull();
+  });
+
+  it('deletes the discussion once the confirmation dialog is accepted', async () => {
+    await state.load(1);
+    state.chats.set([chat()]);
+    fixture.detectChanges();
+
+    const removePromise = component.remove(chat());
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    // The confirm dialog has no zContent, which used to crash on open
+    // (NG0919) because the dialog tried to attach a portal for `undefined`.
+    const okButton = document.querySelector<HTMLButtonElement>('[data-testid="z-ok-button"]');
+    expect(okButton).not.toBeNull();
+    okButton?.click();
+
+    await removePromise;
+
+    expect(deleteSpy).toHaveBeenCalledWith(1, 7);
+    expect(state.chats().some((c) => c.id === 7)).toBe(false);
   });
 });

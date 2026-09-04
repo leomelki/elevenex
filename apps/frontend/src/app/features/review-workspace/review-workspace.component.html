@@ -93,7 +93,11 @@
               [worktreePath]="worktreePath()"
               [path]="tab.path"
               [restoreScrollTop]="tab.scrollTop"
+              [scope]="previewScope()"
+              [changeHash]="previewChangeHash()"
+              [selectionActions]="selectionActions()"
               (scrolled)="onPreviewScrolled($event)"
+              (selectionAction)="onPreviewSelectionAction($event)"
             />
           }
         }

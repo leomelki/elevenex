@@ -1,0 +1,33 @@
+<div class="mp-root">
+  @if (loading()) {
+    <div class="mp-status">
+      <ng-icon name="lucideRefreshCw" size="14" class="mp-spin" />
+      Loading…
+    </div>
+  } @else if (error(); as message) {
+    <div class="mp-status mp-status--error" role="alert">
+      <ng-icon name="lucideTriangleAlert" size="14" />
+      {{ message }}
+    </div>
+  } @else {
+    <article
+      #scrollRef
+      class="mp-doc"
+      (scroll)="scrolled.emit(scrollRef.scrollTop)"
+      (mouseup)="captureSelection()"
+      (keyup)="captureSelection()"
+    >
+      <div class="mp-md" [innerHTML]="content() | cwMarkdown: worktreePath()"></div>
+
+      @if (selectionMenu(); as menu) {
+        <cr-selection-menu
+          [top]="menu.top"
+          [left]="menu.left"
+          [mentions]="menu.mentions"
+          [actions]="selectionActions()"
+          (invoke)="onSelectionMenuAction($event)"
+        />
+      }
+    </article>
+  }
+</div>

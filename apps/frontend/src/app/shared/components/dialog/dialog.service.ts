@@ -101,7 +101,9 @@ export class ZardDialogService {
           } as T,
         ),
       );
-    } else if (typeof componentOrTemplateRef !== 'string') {
+    } else if (typeof componentOrTemplateRef !== 'string' && componentOrTemplateRef != null) {
+      // A dialog with only zTitle/zDescription/footer text has no portal content
+      // to attach — the container renders those directly from `config`.
       const injector = this.createInjector<T, U>(dialogRef, config);
       const contentRef = dialogContainer.attachComponentPortal<T>(
         new ComponentPortal(componentOrTemplateRef, config.zViewContainerRef, injector),

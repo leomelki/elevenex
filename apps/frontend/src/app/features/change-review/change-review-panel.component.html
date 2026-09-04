@@ -427,6 +427,8 @@
                 >
                   @if (file.binary) {
                     <ng-icon name="lucideBinary" size="14" />
+                  } @else if (isExtraFilePath(file.path)) {
+                    <span class="font-sans">no diff</span>
                   } @else {
                     <span class="text-success">+{{ file.additions }}</span>
                     <span class="text-destructive">-{{ file.deletions }}</span>
@@ -627,6 +629,8 @@
                 >
                   @if (file.binary) {
                     <ng-icon name="lucideBinary" size="14" />
+                  } @else if (isExtraFilePath(file.path)) {
+                    <span class="font-sans">no changes in this scope</span>
                   } @else {
                     <span class="text-success">+{{ file.additions }}</span>
                     <span class="text-destructive">-{{ file.deletions }}</span>
@@ -707,6 +711,8 @@
                     >
                       @if (renderRow.file.binary) {
                         <ng-icon name="lucideBinary" size="14" />
+                      } @else if (isExtraFilePath(renderRow.file.path)) {
+                        <span class="font-sans">no changes in this scope</span>
                       } @else {
                         <span class="text-success">+{{ renderRow.file.additions }}</span>
                         <span class="text-destructive">-{{ renderRow.file.deletions }}</span>

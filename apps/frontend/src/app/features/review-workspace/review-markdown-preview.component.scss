@@ -1,0 +1,175 @@
+:host {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.mp-root {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.mp-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 2rem 1rem;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+
+.mp-status--error {
+  color: var(--destructive);
+}
+
+.mp-spin {
+  animation: mp-spin 1s linear infinite;
+}
+
+@keyframes mp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-spin {
+    animation: none;
+  }
+}
+
+.mp-doc {
+  /* Containing block for the selection menu, which scrolls with the text.
+     Padding lives on .mp-md so the menu's coordinates need no correction. */
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Rendered document styling: utilities cannot reach markdown output. */
+.mp-md {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 1.25rem clamp(1rem, 5%, 2.5rem) 3rem;
+  color: var(--foreground);
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.mp-md :first-child {
+  margin-top: 0;
+}
+
+.mp-md h1,
+.mp-md h2,
+.mp-md h3,
+.mp-md h4 {
+  margin: 1.6em 0 0.6em;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.mp-md h1 {
+  font-size: 1.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+
+.mp-md h2 {
+  font-size: 1.3em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+}
+
+.mp-md h3 {
+  font-size: 1.1em;
+}
+
+.mp-md p,
+.mp-md ul,
+.mp-md ol,
+.mp-md blockquote,
+.mp-md table {
+  margin: 0.85em 0;
+}
+
+.mp-md ul,
+.mp-md ol {
+  padding-left: 1.5em;
+}
+
+.mp-md li + li {
+  margin-top: 0.25em;
+}
+
+.mp-md a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mp-md blockquote {
+  border-left: 3px solid color-mix(in oklch, var(--primary) 45%, var(--border));
+  background: color-mix(in oklch, var(--muted) 35%, transparent);
+  border-radius: 0 0.4rem 0.4rem 0;
+  color: var(--muted-foreground);
+  padding: 0.5em 0.9em;
+}
+
+.mp-md code {
+  border-radius: 0.3rem;
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.86em;
+  padding: 0.1em 0.35em;
+}
+
+.mp-md pre {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--card);
+  padding: 0.75em 0.9em;
+}
+
+.mp-md pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.82em;
+}
+
+.mp-md table {
+  width: 100%;
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.mp-md th,
+.mp-md td {
+  border: 1px solid var(--border);
+  padding: 0.4em 0.6em;
+  text-align: left;
+}
+
+.mp-md th {
+  background: color-mix(in oklch, var(--muted) 45%, transparent);
+  font-weight: 700;
+}
+
+.mp-md hr {
+  margin: 1.75em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.mp-md img {
+  max-width: 100%;
+  border-radius: 0.4rem;
+}
