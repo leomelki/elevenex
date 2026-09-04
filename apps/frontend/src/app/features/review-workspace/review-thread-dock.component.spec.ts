@@ -1,4 +1,4 @@
-import { TestBed } from '@angular/core/testing';
+import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { of } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -39,6 +39,7 @@ function chat(overrides: Partial<ReviewChat> = {}): ReviewChat {
 
 describe('ReviewThreadDockComponent inherited context', () => {
   let component: ReviewThreadDockComponent;
+  let fixture: ComponentFixture<ReviewThreadDockComponent>;
   let state: ReviewWorkspaceStateService;
 
   beforeEach(async () => {
@@ -61,7 +62,7 @@ describe('ReviewThreadDockComponent inherited context', () => {
       ],
     }).compileComponents();
 
-    const fixture = TestBed.createComponent(ReviewThreadDockComponent);
+    fixture = TestBed.createComponent(ReviewThreadDockComponent);
     component = fixture.componentInstance;
     fixture.componentRef.setInput('sessionId', 1);
     fixture.componentRef.setInput('provider', 'claude');
@@ -85,5 +86,19 @@ describe('ReviewThreadDockComponent inherited context', () => {
     state.activeThreadId.set(SESSION_TAB_ID);
 
     expect(component.contextNote()).toBeNull();
+  });
+
+  it('renders the tab menu outside the scrolling tab strip, which clips it', () => {
+    state.chats.set([chat()]);
+    fixture.detectChanges();
+
+    const tab = fixture.nativeElement.querySelector('.rd-tab-wrap') as HTMLElement;
+    tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+
+    expect(component.menuOpenFor()).toBe(7);
+    // Inside .rd-tabs the menu would be clipped to the strip's ~30px height.
+    expect(fixture.nativeElement.querySelector('.rd-tabs .rd-menu')).toBeNull();
+    expect(document.querySelector('.cdk-overlay-container .rd-menu')).not.toBeNull();
   });
 });

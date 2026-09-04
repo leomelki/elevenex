@@ -11,7 +11,12 @@
   </button>
 
   @for (chat of state.openChats(); track chat.id) {
-    <div class="rd-tab-wrap">
+    <div
+      class="rd-tab-wrap"
+      cdkOverlayOrigin
+      #menuOrigin="cdkOverlayOrigin"
+      (contextmenu)="openMenu(chat.id, $event)"
+    >
       <button
         type="button"
         role="tab"
@@ -48,7 +53,23 @@
         <ng-icon name="lucideEllipsis" size="13" />
       </button>
 
-      @if (menuOpenFor() === chat.id) {
+      <!--
+        The tab strip scrolls horizontally, which clips anything absolutely
+        positioned inside it, so the menu lives in an overlay detached from
+        this subtree and is anchored back to the tab.
+      -->
+      <ng-template
+        cdkConnectedOverlay
+        [cdkConnectedOverlayOrigin]="menuOrigin"
+        [cdkConnectedOverlayOpen]="menuOpenFor() === chat.id"
+        [cdkConnectedOverlayHasBackdrop]="true"
+        cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+        [cdkConnectedOverlayPush]="true"
+        [cdkConnectedOverlayPositions]="menuPositions"
+        (backdropClick)="closeMenu()"
+        (detach)="closeMenu()"
+        (overlayKeydown)="onMenuKeydown($event)"
+      >
         <div class="rd-menu" role="menu">
           @if (chat.mode === 'readonly') {
             <button type="button" role="menuitem" (click)="unlockEdits(chat)">
@@ -81,7 +102,7 @@
             Delete
           </button>
         </div>
-      }
+      </ng-template>
     </div>
   }
 </div>

@@ -9,6 +9,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { type ConnectedPosition, OverlayModule } from '@angular/cdk/overlay';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
@@ -59,7 +60,7 @@ const SESSION_LENS: ForkedChatLens = {
 @Component({
   selector: 'app-review-thread-dock',
   standalone: true,
-  imports: [CommonModule, NgIcon, ForkedChatComponent],
+  imports: [CommonModule, OverlayModule, NgIcon, ForkedChatComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({
@@ -98,6 +99,17 @@ export class ReviewThreadDockComponent {
 
   readonly menuOpenFor = signal<number | null>(null);
   readonly sessionTabId = SESSION_TAB_ID;
+
+  /**
+   * Hangs the menu off the tab, flipping above it when the dock sits too low
+   * in the window for the menu to fit underneath.
+   */
+  readonly menuPositions: ConnectedPosition[] = [
+    { originX: 'end', originY: 'bottom', overlayX: 'end', overlayY: 'top', offsetY: 2 },
+    { originX: 'end', originY: 'top', overlayX: 'end', overlayY: 'bottom', offsetY: -2 },
+    { originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 2 },
+    { originX: 'start', originY: 'top', overlayX: 'start', overlayY: 'bottom', offsetY: -2 },
+  ];
 
   readonly isSessionTab = computed(
     () => this.state.activeThreadId() === SESSION_TAB_ID,
@@ -170,6 +182,20 @@ export class ReviewThreadDockComponent {
   toggleMenu(chatId: number, event: MouseEvent): void {
     event.stopPropagation();
     this.menuOpenFor.update((open) => (open === chatId ? null : chatId));
+  }
+
+  /** Right-clicking a tab offers the same actions as its "…" button. */
+  openMenu(chatId: number, event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.menuOpenFor.set(chatId);
+  }
+
+  onMenuKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      this.closeMenu();
+    }
   }
 
   closeMenu(): void {

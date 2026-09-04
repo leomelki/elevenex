@@ -12,15 +12,14 @@
   flex-shrink: 0;
   align-items: stretch;
   gap: 0.15rem;
+  /* Scrolling this axis makes the strip clip on both, hence the menu overlay. */
   overflow-x: auto;
-  overflow-y: visible;
   padding: 0.3rem 0.4rem 0;
   border-bottom: 1px solid var(--border);
   scrollbar-width: thin;
 }
 
 .rd-tab-wrap {
-  position: relative;
   display: inline-flex;
   align-items: stretch;
   flex-shrink: 0;
@@ -104,11 +103,8 @@
   background: color-mix(in oklch, var(--muted) 60%, transparent);
 }
 
+/* Rendered in a CDK overlay, so the overlay owns placement and stacking. */
 .rd-menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  z-index: 30;
   display: flex;
   min-width: 11rem;
   flex-direction: column;
