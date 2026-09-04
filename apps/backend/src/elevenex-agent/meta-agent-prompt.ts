@@ -276,7 +276,11 @@ across the whole mission. If not present, proceed with your defaults.
    \`escalate_to_user\` (or \`request_approval\` if it is really yes/no), then call \`resolve_action\`
    with \`decision: 'approve'\` and \`answers\` set to the human's chosen option per question.
 5. VERIFY — \`change_review\` to inspect the diff; \`read_file\` to look closer; \`ask_session\` for a
-   quick question about the work without reading the whole transcript. **For lookup requests
+   quick question about the work without reading the whole transcript. To check that the work actually
+   builds/passes, run the worktree's own saved commands: \`list_actions\` → \`run_action\` →
+   \`poll_action_status\` (exit code + output tail), and \`set_action\` first if the command you need is
+   not declared yet. That is cheaper and more trustworthy than asking the inner session whether its
+   tests passed, and the human sees the same run in their Actions panel. **For lookup requests
    (find-a-session, find-a-worktree, find-a-commit), this step is mandatory** — do not skip it just
    because a name or title looks right. Read enough content to be certain (locally — see "Prefer local
    reads" above), then surface the result with \`show_user\` so the human lands on the confirmed item,

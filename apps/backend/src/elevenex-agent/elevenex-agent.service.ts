@@ -63,6 +63,11 @@ export class ElevenexAgentService implements OnModuleInit {
     'get_pending_action',
     'get_worktree_job',
     'assess_worktree_pool',
+    // Actions: reading and waiting are harmless. run/stop/set/delete_action
+    // mutate the human's worktree and panel, so they still prompt.
+    'list_actions',
+    'read_action_output',
+    'poll_action_status',
   ];
 
   /** Absolute path of the shared agent workspace. */
@@ -179,7 +184,10 @@ export class ElevenexAgentService implements OnModuleInit {
       return existing.id;
     }
     try {
-      const created = await this.projectsService.create(AGENT_PROJECT_NAME, true);
+      const created = await this.projectsService.create(
+        AGENT_PROJECT_NAME,
+        true,
+      );
       return created.id;
     } catch {
       // Lost a create race — re-read and reuse.

@@ -6,6 +6,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
+import { EventEmitter } from 'events';
 import { and, asc, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
@@ -13,14 +14,28 @@ import { ActionPtyManager } from './action-pty-manager.service.js';
 
 type ActionStatus = 'idle' | 'running' | 'success' | 'failed' | 'stopped';
 
+/**
+ * Emitted whenever a run starts or settles, so waiters (the MCP
+ * `poll_action_status` tool) can sleep on an event instead of polling the DB.
+ */
+export interface ActionStatusChangedEvent {
+  actionId: number;
+  status: ActionStatus;
+  exitCode: number | null;
+}
+
 @Injectable()
-export class ActionsService implements OnModuleInit {
+export class ActionsService extends EventEmitter implements OnModuleInit {
   private readonly logger = new Logger('ActionsService');
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly ptyManager: ActionPtyManager,
   ) {
+    super();
+    // One listener per in-flight waiter (poll_action_status); an agent watching
+    // several actions at once must not trip the 10-listener warning.
+    this.setMaxListeners(0);
     this.ptyManager.registerPersistence({
       markRunning: (actionId) => this.markRunning(actionId),
       flushCurrentOutput: (actionId, output) =>
@@ -180,6 +195,11 @@ export class ActionsService implements OnModuleInit {
           `Action "${action.name}" is already running`,
         );
       }
+
+      // The pty never came up, but `start` may already have flipped the row to
+      // 'running' — leave it there and every waiter (UI badge, poll_action_status)
+      // blocks forever on a run that does not exist. Settle it as failed.
+      await this.settleFailedStart(action.id, error).catch(() => undefined);
       throw error;
     }
 
@@ -196,6 +216,33 @@ export class ActionsService implements OnModuleInit {
     return { success: true };
   }
 
+  /**
+   * Repair a row left in 'running' by a start that threw. Only touches rows
+   * still marked running, so a failure raised before `markRunning` leaves an
+   * idle action untouched.
+   */
+  private async settleFailedStart(
+    actionId: number,
+    error: unknown,
+  ): Promise<void> {
+    const rows = await this.db
+      .select()
+      .from(schema.actions)
+      .where(eq(schema.actions.id, actionId));
+    if (rows[0]?.status !== 'running') return;
+
+    const message = error instanceof Error ? error.message : String(error);
+    const now = new Date().toISOString();
+    await this.finalizeRun(actionId, {
+      status: 'failed',
+      currentOutput: '',
+      lastOutput: `Failed to start action: ${message}`,
+      lastExitCode: null,
+      lastFinishedAt: now,
+      updatedAt: now,
+    });
+  }
+
   async markRunning(actionId: number): Promise<void> {
     const now = new Date().toISOString();
     await this.db
@@ -207,6 +254,8 @@ export class ActionsService implements OnModuleInit {
         updatedAt: now,
       })
       .where(eq(schema.actions.id, actionId));
+
+    this.emitStatusChanged(actionId, 'running', null);
   }
 
   async flushCurrentOutput(actionId: number, output: string): Promise<void> {
@@ -234,5 +283,20 @@ export class ActionsService implements OnModuleInit {
       .update(schema.actions)
       .set(payload)
       .where(eq(schema.actions.id, actionId));
+
+    this.emitStatusChanged(actionId, payload.status, payload.lastExitCode);
+  }
+
+  /**
+   * Emitted only after the row is persisted, so a listener that re-reads the
+   * action on the event always sees the final status/exit code.
+   */
+  private emitStatusChanged(
+    actionId: number,
+    status: ActionStatus,
+    exitCode: number | null,
+  ): void {
+    const event: ActionStatusChangedEvent = { actionId, status, exitCode };
+    this.emit('action-status-changed', event);
   }
 }
