@@ -87,6 +87,17 @@ export class WorktreesController {
     });
   }
 
+  /**
+   * How close this repo is to the configured worktree cap. Read by the create
+   * form so the warning is shown *before* the user fills it in, rather than
+   * only as a 409 after they hit create.
+   */
+  @Get('repos/:repoId/worktree-quota')
+  async getWorktreeQuota(@Param('repoId') repoId: string) {
+    const { repo } = await this.findRepo(repoId);
+    return this.worktreePoolService.getWorktreeQuota(repo);
+  }
+
   @Post('repos/:repoId/worktree-pool')
   async createPoolWorktree(
     @Param('repoId') repoId: string,
@@ -140,6 +151,10 @@ export class WorktreesController {
   ) {
     const { id, repo } = await this.findRepo(repoId);
     await this.projectsService.assertProjectIsActive(repo.projectId);
+    await this.worktreePoolService.assertWithinWorktreeLimit(
+      repo,
+      dto.confirmOverLimit,
+    );
 
     const worktreePath =
       dto.worktreePath ||

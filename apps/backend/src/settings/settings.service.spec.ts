@@ -1,7 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import type { DrizzleDB } from '../database/database.provider.js';
 import { SettingsService } from './settings.service.js';
-import { DEFAULT_SPEECH_TO_TEXT_SETTINGS } from './settings.types.js';
+import {
+  DEFAULT_MAX_WORKTREES_PER_REPO,
+  DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+  MAX_WORKTREES_PER_REPO_CEILING,
+} from './settings.types.js';
 
 /**
  * The dictation key can come from the environment, so a developer with
@@ -93,6 +97,7 @@ describe('SettingsService', () => {
       sessionToolbarButtons: null,
       defaultModelByProvider: {},
       defaultReasoningEffortByProvider: {},
+      maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
       speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
       speechToTextApiKeyConfigured: false,
       speechToTextApiKeyFromEnv: false,
@@ -610,5 +615,71 @@ describe('SettingsService', () => {
         sessionToolbarButtons: [{ id: 'terminal' }],
       } as Parameters<SettingsService['update']>[0]),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  describe('worktree limit', () => {
+    it('stores a new limit and reads it back', async () => {
+      const { db, getRows } = createDbMock();
+      const service = new SettingsService(db);
+
+      const settings = await service.update({ maxWorktreesPerRepo: 12 });
+
+      expect(settings.maxWorktreesPerRepo).toBe(12);
+      expect(getRows()[0]).toMatchObject({ maxWorktreesPerRepo: 12 });
+      await expect(service.getMaxWorktreesPerRepo()).resolves.toBe(12);
+    });
+
+    it('accepts 0 as "no limit"', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+
+      await expect(
+        service.update({ maxWorktreesPerRepo: 0 }),
+      ).resolves.toMatchObject({ maxWorktreesPerRepo: 0 });
+    });
+
+    it('rejects negative, fractional and absurd limits', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+
+      for (const value of [-1, 2.5, MAX_WORKTREES_PER_REPO_CEILING + 1]) {
+        await expect(
+          service.update({ maxWorktreesPerRepo: value }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      }
+    });
+
+    it('keeps the stored limit when another setting is patched', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+
+      await service.update({ maxWorktreesPerRepo: 3 });
+      const settings = await service.update({ defaultAgentProvider: 'codex' });
+
+      expect(settings.maxWorktreesPerRepo).toBe(3);
+    });
+
+    it('preserves the limit through onboarding', async () => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+
+      await service.update({ maxWorktreesPerRepo: 2 });
+      const settings = await service.completeOnboarding({
+        defaultAgentProvider: 'claude',
+      });
+
+      expect(settings.maxWorktreesPerRepo).toBe(2);
+    });
+
+    it('falls back to the default for a hand-edited row', async () => {
+      const { db } = createDbMock([
+        { id: 1, maxWorktreesPerRepo: -7, createdAt: 'c', updatedAt: 'u' },
+      ]);
+      const service = new SettingsService(db);
+
+      await expect(service.getMaxWorktreesPerRepo()).resolves.toBe(
+        DEFAULT_MAX_WORKTREES_PER_REPO,
+      );
+    });
   });
 });

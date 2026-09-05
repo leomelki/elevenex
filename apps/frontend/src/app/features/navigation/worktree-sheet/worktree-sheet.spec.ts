@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { TestBed } from '@angular/core/testing';
 import { NgIcon } from '@ng-icons/core';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { WorktreeSheet } from './worktree-sheet';
 import { WorktreesService } from '@/shared/services/worktrees.service';
 import { SessionsService } from '@/shared/services/sessions.service';
@@ -68,6 +68,7 @@ describe('WorktreeSheet', () => {
   const worktreesServiceMock = {
     getPoolByRepo: vi.fn(),
     getPoolByRepoStream: vi.fn(),
+    getQuota: vi.fn(),
     createPool: vi.fn(),
     linkPool: vi.fn(),
     renamePool: vi.fn(),
@@ -84,6 +85,7 @@ describe('WorktreeSheet', () => {
     vi.restoreAllMocks();
     worktreesServiceMock.getPoolByRepo.mockReset();
     worktreesServiceMock.getPoolByRepoStream.mockReset();
+    worktreesServiceMock.getQuota.mockReset();
     worktreesServiceMock.createPool.mockReset();
     worktreesServiceMock.linkPool.mockReset();
     worktreesServiceMock.renamePool.mockReset();
@@ -92,6 +94,10 @@ describe('WorktreeSheet', () => {
     navigationServiceMock.openSession.mockReset();
     worktreesServiceMock.getPoolByRepo.mockReturnValue(of([]));
     worktreesServiceMock.getPoolByRepoStream.mockReturnValue(of([]));
+    // Plenty of headroom by default; the limit has its own cases below.
+    worktreesServiceMock.getQuota.mockReturnValue(
+      of({ limit: 5, count: 1, atLimit: false }),
+    );
     worktreesServiceMock.linkPool.mockReturnValue(of({ id: 99, repoId: 7 }));
     sessionsServiceMock.create.mockReturnValue(of({ id: 123 }));
 
@@ -168,6 +174,7 @@ describe('WorktreeSheet', () => {
       name: 'feature',
       path: '/tmp/repo-feature',
       startPoint: 'feature',
+      confirmOverLimit: false,
     });
     expect(worktreesServiceMock.linkPool).toHaveBeenCalledWith(7, 22, {
       workspaceName: 'feature',
@@ -372,5 +379,80 @@ describe('WorktreeSheet', () => {
     expect(component.canRename(linkingItem)).toBe(false);
     component.startRename(linkingItem, new Event('click'));
     expect(component.renamingId()).toBeNull();
+  });
+
+  describe('worktree limit', () => {
+    it('flags the repo as over the limit when it opens', () => {
+      worktreesServiceMock.getQuota.mockReturnValue(
+        of({ limit: 3, count: 3, atLimit: true }),
+      );
+      const fixture = TestBed.createComponent(WorktreeSheet);
+      const component = fixture.componentInstance;
+      fixture.detectChanges();
+
+      component.open(7, 'feature', '/tmp/repos/repo-one', 'repo-one');
+
+      expect(component.atWorktreeLimit()).toBe(true);
+      expect(component.worktreeLimitMessage()).toContain('limit of 3');
+    });
+
+    it('sends the confirmation with a create made past the limit', () => {
+      worktreesServiceMock.getQuota.mockReturnValue(
+        of({ limit: 3, count: 3, atLimit: true }),
+      );
+      worktreesServiceMock.createPool.mockReturnValue(of(poolItem({ id: 22 })));
+      const fixture = TestBed.createComponent(WorktreeSheet);
+      const component = fixture.componentInstance;
+      fixture.detectChanges();
+
+      component.open(7, 'feature', '/tmp/repos/repo-one', 'repo-one');
+      component.createName.set('feature');
+      component.createPath.set('/tmp/repo-feature');
+      component.createAndLink();
+
+      expect(worktreesServiceMock.createPool).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ confirmOverLimit: true }),
+      );
+    });
+
+    it('refreshes the quota when the backend rejects an unconfirmed create', () => {
+      worktreesServiceMock.getQuota
+        .mockReturnValueOnce(of({ limit: 3, count: 2, atLimit: false }))
+        .mockReturnValueOnce(of({ limit: 3, count: 3, atLimit: true }));
+      worktreesServiceMock.createPool.mockReturnValue(
+        throwError(() => ({
+          error: { code: 'worktree_limit_reached', message: 'Limit reached.' },
+        })),
+      );
+      const fixture = TestBed.createComponent(WorktreeSheet);
+      const component = fixture.componentInstance;
+      fixture.detectChanges();
+
+      component.open(7, 'feature', '/tmp/repos/repo-one', 'repo-one');
+      expect(component.atWorktreeLimit()).toBe(false);
+
+      component.createName.set('feature');
+      component.createPath.set('/tmp/repo-feature');
+      component.createAndLink();
+
+      // The repo filled up while the sheet was open; the next press confirms.
+      expect(component.atWorktreeLimit()).toBe(true);
+      expect(component.creating()).toBe(false);
+    });
+
+    it('behaves as before when the quota cannot be loaded', () => {
+      worktreesServiceMock.getQuota.mockReturnValue(
+        throwError(() => new Error('offline')),
+      );
+      const fixture = TestBed.createComponent(WorktreeSheet);
+      const component = fixture.componentInstance;
+      fixture.detectChanges();
+
+      component.open(7, 'feature', '/tmp/repos/repo-one', 'repo-one');
+
+      expect(component.quota()).toBeNull();
+      expect(component.atWorktreeLimit()).toBe(false);
+    });
   });
 });

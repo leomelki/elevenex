@@ -63,9 +63,17 @@ function poolItem(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** The worktrees-per-repo cap turned off, which is most tests' baseline. */
+function noWorktreeLimit() {
+  return jest.fn(async () => 0);
+}
+
 /** A worktreePool mock that streams no items (empty pool). */
 function emptyPool() {
-  return { streamForRepo: jest.fn(async () => 0) };
+  return {
+    streamForRepo: jest.fn(async () => 0),
+    getWorktreeLimit: noWorktreeLimit(),
+  };
 }
 
 /** The common case: the path under test is a pool worktree, not the main tree. */
@@ -567,7 +575,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
       const data = res.data as any;
@@ -594,7 +602,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob: jest.fn() },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
       const data = res.data as any;
@@ -612,7 +620,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler(
         {
@@ -641,6 +649,146 @@ describe('setup tool group', () => {
       expect(startJob).not.toHaveBeenCalled();
     });
 
+    describe('worktree limit', () => {
+      /** A pool of `size` busy worktrees: none reusable, all counting. */
+      function busyPool(size: number, limit: number) {
+        const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+          for (let index = 0; index < size; index += 1) {
+            await onItem(
+              poolItem({
+                id: 100 + index,
+                name: `busy-${index}`,
+                path: `/repo/.worktrees/busy-${index}`,
+                currentBranch: `other/${index}`,
+                // Dirty, so it is never offered as a reclaimable candidate and
+                // the call reaches the create path.
+                isDirty: true,
+              }),
+            );
+          }
+          return size;
+        });
+        return {
+          streamForRepo,
+          getWorktreeLimit: jest.fn(async () => limit),
+        };
+      }
+
+      it('refuses to create once the repo is at its limit', async () => {
+        const startJob = jest.fn();
+        const ctx = makeCtx({
+          repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+          worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+          worktreeJobs: { startJob },
+          worktreePool: busyPool(3, 3),
+        });
+
+        await expect(
+          createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx),
+        ).rejects.toMatchObject({ code: 'worktree_limit_reached' });
+        expect(startJob).not.toHaveBeenCalled();
+      });
+
+      it('does not let the agent force its way past the limit', async () => {
+        const startJob = jest.fn();
+        const ctx = makeCtx({
+          repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+          worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+          worktreeJobs: { startJob },
+          worktreePool: busyPool(3, 3),
+        });
+
+        // Both of these are the agent's own judgement, which is exactly what
+        // the limit exists to stop being sufficient.
+        for (const forceReason of ['candidates_unusable', 'concurrent_worktrees_needed'] as const) {
+          await expect(
+            createWorktreeTool.handler(
+              { repoId: 1, branchName: 'feature/x', force: true, forceReason },
+              ctx,
+            ),
+          ).rejects.toMatchObject({ code: 'worktree_limit_reached' });
+        }
+        expect(startJob).not.toHaveBeenCalled();
+      });
+
+      it("creates once the human has confirmed", async () => {
+        const startJob = jest.fn().mockReturnValue({ id: 'job-limit', status: 'pending' });
+        const ctx = makeCtx({
+          repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+          worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+          worktreeJobs: { startJob },
+          worktreePool: busyPool(3, 3),
+        });
+
+        const res = await createWorktreeTool.handler(
+          {
+            repoId: 1,
+            branchName: 'feature/x',
+            force: true,
+            forceReason: 'user_confirmed',
+          },
+          ctx,
+        );
+
+        expect((res.data as any).jobId).toBe('job-limit');
+        expect((res.data as any).quota).toEqual({ limit: 3, count: 3, atLimit: true });
+      });
+
+      it('creates freely below the limit', async () => {
+        const startJob = jest.fn().mockReturnValue({ id: 'job-room', status: 'pending' });
+        const ctx = makeCtx({
+          repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+          worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+          worktreeJobs: { startJob },
+          worktreePool: busyPool(2, 5),
+        });
+
+        const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
+        expect((res.data as any).jobId).toBe('job-room');
+        expect((res.data as any).quota.atLimit).toBe(false);
+      });
+
+      it("ignores the repo's own working tree when counting", async () => {
+        const startJob = jest.fn().mockReturnValue({ id: 'job-main', status: 'pending' });
+        const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+          // The main working tree is reported by `git worktree list` too, but
+          // nobody created it — counting it would cost the user a slot.
+          await onItem(poolItem({ id: 1, path: '/repo', repoRootPath: '/repo' }));
+          await onItem(poolItem({ id: 2, path: '/repo/.worktrees/a', isDirty: true }));
+          return 2;
+        });
+        const ctx = makeCtx({
+          repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+          worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+          worktreeJobs: { startJob },
+          worktreePool: { streamForRepo, getWorktreeLimit: jest.fn(async () => 2) },
+        });
+
+        const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
+        expect((res.data as any).quota).toEqual({ limit: 2, count: 1, atLimit: false });
+      });
+
+      it('still offers reuse candidates first at the limit', async () => {
+        const startJob = jest.fn();
+        const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
+          await onItem(poolItem({ id: 60, name: 'free', path: '/repo/.worktrees/free' }));
+          return 1;
+        });
+        const ctx = makeCtx({
+          repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
+          worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
+          worktreeJobs: { startJob },
+          worktreePool: { streamForRepo, getWorktreeLimit: jest.fn(async () => 1) },
+        });
+
+        const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
+        expect((res.data as any).poolCheckResult).toBe('reclaimable_worktrees_found');
+        expect((res.data as any).quota.atLimit).toBe(true);
+        expect(res.nextStep).toContain('worktree limit');
+        expect(startJob).not.toHaveBeenCalled();
+      });
+    });
+
     it('excludes a worktree with sessions attached and reports why', async () => {
       const startJob = jest.fn().mockReturnValue({ id: 'job-b', status: 'pending' });
       const streamForRepo = jest.fn(async (_repo: unknown, onItem: any) => {
@@ -662,7 +810,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
       // No reclaimable candidate left, so creation proceeds without force.
@@ -686,7 +834,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
       const data = res.data as any;
@@ -716,7 +864,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob: jest.fn() },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
       const data = res.data as any;
@@ -742,7 +890,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
       expect((res.data as any).jobId).toBe('job-r');
@@ -758,7 +906,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
       const data = res.data as any;
@@ -787,7 +935,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       await expect(
         createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx),
@@ -805,7 +953,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler(
         { repoId: 1, branchName: 'feature/x', force: true, forceReason: 'user_confirmed' },
@@ -833,7 +981,7 @@ describe('setup tool group', () => {
           getBranchSnapshot,
         },
         worktreeJobs: { startJob: jest.fn() },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler(
         { repoId: 1, branchName: 'feature/x', from_origin: true },
@@ -861,7 +1009,7 @@ describe('setup tool group', () => {
           createLocalBranch,
         },
         worktreeJobs: { startJob: jest.fn() },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler(
         { repoId: 1, branchName: 'user/brand-new', startPoint: 'origin/main' },
@@ -895,7 +1043,7 @@ describe('setup tool group', () => {
             .mockRejectedValue(new Error("fatal: a branch named 'x' already exists")),
         },
         worktreeJobs: { startJob: jest.fn() },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler(
         { repoId: 1, branchName: 'user/raced', startPoint: 'origin/main' },
@@ -918,7 +1066,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       const res = await createWorktreeTool.handler({ repoId: 1, branchName: 'feature/x' }, ctx);
       // Falls through to creation rather than proposing to hijack the main checkout.
@@ -943,7 +1091,7 @@ describe('setup tool group', () => {
         repos: { findOne: jest.fn().mockResolvedValue({ id: 1, name: 'repo', path: '/repo' }) },
         worktrees: { localBranchExists: jest.fn().mockResolvedValue(true) },
         worktreeJobs: { startJob: jest.fn() },
-        worktreePool: { streamForRepo },
+        worktreePool: { streamForRepo, getWorktreeLimit: noWorktreeLimit() },
       });
       await expect(
         createWorktreeTool.handler({ repoId: 1, branchName: 'main' }, ctx),

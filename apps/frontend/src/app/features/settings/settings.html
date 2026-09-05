@@ -102,6 +102,74 @@
 
     <section class="rounded-lg border border-border bg-card">
       <div class="border-b border-border px-5 py-4">
+        <h2 class="text-sm font-semibold text-foreground">Worktrees</h2>
+        <p class="mt-1 text-sm text-muted-foreground">
+          Keep the number of checkouts a repository accumulates on disk under control.
+        </p>
+      </div>
+
+      <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+        <div class="min-w-0">
+          <label for="max-worktrees-per-repo" class="text-sm font-medium text-foreground">
+            Maximum worktrees per repository
+          </label>
+          <div class="mt-1 text-sm text-muted-foreground">
+            Once a repository reaches this number, creating another worktree asks you to confirm
+            first. Agents cannot create one on their own past the limit — they have to reuse an
+            existing worktree or ask you. Set to <span class="font-medium text-foreground">0</span>
+            to remove the limit. The repository's own main working tree is not counted.
+          </div>
+          @if (maxWorktreesError()) {
+            <div class="mt-2 text-sm text-destructive" role="alert">{{ maxWorktreesError() }}</div>
+          } @else if (maxWorktreesPerRepo() === 0) {
+            <div class="mt-2 flex items-center gap-1.5 text-sm text-warning">
+              <ng-icon name="lucideTriangleAlert" size="14" />
+              <span>No limit — nothing will warn you before a repository fills up with worktrees.</span>
+            </div>
+          }
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button
+            z-button
+            zType="outline"
+            zSize="icon-sm"
+            type="button"
+            aria-label="Decrease worktree limit"
+            [zDisabled]="appSettings.saving() || maxWorktreesPerRepo() <= 0"
+            (click)="stepMaxWorktrees(-1)"
+          >
+            <ng-icon name="lucideMinus" size="15" />
+          </button>
+          <input
+            z-input
+            id="max-worktrees-per-repo"
+            type="number"
+            inputmode="numeric"
+            min="0"
+            [max]="maxWorktreesCeiling"
+            class="w-20 text-center"
+            [disabled]="appSettings.saving()"
+            [ngModel]="maxWorktreesPerRepo()"
+            (ngModelChange)="onMaxWorktreesInput($event)"
+          />
+          <button
+            z-button
+            zType="outline"
+            zSize="icon-sm"
+            type="button"
+            aria-label="Increase worktree limit"
+            [zDisabled]="appSettings.saving() || maxWorktreesPerRepo() >= maxWorktreesCeiling"
+            (click)="stepMaxWorktrees(1)"
+          >
+            <ng-icon name="lucidePlus" size="15" />
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-lg border border-border bg-card">
+      <div class="border-b border-border px-5 py-4">
         <h2 class="text-sm font-semibold text-foreground">Dictation</h2>
         <p class="mt-1 text-sm text-muted-foreground">
           Talk to the agent instead of typing. Adds a microphone to every prompt box.

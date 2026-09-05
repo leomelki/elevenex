@@ -8,6 +8,7 @@ import {
   poolItemHandle,
   resolveRepo,
 } from './worktree.util.js';
+import { UNLIMITED_WORKTREES_PER_REPO } from '../../../settings/settings.types.js';
 import type { WorktreePoolItem } from '../../../worktrees/worktree-pool.service.js';
 import type {
   BranchSnapshot,
@@ -33,6 +34,14 @@ const FORCE_REASONS = [
   'candidates_unusable',
   'concurrent_worktrees_needed',
 ] as const;
+
+/**
+ * The one force reason that still counts once the repo has hit the worktree
+ * limit configured in Elevenex settings. Past the cap the question is no longer
+ * "is reuse possible?" — which the agent may answer for itself — but "should
+ * this repo grow another checkout on disk?", which is the human's call.
+ */
+const USER_CONFIRMED: (typeof FORCE_REASONS)[number] = 'user_confirmed';
 
 type ReclaimAction = 'link_worktree' | 'steal_worktree';
 
@@ -192,6 +201,15 @@ async function prepareBranch(
  * branch out with a plain `git checkout`, so without that ref every "new branch
  * off main" mission would fail the moment the pool held a spare worktree.
  *
+ * Worktree cap: Elevenex settings carry a max number of worktrees per repo.
+ * Once the repo is at that number this tool refuses to create, `force` included
+ * — the only accepted way through is `forceReason: 'user_confirmed'`, i.e. the
+ * agent asked the human and they said yes. `candidates_unusable` and
+ * `concurrent_worktrees_needed` are the agent's own judgement, which is exactly
+ * what the cap exists to stop being sufficient; past the limit the disk cost of
+ * another checkout is the human's call, not the agent's. The check runs after
+ * the reuse gate so the reclaimable candidates are still offered first.
+ *
  * Branch-ownership check: runs BEFORE the reuse gate and even when `force` is
  * set, because it is not a preference but a git constraint — the same branch
  * cannot be checked out in two worktrees at once. If branchName is already
@@ -212,6 +230,7 @@ export const createWorktreeTool = defineTool({
     'IMPORTANT: reusing an existing worktree is the default and this tool enforces it — if any clean, session-free worktree exists (unowned, or owned but idle >72 h) it returns those as candidates instead of creating anything, and you are expected to link_worktree/steal_worktree one of them. ' +
     'A worktree is disposable infrastructure, not a record of what it was used for: the branch it holds, its name, and the task it was created for do NOT make it unsuitable — rename_worktree + switch_branch reset it completely. The only real blockers (uncommitted changes, conflicts, lock, attached sessions) are already filtered out for you, and reported in the response so you do not have to guess. ' +
     'force:true is therefore not a way to override a judgement call: it requires forceReason and is limited to the human asking for a new worktree, candidates that actually failed to link, or needing several worktrees at once. ' +
+    'The repo also has a configured worktree cap: at the cap this tool refuses to create even with force, and the ONLY way through is forceReason:"user_confirmed" — ask the human (request_approval), having tried every reuse route first, and re-call only if they agree. ' +
     'If branchName is already checked out in another worktree in the pool, this call never spawns a doomed job (git refuses the same branch in two worktrees): a free one is returned as the candidate to reuse, or, if it is busy, the call errors with branch_checked_out_elsewhere instead. ' +
     'Reuse is never a downgrade: whichever way this call resolves, the branch is fetched/refreshed exactly as requested and created when it does not exist yet, so a returned candidate is ready to link_worktree straight away — do not re-call this tool to "really" get the branch. ' +
     'If branchName has no local ref and neither from_origin nor startPoint is set, the tool auto-detects the repo default branch (origin/HEAD) and uses it as startPoint — no extra call needed for the common "new branch off main" case. ' +
@@ -281,7 +300,8 @@ export const createWorktreeTool = defineTool({
         "'user_confirmed' (the human explicitly asked for a brand-new worktree), " +
         "'candidates_unusable' (you tried link_worktree/steal_worktree on the returned candidates and they failed), " +
         "'concurrent_worktrees_needed' (this mission needs several worktrees at the same time and the candidates are already claimed by its other tasks). " +
-        '"The candidates look unrelated to my task", "they hold other branches", "they are named for something else" and "one is still useful as a reference" are NOT reasons — the first three are irrelevant for a clean worktree, and the last is already handled: worktrees with sessions attached are never offered as candidates.',
+        '"The candidates look unrelated to my task", "they hold other branches", "they are named for something else" and "one is still useful as a reference" are NOT reasons — the first three are irrelevant for a clean worktree, and the last is already handled: worktrees with sessions attached are never offered as candidates. ' +
+        "Once the repo has hit its configured worktree cap, only 'user_confirmed' is accepted — the other two are your own judgement, and past the cap the decision belongs to the human.",
       ),
   },
   handler: async (args, ctx) => {
@@ -330,7 +350,14 @@ export const createWorktreeTool = defineTool({
       reason: string;
     }> = [];
 
+    // Counted off the same stream the reuse gate already walks, so the cap
+    // costs no extra pool scan. The repo's own working tree is not a worktree
+    // anyone created, so it does not count against the budget.
+    const worktreeLimit = await worktreePool.getWorktreeLimit();
+    let worktreeCount = 0;
+
     await worktreePool.streamForRepo(repo, (item) => {
+      if (!isMainWorktree(item)) worktreeCount += 1;
       const reason = blockedReason(item, now);
       // Keep the first match, but let a reclaimable one displace a blocked one:
       // a stale pool row must not mask the worktree that can actually be reused.
@@ -351,6 +378,11 @@ export const createWorktreeTool = defineTool({
         idleSince: lastActivityAt(item) ?? undefined,
       });
     });
+
+    const atLimit =
+      worktreeLimit !== UNLIMITED_WORKTREES_PER_REPO &&
+      worktreeCount >= worktreeLimit;
+    const quota = { limit: worktreeLimit, count: worktreeCount, atLimit };
 
     // Fetch/refresh the branch itself before any return below, so a reused
     // worktree is never handed back staler than a newly created one would be.
@@ -470,9 +502,13 @@ export const createWorktreeTool = defineTool({
             // it, and created when it did not exist yet.
             branchReady: true,
             ...(createdBranchFrom !== undefined ? { createdBranchFrom } : {}),
+            quota,
             ...snapshot,
           },
           nextStep:
+            (atLimit
+              ? `This repo is at its worktree limit (${quota.count}/${quota.limit}), so creating another one is not available to you here — reuse is the only route left short of asking the human. `
+              : '') +
             'Reuse one of these instead of creating a new worktree — that is the expected outcome of this call, not an option. ' +
             `Branch "${branchName}" has already been prepared for you${createdBranchFrom ? ` (created from ${createdBranchFrom})` : ''}, so it is ready to check out — do NOT re-call create_worktree to get it. ` +
             'Every candidate listed is clean, unlocked and has no sessions attached, which is the whole test: a worktree is disposable infrastructure, ' +
@@ -483,6 +519,27 @@ export const createWorktreeTool = defineTool({
             'Only if every candidate then fails to link/steal may you re-call with force:true plus forceReason.',
         };
       }
+    }
+
+    // Last gate before disk is touched. Unlike the reuse gate above, `force`
+    // does not lift this one: the cap exists precisely because an agent that
+    // has convinced itself reuse is impossible is the case that overruns a
+    // repo. Only the human's own "yes" gets through.
+    if (atLimit && args.forceReason !== USER_CONFIRMED) {
+      throw new ToolError({
+        code: 'worktree_limit_reached',
+        message:
+          `Repo "${repo.name}" already has ${quota.count} worktree${quota.count === 1 ? '' : 's'}, ` +
+          `meeting the limit of ${quota.limit} configured in Elevenex settings. Creating another one needs the human's explicit go-ahead.`,
+        remediation:
+          'Do not re-call this tool yet. First exhaust the cheaper routes: assess_worktree_pool to look again, ' +
+          'link_worktree/steal_worktree on any clean session-free worktree (rename_worktree + switch_branch make it yours), ' +
+          'or simply run this task in a worktree you already hold. ' +
+          'If none of that works, ask the human with request_approval — say the repo is at its worktree limit, what you already tried, and why another worktree is needed — ' +
+          'and only if they agree, re-call with force:true and forceReason:"user_confirmed". ' +
+          'They can also raise or disable the limit in Settings → Worktrees, which removes this gate entirely.',
+        retryable: true,
+      });
     }
 
     const worktreePath = args.worktreePath?.trim() || defaultWorktreePath(repo, branchName);
@@ -505,6 +562,9 @@ export const createWorktreeTool = defineTool({
         repoId: repo.id,
         branchName,
         worktreePath,
+        // Reflects the pool as it was *before* this job runs, so the count is
+        // one behind once it succeeds.
+        quota,
         ...snapshot,
       },
       touched: { jobId: job.id },

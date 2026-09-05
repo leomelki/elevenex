@@ -18,23 +18,31 @@ import {
   lucideGitPullRequest,
   lucideGlobe,
   lucideGripVertical,
+  lucideMinus,
   lucideMonitor,
   lucideNotebookPen,
   lucideOrbit,
   lucidePanelRight,
   lucidePlay,
+  lucidePlus,
   lucideRotateCcw,
   lucideSettings,
   lucideSparkles,
   lucideSquareTerminal,
   lucideTerminal,
+  lucideTriangleAlert,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
-import { DefaultAgentProvider, DefaultClaudeSessionSurface } from '@/shared/models/app-settings.model';
+import {
+  DefaultAgentProvider,
+  DefaultClaudeSessionSurface,
+  MAX_WORKTREES_PER_REPO_CEILING,
+} from '@/shared/models/app-settings.model';
 import { AGENT_PROVIDER_PRESENTATIONS } from '@/shared/models/agent-provider-presentation';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardCheckboxComponent } from '@/shared/components/checkbox';
+import { ZardInputDirective } from '@/shared/components/input';
 import { AgentDefaults } from './components/agent-defaults.component';
 import { BackendRestartComponent } from './components/backend-restart.component';
 import { AppUpdateComponent } from './components/app-update.component';
@@ -57,6 +65,7 @@ import {
     NgIcon,
     ZardButtonComponent,
     ZardCheckboxComponent,
+    ZardInputDirective,
     SpeechToTextSettingsComponent,
   ],
   templateUrl: './settings.html',
@@ -73,16 +82,19 @@ import {
       lucideGitPullRequest,
       lucideGlobe,
       lucideGripVertical,
+      lucideMinus,
       lucideMonitor,
       lucideNotebookPen,
       lucideOrbit,
       lucidePanelRight,
       lucidePlay,
+      lucidePlus,
       lucideRotateCcw,
       lucideSettings,
       lucideSparkles,
       lucideSquareTerminal,
       lucideTerminal,
+      lucideTriangleAlert,
     }),
   ],
 })
@@ -94,6 +106,15 @@ export class Settings {
   readonly agentProviders = AGENT_PROVIDER_PRESENTATIONS;
   readonly frontendSha = FRONTEND_GIT_SHA.slice(0, 7);
   readonly backendSha = signal('...');
+  readonly maxWorktreesCeiling = MAX_WORKTREES_PER_REPO_CEILING;
+  readonly maxWorktreesPerRepo = computed(
+    () => this.appSettings.settings().maxWorktreesPerRepo,
+  );
+  /**
+   * Kept separate from `appSettings.error()` so a rejected keystroke ("101")
+   * reads as feedback on this field rather than as a failed save.
+   */
+  readonly maxWorktreesError = signal<string | null>(null);
   readonly toolbarButtons = this.appSettings.normalizedSessionToolbarButtons;
   readonly visibleToolbarButtons = computed(() =>
     this.toolbarButtons().filter((button) => button.visible),
@@ -131,6 +152,25 @@ export class Settings {
     void this.appSettings
       .saveDefaultAgentProvider(provider)
       .catch(() => toast.error('Could not save settings.'));
+  }
+
+  stepMaxWorktrees(delta: -1 | 1): void {
+    void this.saveMaxWorktrees(this.maxWorktreesPerRepo() + delta);
+  }
+
+  /**
+   * Saves on every accepted edit — like the rest of this page, which has no
+   * save button. An out-of-range or half-typed value is reported inline and
+   * left unsaved rather than clamped, so the field never silently disagrees
+   * with what the user meant.
+   */
+  onMaxWorktreesInput(value: number | string | null): void {
+    const parsed = typeof value === 'string' ? Number(value.trim()) : value;
+    if (parsed === null || parsed === undefined || Number.isNaN(parsed)) {
+      this.maxWorktreesError.set('Enter a whole number (0 removes the limit).');
+      return;
+    }
+    void this.saveMaxWorktrees(parsed);
   }
 
   toolbarButtonLabel(id: string): string {
@@ -203,6 +243,26 @@ export class Settings {
     }
 
     window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  private saveMaxWorktrees(value: number): Promise<void> {
+    if (this.appSettings.saving() || value === this.maxWorktreesPerRepo()) {
+      return Promise.resolve();
+    }
+    if (!Number.isInteger(value) || value < 0 || value > this.maxWorktreesCeiling) {
+      this.maxWorktreesError.set(
+        `Pick a whole number between 0 and ${this.maxWorktreesCeiling} (0 removes the limit).`,
+      );
+      return Promise.resolve();
+    }
+
+    this.maxWorktreesError.set(null);
+    return this.appSettings
+      .saveMaxWorktreesPerRepo(value)
+      .then(() => undefined)
+      .catch(() => {
+        toast.error('Could not save the worktree limit.');
+      });
   }
 
   private saveToolbarButtons(

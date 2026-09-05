@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreatePoolWorktreeDto {
   @IsString()
@@ -16,4 +16,12 @@ export class CreatePoolWorktreeDto {
   @IsString()
   @IsOptional()
   path?: string;
+
+  /**
+   * Set once the human has acknowledged the "you have reached the worktree
+   * limit" warning and asked to create one anyway.
+   */
+  @IsBoolean()
+  @IsOptional()
+  confirmOverLimit?: boolean;
 }

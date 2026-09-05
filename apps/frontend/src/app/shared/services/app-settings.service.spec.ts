@@ -2,7 +2,10 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_SPEECH_TO_TEXT_SETTINGS } from '@/shared/models/app-settings.model';
+import {
+  DEFAULT_MAX_WORKTREES_PER_REPO,
+  DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+} from '@/shared/models/app-settings.model';
 import { AppSettingsService } from './app-settings.service';
 
 describe('AppSettingsService', () => {
@@ -48,6 +51,7 @@ describe('AppSettingsService', () => {
       sessionToolbarButtons: null,
       defaultModelByProvider: {},
       defaultReasoningEffortByProvider: {},
+      maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
       speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
       speechToTextApiKeyConfigured: false,
       speechToTextApiKeyFromEnv: false,
@@ -353,5 +357,51 @@ describe('AppSettingsService', () => {
 
     await save;
     expect(service.settings().onboardingCompletedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  describe('worktree limit', () => {
+    it('sends only the touched field and keeps the server answer', async () => {
+      const save = service.saveMaxWorktreesPerRepo(8);
+
+      const request = httpMock.expectOne('/api/settings');
+      expect(request.request.method).toBe('PATCH');
+      expect(request.request.body).toEqual({ maxWorktreesPerRepo: 8 });
+      request.flush({
+        defaultClaudeSessionSurface: 'claude-ui',
+        defaultAgentProvider: 'claude',
+        sessionToolbarButtons: null,
+        maxWorktreesPerRepo: 8,
+        onboardingCompletedAt: null,
+        createdAt: null,
+        updatedAt: null,
+      });
+
+      await save;
+      expect(service.settings().maxWorktreesPerRepo).toBe(8);
+    });
+
+    it('rejects out-of-range values without calling the backend', async () => {
+      await expect(service.saveMaxWorktreesPerRepo(-1)).rejects.toThrow();
+      await expect(service.saveMaxWorktreesPerRepo(2.5)).rejects.toThrow();
+      await expect(service.saveMaxWorktreesPerRepo(1000)).rejects.toThrow();
+      httpMock.verify();
+    });
+
+    it('falls back to the default when the backend omits the field', async () => {
+      const load = service.load();
+      httpMock.expectOne('/api/settings').flush({
+        defaultClaudeSessionSurface: 'claude-ui',
+        defaultAgentProvider: 'claude',
+        sessionToolbarButtons: null,
+        onboardingCompletedAt: null,
+        createdAt: null,
+        updatedAt: null,
+      });
+      await load;
+
+      expect(service.settings().maxWorktreesPerRepo).toBe(
+        DEFAULT_MAX_WORKTREES_PER_REPO,
+      );
+    });
   });
 });

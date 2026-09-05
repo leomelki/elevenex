@@ -18,6 +18,7 @@ import {
   DEFAULT_AGENT_PROVIDER,
   DEFAULT_AGENT_PROVIDERS,
   DEFAULT_CLAUDE_SESSION_SURFACE,
+  DEFAULT_MAX_WORKTREES_PER_REPO,
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
@@ -27,6 +28,7 @@ import {
   MAX_AGENT_PREFERENCE_VALUE_LENGTH,
   MAX_SPEECH_LANGUAGES,
   MAX_SPEECH_SETTING_VALUE_LENGTH,
+  MAX_WORKTREES_PER_REPO_CEILING,
   SPEECH_CLEANUP_MODES,
   SPEECH_TO_TEXT_PROVIDERS,
   SessionToolbarButtonSetting,
@@ -122,6 +124,7 @@ export class SettingsService implements OnModuleInit {
         sessionToolbarButtons: null,
         defaultModelByProvider: {},
         defaultReasoningEffortByProvider: {},
+        maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
         speechToText,
         speechToTextApiKeyConfigured: envKey !== null,
         speechToTextApiKeyFromEnv: envKey !== null,
@@ -187,6 +190,17 @@ export class SettingsService implements OnModuleInit {
     };
   }
 
+  /**
+   * Worktrees a repo may hold before creating another one needs the human's
+   * go-ahead. `0` means the cap is off. Read fresh rather than cached: it is
+   * only consulted on worktree creation, never on a hot path, and a stale cap
+   * would be read as the human's answer to a question they never saw.
+   */
+  async getMaxWorktreesPerRepo(): Promise<number> {
+    const settings = await this.findOne();
+    return settings.maxWorktreesPerRepo;
+  }
+
   async update(input: UpdateAppSettingsInput): Promise<AppSettings> {
     const current = await this.findOne();
     const defaultClaudeSessionSurface =
@@ -215,6 +229,11 @@ export class SettingsService implements OnModuleInit {
       'default thinking level',
     );
 
+    const maxWorktreesPerRepo =
+      input.maxWorktreesPerRepo === undefined
+        ? current.maxWorktreesPerRepo
+        : this.assertMaxWorktreesPerRepo(input.maxWorktreesPerRepo);
+
     const speechToText = this.mergeSpeechToTextSettings(
       current.speechToText,
       input.speechToText,
@@ -224,6 +243,7 @@ export class SettingsService implements OnModuleInit {
     const row = {
       defaultClaudeSessionSurface,
       defaultAgentProvider,
+      maxWorktreesPerRepo,
       sessionToolbarButtons: this.serializeSessionToolbarButtons(
         sessionToolbarButtons,
       ),
@@ -279,6 +299,7 @@ export class SettingsService implements OnModuleInit {
     const row = {
       defaultClaudeSessionSurface,
       defaultAgentProvider: input.defaultAgentProvider,
+      maxWorktreesPerRepo: current.maxWorktreesPerRepo,
       sessionToolbarButtons: this.serializeSessionToolbarButtons(
         current.sessionToolbarButtons,
       ),
@@ -337,6 +358,9 @@ export class SettingsService implements OnModuleInit {
       ),
       defaultModelByProvider,
       defaultReasoningEffortByProvider,
+      maxWorktreesPerRepo: this.parseMaxWorktreesPerRepo(
+        row.maxWorktreesPerRepo,
+      ),
       speechToText,
       // Only ever a boolean — `row.speechToTextApiKey` must not appear in the
       // response. See the column comment in app-settings.schema.ts.
@@ -550,6 +574,33 @@ export class SettingsService implements OnModuleInit {
     if (!DEFAULT_AGENT_PROVIDERS.includes(defaultAgentProvider)) {
       throw new BadRequestException('Unsupported default agent provider.');
     }
+  }
+
+  private assertMaxWorktreesPerRepo(value: number): number {
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < 0 ||
+      value > MAX_WORKTREES_PER_REPO_CEILING
+    ) {
+      throw new BadRequestException(
+        `Worktree limit must be a whole number between 0 and ${MAX_WORKTREES_PER_REPO_CEILING} (0 disables the limit).`,
+      );
+    }
+    return value;
+  }
+
+  /** Tolerant of hand-edited rows: an unusable value falls back to the default. */
+  private parseMaxWorktreesPerRepo(value: number | null | undefined): number {
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < 0 ||
+      value > MAX_WORKTREES_PER_REPO_CEILING
+    ) {
+      return DEFAULT_MAX_WORKTREES_PER_REPO;
+    }
+    return value;
   }
 
   /**

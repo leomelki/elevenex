@@ -25,7 +25,7 @@ import { TrackNativeModalDirective } from '@/shared/core/directives/track-native
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
-import { WorktreePoolItem } from '@/shared/models/worktree.model';
+import { WorktreePoolItem, WorktreeQuota } from '@/shared/models/worktree.model';
 import { NavigationService } from '@/shared/services/navigation.service';
 import { SessionsService } from '@/shared/services/sessions.service';
 import { WorktreesService } from '@/shared/services/worktrees.service';
@@ -117,6 +117,13 @@ export class WorktreeSheet {
   createName = signal('');
   createPath = signal('');
 
+  /**
+   * Where the repo stands against the worktrees-per-repo limit. `null` until
+   * it has loaded — the warning stays hidden rather than guessing.
+   */
+  quota = signal<WorktreeQuota | null>(null);
+  atWorktreeLimit = computed(() => this.quota()?.atLimit === true);
+
   search = signal('');
   filter = signal<WorktreeFilter>('all');
   confirmingId = signal<number | null>(null);
@@ -188,8 +195,10 @@ export class WorktreeSheet {
     this.renamingId.set(null);
     this.prepareCreateDefaults([]);
     this.pool.set([]);
+    this.quota.set(null);
     this.dialogRef.open();
     this.loadPool();
+    this.loadQuota();
   }
 
   close() {
@@ -214,6 +223,31 @@ export class WorktreeSheet {
         this.loading.set(false);
       },
     });
+  }
+
+  /**
+   * Asked for separately from the pool stream rather than counted off it: the
+   * stream arrives progressively, so a count taken mid-load would flash a
+   * "limit reached" warning that then disappears.
+   */
+  loadQuota() {
+    if (!this.repoId()) return;
+    this.worktreesService.getQuota(this.repoId()).subscribe({
+      next: (quota) => this.quota.set(quota),
+      // Non-blocking: without a quota the create button just behaves as it did
+      // before the limit existed, and the backend still enforces it.
+      error: () => this.quota.set(null),
+    });
+  }
+
+  /** The warning shown before a manual creation that goes past the limit. */
+  worktreeLimitMessage() {
+    const quota = this.quota();
+    if (!quota) return '';
+    return (
+      `This repository already has ${quota.count} worktree${quota.count === 1 ? '' : 's'}, ` +
+      `reaching the limit of ${quota.limit} set in Elevenex settings.`
+    );
   }
 
   preferredWorktreeStartDirectory() {
@@ -249,6 +283,9 @@ export class WorktreeSheet {
       name,
       path: worktreePath,
       startPoint: branchName,
+      // The form has shown the limit warning above this button since it loaded
+      // the quota, so pressing "Create anyway" IS the confirmation.
+      confirmOverLimit: this.atWorktreeLimit(),
     }).subscribe({
       next: (created) => {
         this.creating.set(false);
@@ -258,6 +295,12 @@ export class WorktreeSheet {
       error: (err) => {
         toast.error(err?.error?.message || 'Could not create worktree.');
         this.creating.set(false);
+        // The repo crossed the limit while the sheet was open (another project
+        // or an agent added one). Refresh so the warning appears and the next
+        // press is a confirmation rather than the same rejected call.
+        if (err?.error?.code === 'worktree_limit_reached') {
+          this.loadQuota();
+        }
       },
     });
   }

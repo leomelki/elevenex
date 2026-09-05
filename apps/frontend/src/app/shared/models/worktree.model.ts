@@ -71,6 +71,19 @@ export interface CreatePoolWorktreePayload {
   startPoint: string;
   branchName?: string;
   path?: string;
+  /** Set once the user has acknowledged the over-the-limit warning. */
+  confirmOverLimit?: boolean;
+}
+
+/**
+ * How a repo stands against the worktrees-per-repo limit set in Elevenex
+ * settings. `limit` is 0 when the limit is disabled, and `atLimit` is then
+ * always false.
+ */
+export interface WorktreeQuota {
+  limit: number;
+  count: number;
+  atLimit: boolean;
 }
 
 export interface LinkPoolWorktreePayload {

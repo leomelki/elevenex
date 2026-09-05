@@ -9,6 +9,7 @@ import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 import { WorktreesService } from './worktrees.service.js';
 import { WorktreePoolService } from './worktree-pool.service.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
@@ -80,6 +81,9 @@ describe('WorktreePoolService.rename (real git)', () => {
       {
         getStatus: jest.fn().mockReturnValue('idle'),
       } as unknown as ClaudeHooksService,
+      {
+        getMaxWorktreesPerRepo: jest.fn().mockResolvedValue(0),
+      } as unknown as SettingsService,
     );
   });
 

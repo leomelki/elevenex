@@ -3,13 +3,19 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsObject,
   IsOptional,
   IsString,
+  Max,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { CLAUDE_SESSION_SURFACES } from '../settings.types.js';
-import { DEFAULT_AGENT_PROVIDERS } from '../settings.types.js';
+import {
+  DEFAULT_AGENT_PROVIDERS,
+  MAX_WORKTREES_PER_REPO_CEILING,
+} from '../settings.types.js';
 import type {
   AgentProviderPreferencePatch,
   DefaultAgentProvider,
@@ -42,6 +48,13 @@ export class UpdateAppSettingsDto {
   @ValidateNested({ each: true })
   @Type(() => SessionToolbarButtonDto)
   sessionToolbarButtons?: SessionToolbarButtonDto[] | null;
+
+  /** Worktrees allowed per repo before creation must be confirmed; 0 = no cap. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_WORKTREES_PER_REPO_CEILING)
+  maxWorktreesPerRepo?: number;
 
   // Per-provider patches (`{"claude":"opus"}`, `null` value clears one entry).
   // Keys and values stay open-ended so a new provider or a model released

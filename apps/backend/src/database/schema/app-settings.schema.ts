@@ -13,6 +13,9 @@ export const appSettings = sqliteTable('app_settings', {
   defaultModelByProvider: text('default_model_by_provider'),
   defaultReasoningEffortByProvider: text('default_reasoning_effort_by_provider'),
   sessionToolbarButtons: text('session_toolbar_buttons'),
+  // Worktrees a single repo may hold before creating another one has to be
+  // confirmed by the human. 0 disables the cap.
+  maxWorktreesPerRepo: integer('max_worktrees_per_repo').notNull().default(5),
   // Non-secret dictation config as a single JSON object, for the same reason as
   // the maps above: adding a knob or a new STT provider needs no migration.
   speechToText: text('speech_to_text'),

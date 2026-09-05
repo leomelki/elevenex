@@ -4,11 +4,13 @@ import { firstValueFrom } from 'rxjs';
 import {
   AgentProviderPreferenceMap,
   AppSettings,
+  DEFAULT_MAX_WORKTREES_PER_REPO,
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
   LOCAL_WHISPER_MODELS,
   LocalWhisperModelId,
+  MAX_WORKTREES_PER_REPO_CEILING,
   OFFLINE_SPEECH_TO_TEXT_PROVIDERS,
   SPEECH_CLEANUP_MODES,
   SPEECH_TO_TEXT_PROVIDERS,
@@ -30,6 +32,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sessionToolbarButtons: null,
   defaultModelByProvider: {},
   defaultReasoningEffortByProvider: {},
+  maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
   speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   speechToTextApiKeyConfigured: false,
   speechToTextApiKeyFromEnv: false,
@@ -117,6 +120,22 @@ export class AppSettingsService {
     sessionToolbarButtons: SessionToolbarButtonPreference[] | null,
   ): Promise<AppSettings> {
     return this.saveSettings({ sessionToolbarButtons });
+  }
+
+  /**
+   * Caps how many worktrees a repo may hold before creating one more has to be
+   * confirmed. `0` removes the cap.
+   */
+  saveMaxWorktreesPerRepo(maxWorktreesPerRepo: number): Promise<AppSettings> {
+    if (
+      !Number.isInteger(maxWorktreesPerRepo) ||
+      maxWorktreesPerRepo < 0 ||
+      maxWorktreesPerRepo > MAX_WORKTREES_PER_REPO_CEILING
+    ) {
+      return Promise.reject(new Error('Unsupported worktree limit.'));
+    }
+
+    return this.saveSettings({ maxWorktreesPerRepo });
   }
 
   /**
@@ -301,6 +320,9 @@ export class AppSettingsService {
       defaultReasoningEffortByProvider: this.normalizePreferenceMap(
         settings?.defaultReasoningEffortByProvider,
       ),
+      maxWorktreesPerRepo: this.normalizeMaxWorktreesPerRepo(
+        settings?.maxWorktreesPerRepo,
+      ),
       speechToText: this.normalizeSpeechToText(settings?.speechToText),
       speechToTextApiKeyConfigured:
         settings?.speechToTextApiKeyConfigured === true,
@@ -317,6 +339,19 @@ export class AppSettingsService {
       createdAt: settings?.createdAt ?? null,
       updatedAt: settings?.updatedAt ?? null,
     };
+  }
+
+  /** Tolerates a backend that predates the worktree cap, or malformed values. */
+  private normalizeMaxWorktreesPerRepo(value: unknown): number {
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < 0 ||
+      value > MAX_WORKTREES_PER_REPO_CEILING
+    ) {
+      return DEFAULT_MAX_WORKTREES_PER_REPO;
+    }
+    return value;
   }
 
   /** Tolerates a backend that predates dictation, or malformed entries. */

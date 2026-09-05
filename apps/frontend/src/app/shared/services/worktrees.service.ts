@@ -8,6 +8,7 @@ import {
   LinkPoolWorktreePayload,
   WorktreeInfo,
   WorktreePoolItem,
+  WorktreeQuota,
 } from '../models/worktree.model';
 import { Workspace } from '../models/workspace.model';
 import { getApiBaseUrl } from '../runtime/runtime-config';
@@ -87,6 +88,11 @@ export class WorktreesService {
         fallbackSubscription?.unsubscribe();
       };
     });
+  }
+
+  /** Where the repo stands against the configured worktrees-per-repo limit. */
+  getQuota(repoId: number) {
+    return this.http.get<WorktreeQuota>(`/api/repos/${repoId}/worktree-quota`);
   }
 
   createPool(repoId: number, payload: CreatePoolWorktreePayload) {

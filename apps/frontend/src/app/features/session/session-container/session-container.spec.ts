@@ -20,7 +20,10 @@ import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
 import type { AppSettings } from '@/shared/models/app-settings.model';
-import { DEFAULT_SPEECH_TO_TEXT_SETTINGS } from '@/shared/models/app-settings.model';
+import {
+  DEFAULT_MAX_WORKTREES_PER_REPO,
+  DEFAULT_SPEECH_TO_TEXT_SETTINGS,
+} from '@/shared/models/app-settings.model';
 import { Session } from '@/shared/models/session.model';
 import { toast } from 'ngx-sonner';
 
@@ -37,6 +40,7 @@ function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     sessionToolbarButtons: null,
     defaultModelByProvider: {},
     defaultReasoningEffortByProvider: {},
+    maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
     speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
     speechToTextApiKeyConfigured: false,
     speechToTextApiKeyFromEnv: false,

@@ -12,6 +12,7 @@ import {
   WorktreePoolService,
 } from './worktree-pool.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 
 /**
@@ -57,6 +58,9 @@ describe('WorktreePoolService', () => {
   >;
   let projectsServiceMock: jest.Mocked<Pick<ProjectsService, 'assertProjectIsActive'>>;
   let claudeHooksServiceMock: jest.Mocked<Pick<ClaudeHooksService, 'getStatus'>>;
+  let settingsServiceMock: jest.Mocked<
+    Pick<SettingsService, 'getMaxWorktreesPerRepo'>
+  >;
   let gitMock: {
     raw: jest.Mock;
     status: jest.Mock;
@@ -110,6 +114,11 @@ describe('WorktreePoolService', () => {
     claudeHooksServiceMock = {
       getStatus: jest.fn().mockReturnValue('running'),
     };
+    settingsServiceMock = {
+      // 0 = no cap, so the tests below exercise the pool logic itself; the
+      // limit gets its own describe block.
+      getMaxWorktreesPerRepo: jest.fn().mockResolvedValue(0),
+    };
     gitMock = {
       raw: jest.fn(async (args: string[]) => {
         if (args[0] === 'rev-parse' && args[1] === 'stash@{0}') return 'stash-sha\n';
@@ -130,6 +139,7 @@ describe('WorktreePoolService', () => {
       sessionsServiceMock as unknown as SessionsService,
       projectsServiceMock as unknown as ProjectsService,
       claudeHooksServiceMock as unknown as ClaudeHooksService,
+      settingsServiceMock as unknown as SettingsService,
     );
   });
 
@@ -479,5 +489,65 @@ describe('WorktreePoolService', () => {
       repo.id,
       FEATURE_PATH,
     );
+  });
+
+  describe('worktree limit', () => {
+    it("does not count the repo's own working tree against the limit", async () => {
+      settingsServiceMock.getMaxWorktreesPerRepo.mockResolvedValue(1);
+
+      // The pool holds the main working tree plus one real worktree, so a cap
+      // of 1 is exactly met — not exceeded by the main tree tagging along.
+      await expect(service.getWorktreeQuota(repo)).resolves.toEqual({
+        limit: 1,
+        count: 1,
+        atLimit: true,
+      });
+    });
+
+    it('reports headroom below the limit', async () => {
+      settingsServiceMock.getMaxWorktreesPerRepo.mockResolvedValue(4);
+
+      await expect(service.getWorktreeQuota(repo)).resolves.toEqual({
+        limit: 4,
+        count: 1,
+        atLimit: false,
+      });
+    });
+
+    it('never reaches the limit when it is disabled', async () => {
+      settingsServiceMock.getMaxWorktreesPerRepo.mockResolvedValue(0);
+
+      const quota = await service.getWorktreeQuota(repo);
+      expect(quota.atLimit).toBe(false);
+      await expect(
+        service.assertWithinWorktreeLimit(repo),
+      ).resolves.toMatchObject({ atLimit: false });
+    });
+
+    it('blocks an unconfirmed creation at the limit and says by how much', async () => {
+      settingsServiceMock.getMaxWorktreesPerRepo.mockResolvedValue(1);
+
+      await expect(
+        service.createForRepo(repo, { name: 'extra', startPoint: 'main' }),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'worktree_limit_reached',
+          limit: 1,
+          count: 1,
+        }),
+      });
+      // Rejected before git was asked to do anything.
+      expect(gitMock.raw).not.toHaveBeenCalledWith(
+        expect.arrayContaining(['worktree', 'add']),
+      );
+    });
+
+    it('lets a confirmed creation through at the limit', async () => {
+      settingsServiceMock.getMaxWorktreesPerRepo.mockResolvedValue(1);
+
+      await expect(
+        service.assertWithinWorktreeLimit(repo, true),
+      ).resolves.toMatchObject({ atLimit: true });
+    });
   });
 });

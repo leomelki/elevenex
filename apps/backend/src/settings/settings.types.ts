@@ -20,6 +20,25 @@ export interface SessionToolbarButtonSetting {
 }
 
 /**
+ * How many worktrees a single repo may hold before creating one more needs an
+ * explicit human go-ahead.
+ *
+ * Counts the repo's *pool* worktrees only — its own main working tree is never
+ * "created" by elevenex and so never counts against the cap. Reaching the cap
+ * is not a hard stop: an agent must ask the human first (and exhaust reuse),
+ * and the UI asks for a confirmation, but a confirmed creation always goes
+ * through. Disk and `git worktree add` on a multi-thousand-file repo are the
+ * cost being bounded here, not correctness.
+ */
+export const DEFAULT_MAX_WORKTREES_PER_REPO = 5;
+
+/** Stored value that turns the cap off entirely. */
+export const UNLIMITED_WORKTREES_PER_REPO = 0;
+
+/** Upper bound accepted from the API — a typo'd 5000 is never intentional. */
+export const MAX_WORKTREES_PER_REPO_CEILING = 100;
+
+/**
  * Per-provider preference maps (`{"claude":"opus","codex":"gpt-5.5"}`). Keys are
  * agent provider ids and values are opaque provider-defined identifiers, so a
  * newly released model — or a provider we don't know about yet — is storable
@@ -198,6 +217,8 @@ export interface AppSettings {
   sessionToolbarButtons: SessionToolbarButtonSetting[] | null;
   defaultModelByProvider: AgentProviderPreferenceMap;
   defaultReasoningEffortByProvider: AgentProviderPreferenceMap;
+  /** Worktrees allowed per repo before creation needs confirming; 0 = no cap. */
+  maxWorktreesPerRepo: number;
   speechToText: SpeechToTextSettings;
   /**
    * Whether a dictation key is available (from the database or the
@@ -222,6 +243,8 @@ export interface UpdateAppSettingsInput {
   sessionToolbarButtons?: SessionToolbarButtonSetting[] | null;
   defaultModelByProvider?: AgentProviderPreferencePatch | null;
   defaultReasoningEffortByProvider?: AgentProviderPreferencePatch | null;
+  /** `0` clears the cap; omitted keeps the stored value. */
+  maxWorktreesPerRepo?: number;
   /** Partial patch; omitted keys keep their stored value. */
   speechToText?: Partial<SpeechToTextSettings> | null;
   /** `undefined` keeps the stored key, `null`/`''` clears it. */

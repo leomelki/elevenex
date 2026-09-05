@@ -1,0 +1,1 @@
+ALTER TABLE `app_settings` ADD `max_worktrees_per_repo` integer DEFAULT 5 NOT NULL;

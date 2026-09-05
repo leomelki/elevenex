@@ -225,6 +225,13 @@
       "when": 1788363263653,
       "tag": "0031_useful_exodus",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1788601379203,
+      "tag": "0032_aspiring_ben_urich",
+      "breakpoints": true
     }
   ]
 }

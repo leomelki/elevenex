@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsBoolean, IsString, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class CreateWorktreeDto {
   @IsString()
@@ -14,4 +14,9 @@ export class CreateWorktreeDto {
   @IsString()
   @IsOptional()
   startPoint?: string;
+
+  /** The human acknowledged the worktree-limit warning and wants one anyway. */
+  @IsBoolean()
+  @IsOptional()
+  confirmOverLimit?: boolean;
 }

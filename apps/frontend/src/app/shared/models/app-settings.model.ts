@@ -4,6 +4,14 @@ export type DefaultClaudeSessionSurface = 'claude-ui' | 'tui';
 export type DefaultAgentProvider = 'claude' | 'codex' | 'pi' | 'antigravity';
 
 /**
+ * Worktrees a repo may hold before creating another one has to be confirmed.
+ * Mirrors the backend constants; `0` turns the cap off.
+ */
+export const DEFAULT_MAX_WORKTREES_PER_REPO = 5;
+export const UNLIMITED_WORKTREES_PER_REPO = 0;
+export const MAX_WORKTREES_PER_REPO_CEILING = 100;
+
+/**
  * Per-provider preferences keyed by agent provider id. Values are opaque
  * provider-defined identifiers, so a model released tomorrow is storable
  * without a frontend change. A missing key means "use the provider's default".
@@ -96,6 +104,8 @@ export interface AppSettings {
   sessionToolbarButtons: SessionToolbarButtonPreference[] | null;
   defaultModelByProvider: AgentProviderPreferenceMap;
   defaultReasoningEffortByProvider: AgentProviderPreferenceMap;
+  /** Worktrees allowed per repo before creation needs confirming; 0 = no cap. */
+  maxWorktreesPerRepo: number;
   speechToText: SpeechToTextSettings;
   speechToTextApiKeyConfigured: boolean;
   speechToTextApiKeyFromEnv: boolean;

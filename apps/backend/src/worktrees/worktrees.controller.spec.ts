@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { WorktreesController } from './worktrees.controller.js';
 
 describe('WorktreesController', () => {
@@ -32,6 +32,7 @@ describe('WorktreesController', () => {
         createForRepo: jest.fn(),
         linkToProject: jest.fn(),
         streamForRepo: jest.fn(),
+        assertWithinWorktreeLimit: jest.fn(),
       } as any,
       jobsServiceMock as any,
       sessionsServiceMock as any,
@@ -71,6 +72,7 @@ describe('WorktreesController', () => {
         createForRepo: jest.fn(),
         linkToProject: jest.fn(),
         streamForRepo: jest.fn(),
+        assertWithinWorktreeLimit: jest.fn(),
       } as any,
       jobsServiceMock as any,
       sessionsServiceMock as any,
@@ -101,6 +103,7 @@ describe('WorktreesController', () => {
         createForRepo: jest.fn(),
         linkToProject: jest.fn(),
         streamForRepo: jest.fn(),
+        assertWithinWorktreeLimit: jest.fn(),
       } as any,
       { startJob: jest.fn(), getJob: jest.fn() } as any,
       {
@@ -135,6 +138,7 @@ describe('WorktreesController', () => {
         createForRepo: jest.fn(),
         linkToProject: jest.fn(),
         streamForRepo: jest.fn(),
+        assertWithinWorktreeLimit: jest.fn(),
       } as any,
       jobsServiceMock as any,
       {
@@ -160,6 +164,56 @@ describe('WorktreesController', () => {
       'feature',
       expect.stringMatching(/[\\/]tmp[\\/]\.worktrees[\\/]test-repo[\\/]feature$/),
       undefined,
+    );
+  });
+
+  it('refuses to start a creation job once the repo is at its worktree limit', async () => {
+    const jobsServiceMock = { startJob: jest.fn(), getJob: jest.fn() };
+    const assertWithinWorktreeLimit = jest.fn().mockRejectedValue(
+      new ConflictException({ code: 'worktree_limit_reached' }),
+    );
+    const controller = new WorktreesController(
+      { removeWorktree: jest.fn() } as any,
+      { assertWithinWorktreeLimit } as any,
+      jobsServiceMock as any,
+      {
+        deleteByWorktreePath: jest.fn(),
+        deleteByRepoAndWorktreePath: jest.fn(),
+      } as any,
+      { assertProjectIsActive: jest.fn() } as any,
+      makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
+    );
+
+    await expect(
+      controller.createWorktree('7', { branchName: 'feature' }),
+    ).rejects.toThrow(ConflictException);
+    // Nothing was spawned: the limit is checked before any disk work starts.
+    expect(jobsServiceMock.startJob).not.toHaveBeenCalled();
+  });
+
+  it('passes the user confirmation through to the pool when creating', async () => {
+    const createForRepo = jest.fn().mockResolvedValue({ id: 3 });
+    const controller = new WorktreesController(
+      { removeWorktree: jest.fn() } as any,
+      { createForRepo } as any,
+      { startJob: jest.fn(), getJob: jest.fn() } as any,
+      {
+        deleteByWorktreePath: jest.fn(),
+        deleteByRepoAndWorktreePath: jest.fn(),
+      } as any,
+      { assertProjectIsActive: jest.fn() } as any,
+      makeDb([{ id: 7, name: 'test-repo', path: '/tmp/test-repo' }]) as any,
+    );
+
+    await controller.createPoolWorktree('7', {
+      name: 'spare',
+      startPoint: 'main',
+      confirmOverLimit: true,
+    });
+
+    expect(createForRepo).toHaveBeenCalledWith(
+      { id: 7, name: 'test-repo', path: '/tmp/test-repo' },
+      expect.objectContaining({ confirmOverLimit: true }),
     );
   });
 
@@ -261,6 +315,7 @@ describe('WorktreesController', () => {
         createForRepo: jest.fn(),
         linkToProject: jest.fn(),
         streamForRepo: jest.fn(),
+        assertWithinWorktreeLimit: jest.fn(),
       } as any,
       jobsServiceMock as any,
       {

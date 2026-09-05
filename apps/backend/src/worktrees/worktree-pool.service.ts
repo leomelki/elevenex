@@ -14,6 +14,8 @@ import * as schema from '../database/schema/index.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import { SettingsService } from '../settings/settings.service.js';
+import { UNLIMITED_WORKTREES_PER_REPO } from '../settings/settings.types.js';
 import { WorktreeInfo, WorktreesService } from './worktrees.service.js';
 
 export type WorktreeLinkStatus = 'linked' | 'unlinked';
@@ -72,6 +74,19 @@ export interface WorktreePoolItem {
   } | null;
 }
 
+/**
+ * How the repo stands against the configured worktree cap. `limit` is 0 when
+ * the cap is disabled, in which case `atLimit` is always false.
+ */
+export interface WorktreeQuota {
+  /** Configured cap; 0 means unlimited. */
+  limit: number;
+  /** Pool worktrees that count against it (the main working tree does not). */
+  count: number;
+  /** True once creating another one needs an explicit human go-ahead. */
+  atLimit: boolean;
+}
+
 interface SessionActivity {
   activeSessionCount: number;
   runningAgentCount: number;
@@ -92,6 +107,7 @@ export class WorktreePoolService {
     private readonly sessionsService: SessionsService,
     private readonly projectsService: ProjectsService,
     private readonly claudeHooksService: ClaudeHooksService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   async listForRepo(repo: typeof schema.repos.$inferSelect) {
@@ -253,6 +269,54 @@ export class WorktreePoolService {
     };
   }
 
+  /** Configured worktrees-per-repo cap; `0` means the cap is off. */
+  getWorktreeLimit(): Promise<number> {
+    return this.settingsService.getMaxWorktreesPerRepo();
+  }
+
+  /**
+   * The repo's standing against the cap. Counts pool rows rather than running a
+   * status scan — being over budget is about how many worktrees exist on disk,
+   * not about what state each of them is in — but reconciles first so worktrees
+   * created outside elevenex are counted too.
+   */
+  async getWorktreeQuota(
+    repo: typeof schema.repos.$inferSelect,
+  ): Promise<WorktreeQuota> {
+    const limit = await this.getWorktreeLimit();
+    await this.reconcileRepo(repo);
+    const root = await this.realPathOrRaw(repo.path);
+    const rows = await this.db
+      .select({ path: schema.repoWorktrees.path })
+      .from(schema.repoWorktrees)
+      .where(eq(schema.repoWorktrees.repoRootPath, root));
+
+    // Pool rows already hold real paths (see `upsertPoolWorktree`), so the main
+    // working tree is the row whose path is the repo root itself. It is not a
+    // worktree anyone created, so it never counts against the cap.
+    const count = rows.filter((row) => row.path !== root).length;
+
+    return {
+      limit,
+      count,
+      atLimit: limit !== UNLIMITED_WORKTREES_PER_REPO && count >= limit,
+    };
+  }
+
+  /**
+   * Message shown to the human — and handed to agents verbatim — when the cap
+   * has been reached. States the numbers so "why can't I create one?" is
+   * answerable without opening settings.
+   */
+  static worktreeLimitMessage(quota: WorktreeQuota, repoName: string): string {
+    return (
+      `"${repoName}" already has ${quota.count} worktree${quota.count === 1 ? '' : 's'}, ` +
+      `which meets the limit of ${quota.limit} set in Elevenex settings. ` +
+      'Reuse an existing worktree instead, or confirm to create one anyway ' +
+      '(raise or disable the limit in Settings → Worktrees).'
+    );
+  }
+
   async createForRepo(
     repo: typeof schema.repos.$inferSelect,
     input: {
@@ -260,9 +324,15 @@ export class WorktreePoolService {
       path?: string;
       startPoint: string;
       branchName?: string;
+      /**
+       * The human has seen the over-limit warning and chose to create anyway.
+       * The cap is a speed bump, never a hard stop.
+       */
+      confirmOverLimit?: boolean;
     },
   ) {
     await this.projectsService.assertProjectIsActive(repo.projectId);
+    await this.assertWithinWorktreeLimit(repo, input.confirmOverLimit);
     const name = this.normalizeName(input.name);
     const startPoint = input.startPoint.trim() || 'HEAD';
     const worktreePath =
@@ -508,6 +578,28 @@ export class WorktreePoolService {
       );
     }
     return item;
+  }
+
+  /**
+   * Blocks a creation that would push the repo past its cap, unless the caller
+   * says the human confirmed it. Structured payload rather than a bare string
+   * so the UI can tell "you need to confirm" apart from a real failure and
+   * offer a "create anyway" instead of just a red toast.
+   */
+  async assertWithinWorktreeLimit(
+    repo: typeof schema.repos.$inferSelect,
+    confirmOverLimit?: boolean,
+  ): Promise<WorktreeQuota> {
+    const quota = await this.getWorktreeQuota(repo);
+    if (quota.atLimit && !confirmOverLimit) {
+      throw new ConflictException({
+        code: 'worktree_limit_reached',
+        message: WorktreePoolService.worktreeLimitMessage(quota, repo.name),
+        limit: quota.limit,
+        count: quota.count,
+      });
+    }
+    return quota;
   }
 
   async reconcileRepo(repo: typeof schema.repos.$inferSelect) {

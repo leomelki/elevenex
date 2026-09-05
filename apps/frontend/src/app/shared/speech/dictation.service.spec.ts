@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_MAX_WORKTREES_PER_REPO,
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   type AppSettings,
 } from '@/shared/models/app-settings.model';
@@ -23,6 +24,7 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     sessionToolbarButtons: null,
     defaultModelByProvider: {},
     defaultReasoningEffortByProvider: {},
+    maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
     // These cases are about the cloud path; the local engine has its own
     // block below, since its readiness is a download rather than a key.
     speechToText: {
