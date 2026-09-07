@@ -22,9 +22,29 @@ const { EventEmitter } = require('node:events');
 // Public STUN is used only to discover this machine's public address; no session
 // data passes through it. Overridable for deployments that would rather not talk
 // to a third party, at the cost of only reaching peers on the same network.
+//
+// The list is chosen for two kinds of diversity, because a STUN server that
+// cannot be reached costs a hole-punch attempt:
+//
+//   - Operators, so one provider's outage or rate limit is not the whole story.
+//     Google and Cloudflare are anycast and free; Twilio's has been open for
+//     years; Nextcloud's is a fourth party on a different network entirely.
+//   - Ports, which matters more than operator count on a locked-down network.
+//     UDP 3478 and 19302 are the ports a restrictive firewall knows to block,
+//     so the list also reaches out on 53 and 443 — ports that carry DNS and
+//     QUIC, and are therefore rarely filtered.
+//
+// Verified reachable by Binding Request before being listed here. Known-dead
+// names that still circulate in public lists — stun.stunprotocol.org,
+// stun.services.mozilla.com, stun.jitsi.net, openrelay.metered.ca — are
+// deliberately absent, as is Google's port 5349, which answers only over TLS.
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:stun.cloudflare.com:53' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  { urls: 'stun:stun.nextcloud.com:443' },
 ];
 
 function resolveIceServers() {
