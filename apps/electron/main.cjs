@@ -36,6 +36,7 @@ const {
   normalizeEnvironmentRef,
 } = require('./environment-ref.cjs');
 const { createConnectionRegistry } = require('./connection-registry.cjs');
+const { createLinkManager } = require('./link-manager.cjs');
 const { rewriteLocalhostToProxy: rewriteMcpCallbackToProxy } = require('./mcp-proxy-url.cjs');
 const { createWindowRegistry } = require('./window-manager.cjs');
 const {
@@ -256,6 +257,12 @@ const connectionRegistry = createConnectionRegistry({
     if (envRef.mode === 'ssh' || envRef.mode === 'wsl') {
       return stopSshForwardRuntime(envRef.serverId);
     }
+    // Same rule as a tunnel: the link stays up while any window holds it, and
+    // is torn down by the last one letting go. Keeping it alive would leave the
+    // relay session — and the loopback port behind it — open indefinitely.
+    if (envRef.mode === 'paired') {
+      return linkManager.disconnect(envRef.serverId);
+    }
     // The embedded backend is intentionally left running when the last local
     // window closes: restarting it costs seconds, and on macOS the app stays
     // alive with no windows. It is stopped for real in runShutdownCleanup().
@@ -275,6 +282,25 @@ const windowStateStore = createWindowStateStore({
     console.warn(`[windows] layout persistence failed: ${error instanceof Error ? error.message : error}`);
   },
 });
+
+// Remote links: this machine sharing its backend, and the backends it can reach
+// on other machines. Pairing keys stay in the main process (see link-store.cjs),
+// so the renderer only ever sees the redacted views these callbacks broadcast.
+const linkManager = createLinkManager({
+  userDataPath: app.getPath('userData'),
+  getLocalBackendPort: () => Number.parseInt(embeddedBackendPort || `${FALLBACK_BACKEND_PORT}`, 10),
+  onSharingStatus: (status) => broadcastToWindows('elevenex-remote-link:sharing-changed', status),
+  onLinkStatus: (status) => broadcastToWindows('elevenex-remote-link:status-changed', status),
+  onError: (error) => {
+    console.warn(`[remote-link] ${error instanceof Error ? error.message : error}`);
+  },
+});
+
+function broadcastToWindows(channel, payload) {
+  for (const entry of windowRegistry.all()) {
+    windowRegistry.sendTo(entry.id, channel, payload);
+  }
+}
 
 // Frozen once shutdown starts. Quitting closes every window in turn, and each
 // close would otherwise shrink the saved layout until it was empty — the next
@@ -808,6 +834,10 @@ function runShutdownCleanup() {
   for (const sessionId of Array.from(remoteInstallerSessions.keys())) {
     destroyRemoteInstallerSession(sessionId);
   }
+
+  // Drops the relay sessions and the loopback listeners behind them. Sharing is
+  // re-established from the persisted flag on the next launch.
+  void linkManager.stopAll();
 
   stopEmbeddedBackend();
 }
@@ -4746,6 +4776,67 @@ ipcMain.handle('elevenex-ssh-forwarding:pick-identity-file', async (event) => {
   return result.filePaths[0];
 });
 
+// --- Remote links -----------------------------------------------------------
+// Sharing this machine's backend, and connecting to one that another machine
+// shares. `connect` mirrors the SSH tunnel contract: it returns a loopback
+// backendUrl the renderer then hands to set-environment.
+
+ipcMain.handle('elevenex-remote-link:is-supported', () => true);
+
+ipcMain.handle('elevenex-remote-link:get-sharing', () => linkManager.sharingView());
+
+// Separate from get-sharing on purpose: this is the only call that returns the
+// pairing key, so routine status polling can never surface it.
+ipcMain.handle('elevenex-remote-link:get-sharing-code', () => linkManager.getSharingCode());
+
+ipcMain.handle('elevenex-remote-link:enable-sharing', (_event, payload) => linkManager.enableSharing({
+  transport: `${payload?.transport || 'relay'}`,
+  relayUrl: `${payload?.relayUrl || ''}`.trim(),
+  directPort: Number(payload?.directPort) || 0,
+  label: `${payload?.label || ''}`.trim(),
+}));
+
+ipcMain.handle('elevenex-remote-link:disable-sharing', () => linkManager.disableSharing());
+
+ipcMain.handle('elevenex-remote-link:regenerate-code', () => linkManager.regenerateSharingCode());
+
+ipcMain.handle('elevenex-remote-link:suggested-host', () => linkManager.hostAdvertisedHost());
+
+ipcMain.handle('elevenex-remote-link:list', () => linkManager.listLinks());
+
+ipcMain.handle('elevenex-remote-link:add', (_event, payload) => linkManager.addLink({
+  code: `${payload?.code || ''}`.trim(),
+  name: `${payload?.name || ''}`.trim(),
+}));
+
+ipcMain.handle('elevenex-remote-link:rename', (_event, payload) => linkManager.renameLink(
+  Number(payload?.id),
+  `${payload?.name || ''}`.trim(),
+));
+
+ipcMain.handle('elevenex-remote-link:remove', (_event, id) => linkManager.removeLink(Number(id)));
+
+ipcMain.handle('elevenex-remote-link:get-state', (_event, id) => linkManager.getLinkState(Number(id)));
+
+ipcMain.handle('elevenex-remote-link:connect', async (event, id) => {
+  const linkId = Number(id);
+  if (!Number.isInteger(linkId) || linkId <= 0) {
+    throw new Error('A saved device id is required');
+  }
+
+  const state = await linkManager.connect(linkId);
+  // Take the lease for the requesting window immediately. Without it a link
+  // established but not yet switched to would have no holder, and the first
+  // release would tear it down underneath the window that asked for it.
+  const entry = senderWindowEntry(event);
+  if (entry) {
+    connectionRegistry.acquire(entry.id, { mode: 'paired', serverId: linkId, label: state.name });
+  }
+  return state;
+});
+
+ipcMain.handle('elevenex-remote-link:disconnect', (_event, id) => linkManager.disconnect(Number(id)));
+
 ipcMain.handle('elevenex-remote-server:ensure-ready', async (event, payload) => {
   const serverId = Number(payload?.id);
   if (!Number.isFinite(serverId) || serverId <= 0) {
@@ -5117,6 +5208,11 @@ app.whenReady().then(async () => {
   installMicrophonePermissionHandler();
   installMenu();
   await restoreSavedWindows();
+
+  // Sharing was left on in a previous session: bring the host side back up so
+  // the other machine can reconnect without anyone touching this one. Deliberately
+  // not awaited — a relay that is slow or down must not delay startup.
+  void linkManager.restoreSharing();
 
   app.on('activate', () => {
     if (windowRegistry.count() === 0) {

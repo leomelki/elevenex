@@ -32,6 +32,7 @@ import * as express from 'express';
 import { createEdgeProxyServer } from './proxy/edge-proxy.server.js';
 import {
   getEdgeProxyUpstreamOrigin,
+  getElevenexBindHost,
   getElevenexProxyPort,
 } from './config/ports.js';
 import { readFile } from 'fs/promises';
@@ -368,7 +369,7 @@ async function bootstrap() {
     upstreamOrigin: getEdgeProxyUpstreamOrigin(),
     localHttpServer: httpServer,
   });
-  await listenServer(edgeProxyServer, getElevenexProxyPort(), '0.0.0.0');
+  await listenServer(edgeProxyServer, getElevenexProxyPort(), getElevenexBindHost());
 }
 bootstrap().catch((error) => {
   // A failed bootstrap (e.g. the edge proxy cannot bind its port) must kill the

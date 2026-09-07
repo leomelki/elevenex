@@ -303,6 +303,13 @@ export class EnvironmentConnectionManagerService {
     if (snapshot.mode === 'wsl') {
       return { mode: 'wsl', serverId: null, label: this.environmentLabel() };
     }
+    if (snapshot.mode === 'paired' && snapshot.paired) {
+      return {
+        mode: 'paired',
+        serverId: snapshot.paired.id,
+        label: snapshot.paired.name,
+      };
+    }
 
     return { mode: 'local', serverId: null, label: 'Local' };
   }

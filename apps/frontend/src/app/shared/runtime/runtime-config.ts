@@ -56,6 +56,9 @@ export function getBackendServerId(): string {
   if (snapshot?.mode === 'wsl') {
     return 'wsl';
   }
+  if (snapshot?.mode === 'paired' && snapshot.paired) {
+    return `paired-${snapshot.paired.id}`;
+  }
   return 'local';
 }
 
@@ -111,7 +114,10 @@ export function getBackendOrigin(
 export function isBackendOriginReady(
   snapshot: OnboardingStateSnapshot = readOnboardingStateSnapshot(),
 ): boolean {
-  if (snapshot.mode !== 'ssh' && snapshot.mode !== 'wsl') {
+  // 'paired' has the same trap as a tunnel: the origin is a loopback port that
+  // only exists once the link is up, so a socket opened early would bind
+  // silently to this machine's own backend and never reconnect.
+  if (snapshot.mode !== 'ssh' && snapshot.mode !== 'wsl' && snapshot.mode !== 'paired') {
     return true;
   }
 

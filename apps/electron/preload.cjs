@@ -130,6 +130,48 @@ contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
     getState: (id) => ipcRenderer.invoke('elevenex-ssh-forwarding:get-state', id),
     pickIdentityFile: () => ipcRenderer.invoke('elevenex-ssh-forwarding:pick-identity-file'),
   },
+  remoteLink: {
+    isSupported: () => ipcRenderer.invoke('elevenex-remote-link:is-supported'),
+    // Sharing this machine's backend with another device.
+    getSharing: () => ipcRenderer.invoke('elevenex-remote-link:get-sharing'),
+    // Returns the pairing code, which *is* the credential. Called only when the
+    // user asks to see or copy it, never on a status refresh.
+    getSharingCode: () => ipcRenderer.invoke('elevenex-remote-link:get-sharing-code'),
+    enableSharing: (payload) => ipcRenderer.invoke('elevenex-remote-link:enable-sharing', payload),
+    disableSharing: () => ipcRenderer.invoke('elevenex-remote-link:disable-sharing'),
+    regenerateCode: () => ipcRenderer.invoke('elevenex-remote-link:regenerate-code'),
+    suggestedHost: () => ipcRenderer.invoke('elevenex-remote-link:suggested-host'),
+    // Devices this machine can connect to.
+    list: () => ipcRenderer.invoke('elevenex-remote-link:list'),
+    add: (payload) => ipcRenderer.invoke('elevenex-remote-link:add', payload),
+    rename: (payload) => ipcRenderer.invoke('elevenex-remote-link:rename', payload),
+    remove: (id) => ipcRenderer.invoke('elevenex-remote-link:remove', id),
+    connect: (id) => ipcRenderer.invoke('elevenex-remote-link:connect', id),
+    disconnect: (id) => ipcRenderer.invoke('elevenex-remote-link:disconnect', id),
+    getState: (id) => ipcRenderer.invoke('elevenex-remote-link:get-state', id),
+    onSharingChanged: (callback) => {
+      if (typeof callback !== 'function') {
+        return () => {};
+      }
+
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('elevenex-remote-link:sharing-changed', listener);
+      return () => {
+        ipcRenderer.removeListener('elevenex-remote-link:sharing-changed', listener);
+      };
+    },
+    onStatusChanged: (callback) => {
+      if (typeof callback !== 'function') {
+        return () => {};
+      }
+
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('elevenex-remote-link:status-changed', listener);
+      return () => {
+        ipcRenderer.removeListener('elevenex-remote-link:status-changed', listener);
+      };
+    },
+  },
   remoteServer: {
     ensureReady: (payload) => ipcRenderer.invoke('elevenex-remote-server:ensure-ready', payload),
     recheck: (payload) => ipcRenderer.invoke('elevenex-remote-server:recheck', payload),

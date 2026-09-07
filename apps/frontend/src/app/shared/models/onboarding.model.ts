@@ -1,4 +1,4 @@
-export type OnboardingMode = 'local' | 'ssh' | 'wsl';
+export type OnboardingMode = 'local' | 'ssh' | 'wsl' | 'paired';
 
 export type ServerAuthMode = 'agent' | 'password' | 'key';
 
@@ -48,6 +48,16 @@ export interface WslConnectionState {
   lastConnectedAt: string;
 }
 
+// A desktop this machine reaches over a remote link. Unlike SavedServer this is
+// only a display mirror: the record of record — and the pairing key, which is
+// the entire credential — lives in the main process (apps/electron/link-store.cjs)
+// and never enters renderer storage.
+export interface PairedDeviceState {
+  id: number;
+  name: string;
+  localPort: number;
+}
+
 export interface OnboardingStateSnapshot {
   mode: OnboardingMode | null;
   currentStep: OnboardingStep;
@@ -57,4 +67,5 @@ export interface OnboardingStateSnapshot {
   servers: SavedServer[];
   lastSshDefaults: OnboardingLastSshDefaults | null;
   wsl: WslConnectionState | null;
+  paired: PairedDeviceState | null;
 }

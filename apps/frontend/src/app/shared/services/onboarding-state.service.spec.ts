@@ -60,6 +60,7 @@ describe('onboarding state storage', () => {
       servers: [server],
       lastSshDefaults: null,
       wsl: null,
+      paired: null,
     });
 
     const catalogue = JSON.parse(localStorage.getItem(ENVIRONMENT_CATALOGUE_STORAGE_KEY)!);
@@ -82,6 +83,7 @@ describe('onboarding state storage', () => {
       servers: [server],
       lastSshDefaults: null,
       wsl: null,
+      paired: null,
     });
 
     setWindow('w-beta');
@@ -111,6 +113,7 @@ describe('onboarding state storage', () => {
       servers: [server],
       lastSshDefaults: null,
       wsl: null,
+      paired: null,
     }));
 
     const snapshot = readOnboardingStateSnapshot();

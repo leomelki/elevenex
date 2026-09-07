@@ -1,0 +1,11 @@
+{
+  "name": "@elevenex/relay",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Rendezvous relay that splices two Elevenex desktops together. No dependencies, no state, no plaintext.",
+  "license": "CC-BY-NC-4.0",
+  "main": "server.cjs",
+  "scripts": {
+    "start": "node server.cjs"
+  }
+}

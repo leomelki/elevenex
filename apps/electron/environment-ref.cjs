@@ -37,6 +37,21 @@ function normalizeEnvironmentRef(value) {
     };
   }
 
+  // A paired desktop reached over a remote link. Addressed by the saved link's
+  // id, which the main process mints the same Date.now()-based way as a saved
+  // SSH server, so the two id spaces never overlap inside one key.
+  if (value.mode === 'paired') {
+    const serverId = Number(value.serverId);
+    if (!Number.isInteger(serverId) || serverId <= 0) {
+      return { ...LOCAL_ENVIRONMENT_REF };
+    }
+    return {
+      mode: 'paired',
+      serverId,
+      label: label || `Device ${serverId}`,
+    };
+  }
+
   if (value.mode === 'ssh') {
     const serverId = Number(value.serverId);
     // An ssh ref without a usable server id cannot address anything — fall
@@ -63,6 +78,9 @@ function environmentRefKey(envRef) {
   }
   if (normalized.mode === 'ssh') {
     return `server-${normalized.serverId}`;
+  }
+  if (normalized.mode === 'paired') {
+    return `paired-${normalized.serverId}`;
   }
   return 'local';
 }

@@ -431,6 +431,10 @@ function buildWindowsRemoteStartCommand({ remoteRoot, remotePort, forcePortClean
     '      ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }',
     '  } catch { Log "start: no process cleanup performed for port $port" }',
     '}',
+    // See the POSIX start command: remote runtimes opt out of the loopback-only
+    // default because the client reaches them across a tunnel or WSL's
+    // localhost forwarding rather than from the machine itself.
+    '$env:ELEVENEX_BIND_HOST = "0.0.0.0"',
     '$launcher = Join-Path $remoteRoot "bin\\start-backend.ps1"',
     'if (-not (Test-Path -LiteralPath $launcher)) { throw "Missing Windows backend launcher: $launcher" }',
     '$process = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$launcher,"$port") -WindowStyle Hidden -PassThru',
@@ -510,6 +514,13 @@ function buildRemoteStartCommand({ remoteRoot, remotePort, forcePortCleanup, age
         'esac',
       ]
       : []),
+    // The backend binds loopback by default so it is not exposed to the remote
+    // host's network. A remote runtime has to opt out: WSL2's localhost
+    // forwarding cannot reach a listener bound only to 127.0.0.1 inside the
+    // distro, and an SSH remote is already unreachable except through the
+    // tunnel this process opened.
+    'ELEVENEX_BIND_HOST=0.0.0.0',
+    'export ELEVENEX_BIND_HOST',
     `printf "\\n[%s] Starting Elevenex backend from %s on port %s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REMOTE_ROOT" "$PORT" >> "$HOME/${REMOTE_HOME_DIRNAME}/logs/backend.log"`,
     '"$TMUX_BIN" new-session -d -s elevenex-backend "$REMOTE_ROOT/bin/start-backend.sh $PORT"',
     'sleep 1',

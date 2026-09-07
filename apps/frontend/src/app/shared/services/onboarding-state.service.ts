@@ -6,6 +6,7 @@ import {
   OnboardingMode,
   OnboardingStateSnapshot,
   OnboardingStep,
+  PairedDeviceState,
   SavedServer,
   WslConnectionState,
 } from '../models/onboarding.model';
@@ -45,6 +46,7 @@ const DEFAULT_SNAPSHOT: OnboardingStateSnapshot = {
   servers: [],
   lastSshDefaults: null,
   wsl: null,
+  paired: null,
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -92,6 +94,25 @@ function sanitizeServer(value: unknown): SavedServer | null {
     createdAt: `${value['createdAt'] ?? ''}`,
     updatedAt: `${value['updatedAt'] ?? ''}`,
     lastConnectedAt: `${value['lastConnectedAt'] ?? ''}`,
+  };
+}
+
+// The main process owns the real record; this only has to be good enough to
+// rebuild a backend origin after a reload.
+function sanitizePairedState(value: unknown): PairedDeviceState | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const id = Number(value['id']);
+  const localPort = Number(value['localPort']);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  if (!Number.isInteger(localPort) || localPort <= 0) return null;
+
+  return {
+    id,
+    localPort,
+    name: value['name'] ? `${value['name']}`.trim() : `Device ${id}`,
   };
 }
 
@@ -190,6 +211,22 @@ function seedSessionFromInjectedEnvironment(): WindowSession | null {
       remoteConnectionReady: false,
       projectHandoffAcknowledged: true,
       wsl: null,
+      paired: null,
+    };
+  }
+
+  if (injected.mode === 'paired' && Number.isInteger(injected.serverId) && (injected.serverId ?? 0) > 0) {
+    return {
+      mode: 'paired',
+      currentStep: 'project',
+      activeServerId: null,
+      remoteConnectionReady: false,
+      projectHandoffAcknowledged: true,
+      wsl: null,
+      // The port is not known until the link is claimed, so the connection flow
+      // fills this in; until then remoteConnectionReady stays false and nothing
+      // is allowed to dial a backend origin.
+      paired: { id: injected.serverId as number, name: injected.label || `Device ${injected.serverId}`, localPort: 0 },
     };
   }
 
@@ -201,6 +238,7 @@ function seedSessionFromInjectedEnvironment(): WindowSession | null {
       remoteConnectionReady: false,
       projectHandoffAcknowledged: true,
       wsl: null,
+      paired: null,
     };
   }
 
@@ -212,6 +250,7 @@ function seedSessionFromInjectedEnvironment(): WindowSession | null {
       remoteConnectionReady: true,
       projectHandoffAcknowledged: true,
       wsl: null,
+      paired: null,
     };
   }
 
@@ -229,6 +268,7 @@ function readWindowSession(raw: string | null): WindowSession {
       remoteConnectionReady: DEFAULT_SNAPSHOT.remoteConnectionReady,
       projectHandoffAcknowledged: DEFAULT_SNAPSHOT.projectHandoffAcknowledged,
       wsl: DEFAULT_SNAPSHOT.wsl,
+      paired: DEFAULT_SNAPSHOT.paired,
     };
   }
 
@@ -237,7 +277,7 @@ function readWindowSession(raw: string | null): WindowSession {
   const activeServerId = Number(parsed['activeServerId']);
 
   return {
-    mode: mode === 'local' || mode === 'ssh' || mode === 'wsl' ? mode : null,
+    mode: mode === 'local' || mode === 'ssh' || mode === 'wsl' || mode === 'paired' ? mode : null,
     currentStep:
       currentStep === 'choice' || currentStep === 'ssh' || currentStep === 'install' || currentStep === 'project'
         ? currentStep
@@ -246,6 +286,7 @@ function readWindowSession(raw: string | null): WindowSession {
     remoteConnectionReady: parsed['remoteConnectionReady'] === true,
     projectHandoffAcknowledged: parsed['projectHandoffAcknowledged'] === true,
     wsl: sanitizeWslState(parsed['wsl']),
+    paired: sanitizePairedState(parsed['paired']),
   };
 }
 
@@ -350,6 +391,12 @@ export function isOnboardingSetupConfigured(snapshot: OnboardingStateSnapshot): 
     return snapshot.wsl !== null && snapshot.remoteConnectionReady;
   }
 
+  if (snapshot.mode === 'paired') {
+    return snapshot.paired !== null
+      && snapshot.paired.localPort > 0
+      && snapshot.remoteConnectionReady;
+  }
+
   return snapshot.mode === 'ssh'
     && getActiveOnboardingServer(snapshot) !== null
     && snapshot.remoteConnectionReady;
@@ -366,6 +413,12 @@ export function getOnboardingBackendOrigin(snapshot: OnboardingStateSnapshot): s
 
   if (snapshot.mode === 'wsl') {
     return snapshot.wsl ? `http://127.0.0.1:${snapshot.wsl.localPort}` : null;
+  }
+
+  if (snapshot.mode === 'paired') {
+    return snapshot.paired?.localPort
+      ? `http://127.0.0.1:${snapshot.paired.localPort}`
+      : null;
   }
 
   if (snapshot.mode !== 'ssh') {
@@ -419,6 +472,32 @@ export class OnboardingStateService {
       currentStep: 'project',
       remoteConnectionReady: true,
       wsl: state,
+    });
+  }
+
+  getPairedState(snapshot = this.readSnapshot()): PairedDeviceState | null {
+    return snapshot.paired;
+  }
+
+  // Like setWslState: a paired device has no separate "saved list" in renderer
+  // storage to activate against — the catalogue lives in the main process — so
+  // recording a live connection and switching to it are the same action.
+  setPairedState(state: PairedDeviceState) {
+    const snapshot = this.readSnapshot();
+    this.writeSnapshot({
+      ...snapshot,
+      mode: 'paired',
+      currentStep: 'project',
+      remoteConnectionReady: state.localPort > 0,
+      paired: state,
+    });
+  }
+
+  clearPairedConnection() {
+    const snapshot = this.readSnapshot();
+    this.writeSnapshot({
+      ...snapshot,
+      remoteConnectionReady: snapshot.mode === 'paired' ? false : snapshot.remoteConnectionReady,
     });
   }
 

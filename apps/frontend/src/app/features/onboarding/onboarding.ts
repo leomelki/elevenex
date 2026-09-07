@@ -12,6 +12,7 @@ import {
   lucideCpu,
   lucideHardDrive,
   lucideKeyRound,
+  lucideLaptop,
   lucideLock,
   lucideMonitor,
   lucideOrbit,
@@ -26,6 +27,7 @@ import { toast } from 'ngx-sonner';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
+import { RemoteLinkPanelComponent } from '@/features/remote-link/remote-link-panel.component';
 import { ELEVENEX_REMOTE_PORT } from '@/shared/constants/elevenex';
 import { DefaultAgentProvider, DefaultClaudeSessionSurface } from '@/shared/models/app-settings.model';
 import { SavedServer, ServerAuthMode } from '@/shared/models/onboarding.model';
@@ -34,11 +36,11 @@ import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { OnboardingConnectionService } from '@/shared/services/onboarding-connection.service';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
 
-type OnboardingStep = 'connection' | 'ssh' | 'install' | 'agent' | 'claude-surface' | 'reminder';
+type OnboardingStep = 'connection' | 'ssh' | 'paired' | 'install' | 'agent' | 'claude-surface' | 'reminder';
 
 @Component({
   selector: 'app-onboarding',
-  imports: [NgIcon, ZardButtonComponent, ZardInputDirective, PathAutocompleteInputComponent],
+  imports: [NgIcon, ZardButtonComponent, ZardInputDirective, PathAutocompleteInputComponent, RemoteLinkPanelComponent],
   templateUrl: './onboarding.html',
   host: { class: 'block flex-1 overflow-y-auto' },
   viewProviders: [
@@ -75,7 +77,7 @@ export class Onboarding implements OnInit {
   sshSupported = signal(false);
   isWindows = signal(false);
   wslSupported = signal(false);
-  selectedMode = signal<'local' | 'ssh' | 'wsl' | null>(null);
+  selectedMode = signal<'local' | 'ssh' | 'wsl' | 'paired' | null>(null);
   activeStep = signal<OnboardingStep>('connection');
   connectionError = signal('');
   installMessage = signal('');
@@ -109,7 +111,7 @@ export class Onboarding implements OnInit {
 
   readonly stepLabel = computed(() => {
     const step = this.activeStep();
-    if (step === 'connection' || step === 'ssh' || step === 'install') {
+    if (step === 'connection' || step === 'ssh' || step === 'paired' || step === 'install') {
       return 'Backend';
     }
     if (step === 'agent') {
@@ -142,6 +144,22 @@ export class Onboarding implements OnInit {
   async chooseLocalMode() {
     this.selectedMode.set('local');
     this.onboardingState.setMode('local');
+    await this.loadBackendOnboarding();
+  }
+
+  // A paired desktop needs no per-connection form the way SSH does: the pairing
+  // code carries the endpoint and the credential, so the card opens the panel
+  // that manages codes and saved devices.
+  choosePairedMode() {
+    this.selectedMode.set('paired');
+    this.activeStep.set('paired');
+    this.connectionError.set('');
+    this.installMessage.set('');
+  }
+
+  // The panel has already brought the link up and pointed this window at it, so
+  // this only has to continue the flow the other modes reach after connecting.
+  async onPairedConnected() {
     await this.loadBackendOnboarding();
   }
 
