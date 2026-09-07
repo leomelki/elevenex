@@ -102,6 +102,7 @@ describe('ClaudeWorkspaceComponent', () => {
     load: ReturnType<typeof vi.fn>;
     save: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
+    flush: ReturnType<typeof vi.fn>;
   };
   const readyWorktreeContext = () => ({
     repoId: 1,
@@ -348,8 +349,9 @@ describe('ClaudeWorkspaceComponent', () => {
     };
     composerDraftsMock = {
       load: vi.fn(() => Promise.resolve(null)),
-      save: vi.fn(() => Promise.resolve()),
-      delete: vi.fn(() => Promise.resolve()),
+      save: vi.fn(),
+      delete: vi.fn(),
+      flush: vi.fn(() => Promise.resolve()),
     };
     await TestBed.configureTestingModule({
       imports: [ClaudeWorkspaceComponent],
@@ -565,6 +567,7 @@ describe('ClaudeWorkspaceComponent', () => {
       sessionId: 7,
       text: 'Fork draft',
       diffMentions: [],
+      sessionMentions: [],
       images: [],
     });
   });
@@ -604,6 +607,7 @@ describe('ClaudeWorkspaceComponent', () => {
       sessionId: 7,
       text: 'Fresh input',
       diffMentions: [],
+      sessionMentions: [],
       images: [],
     });
   });

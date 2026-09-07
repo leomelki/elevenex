@@ -734,6 +734,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       if (this.deferredContextGenerationTimer !== null) {
         window.clearTimeout(this.deferredContextGenerationTimer);
       }
+      // Write the debounced draft now rather than leaving it to a timer that
+      // fires after the composer this text belongs to is gone.
+      void this.composerDrafts.flush(this.sessionId);
       this.disconnectTranscriptSocket(this.sessionId);
     });
   }
@@ -758,7 +761,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (changes['terminalTranscriptMirror']) this._terminalTranscriptMirror.set(this.terminalTranscriptMirror);
 
     if (changes['sessionId'] && !changes['sessionId'].firstChange) {
-      this.disconnectTranscriptSocket(changes['sessionId'].previousValue as number);
+      const previousSessionId = changes['sessionId'].previousValue as number;
+      void this.composerDrafts.flush(previousSessionId);
+      this.disconnectTranscriptSocket(previousSessionId);
       this.reset();
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       if (this.isVisible) {
@@ -1726,7 +1731,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   private persistComposerDraft(): void {
     if (this.isTranscriptReadOnly()) return;
-    void this.composerDrafts.save({
+    this.composerDrafts.save({
       sessionId: this.sessionId,
       text: this.prompt(),
       diffMentions: this.pendingDiffMentions(),
@@ -1736,7 +1741,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private clearComposerDraft(): void {
-    void this.composerDrafts.delete(this.sessionId);
+    this.composerDrafts.delete(this.sessionId);
   }
 
   private async loadForks(version: number = this.bootstrapVersion): Promise<void> {

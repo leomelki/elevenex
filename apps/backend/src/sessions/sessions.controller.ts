@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import { SessionsService } from './sessions.service.js';
@@ -23,6 +24,10 @@ import {
   type SubmitReviewChatMessageDto,
   type UpdateReviewChatDto,
 } from './review-chats.service.js';
+import {
+  ComposerDraftsService,
+  type SaveComposerDraftDto,
+} from './composer-drafts.service.js';
 import { CreateSessionDto } from './dto/create-session.dto.js';
 
 @Controller('sessions')
@@ -32,6 +37,7 @@ export class SessionsController {
     private readonly sessionForksService: SessionForksService,
     private readonly planChatForksService: PlanChatForksService,
     private readonly reviewChatsService: ReviewChatsService,
+    private readonly composerDraftsService: ComposerDraftsService,
   ) {}
 
   @Post()
@@ -202,6 +208,26 @@ export class SessionsController {
   @Delete(':id/review-chats/:chatId')
   deleteReviewChat(@Param('id') id: string, @Param('chatId') chatId: string) {
     return this.reviewChatsService.delete(Number(id), Number(chatId));
+  }
+
+  // Composer-draft routes, likewise above `@Get(':id')`.
+  @Get(':id/composer-draft')
+  findComposerDraft(@Param('id') id: string) {
+    return this.composerDraftsService.find(Number(id));
+  }
+
+  @Put(':id/composer-draft')
+  saveComposerDraft(
+    @Param('id') id: string,
+    @Body() body: SaveComposerDraftDto,
+  ) {
+    return this.composerDraftsService.save(Number(id), body);
+  }
+
+  @Delete(':id/composer-draft')
+  async deleteComposerDraft(@Param('id') id: string) {
+    await this.composerDraftsService.delete(Number(id));
+    return { deleted: true };
   }
 
   @Get(':id')

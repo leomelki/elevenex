@@ -4,6 +4,7 @@ import { PlanChatForksService } from './plan-chat-forks.service.js';
 import { ReviewChatsService } from './review-chats.service.js';
 import { SessionForksService } from './session-forks.service.js';
 import { SessionsService } from './sessions.service.js';
+import { ComposerDraftsService } from './composer-drafts.service.js';
 import { TerminalModule } from '../terminal/terminal.module.js';
 import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
@@ -20,12 +21,14 @@ import { SettingsModule } from '../settings/settings.module.js';
     SessionForksService,
     PlanChatForksService,
     ReviewChatsService,
+    ComposerDraftsService,
   ],
   exports: [
     SessionsService,
     SessionForksService,
     PlanChatForksService,
     ReviewChatsService,
+    ComposerDraftsService,
   ],
 })
 export class SessionsModule {}

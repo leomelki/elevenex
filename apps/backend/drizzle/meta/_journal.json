@@ -232,6 +232,13 @@
       "when": 1788601379203,
       "tag": "0032_aspiring_ben_urich",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1788793352877,
+      "tag": "0033_whole_pete_wisdom",
+      "breakpoints": true
     }
   ]
 }

@@ -65,7 +65,11 @@ function listenServer(
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // The parsers are installed by hand further down, after the routes that need
+  // to read the raw request stream themselves.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false,
+  });
   app.setGlobalPrefix('api');
 
   // A user-requested restart (Settings → Backend) exits with a code the
@@ -294,6 +298,16 @@ async function bootstrap() {
   app.use('/api/mcp', (req: any, res: any) => {
     void elevenexMcpTransport.handle(req, res);
   });
+
+  // Every route above this line reads `req` as a stream. Registering the
+  // parsers here rather than letting Nest install them at creation time keeps
+  // that ordering explicit instead of relying on when `init()` happens to run.
+  //
+  // The limit is well over express' 100 kB default because composer drafts
+  // carry image attachments as base64 data URLs (the composer itself accepts up
+  // to 20 MB, the draft store keeps up to 8 MB of it).
+  app.useBodyParser('json', { limit: '12mb' });
+  app.useBodyParser('urlencoded', { extended: true, limit: '12mb' });
 
   app.useGlobalPipes(
     new ValidationPipe({
