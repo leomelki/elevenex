@@ -17,6 +17,12 @@ function hasBackendConnection(snapshot: OnboardingStateSnapshot): boolean {
   if (snapshot.mode === 'wsl') {
     return snapshot.wsl !== null;
   }
+  // A paired desktop is saved in the main process, so a remembered device is
+  // enough to enter the workspace — same rule as WSL and SSH below, with the
+  // runtime overlay covering a link that is still reconnecting.
+  if (snapshot.mode === 'paired') {
+    return snapshot.paired !== null;
+  }
   // For SSH mode, allow workspace access whenever the user has an active server saved,
   // even if the live tunnel isn't ready — the runtime overlay handles reconnect / change-server.
   return snapshot.mode === 'ssh' && getActiveOnboardingServer(snapshot) !== null;

@@ -6,6 +6,7 @@ import {
   buildBrowserViewProjectPrefix,
 } from '@/features/browser-panel/browser-view-state.service';
 import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-state.service';
+import { RemoteLinkService } from '@/features/remote-link/remote-link.service';
 import { TabService } from '@/features/session/tab-service';
 import { buildVSCodeIframeKey, VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
 import { ELEVENEX_REMOTE_PORT } from '@/shared/constants/elevenex';
@@ -58,6 +59,7 @@ export class EnvironmentConnectionManagerService {
   private readonly navigationService = inject(NavigationService);
   private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private readonly openWindows = inject(OpenWindowsService);
+  private readonly remoteLink = inject(RemoteLinkService);
 
   readonly switching = signal(false);
   readonly switchError = signal('');
@@ -91,6 +93,9 @@ export class EnvironmentConnectionManagerService {
     }
     if (snapshot.mode === 'wsl') {
       return snapshot.wsl?.distroName ? `WSL: ${snapshot.wsl.distroName}` : 'WSL backend';
+    }
+    if (snapshot.mode === 'paired') {
+      return snapshot.paired?.name || 'Paired desktop';
     }
 
     return 'Local';
@@ -132,6 +137,23 @@ export class EnvironmentConnectionManagerService {
         installStatus: result.installStatus,
         lastConnectedAt: new Date().toISOString(),
       });
+      this.sshRuntimeRecovery.clearRemoteDisconnect();
+      this.onboardingStartup.clearStartupFailure();
+      await this.finalizeWorkspaceHandoff();
+    });
+  }
+
+  /**
+   * Switch this window onto a paired desktop.
+   *
+   * RemoteLinkService.connect() brings the link up and records the loopback
+   * port, but a switch from a live environment also has to drop whatever this
+   * window was on and re-mount the workspace — same shape as switchToWsl().
+   */
+  async switchToPaired(deviceId: number, label: string): Promise<{ ok: boolean; error?: string }> {
+    return this.runSwitch(label, async () => {
+      await this.stopActiveRemoteTunnel();
+      await this.remoteLink.connect(deviceId);
       this.sshRuntimeRecovery.clearRemoteDisconnect();
       this.onboardingStartup.clearStartupFailure();
       await this.finalizeWorkspaceHandoff();

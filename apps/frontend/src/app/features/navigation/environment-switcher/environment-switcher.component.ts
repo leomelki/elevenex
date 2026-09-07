@@ -17,6 +17,7 @@ import {
   lucideFolderOpen,
   lucideHardDrive,
   lucideKeyRound,
+  lucideLaptop,
   lucideLock,
   lucidePencil,
   lucidePlus,
@@ -28,6 +29,9 @@ import {
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 
+import { RemoteLinkPanelComponent } from '@/features/remote-link/remote-link-panel.component';
+import type { RemoteLinkDeviceState } from '@/shared/runtime/electron-remote-link';
+import { RemoteLinkService } from '@/features/remote-link/remote-link.service';
 import { ZardInputDirective } from '@/shared/components/input';
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
 import { SavedServer, ServerAuthMode } from '@/shared/models/onboarding.model';
@@ -46,7 +50,9 @@ import {
 } from '@/shared/services/ssh-runtime-recovery.service';
 import { WslInstallFlowService } from '@/shared/services/wsl-install-flow.service';
 
-type PopoverView = 'list' | 'editor';
+// 'pairing' hosts the shared remote-link panel, so pairing a desktop never
+// means leaving the workspace for the onboarding route.
+type PopoverView = 'list' | 'editor' | 'pairing';
 type RowExpansion =
   | { kind: 'password'; serverId: number }
   | { kind: 'delete'; serverId: number }
@@ -65,7 +71,7 @@ function createEmptyDraft(): SavedServerDraft {
 
 @Component({
   selector: 'app-environment-switcher',
-  imports: [NgIcon, ZardInputDirective, PathAutocompleteInputComponent],
+  imports: [NgIcon, ZardInputDirective, PathAutocompleteInputComponent, RemoteLinkPanelComponent],
   templateUrl: './environment-switcher.component.html',
   styleUrl: './environment-switcher.component.scss',
   viewProviders: [
@@ -77,6 +83,7 @@ function createEmptyDraft(): SavedServerDraft {
       lucideFolderOpen,
       lucideHardDrive,
       lucideKeyRound,
+      lucideLaptop,
       lucideLock,
       lucidePencil,
       lucidePlus,
@@ -114,12 +121,17 @@ export class EnvironmentSwitcherComponent {
   readonly open = signal(false);
   readonly popoverPos = signal({ top: '0px', left: '0px', width: '0px' });
   readonly view = signal<PopoverView>('list');
+  private readonly remoteLink = inject(RemoteLinkService);
+  readonly pairedDevices = this.remoteLink.devices;
+  readonly remoteLinkSupported = this.remoteLink.supported;
   readonly editingServerId = signal<number | 'new' | null>(null);
   readonly draft = signal<SavedServerDraft>(createEmptyDraft());
   readonly expansion = signal<RowExpansion>(null);
   readonly password = signal('');
   readonly passphrase = signal('');
-  readonly switchingId = signal<number | 'local' | 'wsl' | null>(null);
+  // Paired devices are keyed `paired-<id>` so their ids cannot collide with a
+  // saved SSH server's numeric id in this same signal.
+  readonly switchingId = signal<number | 'local' | 'wsl' | `paired-${number}` | null>(null);
   // Whether wsl.exe is present on this Windows machine — checked lazily each
   // time the popover opens, since it can change without restarting Elevenex
   // (e.g. the user just ran `wsl --install`). The row itself is always shown
@@ -285,6 +297,10 @@ export class EnvironmentSwitcherComponent {
     return this.snapshot().mode === 'wsl';
   }
 
+  isPairedActive(deviceId: number): boolean {
+    return this.snapshot().mode === 'paired' && this.snapshot().paired?.id === deviceId;
+  }
+
   authLabel(mode: ServerAuthMode) {
     switch (mode) {
       case 'agent':
@@ -341,6 +357,33 @@ export class EnvironmentSwitcherComponent {
     if (result.ok) {
       this.close();
     }
+  }
+
+  async selectPaired(device: RemoteLinkDeviceState, event?: Event) {
+    event?.stopPropagation();
+    if (this.isPairedActive(device.id) && this.snapshot().remoteConnectionReady) {
+      this.close();
+      return;
+    }
+    this.connectionManager.clearError();
+    this.switchingId.set(`paired-${device.id}`);
+    const result = await this.connectionManager.switchToPaired(device.id, device.name);
+    this.switchingId.set(null);
+    if (result.ok) {
+      this.close();
+    }
+  }
+
+  openPairingView(event?: Event) {
+    event?.stopPropagation();
+    this.connectionManager.clearError();
+    this.view.set('pairing');
+  }
+
+  // The panel switched this window onto the paired device itself, so the
+  // popover only has to get out of the way.
+  onPairedFromPanel() {
+    this.close();
   }
 
   async selectServer(server: SavedServer, event?: Event) {

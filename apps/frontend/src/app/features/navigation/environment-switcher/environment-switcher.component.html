@@ -41,6 +41,11 @@
         <div class="env-popover__title">
           {{ editingServerId() === 'new' ? 'Add server' : 'Edit server' }}
         </div>
+      } @else if (view() === 'pairing') {
+        <button type="button" class="env-iconbtn" aria-label="Back" (click)="view.set('list')">
+          <ng-icon name="lucideArrowLeft" size="14" />
+        </button>
+        <div class="env-popover__title">Paired desktops</div>
       } @else {
         <div class="env-popover__title">Environments</div>
         <div class="env-popover__header-actions">
@@ -207,6 +212,45 @@
               }
             </span>
           </div>
+        }
+
+        @if (pairedDevices().length > 0) {
+          <div class="env-list__divider"></div>
+          @for (device of pairedDevices(); track device.id) {
+            <div
+              role="menuitemradio"
+              tabindex="0"
+              [attr.aria-checked]="isPairedActive(device.id)"
+              [attr.aria-disabled]="switching() ? 'true' : null"
+              class="env-row"
+              [class.env-row--active]="isPairedActive(device.id)"
+              [class.env-row--disabled]="switching()"
+              (click)="!switching() && selectPaired(device, $event)"
+              (keydown.enter)="!switching() && selectPaired(device, $event)"
+              (keydown.space)="$event.preventDefault(); !switching() && selectPaired(device, $event)"
+            >
+              <span class="env-row__leading">
+                <span class="env-row__iconframe env-row__iconframe--remote">
+                  <ng-icon name="lucideLaptop" size="14" />
+                </span>
+              </span>
+              <span class="env-row__body">
+                <span class="env-row__title-row">
+                  <span class="env-row__title">{{ device.name }}</span>
+                </span>
+                <span class="env-row__subtitle">
+                  {{ device.status === 'connected' ? 'Paired desktop — connected' : 'Paired desktop' }}
+                </span>
+              </span>
+              <span class="env-row__trailing">
+                @if (switchingId() === 'paired-' + device.id) {
+                  <ng-icon name="lucideRefreshCw" size="13" class="env-row__spin" />
+                } @else if (isPairedActive(device.id)) {
+                  <ng-icon name="lucideCheck" size="14" class="env-row__check" />
+                }
+              </span>
+            </div>
+          }
         }
 
         @if (savedServers().length > 0) {
@@ -400,6 +444,17 @@
         }
 
         <div class="env-popover__footer">
+          @if (remoteLinkSupported()) {
+            <button
+              type="button"
+              class="env-btn env-btn--ghost env-btn--block"
+              title="Share this device, or pair with another desktop"
+              (click)="openPairingView($event)"
+            >
+              <ng-icon name="lucideLaptop" size="12" />
+              <span>Pair a desktop…</span>
+            </button>
+          }
           <button
             type="button"
             class="env-btn env-btn--ghost env-btn--block"
@@ -411,6 +466,11 @@
           </button>
         </div>
       }
+
+    } @else if (view() === 'pairing') {
+      <div class="env-pairing">
+        <app-remote-link-panel (connected)="onPairedFromPanel()" />
+      </div>
     } @else {
       <div class="env-editor">
         <label class="env-field">
