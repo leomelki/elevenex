@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, screen, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, protocol, screen, session, shell } = require('electron');
 const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } = require('fs');
 const http = require('http');
 const net = require('net');
@@ -38,6 +38,11 @@ const {
 const { createConnectionRegistry } = require('./connection-registry.cjs');
 const { createLinkManager } = require('./link-manager.cjs');
 const { createWebRtcPeerFactory } = require('./link-webrtc.cjs');
+const {
+  createRendezvousFactory,
+  registerRendezvousScheme,
+  serveRendezvousScheme,
+} = require('./link-rendezvous.cjs');
 const { rewriteLocalhostToProxy: rewriteMcpCallbackToProxy } = require('./mcp-proxy-url.cjs');
 const { createWindowRegistry } = require('./window-manager.cjs');
 const {
@@ -47,6 +52,10 @@ const {
   clampBoundsToDisplays,
   createWindowStateStore,
 } = require('./window-state-store.cjs');
+
+// Has to happen before the app is ready, so it cannot live with the handler
+// that serves the scheme.
+registerRendezvousScheme(protocol);
 
 // Common install directories for user-facing binaries (tmux, claude, plannotator,
 // cursor). macOS Electron apps launched from Finder/DMG get a stripped PATH
@@ -295,6 +304,12 @@ const linkManager = createLinkManager({
   createPeer: createWebRtcPeerFactory({
     BrowserWindow,
     onError: (error) => console.warn(`[remote-link] webrtc: ${error?.message || error}`),
+  }),
+  // Lets two machines find each other through public brokers, with no relay to
+  // run and no port to forward.
+  openRendezvous: createRendezvousFactory({
+    BrowserWindow,
+    onError: (error) => console.warn(`[remote-link] rendezvous: ${error?.message || error}`),
   }),
   onSharingStatus: (status) => broadcastToWindows('elevenex-remote-link:sharing-changed', status),
   onLinkStatus: (status) => broadcastToWindows('elevenex-remote-link:status-changed', status),
@@ -5195,6 +5210,10 @@ app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) {
     return;
   }
+
+  // Gives the rendezvous renderer a secure origin, which is what makes
+  // crypto.subtle available to it.
+  serveRendezvousScheme(protocol);
 
   app.setName('Elevenex');
 

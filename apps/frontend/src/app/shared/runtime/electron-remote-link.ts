@@ -10,7 +10,7 @@ declare global {
 
 export {};
 
-export type RemoteLinkTransport = 'relay' | 'direct';
+export type RemoteLinkTransport = 'relay' | 'direct' | 'p2p';
 
 export type RemoteLinkStatus =
   | 'stopped'

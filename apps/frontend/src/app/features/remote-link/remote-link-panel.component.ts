@@ -12,7 +12,7 @@ import {
 
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
-import type { RemoteLinkTransport } from '@/shared/runtime/electron-remote-link';
+import type { RemoteLinkDeviceState, RemoteLinkTransport } from '@/shared/runtime/electron-remote-link';
 
 import { RemoteLinkService } from './remote-link.service';
 
@@ -50,7 +50,9 @@ export class RemoteLinkPanelComponent {
   protected readonly devices = this.service.devices;
   protected readonly busy = this.service.busy;
 
-  protected readonly transport = signal<RemoteLinkTransport>('relay');
+  // Peer-to-peer by default: it is the only one of the three that needs neither
+  // a server to run nor a network the other machine can already reach.
+  protected readonly transport = signal<RemoteLinkTransport>('p2p');
   protected readonly relayUrl = signal('');
   protected readonly directPort = signal(11123);
   protected readonly pairingCode = signal<string | null>(null);
@@ -73,7 +75,7 @@ export class RemoteLinkPanelComponent {
       case 'waiting':
         return 'Waiting for a device to connect.';
       case 'reconnecting':
-        return 'Reconnecting to the relay…';
+        return sharing.transport === 'relay' ? 'Reconnecting to the relay…' : 'Reconnecting…';
       case 'error':
         return sharing.error ?? 'Sharing hit an error.';
       default:
@@ -83,6 +85,19 @@ export class RemoteLinkPanelComponent {
 
   protected setTransport(value: RemoteLinkTransport): void {
     this.transport.set(value);
+  }
+
+  // A p2p link has no endpoint to show: naming the brokers would be noise, and
+  // there is no address for the user to check.
+  protected transportSummary(device: RemoteLinkDeviceState): string {
+    switch (device.transport) {
+      case 'relay':
+        return `Via relay · ${device.endpoint}`;
+      case 'direct':
+        return `Direct · ${device.endpoint}`;
+      default:
+        return 'Peer-to-peer';
+    }
   }
 
   protected async enableSharing(): Promise<void> {

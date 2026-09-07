@@ -17,7 +17,10 @@ const CODE_PREFIX = 'EX1-';
 const PAIRING_KEY_BYTES = 32;
 const PAIR_ID_BYTES = 16;
 
-const TRANSPORTS = new Set(['relay', 'direct']);
+// 'p2p' needs no endpoint: the two ends find each other through public
+// rendezvous brokers keyed by the pairing key itself, so there is no address to
+// carry and nothing for the user to configure.
+const TRANSPORTS = new Set(['relay', 'direct', 'p2p']);
 
 function toBase64Url(buffer) {
   return buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -55,6 +58,19 @@ function assertDirectEndpoint(value) {
   return text;
 }
 
+function normalizeEndpoint(transport, endpoint) {
+  switch (transport) {
+    case 'relay':
+      return assertRelayUrl(endpoint);
+    case 'direct':
+      return assertDirectEndpoint(endpoint);
+    default:
+      // 'p2p' addresses nothing, so an endpoint would only be a field to keep
+      // consistent with itself.
+      return '';
+  }
+}
+
 function parseDirectEndpoint(endpoint) {
   const text = assertDirectEndpoint(endpoint);
   const separator = text.lastIndexOf(':');
@@ -69,9 +85,7 @@ function createPairing({ transport = 'relay', endpoint, label = '' } = {}) {
   if (!TRANSPORTS.has(transport)) {
     throw new Error(`Unsupported pairing transport: ${transport}`);
   }
-  const normalizedEndpoint = transport === 'relay'
-    ? assertRelayUrl(endpoint)
-    : assertDirectEndpoint(endpoint);
+  const normalizedEndpoint = normalizeEndpoint(transport, endpoint);
 
   return {
     version: 1,
@@ -87,10 +101,12 @@ function encodePairingCode(pairing) {
   const payload = {
     v: 1,
     t: pairing.transport,
-    u: pairing.endpoint,
     i: pairing.pairId,
     k: toBase64Url(pairing.pairingKey),
   };
+  if (pairing.endpoint) {
+    payload.u = pairing.endpoint;
+  }
   if (pairing.label) {
     payload.n = pairing.label;
   }
@@ -128,9 +144,7 @@ function decodePairingCode(code) {
   return {
     version: 1,
     transport: payload.t,
-    endpoint: payload.t === 'relay'
-      ? assertRelayUrl(payload.u)
-      : assertDirectEndpoint(payload.u),
+    endpoint: normalizeEndpoint(payload.t, payload.u),
     pairId: payload.i,
     pairingKey,
     label: typeof payload.n === 'string' ? payload.n.slice(0, 64) : '',

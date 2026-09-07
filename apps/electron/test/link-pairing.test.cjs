@@ -35,6 +35,26 @@ describe('pairing codes', () => {
     assert.deepEqual(parseDirectEndpoint(decoded.endpoint), { host: '192.168.1.24', port: 11123 });
   });
 
+  it('round-trips a p2p pairing, which addresses nothing', () => {
+    const pairing = createPairing({ transport: 'p2p', label: 'Kitchen desktop' });
+    const decoded = decodePairingCode(encodePairingCode(pairing));
+
+    assert.equal(decoded.transport, 'p2p');
+    assert.equal(decoded.endpoint, '');
+    assert.equal(decoded.label, 'Kitchen desktop');
+    assert.ok(decoded.pairingKey.equals(pairing.pairingKey));
+  });
+
+  it('leaves the endpoint out of a p2p code rather than encoding an empty one', () => {
+    const code = encodePairingCode(createPairing({ transport: 'p2p' }));
+    const payload = JSON.parse(
+      Buffer.from(code.slice(CODE_PREFIX.length).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString(),
+    );
+
+    assert.equal(payload.t, 'p2p');
+    assert.ok(!('u' in payload), 'a p2p code should carry no endpoint field');
+  });
+
   it('mints a fresh key and id every time', () => {
     const first = relayPairing();
     const second = relayPairing();

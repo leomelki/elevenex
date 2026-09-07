@@ -12,15 +12,17 @@
   "scripts": {
     "test": "node --test \"test/**/*.test.cjs\"",
     "test:webrtc": "electron test/webrtc-integration.cjs",
-    "start": "electron .",
-    "start:debug": "ELECTRON_DEBUG_FRONTEND=1 electron .",
-    "package": "electron-builder",
-    "package:mac": "electron-builder --mac",
-    "package:mac:dir": "electron-builder --mac dir",
-    "package:linux": "electron-builder --linux",
-    "package:linux:dir": "electron-builder --linux dir",
-    "package:win": "electron-builder --win",
-    "package:win:dir": "electron-builder --win dir"
+    "test:rendezvous": "pnpm build:rendezvous && electron test/rendezvous-integration.cjs",
+    "build:rendezvous": "esbuild link-rendezvous-entry.mjs --bundle --format=esm --platform=browser --minify --outfile=vendor/rendezvous.mjs",
+    "start": "pnpm build:rendezvous && electron .",
+    "start:debug": "pnpm build:rendezvous && ELECTRON_DEBUG_FRONTEND=1 electron .",
+    "package": "pnpm build:rendezvous && electron-builder",
+    "package:mac": "pnpm build:rendezvous && electron-builder --mac",
+    "package:mac:dir": "pnpm build:rendezvous && electron-builder --mac dir",
+    "package:linux": "pnpm build:rendezvous && electron-builder --linux",
+    "package:linux:dir": "pnpm build:rendezvous && electron-builder --linux dir",
+    "package:win": "pnpm build:rendezvous && electron-builder --win",
+    "package:win:dir": "pnpm build:rendezvous && electron-builder --win dir"
   },
   "build": {
     "appId": "fr.leomelki.elevenex",
@@ -32,8 +34,12 @@
       "output": "dist"
     },
     "icon": "assets/macos-runtime-icon.png",
+    "asarUnpack": [
+      "vendor/**/*"
+    ],
     "files": [
       "*.cjs",
+      "vendor/**/*",
       "assets/**/*",
       {
         "from": "../frontend/dist/frontend/browser",
@@ -124,6 +130,12 @@
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",
     "electron": "^35.1.5",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "@trystero-p2p/mqtt": "^0.25.4",
+    "@trystero-p2p/torrent": "^0.25.4",
+    "trystero": "^0.25.4"
   }
 }

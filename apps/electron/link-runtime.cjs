@@ -16,16 +16,27 @@ const { EventEmitter } = require('node:events');
 const { SecureChannel } = require('./link-secure.cjs');
 const { createLocalListener, serveStreams } = require('./link-forward.cjs');
 const { createMuxSession } = require('./link-mux.cjs');
-const { attemptDirectUpgrade } = require('./link-upgrade.cjs');
+const { PeerChannel, attemptDirectUpgrade } = require('./link-upgrade.cjs');
 const {
   awaitRelayPeer,
   connectDirect,
   createDirectServer,
 } = require('./link-transport.cjs');
 const { parseDirectEndpoint } = require('./link-pairing.cjs');
+const { DEFAULT_STRATEGIES } = require('./link-rendezvous.cjs');
 
 const RECONNECT_BASE_DELAY_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 15000;
+
+// How long to sit in a rendezvous room before trying the next broker family.
+// Giving up rejoins rather than ending the link: the other machine may simply
+// not be awake yet.
+const RENDEZVOUS_TIMEOUT_MS = 12000;
+
+// Every mux frame becomes one data-channel message, so p2p sessions use the
+// same conservative frame size as an upgraded relay session — well inside
+// SCTP's comfortable range, rather than relying on large-message fragmentation.
+const PEER_FRAME_BYTES = 64 * 1024;
 
 function backoffDelay(attempt) {
   const delay = RECONNECT_BASE_DELAY_MS * 2 ** Math.min(attempt, 6);
@@ -47,10 +58,52 @@ function sleep(ms, signal) {
 }
 
 // Runs the handshake and hands back a live mux session, or throws.
-async function establishSession(channel, { pairingKey, isInitiator }) {
+async function establishSession(channel, { pairingKey, isInitiator, maxFrameBytes }) {
   const secure = new SecureChannel(channel, { pairingKey, isInitiator });
   await secure.whenReady();
-  return createMuxSession(secure, { isInitiator });
+  return createMuxSession(secure, { isInitiator, ...(maxFrameBytes ? { maxFrameBytes } : {}) });
+}
+
+// A rendezvous hands out every device holding the pairing key, and the same
+// device arrives once per broker that found it. The first one wins; the rest are
+// dropped, which costs a duplicate connection the other side then closes.
+function firstRendezvousPeer(rendezvous, { signal, timeoutMs = RENDEZVOUS_TIMEOUT_MS }) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const finish = (fn, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      fn(value);
+    };
+
+    // Stays attached after the promise settles: duplicates arrive later, by
+    // definition, and something has to close them.
+    const onPeer = (peer) => {
+      if (settled) {
+        peer.close();
+        return;
+      }
+      finish(resolve, peer);
+    };
+
+    const onAbort = () => finish(reject, new Error('The link was stopped.'));
+    const timer = setTimeout(
+      () => finish(reject, new Error('No device answered this pairing code.')),
+      timeoutMs,
+    );
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+
+    // Later arrivals are duplicates of a peer we already have.
+    rendezvous.on('peer', onPeer);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function sessionClosed(session) {
@@ -64,14 +117,22 @@ function sessionClosed(session) {
 }
 
 class LinkHost extends EventEmitter {
-  constructor({ pairing, getTargetPort, bindHost = '0.0.0.0', createPeer = null }) {
+  constructor({
+    pairing,
+    getTargetPort,
+    bindHost = '0.0.0.0',
+    createPeer = null,
+    openRendezvous = null,
+  }) {
     super();
     this.pairing = pairing;
     this.getTargetPort = getTargetPort;
     this.bindHost = bindHost;
     this.createPeer = createPeer;
+    this.openRendezvous = openRendezvous;
     this.controller = null;
     this.directServer = null;
+    this.rendezvous = null;
     this.sessions = new Set();
     this.status = 'stopped';
     this.lastError = null;
@@ -104,10 +165,36 @@ class LinkHost extends EventEmitter {
 
     if (this.pairing.transport === 'direct') {
       await this.#startDirect();
+    } else if (this.pairing.transport === 'p2p') {
+      this.#startRendezvous();
     } else {
       this.loop = this.#runRelayLoop();
     }
     return this.toStatus();
+  }
+
+  // Nothing is bound and nothing is dialled: the room is joined and devices
+  // holding the pairing key turn up in it. Several may, exactly as several may
+  // dial an open port, so every peer is adopted.
+  #startRendezvous() {
+    if (!this.openRendezvous) {
+      this.#setStatus('error', 'Peer-to-peer sharing is only available in the desktop app.');
+      throw new Error('Peer-to-peer sharing is not available here.');
+    }
+
+    this.rendezvous = this.openRendezvous({ pairingKey: this.pairing.pairingKey });
+    this.rendezvous.on('peer', (peer) => {
+      // A peer that cannot prove it holds the pairing key is expected noise on
+      // a public broker, and must not take the room down.
+      this.#adoptChannel(new PeerChannel(peer)).catch(() => peer.close());
+    });
+    this.rendezvous.on('error', (error) => {
+      // One broker failing is survivable — the others are still listening — so
+      // this is reported without tearing the room down.
+      this.emit('forward-error', error);
+    });
+
+    this.#setStatus('waiting');
   }
 
   async #startDirect() {
@@ -173,6 +260,7 @@ class LinkHost extends EventEmitter {
     const session = await establishSession(channel, {
       pairingKey: this.pairing.pairingKey,
       isInitiator: false,
+      maxFrameBytes: this.pairing.transport === 'p2p' ? PEER_FRAME_BYTES : 0,
     });
 
     serveStreams(session, {
@@ -199,7 +287,9 @@ class LinkHost extends EventEmitter {
   // Serves the direct session exactly like the relayed one. Both stay live: the
   // connecting side decides which to open new streams on.
   async #upgrade(relaySession, targetPort) {
-    if (!this.createPeer) {
+    // Only a relayed session has anything to upgrade to: direct and p2p
+    // sessions are already the fast path.
+    if (!this.createPeer || this.pairing.transport !== 'relay') {
       return;
     }
 
@@ -242,6 +332,10 @@ class LinkHost extends EventEmitter {
       await this.directServer.close();
       this.directServer = null;
     }
+    if (this.rendezvous) {
+      this.rendezvous.close();
+      this.rendezvous = null;
+    }
     if (this.loop) {
       await this.loop.catch(() => {});
       this.loop = null;
@@ -253,12 +347,21 @@ class LinkHost extends EventEmitter {
 }
 
 class LinkClient extends EventEmitter {
-  constructor({ pairing, localPort = 0, localHost = '127.0.0.1', createPeer = null }) {
+  constructor({
+    pairing,
+    localPort = 0,
+    localHost = '127.0.0.1',
+    createPeer = null,
+    openRendezvous = null,
+  }) {
     super();
     this.pairing = pairing;
     this.requestedPort = localPort;
     this.localHost = localHost;
     this.createPeer = createPeer;
+    this.openRendezvous = openRendezvous;
+    this.rendezvous = null;
+    this.rendezvousAttempt = 0;
     this.localPort = null;
     this.listener = null;
     this.session = null;
@@ -288,8 +391,11 @@ class LinkClient extends EventEmitter {
       localPort: this.localPort,
       backendUrl: this.localPort ? `http://127.0.0.1:${this.localPort}` : null,
       // How traffic is actually flowing right now, as opposed to how the two
-      // ends found each other.
-      path: this.directSession?.isOpen() ? 'direct' : 'relay',
+      // ends found each other. Only a relay pairing can be on a relay: the other
+      // two transports carry traffic between the machines from the start.
+      path: this.pairing.transport !== 'relay' || this.directSession?.isOpen()
+        ? 'direct'
+        : 'relay',
       error: this.lastError,
     };
   }
@@ -366,12 +472,48 @@ class LinkClient extends EventEmitter {
       const { host, port } = parseDirectEndpoint(this.pairing.endpoint);
       return connectDirect({ host, port });
     }
+    if (this.pairing.transport === 'p2p') {
+      return this.#openRendezvousChannel(signal);
+    }
     return awaitRelayPeer({
       endpoint: this.pairing.endpoint,
       pairId: this.pairing.pairId,
       role: 'client',
       signal,
     });
+  }
+
+  // The room has to stay joined for the life of the connection — Trystero owns
+  // the peer connection and leaving would close it — so it is torn down with the
+  // channel, and the next attempt starts a fresh one rather than trying to
+  // resurrect a room whose peer state is already stale.
+  async #openRendezvousChannel(signal) {
+    if (!this.openRendezvous) {
+      throw new Error('Peer-to-peer links are only available in the desktop app.');
+    }
+
+    // One broker family per attempt, rotating on failure. The sharing side
+    // waits in all of them at once — it has nothing better to do — but a
+    // connecting side that did the same would be introduced to the same machine
+    // once per broker and have to throw the extra connections away. Redundancy
+    // is preserved either way: a family that is down simply loses its turn.
+    const strategy = DEFAULT_STRATEGIES[this.rendezvousAttempt % DEFAULT_STRATEGIES.length];
+    this.rendezvousAttempt += 1;
+
+    const rendezvous = this.openRendezvous({
+      pairingKey: this.pairing.pairingKey,
+      strategies: [strategy],
+    });
+    try {
+      const peer = await firstRendezvousPeer(rendezvous, { signal });
+      const channel = new PeerChannel(peer);
+      channel.once('close', () => rendezvous.close());
+      this.rendezvous = rendezvous;
+      return channel;
+    } catch (error) {
+      rendezvous.close();
+      throw error;
+    }
   }
 
   async #runLoop() {
@@ -385,6 +527,7 @@ class LinkClient extends EventEmitter {
         const session = await establishSession(channel, {
           pairingKey: this.pairing.pairingKey,
           isInitiator: true,
+          maxFrameBytes: this.pairing.transport === 'p2p' ? PEER_FRAME_BYTES : 0,
         });
 
         this.session = session;
@@ -420,7 +563,7 @@ class LinkClient extends EventEmitter {
 
   // The connecting side offers; the sharing side answers.
   async #upgrade(relaySession) {
-    if (!this.createPeer) {
+    if (!this.createPeer || this.pairing.transport !== 'relay') {
       return;
     }
 
@@ -463,6 +606,10 @@ class LinkClient extends EventEmitter {
     if (this.session) {
       this.session.close();
       this.session = null;
+    }
+    if (this.rendezvous) {
+      this.rendezvous.close();
+      this.rendezvous = null;
     }
     if (this.listener) {
       await this.listener.close();

@@ -71,7 +71,7 @@
                       <span class="text-destructive">{{ device.error || 'Link error' }}</span>
                     }
                     @default {
-                      {{ device.transport === 'relay' ? 'Via relay' : 'Direct' }} · {{ device.endpoint }}
+                      {{ transportSummary(device) }}
                     }
                   }
                 </div>
@@ -120,7 +120,16 @@
 
       @if (!sharing().enabled) {
         <div class="mt-4 space-y-4">
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
+            <button
+              z-button
+              type="button"
+              zSize="sm"
+              [zType]="transport() === 'p2p' ? 'default' : 'outline'"
+              (click)="setTransport('p2p')"
+            >
+              Peer-to-peer
+            </button>
             <button
               z-button
               type="button"
@@ -141,7 +150,19 @@
             </button>
           </div>
 
-          @if (transport() === 'relay') {
+          @if (transport() === 'p2p') {
+            <div class="rounded-md border border-border bg-muted/40 p-3">
+              <p class="text-xs leading-5 text-muted-foreground">
+                Works over the internet with nothing to set up. The two machines find each other through public
+                brokers, then talk directly — no relay to run, no port to forward, and no address in the code that
+                could go stale when you change network.
+              </p>
+              <p class="mt-2 text-xs leading-5 text-muted-foreground">
+                Those brokers are volunteer infrastructure and only carry the introduction, never your traffic. On a
+                network that blocks peer-to-peer connections outright, a relay is the reliable choice.
+              </p>
+            </div>
+          } @else if (transport() === 'relay') {
             <div>
               <label class="text-sm font-medium text-foreground" for="relay-url">Relay URL</label>
               <p class="mt-1 text-xs leading-5 text-muted-foreground">

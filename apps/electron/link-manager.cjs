@@ -34,6 +34,9 @@ function createLinkManager({
   // Builds WebRTC peers. Optional: without it links stay on the relay, which is
   // what the tests and any non-Electron caller do.
   createPeer = null,
+  // Joins the public-broker rendezvous. Optional for the same reason, and its
+  // absence is what makes the p2p transport unavailable outside Electron.
+  openRendezvous = null,
   onSharingStatus = () => {},
   onLinkStatus = () => {},
   onError = () => {},
@@ -101,6 +104,7 @@ function createLinkManager({
       // reachable from outside this host. Relay pairings never bind anything.
       bindHost: '0.0.0.0',
       createPeer,
+      openRendezvous,
     });
 
     host.on('status', (status) => {
@@ -121,11 +125,19 @@ function createLinkManager({
       throw new Error('A port is required to share directly.');
     }
 
+    if (transport === 'p2p' && !openRendezvous) {
+      throw new Error('Peer-to-peer sharing is not available in this build.');
+    }
+
     // The endpoint is what the *other* machine dials, so a direct pairing
     // advertises a reachable address rather than the wildcard this side binds.
-    const endpoint = transport === 'relay'
-      ? `${relayUrl}`.trim()
-      : `${hostAdvertisedHost()}:${Number(directPort)}`;
+    // A p2p pairing dials nothing: the brokers find the other machine.
+    let endpoint = '';
+    if (transport === 'relay') {
+      endpoint = `${relayUrl}`.trim();
+    } else if (transport === 'direct') {
+      endpoint = `${hostAdvertisedHost()}:${Number(directPort)}`;
+    }
 
     const existing = store.getSharing();
     // Reuse the pairing when nothing addressable changed, so turning sharing off
@@ -276,7 +288,12 @@ function createLinkManager({
       return linkView(store.getLink(id));
     }
 
-    const client = createLinkClient({ pairing: link, localPort: 0, createPeer });
+    const client = createLinkClient({
+      pairing: link,
+      localPort: 0,
+      createPeer,
+      openRendezvous,
+    });
     const runtime = { client, status: client.toStatus() };
     clients.set(link.id, runtime);
 
