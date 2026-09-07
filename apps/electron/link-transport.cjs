@@ -244,7 +244,12 @@ function awaitRelayPeer({ endpoint, pairId, role, signal, connectTimeoutMs }) {
             settled = true;
             cleanup();
             channel.close();
-            reject(new Error(control.message || 'The relay rejected this connection.'));
+            const error = new Error(control.message || 'The relay rejected this connection.');
+            // The relay answered on purpose — nobody is sharing this code, the
+            // id is malformed, it is at capacity. Marked so the caller can tell
+            // the user now instead of retrying in silence behind a timeout.
+            error.code = 'RELAY_REJECTED';
+            reject(error);
           }
         };
 

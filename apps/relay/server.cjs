@@ -25,8 +25,9 @@ const DEFAULTS = {
   path: '/link',
   maxRooms: 10000,
   // A connecting device whose host is not sharing should be told so, rather than
-  // hanging on a silent socket until the user gives up.
-  clientWaitTimeoutMs: 30000,
+  // hanging on a silent socket until the user gives up. A host that is online is
+  // spliced the moment it arrives, so this only ever bounds the failure case.
+  clientWaitTimeoutMs: 15000,
   heartbeatIntervalMs: 30000,
   quiet: false,
 };

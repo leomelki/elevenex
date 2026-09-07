@@ -242,10 +242,10 @@ class LinkClient extends EventEmitter {
     };
   }
 
-  #setStatus(status, error = null) {
+  #setStatus(status, error = null, { rejected = false } = {}) {
     this.status = status;
     this.lastError = error;
-    this.emit('status', this.toStatus());
+    this.emit('status', { ...this.toStatus(), rejected });
   }
 
   async start() {
@@ -295,7 +295,11 @@ class LinkClient extends EventEmitter {
           clearTimeout(timer);
           this.removeListener('status', onStatus);
           resolve(status);
-        } else if (status.status === 'stopped') {
+        } else if (status.status === 'stopped' || status.rejected) {
+          // `rejected` means the relay gave a definite answer — nobody is
+          // sharing this code, most often. Waiting out the timeout would only
+          // turn a clear message into a vague one. The loop keeps retrying in
+          // the background, so a device that starts sharing later still lands.
           clearTimeout(timer);
           this.removeListener('status', onStatus);
           reject(new Error(status.error || 'The link was stopped.'));
@@ -346,7 +350,9 @@ class LinkClient extends EventEmitter {
         if (signal.aborted) {
           break;
         }
-        this.#setStatus('reconnecting', error.message);
+        this.#setStatus('reconnecting', error.message, {
+          rejected: error.code === 'RELAY_REJECTED',
+        });
       }
 
       attempt += 1;
