@@ -48,6 +48,12 @@ export interface RemoteLinkDeviceState {
   status: RemoteLinkStatus;
   localPort: number | null;
   backendUrl: string | null;
+  /**
+   * How traffic is flowing right now, as opposed to how the two ends found each
+   * other. A relayed link upgrades itself to `direct` when hole punching
+   * succeeds, and silently returns to `relay` if that path drops.
+   */
+  path: 'relay' | 'direct';
   error: string | null;
 }
 

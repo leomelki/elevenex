@@ -28,6 +28,12 @@ const FRAME = {
   WINDOW_UPDATE: 1,
   PING: 2,
   GOAWAY: 3,
+  // Out-of-band control that belongs to the link rather than to any stream.
+  // Used to carry WebRTC offer/answer/ICE, which means signalling travels
+  // *inside* the encrypted session: a relay cannot read the candidates it is
+  // forwarding, and cannot substitute its own to insert itself into the direct
+  // connection.
+  SIGNAL: 4,
 };
 
 const FLAG = {
@@ -283,6 +289,17 @@ class MuxSession extends EventEmitter {
     this.channel.send(encodeFrame(type, flags, streamId, value, payload), { binary: true });
   }
 
+  // Link-level control, not tied to a stream. See FRAME.SIGNAL.
+  sendSignal(payload) {
+    this.sendFrame(
+      FRAME.SIGNAL,
+      0,
+      0,
+      0,
+      Buffer.from(JSON.stringify(payload), 'utf8'),
+    );
+  }
+
   open() {
     if (this.closed) {
       throw new Error('Cannot open a stream on a closed link session');
@@ -352,6 +369,17 @@ class MuxSession extends EventEmitter {
       if ((frame.flags & FLAG.ACK) === 0) {
         this.sendFrame(FRAME.PING, FLAG.ACK, 0, frame.value, null);
       }
+      return;
+    }
+
+    if (frame.type === FRAME.SIGNAL) {
+      let payload;
+      try {
+        payload = JSON.parse(frame.payload.toString('utf8'));
+      } catch {
+        return; // A peer on a newer protocol may send shapes we cannot read.
+      }
+      this.emit('signal', payload);
       return;
     }
 

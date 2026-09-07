@@ -37,6 +37,7 @@ const {
 } = require('./environment-ref.cjs');
 const { createConnectionRegistry } = require('./connection-registry.cjs');
 const { createLinkManager } = require('./link-manager.cjs');
+const { createWebRtcPeerFactory } = require('./link-webrtc.cjs');
 const { rewriteLocalhostToProxy: rewriteMcpCallbackToProxy } = require('./mcp-proxy-url.cjs');
 const { createWindowRegistry } = require('./window-manager.cjs');
 const {
@@ -289,6 +290,12 @@ const windowStateStore = createWindowStateStore({
 const linkManager = createLinkManager({
   userDataPath: app.getPath('userData'),
   getLocalBackendPort: () => Number.parseInt(embeddedBackendPort || `${FALLBACK_BACKEND_PORT}`, 10),
+  // Lets a relayed link upgrade itself to a direct peer-to-peer connection.
+  // The relay stays up as the fallback, so this only ever makes things faster.
+  createPeer: createWebRtcPeerFactory({
+    BrowserWindow,
+    onError: (error) => console.warn(`[remote-link] webrtc: ${error?.message || error}`),
+  }),
   onSharingStatus: (status) => broadcastToWindows('elevenex-remote-link:sharing-changed', status),
   onLinkStatus: (status) => broadcastToWindows('elevenex-remote-link:status-changed', status),
   onError: (error) => {

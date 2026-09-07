@@ -56,3 +56,27 @@ test('electron package includes every local CommonJS runtime dependency', () => 
   assert.ok(visited.has('link-manager.cjs'), 'expected the remote-link stack to be reached from main.cjs');
   assert.ok(visited.has('link-ws.cjs'), 'expected the transitive link modules to be reached');
 });
+
+// Preloads are named by path and handed to Electron, never required, so the
+// traversal above cannot see them. A missing one fails only at runtime in a
+// packaged build, which is the worst place to find out.
+test('electron package includes preload scripts referenced by path', () => {
+  const patterns = packageJson.build.files.filter((entry) => typeof entry === 'string');
+  const referenced = new Set();
+
+  for (const file of ['main.cjs', 'link-webrtc.cjs']) {
+    const source = readFileSync(path.join(electronRoot, file), 'utf8');
+    for (const match of source.matchAll(/['"]([\w.-]+preload[\w.-]*\.cjs)['"]/g)) {
+      referenced.add(match[1]);
+    }
+  }
+
+  assert.ok(referenced.has('link-webrtc-preload.cjs'), 'expected the WebRTC preload to be referenced');
+  for (const file of referenced) {
+    assert.ok(
+      patterns.some((pattern) => coversFile(pattern, file)),
+      `${file} is not covered by build.files`,
+    );
+    assert.ok(readFileSync(path.join(electronRoot, file), 'utf8').length > 0, `${file} is empty`);
+  }
+});

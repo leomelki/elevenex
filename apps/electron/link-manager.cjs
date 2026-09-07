@@ -31,6 +31,9 @@ function defaultHostLabel() {
 function createLinkManager({
   userDataPath,
   getLocalBackendPort,
+  // Builds WebRTC peers. Optional: without it links stay on the relay, which is
+  // what the tests and any non-Electron caller do.
+  createPeer = null,
   onSharingStatus = () => {},
   onLinkStatus = () => {},
   onError = () => {},
@@ -97,6 +100,7 @@ function createLinkManager({
       // A direct pairing names a port the other machine dials, so it has to be
       // reachable from outside this host. Relay pairings never bind anything.
       bindHost: '0.0.0.0',
+      createPeer,
     });
 
     host.on('status', (status) => {
@@ -220,6 +224,8 @@ function createLinkManager({
       status: status.status,
       localPort: status.localPort ?? null,
       backendUrl: status.backendUrl ?? null,
+      // 'direct' once a peer-to-peer path is carrying traffic, 'relay' until then.
+      path: status.path ?? 'relay',
       error: status.error ?? null,
     };
   }
@@ -270,7 +276,7 @@ function createLinkManager({
       return linkView(store.getLink(id));
     }
 
-    const client = createLinkClient({ pairing: link, localPort: 0 });
+    const client = createLinkClient({ pairing: link, localPort: 0, createPeer });
     const runtime = { client, status: client.toStatus() };
     clients.set(link.id, runtime);
 

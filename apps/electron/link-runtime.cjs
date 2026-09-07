@@ -16,6 +16,7 @@ const { EventEmitter } = require('node:events');
 const { SecureChannel } = require('./link-secure.cjs');
 const { createLocalListener, serveStreams } = require('./link-forward.cjs');
 const { createMuxSession } = require('./link-mux.cjs');
+const { attemptDirectUpgrade } = require('./link-upgrade.cjs');
 const {
   awaitRelayPeer,
   connectDirect,
@@ -63,11 +64,12 @@ function sessionClosed(session) {
 }
 
 class LinkHost extends EventEmitter {
-  constructor({ pairing, getTargetPort, bindHost = '0.0.0.0' }) {
+  constructor({ pairing, getTargetPort, bindHost = '0.0.0.0', createPeer = null }) {
     super();
     this.pairing = pairing;
     this.getTargetPort = getTargetPort;
     this.bindHost = bindHost;
+    this.createPeer = createPeer;
     this.controller = null;
     this.directServer = null;
     this.sessions = new Set();
@@ -181,12 +183,47 @@ class LinkHost extends EventEmitter {
     this.sessions.add(session);
     this.#setStatus('connected');
 
+    // The sharing side answers the upgrade; the connecting side offers. Not
+    // awaited: the relay session is already serving traffic and stays the
+    // fallback whether or not this succeeds.
+    void this.#upgrade(session, targetPort);
+
     await sessionClosed(session);
 
     this.sessions.delete(session);
     if (this.controller && !this.controller.signal.aborted) {
       this.#setStatus(this.sessions.size > 0 ? 'connected' : 'waiting');
     }
+  }
+
+  // Serves the direct session exactly like the relayed one. Both stay live: the
+  // connecting side decides which to open new streams on.
+  async #upgrade(relaySession, targetPort) {
+    if (!this.createPeer) {
+      return;
+    }
+
+    const direct = await attemptDirectUpgrade({
+      session: relaySession,
+      pairingKey: this.pairing.pairingKey,
+      isInitiator: false,
+      createPeer: this.createPeer,
+      signal: this.controller?.signal,
+    }).catch(() => null);
+
+    if (!direct) {
+      return;
+    }
+
+    serveStreams(direct, {
+      targetPort,
+      onError: (error) => this.emit('forward-error', error),
+    });
+    this.sessions.add(direct);
+    this.emit('upgraded', { transport: 'direct' });
+
+    await sessionClosed(direct);
+    this.sessions.delete(direct);
   }
 
   async stop() {
@@ -216,18 +253,30 @@ class LinkHost extends EventEmitter {
 }
 
 class LinkClient extends EventEmitter {
-  constructor({ pairing, localPort = 0, localHost = '127.0.0.1' }) {
+  constructor({ pairing, localPort = 0, localHost = '127.0.0.1', createPeer = null }) {
     super();
     this.pairing = pairing;
     this.requestedPort = localPort;
     this.localHost = localHost;
+    this.createPeer = createPeer;
     this.localPort = null;
     this.listener = null;
     this.session = null;
+    // Set once a peer-to-peer path is up. New connections go here; the relay
+    // session stays open underneath so losing it is a downgrade, not an outage.
+    this.directSession = null;
     this.controller = null;
     this.loop = null;
     this.status = 'stopped';
     this.lastError = null;
+  }
+
+  // Which session new forwarded connections should use.
+  activeSession() {
+    if (this.directSession?.isOpen()) {
+      return this.directSession;
+    }
+    return this.session;
   }
 
   toStatus() {
@@ -238,6 +287,9 @@ class LinkClient extends EventEmitter {
       pairId: this.pairing.pairId,
       localPort: this.localPort,
       backendUrl: this.localPort ? `http://127.0.0.1:${this.localPort}` : null,
+      // How traffic is actually flowing right now, as opposed to how the two
+      // ends found each other.
+      path: this.directSession?.isOpen() ? 'direct' : 'relay',
       error: this.lastError,
     };
   }
@@ -258,7 +310,7 @@ class LinkClient extends EventEmitter {
     this.listener = createLocalListener({
       host: this.localHost,
       port: this.requestedPort,
-      getSession: () => this.session,
+      getSession: () => this.activeSession(),
       onError: (error) => this.emit('forward-error', error),
     });
 
@@ -339,8 +391,14 @@ class LinkClient extends EventEmitter {
         attempt = 0;
         this.#setStatus('connected');
 
+        void this.#upgrade(session);
+
         await sessionClosed(session);
         this.session = null;
+        // The direct path rides on signalling from the relay session and is
+        // meaningless without a way to rebuild it, so it goes too.
+        this.directSession?.close();
+        this.directSession = null;
         if (signal.aborted) {
           break;
         }
@@ -360,6 +418,37 @@ class LinkClient extends EventEmitter {
     }
   }
 
+  // The connecting side offers; the sharing side answers.
+  async #upgrade(relaySession) {
+    if (!this.createPeer) {
+      return;
+    }
+
+    const direct = await attemptDirectUpgrade({
+      session: relaySession,
+      pairingKey: this.pairing.pairingKey,
+      isInitiator: true,
+      createPeer: this.createPeer,
+      signal: this.controller?.signal,
+    }).catch(() => null);
+
+    if (!direct || relaySession !== this.session) {
+      // The relay session this upgrade belonged to has already been replaced.
+      direct?.close();
+      return;
+    }
+
+    this.directSession = direct;
+    this.#setStatus(this.status);
+
+    await sessionClosed(direct);
+    if (this.directSession === direct) {
+      this.directSession = null;
+      // New connections silently return to the relay.
+      this.#setStatus(this.status);
+    }
+  }
+
   async stop() {
     if (!this.controller) {
       return this.toStatus();
@@ -367,6 +456,10 @@ class LinkClient extends EventEmitter {
     this.controller.abort();
     this.controller = null;
 
+    if (this.directSession) {
+      this.directSession.close();
+      this.directSession = null;
+    }
     if (this.session) {
       this.session.close();
       this.session = null;

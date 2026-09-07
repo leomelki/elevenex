@@ -56,7 +56,10 @@
                 <div class="truncate text-xs text-muted-foreground">
                   @switch (device.status) {
                     @case ('connected') {
-                      <span class="text-success">Connected</span> · localhost:{{ device.localPort }}
+                      <span class="text-success">Connected</span>
+                      ·
+                      {{ device.path === 'direct' ? 'Peer-to-peer' : 'Via relay' }}
+                      · localhost:{{ device.localPort }}
                     }
                     @case ('reconnecting') {
                       <span class="text-warning">Reconnecting…</span>
