@@ -1,76 +1,43 @@
 const { execFileSync, execSync } = require('child_process');
-const { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } = require('fs');
+const { lstatSync, readlinkSync, rmSync } = require('fs');
+const { createRequire } = require('module');
 const { join } = require('path');
 
 const root = join(__dirname, '..');
-const extensionToolchainPackages = ['webpack', 'webpack-cli', 'ts-loader', 'typescript', 'mocha'];
+const extensionDirs = ['vscode-filesystem-provider', 'vscode-scm-extension'];
 
-function ensureSymlink(targetPath, linkPath, type = 'dir') {
-  rmSync(linkPath, { recursive: true, force: true });
-  symlinkSync(targetPath, linkPath, process.platform === 'win32' && type === 'dir' ? 'junction' : type);
-}
+// Older revisions of this script hand-built `node_modules/.bin` entries for the
+// extensions as symlinks into pnpm's virtual store. Anything that later wrote a
+// real shim over such an entry followed the symlink and truncated the actual
+// `webpack-cli/bin/cli.js` inside `node_modules/.pnpm`, which also corrupts the
+// hardlinked global store. Drop the leftovers so they cannot do that again;
+// pnpm recreates proper shims whenever it links bins.
+function removeStaleBinSymlinks(packageDir) {
+  const binDir = join(packageDir, 'node_modules', '.bin');
 
-function ensureBinShim(binName, entryPath, binDir) {
-  const shellShim = join(binDir, binName);
-  rmSync(shellShim, { force: true });
+  for (const binName of ['webpack', 'webpack-cli']) {
+    const binPath = join(binDir, binName);
 
-  if (process.platform === 'win32') {
-    const cmdShim = join(binDir, `${binName}.cmd`);
-    const psShim = join(binDir, `${binName}.ps1`);
-    rmSync(cmdShim, { force: true });
-    rmSync(psShim, { force: true });
+    try {
+      if (!lstatSync(binPath).isSymbolicLink()) continue;
+      if (!readlinkSync(binPath).includes('webpack-cli')) continue;
+    } catch {
+      continue;
+    }
 
-    writeFileSync(cmdShim, `@ECHO off\r\nnode "%~dp0\\${entryPath.replaceAll('/', '\\')}" %*\r\n`, 'utf8');
-    writeFileSync(psShim, `& node "$PSScriptRoot/${entryPath}" @args\r\nexit $LASTEXITCODE\r\n`, 'utf8');
-    return;
-  }
-
-  ensureSymlink(entryPath, shellShim, 'file');
-  chmodSync(shellShim, 0o755);
-}
-
-function findPnpmPackageRoot(packageName) {
-  const pnpmRoot = join(root, 'node_modules', '.pnpm');
-  const packageSuffix = join('node_modules', ...packageName.split('/'), 'package.json');
-
-  const candidates = readdirSync(pnpmRoot)
-    .map((entry) => join(pnpmRoot, entry, packageSuffix))
-    .filter((candidate) => existsSync(candidate))
-    .sort()
-    .reverse();
-
-  if (candidates.length === 0) {
-    throw new Error(`Could not resolve ${packageName} from pnpm store`);
-  }
-
-  return join(candidates[0], '..');
-}
-
-function prepareExtensionToolchain(packageDir) {
-  const nodeModulesDir = join(packageDir, 'node_modules');
-  const binDir = join(nodeModulesDir, '.bin');
-  mkdirSync(binDir, { recursive: true });
-
-  for (const packageName of extensionToolchainPackages) {
-    const packageRoot = findPnpmPackageRoot(packageName);
-    const liveDir = join(nodeModulesDir, packageName);
-    ensureSymlink(packageRoot, liveDir, 'dir');
-  }
-
-  const webpackCliEntry = join(nodeModulesDir, 'webpack-cli', 'bin', 'cli.js');
-  if (existsSync(webpackCliEntry)) {
-    ensureBinShim('webpack', '../webpack-cli/bin/cli.js', binDir);
-    ensureBinShim('webpack-cli', '../webpack-cli/bin/cli.js', binDir);
+    rmSync(binPath, { force: true });
   }
 }
 
+// pnpm links every workspace package's dependencies before it runs the root
+// lifecycle scripts, so plain Node resolution from the extension finds the
+// toolchain. Never scan `node_modules/.pnpm` by hand: its directory names are
+// resolution-dependent and change whenever the lockfile does.
 function buildExtension(packageDir) {
-  prepareExtensionToolchain(packageDir);
+  removeStaleBinSymlinks(packageDir);
 
-  const webpackCliEntry = join(packageDir, 'node_modules', 'webpack-cli', 'bin', 'cli.js');
-  if (!existsSync(webpackCliEntry)) {
-    throw new Error(`webpack-cli entrypoint not found for ${packageDir}`);
-  }
+  const requireFromExtension = createRequire(join(packageDir, 'package.json'));
+  const webpackCliEntry = requireFromExtension.resolve('webpack-cli/bin/cli.js');
 
   execFileSync(process.execPath, [webpackCliEntry, '--mode', 'production'], {
     cwd: packageDir,
@@ -81,8 +48,9 @@ function buildExtension(packageDir) {
 // 1. Build custom VS Code extensions
 console.log('Building VS Code extensions...');
 try {
-  buildExtension(join(root, 'vscode-filesystem-provider'));
-  buildExtension(join(root, 'vscode-scm-extension'));
+  for (const extensionDir of extensionDirs) {
+    buildExtension(join(root, extensionDir));
+  }
 } catch (e) {
   console.error('Failed to build VS Code extensions:', e.message);
   process.exit(1);
