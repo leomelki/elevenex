@@ -573,25 +573,25 @@ type Todo = ToolTodoItem;
         max-height: 24rem;
         overflow: auto;
       }
-      .cw-write__line {
+      :host ::ng-deep .cw-write__line {
         display: grid;
         grid-template-columns: 1.75rem 1fr;
         background: color-mix(in oklab, oklch(0.52 0.18 240) 8%, transparent);
       }
-      :host-context(.dark) .cw-write__line {
+      :host-context(.dark) ::ng-deep .cw-write__line {
         background: color-mix(in oklab, oklch(0.68 0.16 240) 13%, transparent);
       }
-      .cw-write__sign {
+      :host ::ng-deep .cw-write__sign {
         user-select: none;
         text-align: center;
         color: oklch(0.45 0.2 240);
         background: color-mix(in oklab, oklch(0.52 0.18 240) 16%, transparent);
       }
-      :host-context(.dark) .cw-write__sign {
+      :host-context(.dark) ::ng-deep .cw-write__sign {
         color: oklch(0.72 0.16 240);
         background: color-mix(in oklab, oklch(0.68 0.16 240) 22%, transparent);
       }
-      .cw-write__code {
+      :host ::ng-deep .cw-write__code {
         padding: 0 0.5rem;
         white-space: pre-wrap;
         word-break: break-word;
