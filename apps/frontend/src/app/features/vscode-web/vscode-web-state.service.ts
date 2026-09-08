@@ -37,8 +37,9 @@ export class VSCodeWebStateService {
   private iframeInstances = new Map<string, HTMLIFrameElement>();
   private iframeVisibility = signal<Map<string, boolean>>(new Map());
   private iframeReady = signal<Map<string, boolean>>(new Map());
+  private iframeTheme = new Map<string, boolean>();
 
-  getOrCreateIframe(iframeKey: string, worktreePath: string, container: HTMLElement): HTMLIFrameElement {
+  getOrCreateIframe(iframeKey: string, worktreePath: string, container: HTMLElement, isDark: boolean): HTMLIFrameElement {
     const existing = this.iframeInstances.get(iframeKey);
     if (existing) {
       this.attachIframe(existing, container);
@@ -53,14 +54,35 @@ export class VSCodeWebStateService {
     const params = new URLSearchParams({
       workspace: toWorkspaceRootUri(worktreePath),
       extensionPaths: '/vscode-ext1,/vscode-ext2',
+      theme: isDark ? 'dark' : 'light',
     });
     iframe.src = `${resolveVSCodeBackendOrigin()}/vscode-static/index.html?${params.toString()}`;
 
     this.attachIframe(iframe, container);
     this.iframeInstances.set(iframeKey, iframe);
     this.iframeVisibility.update(m => new Map(m).set(iframeKey, true));
+    this.iframeTheme.set(iframeKey, isDark);
 
     return iframe;
+  }
+
+  /**
+   * VS Code Web only picks up its initial theme at workbench boot (via
+   * `configurationDefaults` in the injected product config), so there is no
+   * live API to flip it without reloading. Workspace/editor UI state persists
+   * across reload in the browser's per-origin storage, so this is low-cost.
+   */
+  setTheme(iframeKey: string, isDark: boolean): void {
+    const iframe = this.iframeInstances.get(iframeKey);
+    if (!iframe || this.iframeTheme.get(iframeKey) === isDark) {
+      return;
+    }
+
+    this.iframeTheme.set(iframeKey, isDark);
+    const url = new URL(iframe.src);
+    url.searchParams.set('theme', isDark ? 'dark' : 'light');
+    iframe.src = url.toString();
+    this.iframeReady.update(m => new Map(m).set(iframeKey, false));
   }
 
   showIframe(iframeKey: string, container?: HTMLElement): void {
@@ -97,6 +119,7 @@ export class VSCodeWebStateService {
         newMap.delete(iframeKey);
         return newMap;
       });
+      this.iframeTheme.delete(iframeKey);
     }
   }
 

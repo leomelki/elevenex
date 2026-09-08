@@ -24,6 +24,7 @@ const WORKBENCH_BOOTSTRAP_SCRIPT = `${WORKBENCH_BOOTSTRAP_MARKER}
   var workspace = params.get('workspace');
   var rawExtensionPaths = params.get('extensionPaths') || '';
   var extensionPaths = rawExtensionPaths.split(',').map(function (entry) { return entry.trim(); }).filter(Boolean);
+  var theme = params.get('theme') === 'light' ? 'light' : 'dark';
 
   function toUri(value) {
     var url = new URL(value, window.location.origin);
@@ -50,7 +51,10 @@ const WORKBENCH_BOOTSTRAP_SCRIPT = `${WORKBENCH_BOOTSTRAP_MARKER}
       }
     },
     additionalBuiltinExtensions: extensionPaths.map(toUri),
-    settingsSyncOptions: { enabled: false }
+    settingsSyncOptions: { enabled: false },
+    configurationDefaults: {
+      'workbench.colorTheme': theme === 'light' ? 'Default Light Modern' : 'Default Dark Modern'
+    }
   };
 
   if (workspace) {

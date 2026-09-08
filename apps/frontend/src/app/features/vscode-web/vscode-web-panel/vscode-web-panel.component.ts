@@ -2,6 +2,7 @@ import { Component, input, ElementRef, ViewChild, AfterViewInit, OnDestroy, inje
 import { CommonModule } from '@angular/common';
 import { VSCodeWebStateService, buildVSCodeIframeKey } from '../vscode-web-state.service';
 import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
+import { ThemeService } from '@/shared/services/theme.service';
 
 @Component({
   selector: 'app-vscode-web-panel',
@@ -139,6 +140,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
   @ViewChild('container', { static: true }) container!: ElementRef<HTMLDivElement>;
 
   private stateService = inject(VSCodeWebStateService);
+  private themeService = inject(ThemeService);
   isLoading = signal(true);
   startupIssue = signal<string | null>(null);
   private currentSessionId: number | null = null;
@@ -174,6 +176,12 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
       if (sessionId !== this.currentSessionId || this.currentSessionId === null) {
         this.handleSessionChange(sessionId, projectId, path);
       }
+    });
+
+    effect(() => {
+      const isDark = this.themeService.isDark();
+      if (this.currentIframeKey === null) return;
+      this.stateService.setTheme(this.currentIframeKey, isDark);
     });
   }
 
@@ -213,6 +221,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
     
     if (this.stateService.hasIframe(iframeKey)) {
       this.stateService.showIframe(iframeKey, container);
+      this.stateService.setTheme(iframeKey, this.themeService.isDark());
       this.stateService.setReady(iframeKey, false);
       this.isLoading.set(true);
       this.armReadyTimeout(iframeKey, sessionId);
@@ -220,7 +229,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
     } else {
       this.stateService.setReady(iframeKey, false);
       this.isLoading.set(true);
-      const iframe = this.stateService.getOrCreateIframe(iframeKey, worktreePath, container);
+      const iframe = this.stateService.getOrCreateIframe(iframeKey, worktreePath, container, this.themeService.isDark());
       this.armReadyTimeout(iframeKey, sessionId);
       iframe.addEventListener('load', () => {
         if (this.currentSessionId === sessionId) {
