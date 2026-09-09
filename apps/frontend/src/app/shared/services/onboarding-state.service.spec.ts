@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SavedServer } from '../models/onboarding.model';
+import { OnboardingStateSnapshot, SavedServer } from '../models/onboarding.model';
 import { installMemoryLocalStorage } from '../testing/memory-storage';
 import {
   ENVIRONMENT_CATALOGUE_STORAGE_KEY,
   ONBOARDING_STORAGE_KEY,
   WINDOW_SESSION_STORAGE_KEY_BASE,
+  getOnboardingBackendOrigin,
   readOnboardingStateSnapshot,
   writeOnboardingStateSnapshot,
 } from './onboarding-state.service';
@@ -162,6 +163,24 @@ describe('onboarding state storage', () => {
     }));
 
     expect(readOnboardingStateSnapshot().mode).toBe('local');
+  });
+
+  it('keeps a paired window on its own loopback origin while the link is down', () => {
+    const snapshot: OnboardingStateSnapshot = {
+      mode: 'paired',
+      currentStep: 'project',
+      activeServerId: null,
+      // The link dropped: nothing may open a socket, but requests must still
+      // fail against the device rather than quietly answer from this machine.
+      remoteConnectionReady: false,
+      projectHandoffAcknowledged: true,
+      servers: [],
+      lastSshDefaults: null,
+      wsl: null,
+      paired: { id: 3, name: 'Studio', localPort: 51234 },
+    };
+
+    expect(getOnboardingBackendOrigin(snapshot)).toBe('http://127.0.0.1:51234');
   });
 
   it('falls back to defaults on unreadable storage', () => {

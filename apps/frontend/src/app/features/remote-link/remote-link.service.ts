@@ -52,12 +52,29 @@ export class RemoteLinkService {
       this.devicesState.update(devices =>
         devices.map(device => (device.id === state.id ? state : device)),
       );
+
+      const paired = this.onboardingState.getPairedState();
+      if (paired?.id !== state.id) {
+        return;
+      }
+
       // A link that dropped must stop the window from treating its loopback
       // port as a live backend, otherwise sockets reconnect into a dead port.
-      const paired = this.onboardingState.getPairedState();
-      if (paired?.id === state.id && state.status !== 'connected') {
+      if (state.status !== 'connected' || !state.localPort) {
         this.onboardingState.clearPairedConnection();
+        return;
       }
+
+      // ...and a link that came back must hand the window its backend again.
+      // A p2p link re-establishes itself on its own, so without this a single
+      // blip would leave the window on a paired desktop it never dials: the
+      // switcher keeps the device's name, every request falls back to the local
+      // origin, and the sidebar quietly fills with this machine's projects.
+      this.onboardingState.markPairedConnected({
+        id: state.id,
+        name: state.name,
+        localPort: state.localPort,
+      });
     });
 
     inject(DestroyRef).onDestroy(() => {
@@ -145,8 +162,13 @@ export class RemoteLinkService {
 
     return this.withBusy(async () => {
       const device = await this.api!.connect(id);
-      if (!device.localPort) {
-        throw new Error('The link connected but did not report a local port.');
+      // The port outlives the session it fronts — it is opened when the link
+      // starts and stays up across reconnects — so it is not on its own
+      // evidence that anything is on the other end. Pointing the window at a
+      // port whose session is down would show an empty workspace under the
+      // device's name instead of a failure to connect.
+      if (device.status !== 'connected' || !device.localPort) {
+        throw new Error(device.error || 'The link did not finish connecting.');
       }
       this.onboardingState.setPairedState({
         id: device.id,

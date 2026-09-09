@@ -142,7 +142,8 @@ export class EnvironmentSwitcherComponent {
   readonly statusVariant = computed(() => {
     if (this.switching()) return 'switching';
     if (this.remoteDisconnect()) return 'degraded';
-    return this.snapshot().mode === 'ssh' || this.snapshot().mode === 'wsl' ? 'remote' : 'local';
+    const mode = this.snapshot().mode;
+    return mode === 'ssh' || mode === 'wsl' || mode === 'paired' ? 'remote' : 'local';
   });
 
   readonly triggerLabel = computed(() => this.connectionManager.environmentLabel());
@@ -151,6 +152,13 @@ export class EnvironmentSwitcherComponent {
     if (this.remoteDisconnect()) return 'Connection lost';
     if (this.snapshot().mode === 'wsl') {
       return this.snapshot().wsl?.distroName || 'WSL';
+    }
+    if (this.snapshot().mode === 'paired') {
+      // The link's own status, not the window's: a paired desktop whose link
+      // dropped still shows the device, and the subtitle is the only place that
+      // says the workspace behind it is not answering.
+      const device = this.pairedDevices().find(entry => entry.id === this.snapshot().paired?.id);
+      return device?.status === 'connected' ? 'Paired desktop' : 'Reconnecting…';
     }
     const server = this.activeServer();
     if (!server || this.snapshot().mode !== 'ssh') return 'Local workspace';

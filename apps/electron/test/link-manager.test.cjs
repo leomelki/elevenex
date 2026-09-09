@@ -53,6 +53,16 @@ function makeManager(name, backendPort) {
   return manager;
 }
 
+async function waitFor(predicate, { timeoutMs = 10000, intervalMs = 50 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error('timed out waiting for a condition');
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 function fetchThrough(port) {
   return new Promise((resolve, reject) => {
     http.get({ host: '127.0.0.1', port, path: '/' }, (response) => {
@@ -143,6 +153,25 @@ describe('link manager: desktop to desktop', () => {
     // The old pairing id no longer has a host waiting on the relay, so this must
     // fail rather than quietly reaching the machine.
     await assert.rejects(machineB.connect(stale.id));
+  });
+
+  it('does not report a link that never came back as connected', async () => {
+    const relayUrl = await startRelay();
+    const machineA = makeManager('down-a', await startBackend('x'));
+    await machineA.enableSharing({ transport: 'relay', relayUrl });
+
+    const machineB = makeManager('down-b', 1);
+    const device = machineB.addLink({ code: machineA.getSharingCode() });
+    await machineB.connect(device.id);
+
+    // The sharing side goes away. The client keeps its loopback port and
+    // retries in the background, so connect() lands on the cached client.
+    await machineA.stopAll();
+    await waitFor(() => machineB.getLinkState(device.id).status !== 'connected');
+
+    // Reporting success here would point a window at a port with no session
+    // behind it: an empty workspace under the device's name, and no error.
+    await assert.rejects(machineB.connect(device.id));
   });
 
   it('refuses to save the same device twice', async () => {

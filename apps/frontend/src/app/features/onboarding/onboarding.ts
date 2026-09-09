@@ -109,6 +109,8 @@ export class Onboarding implements OnInit {
 
   readonly wslSummary = computed(() => this.onboardingState.getWslState(this.onboardingState.readSnapshot()));
 
+  readonly pairedSummary = computed(() => this.onboardingState.getPairedState(this.onboardingState.readSnapshot()));
+
   readonly stepLabel = computed(() => {
     const step = this.activeStep();
     if (step === 'connection' || step === 'ssh' || step === 'paired' || step === 'install') {
@@ -159,8 +161,15 @@ export class Onboarding implements OnInit {
 
   // The panel has already brought the link up and pointed this window at it, so
   // this only has to continue the flow the other modes reach after connecting.
+  // Reading the settings goes over the link, which can be slow enough that the
+  // panel would otherwise sit on "Connected" with no sign anything is happening.
   async onPairedConnected() {
-    await this.loadBackendOnboarding();
+    this.connecting.set(true);
+    try {
+      await this.loadBackendOnboarding();
+    } finally {
+      this.connecting.set(false);
+    }
   }
 
   chooseSshMode() {
@@ -351,6 +360,20 @@ export class Onboarding implements OnInit {
       return;
     }
 
+    // A window already on a paired desktop must not be sent back to the mode
+    // picker: the device is saved in the main process, so re-picking it would
+    // ask the user to pair a machine they are already paired with.
+    if (snapshot.mode === 'paired') {
+      this.selectedMode.set('paired');
+      if (snapshot.paired) {
+        await this.loadBackendOnboarding();
+        return;
+      }
+
+      this.activeStep.set('paired');
+      return;
+    }
+
     if (snapshot.mode === 'wsl') {
       this.selectedMode.set('wsl');
       if (snapshot.wsl) {
@@ -381,7 +404,10 @@ export class Onboarding implements OnInit {
       }
       this.activeStep.set('agent');
     } catch {
-      this.activeStep.set('connection');
+      // Back to the step that can fix it. For a paired desktop that is the
+      // pairing panel — the mode picker would only ask the user to choose the
+      // mode they are already in.
+      this.activeStep.set(this.selectedMode() === 'paired' ? 'paired' : 'connection');
       toast.error('Could not load backend onboarding settings.');
     }
   }

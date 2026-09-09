@@ -283,8 +283,11 @@ function createLinkManager({
       }
       // A client that is mid-reconnect is worth waiting on rather than
       // replacing: tearing it down would drop the loopback port a window is
-      // already pointed at.
-      await existing.client.whenConnected().catch(() => {});
+      // already pointed at. The failure propagates — swallowing it would report
+      // a link that never came back as connected, and the caller would point a
+      // window at a loopback port with no session behind it.
+      await existing.client.whenConnected();
+      store.markConnected(link.id);
       return linkView(store.getLink(id));
     }
 

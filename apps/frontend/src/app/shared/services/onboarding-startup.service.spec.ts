@@ -43,6 +43,13 @@ describe('OnboardingStartupService', () => {
 
   const projectsServiceMock = {
     refresh: vi.fn(),
+    // The prompt only offers forwards whose project is active, so these are the
+    // project ids the forward fixtures below belong to.
+    getAll: vi.fn(() => of([{ id: 5 }, { id: 8 }])),
+  };
+
+  const remoteLinkMock = {
+    connect: vi.fn(),
   };
 
   const createService = () => new OnboardingStartupService(
@@ -51,6 +58,7 @@ describe('OnboardingStartupService', () => {
     sshForwardsServiceMock as never,
     projectsServiceMock as never,
     navigationServiceMock as never,
+    remoteLinkMock as never,
   );
 
   beforeEach(() => {
@@ -114,6 +122,49 @@ describe('OnboardingStartupService', () => {
 
     expect(service.startupPortForwardPrompt()).toBeNull();
     expect(onboardingConnectionMock.reconnect).not.toHaveBeenCalled();
+  });
+
+  it('should bring the link back up for a window reopened on a paired desktop', async () => {
+    onboardingStateMock.readSnapshot.mockReturnValue({
+      mode: 'paired',
+      currentStep: 'project',
+      activeServerId: null,
+      // Carried over from the previous run, when the link really was up.
+      remoteConnectionReady: true,
+      projectHandoffAcknowledged: true,
+      servers: [],
+      lastSshDefaults: null,
+      paired: { id: 3, name: 'Studio', localPort: 51234 },
+    });
+    remoteLinkMock.connect.mockResolvedValue({ id: 3, localPort: 51999 });
+
+    const service = createService();
+    await service.initialize();
+
+    // The remembered port belongs to a listener that died with the last run.
+    expect(onboardingStateMock.setRemoteConnectionReady).toHaveBeenCalledWith(false);
+    expect(remoteLinkMock.connect).toHaveBeenCalledWith(3);
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
+    expect(onboardingConnectionMock.reconnect).not.toHaveBeenCalled();
+  });
+
+  it('should survive a paired desktop that cannot be reached at startup', async () => {
+    onboardingStateMock.readSnapshot.mockReturnValue({
+      mode: 'paired',
+      currentStep: 'project',
+      activeServerId: null,
+      remoteConnectionReady: true,
+      projectHandoffAcknowledged: true,
+      servers: [],
+      lastSshDefaults: null,
+      paired: { id: 3, name: 'Studio', localPort: 51234 },
+    });
+    remoteLinkMock.connect.mockRejectedValue(new Error('The link did not finish connecting.'));
+
+    const service = createService();
+    await service.initialize();
+
+    expect(navigationServiceMock.refreshTree).not.toHaveBeenCalled();
   });
 
   it('should not create a prompt when remote reconnect fails', async () => {

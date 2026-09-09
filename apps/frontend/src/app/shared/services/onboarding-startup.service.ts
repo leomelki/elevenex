@@ -1,6 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { SavedServer } from '../models/onboarding.model';
+import { RemoteLinkService } from '@/features/remote-link/remote-link.service';
+import { PairedDeviceState, SavedServer } from '../models/onboarding.model';
 import { SshForward } from '../models/ssh-forward.model';
 import { OnboardingConnectionService } from './onboarding-connection.service';
 import { OnboardingStateService } from './onboarding-state.service';
@@ -68,10 +69,16 @@ export class OnboardingStartupService {
     private readonly sshForwardsService: SshForwardsService,
     private readonly projectsService: ProjectsService,
     private readonly navigationService: NavigationService,
+    private readonly remoteLink: RemoteLinkService,
   ) {}
 
   async initialize(): Promise<void> {
     const snapshot = this.onboardingState.readSnapshot();
+    if (snapshot.mode === 'paired') {
+      await this.restorePairedLink(snapshot.paired);
+      return;
+    }
+
     if (snapshot.mode !== 'ssh') {
       return;
     }
@@ -118,6 +125,35 @@ export class OnboardingStartupService {
       });
     } finally {
       this._startupConnectingServer.set(null);
+    }
+  }
+
+  /**
+   * Brings a paired desktop's link back up for a window that reopened on one.
+   *
+   * The link client lives in the main process and is torn down with the last
+   * window holding it, so a window restored onto a paired desktop remembers the
+   * device but has nothing behind its loopback port. This is the paired
+   * equivalent of the SSH reconnect above; without it the window keeps the
+   * device's name and the previous run's dead port for the rest of its life.
+   */
+  private async restorePairedLink(paired: PairedDeviceState | null): Promise<void> {
+    if (!paired) {
+      this.onboardingState.setRemoteConnectionReady(false);
+      return;
+    }
+
+    // The remembered port belonged to the previous run's listener, so nothing
+    // may open a socket against it until the link reports a live one.
+    this.onboardingState.setRemoteConnectionReady(false);
+
+    try {
+      await this.remoteLink.connect(paired.id);
+      this.navigationService.refreshTree();
+    } catch {
+      // Nothing to retry against here — the device row in the environment
+      // switcher carries the link's real status, and selecting it retries with
+      // the error surfaced.
     }
   }
 

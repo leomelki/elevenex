@@ -407,18 +407,26 @@ export function isOnboardingComplete(snapshot: OnboardingStateSnapshot): boolean
 }
 
 export function getOnboardingBackendOrigin(snapshot: OnboardingStateSnapshot): string | null {
+  // Deliberately ahead of the readiness gate. Every other mode has a
+  // disconnected state the user can see — SSH and WSL raise the reconnect
+  // overlay — but a paired link that drops has nowhere to say so, and falling
+  // back to the local origin would answer with this machine's projects under
+  // the remote machine's name. The loopback listener stays up across
+  // reconnects and refuses connections while the session is down, so keeping
+  // the origin pinned to it turns that into a visible failure instead.
+  // Long-lived sockets are still held back by isBackendOriginReady().
+  if (snapshot.mode === 'paired') {
+    return snapshot.paired?.localPort
+      ? `http://127.0.0.1:${snapshot.paired.localPort}`
+      : null;
+  }
+
   if (!snapshot.remoteConnectionReady) {
     return null;
   }
 
   if (snapshot.mode === 'wsl') {
     return snapshot.wsl ? `http://127.0.0.1:${snapshot.wsl.localPort}` : null;
-  }
-
-  if (snapshot.mode === 'paired') {
-    return snapshot.paired?.localPort
-      ? `http://127.0.0.1:${snapshot.paired.localPort}`
-      : null;
   }
 
   if (snapshot.mode !== 'ssh') {
@@ -490,6 +498,27 @@ export class OnboardingStateService {
       currentStep: 'project',
       remoteConnectionReady: state.localPort > 0,
       paired: state,
+    });
+  }
+
+  /**
+   * Re-arms the paired backend after a link came back on its own.
+   *
+   * Unlike setPairedState() this never *moves* the window: it only refreshes
+   * the device this window is already on, so a link recovering in the
+   * background cannot drag a window that has since switched to another
+   * environment back onto a paired desktop.
+   */
+  markPairedConnected(state: PairedDeviceState) {
+    const snapshot = this.readSnapshot();
+    if (snapshot.mode !== 'paired' || snapshot.paired?.id !== state.id) {
+      return;
+    }
+
+    this.writeSnapshot({
+      ...snapshot,
+      paired: state,
+      remoteConnectionReady: state.localPort > 0,
     });
   }
 

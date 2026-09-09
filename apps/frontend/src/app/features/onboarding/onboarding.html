@@ -60,6 +60,8 @@
           Using the local backend.
         } @else if (selectedMode() === 'wsl') {
           Using the WSL backend@if (wslSummary()?.distroName) { ({{ wslSummary()?.distroName }}) }.
+        } @else if (selectedMode() === 'paired' && pairedSummary(); as paired) {
+          Connected to the paired desktop “{{ paired.name }}”.
         } @else {
           Choose a backend before saving preferences.
         }
@@ -182,6 +184,13 @@
           <div class="mt-8">
             <app-remote-link-panel (connected)="onPairedConnected()" />
           </div>
+
+          @if (connecting()) {
+            <div class="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+              <ng-icon name="lucideRefreshCw" size="16" class="animate-spin" />
+              Opening the workspace on the paired desktop…
+            </div>
+          }
 
           <div class="mt-8">
             <button z-button type="button" zType="outline" (click)="activeStep.set('connection')">

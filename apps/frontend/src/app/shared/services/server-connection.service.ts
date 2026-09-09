@@ -1,5 +1,5 @@
 import { Injectable, NgZone, OnDestroy, computed, signal } from '@angular/core';
-import { getWebSocketUrl } from '../runtime/runtime-config';
+import { getBackendOrigin, getWebSocketUrl } from '../runtime/runtime-config';
 
 export type ServerConnectionPhase = 'connecting' | 'connected' | 'disconnected' | 'restored';
 
@@ -32,6 +32,8 @@ export class ServerConnectionService implements OnDestroy {
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private restoredTimer: ReturnType<typeof setTimeout> | null = null;
   private waiters: Waiter[] = [];
+  /** Origin the live socket was opened against, so a backend switch is detectable. */
+  private connectedOrigin: string | null = null;
 
   private readonly _state = signal<ServerConnectionState>({
     phase: 'connecting',
@@ -69,6 +71,7 @@ export class ServerConnectionService implements OnDestroy {
 
   waitUntilInteractive(): Promise<void> {
     this.start();
+    this.repointIfBackendChanged();
 
     if (this.isInteractive()) {
       return Promise.resolve();
@@ -79,11 +82,45 @@ export class ServerConnectionService implements OnDestroy {
     });
   }
 
+  /**
+   * Repoints the socket when the window changes backend.
+   *
+   * This socket gates every HTTP request through the api-base interceptor, so
+   * one left on the previous backend is not merely stale: it reports the wrong
+   * machine's capabilities, and a socket stuck retrying against an origin the
+   * window no longer uses holds back requests that would have succeeded.
+   * Switching environments does not reload the app, so nothing else notices.
+   */
+  private repointIfBackendChanged(): void {
+    if (!this.connectedOrigin || this.connectedOrigin === getBackendOrigin()) {
+      return;
+    }
+
+    const previous = this.ws;
+    this.ws = null;
+    if (previous) {
+      // Detach first: closing a socket we are deliberately replacing must not
+      // run the onclose reconnect path on top of the one we are starting.
+      previous.onopen = null;
+      previous.onmessage = null;
+      previous.onclose = null;
+      previous.onerror = null;
+      try {
+        previous.close();
+      } catch {
+        // Already gone.
+      }
+    }
+    this.openSocket();
+  }
+
   private openSocket(): void {
     this.clearReconnectTimer();
     this.clearHeartbeatTimer();
 
-    const ws = new WebSocket(getWebSocketUrl('/server-connection'));
+    const origin = getBackendOrigin();
+    this.connectedOrigin = origin;
+    const ws = new WebSocket(getWebSocketUrl('/server-connection', undefined, origin));
     this.ws = ws;
 
     if (!this.hasConnected) {
