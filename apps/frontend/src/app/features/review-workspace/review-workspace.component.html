@@ -109,6 +109,22 @@
                   (selectionAction)="onPreviewSelectionAction($event)"
                 />
               }
+              @case ('html') {
+                <app-review-html-preview
+                  class="rw-code__overlay"
+                  [worktreePath]="worktreePath()"
+                  [path]="tab.path"
+                  [restoreScrollTop]="tab.scrollTop"
+                  [scope]="previewScope()"
+                  [changeHash]="previewChangeHash()"
+                  [selectionActions]="selectionActions()"
+                  [anchors]="previewAnchors()"
+                  (scrolled)="onPreviewScrolled($event)"
+                  (selectionAction)="onPreviewSelectionAction($event)"
+                  (openPath)="openTab($event, { extra: true })"
+                  (anchorActivated)="state.focusThread($event)"
+                />
+              }
             }
           }
         }

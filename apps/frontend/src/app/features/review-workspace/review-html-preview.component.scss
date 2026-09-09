@@ -1,0 +1,119 @@
+:host {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.hp-root {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.hp-bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--card) 35%, var(--background));
+  padding: 0.25rem 0.5rem;
+}
+
+.hp-path {
+  overflow: hidden;
+  flex: 1;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.hp-action {
+  display: inline-flex;
+  width: 1.35rem;
+  height: 1.35rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.hp-action:hover {
+  background: color-mix(in oklch, var(--foreground) 10%, transparent);
+  color: var(--foreground);
+}
+
+.hp-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 45%, transparent);
+}
+
+.hp-frame-wrap {
+  /* Containing block for the selection menu, which is placed in this
+     element's coordinates from a rect the frame reports. */
+  position: relative;
+  min-height: 0;
+  flex: 1;
+}
+
+.hp-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  /* The page brings its own colours and is usually written for a light
+     background, so give it one rather than letting the app's dark surface
+     show through wherever the page leaves things transparent. */
+  background: #fff;
+}
+
+.hp-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 2rem 1rem;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+
+.hp-status--error {
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--destructive) 10%, transparent);
+  color: var(--destructive);
+  padding: 0.5rem 0.75rem;
+}
+
+.hp-status--overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--background);
+}
+
+.hp-spin {
+  animation: hp-spin 1s linear infinite;
+}
+
+@keyframes hp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hp-spin {
+    animation: none;
+  }
+}

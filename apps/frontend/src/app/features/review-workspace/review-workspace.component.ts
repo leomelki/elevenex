@@ -26,6 +26,11 @@ import type {
   DiffSelectionMention,
   DiffSelectionMentionScope,
 } from '@/shared/models/diff-selection-mention.model';
+import type {
+  PreviewAnchorHighlight,
+  PreviewSourceRef,
+} from '@/shared/models/review-preview-bridge.model';
+import type { ReviewAnchor } from '@/shared/models/review-chat.model';
 import type { CreateSessionForkResponse } from '@/shared/models/session.model';
 import { appendDiffSelectionMentions } from '@/shared/utils/diff-selection-mention';
 import {
@@ -38,6 +43,7 @@ import type { DiffSelectionMenuAction } from '@/features/change-review/diff-sele
 import { ReviewFileOpenerComponent } from './review-file-opener.component';
 import { ReviewFileTabsComponent, type ReviewFileTab } from './review-file-tabs.component';
 import { reviewPreviewRendererForPath } from './review-preview-renderers';
+import { ReviewHtmlPreviewComponent } from './review-html-preview.component';
 import { ReviewMarkdownPreviewComponent } from './review-markdown-preview.component';
 import { ReviewThreadDockComponent } from './review-thread-dock.component';
 import {
@@ -60,6 +66,7 @@ const FORKABLE_PROVIDERS: readonly AgentProviderId[] = ['claude', 'codex'];
     ChangeReviewPanelComponent,
     ReviewFileOpenerComponent,
     ReviewFileTabsComponent,
+    ReviewHtmlPreviewComponent,
     ReviewMarkdownPreviewComponent,
     ReviewThreadDockComponent,
   ],
@@ -138,6 +145,32 @@ export class ReviewWorkspaceComponent {
     return this.diffPanel()?.fileChangeHashes().get(path) ?? null;
   });
 
+  /**
+   * Discussion anchors that fall in the file on screen, for the rendered
+   * preview to paint over the page.
+   *
+   * The diff highlights anchors by matching rows; a rendered page has no rows,
+   * so the preview is handed the anchors themselves and locates the elements
+   * that cover them. An anchor with neither a line range nor a recorded
+   * preview reference cannot be placed, so it is left out rather than guessed
+   * at.
+   */
+  readonly previewAnchors = computed<PreviewAnchorHighlight[]>(() => {
+    const path = this.activeTabPath();
+    if (!path) return [];
+
+    const highlights: PreviewAnchorHighlight[] = [];
+    for (const chat of this.state.openChats()) {
+      for (const anchor of chat.anchors) {
+        if (anchor.filePath !== path) continue;
+        const source = previewSourceForAnchor(anchor);
+        if (!source) continue;
+        highlights.push({ chatId: chat.id, source, title: chat.title });
+        break; // one marker per discussion is enough to click through
+      }
+    }
+    return highlights;
+  });
 
   readonly canFork = computed(() =>
     FORKABLE_PROVIDERS.includes(this.provider()),
@@ -373,3 +406,24 @@ export class ReviewWorkspaceComponent {
   }
 }
 
+/**
+ * How a rendered preview can find an anchor again.
+ *
+ * Prefers what the preview itself recorded when the anchor was made, and falls
+ * back to the line range, which is what a diff-made anchor carries. Anchors
+ * with neither cannot be placed on a rendered page.
+ */
+function previewSourceForAnchor(anchor: ReviewAnchor): PreviewSourceRef | null {
+  if (anchor.previewAnchor) return anchor.previewAnchor;
+
+  const startLine = anchor.newLineStart ?? anchor.oldLineStart;
+  const endLine = anchor.newLineEnd ?? anchor.oldLineEnd ?? startLine;
+  if (startLine === null || endLine === null) return null;
+
+  return {
+    kind: 'lines',
+    path: anchor.filePath,
+    startLine,
+    endLine,
+  };
+}

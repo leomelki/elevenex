@@ -1,0 +1,61 @@
+<div class="hp-root">
+  <div class="hp-bar">
+    <span class="hp-path" [title]="path()">{{ path() }}</span>
+
+    <button
+      type="button"
+      class="hp-action"
+      title="Re-read this page from disk"
+      aria-label="Reload the preview"
+      (click)="refresh()"
+    >
+      <ng-icon name="lucideRefreshCw" size="13" />
+    </button>
+  </div>
+
+  @if (error(); as message) {
+    <div class="hp-status hp-status--error" role="alert">
+      <ng-icon name="lucideTriangleAlert" size="14" />
+      {{ message }}
+    </div>
+  }
+
+  <div #frameWrap class="hp-frame-wrap">
+    @if (loading() && !error()) {
+      <div class="hp-status hp-status--overlay">
+        <ng-icon name="lucideRefreshCw" size="14" class="hp-spin" />
+        Loading…
+      </div>
+    }
+
+    @if (frameUrl(); as url) {
+      <!--
+        sandbox is deliberately only allow-scripts. Dropping allow-same-origin
+        is what gives the page an opaque origin, so it cannot reach the app's
+        DOM, its cookies or its storage — and, with the content policy the
+        backend serves alongside it, cannot call the unauthenticated file API
+        either. Adding anything here widens that, so don't without reading the
+        note in ReviewPreviewService.
+      -->
+      <iframe
+        #frameRef
+        class="hp-frame"
+        title="Rendered preview"
+        sandbox="allow-scripts"
+        referrerpolicy="no-referrer"
+        [src]="url"
+        (load)="onFrameLoad()"
+      ></iframe>
+    }
+
+    @if (selectionMenu(); as menu) {
+      <cr-selection-menu
+        [top]="menu.top"
+        [left]="menu.left"
+        [mentions]="menu.mentions"
+        [actions]="selectionActions()"
+        (invoke)="onSelectionMenuAction($event)"
+      />
+    }
+  </div>
+</div>
