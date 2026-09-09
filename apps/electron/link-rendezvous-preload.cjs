@@ -31,6 +31,38 @@ const BUNDLE_URL = pathToFileURL(
 
 const ACTION_ID = 'link';
 
+// Chromium permanently breaks a data-channel connection that rolls back its
+// *initial* offer. The rollback returns it to a stable state that never had an
+// m-section, which orphans the data channel: every later createOffer produces a
+// session-level-only SDP with no m-line, about 105 bytes, and opening another
+// data channel does not bring it back. Trystero rolls back on offer glare and on
+// ICE restart, so a pooled offer that hits either is dead for the rest of its
+// life and hands an empty offer to every peer it is matched with afterwards —
+// which the far end sees as a peer that never starts ICE.
+//
+// Suppressing the rollback leaves the connection in have-local-offer, where
+// Trystero's next setLocalDescription re-offers cleanly. The guard is limited to
+// connections that have never completed a negotiation, because that is the only
+// case that loses an m-section: once there is a current remote description,
+// rolling back returns to a stable state that still has one, and that rollback
+// is left alone.
+//
+// This lives here rather than in the bundle because `pnpm build:rendezvous`
+// regenerates vendor/rendezvous.mjs from npm and would silently drop it.
+function guardInitialOfferRollback() {
+  const { prototype } = RTCPeerConnection;
+  const setLocalDescription = prototype.setLocalDescription;
+
+  prototype.setLocalDescription = function guardedSetLocalDescription(description) {
+    if (description?.type === 'rollback' && !this.currentRemoteDescription) {
+      return Promise.resolve();
+    }
+    return setLocalDescription.apply(this, arguments);
+  };
+}
+
+guardInitialOfferRollback();
+
 let bundle = null;
 
 function loadStrategies() {
