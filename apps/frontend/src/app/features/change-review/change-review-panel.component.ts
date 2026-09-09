@@ -77,6 +77,8 @@ import {
 } from './diff-selection-menu.component';
 import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
 import { diffMentionRowKey } from '@/shared/utils/diff-row-key';
+import { captureSelectionWithin, clearSelection } from '@/shared/utils/dom-selection';
+import { placeSelectionMenu } from '@/shared/utils/selection-menu-position';
 import {
   CHANGE_REVIEW_HEADER_ROWS,
   ChangeReviewVirtualAnchor,
@@ -920,27 +922,14 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   captureDiffSelection(): void {
-    const selection = window.getSelection();
     const scrollEl = this.diffScroll()?.nativeElement;
-    if (!selection || selection.isCollapsed || !selection.rangeCount || !scrollEl) {
+    const captured = captureSelectionWithin(scrollEl);
+    if (!scrollEl || !captured) {
       this.selectionMentionAction.set(null);
       return;
     }
 
-    const anchorNode = selection.anchorNode;
-    const focusNode = selection.focusNode;
-    if (
-      !anchorNode ||
-      !focusNode ||
-      !scrollEl.contains(anchorNode) ||
-      !scrollEl.contains(focusNode)
-    ) {
-      this.selectionMentionAction.set(null);
-      return;
-    }
-
-    const range = selection.getRangeAt(0);
-    const selectedRows = this.selectedDiffRows(range, scrollEl);
+    const selectedRows = this.selectedDiffRows(captured.range, scrollEl);
     if (!selectedRows.length) {
       this.selectionMentionAction.set(null);
       return;
@@ -952,16 +941,12 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    const firstRect =
-      typeof range.getBoundingClientRect === 'function'
-        ? range.getBoundingClientRect()
-        : scrollEl.getBoundingClientRect();
-    const containerRect = scrollEl.getBoundingClientRect();
-    this.selectionMentionAction.set({
-      top: Math.max(8, firstRect.top - containerRect.top + scrollEl.scrollTop - 38),
-      left: Math.max(8, firstRect.left - containerRect.left + scrollEl.scrollLeft),
-      mentions,
-    });
+    const placement = placeSelectionMenu(
+      captured.rect,
+      scrollEl.getBoundingClientRect(),
+      { top: scrollEl.scrollTop, left: scrollEl.scrollLeft },
+    );
+    this.selectionMentionAction.set({ ...placement, mentions });
   }
 
   mentionCurrentSelection(): void {
@@ -969,7 +954,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     if (!action?.mentions.length) return;
     this.mentionSelection.emit(action.mentions);
     this.selectionMentionAction.set(null);
-    window.getSelection()?.removeAllRanges();
+    clearSelection();
     toast.success(
       action.mentions.length === 1
         ? 'Added diff selection to chat'
@@ -991,7 +976,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     }
     this.selectionAction.emit(event);
     this.selectionMentionAction.set(null);
-    window.getSelection()?.removeAllRanges();
+    clearSelection();
   }
 
   forwardMentionSelection(mentions: DiffSelectionMention[]): void {

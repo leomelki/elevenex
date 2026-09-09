@@ -18,6 +18,8 @@ import type {
   DiffSelectionMentionScope,
 } from '@/shared/models/diff-selection-mention.model';
 import { FilesService } from '@/shared/services/files.service';
+import { captureSelectionWithin, clearSelection } from '@/shared/utils/dom-selection';
+import { placeSelectionMenu } from '@/shared/utils/selection-menu-position';
 import { MarkdownPipe } from '@/features/session/claude-workspace/pipes/markdown.pipe';
 import {
   DEFAULT_DIFF_SELECTION_ACTIONS,
@@ -32,9 +34,6 @@ interface SelectionMenuState {
   left: number;
   mentions: DiffSelectionMention[];
 }
-
-/** Vertical gap between the selection and the action bar sitting above it. */
-const MENU_OFFSET_PX = 38;
 
 /**
  * Rendered view of a markdown file in the worktree.
@@ -109,19 +108,8 @@ export class ReviewMarkdownPreviewComponent {
    */
   captureSelection(): void {
     const scrollEl = this.scrollRef()?.nativeElement;
-    const selection = window.getSelection();
-    if (!scrollEl || !selection || selection.isCollapsed || !selection.rangeCount) {
-      this.selectionMenu.set(null);
-      return;
-    }
-
-    const { anchorNode, focusNode } = selection;
-    if (
-      !anchorNode ||
-      !focusNode ||
-      !scrollEl.contains(anchorNode) ||
-      !scrollEl.contains(focusNode)
-    ) {
+    const captured = captureSelectionWithin(scrollEl);
+    if (!scrollEl || !captured) {
       this.selectionMenu.set(null);
       return;
     }
@@ -131,33 +119,25 @@ export class ReviewMarkdownPreviewComponent {
       scope: this.scope(),
       changeHash: this.changeHash(),
       content: this.content(),
-      selectedText: selection.toString(),
+      selectedText: captured.text,
     });
     if (!mention) {
       this.selectionMenu.set(null);
       return;
     }
 
-    const range = selection.getRangeAt(0);
-    const selectionRect =
-      typeof range.getBoundingClientRect === 'function'
-        ? range.getBoundingClientRect()
-        : scrollEl.getBoundingClientRect();
-    const containerRect = scrollEl.getBoundingClientRect();
-    this.selectionMenu.set({
-      top: Math.max(
-        8,
-        selectionRect.top - containerRect.top + scrollEl.scrollTop - MENU_OFFSET_PX,
-      ),
-      left: Math.max(8, selectionRect.left - containerRect.left + scrollEl.scrollLeft),
-      mentions: [mention],
-    });
+    const placement = placeSelectionMenu(
+      captured.rect,
+      scrollEl.getBoundingClientRect(),
+      { top: scrollEl.scrollTop, left: scrollEl.scrollLeft },
+    );
+    this.selectionMenu.set({ ...placement, mentions: [mention] });
   }
 
   onSelectionMenuAction(event: { id: string; mentions: DiffSelectionMention[] }): void {
     this.selectionAction.emit(event);
     this.selectionMenu.set(null);
-    window.getSelection()?.removeAllRanges();
+    clearSelection();
   }
 
   private async load(worktreePath: string, path: string): Promise<void> {

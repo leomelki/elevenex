@@ -1,14 +1,16 @@
 import {
   DIFF_SELECTION_MENTION_MAX_TEXT,
   type DiffSelectionMention,
-  type DiffSelectionMentionContextRow,
   type DiffSelectionMentionScope,
 } from '@/shared/models/diff-selection-mention.model';
+import {
+  REVIEW_CONTEXT_LINES,
+  REVIEW_MAX_SELECTED_ROWS,
+  sourceContextRows,
+  splitSourceLines,
+  unlocatedContextRow,
+} from './review-source-context';
 
-/** Source lines kept either side of the selection, matching the diff panel. */
-const CONTEXT_LINES = 3;
-/** Cap on anchored rows, so selecting a whole document stays manageable. */
-const MAX_SELECTED_ROWS = 60;
 /** Below this length a line is too generic to trust as a containment match. */
 const MIN_FUZZY_MATCH_CHARS = 4;
 
@@ -29,8 +31,8 @@ export function locateMarkdownSelection(
   content: string,
   selectedText: string,
 ): MarkdownSourceRange | null {
-  const sourceLines = splitLines(content).map(normalizeLine);
-  const selectionLines = splitLines(selectedText).map(normalizeLine).filter(Boolean);
+  const sourceLines = splitSourceLines(content).map(normalizeLine);
+  const selectionLines = splitSourceLines(selectedText).map(normalizeLine).filter(Boolean);
   if (!sourceLines.length || !selectionLines.length) return null;
 
   const start = findLine(sourceLines, selectionLines[0], 0);
@@ -60,7 +62,7 @@ export function buildMarkdownSelectionMention(options: {
   const raw = options.selectedText.replace(/\r\n?/g, '\n').trim();
   if (!raw) return null;
 
-  const sourceLines = splitLines(options.content);
+  const sourceLines = splitSourceLines(options.content);
   const range = locateMarkdownSelection(options.content, raw);
 
   return {
@@ -80,34 +82,29 @@ export function buildMarkdownSelectionMention(options: {
     newLineEnd: range?.endLine ?? null,
     selectedText: raw.slice(0, DIFF_SELECTION_MENTION_MAX_TEXT),
     context: {
-      before: range ? contextRows(sourceLines, range.startLine - CONTEXT_LINES, range.startLine - 1) : [],
+      before: range
+        ? sourceContextRows(
+            sourceLines,
+            range.startLine - REVIEW_CONTEXT_LINES,
+            range.startLine - 1,
+          )
+        : [],
       selected: range
-        ? contextRows(sourceLines, range.startLine, range.endLine).slice(0, MAX_SELECTED_ROWS)
-        : [{ type: 'context', oldLine: null, newLine: null, content: raw }],
-      after: range ? contextRows(sourceLines, range.endLine + 1, range.endLine + CONTEXT_LINES) : [],
+        ? sourceContextRows(sourceLines, range.startLine, range.endLine).slice(
+            0,
+            REVIEW_MAX_SELECTED_ROWS,
+          )
+        : [unlocatedContextRow(raw)],
+      after: range
+        ? sourceContextRows(
+            sourceLines,
+            range.endLine + 1,
+            range.endLine + REVIEW_CONTEXT_LINES,
+          )
+        : [],
     },
     truncated: raw.length > DIFF_SELECTION_MENTION_MAX_TEXT,
   };
-}
-
-/** Rows for a 1-based, inclusive line range, clamped to the file. */
-function contextRows(
-  sourceLines: readonly string[],
-  startLine: number,
-  endLine: number,
-): DiffSelectionMentionContextRow[] {
-  const rows: DiffSelectionMentionContextRow[] = [];
-  const from = Math.max(1, startLine);
-  const to = Math.min(sourceLines.length, endLine);
-  for (let line = from; line <= to; line += 1) {
-    rows.push({
-      type: 'context',
-      oldLine: line,
-      newLine: line,
-      content: sourceLines[line - 1],
-    });
-  }
-  return rows;
 }
 
 function findLine(
@@ -125,10 +122,6 @@ function findLine(
     if (line.length >= MIN_FUZZY_MATCH_CHARS && needle.includes(line)) return index;
   }
   return null;
-}
-
-function splitLines(value: string): string[] {
-  return value.replace(/\r\n?/g, '\n').split('\n');
 }
 
 /** Strip the markdown syntax the renderer removes, so both sides compare alike. */
