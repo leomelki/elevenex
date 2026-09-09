@@ -10,7 +10,10 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { buildPreviewBridgeScript } from './preview-bridge.js';
-import { ReviewPreviewService } from './review-preview.service.js';
+import {
+  ReviewPreviewService,
+  type PreviewAssetPath,
+} from './review-preview.service.js';
 
 interface CreatePreviewSessionBody {
   worktreePath: string;
@@ -58,11 +61,33 @@ export class ReviewPreviewController {
     return buildPreviewBridgeScript();
   }
 
+  /**
+   * The prefix on its own, which is what a link to `./` resolves to. Serves
+   * the root index, mirroring how a static server behaves — the wildcard below
+   * needs at least one segment and would otherwise 404 here.
+   */
+  @Get('p/:previewId')
+  async root(
+    @Param('previewId') previewId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    return this.serve(previewId, [], res);
+  }
+
   @Get('p/:previewId/*path')
   async asset(
     @Param('previewId') previewId: string,
-    @Param('path') assetPath: string,
+    // Express 5 gives a `*path` wildcard as an array of decoded segments.
+    @Param('path') assetPath: PreviewAssetPath,
     @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    return this.serve(previewId, assetPath, res);
+  }
+
+  private async serve(
+    previewId: string,
+    assetPath: PreviewAssetPath,
+    res: Response,
   ): Promise<StreamableFile> {
     const asset = await this.reviewPreview.readAsset(previewId, assetPath);
 

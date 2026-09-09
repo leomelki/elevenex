@@ -35,6 +35,25 @@ describe('ReviewPreviewService', () => {
     expect(asset.body.toString()).toContain('color: red');
   });
 
+  it('accepts the array of segments Express gives for a wildcard path', async () => {
+    // This is the shape the controller actually receives for a nested asset;
+    // treating it as a string silently 404s every dependency a page has.
+    const asset = await service.readAsset(previewId, ['docs', 'style.css']);
+    expect(asset.body.toString()).toContain('color: red');
+  });
+
+  it('serves the root index for the bare prefix', async () => {
+    await fs.writeFile(path.join(root, 'index.html'), '<p>root</p>');
+    const asset = await service.readAsset(previewId, []);
+    expect(asset.body.toString()).toContain('root');
+  });
+
+  it('rejects a doubly-encoded traversal without decoding it again', async () => {
+    // Express has already decoded once; decoding here would turn this into a
+    // real '..' segment.
+    await expect(read('%2e%2e/secret.txt')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it('instruments html and attaches a policy', async () => {
     const asset = await read('docs/index.html');
     expect(asset.instrumented).toBe(true);

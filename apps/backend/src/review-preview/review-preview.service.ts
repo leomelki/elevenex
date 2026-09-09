@@ -43,6 +43,9 @@ interface PreviewSession {
   lastAccessAt: number;
 }
 
+/** A `*path` wildcard: Express 5 gives an array of segments, older forms a string. */
+export type PreviewAssetPath = string | string[] | undefined;
+
 export interface PreviewAsset {
   body: Buffer | Readable;
   mimeType: string;
@@ -134,7 +137,7 @@ export class ReviewPreviewService {
   /**
    * Resolve, read and (for HTML) instrument one file inside a preview session.
    */
-  async readAsset(previewId: string, relativePath: string): Promise<PreviewAsset> {
+  async readAsset(previewId: string, relativePath: PreviewAssetPath): Promise<PreviewAsset> {
     const session = this.requireSession(previewId);
     const absolutePath = await this.resolveWithinSession(session, relativePath);
 
@@ -188,12 +191,17 @@ export class ReviewPreviewService {
    */
   private async resolveWithinSession(
     session: PreviewSession,
-    relativePath: string,
+    relativePath: PreviewAssetPath,
   ): Promise<string> {
-    const segments = relativePath
-      .split('/')
-      .filter((segment) => segment.length > 0)
-      .map((segment) => decodeURIComponent(segment));
+    // Express 5 hands a `*path` wildcard back as an array of already-decoded
+    // segments, not a string — so a nested asset arrives as ['assets','a.css'].
+    // Decoding again here would be wrong twice over: it would mangle a
+    // filename that legitimately contains a percent sign, and it would let a
+    // doubly-encoded '..' through as a real one.
+    const raw = Array.isArray(relativePath)
+      ? relativePath
+      : String(relativePath ?? '').split('/');
+    const segments = raw.filter((segment) => segment.length > 0);
 
     for (const segment of segments) {
       if (segment === '.git' || segment.includes('\0')) {
