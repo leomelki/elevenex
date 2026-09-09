@@ -67,6 +67,9 @@ importers:
       onnxruntime-node:
         specifier: ^1.29.0
         version: 1.29.0
+      parse5:
+        specifier: ^8.0.0
+        version: 8.0.0
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2

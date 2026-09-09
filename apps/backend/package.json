@@ -41,6 +41,7 @@
     "hash-wasm": "^4.12.0",
     "node-pty": "^1.1.0",
     "onnxruntime-node": "^1.29.0",
+    "parse5": "^8.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "simple-git": "^3.33.0",
@@ -94,7 +95,7 @@
       "^chokidar$": "<rootDir>/file-watcher/__mocks__/chokidar.ts"
     },
     "transformIgnorePatterns": [
-      "node_modules/(?!(chokidar)/)"
+      "node_modules/(?!\\.pnpm/)(?!(chokidar|parse5|entities)/)"
     ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"

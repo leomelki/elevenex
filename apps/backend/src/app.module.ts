@@ -15,6 +15,7 @@ import { GitModule } from './git/git.module.js';
 import { ScratchpadModule } from './scratchpad/scratchpad.module.js';
 import { TodosModule } from './todos/todos.module.js';
 import { PlannotatorModule } from './plannotator/plannotator.module.js';
+import { ReviewPreviewModule } from './review-preview/review-preview.module.js';
 import { UserTerminalModule } from './user-terminal/user-terminal.module.js';
 import { FileWatcherModule } from './file-watcher/file-watcher.module.js';
 import { ClaudeHooksModule } from './claude-hooks/claude-hooks.module.js';
@@ -51,6 +52,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     ScratchpadModule,
     TodosModule,
     PlannotatorModule,
+    ReviewPreviewModule,
     UserTerminalModule,
     FileWatcherModule,
     ClaudeHooksModule,
