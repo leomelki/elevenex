@@ -4,8 +4,11 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
   lucideCopy,
+  lucideGlobe,
   lucideLaptop,
+  lucidePlug,
   lucideRefreshCw,
+  lucideServer,
   lucideTrash2,
   lucideTriangleAlert,
 } from '@ng-icons/lucide';
@@ -32,8 +35,11 @@ import { RemoteLinkService } from './remote-link.service';
     provideIcons({
       lucideCheck,
       lucideCopy,
+      lucideGlobe,
       lucideLaptop,
+      lucidePlug,
       lucideRefreshCw,
+      lucideServer,
       lucideTrash2,
       lucideTriangleAlert,
     }),
@@ -85,6 +91,17 @@ export class RemoteLinkPanelComponent {
 
   protected setTransport(value: RemoteLinkTransport): void {
     this.transport.set(value);
+  }
+
+  // A hand-rolled 3-way segmented control (rather than a variable-length row of
+  // buttons) so it can never wrap unpredictably in the narrow sidebar popover
+  // this panel is embedded in.
+  protected transportOptionClass(value: RemoteLinkTransport): string {
+    const base =
+      'flex flex-col items-center justify-center gap-1 rounded-md px-1 py-1.5 text-center text-[11px] font-medium leading-tight transition-colors';
+    return this.transport() === value
+      ? `${base} bg-background text-foreground shadow-sm`
+      : `${base} text-muted-foreground hover:text-foreground`;
   }
 
   // A p2p link has no endpoint to show: naming the brokers would be noise, and

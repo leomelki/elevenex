@@ -1,65 +1,68 @@
 @if (!supported()) {
-  <div class="rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+  <div class="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
     Remote links are only available in the Elevenex desktop app.
   </div>
 } @else {
-  <div class="space-y-8">
+  <div class="flex flex-col gap-5">
     @if (error()) {
-      <div class="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">
-        <ng-icon name="lucideTriangleAlert" size="16" class="mt-0.5 shrink-0" />
-        <span>{{ error() }}</span>
+      <div class="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive" role="alert">
+        <ng-icon name="lucideTriangleAlert" size="14" class="mt-0.5 shrink-0" />
+        <span class="min-w-0">{{ error() }}</span>
       </div>
     }
 
     <!-- Connect to another device -->
-    <section>
-      <h3 class="text-base font-semibold text-foreground">Connect to a device</h3>
-      <p class="mt-1 text-sm leading-6 text-muted-foreground">
-        Paste the pairing code from the machine you want to reach. Its backend becomes available here as if it were local.
-      </p>
+    <section class="flex min-w-0 flex-col gap-3">
+      <div>
+        <h3 class="text-sm font-semibold text-foreground">Connect to a device</h3>
+        <p class="mt-0.5 text-xs leading-5 text-muted-foreground">Paste a pairing code to reach its backend from here.</p>
+      </div>
 
-      <div class="mt-4 flex flex-col gap-3 sm:flex-row">
+      <div class="flex min-w-0 flex-col gap-2">
         <input
           z-input
-          class="flex-1 font-mono text-xs"
-          placeholder="EX1-…"
+          zSize="sm"
+          class="w-full min-w-0 font-mono"
+          placeholder="Pairing code"
           autocomplete="off"
           spellcheck="false"
           [ngModel]="enteredCode()"
           (ngModelChange)="enteredCode.set($event)"
           (keydown.enter)="addDevice()"
         />
-        <input
-          z-input
-          class="sm:w-48"
-          placeholder="Name (optional)"
-          autocomplete="off"
-          [ngModel]="deviceName()"
-          (ngModelChange)="deviceName.set($event)"
-          (keydown.enter)="addDevice()"
-        />
-        <button z-button type="button" [disabled]="!enteredCode().trim() || busy()" (click)="addDevice()">
-          Add device
-        </button>
+        <div class="flex min-w-0 gap-2">
+          <input
+            z-input
+            zSize="sm"
+            class="min-w-0 flex-1"
+            placeholder="Name (optional)"
+            autocomplete="off"
+            [ngModel]="deviceName()"
+            (ngModelChange)="deviceName.set($event)"
+            (keydown.enter)="addDevice()"
+          />
+          <button z-button type="button" zSize="sm" class="shrink-0" [disabled]="!enteredCode().trim() || busy()" (click)="addDevice()">
+            Add
+          </button>
+        </div>
       </div>
 
       @if (devices().length > 0) {
-        <ul class="mt-5 space-y-2">
+        <ul class="flex flex-col gap-1.5">
           @for (device of devices(); track device.id) {
-            <li class="flex items-center gap-3 rounded-md border border-border bg-background p-3">
-              <span class="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-card">
-                <ng-icon name="lucideLaptop" size="18" />
+            <li class="flex min-w-0 items-center gap-2 rounded-md border border-border bg-background p-2">
+              <span class="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-card">
+                <ng-icon name="lucideLaptop" size="14" />
               </span>
 
               <div class="min-w-0 flex-1">
-                <div class="truncate text-sm font-medium text-foreground">{{ device.name }}</div>
-                <div class="truncate text-xs text-muted-foreground">
+                <div class="truncate text-xs font-medium text-foreground">{{ device.name }}</div>
+                <div class="truncate text-[11px] text-muted-foreground">
                   @switch (device.status) {
                     @case ('connected') {
                       <span class="text-success">Connected</span>
                       ·
                       {{ device.path === 'direct' ? 'Peer-to-peer' : 'Via relay' }}
-                      · localhost:{{ device.localPort }}
                     }
                     @case ('reconnecting') {
                       <span class="text-warning">Reconnecting…</span>
@@ -81,6 +84,7 @@
                 z-button
                 type="button"
                 zSize="sm"
+                class="shrink-0"
                 [zLoading]="connectingId() === device.id"
                 [disabled]="busy() || device.status === 'connected'"
                 (click)="connect(device.id)"
@@ -92,11 +96,12 @@
                 type="button"
                 zType="ghost"
                 zSize="sm"
+                class="shrink-0"
                 aria-label="Forget this device"
                 [disabled]="busy()"
                 (click)="removeDevice(device.id)"
               >
-                <ng-icon name="lucideTrash2" size="16" />
+                <ng-icon name="lucideTrash2" size="14" />
               </button>
             </li>
           }
@@ -105,129 +110,109 @@
     </section>
 
     <!-- Share this device -->
-    <section class="border-t border-border pt-8">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h3 class="text-base font-semibold text-foreground">Share this device</h3>
-          <p class="mt-1 text-sm leading-6 text-muted-foreground">{{ sharingSummary() }}</p>
+    <section class="flex min-w-0 flex-col gap-3 border-t border-border pt-5">
+      <div class="flex flex-wrap items-start justify-between gap-2">
+        <div class="min-w-0">
+          <h3 class="text-sm font-semibold text-foreground">Share this device</h3>
+          <p class="mt-0.5 text-xs leading-5 text-muted-foreground">{{ sharingSummary() }}</p>
         </div>
         @if (sharing().enabled) {
-          <button z-button type="button" zType="outline" zSize="sm" [disabled]="busy()" (click)="disableSharing()">
+          <button z-button type="button" zType="outline" zSize="sm" class="shrink-0" [disabled]="busy()" (click)="disableSharing()">
             Stop sharing
           </button>
         }
       </div>
 
       @if (!sharing().enabled) {
-        <div class="mt-4 space-y-4">
-          <div class="flex flex-wrap gap-2">
-            <button
-              z-button
-              type="button"
-              zSize="sm"
-              [zType]="transport() === 'p2p' ? 'default' : 'outline'"
-              (click)="setTransport('p2p')"
-            >
-              Peer-to-peer
+        <div class="flex min-w-0 flex-col gap-3">
+          <div class="grid grid-cols-3 gap-1 rounded-lg border border-border bg-muted/40 p-1" role="radiogroup" aria-label="Sharing method">
+            <button type="button" role="radio" [attr.aria-checked]="transport() === 'p2p'" [class]="transportOptionClass('p2p')" (click)="setTransport('p2p')">
+              <ng-icon name="lucideGlobe" size="14" />
+              <span>Peer-to-peer</span>
             </button>
-            <button
-              z-button
-              type="button"
-              zSize="sm"
-              [zType]="transport() === 'relay' ? 'default' : 'outline'"
-              (click)="setTransport('relay')"
-            >
-              Through a relay
+            <button type="button" role="radio" [attr.aria-checked]="transport() === 'relay'" [class]="transportOptionClass('relay')" (click)="setTransport('relay')">
+              <ng-icon name="lucideServer" size="14" />
+              <span>Relay</span>
             </button>
-            <button
-              z-button
-              type="button"
-              zSize="sm"
-              [zType]="transport() === 'direct' ? 'default' : 'outline'"
-              (click)="setTransport('direct')"
-            >
-              Direct
+            <button type="button" role="radio" [attr.aria-checked]="transport() === 'direct'" [class]="transportOptionClass('direct')" (click)="setTransport('direct')">
+              <ng-icon name="lucidePlug" size="14" />
+              <span>Direct</span>
             </button>
           </div>
 
           @if (transport() === 'p2p') {
-            <div class="rounded-md border border-border bg-muted/40 p-3">
-              <p class="text-xs leading-5 text-muted-foreground">
-                Works over the internet with nothing to set up. The two machines find each other through public
-                brokers, then talk directly — no relay to run, no port to forward, and no address in the code that
-                could go stale when you change network.
-              </p>
-              <p class="mt-2 text-xs leading-5 text-muted-foreground">
-                Those brokers are volunteer infrastructure and only carry the introduction, never your traffic. On a
-                network that blocks peer-to-peer connections outright, a relay is the reliable choice.
-              </p>
-            </div>
+            <p class="text-xs leading-5 text-muted-foreground">
+              Finds the other machine over the internet and connects directly — nothing to configure or forward.
+            </p>
           } @else if (transport() === 'relay') {
-            <div>
-              <label class="text-sm font-medium text-foreground" for="relay-url">Relay URL</label>
-              <p class="mt-1 text-xs leading-5 text-muted-foreground">
-                Both machines dial this outbound, so neither needs a router change. Run your own with
-                <code class="rounded bg-muted px-1 py-0.5">node apps/relay/server.cjs</code>.
-              </p>
+            <div class="flex min-w-0 flex-col gap-1.5">
+              <label class="text-xs font-medium text-foreground" for="relay-url">Relay URL</label>
               <input
                 id="relay-url"
                 z-input
-                class="mt-2 w-full font-mono text-xs"
+                zSize="sm"
+                class="w-full min-w-0 font-mono"
                 placeholder="wss://relay.example.com/link"
                 autocomplete="off"
                 spellcheck="false"
                 [ngModel]="relayUrl()"
                 (ngModelChange)="relayUrl.set($event)"
               />
+              <p class="text-[11px] leading-4 text-muted-foreground">
+                Both machines dial out, so neither needs a router change. Self-host with
+                <code class="break-all rounded bg-muted px-1 py-0.5">node apps/relay/server.cjs</code>.
+              </p>
             </div>
           } @else {
-            <div>
-              <label class="text-sm font-medium text-foreground" for="direct-port">Port</label>
-              <p class="mt-1 text-xs leading-5 text-muted-foreground">
-                This machine listens on the port and the other one dials it. No relay needed, but it only works where this
-                machine is already reachable — the same network, usually.
-              </p>
+            <div class="flex min-w-0 flex-col gap-1.5">
+              <label class="text-xs font-medium text-foreground" for="direct-port">Port</label>
               <input
                 id="direct-port"
                 z-input
+                zSize="sm"
                 type="number"
-                class="mt-2 w-32"
+                class="w-24"
                 [ngModel]="directPort()"
                 (ngModelChange)="directPort.set($event)"
               />
+              <p class="text-[11px] leading-4 text-muted-foreground">
+                This machine listens on the port; only works where it's already reachable.
+              </p>
             </div>
           }
 
-          <button z-button type="button" [disabled]="busy()" (click)="enableSharing()">Start sharing</button>
+          <button z-button type="button" zSize="sm" [disabled]="busy()" (click)="enableSharing()">Start sharing</button>
         </div>
       } @else {
-        <div class="mt-4 space-y-3">
+        <div class="flex min-w-0 flex-col gap-2">
           @if (pairingCode()) {
-            <div>
-              <div class="text-sm font-medium text-foreground">Pairing code</div>
-              <p class="mt-1 text-xs leading-5 text-muted-foreground">
-                Anyone with this code can reach this machine's backend and run commands on it. Share it like a password.
-              </p>
-              <div class="mt-2 flex items-start gap-2">
-                <code
-                  class="min-w-0 flex-1 break-all rounded-md border border-border bg-muted/50 p-3 font-mono text-xs text-foreground"
-                >{{ pairingCode() }}</code>
-                <button z-button type="button" zType="outline" zSize="sm" aria-label="Copy pairing code" (click)="copyCode()">
-                  <ng-icon [name]="codeCopied() ? 'lucideCheck' : 'lucideCopy'" size="16" />
+            <div class="flex min-w-0 flex-col gap-1.5">
+              <div class="text-xs font-medium text-foreground">Pairing code</div>
+              <div class="flex min-w-0 items-start gap-2">
+                <code class="min-w-0 flex-1 break-all rounded-md border border-border bg-muted/50 p-2 font-mono text-xs text-foreground">{{ pairingCode() }}</code>
+                <button z-button type="button" zType="outline" zSize="sm" class="shrink-0" aria-label="Copy pairing code" (click)="copyCode()">
+                  <ng-icon [name]="codeCopied() ? 'lucideCheck' : 'lucideCopy'" size="14" />
                 </button>
               </div>
+              <p class="text-[11px] leading-4 text-muted-foreground">Anyone with this code can reach this machine — share it like a password.</p>
             </div>
           } @else {
-            <button z-button type="button" zType="outline" zSize="sm" (click)="revealCode()">Show pairing code</button>
+            <button z-button type="button" zType="outline" zSize="sm" class="self-start" (click)="revealCode()">Show pairing code</button>
           }
 
-          <button z-button type="button" zType="ghost" zSize="sm" [disabled]="busy()" (click)="regenerateCode()">
-            <ng-icon name="lucideRefreshCw" size="14" />
+          <button
+            z-button
+            type="button"
+            zType="ghost"
+            zSize="sm"
+            class="self-start"
+            [disabled]="busy()"
+            title="Regenerating immediately revokes the old code"
+            (click)="regenerateCode()"
+          >
+            <ng-icon name="lucideRefreshCw" size="13" />
             Regenerate code
           </button>
-          <p class="text-xs leading-5 text-muted-foreground">
-            Regenerating immediately revokes the old code — any device still using it will stop connecting.
-          </p>
         </div>
       }
     </section>
