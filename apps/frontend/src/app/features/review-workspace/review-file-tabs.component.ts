@@ -4,10 +4,15 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideBookOpen,
   lucideCode,
+  lucideEye,
   lucideFileCode,
   lucideLayers,
   lucideX,
 } from '@ng-icons/lucide';
+import {
+  reviewPreviewRendererForPath,
+  type ReviewPreviewRenderer,
+} from './review-preview-renderers';
 
 export interface ReviewFileTab {
   path: string;
@@ -28,6 +33,7 @@ export interface ReviewFileTab {
     provideIcons({
       lucideBookOpen,
       lucideCode,
+      lucideEye,
       lucideFileCode,
       lucideLayers,
       lucideX,
@@ -64,17 +70,20 @@ export interface ReviewFileTab {
             }
           </button>
 
-          @if (isMarkdown(tab.path)) {
+          @if (previewRenderer(tab.path); as renderer) {
             <button
               type="button"
               class="ft-tab__toggle"
               [class.ft-tab__toggle--on]="tab.preview"
               [attr.aria-pressed]="tab.preview"
-              [title]="tab.preview ? 'Show the diff' : 'Show rendered markdown'"
-              [attr.aria-label]="tab.preview ? 'Show the diff' : 'Show rendered markdown'"
+              [title]="tab.preview ? renderer.codeLabel : renderer.label"
+              [attr.aria-label]="tab.preview ? renderer.codeLabel : renderer.label"
               (click)="togglePreview.emit(tab.path)"
             >
-              <ng-icon [name]="tab.preview ? 'lucideCode' : 'lucideBookOpen'" size="11" />
+              <ng-icon
+                [name]="tab.preview ? renderer.icon : renderer.previewIcon"
+                size="11"
+              />
             </button>
           }
 
@@ -242,11 +251,8 @@ export class ReviewFileTabsComponent {
     return path.split('/').pop() || path;
   }
 
-  isMarkdown(path: string): boolean {
-    return isMarkdownPath(path);
+  /** The rendered view this file offers, or null if it has none. */
+  previewRenderer(path: string): ReviewPreviewRenderer | null {
+    return reviewPreviewRendererForPath(path);
   }
-}
-
-export function isMarkdownPath(path: string): boolean {
-  return /\.(md|markdown|mdx)$/i.test(path);
 }

@@ -121,11 +121,24 @@ describe('ReviewWorkspaceComponent tabs', () => {
   it('opens markdown on rendered preview and other files on the diff', () => {
     component.openTab('README.md');
     expect(component.tabs()[0].preview).toBe(true);
-    expect(component.showMarkdownPreview()).toBe(true);
+    expect(component.showPreview()).toBe(true);
+    expect(component.activePreviewRenderer()?.id).toBe('markdown');
 
     component.openTab('src/a.ts');
     expect(component.tabs()[1].preview).toBe(false);
-    expect(component.showMarkdownPreview()).toBe(false);
+    expect(component.showPreview()).toBe(false);
+  });
+
+  it('opens html on the diff, since rendering it runs the repo\'s scripts', () => {
+    component.openTab('docs/index.html');
+
+    expect(component.tabs()[0].preview).toBe(false);
+    expect(component.showPreview()).toBe(false);
+
+    component.toggleTabPreview('docs/index.html');
+
+    expect(component.showPreview()).toBe(true);
+    expect(component.activePreviewRenderer()?.id).toBe('html');
   });
 
   it('toggles a markdown tab between preview and diff, resetting its scroll', () => {
@@ -136,7 +149,7 @@ describe('ReviewWorkspaceComponent tabs', () => {
     component.toggleTabPreview('README.md');
 
     expect(component.tabs()[0].preview).toBe(false);
-    expect(component.showMarkdownPreview()).toBe(false);
+    expect(component.showPreview()).toBe(false);
     // Diff and preview scroll independently, so the offset must not carry over.
     expect(component.tabs()[0].scrollTop).toBe(0);
   });

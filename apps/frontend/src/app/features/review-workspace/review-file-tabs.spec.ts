@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isMarkdownPath } from './review-file-tabs.component';
+import { isMarkdownPath } from './review-preview-renderers';
 
 describe('isMarkdownPath', () => {
   it('recognises markdown extensions', () => {

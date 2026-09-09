@@ -5,3 +5,4 @@ export {
   SESSION_TAB_ID,
 } from './review-workspace-state.service';
 export * from './review-anchors';
+export * from './review-preview-renderers';

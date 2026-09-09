@@ -36,11 +36,8 @@ import {
 import { ChangeReviewPanelComponent } from '@/features/change-review/change-review-panel.component';
 import type { DiffSelectionMenuAction } from '@/features/change-review/diff-selection-menu.component';
 import { ReviewFileOpenerComponent } from './review-file-opener.component';
-import {
-  ReviewFileTabsComponent,
-  isMarkdownPath,
-  type ReviewFileTab,
-} from './review-file-tabs.component';
+import { ReviewFileTabsComponent, type ReviewFileTab } from './review-file-tabs.component';
+import { reviewPreviewRendererForPath } from './review-preview-renderers';
 import { ReviewMarkdownPreviewComponent } from './review-markdown-preview.component';
 import { ReviewThreadDockComponent } from './review-thread-dock.component';
 import {
@@ -112,11 +109,20 @@ export class ReviewWorkspaceComponent {
     () => this.tabs().find((tab) => tab.path === this.activeTabPath()) ?? null,
   );
 
-  /** Markdown tabs left on preview render the document instead of the diff. */
-  readonly showMarkdownPreview = computed(() => {
+  /**
+   * The rendered view covering the diff, or null when the diff is showing.
+   *
+   * A tab is on preview only if it asked to be *and* its file has a renderer,
+   * so a stale `preview` flag on a file type that lost its renderer falls back
+   * to the diff rather than showing nothing.
+   */
+  readonly activePreviewRenderer = computed(() => {
     const tab = this.activeTab();
-    return tab !== null && tab.preview && isMarkdownPath(tab.path);
+    if (!tab?.preview) return null;
+    return reviewPreviewRendererForPath(tab.path);
   });
+
+  readonly showPreview = computed(() => this.activePreviewRenderer() !== null);
 
   /**
    * Selection metadata for the markdown preview, taken from the diff panel so a
@@ -131,6 +137,7 @@ export class ReviewWorkspaceComponent {
     if (!path) return null;
     return this.diffPanel()?.fileChangeHashes().get(path) ?? null;
   });
+
 
   readonly canFork = computed(() =>
     FORKABLE_PROVIDERS.includes(this.provider()),
@@ -290,9 +297,9 @@ export class ReviewWorkspaceComponent {
         {
           path,
           scrollTop: 0,
-          // Markdown opens rendered: that is how you want to read a document,
-          // and the toggle is one click away when you want the diff.
-          preview: isMarkdownPath(path),
+          // Each renderer decides whether its files land rendered or on the
+          // diff; the toggle is one click away either way.
+          preview: reviewPreviewRendererForPath(path)?.opensByDefault ?? false,
           extra: Boolean(options.extra),
         },
       ]);
@@ -341,7 +348,7 @@ export class ReviewWorkspaceComponent {
   }
 
   private captureActiveScroll(): void {
-    if (this.showMarkdownPreview()) return; // the preview reports its own offset
+    if (this.showPreview()) return; // the preview reports its own offset
     const panel = this.diffPanel();
     if (!panel) return;
     this.rememberScroll(panel.readScrollTop());
@@ -349,7 +356,7 @@ export class ReviewWorkspaceComponent {
 
   private restoreActiveScroll(): void {
     const tab = this.activeTab();
-    if (!tab || this.showMarkdownPreview()) return;
+    if (!tab || this.showPreview()) return;
     this.diffPanel()?.restoreScrollTop(tab.scrollTop);
   }
 
@@ -365,3 +372,4 @@ export class ReviewWorkspaceComponent {
     this.promoted.emit(response as CreateSessionForkResponse);
   }
 }
+

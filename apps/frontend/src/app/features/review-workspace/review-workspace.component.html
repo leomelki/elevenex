@@ -73,7 +73,7 @@
         <app-change-review-panel
           class="h-full"
           chromeVariant="workspace"
-          [class.rw-code__hidden]="showMarkdownPreview()"
+          [class.rw-code__hidden]="showPreview()"
           [worktreePath]="worktreePath()"
           [fullFileMode]="fullFileMode()"
           [extraFiles]="extraFiles()"
@@ -86,19 +86,30 @@
           (fileActivated)="openTab($event)"
         />
 
-        @if (showMarkdownPreview()) {
+        <!--
+          Dispatched with a switch rather than ngComponentOutlet on purpose:
+          the renderers take genuinely different inputs, and an outlet would
+          force an untyped inputs bag that defeats template type-checking, for
+          the sake of saving three lines per renderer. Adding one here is a
+          descriptor in review-preview-renderers.ts plus a case below.
+        -->
+        @if (activePreviewRenderer(); as renderer) {
           @if (activeTab(); as tab) {
-            <app-review-markdown-preview
-              class="rw-code__overlay"
-              [worktreePath]="worktreePath()"
-              [path]="tab.path"
-              [restoreScrollTop]="tab.scrollTop"
-              [scope]="previewScope()"
-              [changeHash]="previewChangeHash()"
-              [selectionActions]="selectionActions()"
-              (scrolled)="onPreviewScrolled($event)"
-              (selectionAction)="onPreviewSelectionAction($event)"
-            />
+            @switch (renderer.id) {
+              @case ('markdown') {
+                <app-review-markdown-preview
+                  class="rw-code__overlay"
+                  [worktreePath]="worktreePath()"
+                  [path]="tab.path"
+                  [restoreScrollTop]="tab.scrollTop"
+                  [scope]="previewScope()"
+                  [changeHash]="previewChangeHash()"
+                  [selectionActions]="selectionActions()"
+                  (scrolled)="onPreviewScrolled($event)"
+                  (selectionAction)="onPreviewSelectionAction($event)"
+                />
+              }
+            }
           }
         }
       </div>
