@@ -52,124 +52,220 @@
   overflow-y: auto;
 }
 
-/* Rendered document styling: utilities cannot reach markdown output. */
-.mp-md {
+/* Rendered document styling: utilities cannot reach markdown output.
+   `::ng-deep` is required, not decorative — the pipe's HTML is injected with
+   `[innerHTML]`, so its elements never receive this component's scoping
+   attribute and every plain `.mp-md h1` selector would silently match nothing. */
+:host ::ng-deep .mp-md {
   max-width: 48rem;
   margin: 0 auto;
   padding: 1.25rem clamp(1rem, 5%, 2.5rem) 3rem;
   color: var(--foreground);
   font-size: 0.86rem;
   line-height: 1.65;
-}
+  word-break: break-word;
 
-.mp-md :first-child {
-  margin-top: 0;
-}
+  > :first-child {
+    margin-top: 0;
+  }
 
-.mp-md h1,
-.mp-md h2,
-.mp-md h3,
-.mp-md h4 {
-  margin: 1.6em 0 0.6em;
-  font-weight: 700;
-  line-height: 1.25;
-}
+  > :last-child {
+    margin-bottom: 0;
+  }
 
-.mp-md h1 {
-  font-size: 1.6em;
-  padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--border);
-}
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    margin: 1.6em 0 0.6em;
+    color: var(--foreground);
+    font-weight: 700;
+    line-height: 1.25;
+  }
 
-.mp-md h2 {
-  font-size: 1.3em;
-  padding-bottom: 0.25em;
-  border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
-}
+  h1 {
+    font-size: 1.6em;
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--border);
+  }
 
-.mp-md h3 {
-  font-size: 1.1em;
-}
+  h2 {
+    font-size: 1.3em;
+    padding-bottom: 0.25em;
+    border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+  }
 
-.mp-md p,
-.mp-md ul,
-.mp-md ol,
-.mp-md blockquote,
-.mp-md table {
-  margin: 0.85em 0;
-}
+  h3 {
+    font-size: 1.1em;
+  }
 
-.mp-md ul,
-.mp-md ol {
-  padding-left: 1.5em;
-}
+  h4,
+  h5,
+  h6 {
+    font-size: 1em;
+  }
 
-.mp-md li + li {
-  margin-top: 0.25em;
-}
+  h6 {
+    color: var(--muted-foreground);
+  }
 
-.mp-md a {
-  color: var(--primary);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
+  p,
+  ul,
+  ol,
+  blockquote,
+  table,
+  pre {
+    margin: 0.85em 0;
+  }
 
-.mp-md blockquote {
-  border-left: 3px solid color-mix(in oklch, var(--primary) 45%, var(--border));
-  background: color-mix(in oklch, var(--muted) 35%, transparent);
-  border-radius: 0 0.4rem 0.4rem 0;
-  color: var(--muted-foreground);
-  padding: 0.5em 0.9em;
-}
+  ul,
+  ol {
+    padding-left: 1.5em;
+  }
 
-.mp-md code {
-  border-radius: 0.3rem;
-  background: color-mix(in oklch, var(--foreground) 8%, transparent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.86em;
-  padding: 0.1em 0.35em;
-}
+  /* Browser defaults are reset by the global stylesheet, so the markers have
+     to be restated here or nested lists render as unmarked paragraphs. */
+  ul {
+    list-style-type: disc;
+  }
 
-.mp-md pre {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--card);
-  padding: 0.75em 0.9em;
-}
+  ol {
+    list-style-type: decimal;
+  }
 
-.mp-md pre code {
-  background: transparent;
-  padding: 0;
-  font-size: 0.82em;
-}
+  ul ul,
+  ol ul {
+    list-style-type: circle;
+  }
 
-.mp-md table {
-  width: 100%;
-  border-collapse: collapse;
-  display: block;
-  overflow-x: auto;
-}
+  ul ul ul,
+  ol ul ul {
+    list-style-type: square;
+  }
 
-.mp-md th,
-.mp-md td {
-  border: 1px solid var(--border);
-  padding: 0.4em 0.6em;
-  text-align: left;
-}
+  li + li {
+    margin-top: 0.25em;
+  }
 
-.mp-md th {
-  background: color-mix(in oklch, var(--muted) 45%, transparent);
-  font-weight: 700;
-}
+  li > p {
+    margin: 0.25em 0;
+  }
 
-.mp-md hr {
-  margin: 1.75em 0;
-  border: 0;
-  border-top: 1px solid var(--border);
-}
+  /* GFM task lists carry their own box, so the list marker is redundant. */
+  li:has(.cw-task) {
+    list-style: none;
+    margin-left: -1.25em;
+  }
 
-.mp-md img {
-  max-width: 100%;
-  border-radius: 0.4rem;
+  .cw-task {
+    margin-right: 0.15em;
+    font-size: 1.1em;
+    line-height: 1;
+  }
+
+  .cw-task--done {
+    color: var(--success);
+  }
+
+  .cw-task--todo {
+    color: var(--muted-foreground);
+  }
+
+  strong {
+    color: var(--foreground);
+    font-weight: 700;
+  }
+
+  a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  blockquote {
+    border-left: 3px solid color-mix(in oklch, var(--primary) 45%, var(--border));
+    background: color-mix(in oklch, var(--muted) 35%, transparent);
+    border-radius: 0 0.4rem 0.4rem 0;
+    color: var(--muted-foreground);
+    padding: 0.5em 0.9em;
+  }
+
+  code {
+    border-radius: 0.3rem;
+    background: color-mix(in oklch, var(--foreground) 8%, transparent);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.86em;
+    padding: 0.1em 0.35em;
+  }
+
+  pre {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--card);
+    padding: 0.75em 0.9em;
+    line-height: 1.55;
+
+    code {
+      background: transparent;
+      padding: 0;
+      font-size: 0.82em;
+    }
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    display: block;
+    overflow-x: auto;
+  }
+
+  th,
+  td {
+    border: 1px solid var(--border);
+    padding: 0.4em 0.6em;
+    text-align: left;
+  }
+
+  th {
+    background: color-mix(in oklch, var(--muted) 45%, transparent);
+    font-weight: 700;
+  }
+
+  tbody tr:nth-child(even) {
+    background: color-mix(in oklch, var(--muted) 18%, transparent);
+  }
+
+  hr {
+    margin: 1.75em 0;
+    border: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 1em 0;
+    border-radius: 0.4rem;
+    /* A transparent PNG drawn for a light background stays legible on a dark
+       one, and the border keeps a white-on-white screenshot from bleeding
+       into the page. */
+    background: color-mix(in oklch, var(--muted) 40%, transparent);
+    border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  }
+
+  /* An inline image (a badge, an emoji) should sit in the text, not break it. */
+  p > img:not(:only-child),
+  a > img,
+  td img,
+  th img {
+    display: inline-block;
+    margin: 0;
+    vertical-align: middle;
+    background: none;
+    border: 0;
+  }
 }

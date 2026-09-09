@@ -769,6 +769,26 @@
     margin: 0.125rem 0;
   }
 
+  // GFM task lists carry their own box, so the list marker is redundant.
+  li:has(.cw-task) {
+    list-style: none;
+    margin-left: -1.25rem;
+  }
+
+  .cw-task {
+    margin-right: 0.15em;
+    font-size: 1.1em;
+    line-height: 1;
+
+    &--done {
+      color: var(--success);
+    }
+
+    &--todo {
+      color: var(--muted-foreground);
+    }
+  }
+
   strong {
     color: var(--foreground);
     font-weight: 700;

@@ -17,7 +17,7 @@
       (mouseup)="captureSelection()"
       (keyup)="captureSelection()"
     >
-      <div class="mp-md" [innerHTML]="content() | cwMarkdown: worktreePath()"></div>
+      <div class="mp-md" [innerHTML]="content() | cwMarkdown: worktreePath() : path()"></div>
 
       @if (selectionMenu(); as menu) {
         <cr-selection-menu

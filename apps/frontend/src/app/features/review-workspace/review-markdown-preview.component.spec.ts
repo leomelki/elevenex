@@ -8,9 +8,21 @@ import { ReviewMarkdownPreviewComponent } from './review-markdown-preview.compon
 
 const flush = () => new Promise((resolve) => window.setTimeout(resolve, 0));
 
-const DOC = ['# Title', '', 'An intro paragraph about the thing.', '', 'Another paragraph.'].join(
-  '\n',
-);
+const DOC = [
+  '# Title',
+  '',
+  'An intro paragraph about the thing.',
+  '',
+  '## Section',
+  '',
+  '| A | B |',
+  '| - | - |',
+  '| 1 | 2 |',
+  '',
+  '![A diagram](./img/diagram.png)',
+  '',
+  'Another paragraph.',
+].join('\n');
 
 describe('ReviewMarkdownPreviewComponent', () => {
   let fixture: ComponentFixture<ReviewMarkdownPreviewComponent>;
@@ -59,6 +71,23 @@ describe('ReviewMarkdownPreviewComponent', () => {
   it('renders the document', () => {
     expect((fixture.nativeElement as HTMLElement).textContent).toContain(
       'An intro paragraph about the thing.',
+    );
+  });
+
+  it('renders the block constructs the document uses, not just its paragraphs', () => {
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('.mp-md h1')?.textContent).toBe('Title');
+    expect(root.querySelector('.mp-md h2')?.textContent).toBe('Section');
+    expect(root.querySelector('.mp-md th')?.textContent).toBe('A');
+    expect(root.querySelector('.mp-md td')?.textContent).toBe('1');
+  });
+
+  it('loads an embedded image relative to the document, not the worktree root', () => {
+    // The doc is `docs/notes.md`, so `./img/diagram.png` is `docs/img/diagram.png`.
+    const image = (fixture.nativeElement as HTMLElement).querySelector('.mp-md img');
+    expect(image?.getAttribute('alt')).toBe('A diagram');
+    expect(image?.getAttribute('src')).toContain(
+      `/raw/${encodeURIComponent('docs/img/diagram.png')}`,
     );
   });
 
