@@ -103,9 +103,15 @@ export function detectLanguage(filename: string): string {
 }
 
 /**
- * Map file extensions to MIME types for raw binary serving (e.g. images embedded in chat markdown).
+ * Map file extensions to MIME types for raw byte serving.
+ *
+ * Used both for images embedded in chat markdown and for the review HTML
+ * preview, which serves a page's whole dependency graph from the worktree.
+ * The preview is why the non-image entries matter: a stylesheet sent as
+ * `application/octet-stream` is not applied, and a script is not executed.
  */
 const MIME_TYPE_MAP: Record<string, string> = {
+  // Images
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -115,6 +121,34 @@ const MIME_TYPE_MAP: Record<string, string> = {
   '.bmp': 'image/bmp',
   '.ico': 'image/x-icon',
   '.avif': 'image/avif',
+  // Documents and code
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.xhtml': 'application/xhtml+xml; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.cjs': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.wasm': 'application/wasm',
+  // Fonts
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.eot': 'application/vnd.ms-fontobject',
+  // Media
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
 };
 
 /**

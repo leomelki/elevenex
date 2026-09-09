@@ -10,6 +10,7 @@ import {
   Put,
   Query,
   Res,
+  StreamableFile,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { FilesService } from './files.service.js';
@@ -174,7 +175,7 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Param('path') filePath: string,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<Buffer> {
+  ): Promise<StreamableFile> {
     const decodedWorktree = decodeURIComponent(worktreePath);
     const decodedFile = decodeURIComponent(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
@@ -186,7 +187,13 @@ export class FilesController {
       );
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Cache-Control', 'private, max-age=60');
-      return buffer;
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      // Must be a StreamableFile, not the raw Buffer: Nest's Express adapter
+      // ends with `isObject(body) ? res.json(body) : res.send(body)`, and a
+      // Buffer is an object — so returning it sends `{"type":"Buffer",...}`
+      // under an image content type. Passthrough is kept so the
+      // NotFoundException below still turns into a 404.
+      return new StreamableFile(buffer, { type: mimeType });
     } catch (error) {
       if (error instanceof Error && error.message.includes('does not exist')) {
         throw new NotFoundException(error.message);
