@@ -125,6 +125,16 @@ export function isBackendOriginReady(
 }
 
 export function getApiBaseUrl(): string {
+  // The runtime's `apiBaseUrl` is fixed when the window opens, so after a
+  // switch to an SSH, WSL or paired backend it still names this machine's.
+  // REST calls follow the switch through the api-base interceptor; URLs built
+  // by hand — markdown images, event streams — must follow it too, or they
+  // quietly ask the wrong backend for the file.
+  const onboardingOrigin = getOnboardingBackendOrigin(readOnboardingStateSnapshot());
+  if (onboardingOrigin) {
+    return `${normalizeBaseUrl(onboardingOrigin)}/api`;
+  }
+
   const runtimeApiBase = normalizeBaseUrl(getRuntimeConfig().apiBaseUrl);
   if (runtimeApiBase) {
     return runtimeApiBase;

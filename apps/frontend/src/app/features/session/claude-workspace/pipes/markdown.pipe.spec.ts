@@ -119,6 +119,32 @@ describe('MarkdownPipe', () => {
     expect(imageSrc('![a](img/a.png)')).toBe('img/a.png');
   });
 
+  it('resolves raw HTML images the same way as markdown ones', () => {
+    // Documents size images with `<img width>`; left alone, the browser would
+    // look for the file next to the app instead of in the worktree.
+    const host = document.createElement('div');
+    host.innerHTML = render('<img src="./img/a.png" width="240" alt="Diagram">', WORKTREE, 'docs/guide.md');
+    const image = host.querySelector('img');
+
+    expect(image?.getAttribute('src')).toBe(rawUrl('docs/img/a.png'));
+    expect(image?.getAttribute('width')).toBe('240');
+  });
+
+  it('reads an absolute path inside the worktree as that worktree file', () => {
+    expect(imageSrc(`![a](${WORKTREE}/docs/shot.png)`, WORKTREE, 'notes/plan.md')).toBe(
+      rawUrl('docs/shot.png'),
+    );
+    // Sessions store their worktree with a trailing slash.
+    expect(imageSrc(`![a](${WORKTREE}/docs/shot.png)`, `${WORKTREE}/`, 'notes/plan.md')).toContain(
+      `/raw/${encodeURIComponent('docs/shot.png')}`,
+    );
+  });
+
+  it('encodes a filename with spaces exactly once however it is written', () => {
+    expect(imageSrc('![a](<my shot.png>)', WORKTREE, 'README.md')).toBe(rawUrl('my shot.png'));
+    expect(imageSrc('![a](my%20shot.png)', WORKTREE, 'README.md')).toBe(rawUrl('my shot.png'));
+  });
+
   it('keeps the alt text and title', () => {
     const html = render('![Alt text](a.png "A title")', WORKTREE, 'README.md');
     expect(html).toContain('alt="Alt text"');
