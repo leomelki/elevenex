@@ -1,5 +1,6 @@
 import { HttpClient, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { effect, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { provideApiBaseInterceptor } from './api-base.interceptor';
@@ -76,5 +77,32 @@ describe('apiBaseInterceptor', () => {
 
     expect(serverConnectionMock.waitUntilInteractive).not.toHaveBeenCalled();
     expect(response).toHaveBeenCalledWith({ ok: true });
+  });
+
+  it('does not make an effect that sends a request depend on connection state', async () => {
+    // Subscribing runs this interceptor synchronously inside the caller's
+    // effect, so a signal read while gating would re-run that effect — and
+    // resend its request — every time the connection changed.
+    const interactive = signal(true);
+    serverConnectionMock.waitUntilInteractive.mockImplementationOnce(() => {
+      interactive();
+      return Promise.resolve();
+    });
+
+    let runs = 0;
+    TestBed.runInInjectionContext(() =>
+      effect(() => {
+        runs += 1;
+        http.get('/api/info').subscribe();
+      }),
+    );
+    TestBed.tick();
+
+    interactive.set(false);
+    TestBed.tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(runs).toBe(1);
+    httpMock.expectOne('http://backend.test/api/info').flush({});
   });
 });

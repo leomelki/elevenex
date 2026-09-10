@@ -7,6 +7,7 @@ import {
   input,
   output,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -86,13 +87,26 @@ export class ReviewMarkdownPreviewComponent {
     effect(() => {
       const worktreePath = this.worktreePath();
       const path = this.path();
-      this.selectionMenu.set(null);
-      void this.load(worktreePath, path);
+      // The read subscribes synchronously, so without this anything the HTTP
+      // chain reads becomes a dependency, and a change to it reloads the
+      // document — throwing the reader back to the top until it lands again.
+      untracked(() => {
+        this.selectionMenu.set(null);
+        void this.load(worktreePath, path);
+      });
     });
 
+    // Restore once per rendered document, never because the offset changed.
+    // `restoreScrollTop` is fed by our own `scrolled` output, so tracking it
+    // wrote a one-frame-stale offset back on every scroll event: the page
+    // fought wheel and momentum scrolling, and a drag selection drifted off
+    // the pointer as the browser's autoscroll kept being undone.
     effect(() => {
+      // A new article is a freshly loaded document; content covers a path
+      // change whose read resolved without swapping the article out.
+      this.scrollRef();
       this.content();
-      const offset = this.restoreScrollTop();
+      const offset = untracked(() => this.restoreScrollTop());
       if (!offset) return;
       requestAnimationFrame(() => {
         const element = this.scrollRef()?.nativeElement;

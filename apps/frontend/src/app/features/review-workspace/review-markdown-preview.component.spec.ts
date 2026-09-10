@@ -1,7 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { of } from 'rxjs';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import { FilesService } from '@/shared/services/files.service';
 import { ReviewMarkdownPreviewComponent } from './review-markdown-preview.component';
@@ -28,18 +28,28 @@ describe('ReviewMarkdownPreviewComponent', () => {
   let fixture: ComponentFixture<ReviewMarkdownPreviewComponent>;
   let component: ReviewMarkdownPreviewComponent;
   let emitted: Array<{ id: string; mentions: DiffSelectionMention[] }>;
+  let readFile: ReturnType<typeof vi.fn>;
+  /** Stands in for state the HTTP chain reads while the request subscribes. */
+  let connected: ReturnType<typeof signal<boolean>>;
 
   beforeEach(async () => {
     emitted = [];
+    connected = signal(true);
+    readFile = vi.fn(() => {
+      // The api-base interceptor reads connection state synchronously, inside
+      // whatever reactive context started the request.
+      connected();
+      return of({ content: DOC, language: 'markdown' });
+    });
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+      window.setTimeout(() => callback(Date.now()), 0),
+    );
 
     await TestBed.configureTestingModule({
       imports: [ReviewMarkdownPreviewComponent],
       providers: [
         provideZonelessChangeDetection(),
-        {
-          provide: FilesService,
-          useValue: { readFile: vi.fn(() => of({ content: DOC, language: 'markdown' })) },
-        },
+        { provide: FilesService, useValue: { readFile } },
       ],
     }).compileComponents();
 
@@ -53,10 +63,20 @@ describe('ReviewMarkdownPreviewComponent', () => {
     ]);
     component.selectionAction.subscribe((event) => emitted.push(event));
 
+    await settle();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  async function settle(): Promise<void> {
     fixture.detectChanges();
     await flush();
     fixture.detectChanges();
-  });
+    await flush();
+  }
 
   function selectParagraph(text: string): void {
     const paragraph = Array.from(
@@ -123,5 +143,40 @@ describe('ReviewMarkdownPreviewComponent', () => {
     expect(
       (fixture.nativeElement as HTMLElement).querySelector('.cr-selection-menu'),
     ).toBeNull();
+  });
+
+  it('keeps the document when state read during its request changes', async () => {
+    // A connection blip used to reload the file, which swapped the article for
+    // a spinner and dropped the reader back to the top.
+    const article = (fixture.nativeElement as HTMLElement).querySelector('.mp-doc');
+
+    connected.set(false);
+    await settle();
+    connected.set(true);
+    await settle();
+
+    expect(readFile).toHaveBeenCalledTimes(1);
+    expect((fixture.nativeElement as HTMLElement).querySelector('.mp-doc')).toBe(article);
+  });
+
+  it('does not write back the scroll offset it reported itself', async () => {
+    // The host echoes `scrolled` into `restoreScrollTop`; applying that echo a
+    // frame late fought the user's own scrolling and dragged selections.
+    const setScrollTop = vi.spyOn(Element.prototype, 'scrollTop', 'set');
+
+    fixture.componentRef.setInput('restoreScrollTop', 240);
+    await settle();
+
+    expect(setScrollTop).not.toHaveBeenCalled();
+  });
+
+  it('restores the tab’s offset when a document is opened', async () => {
+    const setScrollTop = vi.spyOn(Element.prototype, 'scrollTop', 'set');
+
+    fixture.componentRef.setInput('path', 'docs/other.md');
+    fixture.componentRef.setInput('restoreScrollTop', 180);
+    await settle();
+
+    expect(setScrollTop).toHaveBeenCalledWith(180);
   });
 });

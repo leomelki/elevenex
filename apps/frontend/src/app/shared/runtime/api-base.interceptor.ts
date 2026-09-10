@@ -1,4 +1,4 @@
-import { inject } from '@angular/core';
+import { inject, untracked } from '@angular/core';
 import { HttpInterceptorFn, withInterceptors } from '@angular/common/http';
 import { from, switchMap } from 'rxjs';
 import { getBackendOrigin } from './runtime-config';
@@ -6,7 +6,11 @@ import { ServerConnectionService } from '../services/server-connection.service';
 
 const ABSOLUTE_URL_PATTERN = /^[a-z][a-z\d+\-.]*:\/\//i;
 
-const apiBaseInterceptor: HttpInterceptorFn = (req, next) => {
+// Untracked because subscribing runs this synchronously inside whatever effect
+// sent the request. The connection state read while gating would otherwise
+// become that effect's dependency, re-running it — and resending its request —
+// on every reconnect.
+const apiBaseInterceptor: HttpInterceptorFn = (req, next) => untracked(() => {
   const backendOrigin = getBackendOrigin();
   const isRelativeBackendRequest = req.url.startsWith('/');
   const isAbsoluteBackendRequest = req.url.startsWith(`${backendOrigin}/`);
@@ -23,7 +27,7 @@ const apiBaseInterceptor: HttpInterceptorFn = (req, next) => {
   return from(serverConnection.waitUntilInteractive()).pipe(
     switchMap(() => next(request)),
   );
-};
+});
 
 export function provideApiBaseInterceptor() {
   return withInterceptors([apiBaseInterceptor]);
