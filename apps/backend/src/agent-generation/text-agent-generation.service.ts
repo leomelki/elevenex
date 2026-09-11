@@ -12,7 +12,7 @@ import type {
 import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
 import {
   findSdkRealDir,
-  resolveCodexBinary,
+  resolveCodexSdkBinaryOverride,
 } from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
 import { SettingsService } from '../settings/settings.service.js';
@@ -218,8 +218,9 @@ export class TextAgentGenerationService {
         request.worktreePath,
       );
       const { Codex } = await importCodexSdk();
+      const codexPathOverride = resolveCodexSdkBinaryOverride();
       const codex = new Codex({
-        codexPathOverride: resolveCodexBinary(),
+        ...(codexPathOverride ? { codexPathOverride } : {}),
         env: this.toStringEnv(env),
       });
       const thread = codex.startThread(
