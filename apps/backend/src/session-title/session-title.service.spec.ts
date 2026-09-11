@@ -52,7 +52,7 @@ describe('SessionTitleService', () => {
   it('uses Codex for Codex session titles', async () => {
     textAgentGenerationService.generate.mockResolvedValue({
       provider: 'codex',
-      model: 'gpt-5.4-mini',
+      model: 'user-selected-codex-model',
       text: 'Implement Auto Names',
     });
 

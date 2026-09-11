@@ -15,6 +15,7 @@ import {
   resolveCodexBinary,
 } from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
+import { SettingsService } from '../settings/settings.service.js';
 import { AntigravityProcessClient } from '../antigravity-runtime/antigravity-process-client.js';
 import type { AntigravityResultEvent } from '../antigravity-runtime/antigravity-runtime.types.js';
 
@@ -31,11 +32,6 @@ const ANTIGRAVITY_NO_TOOLS_PREAMBLE =
   'Everything you need is in this message; answer directly from it.';
 
 export type TextAgentProvider = 'claude' | 'codex' | 'pi' | 'antigravity';
-
-export const DEFAULT_TEXT_AGENT_MODELS = {
-  claude: 'haiku',
-  codex: 'gpt-5.4-mini',
-} as const;
 
 type CodexSdkModule = typeof import('@openai/codex-sdk');
 
@@ -88,6 +84,7 @@ export interface GenerateTextWithAgentRequest {
     model?: string;
   };
   pi?: {
+    model?: string;
     timeoutMs?: number;
   };
   antigravity?: {
@@ -113,6 +110,8 @@ export interface GenerateTextWithAgentResult {
 export class TextAgentGenerationService {
   private readonly logger = new Logger(TextAgentGenerationService.name);
 
+  constructor(private readonly settingsService: SettingsService) {}
+
   async generate(
     request: GenerateTextWithAgentRequest,
   ): Promise<GenerateTextWithAgentResult | null> {
@@ -137,7 +136,7 @@ export class TextAgentGenerationService {
       return null;
     }
 
-    const model = request.claude?.model ?? DEFAULT_TEXT_AGENT_MODELS.claude;
+    const model = this.resolveModel('claude', request.claude?.model);
     const env = await buildAugmentedEnvAsync(process.env, request.worktreePath);
     const canUseTool =
       request.claude?.canUseTool ??
@@ -150,7 +149,7 @@ export class TextAgentGenerationService {
       prompt: request.prompt,
       options: {
         cwd: request.worktreePath,
-        model,
+        ...(model ? { model } : {}),
         permissionMode: 'plan',
         canUseTool,
         ...(request.claude?.maxTurns !== undefined
@@ -212,7 +211,7 @@ export class TextAgentGenerationService {
       return null;
     }
 
-    const model = request.codex?.model ?? DEFAULT_TEXT_AGENT_MODELS.codex;
+    const model = this.resolveModel('codex', request.codex?.model);
     try {
       const env = await buildAugmentedEnvAsync(
         process.env,
@@ -223,13 +222,9 @@ export class TextAgentGenerationService {
         codexPathOverride: resolveCodexBinary(),
         env: this.toStringEnv(env),
       });
-      const thread = codex.startThread({
-        workingDirectory: request.worktreePath,
-        skipGitRepoCheck: true,
-        model,
-        sandboxMode: 'read-only',
-        approvalPolicy: 'never',
-      });
+      const thread = codex.startThread(
+        this.buildCodexThreadOptions(request.worktreePath, model),
+      );
       const result = await thread.run(request.prompt);
       return {
         provider: 'codex',
@@ -257,6 +252,7 @@ export class TextAgentGenerationService {
     }
 
     const timeoutMs = request.pi?.timeoutMs ?? 60_000;
+    const model = this.resolveModel('pi', request.pi?.model);
     const runtime = new PiSessionRuntime({
       cwd: request.worktreePath,
       timeoutMs,
@@ -325,14 +321,27 @@ export class TextAgentGenerationService {
     });
 
     try {
+      const parsedModel = this.parsePiModelRef(model);
+      if (parsedModel) {
+        await runtime.send({
+          type: 'set_model',
+          provider: parsedModel.provider,
+          modelId: parsedModel.modelId,
+        });
+      } else if (model) {
+        this.logger.warn(
+          `[${request.taskName}] Ignoring invalid Pi model reference: ${JSON.stringify(model)}`,
+        );
+      }
       await runtime.send({
         type: 'prompt',
         message: request.prompt,
+        reasoningEffort: 'low',
       });
       await completionPromise;
       return {
         provider: 'pi',
-        model: null,
+        model,
         text: assistantFinalText || assistantDeltaText,
       };
     } catch (error) {
@@ -375,7 +384,7 @@ export class TextAgentGenerationService {
       return null;
     }
 
-    const model = request.antigravity?.model ?? null;
+    const model = this.resolveModel('antigravity', request.antigravity?.model);
     const schema = request.antigravity?.jsonSchema;
     const timeoutMs = request.antigravity?.timeoutMs ?? 120_000;
 
@@ -512,6 +521,38 @@ export class TextAgentGenerationService {
         return '';
       })
       .join('');
+  }
+
+  private resolveModel(
+    provider: TextAgentProvider,
+    requestedModel?: string,
+  ): string | null {
+    const requested = requestedModel?.trim();
+    if (requested) return requested;
+    return this.settingsService.getAgentProviderDefaults(provider).model;
+  }
+
+  private parsePiModelRef(
+    model: string | null,
+  ): { provider: string; modelId: string } | null {
+    if (!model) return null;
+    const slash = model.indexOf('/');
+    if (slash <= 0 || slash === model.length - 1) return null;
+    return {
+      provider: model.slice(0, slash),
+      modelId: model.slice(slash + 1),
+    };
+  }
+
+  private buildCodexThreadOptions(worktreePath: string, model: string | null) {
+    return {
+      workingDirectory: worktreePath,
+      skipGitRepoCheck: true,
+      ...(model ? { model } : {}),
+      modelReasoningEffort: 'low',
+      sandboxMode: 'read-only',
+      approvalPolicy: 'never',
+    } as const;
   }
 
   private resolveClaudeCodeExecutable(): string {

@@ -31,13 +31,13 @@ describe('TranscriptCleanupService', () => {
     // A latency-critical text transform must not ship the full tool preset.
     expect(request['claude'].tools).toEqual([]);
     expect(request['claude'].maxTurns).toBe(1);
-    expect(request['claude'].model).toBe('haiku');
+    expect(request['claude'].model).toBeUndefined();
   });
 
   it('passes the pinned model to every harness that accepts one', async () => {
     const generate = jest.fn(async () => ({
       provider: 'codex',
-      model: 'gpt-5.4-mini',
+      model: 'user-selected-codex-model',
       text: 'ok',
     }));
     const service = createService(generate);
@@ -45,12 +45,12 @@ describe('TranscriptCleanupService', () => {
     await service.clean({
       ...BASE,
       provider: 'codex',
-      model: 'gpt-5.4-mini',
+      model: 'user-selected-codex-model',
       rawText: 'ok',
     });
 
     const request = generate.mock.calls[0]![0] as Record<string, any>;
-    expect(request['codex']).toEqual({ model: 'gpt-5.4-mini' });
+    expect(request['codex']).toEqual({ model: 'user-selected-codex-model' });
   });
 
   it('includes keyterms so spoken identifiers can be reconstructed', async () => {
@@ -94,7 +94,11 @@ describe('TranscriptCleanupService', () => {
 
   it('returns null on an empty reply', async () => {
     const service = createService(
-      jest.fn(async () => ({ provider: 'claude', model: 'haiku', text: '   ' })),
+      jest.fn(async () => ({
+        provider: 'claude',
+        model: 'haiku',
+        text: '   ',
+      })),
     );
     await expect(
       service.clean({ ...BASE, rawText: 'some words' }),
@@ -143,7 +147,9 @@ describe('TranscriptCleanupService', () => {
     const generate = jest.fn();
     const service = createService(generate);
 
-    await expect(service.clean({ ...BASE, rawText: '   ' })).resolves.toBeNull();
+    await expect(
+      service.clean({ ...BASE, rawText: '   ' }),
+    ).resolves.toBeNull();
     await expect(
       service.clean({ ...BASE, rawText: 'x'.repeat(5000) }),
     ).resolves.toBeNull();

@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
-  DEFAULT_TEXT_AGENT_MODELS,
   TextAgentGenerationService,
   type TextAgentProvider,
 } from '../agent-generation/text-agent-generation.service.js';
@@ -57,7 +56,7 @@ export class TranscriptCleanupService {
       return null;
     }
 
-    const model = request.model ?? defaultModelFor(provider);
+    const model = request.model;
     const prompt = this.buildPrompt(raw, request.keyterms);
     const startedAt = Date.now();
 
@@ -186,10 +185,4 @@ export class TranscriptCleanupService {
       }
     }
   }
-}
-
-function defaultModelFor(provider: TextAgentProvider): string | null {
-  return provider === 'claude' || provider === 'codex'
-    ? DEFAULT_TEXT_AGENT_MODELS[provider]
-    : null;
 }
