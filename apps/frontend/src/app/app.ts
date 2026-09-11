@@ -24,7 +24,6 @@ import { WslInstallModalComponent } from './features/remote-install/wsl-install-
 import { getRuntimeConfig } from './shared/runtime/runtime-config';
 import {
   ElectronWindowState,
-  getElectronAppApi,
   getElectronWindowControlsApi,
 } from './shared/runtime/electron-window-controls';
 import { TmuxRequiredOverlayComponent } from './features/tmux-required/tmux-required-overlay.component';
@@ -89,7 +88,6 @@ export class App implements OnInit, OnDestroy {
   private readonly onboardingState = inject(OnboardingStateService);
   private readonly theme = inject(ThemeService);
   private readonly windowControls = getElectronWindowControlsApi();
-  private readonly appControls = getElectronAppApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
 
   sidebarWidth = signal(readSidebarWidth());
@@ -116,10 +114,9 @@ export class App implements OnInit, OnDestroy {
     !this.sshRuntimeRecovery.remoteDisconnect() &&
     !this.isOnboardingRoute(),
   );
-  // tmux is a hard requirement: when the active backend reports it's missing we
-  // block the workspace entirely. Only surfaces for a determinate backend (local,
-  // or a remote that is actually connected) and never over onboarding/SSH overlays.
-  readonly tmuxRequired = computed<{ mode: 'local' | 'remote'; platform: string } | null>(() => {
+  // Remote POSIX runtimes use tmux for persistence. Local and Windows runtimes
+  // manage child processes directly and must never be blocked on its presence.
+  readonly tmuxRequired = computed<{ platform: string } | null>(() => {
     if (this.isOnboardingRoute()) {
       return null;
     }
@@ -127,28 +124,20 @@ export class App implements OnInit, OnDestroy {
       return null;
     }
     const capabilities = this.serverConnection.capabilities();
-    if (!capabilities || capabilities.tmuxAvailable) {
+    if (!capabilities || !capabilities.tmuxRequired || capabilities.tmuxAvailable) {
       return null;
     }
 
     const snapshot = this.onboardingState.snapshotState();
-    if (snapshot.mode === 'ssh') {
+    if (snapshot.mode !== 'local') {
       // Capabilities only reflect the remote host once the tunnel is active.
       if (!snapshot.remoteConnectionReady) {
         return null;
       }
-      return { mode: 'remote', platform: capabilities.platform };
+      return { platform: capabilities.platform };
     }
 
-    return { mode: 'local', platform: capabilities.platform };
-  });
-  readonly canRestartApp = computed(() => this.appControls !== null);
-  readonly tmuxActionLabel = computed(() => {
-    const block = this.tmuxRequired();
-    if (block?.mode === 'remote') {
-      return 'Reconnect';
-    }
-    return this.canRestartApp() ? 'Restart Elevenex' : 'Re-check';
+    return null;
   });
 
   private removeWindowListener: (() => void) | null = null;
@@ -335,14 +324,8 @@ export class App implements OnInit, OnDestroy {
 
     this.tmuxActionBusy.set(true);
     try {
-      if (block.mode === 'local' && this.appControls) {
-        // Relaunches the desktop app; this process is replaced before we return.
-        await this.appControls.restart();
-        return;
-      }
-
-      // Remote, or local web/dev runtime without a relaunch bridge: reopen the
-      // server connection so the backend re-advertises whether tmux is present.
+      // Reopen the server connection so the remote backend re-advertises
+      // whether tmux is present.
       this.serverConnection.recheck();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not restart Elevenex.');

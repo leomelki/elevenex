@@ -1382,6 +1382,7 @@ async function launchEmbeddedBackendWithRetries() {
     const env = {
       ...process.env,
       ELEVENEX_BACKEND_RUNTIME_ROOT: embeddedBackendRoot,
+      ELEVENEX_BACKEND_MODE: 'local',
       DB_PATH: packagedDatabasePath,
       ELEVENEX_PROXY_PORT: resolvedPort,
       FRONTEND_PORT: resolvedPort,
@@ -4444,8 +4445,8 @@ ipcMain.handle('elevenex-windows:broadcast', (event, payload) => {
 
 ipcMain.handle('elevenex-app:restart', () => {
   // Relaunch a fresh instance, then quit the current one through the normal
-  // shutdown path so the embedded backend child is terminated cleanly. On the
-  // next launch the backend re-detects tmux.
+  // shutdown path so the embedded backend and its direct child PTYs are
+  // terminated cleanly.
   app.relaunch();
   requestAppQuit();
 });

@@ -4,11 +4,8 @@ import {
   lucideCheck,
   lucideCopy,
   lucideRefreshCw,
-  lucideRotateCcw,
   lucideTerminal,
 } from '@ng-icons/lucide';
-
-export type TmuxRequiredMode = 'local' | 'remote';
 
 interface InstallOption {
   label: string;
@@ -27,20 +24,15 @@ interface InstallOption {
       lucideCheck,
       lucideCopy,
       lucideRefreshCw,
-      lucideRotateCcw,
       lucideTerminal,
     }),
   ],
 })
 export class TmuxRequiredOverlayComponent {
-  /** Whether the backend in question is the local machine or a remote server. */
-  readonly mode = input.required<TmuxRequiredMode>();
   /** Node platform of the backend host, used to tailor install guidance. */
   readonly platform = input<string | null>(null);
   /** Disables the action button while a restart/reconnect is in flight. */
   readonly busy = input(false);
-  /** Label of the primary action button (e.g. "Restart Elevenex", "Reconnect"). */
-  readonly actionLabel = input('Reconnect');
   /** Emitted when the user triggers the primary action. */
   readonly action = output<void>();
 

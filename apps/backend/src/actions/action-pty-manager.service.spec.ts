@@ -6,10 +6,14 @@ import * as pty from 'node-pty';
 import { ActionPtyManager } from './action-pty-manager.service.js';
 import {
   buildAugmentedEnvAsync,
+  buildShellCommandArgs,
   buildTmuxInlineEnvPrefix,
   findBinary,
+  getDefaultUserShell,
+  normalizeShellForPlatform,
 } from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
+import { shouldUseTmux } from '../config/backend-runtime-mode.js';
 
 jest.mock('node-pty', () => ({
   spawn: jest.fn(),
@@ -17,12 +21,22 @@ jest.mock('node-pty', () => ({
 
 jest.mock('../config/system-paths.js', () => ({
   buildAugmentedEnvAsync: jest.fn(),
+  buildShellCommandArgs: jest.fn((_shell: string, command: string) => [
+    '-lc',
+    command,
+  ]),
   buildTmuxInlineEnvPrefix: jest.fn(() => "PATH='/repo/bin'"),
   findBinary: jest.fn(),
+  getDefaultUserShell: jest.fn(() => '/bin/sh'),
+  normalizeShellForPlatform: jest.fn((shell: string) => shell),
 }));
 
 jest.mock('../terminal/async-process.js', () => ({
   execFileQuiet: jest.fn(),
+}));
+
+jest.mock('../config/backend-runtime-mode.js', () => ({
+  shouldUseTmux: jest.fn(() => true),
 }));
 
 type MockPty = EventEmitter & {
@@ -55,8 +69,14 @@ describe('ActionPtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
   const mockExecFileQuiet = jest.mocked(execFileQuiet);
   const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
+  const mockBuildShellCommandArgs = jest.mocked(buildShellCommandArgs);
   const mockBuildTmuxInlineEnvPrefix = jest.mocked(buildTmuxInlineEnvPrefix);
   const mockFindBinary = jest.mocked(findBinary);
+  const mockGetDefaultUserShell = jest.mocked(getDefaultUserShell);
+  const mockNormalizeShellForPlatform = jest.mocked(
+    normalizeShellForPlatform,
+  );
+  const mockShouldUseTmux = jest.mocked(shouldUseTmux);
 
   let tmpDir: string;
   let manager: ActionPtyManager | null;
@@ -74,6 +94,13 @@ describe('ActionPtyManager', () => {
       'ELEVENEX-INVALID-KEY': 'ignored',
     });
     mockBuildTmuxInlineEnvPrefix.mockReturnValue("PATH='/repo/bin'");
+    mockBuildShellCommandArgs.mockImplementation((_shell, command) => [
+      '-lc',
+      command,
+    ]);
+    mockGetDefaultUserShell.mockReturnValue('/bin/sh');
+    mockNormalizeShellForPlatform.mockImplementation((shell) => shell);
+    mockShouldUseTmux.mockReturnValue(true);
     mockExecFileQuiet.mockResolvedValue(undefined);
     mockSpawn.mockReturnValue(createMockPty() as never);
   });
@@ -112,6 +139,31 @@ describe('ActionPtyManager', () => {
         COLORTERM: 'truecolor',
       }),
     });
+  });
+
+  it('does not resolve or invoke tmux when the backend is local', async () => {
+    mockShouldUseTmux.mockReturnValue(false);
+    mockFindBinary.mockReturnValue('/usr/bin/tmux');
+    manager = new ActionPtyManager();
+    manager.registerPersistence({
+      markRunning: jest.fn().mockResolvedValue(undefined),
+      flushCurrentOutput: jest.fn().mockResolvedValue(undefined),
+      finalizeRun: jest.fn().mockResolvedValue(undefined),
+    });
+
+    await manager.start({
+      id: 13,
+      worktreePath: tmpDir,
+      command: 'node -v',
+    });
+
+    expect(mockFindBinary).not.toHaveBeenCalled();
+    expect(mockExecFileQuiet).not.toHaveBeenCalled();
+    expect(mockSpawn).toHaveBeenCalledWith(
+      '/custom/zsh',
+      ['-lc', 'node -v'],
+      expect.objectContaining({ cwd: tmpDir }),
+    );
   });
 
   it('reattaches tmux actions with the original worktree env and cwd', async () => {

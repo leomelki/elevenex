@@ -1,8 +1,14 @@
 import { EventEmitter } from 'node:events';
 import * as pty from 'node-pty';
 import { UserPtyManager } from './user-pty-manager.service.js';
-import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
+import {
+  buildAugmentedEnvAsync,
+  findBinary,
+  normalizeShellForPlatform,
+  stripInheritedTmuxEnv,
+} from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
+import { shouldUseTmux } from '../config/backend-runtime-mode.js';
 
 jest.mock('node-pty', () => ({
   spawn: jest.fn(),
@@ -11,10 +17,16 @@ jest.mock('node-pty', () => ({
 jest.mock('../config/system-paths.js', () => ({
   buildAugmentedEnvAsync: jest.fn(),
   findBinary: jest.fn(() => null),
+  normalizeShellForPlatform: jest.fn((shell: string) => shell),
+  stripInheritedTmuxEnv: jest.fn((env: NodeJS.ProcessEnv) => env),
 }));
 
 jest.mock('../terminal/async-process.js', () => ({
   execFileQuiet: jest.fn(),
+}));
+
+jest.mock('../config/backend-runtime-mode.js', () => ({
+  shouldUseTmux: jest.fn(() => true),
 }));
 
 type MockPty = EventEmitter & {
@@ -51,7 +63,12 @@ describe('UserPtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
   const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
   const mockFindBinary = jest.mocked(findBinary);
+  const mockNormalizeShellForPlatform = jest.mocked(
+    normalizeShellForPlatform,
+  );
+  const mockStripInheritedTmuxEnv = jest.mocked(stripInheritedTmuxEnv);
   const mockExecFileQuiet = jest.mocked(execFileQuiet);
+  const mockShouldUseTmux = jest.mocked(shouldUseTmux);
 
   let manager: UserPtyManager;
 
@@ -59,11 +76,33 @@ describe('UserPtyManager', () => {
     jest.resetAllMocks();
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
     mockFindBinary.mockReturnValue(null);
+    mockNormalizeShellForPlatform.mockImplementation((shell) => shell);
+    mockStripInheritedTmuxEnv.mockImplementation((env) => env);
+    mockShouldUseTmux.mockReturnValue(true);
     mockExecFileQuiet.mockResolvedValue(undefined);
     mockSpawn.mockReturnValue(createMockPty() as never);
     manager = new UserPtyManager({
       sendToTerminal: jest.fn(),
     } as never);
+  });
+
+  it('does not resolve or invoke tmux when the backend is local', async () => {
+    mockShouldUseTmux.mockReturnValue(false);
+    mockFindBinary.mockReturnValue('/usr/bin/tmux');
+    mockFindBinary.mockClear();
+    manager = new UserPtyManager({
+      sendToTerminal: jest.fn(),
+    } as never);
+
+    await manager.spawn(4, '/repo/worktree', '/bin/zsh');
+
+    expect(mockFindBinary).not.toHaveBeenCalled();
+    expect(mockExecFileQuiet).not.toHaveBeenCalled();
+    expect(mockSpawn).toHaveBeenCalledWith(
+      '/bin/zsh',
+      [],
+      expect.objectContaining({ cwd: '/repo/worktree' }),
+    );
   });
 
   it('coalesces concurrent async spawns for the same terminal', async () => {

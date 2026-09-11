@@ -15,14 +15,9 @@
     <h1 class="tmux-overlay__title">Install tmux to use Elevenex</h1>
 
     <p class="tmux-overlay__message">
-      @if (mode() === 'remote') {
-        Elevenex relies on tmux on your remote server to keep terminal sessions alive
-        across reconnects. tmux isn't installed there yet — install it on the remote
-        machine, then reconnect.
-      } @else {
-        Elevenex relies on tmux to keep terminal sessions alive across reconnects.
-        tmux isn't installed on this machine — install it, then restart Elevenex.
-      }
+      Elevenex relies on tmux on your remote server to keep terminal sessions alive
+      across reconnects. tmux isn't installed there yet — install it on the remote
+      machine, then reconnect.
     </p>
 
     <div class="tmux-overlay__install">
@@ -60,16 +55,12 @@
       [disabled]="busy()"
       (click)="emitAction()"
     >
-      <ng-icon [name]="mode() === 'remote' ? 'lucideRefreshCw' : 'lucideRotateCcw'" size="16" />
-      {{ actionLabel() }}
+      <ng-icon name="lucideRefreshCw" size="16" />
+      Reconnect
     </button>
 
     <p class="tmux-overlay__hint">
-      @if (mode() === 'remote') {
-        Elevenex stays disconnected from this server until tmux is available.
-      } @else {
-        Elevenex re-checks for tmux once it restarts.
-      }
+      Elevenex stays disconnected from this server until tmux is available.
     </p>
   </div>
 </section>

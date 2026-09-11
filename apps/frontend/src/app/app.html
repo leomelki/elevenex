@@ -324,10 +324,8 @@
 
   @if (tmuxRequired(); as block) {
     <app-tmux-required-overlay
-      [mode]="block.mode"
       [platform]="block.platform"
       [busy]="tmuxActionBusy()"
-      [actionLabel]="tmuxActionLabel()"
       (action)="handleTmuxAction()"
     />
   }
@@ -335,4 +333,3 @@
 <ngx-sonner-toaster position="bottom-right" />
 <app-remote-install-modal />
 <app-wsl-install-modal />
-

@@ -65,7 +65,9 @@ export class BackendRestartComponent {
     }
 
     const confirmed = window.confirm(
-      'Restart the Elevenex backend? Terminals keep running in tmux, but any agent run in progress is interrupted.',
+      this.serverConnection.capabilities()?.tmuxRequired
+        ? 'Restart the Elevenex backend? Persistent remote terminals keep running, but any agent run in progress is interrupted.'
+        : 'Restart the Elevenex backend? Local terminal and agent processes in progress will be interrupted.',
     );
     if (!confirmed) {
       return;

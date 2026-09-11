@@ -4,8 +4,10 @@ import { getBackendOrigin, getWebSocketUrl } from '../runtime/runtime-config';
 export type ServerConnectionPhase = 'connecting' | 'connected' | 'disconnected' | 'restored';
 
 export interface ServerCapabilities {
-  /** Whether tmux is available on the machine running the backend. */
+  /** Whether tmux is available to this runtime under its process policy. */
   tmuxAvailable: boolean;
+  /** Whether this backend uses tmux for persistent process management. */
+  tmuxRequired: boolean;
   /** Node platform of the backend host (e.g. 'win32', 'darwin', 'linux'). */
   platform: string;
 }
@@ -47,10 +49,10 @@ export class ServerConnectionService implements OnDestroy {
   readonly state = this._state.asReadonly();
   readonly reconnectCount = this._reconnectCount.asReadonly();
   readonly capabilities = this._capabilities.asReadonly();
-  /** True once the backend has reported that tmux is not available. */
+  /** True when this runtime requires tmux but cannot find it. */
   readonly tmuxMissing = computed(() => {
     const caps = this._capabilities();
-    return caps !== null && !caps.tmuxAvailable;
+    return caps !== null && caps.tmuxRequired && !caps.tmuxAvailable;
   });
   readonly showOverlay = computed(() => {
     const phase = this._state().phase;
@@ -202,13 +204,20 @@ export class ServerConnectionService implements OnDestroy {
       return undefined;
     }
 
-    const caps = value as { tmuxAvailable?: unknown; platform?: unknown };
+    const caps = value as {
+      tmuxAvailable?: unknown;
+      tmuxRequired?: unknown;
+      platform?: unknown;
+    };
     if (typeof caps.tmuxAvailable !== 'boolean') {
       return undefined;
     }
 
     return {
       tmuxAvailable: caps.tmuxAvailable,
+      // Older remote backends did not advertise the policy separately and
+      // always required tmux. Preserve that safe behavior during upgrades.
+      tmuxRequired: typeof caps.tmuxRequired === 'boolean' ? caps.tmuxRequired : true,
       platform: typeof caps.platform === 'string' ? caps.platform : 'unknown',
     };
   }

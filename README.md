@@ -49,8 +49,11 @@ Elevenex is a pnpm monorepo with a desktop shell, a frontend, a backend, and a s
 - Node.js with a toolchain capable of building native modules.
 - `pnpm` for workspace installs and scripts.
 - `claude` available on your `PATH` if you want to use the in-app Claude Code workspace.
-- `tmux` recommended for persistent Claude terminal sessions and reconnect behavior.
 - Native build support required by dependencies such as `better-sqlite3` and `node-pty`.
+
+Local backends launch terminals and actions directly with `node-pty`; they do
+not detect, require, or invoke `tmux`. Remote POSIX backends use `tmux` to keep
+processes alive across SSH disconnects and backend restarts.
 
 If you use remote servers through Elevenex:
 

@@ -630,6 +630,7 @@ function writeLauncher(targetRoot, target) {
       `$logRoot = Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\logs"`,
       'New-Item -ItemType Directory -Force $logRoot | Out-Null',
       '$env:ELEVENEX_BACKEND_RUNTIME_ROOT = $runtimeRoot',
+      '$env:ELEVENEX_BACKEND_MODE = "remote"',
       `$env:DB_PATH = Join-Path $HOME "${REMOTE_HOME_DIRNAME}\\elevenex.db"`,
       // Whisper weights run to a gigabyte; keep them with the rest of this
       // runtime's state so removing the remote install takes them too.
@@ -674,6 +675,7 @@ function writeLauncher(targetRoot, target) {
     'RUNTIME_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"',
     `mkdir -p "$HOME/${REMOTE_HOME_DIRNAME}/logs"`,
     'export ELEVENEX_BACKEND_RUNTIME_ROOT="$RUNTIME_ROOT"',
+    'export ELEVENEX_BACKEND_MODE=remote',
     `export DB_PATH="$HOME/${REMOTE_HOME_DIRNAME}/elevenex.db"`,
     // Whisper weights run to a gigabyte; keep them with the rest of this
     // runtime's state so removing the remote install takes them too.

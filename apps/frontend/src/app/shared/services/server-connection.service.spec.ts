@@ -83,6 +83,23 @@ describe('ServerConnectionService', () => {
     expect(service.isInteractive()).toBe(true);
   });
 
+  it('does not report missing tmux when the backend does not require it', () => {
+    service.start();
+    MockWebSocket.instances[0].emitOpen();
+    MockWebSocket.instances[0].emitMessage(JSON.stringify({
+      type: 'ready',
+      serverTime: '2026-05-12T08:00:00.000Z',
+      capabilities: {
+        tmuxAvailable: false,
+        tmuxRequired: false,
+        platform: 'linux',
+      },
+    }));
+
+    expect(service.tmuxMissing()).toBe(false);
+    expect(service.capabilities()?.tmuxRequired).toBe(false);
+  });
+
   it('enters disconnected state on close and reconnects with backoff', () => {
     service.start();
     MockWebSocket.instances[0].emitOpen();

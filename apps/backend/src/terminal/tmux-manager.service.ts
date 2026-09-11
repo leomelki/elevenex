@@ -6,6 +6,7 @@ import * as path from 'path';
 import { generateTmuxScrollConfig } from './tmux-scroll-config.js';
 import { findBinary } from '../config/system-paths.js';
 import { execFileAsync, execFileQuiet } from './async-process.js';
+import { shouldUseTmux } from '../config/backend-runtime-mode.js';
 
 const TMUX_SESSION_PREFIX = 'elevenex';
 
@@ -18,15 +19,19 @@ interface TmuxSession {
 @Injectable()
 export class TmuxManager implements OnModuleDestroy {
   private sessions = new Map<number, TmuxSession>();
+  private readonly tmuxEnabled: boolean;
   private tmuxAvailable: boolean;
   private tmuxBin: string;
   private scrollBindingsConfigured = false;
   private scrollBindingsConfigurePromise: Promise<void> | null = null;
 
   constructor() {
-    this.tmuxBin = this.resolveTmuxPath();
+    this.tmuxEnabled = shouldUseTmux();
+    this.tmuxBin = this.tmuxEnabled ? this.resolveTmuxPath() : '';
     this.tmuxAvailable = this.tmuxBin !== '';
-    if (this.tmuxAvailable) {
+    if (!this.tmuxEnabled) {
+      console.log('tmux disabled - backend processes use direct PTYs');
+    } else if (this.tmuxAvailable) {
       console.log(
         `tmux detected at ${this.tmuxBin} - session persistence enabled`,
       );
@@ -40,7 +45,7 @@ export class TmuxManager implements OnModuleDestroy {
   }
 
   private refreshTmuxPath(): void {
-    if (this.tmuxAvailable) return;
+    if (!this.tmuxEnabled || this.tmuxAvailable) return;
     const resolved = this.resolveTmuxPath();
     if (!resolved) return;
 
@@ -54,6 +59,10 @@ export class TmuxManager implements OnModuleDestroy {
   isTmuxAvailable(): boolean {
     this.refreshTmuxPath();
     return this.tmuxAvailable;
+  }
+
+  isTmuxRequired(): boolean {
+    return this.tmuxEnabled;
   }
 
   getTmuxBin(): string {

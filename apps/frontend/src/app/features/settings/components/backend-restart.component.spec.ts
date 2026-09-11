@@ -26,6 +26,11 @@ const STATUS = {
 describe('BackendRestartComponent', () => {
   let httpMock: HttpTestingController;
   const reconnectCount = signal(0);
+  const capabilities = signal({
+    tmuxAvailable: false,
+    tmuxRequired: false,
+    platform: 'linux',
+  });
 
   let confirmSpy: ReturnType<typeof vi.spyOn> | null = null;
 
@@ -42,7 +47,10 @@ describe('BackendRestartComponent', () => {
         provideHttpClientTesting(),
         {
           provide: ServerConnectionService,
-          useValue: { reconnectCount: reconnectCount.asReadonly() },
+          useValue: {
+            reconnectCount: reconnectCount.asReadonly(),
+            capabilities: capabilities.asReadonly(),
+          },
         },
       ],
     }).compileComponents();

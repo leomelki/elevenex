@@ -5,6 +5,7 @@ import { PtyManager } from './pty-manager.service.js';
 import {
   buildAugmentedEnvAsync,
   buildTmuxInlineEnvPrefix,
+  stripInheritedTmuxEnv,
 } from '../config/system-paths.js';
 import { execFileQuiet } from './async-process.js';
 
@@ -16,6 +17,7 @@ jest.mock('../config/system-paths.js', () => ({
   buildAugmentedEnvAsync: jest.fn(),
   buildTmuxInlineEnvPrefix: jest.fn(() => "PATH='/mock/bin'"),
   findBinary: jest.fn(() => null),
+  stripInheritedTmuxEnv: jest.fn((env: NodeJS.ProcessEnv) => env),
 }));
 
 jest.mock('../config/runtime-paths.js', () => ({
@@ -60,6 +62,7 @@ describe('PtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
   const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
   const mockBuildTmuxInlineEnvPrefix = jest.mocked(buildTmuxInlineEnvPrefix);
+  const mockStripInheritedTmuxEnv = jest.mocked(stripInheritedTmuxEnv);
   const mockExecFileQuiet = jest.mocked(execFileQuiet);
 
   let manager: PtyManager;
@@ -83,6 +86,7 @@ describe('PtyManager', () => {
     jest.resetAllMocks();
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
     mockBuildTmuxInlineEnvPrefix.mockReturnValue("PATH='/mock/bin'");
+    mockStripInheritedTmuxEnv.mockImplementation((env) => env);
     mockExecFileQuiet.mockResolvedValue(undefined);
     mockSpawn.mockReturnValue(createMockPty() as never);
     tmuxManager = {

@@ -19,6 +19,7 @@ import {
   stripInheritedTmuxEnv,
 } from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
+import { shouldUseTmux } from '../config/backend-runtime-mode.js';
 
 const TMUX_SESSION_PREFIX = 'elevenex-uterm';
 
@@ -47,6 +48,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private readonly tmuxResizeState = new Map<number, TmuxResizeState>();
   private pendingKills = new Set<number>();
   private readonly logger = new Logger('UserPtyManager');
+  private readonly tmuxEnabled: boolean;
   private tmuxBin: string;
   private scrollBindingsConfigured = false;
   private scrollBindingsConfigurePromise: Promise<void> | null = null;
@@ -55,7 +57,8 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     @Inject(forwardRef(() => UserTerminalGateway))
     private readonly gateway: UserTerminalGateway,
   ) {
-    this.tmuxBin = this.resolveTmuxPath();
+    this.tmuxEnabled = shouldUseTmux();
+    this.tmuxBin = this.tmuxEnabled ? this.resolveTmuxPath() : '';
   }
 
   private resolveTmuxPath(): string {
@@ -63,6 +66,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   }
 
   private isTmuxAvailable(): boolean {
+    if (!this.tmuxEnabled) return false;
     if (this.tmuxBin === '') {
       this.tmuxBin = this.resolveTmuxPath();
     }
@@ -352,7 +356,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     }
   }
 
-  /** Kill PTY attachment only — tmux session survives for later reattach */
+  /** End a local direct PTY, or detach from a remote tmux session. */
   kill(terminalId: number): boolean {
     const hadInFlightSpawn = this.spawnInFlight.has(terminalId);
     if (hadInFlightSpawn) {

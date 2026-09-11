@@ -17,6 +17,7 @@ import {
   normalizeShellForPlatform,
 } from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
+import { shouldUseTmux } from '../config/backend-runtime-mode.js';
 
 type ActionStatus = 'idle' | 'running' | 'success' | 'failed' | 'stopped';
 
@@ -76,10 +77,12 @@ export class ActionPtyManager
   private readonly defaultShell = getDefaultUserShell();
   private gateway?: ActionGatewayLike;
   private persistence?: ActionPersistence;
+  private readonly tmuxEnabled: boolean;
   private tmuxBin: string;
 
   constructor() {
-    this.tmuxBin = this.resolveTmuxPath();
+    this.tmuxEnabled = shouldUseTmux();
+    this.tmuxBin = this.tmuxEnabled ? this.resolveTmuxPath() : '';
   }
 
   registerGateway(gateway: ActionGatewayLike): void {
@@ -307,6 +310,7 @@ export class ActionPtyManager
   }
 
   private isTmuxAvailable(): boolean {
+    if (!this.tmuxEnabled) return false;
     if (this.tmuxBin === '') {
       this.tmuxBin = this.resolveTmuxPath();
     }

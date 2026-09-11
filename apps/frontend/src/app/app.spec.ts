@@ -24,6 +24,11 @@ describe('App', () => {
     reconnectAttempt: 0,
   });
   const showServerConnectionOverlay = signal(false);
+  const serverCapabilities = signal({
+    tmuxAvailable: false,
+    tmuxRequired: false,
+    platform: 'linux',
+  });
   const startupServiceMock = {
     startupPortForwardPrompt: prompt.asReadonly(),
     dismissStartupPortForwardPrompt: vi.fn(),
@@ -58,6 +63,7 @@ describe('App', () => {
     savedServers: signal([]).asReadonly(),
     switchError: signal('').asReadonly(),
     environmentLabel: signal('Local').asReadonly(),
+    isWslSupported: vi.fn(() => Promise.resolve(false)),
     clearError: vi.fn(),
   };
   const remoteInstallFlowMock = {
@@ -72,8 +78,10 @@ describe('App', () => {
     showOverlay: showServerConnectionOverlay.asReadonly(),
     isInteractive: signal(true).asReadonly(),
     reconnectCount: signal(0).asReadonly(),
+    capabilities: serverCapabilities.asReadonly(),
     start: vi.fn(),
     waitUntilInteractive: vi.fn(() => Promise.resolve()),
+    recheck: vi.fn(),
   };
   const windowControlsMock = {
     getEnvironment: vi.fn(() =>
@@ -130,6 +138,11 @@ describe('App', () => {
       reconnectAttempt: 0,
     });
     showServerConnectionOverlay.set(false);
+    serverCapabilities.set({
+      tmuxAvailable: false,
+      tmuxRequired: false,
+      platform: 'linux',
+    });
     vi.clearAllMocks();
     window.__ELEVENEX_ELECTRON__ = undefined;
     window.__ELEVENEX_RUNTIME__ = undefined;
@@ -179,6 +192,20 @@ describe('App', () => {
     await fixture.whenStable();
     const compiled = fixture.nativeElement as HTMLElement;
     expect(compiled.querySelector('.app-shell')).toBeTruthy();
+  });
+
+  it('does not require tmux for a local backend', async () => {
+    serverCapabilities.set({
+      tmuxAvailable: false,
+      tmuxRequired: true,
+      platform: 'linux',
+    });
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement as HTMLElement).querySelector('.tmux-overlay')).toBeNull();
   });
 
   it('should render the startup forward banner when prompt state exists', async () => {

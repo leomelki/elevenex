@@ -6,8 +6,10 @@ import { TmuxManager } from '../terminal/tmux-manager.service.js';
 type ServerConnectionMessageType = 'ready' | 'heartbeat';
 
 interface ServerCapabilities {
-  /** Whether tmux is available on the machine running the backend. */
+  /** Whether tmux is available to this runtime under its process policy. */
   tmuxAvailable: boolean;
+  /** Whether this runtime requires tmux for persistent process management. */
+  tmuxRequired: boolean;
   /** Node platform of the backend host, used to tailor install guidance. */
   platform: NodeJS.Platform;
 }
@@ -98,6 +100,7 @@ export class ServerConnectionGateway implements OnModuleDestroy {
     if (type === 'ready') {
       message.capabilities = {
         tmuxAvailable: this.tmuxManager.isTmuxAvailable(),
+        tmuxRequired: this.tmuxManager.isTmuxRequired(),
         platform: process.platform,
       };
     }

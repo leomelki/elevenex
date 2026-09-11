@@ -1,5 +1,4 @@
 import { EventEmitter } from 'events';
-import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { ServerConnectionGateway } from './server-connection.gateway.js';
 
@@ -16,7 +15,10 @@ describe('ServerConnectionGateway', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     server = new EventEmitter();
-    gateway = new ServerConnectionGateway();
+    gateway = new ServerConnectionGateway({
+      isTmuxAvailable: jest.fn(() => false),
+      isTmuxRequired: jest.fn(() => false),
+    } as never);
     gateway.attachToServer(server as never);
   });
 
@@ -53,9 +55,19 @@ describe('ServerConnectionGateway', () => {
     const message = JSON.parse(ws.send.mock.calls[0][0]) as {
       type: string;
       serverTime: string;
+      capabilities: {
+        tmuxAvailable: boolean;
+        tmuxRequired: boolean;
+        platform: string;
+      };
     };
     expect(message.type).toBe('ready');
     expect(Number.isNaN(Date.parse(message.serverTime))).toBe(false);
+    expect(message.capabilities).toEqual({
+      tmuxAvailable: false,
+      tmuxRequired: false,
+      platform: process.platform,
+    });
   });
 
   it('does not accept unrelated websocket paths', () => {

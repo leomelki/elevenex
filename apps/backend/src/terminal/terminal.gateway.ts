@@ -164,7 +164,7 @@ export class TerminalGateway implements OnModuleDestroy {
       if (!isCurrentConnection()) {
         return;
       }
-      // Kill the PTY process (detaches from tmux, but tmux session lives on)
+      // End the local direct PTY, or detach from a persistent remote tmux PTY.
       this.ptyManager.kill(sessionId);
       this.sessions.delete(sessionId);
       this.lastRestartTime.delete(sessionId);
