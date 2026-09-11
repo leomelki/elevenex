@@ -52,6 +52,7 @@ import type { DiffSelectionMention } from '@/shared/models/diff-selection-mentio
 import type { SessionMention, SessionMentionCandidate } from '@/shared/models/session-mention.model';
 import {
   AgentAuthStatus,
+  AgentPlanUsage,
   AgentProviderId,
   AgentRuntimeProviderInfo,
 } from '@/shared/models/agent-runtime.model';
@@ -265,6 +266,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly draftRootRef = signal('');
   readonly availableModels = signal<ClaudeModelOption[]>([]);
   readonly contextUsage = signal<ClaudeContextUsage | null>(null);
+  readonly planUsage = signal<AgentPlanUsage | null>(null);
   readonly historyItems = signal<ClaudeTranscriptItem[]>([]);
   readonly liveItems = signal<ClaudeTranscriptItem[]>([]);
   readonly optimisticUserItems = signal<ClaudeTranscriptItem[]>([]);
@@ -1974,12 +1976,18 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.fastMode.set(event.payload.fastMode ?? false);
         this.availableModels.set(event.payload.availableModels);
         this.contextUsage.set(event.payload.contextUsage);
+        if (event.payload.planUsage !== undefined) {
+          this.planUsage.set(event.payload.planUsage);
+        }
         this._permissionMode.set(event.payload.permissionMode);
         this._planMode.set(event.payload.planMode ?? false);
         this.applyPendingPermissionFromRuntime(event.payload.pendingPermissionRequest);
         this.pendingUserInputRequest.set(event.payload.pendingUserInputRequest);
         this.updatePendingPrompts(event.payload.pendingPrompts ?? []);
         if (event.payload.runPhase !== 'running') this.submitting.set(false);
+        return;
+      case 'plan_usage':
+        this.planUsage.set(event.payload.planUsage);
         return;
       case 'task_started':
       case 'task_updated':
@@ -2224,6 +2232,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.fastMode.set(state.fastMode ?? false);
     this.availableModels.set(state.availableModels);
     this.contextUsage.set(state.contextUsage);
+    this.planUsage.set(state.planUsage ?? null);
     this._permissionMode.set(state.permissionMode);
     this._planMode.set(state.planMode ?? false);
     this.applyPendingPermissionFromRuntime(state.pendingPermissionRequest);
@@ -2314,6 +2323,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.draftRootRef.set('');
     this.availableModels.set([]);
     this.contextUsage.set(null);
+    this.planUsage.set(null);
     this._permissionMode.set(null);
     this._planMode.set(false);
     this.historyItems.set([]);
@@ -2507,4 +2517,3 @@ function buildWorktreeContextPrompt(contextSentence: string, prompt: string): st
     prompt,
   ].join('\n');
 }
-

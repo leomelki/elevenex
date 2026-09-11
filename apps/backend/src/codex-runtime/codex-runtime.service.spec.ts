@@ -174,6 +174,74 @@ describe('CodexRuntimeService', () => {
     );
   });
 
+  it('maps Codex subscription windows to remaining plan allowance', () => {
+    const { service } = createService();
+
+    const usage = (service as any).toCodexPlanUsage({
+      ordinaryUsageAllowed: true,
+      rateLimits: {
+        planType: 'plus',
+        primary: {
+          usedPercent: 73,
+          windowDurationMins: 300,
+          resetsAt: 1_800_000_000,
+        },
+        secondary: {
+          usedPercent: 12,
+          windowDurationMins: 10_080,
+          resetsAt: 1_800_500_000,
+        },
+        credits: { hasCredits: true, unlimited: false, balance: '125' },
+      },
+    });
+
+    expect(usage).toEqual(
+      expect.objectContaining({
+        provider: 'codex',
+        planName: 'Plus',
+        status: 'available',
+        credits: { balance: '125', unlimited: false },
+        windows: [
+          expect.objectContaining({
+            label: '5-hour limit',
+            remainingPercentage: 27,
+          }),
+          expect.objectContaining({
+            label: 'Weekly limit',
+            remainingPercentage: 88,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('does not create plan usage without quota windows', () => {
+    const { service } = createService();
+
+    expect(
+      (service as any).toCodexPlanUsage({ rateLimits: { planType: 'plus' } }),
+    ).toBeNull();
+  });
+
+  it('does not request subscription usage for API-key authentication', async () => {
+    const { service, authService, appServer } = createService();
+    authService.getFastStatus.mockResolvedValue({
+      installed: true,
+      authenticated: true,
+      authMethod: 'api_key',
+      version: null,
+    });
+
+    await service.getRuntimeState(7);
+    await Promise.resolve();
+
+    expect(appServer.request).not.toHaveBeenCalledWith(
+      'account/rateLimits/read',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it('coalesces concurrent prewarm calls for one session', async () => {
     const { service, sessionsService, appServer } = createService();
     let resolvePrewarm!: () => void;

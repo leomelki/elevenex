@@ -24,6 +24,7 @@ export const progressBarIndicatorVariants = cva(
       zType: {
         default: 'bg-primary',
         success: 'bg-success',
+        warning: 'bg-warning',
         destructive: 'bg-destructive',
       },
     },

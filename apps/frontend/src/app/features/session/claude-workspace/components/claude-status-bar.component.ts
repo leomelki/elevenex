@@ -35,7 +35,13 @@ import {
   ClaudeStatusBarPhase,
   ClaudeTaskState,
 } from '@/shared/models/claude-runtime.model';
-import { AgentProviderId, AgentRuntimeProviderInfo } from '@/shared/models/agent-runtime.model';
+import {
+  AgentPlanUsage,
+  AgentPlanUsageWindow,
+  AgentProviderId,
+  AgentRuntimeProviderInfo,
+} from '@/shared/models/agent-runtime.model';
+import { ZardProgressBarComponent } from '@/shared/components/progress-bar';
 
 interface PermissionModeOption {
   id: ClaudePermissionMode;
@@ -67,7 +73,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
 @Component({
   selector: 'cw-status-bar',
   standalone: true,
-  imports: [CommonModule, NgIcon],
+  imports: [CommonModule, NgIcon, ZardProgressBarComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     '(document:mousedown)': 'onDocumentMousedown($event)',
@@ -272,6 +278,80 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
         </span>
       }
 
+      @if (visiblePlanUsage(); as usage) {
+        <span class="cw-sb__sep">·</span>
+        <div class="cw-sb__model">
+          <button
+            type="button"
+            class="cw-sb__link cw-sb__usage-trigger"
+            [attr.data-status]="usage.status"
+            [attr.aria-expanded]="usageOpen()"
+            aria-haspopup="dialog"
+            (click)="toggleMenu('usage')"
+            [title]="usageTriggerTitle()"
+          >
+            <span
+              class="cw-sb__usage-ring"
+              [style.--usage-percent]="lowestRemainingPercentage() + '%'"
+              aria-hidden="true"
+            ></span>
+            {{ lowestRemainingPercentage() }}% left
+          </button>
+          @if (usageOpen()) {
+            <div
+              class="cw-sb__menu cw-sb__usage-menu"
+              role="dialog"
+              aria-label="Plan usage"
+              (mousedown)="$event.stopPropagation()"
+            >
+              <div class="cw-sb__usage-header">
+                <div>
+                  <strong>{{ usage.provider === 'codex' ? 'Codex' : 'Claude' }} usage</strong>
+                  <span>Included plan allowance</span>
+                </div>
+                @if (usage.planName) {
+                  <span class="cw-sb__plan-badge">{{ usage.planName }}</span>
+                }
+              </div>
+
+              <div class="cw-sb__usage-windows">
+                @for (window of usage.windows; track window.id) {
+                  <div class="cw-sb__usage-window">
+                    <div class="cw-sb__usage-row">
+                      <span>{{ window.label }}</span>
+                      <strong>{{ window.remainingPercentage }}% left</strong>
+                    </div>
+                    <z-progress-bar
+                      zSize="sm"
+                      [zValue]="window.remainingPercentage / 100"
+                      [zType]="usageProgressType(window)"
+                      [zLabel]="window.label + ': ' + window.remainingPercentage + '% remaining'"
+                    />
+                    @if (window.resetsAt) {
+                      <span class="cw-sb__usage-reset" [title]="formatResetTitle(window.resetsAt)">
+                        {{ formatResetTime(window.resetsAt) }}
+                      </span>
+                    }
+                  </div>
+                }
+              </div>
+
+              @if (usage.credits; as credits) {
+                <div class="cw-sb__credits">
+                  <span>Extra credits</span>
+                  <strong>{{
+                    credits.unlimited ? 'Unlimited' : (credits.balance ?? 'Available')
+                  }}</strong>
+                </div>
+              }
+              <p class="cw-sb__usage-note">
+                Based on provider-reported usage. Complex tasks may consume more allowance.
+              </p>
+            </div>
+          }
+        </div>
+      }
+
       @if (backgroundWorkCount() > 0) {
         <span class="cw-sb__sep">·</span>
         <span
@@ -418,6 +498,97 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
       .cw-sb__ctx--warn {
         color: var(--destructive);
       }
+      .cw-sb__usage-trigger[data-status='warning'] {
+        color: var(--warning);
+      }
+      .cw-sb__usage-trigger[data-status='exhausted'] {
+        color: var(--destructive);
+      }
+      .cw-sb__usage-ring {
+        --usage-percent: 0%;
+        position: relative;
+        width: 0.625rem;
+        height: 0.625rem;
+        flex: none;
+        border-radius: 999px;
+        background: conic-gradient(currentColor var(--usage-percent), var(--muted) 0);
+      }
+      .cw-sb__usage-ring::after {
+        content: '';
+        position: absolute;
+        inset: 0.125rem;
+        border-radius: inherit;
+        background: var(--background);
+      }
+      .cw-sb__usage-menu {
+        width: min(19rem, calc(100vw - 1rem));
+        padding: 0.75rem;
+        cursor: default;
+      }
+      .cw-sb__usage-header,
+      .cw-sb__usage-row,
+      .cw-sb__credits {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+      .cw-sb__usage-header > div {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        gap: 0.125rem;
+      }
+      .cw-sb__usage-header strong {
+        color: var(--foreground);
+        font-size: 0.8125rem;
+        font-weight: 650;
+      }
+      .cw-sb__usage-header span,
+      .cw-sb__usage-reset,
+      .cw-sb__usage-note {
+        color: var(--muted-foreground);
+        font-size: 0.6875rem;
+      }
+      .cw-sb__plan-badge {
+        flex: none;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--muted);
+        padding: 0.125rem 0.4375rem;
+        color: var(--foreground) !important;
+        font-weight: 600;
+      }
+      .cw-sb__usage-windows {
+        display: grid;
+        gap: 0.875rem;
+        margin-top: 0.875rem;
+      }
+      .cw-sb__usage-window {
+        display: grid;
+        gap: 0.375rem;
+      }
+      .cw-sb__usage-row {
+        color: var(--foreground);
+        font-size: 0.75rem;
+      }
+      .cw-sb__usage-row strong {
+        font-weight: 650;
+      }
+      .cw-sb__usage-reset {
+        line-height: 1;
+      }
+      .cw-sb__credits {
+        margin-top: 0.875rem;
+        border-top: 1px solid var(--border);
+        padding-top: 0.625rem;
+        color: var(--foreground);
+        font-size: 0.75rem;
+      }
+      .cw-sb__usage-note {
+        margin: 0.625rem 0 0;
+        line-height: 1.35;
+      }
       .cw-sb__link,
       .cw-sb__icon-btn {
         display: inline-flex;
@@ -528,6 +699,7 @@ export class ClaudeStatusBarComponent {
   readonly fastMode = input(false);
   readonly availableModels = input<ClaudeModelOption[]>([]);
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
+  readonly planUsage = input<AgentPlanUsage | null>(null);
   readonly tasks = input<ClaudeTaskState[]>([]);
   /** Count of background jobs still running; shown as a persistent chip. */
   readonly backgroundWorkCount = input<number>(0);
@@ -552,7 +724,19 @@ export class ClaudeStatusBarComponent {
   readonly effortOpen = signal(false);
   readonly providerOpen = signal(false);
   readonly permissionOpen = signal(false);
+  readonly usageOpen = signal(false);
   readonly menuOpen = signal(false);
+
+  readonly visiblePlanUsage = computed(() => {
+    const usage = this.planUsage();
+    const provider = this.currentProvider();
+    return usage &&
+      (provider === 'claude' || provider === 'codex') &&
+      usage.provider === provider &&
+      usage.windows.length
+      ? usage
+      : null;
+  });
 
   private readonly host = inject(ElementRef<HTMLElement>);
 
@@ -562,6 +746,7 @@ export class ClaudeStatusBarComponent {
       !this.effortOpen() &&
       !this.providerOpen() &&
       !this.permissionOpen() &&
+      !this.usageOpen() &&
       !this.menuOpen()
     )
       return;
@@ -575,10 +760,11 @@ export class ClaudeStatusBarComponent {
     this.effortOpen.set(false);
     this.providerOpen.set(false);
     this.permissionOpen.set(false);
+    this.usageOpen.set(false);
     this.menuOpen.set(false);
   }
 
-  toggleMenu(which: 'model' | 'effort' | 'provider' | 'permission' | 'overflow'): void {
+  toggleMenu(which: 'model' | 'effort' | 'provider' | 'permission' | 'usage' | 'overflow'): void {
     if (which === 'provider' && this.providerLocked()) {
       this.providerOpen.set(false);
       return;
@@ -589,13 +775,53 @@ export class ClaudeStatusBarComponent {
       effort: which === 'effort' ? !this.effortOpen() : false,
       provider: which === 'provider' ? !this.providerOpen() : false,
       permission: which === 'permission' ? !this.permissionOpen() : false,
+      usage: which === 'usage' ? !this.usageOpen() : false,
       overflow: which === 'overflow' ? !this.menuOpen() : false,
     };
     this.modelOpen.set(next.model);
     this.effortOpen.set(next.effort);
     this.providerOpen.set(next.provider);
     this.permissionOpen.set(next.permission);
+    this.usageOpen.set(next.usage);
     this.menuOpen.set(next.overflow);
+  }
+
+  readonly lowestRemainingPercentage = computed(() => {
+    const windows = this.visiblePlanUsage()?.windows ?? [];
+    return windows.length ? Math.min(...windows.map((window) => window.remainingPercentage)) : 0;
+  });
+
+  readonly usageTriggerTitle = computed(() => {
+    const usage = this.visiblePlanUsage();
+    if (!usage) return '';
+    const provider = usage.provider === 'codex' ? 'Codex' : 'Claude';
+    return `${provider} plan: ${this.lowestRemainingPercentage()}% remaining`;
+  });
+
+  usageProgressType(window: AgentPlanUsageWindow): 'success' | 'warning' | 'destructive' {
+    if (window.remainingPercentage <= 5) return 'destructive';
+    if (window.remainingPercentage <= 20) return 'warning';
+    return 'success';
+  }
+
+  formatResetTime(timestampSeconds: number): string {
+    const remainingMs = timestampSeconds * 1000 - Date.now();
+    if (remainingMs <= 0) return 'Resetting soon';
+    const totalMinutes = Math.ceil(remainingMs / 60_000);
+    if (totalMinutes < 60) return `Resets in ${totalMinutes}m`;
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours < 24) return `Resets in ${hours}h${minutes ? ` ${minutes}m` : ''}`;
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return `Resets in ${days}d${remainingHours ? ` ${remainingHours}h` : ''}`;
+  }
+
+  formatResetTitle(timestampSeconds: number): string {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(timestampSeconds * 1000));
   }
 
   readonly permissionOptions = computed(() => {

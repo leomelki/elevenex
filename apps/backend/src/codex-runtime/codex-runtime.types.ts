@@ -1,4 +1,5 @@
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import type { AgentPlanUsage } from '../agent-runtime/agent-runtime.types.js';
 import type {
   ClaudeAuthStatus,
   ClaudeContextUsage,
@@ -127,6 +128,7 @@ export interface CodexRuntimeState {
   contextUsage: ClaudeContextUsage | null;
   sessionMetadata: CodexRuntimeSessionMetadata | null;
   authStatus: CodexAuthStatus | null;
+  planUsage: AgentPlanUsage | null;
 }
 
 export interface CodexHistorySessionSummary {

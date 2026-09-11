@@ -145,6 +145,7 @@ import type {
   AgentAuthStatus,
   AgentForkConversationRequest,
   AgentForkConversationResult,
+  AgentPlanUsage,
   AgentProviderModelCatalogPayload,
 } from '../agent-runtime/agent-runtime.types.js';
 import { SettingsService } from '../settings/settings.service.js';
@@ -321,6 +322,7 @@ interface RuntimeState {
   runtimeStatus: ClaudeRuntimeStatus | null;
   authStatus: ClaudeAuthStatus | null;
   rateLimit: ClaudeRateLimit | null;
+  planUsage: AgentPlanUsage | null;
   notifications: ClaudeNotification[];
   hooks: ClaudeHookExecution[];
   recentHookEvents: ClaudeHookEvent[];
@@ -3651,6 +3653,15 @@ export class ClaudeRuntimeService
     };
 
     state.sessionMetadata = metadata;
+    // The SDK only reports plan limits for claude.ai subscription auth. If a
+    // session is backed by an API key, never carry a quota card into it.
+    if (metadata.apiKeySource !== 'oauth' && state.planUsage) {
+      state.planUsage = null;
+      this.emitEvent({
+        type: 'plan_usage',
+        payload: { sessionId, planUsage: null },
+      });
+    }
     if (message.permissionMode === 'plan') {
       state.planMode = true;
     }
@@ -4045,10 +4056,100 @@ export class ClaudeRuntimeService
       surpassedThreshold: message.rate_limit_info.surpassedThreshold,
     };
     state.rateLimit = rateLimit;
+    // rate_limit_event is explicitly subscription-only in the Claude Agent
+    // SDK. The metadata guard also protects against a stale/malformed event
+    // while API-key authentication is active.
+    if (state.sessionMetadata?.apiKeySource === 'oauth') {
+      state.planUsage = this.toClaudePlanUsage(rateLimit, state.planUsage);
+      this.emitEvent({
+        type: 'plan_usage',
+        payload: { sessionId, planUsage: state.planUsage },
+      });
+    }
     this.emitEvent({
       type: 'rate_limit',
       payload: { sessionId, rateLimit },
     });
+  }
+
+  private toClaudePlanUsage(
+    rateLimit: ClaudeRateLimit,
+    previous: AgentPlanUsage | null,
+  ): AgentPlanUsage | null {
+    if (typeof rateLimit.utilization !== 'number') {
+      return rateLimit.status === 'rejected'
+        ? {
+            provider: 'claude',
+            planName: null,
+            status: 'exhausted',
+            windows: [
+              {
+                id: rateLimit.rateLimitType ?? 'plan',
+                label: 'Plan usage',
+                remainingPercentage: 0,
+                resetsAt: rateLimit.resetsAt ?? null,
+              },
+            ],
+            credits: null,
+            updatedAt: new Date().toISOString(),
+          }
+        : previous;
+    }
+    const id = rateLimit.rateLimitType ?? 'plan';
+    const remainingPercentage = Math.max(
+      0,
+      Math.min(100, Math.round((1 - rateLimit.utilization) * 100)),
+    );
+    const labels: Record<string, string> = {
+      five_hour: '5-hour limit',
+      seven_day: 'Weekly limit',
+      seven_day_opus: 'Weekly Opus limit',
+      seven_day_sonnet: 'Weekly Sonnet limit',
+      overage: 'Extra usage',
+      plan: 'Plan usage',
+    };
+    const windows = [
+      ...(previous?.provider === 'claude'
+        ? previous.windows.filter((window) => window.id !== id)
+        : []),
+      {
+        id,
+        label: labels[id] ?? 'Plan usage',
+        remainingPercentage,
+        resetsAt: rateLimit.resetsAt ?? null,
+      },
+    ].sort((left, right) => {
+      const order = [
+        'five_hour',
+        'seven_day',
+        'seven_day_sonnet',
+        'seven_day_opus',
+        'overage',
+      ];
+      const leftIndex = order.indexOf(left.id);
+      const rightIndex = order.indexOf(right.id);
+      return (
+        (leftIndex < 0 ? order.length : leftIndex) -
+        (rightIndex < 0 ? order.length : rightIndex)
+      );
+    });
+    const lowestRemaining = Math.min(
+      ...windows.map((window) => window.remainingPercentage),
+    );
+
+    return {
+      provider: 'claude',
+      planName: null,
+      status:
+        rateLimit.status === 'rejected' || lowestRemaining <= 0
+          ? 'exhausted'
+          : rateLimit.status === 'allowed_warning' || lowestRemaining <= 20
+            ? 'warning'
+            : 'available',
+      windows,
+      credits: null,
+      updatedAt: new Date().toISOString(),
+    };
   }
 
   private handleFilesPersistedEvent(
@@ -4587,6 +4688,7 @@ export class ClaudeRuntimeService
       runtimeStatus: null,
       authStatus: null,
       rateLimit: null,
+      planUsage: null,
       notifications: [],
       hooks: [],
       recentHookEvents: [],
@@ -4648,6 +4750,7 @@ export class ClaudeRuntimeService
         planMode: state.planMode,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
+        planUsage: state.planUsage,
         pendingPermissionRequest: state.pendingPermissionRequest,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
@@ -5433,6 +5536,7 @@ export class ClaudeRuntimeService
       runtimeStatus: state.runtimeStatus,
       authStatus: state.authStatus,
       rateLimit: state.rateLimit,
+      planUsage: state.planUsage,
       notifications: state.notifications,
       hooks: state.hooks,
       recentHookEvents: state.recentHookEvents,

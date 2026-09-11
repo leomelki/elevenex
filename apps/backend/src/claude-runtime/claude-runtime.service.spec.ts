@@ -612,6 +612,19 @@ describe('ClaudeRuntimeService', () => {
         rateLimitType: 'five_hour',
       }),
     );
+    expect(state.planUsage).toEqual(
+      expect.objectContaining({
+        provider: 'claude',
+        status: 'warning',
+        windows: [
+          expect.objectContaining({
+            id: 'five_hour',
+            label: '5-hour limit',
+            remainingPercentage: 8,
+          }),
+        ],
+      }),
+    );
     expect(state.latestPromptSuggestion).toEqual(
       expect.objectContaining({
         suggestion: 'Run the backend tests next.',
@@ -623,6 +636,7 @@ describe('ClaudeRuntimeService', () => {
         'runtime_status',
         'auth_status',
         'rate_limit',
+        'plan_usage',
         'prompt_suggestion',
       ]),
     );

@@ -23,6 +23,7 @@ import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
+  AgentPlanUsage,
   AgentProviderModelCatalogPayload,
 } from '../agent-runtime/agent-runtime.types.js';
 import {
@@ -67,6 +68,7 @@ const CODEX_MODEL_REFRESH_RETRY_MS = 30_000;
 const CODEX_MODEL_LIST_TIMEOUT_MS = 8_000;
 const CODEX_MODEL_REFRESH_IDLE_DELAY_MS = 10_000;
 const CODEX_PREWARM_COOLDOWN_MS = 30_000;
+const CODEX_PLAN_USAGE_TTL_MS = 60_000;
 const CODEX_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'gpt-5.5': 1_050_000,
   'gpt-5.4': 1_050_000,
@@ -135,6 +137,31 @@ interface CodexThreadStartResult {
   };
 }
 
+interface CodexRateLimitWindow {
+  usedPercent?: unknown;
+  resetsAt?: unknown;
+  windowDurationMins?: unknown;
+}
+
+interface CodexRateLimitSnapshot {
+  planType?: unknown;
+  limitId?: unknown;
+  limitName?: unknown;
+  primary?: CodexRateLimitWindow | null;
+  secondary?: CodexRateLimitWindow | null;
+  credits?: {
+    balance?: unknown;
+    hasCredits?: unknown;
+    unlimited?: unknown;
+  } | null;
+}
+
+interface CodexRateLimitsResponse {
+  ordinaryUsageAllowed?: unknown;
+  rateLimits?: CodexRateLimitSnapshot;
+  rateLimitsByLimitId?: Record<string, CodexRateLimitSnapshot> | null;
+}
+
 @Injectable()
 export class CodexRuntimeService
   extends EventEmitter
@@ -153,6 +180,10 @@ export class CodexRuntimeService
   private modelCatalogInterval: NodeJS.Timeout | null = null;
   private readonly prewarmInFlight = new Map<number, Promise<void>>();
   private readonly lastPrewarmAt = new Map<number, number>();
+  private codexPlanUsage: AgentPlanUsage | null = null;
+  private planUsageRefreshInFlight: Promise<void> | null = null;
+  private lastPlanUsageRefreshAt = 0;
+  private unsubscribePlanUsageNotifications: (() => void) | null = null;
   constructor(
     private readonly sessionsService: SessionsService,
     private readonly authService: CodexAuthService,
@@ -202,9 +233,24 @@ export class CodexRuntimeService
       void this.refreshModelCatalogIfStale();
     }, CODEX_MODEL_REFRESH_TTL_MS);
     this.modelCatalogInterval.unref?.();
+    this.unsubscribePlanUsageNotifications = this.appServer.onNotification(
+      (notification) => {
+        const hasOAuthSession = [...this.runtimeStates.values()].some(
+          (state) => state.authStatus?.authMethod === 'oauth',
+        );
+        if (
+          notification.method === 'account/rateLimits/updated' &&
+          hasOAuthSession
+        ) {
+          void this.refreshCodexPlanUsage(true);
+        }
+      },
+    );
   }
 
   onModuleDestroy(): void {
+    this.unsubscribePlanUsageNotifications?.();
+    this.unsubscribePlanUsageNotifications = null;
     if (this.modelCatalogInterval) {
       clearInterval(this.modelCatalogInterval);
       this.modelCatalogInterval = null;
@@ -231,7 +277,10 @@ export class CodexRuntimeService
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
     state.cachedWorktreePath = session.worktreePath;
-    await this.refreshAuthStatusFast(state);
+    await this.refreshAuthStatusFast(state, sessionId);
+    if (state.authStatus?.authMethod === 'oauth') {
+      void this.refreshCodexPlanUsage();
+    }
     this.scheduleModelCatalogRefresh();
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -272,8 +321,11 @@ export class CodexRuntimeService
       const session = await this.sessionsService.findOne(sessionId);
       const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
       state.cachedWorktreePath = session.worktreePath;
-      await this.refreshAuthStatusFast(state);
+      await this.refreshAuthStatusFast(state, sessionId);
       await this.appServer.prewarm();
+      if (state.authStatus?.authMethod === 'oauth') {
+        await this.refreshCodexPlanUsage();
+      }
       this.lastPrewarmAt.set(sessionId, Date.now());
     })()
       .catch((error) => {
@@ -460,7 +512,7 @@ export class CodexRuntimeService
           `Failed to mark session ${sessionId} active: ${String(error)}`,
         ),
       );
-    void this.refreshAuthStatusFast(state).catch(() => undefined);
+    void this.refreshAuthStatusFast(state, sessionId).catch(() => undefined);
     this.emitRunState(sessionId);
 
     if (isNewSession) {
@@ -698,6 +750,9 @@ export class CodexRuntimeService
         event.usage,
       );
       this.emitRunState(sessionId);
+      if (state.authStatus?.authMethod === 'oauth') {
+        void this.refreshCodexPlanUsage(true);
+      }
       return;
     }
     if (event.type === 'turn.failed') {
@@ -1114,6 +1169,7 @@ export class CodexRuntimeService
       contextUsage: null,
       sessionMetadata: null,
       authStatus: null,
+      planUsage: this.codexPlanUsage,
     };
     this.runtimeStates.set(sessionId, state);
     return state;
@@ -1140,6 +1196,7 @@ export class CodexRuntimeService
         planMode: state.planMode,
         availableModels: state.availableModels,
         contextUsage: state.contextUsage,
+        planUsage: state.planUsage,
         pendingPermissionRequest: state.pendingPermissionRequest,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
@@ -1241,8 +1298,165 @@ export class CodexRuntimeService
     }
   }
 
-  private async refreshAuthStatusFast(state: CodexRuntimeState): Promise<void> {
+  private async refreshAuthStatusFast(
+    state: CodexRuntimeState,
+    sessionId?: number,
+  ): Promise<void> {
     state.authStatus = await this.authService.getFastStatus();
+    if (state.authStatus.authMethod !== 'oauth') {
+      const hadPlanUsage = state.planUsage !== null;
+      state.planUsage = null;
+      if (hadPlanUsage && sessionId !== undefined) {
+        this.emitEvent({
+          type: 'plan_usage',
+          payload: { sessionId, planUsage: null },
+        });
+      }
+    }
+  }
+
+  private refreshCodexPlanUsage(force = false): Promise<void> {
+    if (
+      !force &&
+      Date.now() - this.lastPlanUsageRefreshAt < CODEX_PLAN_USAGE_TTL_MS
+    ) {
+      return Promise.resolve();
+    }
+    if (this.planUsageRefreshInFlight) {
+      return this.planUsageRefreshInFlight;
+    }
+
+    this.planUsageRefreshInFlight = (async () => {
+      try {
+        const response = await this.appServer.request<CodexRateLimitsResponse>(
+          'account/rateLimits/read',
+          { excludeResetCreditDetails: true },
+          8_000,
+        );
+        this.lastPlanUsageRefreshAt = Date.now();
+        this.codexPlanUsage = this.toCodexPlanUsage(response);
+        this.broadcastPlanUsage();
+      } catch (error) {
+        // Older app-server builds may not implement this method. Quota is
+        // optional UI, so keep it hidden and retry after the normal TTL.
+        this.lastPlanUsageRefreshAt = Date.now();
+        this.logger.debug(`Codex plan usage unavailable: ${String(error)}`);
+      } finally {
+        this.planUsageRefreshInFlight = null;
+      }
+    })();
+    return this.planUsageRefreshInFlight;
+  }
+
+  private toCodexPlanUsage(
+    response: CodexRateLimitsResponse,
+  ): AgentPlanUsage | null {
+    const snapshot =
+      response.rateLimitsByLimitId?.['codex'] ?? response.rateLimits ?? null;
+    if (!snapshot) return null;
+
+    const windows = [snapshot.primary, snapshot.secondary]
+      .map((window, index) => this.toCodexPlanUsageWindow(window, index))
+      .filter(
+        (window): window is NonNullable<typeof window> => window !== null,
+      );
+    if (!windows.length) return null;
+
+    const lowestRemaining = Math.min(
+      ...windows.map((window) => window.remainingPercentage),
+    );
+    const ordinaryUsageAllowed =
+      typeof response.ordinaryUsageAllowed === 'boolean'
+        ? response.ordinaryUsageAllowed
+        : null;
+    const credits = snapshot.credits;
+    const hasCredits =
+      credits?.hasCredits === true || credits?.unlimited === true;
+
+    return {
+      provider: 'codex',
+      planName:
+        typeof snapshot.planType === 'string'
+          ? this.formatCodexPlanName(snapshot.planType)
+          : null,
+      status:
+        ordinaryUsageAllowed === false || lowestRemaining <= 0
+          ? 'exhausted'
+          : lowestRemaining <= 20
+            ? 'warning'
+            : 'available',
+      windows,
+      credits: hasCredits
+        ? {
+            balance:
+              typeof credits?.balance === 'string' ? credits.balance : null,
+            unlimited: credits?.unlimited === true,
+          }
+        : null,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private toCodexPlanUsageWindow(
+    window: CodexRateLimitWindow | null | undefined,
+    index: number,
+  ): AgentPlanUsage['windows'][number] | null {
+    if (!window || typeof window.usedPercent !== 'number') return null;
+    const durationMinutes =
+      typeof window.windowDurationMins === 'number'
+        ? window.windowDurationMins
+        : null;
+    let label = index === 0 ? 'Short-term limit' : 'Long-term limit';
+    if (durationMinutes !== null) {
+      if (durationMinutes === 300) label = '5-hour limit';
+      else if (durationMinutes === 10_080) label = 'Weekly limit';
+      else if (durationMinutes % 1_440 === 0)
+        label = `${durationMinutes / 1_440}-day limit`;
+      else if (durationMinutes % 60 === 0)
+        label = `${durationMinutes / 60}-hour limit`;
+    }
+    return {
+      id: index === 0 ? 'primary' : 'secondary',
+      label,
+      remainingPercentage: Math.max(
+        0,
+        Math.min(100, Math.round(100 - window.usedPercent)),
+      ),
+      resetsAt: typeof window.resetsAt === 'number' ? window.resetsAt : null,
+    };
+  }
+
+  private formatCodexPlanName(planType: string): string {
+    const labels: Record<string, string> = {
+      pro: 'Pro',
+      prolite: 'Pro',
+      plus: 'Plus',
+      go: 'Go',
+      free: 'Free',
+      team: 'Team',
+      business: 'Business',
+      enterprise: 'Enterprise',
+      edu: 'Edu',
+    };
+    return (
+      labels[planType] ??
+      planType
+        .split('_')
+        .filter(Boolean)
+        .map((part) => part[0]?.toUpperCase() + part.slice(1))
+        .join(' ')
+    );
+  }
+
+  private broadcastPlanUsage(): void {
+    for (const [sessionId, state] of this.runtimeStates) {
+      if (state.authStatus?.authMethod !== 'oauth') continue;
+      state.planUsage = this.codexPlanUsage;
+      this.emitEvent({
+        type: 'plan_usage',
+        payload: { sessionId, planUsage: state.planUsage },
+      });
+    }
   }
 
   private scheduleModelCatalogRefresh(): void {
@@ -1454,6 +1668,7 @@ export class CodexRuntimeService
       runtimeStatus: null,
       authStatus: state.authStatus,
       rateLimit: null,
+      planUsage: state.planUsage,
       notifications: [],
       hooks: [],
       recentHookEvents: [],

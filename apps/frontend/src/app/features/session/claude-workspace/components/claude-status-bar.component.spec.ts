@@ -81,4 +81,48 @@ describe('ClaudeStatusBarComponent', () => {
     expect(fixture.componentInstance.activePermissionLabel()).toBe('Accept edits');
     expect(fixture.nativeElement.textContent).toContain('Plan on');
   });
+
+  it('shows provider-reported plan usage with a detailed allowance popover', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('currentProvider', 'codex');
+    fixture.componentRef.setInput('planUsage', {
+      provider: 'codex',
+      planName: 'Plus',
+      status: 'warning',
+      windows: [
+        {
+          id: 'primary',
+          label: '5-hour limit',
+          remainingPercentage: 18,
+          resetsAt: Math.floor(Date.now() / 1000) + 3600,
+        },
+        {
+          id: 'secondary',
+          label: 'Weekly limit',
+          remainingPercentage: 64,
+          resetsAt: null,
+        },
+      ],
+      credits: null,
+      updatedAt: new Date().toISOString(),
+    });
+    fixture.detectChanges();
+
+    const trigger = fixture.nativeElement.querySelector('.cw-sb__usage-trigger') as HTMLElement;
+    expect(trigger.textContent).toContain('18% left');
+    trigger.click();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Codex usage');
+    expect(fixture.nativeElement.textContent).toContain('5-hour limit');
+    expect(fixture.nativeElement.textContent).toContain('Weekly limit');
+    expect(fixture.nativeElement.textContent).toContain('Plus');
+  });
+
+  it('does not reserve status-bar space when plan usage is unavailable', async () => {
+    const fixture = await render();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.cw-sb__usage-trigger')).toBeNull();
+  });
 });

@@ -98,6 +98,27 @@ export interface AgentAuthStatus {
   installHint?: string | null;
 }
 
+/** Provider-reported allowance for a quota-backed Codex or Claude plan. */
+export interface AgentPlanUsageWindow {
+  id: string;
+  label: string;
+  remainingPercentage: number;
+  /** Unix timestamp in seconds, matching both provider protocols. */
+  resetsAt: number | null;
+}
+
+export interface AgentPlanUsage {
+  provider: 'claude' | 'codex';
+  planName: string | null;
+  status: 'available' | 'warning' | 'exhausted';
+  windows: AgentPlanUsageWindow[];
+  credits: {
+    balance: string | null;
+    unlimited: boolean;
+  } | null;
+  updatedAt: string;
+}
+
 export type AgentImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 
 export interface AgentImageInput {

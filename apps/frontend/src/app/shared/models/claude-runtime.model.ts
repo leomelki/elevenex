@@ -604,6 +604,7 @@ export interface ClaudeRuntimeState {
   runtimeStatus: ClaudeRuntimeStatus | null;
   authStatus: ClaudeAuthStatus | null;
   rateLimit: ClaudeRateLimit | null;
+  planUsage?: import('./agent-runtime.model').AgentPlanUsage | null;
   notifications: ClaudeNotification[];
   hooks: ClaudeHookExecution[];
   recentHookEvents: ClaudeHookEvent[];
@@ -659,6 +660,7 @@ export type ClaudeRuntimeEvent =
         planMode: boolean;
         availableModels: ClaudeModelOption[];
         contextUsage: ClaudeContextUsage | null;
+        planUsage?: import('./agent-runtime.model').AgentPlanUsage | null;
         pendingPermissionRequest: ClaudePermissionRequest | null;
         pendingUserInputRequest: ClaudeUserInputRequest | null;
         pendingPrompts: ClaudePendingPrompt[];
@@ -671,6 +673,13 @@ export type ClaudeRuntimeEvent =
   | { type: 'runtime_status'; payload: { sessionId: number; status: ClaudeRuntimeStatus } }
   | { type: 'auth_status'; payload: { sessionId: number; status: ClaudeAuthStatus } }
   | { type: 'rate_limit'; payload: { sessionId: number; rateLimit: ClaudeRateLimit } }
+  | {
+      type: 'plan_usage';
+      payload: {
+        sessionId: number;
+        planUsage: import('./agent-runtime.model').AgentPlanUsage | null;
+      };
+    }
   | { type: 'notification'; payload: { sessionId: number; notification: ClaudeNotification } }
   | { type: 'api_retry'; payload: { sessionId: number; retry: ClaudeApiRetry } }
   | {

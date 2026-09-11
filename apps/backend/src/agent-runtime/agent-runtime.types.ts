@@ -136,6 +136,30 @@ export interface AgentAuthStatus {
   [key: string]: unknown;
 }
 
+/**
+ * Provider-reported subscription allowance. This deliberately models a
+ * percentage and reset time instead of message counts: both Codex and Claude
+ * meter task complexity, so a message-count estimate would be misleading.
+ */
+export interface AgentPlanUsageWindow {
+  id: string;
+  label: string;
+  remainingPercentage: number;
+  resetsAt: number | null;
+}
+
+export interface AgentPlanUsage {
+  provider: 'claude' | 'codex';
+  planName: string | null;
+  status: 'available' | 'warning' | 'exhausted';
+  windows: AgentPlanUsageWindow[];
+  credits: {
+    balance: string | null;
+    unlimited: boolean;
+  } | null;
+  updatedAt: string;
+}
+
 export interface AgentImageInput {
   mediaType: AgentImageMediaType;
   data: string;
