@@ -139,6 +139,10 @@
     <app-agent-control-drawer />
   </div>
 
+  <!-- Last shell child so it is pinned to the bottom of the window on every
+       route: someone is driving this machine's backend from elsewhere. -->
+  <app-remote-share-status-bar />
+
   <app-agent-command-bar />
 
   @if (remoteConnecting(); as connecting) {

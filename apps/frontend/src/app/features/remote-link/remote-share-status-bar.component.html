@@ -1,0 +1,36 @@
+@if (connectedPeers() > 0) {
+  <!-- A live indicator, not a prompt: no close button, it leaves when the
+       connection does. Kept to one slim row so it stays visible without
+       getting in the way of the workspace above it. -->
+  <section
+    class="remote-share-bar flex h-9 w-full shrink-0 items-center gap-2.5 border-t border-warning/30 bg-warning/10 px-3 sm:px-4"
+    role="status"
+    aria-live="polite"
+    aria-label="Remote sharing active"
+  >
+    <span class="relative flex size-2 shrink-0" aria-hidden="true">
+      <span class="absolute inline-flex size-full animate-ping rounded-full bg-warning/70"></span>
+      <span class="relative inline-flex size-2 rounded-full bg-warning"></span>
+    </span>
+
+    <ng-icon name="lucideMonitorSmartphone" size="14" class="shrink-0 text-warning" />
+
+    <p class="min-w-0 flex-1 truncate text-xs font-medium text-foreground" [title]="peerSummary()">
+      {{ peerSummary() }}
+    </p>
+
+    <button
+      z-button
+      type="button"
+      zType="destructive"
+      zSize="sm"
+      class="shrink-0"
+      [zLoading]="stopping()"
+      [zDisabled]="stopping()"
+      (click)="stopSharing()"
+    >
+      <ng-icon name="lucideUnlink" size="13" />
+      Stop sharing
+    </button>
+  </section>
+}
