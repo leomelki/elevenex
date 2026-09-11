@@ -86,10 +86,10 @@
                 zSize="sm"
                 class="shrink-0"
                 [zLoading]="connectingId() === device.id"
-                [disabled]="busy() || device.status === 'connected'"
+                [disabled]="busy() || isActiveDevice(device)"
                 (click)="connect(device.id)"
               >
-                {{ device.status === 'connected' ? 'Connected' : 'Connect' }}
+                {{ connectLabel(device) }}
               </button>
               <button
                 z-button

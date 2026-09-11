@@ -469,7 +469,7 @@
 
     } @else if (view() === 'pairing') {
       <div class="env-pairing">
-        <app-remote-link-panel (connected)="onPairedFromPanel()" />
+        <app-remote-link-panel (connected)="onPairedFromPanel($event)" />
       </div>
     } @else {
       <div class="env-editor">

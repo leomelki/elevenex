@@ -74,6 +74,51 @@ describe('onboarding state storage', () => {
     expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
   });
 
+  it('keeps the paired device across a reload', () => {
+    // The device is what names the backend origin for the whole window, so
+    // dropping it on write leaves a window in paired mode with nothing to dial:
+    // requests fall back to this machine's backend and the route guard sends the
+    // window back to the mode picker.
+    writeOnboardingStateSnapshot({
+      mode: 'paired',
+      currentStep: 'project',
+      activeServerId: null,
+      remoteConnectionReady: true,
+      projectHandoffAcknowledged: true,
+      servers: [],
+      lastSshDefaults: null,
+      wsl: null,
+      paired: { id: 7, name: 'La-TV.local', localPort: 51234 },
+    });
+
+    const snapshot = readOnboardingStateSnapshot();
+
+    expect(snapshot.paired).toEqual({ id: 7, name: 'La-TV.local', localPort: 51234 });
+    expect(getOnboardingBackendOrigin(snapshot)).toBe('http://127.0.0.1:51234');
+  });
+
+  it('keeps a device whose link is not claimed yet', () => {
+    // A window seeded by the main process knows its device before it knows the
+    // port. Losing the device here would be the same dead end as above, so the
+    // record survives while the origin stays unresolved.
+    writeOnboardingStateSnapshot({
+      mode: 'paired',
+      currentStep: 'project',
+      activeServerId: null,
+      remoteConnectionReady: false,
+      projectHandoffAcknowledged: true,
+      servers: [],
+      lastSshDefaults: null,
+      wsl: null,
+      paired: { id: 7, name: 'La-TV.local', localPort: 0 },
+    });
+
+    const snapshot = readOnboardingStateSnapshot();
+
+    expect(snapshot.paired?.id).toBe(7);
+    expect(getOnboardingBackendOrigin(snapshot)).toBeNull();
+  });
+
   it('gives two windows independent environments over a shared catalogue', () => {
     writeOnboardingStateSnapshot({
       mode: 'ssh',

@@ -16,6 +16,7 @@ import {
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import type { RemoteLinkDeviceState, RemoteLinkTransport } from '@/shared/runtime/electron-remote-link';
+import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
 
 import { RemoteLinkService } from './remote-link.service';
 
@@ -48,8 +49,14 @@ import { RemoteLinkService } from './remote-link.service';
 })
 export class RemoteLinkPanelComponent {
   private readonly service = inject(RemoteLinkService);
+  private readonly onboardingState = inject(OnboardingStateService);
 
-  readonly connected = output<void>();
+  /**
+   * Emits the device the window was just pointed at. The host decides what a
+   * switch means for it — bringing the link up is not enough on its own, since
+   * the workspace around it still has to be re-mounted onto the new backend.
+   */
+  readonly connected = output<RemoteLinkDeviceState>();
 
   protected readonly supported = this.service.supported;
   protected readonly sharing = this.service.sharing;
@@ -67,6 +74,38 @@ export class RemoteLinkPanelComponent {
   protected readonly deviceName = signal('');
   protected readonly error = signal<string | null>(null);
   protected readonly connectingId = signal<number | null>(null);
+
+  /**
+   * The device *this window* is actually pointed at.
+   *
+   * A link being up says nothing about where the window sends its requests: the
+   * link is owned by the main process and outlives any one window, so a reload
+   * or a second window finds it already connected while still talking to its
+   * own backend. Only this tells the two apart.
+   */
+  protected readonly activeDeviceId = computed(() => {
+    const snapshot = this.onboardingState.snapshotState();
+    if (snapshot.mode !== 'paired' || !snapshot.paired?.localPort) {
+      return null;
+    }
+    return snapshot.paired.id;
+  });
+
+  protected isActiveDevice(device: RemoteLinkDeviceState): boolean {
+    return this.activeDeviceId() === device.id && device.status === 'connected';
+  }
+
+  /**
+   * Connecting is offered for every device this window is not already on, even
+   * one whose link is up — that is the only way to claim an existing link, and
+   * connect() is a no-op on the main-process side when it already is.
+   */
+  protected connectLabel(device: RemoteLinkDeviceState): string {
+    if (this.isActiveDevice(device)) {
+      return 'Connected';
+    }
+    return device.status === 'connected' ? 'Open' : 'Connect';
+  }
 
   protected readonly sharingSummary = computed(() => {
     const sharing = this.sharing();
@@ -188,8 +227,7 @@ export class RemoteLinkPanelComponent {
     this.error.set(null);
     this.connectingId.set(id);
     try {
-      await this.service.connect(id);
-      this.connected.emit();
+      this.connected.emit(await this.service.connect(id));
     } catch (error) {
       this.error.set(this.messageFor(error));
     } finally {

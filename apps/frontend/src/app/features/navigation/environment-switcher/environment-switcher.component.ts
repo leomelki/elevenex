@@ -373,13 +373,7 @@ export class EnvironmentSwitcherComponent {
       this.close();
       return;
     }
-    this.connectionManager.clearError();
-    this.switchingId.set(`paired-${device.id}`);
-    const result = await this.connectionManager.switchToPaired(device.id, device.name);
-    this.switchingId.set(null);
-    if (result.ok) {
-      this.close();
-    }
+    await this.switchToPaired(device);
   }
 
   openPairingView(event?: Event) {
@@ -388,10 +382,23 @@ export class EnvironmentSwitcherComponent {
     this.view.set('pairing');
   }
 
-  // The panel switched this window onto the paired device itself, so the
-  // popover only has to get out of the way.
-  onPairedFromPanel() {
-    this.close();
+  // The panel brought the link up and recorded the loopback port, but that only
+  // decides *where* requests go — the workspace still has to be re-mounted, or
+  // the sidebar keeps showing the projects of the environment left behind. So a
+  // device paired from here goes through the same switch as one picked from the
+  // list, which is a no-op on the link itself and idempotent on the rest.
+  async onPairedFromPanel(device: RemoteLinkDeviceState) {
+    await this.switchToPaired(device);
+  }
+
+  private async switchToPaired(device: RemoteLinkDeviceState) {
+    this.connectionManager.clearError();
+    this.switchingId.set(`paired-${device.id}`);
+    const result = await this.connectionManager.switchToPaired(device.id, device.name);
+    this.switchingId.set(null);
+    if (result.ok) {
+      this.close();
+    }
   }
 
   async selectServer(server: SavedServer, event?: Event) {

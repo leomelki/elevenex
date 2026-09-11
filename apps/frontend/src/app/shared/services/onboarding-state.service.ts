@@ -107,7 +107,11 @@ function sanitizePairedState(value: unknown): PairedDeviceState | null {
   const id = Number(value['id']);
   const localPort = Number(value['localPort']);
   if (!Number.isInteger(id) || id <= 0) return null;
-  if (!Number.isInteger(localPort) || localPort <= 0) return null;
+  // Port 0 means "device known, link not claimed yet" — the state a window is
+  // seeded with before startup brings the link up. It has to survive the
+  // round-trip, or the window forgets which desktop it is on and falls back to
+  // the mode picker; the port being 0 already keeps every origin getter null.
+  if (!Number.isInteger(localPort) || localPort < 0) return null;
 
   return {
     id,
@@ -358,6 +362,7 @@ export function writeOnboardingStateSnapshot(snapshot: OnboardingStateSnapshot):
         remoteConnectionReady: snapshot.remoteConnectionReady,
         projectHandoffAcknowledged: snapshot.projectHandoffAcknowledged,
         wsl: snapshot.wsl,
+        paired: snapshot.paired,
       }),
     );
     // The pre-split key has now been superseded on both axes; leaving it around
