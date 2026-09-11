@@ -36,8 +36,13 @@ export interface TextSearchRange {
 export interface TextSearchResult {
   path: string;
   lineNumber: number;
+  /** Preview snippet; windowed when the source line is very long. */
   lineText: string;
+  /** Match offsets within the document line. */
   ranges: TextSearchRange[];
+  /** Match offsets within `lineText`. Equals `ranges` unless truncated. */
+  previewRanges?: TextSearchRange[];
+  previewTruncated?: boolean;
 }
 
 export interface TextSearchOptions {
@@ -51,11 +56,37 @@ export interface TextSearchOptions {
   maxResults?: number;
 }
 
+export interface TextSearchSummary {
+  /** True when the search stopped early because `maxResults` was reached. */
+  limitHit: boolean;
+}
+
 const DEFAULT_FILE_SEARCH_LIMIT = 100;
 const MAX_FILE_SEARCH_LIMIT = 500;
 const FALLBACK_WALK_MAX_FILES = 20_000;
 const DEFAULT_TEXT_SEARCH_LIMIT = 250;
 const MAX_TEXT_SEARCH_LIMIT = 2_000;
+/**
+ * A match inside a minified bundle can sit on a multi-megabyte line. ripgrep's
+ * `--max-columns` is ignored by its JSON printer, so the preview is windowed
+ * here instead: consumers get a bounded snippet around the first match while
+ * `ranges` stay in real document coordinates.
+ */
+const TEXT_SEARCH_MAX_PREVIEW_CHARS = 1_000;
+const TEXT_SEARCH_PREVIEW_LEAD_CHARS = 100;
+/**
+ * Matches are coalesced into batches so a busy search does not turn into one
+ * socket write per line, while still reaching the client quickly.
+ */
+const TEXT_SEARCH_FLUSH_INTERVAL_MS = 25;
+const TEXT_SEARCH_FLUSH_BATCH_SIZE = 200;
+/**
+ * `git ls-files` over a large repository costs tens of milliseconds, and file
+ * search runs on every keystroke. Candidates are cached per worktree and served
+ * stale while a refresh runs, so typing never waits on a subprocess.
+ */
+const FILE_SEARCH_CACHE_TTL_MS = 5_000;
+const FILE_SEARCH_CACHE_MAX_ENTRIES = 8;
 const RIPGREP_PLATFORM_PACKAGE_BY_TARGET: Record<string, string> = {
   'darwin-arm64': '@vscode/ripgrep-darwin-arm64',
   'darwin-x64': '@vscode/ripgrep-darwin-x64',
@@ -270,6 +301,50 @@ function byteOffsetToStringOffset(text: string, byteOffset: number): number {
     .toString('utf8').length;
 }
 
+/**
+ * Bounds the preview text sent to consumers, keeping a window around the first
+ * match. `ranges` remain document-relative; `previewRanges` index into the
+ * returned (possibly shifted) preview text.
+ */
+function buildBoundedPreview(
+  lineText: string,
+  ranges: TextSearchRange[],
+): Pick<TextSearchResult, 'lineText'> &
+  Partial<Pick<TextSearchResult, 'previewRanges' | 'previewTruncated'>> {
+  // The overwhelming majority of lines fit, and omitting the preview fields
+  // keeps the payload (and existing consumers) unchanged.
+  if (lineText.length <= TEXT_SEARCH_MAX_PREVIEW_CHARS) {
+    return { lineText };
+  }
+
+  const firstStart = ranges[0]?.start ?? 0;
+  let windowStart = Math.max(0, firstStart - TEXT_SEARCH_PREVIEW_LEAD_CHARS);
+  const windowEnd = Math.min(
+    lineText.length,
+    windowStart + TEXT_SEARCH_MAX_PREVIEW_CHARS,
+  );
+  windowStart = Math.max(0, windowEnd - TEXT_SEARCH_MAX_PREVIEW_CHARS);
+
+  const previewText = lineText.slice(windowStart, windowEnd);
+  const previewRanges = ranges
+    .map((range) => ({
+      start: Math.min(Math.max(range.start - windowStart, 0), previewText.length),
+      end: Math.min(Math.max(range.end - windowStart, 0), previewText.length),
+    }))
+    .filter((range) => range.end > range.start);
+
+  return {
+    lineText: previewText,
+    // A match sitting past the window still deserves a visible row; anchor its
+    // highlight at the end of the snippet rather than dropping the result.
+    previewRanges:
+      previewRanges.length > 0
+        ? previewRanges
+        : [{ start: previewText.length, end: previewText.length }],
+    previewTruncated: true,
+  };
+}
+
 function isFuzzyMatch(candidate: string, query: string): boolean {
   if (!query) {
     return true;
@@ -395,8 +470,19 @@ async function resolveExistingParentDirectory(
   };
 }
 
+interface FileSearchCandidateCacheEntry {
+  paths: string[] | null;
+  loadedAt: number;
+  inFlight: Promise<string[]> | null;
+}
+
 @Injectable()
 export class FilesService {
+  private readonly fileSearchCandidateCache = new Map<
+    string,
+    FileSearchCandidateCacheEntry
+  >();
+
   async searchFiles(
     worktreePath: string,
     query: string = '',
@@ -450,10 +536,37 @@ export class FilesService {
       .map(({ path: resultPath, name }) => ({ path: resultPath, name }));
   }
 
+  /**
+   * Buffered variant kept for callers that want the whole result set (MCP
+   * tools, tests). Delegates to the streaming core so both paths share the same
+   * ripgrep handling.
+   */
   async searchText(
     worktreePath: string,
     options: TextSearchOptions,
   ): Promise<TextSearchResult[]> {
+    const results: TextSearchResult[] = [];
+    await this.searchTextStream(worktreePath, options, (batch) => {
+      results.push(...batch);
+    });
+
+    return results;
+  }
+
+  /**
+   * Streams ripgrep matches to `onResults` in small batches as they are found,
+   * rather than buffering the whole result set until the process exits.
+   *
+   * Aborting `signal` kills ripgrep, so a cancelled search (the user typing
+   * another character) stops burning CPU immediately instead of running to
+   * completion against a disconnected client.
+   */
+  async searchTextStream(
+    worktreePath: string,
+    options: TextSearchOptions,
+    onResults: (batch: TextSearchResult[]) => void,
+    signal?: AbortSignal,
+  ): Promise<TextSearchSummary> {
     const resolvedWorktree = path.resolve(worktreePath);
     let stat;
     try {
@@ -467,29 +580,87 @@ export class FilesService {
     }
 
     const query = options.query ?? '';
-    if (!query) {
-      return [];
+    if (!query || signal?.aborted) {
+      return { limitHit: false };
     }
 
     const maxResults = normalizeTextSearchLimit(options.maxResults);
     const args = this.buildRipgrepTextSearchArgs(options);
 
-    return new Promise((resolve, reject) => {
+    return new Promise<TextSearchSummary>((resolve, reject) => {
       const child = spawn(resolveRipgrepBinary(), args, {
         cwd: resolvedWorktree,
         windowsHide: true,
       });
-      const results: TextSearchResult[] = [];
+
+      let pending: TextSearchResult[] = [];
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
+      let emitted = 0;
+      let limitHit = false;
       let stdoutBuffer = '';
       let stderr = '';
-      let didKillForLimit = false;
+      let stopped = false;
       let settled = false;
+      let consumerError: Error | null = null;
 
-      const resolveOnce = (value: TextSearchResult[]): void => {
+      const stopChild = (): void => {
+        if (stopped) {
+          return;
+        }
+        stopped = true;
+        child.kill();
+      };
+
+      const cleanup = (): void => {
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        signal?.removeEventListener('abort', onAbort);
+      };
+
+      const flush = (): void => {
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+
+        if (pending.length === 0 || consumerError) {
+          return;
+        }
+
+        const batch = pending;
+        pending = [];
+        try {
+          onResults(batch);
+        } catch (error) {
+          // The consumer (usually a disconnected HTTP response) went away.
+          consumerError = error instanceof Error ? error : new Error(String(error));
+          stopChild();
+        }
+      };
+
+      const scheduleFlush = (): void => {
+        if (pending.length >= TEXT_SEARCH_FLUSH_BATCH_SIZE) {
+          flush();
+          return;
+        }
+
+        if (!flushTimer) {
+          flushTimer = setTimeout(flush, TEXT_SEARCH_FLUSH_INTERVAL_MS);
+        }
+      };
+
+      function onAbort(): void {
+        stopChild();
+      }
+
+      const resolveOnce = (value: TextSearchSummary): void => {
         if (settled) {
           return;
         }
         settled = true;
+        cleanup();
         resolve(value);
       };
 
@@ -498,11 +669,12 @@ export class FilesService {
           return;
         }
         settled = true;
+        cleanup();
         reject(error);
       };
 
       const handleLine = (line: string): void => {
-        if (!line.trim()) {
+        if (!line.trim() || limitHit || consumerError) {
           return;
         }
 
@@ -517,10 +689,9 @@ export class FilesService {
           return;
         }
 
-        const relativePath = String(event.data?.path?.text ?? '').replace(
-          /\\/g,
-          '/',
-        ).replace(/^\.\//, '');
+        const relativePath = String(event.data?.path?.text ?? '')
+          .replace(/\\/g, '/')
+          .replace(/^\.\//, '');
         const lineText = String(event.data?.lines?.text ?? '').replace(
           /\r?\n$/,
           '',
@@ -543,17 +714,22 @@ export class FilesService {
           return;
         }
 
-        results.push({
+        pending.push({
           path: relativePath,
           lineNumber,
-          lineText,
           ranges,
+          ...buildBoundedPreview(lineText, ranges),
         });
+        emitted += 1;
 
-        if (results.length >= maxResults && !didKillForLimit) {
-          didKillForLimit = true;
-          child.kill();
+        if (emitted >= maxResults) {
+          limitHit = true;
+          flush();
+          stopChild();
+          return;
         }
+
+        scheduleFlush();
       };
 
       child.stdout.on('data', (chunk: Buffer) => {
@@ -570,26 +746,39 @@ export class FilesService {
       });
 
       child.on('error', (error) => {
+        cleanup();
         rejectOnce(error);
       });
 
-      child.on('close', (code, signal) => {
+      child.on('close', (code, exitSignal) => {
         if (stdoutBuffer) {
           handleLine(stdoutBuffer);
         }
+        flush();
 
-        if (didKillForLimit || code === 0 || code === 1) {
-          resolveOnce(results.slice(0, maxResults));
+        if (consumerError) {
+          rejectOnce(consumerError);
+          return;
+        }
+
+        // ripgrep exits 1 when there are simply no matches, and we terminate it
+        // ourselves once the result limit or a cancellation lands.
+        if (stopped || code === 0 || code === 1) {
+          resolveOnce({ limitHit });
           return;
         }
 
         rejectOnce(
           new Error(
             stderr.trim() ||
-              `ripgrep exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}`,
+              `ripgrep exited with code ${code ?? 'unknown'}${exitSignal ? ` (${exitSignal})` : ''}`,
           ),
         );
       });
+
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
     });
   }
 
@@ -601,6 +790,9 @@ export class FilesService {
       '--no-heading',
       '--color',
       'never',
+      // ripgrep block-buffers a piped stdout, which would hold back the first
+      // matches of a sparse search until ~64KiB accumulated.
+      '--line-buffered',
     ];
 
     if (!options.isRegExp) {
@@ -633,16 +825,101 @@ export class FilesService {
     return args;
   }
 
+  /**
+   * Returns the searchable file list for a worktree, cached per worktree.
+   *
+   * Concurrent callers share one in-flight load, and an expired entry is served
+   * stale while it refreshes in the background, so keystroke-rate file search
+   * never blocks on `git ls-files`.
+   */
   private async listSearchCandidatePaths(
     worktreePath: string,
   ): Promise<string[]> {
-    try {
-      const gitPaths = await runGitLsFiles(worktreePath);
-      return gitPaths
-        .map((item) => item.replace(/\\/g, '/'))
-        .filter(isSearchableRelativePath);
-    } catch {
-      return this.walkSearchCandidatePaths(worktreePath);
+    const cached = this.fileSearchCandidateCache.get(worktreePath);
+    const cachedPaths = cached?.paths ?? null;
+
+    if (
+      cachedPaths !== null &&
+      Date.now() - cached!.loadedAt < FILE_SEARCH_CACHE_TTL_MS
+    ) {
+      return cachedPaths;
+    }
+
+    const refresh = this.loadSearchCandidatePaths(worktreePath);
+
+    // Stale-while-revalidate: answer from the previous list immediately and let
+    // the refresh land in the cache for the next keystroke.
+    return cachedPaths !== null ? cachedPaths : refresh;
+  }
+
+  private loadSearchCandidatePaths(worktreePath: string): Promise<string[]> {
+    const existing = this.fileSearchCandidateCache.get(worktreePath);
+    if (existing?.inFlight) {
+      return existing.inFlight;
+    }
+
+    const load = (async () => {
+      try {
+        const gitPaths = await runGitLsFiles(worktreePath);
+        return gitPaths
+          .map((item) => item.replace(/\\/g, '/'))
+          .filter(isSearchableRelativePath);
+      } catch {
+        return this.walkSearchCandidatePaths(worktreePath);
+      }
+    })();
+
+    const entry: FileSearchCandidateCacheEntry = existing ?? {
+      paths: null,
+      loadedAt: 0,
+      inFlight: null,
+    };
+    entry.inFlight = load;
+    this.fileSearchCandidateCache.set(worktreePath, entry);
+    this.evictStaleCandidateCacheEntries();
+
+    void load
+      .then((paths) => {
+        entry.paths = paths;
+        entry.loadedAt = Date.now();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (entry.inFlight !== load) {
+          return;
+        }
+
+        entry.inFlight = null;
+        if (entry.paths === null) {
+          // Nothing usable to serve later; drop the placeholder entry.
+          this.fileSearchCandidateCache.delete(worktreePath);
+        }
+      });
+
+    return load;
+  }
+
+  /** Keeps the cache bounded when many worktrees are searched over a session. */
+  private evictStaleCandidateCacheEntries(): void {
+    while (this.fileSearchCandidateCache.size > FILE_SEARCH_CACHE_MAX_ENTRIES) {
+      let oldestKey: string | null = null;
+      let oldestAt = Number.POSITIVE_INFINITY;
+
+      for (const [key, value] of this.fileSearchCandidateCache) {
+        if (value.inFlight) {
+          continue;
+        }
+        if (value.loadedAt < oldestAt) {
+          oldestAt = value.loadedAt;
+          oldestKey = key;
+        }
+      }
+
+      if (oldestKey === null) {
+        return;
+      }
+
+      this.fileSearchCandidateCache.delete(oldestKey);
     }
   }
 

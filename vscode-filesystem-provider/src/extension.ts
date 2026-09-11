@@ -36,6 +36,12 @@ interface FileSearchQuickPickItem extends QuickPickItem {
   path: string;
 }
 
+/**
+ * The backend caches its candidate file list, so responses are fast enough to
+ * poll aggressively; this only coalesces bursts within a single keystroke.
+ */
+const FILE_SEARCH_DEBOUNCE_MS = 60;
+
 function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '');
 }
@@ -102,13 +108,23 @@ async function openFileSearch(worktreePath: string, backendClient: BackendClient
   let disposed = false;
   let requestVersion = 0;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let inFlight: AbortController | undefined;
 
   const updateItems = async (query: string): Promise<void> => {
     const version = ++requestVersion;
+    // Drop the superseded request so the backend stops working on it.
+    inFlight?.abort();
+    const abortController = new AbortController();
+    inFlight = abortController;
     quickPick.busy = true;
 
     try {
-      const results = await backendClient.searchFiles(worktreePath, query, 100);
+      const results = await backendClient.searchFiles(
+        worktreePath,
+        query,
+        100,
+        abortController.signal,
+      );
       if (disposed || version !== requestVersion) {
         return;
       }
@@ -136,7 +152,7 @@ async function openFileSearch(worktreePath: string, backendClient: BackendClient
 
     debounceTimer = setTimeout(() => {
       void updateItems(query);
-    }, 120);
+    }, FILE_SEARCH_DEBOUNCE_MS);
   };
 
   quickPick.onDidChangeValue(scheduleUpdate);
@@ -162,6 +178,7 @@ async function openFileSearch(worktreePath: string, backendClient: BackendClient
     if (debounceTimer) {
       clearTimeout(debounceTimer);
     }
+    inFlight?.abort();
     quickPick.dispose();
   });
 

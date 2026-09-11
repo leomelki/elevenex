@@ -37,6 +37,14 @@ function normalizeGlobPatterns(patterns: unknown): string[] {
     .filter((pattern): pattern is string => Boolean(pattern));
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'AbortError'
+  );
+}
+
 function toWorkspaceVfsUri(worktreePath: string, relativePath: string): Uri {
   return Uri.from({
     scheme: 'workspace-vfs',
@@ -53,7 +61,9 @@ export function toVSCodeTextSearchResult(
     (range) =>
       new Range(result.lineNumber, range.start, result.lineNumber, range.end),
   );
-  const previewRanges = result.ranges.map(
+  // Preview offsets differ from document offsets when the backend windowed a
+  // very long line.
+  const previewRanges = (result.previewRanges ?? result.ranges).map(
     (range) => new Range(0, range.start, 0, range.end),
   );
 
@@ -109,25 +119,30 @@ export function createWorkspaceTextSearchProvider(
           maxResults: options.maxResults,
         };
 
-        const results = await backendClient.searchText(
+        const summary = await backendClient.searchTextStream(
           worktreePath,
           request,
+          (batch) => {
+            if (token.isCancellationRequested) {
+              return;
+            }
+
+            for (const result of batch) {
+              progress.report(toVSCodeTextSearchResult(worktreePath, result));
+            }
+          },
           abortController.signal,
         );
 
-        if (token.isCancellationRequested) {
+        return { limitHit: summary.limitHit };
+      } catch (error) {
+        // A superseded search aborts its request; that is not a failure to
+        // surface, and results already reported stay in the view.
+        if (token.isCancellationRequested || isAbortError(error)) {
           return { limitHit: false };
         }
 
-        for (const result of results) {
-          progress.report(toVSCodeTextSearchResult(worktreePath, result));
-        }
-
-        return {
-          limitHit:
-            typeof options.maxResults === 'number' &&
-            results.length >= options.maxResults,
-        };
+        throw error;
       } finally {
         cancellation?.dispose();
       }

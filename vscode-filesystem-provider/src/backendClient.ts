@@ -5,6 +5,7 @@ import {
   BackendDirectoryEntry,
   BackendTextSearchOptions,
   BackendTextSearchResult,
+  BackendTextSearchSummary,
   BackendWriteRequest,
 } from './types';
 
@@ -233,6 +234,7 @@ export class BackendClient {
     worktreePath: string,
     query: string = '',
     limit: number = 100,
+    abortSignal?: AbortSignal,
   ): Promise<BackendFileSearchResult[]> {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const params = new URLSearchParams();
@@ -243,6 +245,7 @@ export class BackendClient {
 
     const response = await fetch(
       `${this.baseUrl}/${encodedWorktreePath}/file-search?${params.toString()}`,
+      { signal: abortSignal },
     );
 
     if (!response.ok) {
@@ -252,12 +255,7 @@ export class BackendClient {
     return response.json() as Promise<BackendFileSearchResult[]>;
   }
 
-  async searchText(
-    worktreePath: string,
-    options: BackendTextSearchOptions,
-    abortSignal?: AbortSignal,
-  ): Promise<BackendTextSearchResult[]> {
-    const encodedWorktreePath = encodeURIComponent(worktreePath);
+  private buildTextSearchParams(options: BackendTextSearchOptions): URLSearchParams {
     const params = new URLSearchParams();
     params.set('query', options.query);
     if (options.isRegExp !== undefined) {
@@ -282,6 +280,17 @@ export class BackendClient {
       params.append('exclude', exclude);
     }
 
+    return params;
+  }
+
+  async searchText(
+    worktreePath: string,
+    options: BackendTextSearchOptions,
+    abortSignal?: AbortSignal,
+  ): Promise<BackendTextSearchResult[]> {
+    const encodedWorktreePath = encodeURIComponent(worktreePath);
+    const params = this.buildTextSearchParams(options);
+
     const response = await fetch(
       `${this.baseUrl}/${encodedWorktreePath}/text-search?${params.toString()}`,
       { signal: abortSignal },
@@ -292,6 +301,104 @@ export class BackendClient {
     }
 
     return response.json() as Promise<BackendTextSearchResult[]>;
+  }
+
+  /**
+   * Consumes the NDJSON text-search stream, invoking `onResults` for each batch
+   * as it arrives so matches can be surfaced while ripgrep is still running.
+   *
+   * Falls back to the buffered endpoint when the runtime does not expose a
+   * readable response body.
+   */
+  async searchTextStream(
+    worktreePath: string,
+    options: BackendTextSearchOptions,
+    onResults: (results: BackendTextSearchResult[]) => void,
+    abortSignal?: AbortSignal,
+  ): Promise<BackendTextSearchSummary> {
+    const encodedWorktreePath = encodeURIComponent(worktreePath);
+    const params = this.buildTextSearchParams(options);
+
+    const response = await fetch(
+      `${this.baseUrl}/${encodedWorktreePath}/text-search/stream?${params.toString()}`,
+      { signal: abortSignal, headers: { Accept: 'application/x-ndjson' } },
+    );
+
+    if (!response.ok) {
+      throw this.mapHttpError(response.status, toWorkspaceUri(worktreePath, ''));
+    }
+
+    const body = response.body;
+    if (!body?.getReader) {
+      const results = await this.searchText(worktreePath, options, abortSignal);
+      onResults(results);
+      return {
+        limitHit:
+          options.maxResults !== undefined && results.length >= options.maxResults,
+      };
+    }
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let limitHit = false;
+
+    const handleLine = (line: string): void => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      let message: any;
+      try {
+        message = JSON.parse(trimmed);
+      } catch {
+        return;
+      }
+
+      if (message?.type === 'results' && Array.isArray(message.results)) {
+        if (message.results.length > 0) {
+          onResults(message.results as BackendTextSearchResult[]);
+        }
+        return;
+      }
+
+      if (message?.type === 'done') {
+        limitHit = Boolean(message.limitHit);
+        return;
+      }
+
+      if (message?.type === 'error') {
+        throw new Error(String(message.message ?? 'Text search failed'));
+      }
+    };
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex = buffer.indexOf('\n');
+        while (newlineIndex !== -1) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+          handleLine(line);
+          newlineIndex = buffer.indexOf('\n');
+        }
+      }
+
+      buffer += decoder.decode();
+      handleLine(buffer);
+    } finally {
+      // Releases the connection when we stop early (cancellation, in-band error).
+      void reader.cancel().catch(() => undefined);
+    }
+
+    return { limitHit };
   }
 
   /**

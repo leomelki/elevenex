@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpException,
   NotFoundException,
   Patch,
   Param,
@@ -109,6 +110,104 @@ export class FilesController {
       query ?? '',
       parsedLimit,
     );
+  }
+
+  /**
+   * Streaming counterpart of `text-search`, emitting NDJSON lines
+   * (`{"type":"results",...}` / `{"type":"done",...}` / `{"type":"error",...}`)
+   * so the editor can render matches while ripgrep is still running.
+   *
+   * Headers are flushed lazily: until the first line is written we can still
+   * fail with a normal HTTP status code.
+   */
+  @Get(':worktreePath/text-search/stream')
+  async streamSearchText(
+    @Res() res: Response,
+    @Param('worktreePath') worktreePath: string,
+    @Query('query') query?: string,
+    @Query('isRegExp') isRegExp?: string,
+    @Query('isCaseSensitive') isCaseSensitive?: string,
+    @Query('isWordMatch') isWordMatch?: string,
+    @Query('include') include?: string | string[],
+    @Query('exclude') exclude?: string | string[],
+    @Query('useIgnoreFiles') useIgnoreFiles?: string,
+    @Query('maxResults') maxResults?: string,
+  ): Promise<void> {
+    const decodedWorktree = decodeURIComponent(worktreePath);
+    const parsedMaxResults =
+      maxResults === undefined ? undefined : Number(maxResults);
+
+    const abortController = new AbortController();
+    // The client disconnecting (VS Code cancelling a superseded search) must
+    // stop ripgrep instead of letting it run to completion unobserved.
+    res.on('close', () => abortController.abort());
+
+    let headersSent = false;
+    const ensureHeaders = (): void => {
+      if (headersSent) {
+        return;
+      }
+      headersSent = true;
+      res.status(200);
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      // Defeat proxy buffering so batches are not held back.
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+      res.socket?.setNoDelay(true);
+    };
+
+    const writeLine = (payload: unknown): void => {
+      ensureHeaders();
+      res.write(`${JSON.stringify(payload)}\n`);
+    };
+
+    try {
+      const summary = await this.filesService.searchTextStream(
+        decodedWorktree,
+        {
+          query: query ?? '',
+          isRegExp: toBoolean(isRegExp),
+          isCaseSensitive: toBoolean(isCaseSensitive),
+          isWordMatch: toBoolean(isWordMatch),
+          includes: toArray(include),
+          excludes: toArray(exclude),
+          useIgnoreFiles: toBoolean(useIgnoreFiles),
+          maxResults: parsedMaxResults,
+        },
+        (results) => writeLine({ type: 'results', results }),
+        abortController.signal,
+      );
+
+      if (res.writableEnded) {
+        return;
+      }
+
+      writeLine({ type: 'done', limitHit: summary.limitHit });
+      res.end();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Text search failed';
+
+      if (res.writableEnded) {
+        return;
+      }
+
+      if (!headersSent) {
+        const status = error instanceof HttpException ? error.getStatus() : 500;
+        res.status(status).json({ statusCode: status, message });
+        return;
+      }
+
+      // The failure is often the socket itself; never let reporting it throw
+      // back into Nest, which would try to respond on a dead connection.
+      try {
+        writeLine({ type: 'error', message });
+        res.end();
+      } catch {
+        res.destroy();
+      }
+    }
   }
 
   @Get(':worktreePath/text-search')

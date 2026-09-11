@@ -28,16 +28,18 @@ suite('TextSearchProvider', () => {
   test('reports backend results and forwards search options', async () => {
     const calls: unknown[] = [];
     const backendClient = {
-      searchText: async (...args: unknown[]) => {
+      searchTextStream: async (...args: unknown[]) => {
         calls.push(args);
-        return [
+        const onResults = args[2] as (batch: unknown[]) => void;
+        onResults([
           {
             path: 'src/app.ts',
             lineNumber: 0,
             lineText: 'needle',
             ranges: [{ start: 0, end: 6 }],
           },
-        ];
+        ]);
+        return { limitHit: false };
       },
     };
     const provider = createWorkspaceTextSearchProvider(
@@ -77,10 +79,92 @@ suite('TextSearchProvider', () => {
     });
   });
 
+  test('reports each batch as it streams in, before the search completes', async () => {
+    const reported: unknown[] = [];
+    let releaseSecondBatch: (() => void) | undefined;
+    const secondBatchGate = new Promise<void>((resolve) => {
+      releaseSecondBatch = resolve;
+    });
+
+    const backendClient = {
+      searchTextStream: async (
+        _worktreePath: string,
+        _options: unknown,
+        onResults: (batch: unknown[]) => void,
+      ) => {
+        onResults([
+          {
+            path: 'a.ts',
+            lineNumber: 0,
+            lineText: 'needle',
+            ranges: [{ start: 0, end: 6 }],
+          },
+        ]);
+
+        await secondBatchGate;
+
+        onResults([
+          {
+            path: 'b.ts',
+            lineNumber: 1,
+            lineText: 'needle',
+            ranges: [{ start: 0, end: 6 }],
+          },
+        ]);
+
+        return { limitHit: true };
+      },
+    };
+    const provider = createWorkspaceTextSearchProvider(
+      worktreePath,
+      backendClient as any,
+    );
+
+    const pending = provider.provideTextSearchResults(
+      { pattern: 'needle' },
+      {},
+      { report: (value) => reported.push(value) },
+      { isCancellationRequested: false },
+    );
+
+    // The first batch is visible while the backend is still streaming.
+    await Promise.resolve();
+    assert.strictEqual(reported.length, 1);
+
+    releaseSecondBatch!();
+    const complete = await pending;
+
+    assert.strictEqual(reported.length, 2);
+    assert.deepStrictEqual(complete, { limitHit: true });
+  });
+
+  test('swallows abort errors from a superseded search', async () => {
+    const backendClient = {
+      searchTextStream: async () => {
+        const error = new Error('The operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      },
+    };
+    const provider = createWorkspaceTextSearchProvider(
+      worktreePath,
+      backendClient as any,
+    );
+
+    const complete = await provider.provideTextSearchResults(
+      { pattern: 'needle' },
+      {},
+      { report: () => undefined },
+      { isCancellationRequested: false },
+    );
+
+    assert.deepStrictEqual(complete, { limitHit: false });
+  });
+
   test('returns without searching when already cancelled', async () => {
     const backendClient = {
-      searchText: async () => {
-        throw new Error('searchText should not be called');
+      searchTextStream: async () => {
+        throw new Error('searchTextStream should not be called');
       },
     };
     const provider = createWorkspaceTextSearchProvider(

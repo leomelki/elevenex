@@ -572,6 +572,106 @@ describe('FilesService', () => {
         service.searchText(filePath, { query: 'needle' }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('windows the preview of very long lines while keeping document ranges', async () => {
+      const prefix = 'x'.repeat(4_000);
+      fs.writeFileSync(
+        path.join(tmpDir, 'bundle.js'),
+        `${prefix}needle${'y'.repeat(4_000)}\n`,
+      );
+
+      const [result] = await service.searchText(tmpDir, { query: 'needle' });
+
+      expect(result.previewTruncated).toBe(true);
+      expect(result.lineText.length).toBeLessThanOrEqual(1_000);
+      // Document coordinates still point at the real match.
+      expect(result.ranges).toEqual([{ start: 4_000, end: 4_006 }]);
+      // Preview coordinates index into the returned snippet.
+      const previewRange = result.previewRanges![0];
+      expect(
+        result.lineText.slice(previewRange.start, previewRange.end),
+      ).toBe('needle');
+    });
+
+    it('leaves short previews untouched', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'app.ts'), 'const needle = 1;\n');
+
+      const [result] = await service.searchText(tmpDir, { query: 'needle' });
+
+      expect(result.previewTruncated).toBeUndefined();
+      expect(result.previewRanges).toBeUndefined();
+      expect(result.lineText).toBe('const needle = 1;');
+    });
+  });
+
+  describe('searchTextStream', () => {
+    it('delivers matches through the callback and reports limitHit', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, 'a.txt'),
+        Array.from({ length: 20 }, () => 'needle').join('\n'),
+      );
+
+      const batches: unknown[][] = [];
+      const summary = await service.searchTextStream(
+        tmpDir,
+        { query: 'needle', maxResults: 5 },
+        (batch) => batches.push(batch),
+      );
+
+      expect(summary).toEqual({ limitHit: true });
+      expect(batches.length).toBeGreaterThan(0);
+      expect(batches.flat()).toHaveLength(5);
+    });
+
+    it('does not report limitHit when the search completes under the limit', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'a.txt'), 'needle\nneedle\n');
+
+      const batches: unknown[][] = [];
+      const summary = await service.searchTextStream(
+        tmpDir,
+        { query: 'needle', maxResults: 50 },
+        (batch) => batches.push(batch),
+      );
+
+      expect(summary).toEqual({ limitHit: false });
+      expect(batches.flat()).toHaveLength(2);
+    });
+
+    it('stops without emitting when the signal is already aborted', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'a.txt'), 'needle\n');
+      const controller = new AbortController();
+      controller.abort();
+
+      const batches: unknown[][] = [];
+      const summary = await service.searchTextStream(
+        tmpDir,
+        { query: 'needle' },
+        (batch) => batches.push(batch),
+        controller.signal,
+      );
+
+      expect(summary).toEqual({ limitHit: false });
+      expect(batches).toHaveLength(0);
+    });
+
+    it('resolves early when the signal aborts mid-search', async () => {
+      for (let index = 0; index < 40; index += 1) {
+        fs.writeFileSync(
+          path.join(tmpDir, `file-${index}.txt`),
+          Array.from({ length: 200 }, () => 'needle').join('\n'),
+        );
+      }
+
+      const controller = new AbortController();
+      const summary = await service.searchTextStream(
+        tmpDir,
+        { query: 'needle', maxResults: 2_000 },
+        () => controller.abort(),
+        controller.signal,
+      );
+
+      expect(summary.limitHit).toBe(false);
+    });
   });
 
   describe('readFile', () => {

@@ -49,8 +49,18 @@ export interface BackendTextSearchRange {
 export interface BackendTextSearchResult {
   path: string;
   lineNumber: number;
+  /** Preview snippet; windowed by the backend when the source line is huge. */
   lineText: string;
+  /** Match offsets within the document line. */
   ranges: BackendTextSearchRange[];
+  /** Match offsets within `lineText`. Absent when it equals `ranges`. */
+  previewRanges?: BackendTextSearchRange[];
+  previewTruncated?: boolean;
+}
+
+export interface BackendTextSearchSummary {
+  /** True when the backend stopped early because `maxResults` was reached. */
+  limitHit: boolean;
 }
 
 export interface BackendTextSearchOptions {
