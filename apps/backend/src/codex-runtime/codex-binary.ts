@@ -1,6 +1,17 @@
 import { existsSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { findBinary } from '../config/system-paths.js';
+
+const WINDOWS_CODEX_PACKAGES: Partial<Record<NodeJS.Architecture, string>> = {
+  x64: '@openai/codex-win32-x64',
+  arm64: '@openai/codex-win32-arm64',
+};
+
+const WINDOWS_CODEX_TARGETS: Partial<Record<NodeJS.Architecture, string>> = {
+  x64: 'x86_64-pc-windows-msvc',
+  arm64: 'aarch64-pc-windows-msvc',
+};
 
 /**
  * Walks up the node_modules tree from this file looking for the SDK install
@@ -63,17 +74,65 @@ export function resolveCodexSdkBinaryOverride(): string | undefined {
     return cachedSdkOverride ?? undefined;
   }
 
-  cachedSdkOverride = selectCodexSdkBinaryOverride(findBinary('codex')) ?? null;
+  const installedBinary = findBinary('codex');
+  const nativeWindowsBinary = installedBinary
+    ? findNativeWindowsCodexBinary(installedBinary)
+    : null;
+  cachedSdkOverride =
+    selectCodexSdkBinaryOverride(
+      installedBinary,
+      process.platform,
+      nativeWindowsBinary,
+    ) ?? null;
   return cachedSdkOverride ?? undefined;
 }
 
 export function selectCodexSdkBinaryOverride(
   installedBinary: string | null,
   platform: NodeJS.Platform = process.platform,
+  nativeWindowsBinary: string | null = null,
 ): string | undefined {
   if (!installedBinary) return platform === 'win32' ? undefined : 'codex';
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(installedBinary)) {
-    return undefined;
+    return nativeWindowsBinary ?? undefined;
   }
   return installedBinary;
+}
+
+/**
+ * npm/pnpm expose Codex on Windows through a `.cmd` shim, but the SDK uses
+ * `spawn()` without a shell and therefore needs the native executable. Resolve
+ * the platform package from beside that shim so the SDK and the normal runtime
+ * still use the exact same user-managed Codex installation.
+ */
+export function findNativeWindowsCodexBinary(
+  installedBinary: string,
+  arch: NodeJS.Architecture = process.arch,
+): string | null {
+  if (!/\.(cmd|bat)$/i.test(installedBinary)) return null;
+
+  const platformPackage = WINDOWS_CODEX_PACKAGES[arch];
+  const target = WINDOWS_CODEX_TARGETS[arch];
+  if (!platformPackage || !target) return null;
+
+  try {
+    const shimRequire = createRequire(
+      path.join(path.dirname(installedBinary), '__elevenex_codex_anchor.js'),
+    );
+    const codexPackageJson = shimRequire.resolve('@openai/codex/package.json');
+    const codexRequire = createRequire(codexPackageJson);
+    const platformPackageJson = codexRequire.resolve(
+      `${platformPackage}/package.json`,
+    );
+    const binaryPath = path.join(
+      path.dirname(platformPackageJson),
+      'vendor',
+      target,
+      'codex',
+      'codex.exe',
+    );
+    return existsSync(binaryPath) ? binaryPath : null;
+  } catch {
+    return null;
+  }
 }
