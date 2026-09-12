@@ -1,25 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { execFile as execFileCallback } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import type {
   CanUseTool,
   SDKAssistantMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
 import {
-  findSdkRealDir,
-  resolveCodexSdkBinaryOverride,
-} from '../codex-runtime/codex-binary.js';
+  buildAugmentedEnvAsync,
+  buildSpawnCommand,
+  findBinary,
+} from '../config/system-paths.js';
+import { resolveCodexBinary } from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { AntigravityProcessClient } from '../antigravity-runtime/antigravity-process-client.js';
 import type { AntigravityResultEvent } from '../antigravity-runtime/antigravity-runtime.types.js';
-
-const execFileAsync = promisify(execFileCallback);
 
 /**
  * These one-shot flows run without `--dangerously-skip-permissions`, so `agy`
@@ -33,25 +29,37 @@ const ANTIGRAVITY_NO_TOOLS_PREAMBLE =
 
 export type TextAgentProvider = 'claude' | 'codex' | 'pi' | 'antigravity';
 
-type CodexSdkModule = typeof import('@openai/codex-sdk');
-
-const _dynamicImport = new Function(
-  'specifier',
-  'return import(specifier)',
-) as (specifier: string) => Promise<CodexSdkModule>;
-
-async function importCodexSdk(): Promise<CodexSdkModule> {
-  // In the bundled runtime, `import('@openai/codex-sdk')` resolves relative to
-  // main.cjs which has no node_modules sibling. Resolve the SDK to an absolute
-  // file URL so Node can find it regardless of where main.cjs lives.
-  const sdkDir = findSdkRealDir();
-  if (sdkDir) {
-    const entryPoint = path.join(sdkDir, 'dist', 'index.js');
-    if (existsSync(entryPoint)) {
-      return _dynamicImport(pathToFileURL(entryPoint).href);
-    }
+export function readCodexExecAgentMessage(line: string): string | null {
+  try {
+    const event = JSON.parse(line) as {
+      type?: unknown;
+      item?: { type?: unknown; text?: unknown };
+    };
+    return event.type === 'item.completed' &&
+      event.item?.type === 'agent_message' &&
+      typeof event.item.text === 'string'
+      ? event.item.text
+      : null;
+  } catch {
+    return null;
   }
-  return _dynamicImport('@openai/codex-sdk');
+}
+
+export function readCodexExecError(line: string): string | null {
+  try {
+    const event = JSON.parse(line) as {
+      type?: unknown;
+      message?: unknown;
+      error?: { message?: unknown };
+    };
+    if (event.type !== 'error' && event.type !== 'turn.failed') return null;
+    if (typeof event.message === 'string') return event.message;
+    return typeof event.error?.message === 'string'
+      ? event.error.message
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface GenerateTextWithAgentRequest {
@@ -217,20 +225,16 @@ export class TextAgentGenerationService {
         process.env,
         request.worktreePath,
       );
-      const { Codex } = await importCodexSdk();
-      const codexPathOverride = resolveCodexSdkBinaryOverride();
-      const codex = new Codex({
-        ...(codexPathOverride ? { codexPathOverride } : {}),
-        env: this.toStringEnv(env),
-      });
-      const thread = codex.startThread(
-        this.buildCodexThreadOptions(request.worktreePath, model),
+      const text = await this.runCodexExec(
+        request.worktreePath,
+        request.prompt,
+        model,
+        env,
       );
-      const result = await thread.run(request.prompt);
       return {
         provider: 'codex',
         model,
-        text: result.finalResponse ?? '',
+        text,
       };
     } catch (error) {
       this.logger.warn(
@@ -240,6 +244,88 @@ export class TextAgentGenerationService {
       );
       return null;
     }
+  }
+
+  /**
+   * Runs the user-visible Codex CLI instead of reaching into any package
+   * manager's installation tree. buildSpawnCommand handles native binaries,
+   * Windows command shims, and POSIX launchers through the same interface used
+   * by interactive Codex sessions.
+   */
+  private runCodexExec(
+    worktreePath: string,
+    prompt: string,
+    model: string | null,
+    env: NodeJS.ProcessEnv,
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const { command, shell } = buildSpawnCommand(resolveCodexBinary());
+      const args = [
+        'exec',
+        '--json',
+        '--sandbox',
+        'read-only',
+        '--skip-git-repo-check',
+        '-c',
+        'approval_policy="never"',
+        '-c',
+        'model_reasoning_effort="low"',
+        ...(model ? ['--model', model] : []),
+        '-',
+      ];
+      const child = spawn(command, args, {
+        cwd: worktreePath,
+        env,
+        shell,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      const lines = createInterface({
+        input: child.stdout,
+        crlfDelay: Infinity,
+      });
+      let finalResponse = '';
+      let protocolError = '';
+      let stderr = '';
+      let settled = false;
+
+      lines.on('line', (line) => {
+        const message = readCodexExecAgentMessage(line);
+        if (message !== null) finalResponse = message;
+        const error = readCodexExecError(line);
+        if (error !== null) protocolError = error;
+      });
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr = (stderr + chunk.toString('utf8')).slice(-32_768);
+      });
+
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        lines.close();
+        reject(error);
+      };
+      child.once('error', fail);
+      child.stdin.once('error', fail);
+      child.once('exit', (code, signal) => {
+        if (settled) return;
+        settled = true;
+        lines.close();
+        if (code === 0) {
+          resolve(finalResponse);
+          return;
+        }
+        reject(
+          new Error(
+            protocolError ||
+              stderr.trim() ||
+              `Codex exited with code ${code ?? 'null'} and signal ${signal ?? 'null'}`,
+          ),
+        );
+      });
+
+      child.stdin.end(prompt);
+    });
   }
 
   private async generateWithPi(
@@ -545,17 +631,6 @@ export class TextAgentGenerationService {
     };
   }
 
-  private buildCodexThreadOptions(worktreePath: string, model: string | null) {
-    return {
-      workingDirectory: worktreePath,
-      skipGitRepoCheck: true,
-      ...(model ? { model } : {}),
-      modelReasoningEffort: 'low',
-      sandboxMode: 'read-only',
-      approvalPolicy: 'never',
-    } as const;
-  }
-
   private resolveClaudeCodeExecutable(): string {
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     if (configuredPath) {
@@ -563,13 +638,5 @@ export class TextAgentGenerationService {
     }
 
     return findBinary('claude') ?? 'claude';
-  }
-
-  private toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-    return Object.fromEntries(
-      Object.entries(env).flatMap(([key, value]) =>
-        typeof value === 'string' ? [[key, value]] : [],
-      ),
-    );
   }
 }

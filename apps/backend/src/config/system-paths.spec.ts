@@ -7,6 +7,7 @@ import {
   buildAugmentedEnv,
   buildAugmentedEnvAsync,
   buildAugmentedPath,
+  buildSpawnCommand,
   buildTmuxInlineEnvPrefix,
   findBinary,
   refreshLoginShellEnv,
@@ -206,6 +207,33 @@ describeWindows('system-paths Windows env handling', () => {
     );
 
     expect(pathValue).toBe('C:\\Windows\\System32;C:\\Tools;D:\\bin');
+  });
+
+  it('runs generic command shims through the Windows shell', () => {
+    expect(buildSpawnCommand('C:\\Tools\\codex.cmd')).toEqual({
+      command: '"C:\\Tools\\codex.cmd"',
+      shell: true,
+    });
+    expect(buildSpawnCommand('C:\\Tools\\codex.BAT')).toEqual({
+      command: '"C:\\Tools\\codex.BAT"',
+      shell: true,
+    });
+  });
+
+  it('spawns native Windows executables directly', () => {
+    expect(buildSpawnCommand('C:\\Tools\\codex.exe')).toEqual({
+      command: 'C:\\Tools\\codex.exe',
+      shell: false,
+    });
+  });
+});
+
+describePosix('system-paths POSIX process handling', () => {
+  it('spawns launchers directly', () => {
+    expect(buildSpawnCommand('/usr/local/bin/codex')).toEqual({
+      command: '/usr/local/bin/codex',
+      shell: false,
+    });
   });
 });
 

@@ -1,4 +1,8 @@
-import { TextAgentGenerationService } from './text-agent-generation.service.js';
+import {
+  readCodexExecAgentMessage,
+  readCodexExecError,
+  TextAgentGenerationService,
+} from './text-agent-generation.service.js';
 import type { SettingsService } from '../settings/settings.service.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
 
@@ -38,18 +42,6 @@ describe('TextAgentGenerationService model selection', () => {
     );
   });
 
-  it('uses low reasoning for Codex one-shot tasks', () => {
-    expect(
-      (service as any).buildCodexThreadOptions(
-        '/repo',
-        'user-selected-codex-model',
-      ),
-    ).toMatchObject({
-      model: 'user-selected-codex-model',
-      modelReasoningEffort: 'low',
-    });
-  });
-
   it('selects the user default model and low reasoning for Pi one-shot tasks', async () => {
     getAgentProviderDefaults.mockReturnValueOnce({
       model: 'provider/user-selected-pi-model',
@@ -86,5 +78,50 @@ describe('TextAgentGenerationService model selection', () => {
     });
     stop.mockRestore();
     send.mockRestore();
+  });
+});
+
+describe('readCodexExecAgentMessage', () => {
+  it('extracts completed assistant output from the CLI JSONL stream', () => {
+    expect(
+      readCodexExecAgentMessage(
+        JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'agent_message', text: 'Generated title' },
+        }),
+      ),
+    ).toBe('Generated title');
+  });
+
+  it('ignores other events and non-JSON diagnostic output', () => {
+    expect(
+      readCodexExecAgentMessage(JSON.stringify({ type: 'turn.completed' })),
+    ).toBeNull();
+    expect(readCodexExecAgentMessage('warning: retrying')).toBeNull();
+  });
+});
+
+describe('readCodexExecError', () => {
+  it('extracts top-level and failed-turn errors from the CLI JSONL stream', () => {
+    expect(
+      readCodexExecError(
+        JSON.stringify({ type: 'error', message: 'Authentication failed' }),
+      ),
+    ).toBe('Authentication failed');
+    expect(
+      readCodexExecError(
+        JSON.stringify({
+          type: 'turn.failed',
+          error: { message: 'Model unavailable' },
+        }),
+      ),
+    ).toBe('Model unavailable');
+  });
+
+  it('ignores unrelated and malformed lines', () => {
+    expect(
+      readCodexExecError(JSON.stringify({ type: 'turn.started' })),
+    ).toBeNull();
+    expect(readCodexExecError('not json')).toBeNull();
   });
 });
