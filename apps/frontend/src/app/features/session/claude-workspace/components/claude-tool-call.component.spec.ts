@@ -219,4 +219,99 @@ describe('ClaudeToolCallComponent', () => {
     expect(diffs[0].querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-line');
     expect(diffs[1].querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-line');
   });
+
+  it('renders Codex file changes as per-file inline diffs', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeToolCallComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'codex-change',
+      kind: 'tool_use',
+      toolUseId: 'codex-change',
+      toolName: 'FileChanges',
+      toolKind: 'file_changes',
+      toolDisplayName: 'File changes',
+      toolInput: {
+        changes: [
+          {
+            path: 'src/app.ts',
+            kind: { type: 'update', move_path: null },
+            diff: '@@ -2,2 +2,2 @@\n const a = 1;\n-const b = 2;\n+const b = 3;',
+          },
+          {
+            path: 'src/new.ts',
+            kind: { type: 'add' },
+            diff: 'export const ready = true;\n',
+          },
+        ],
+      },
+      timestamp: '2026-09-12T08:00:00.000Z',
+    });
+    fixture.componentRef.setInput('result', {
+      id: 'codex-change-result',
+      kind: 'tool_result',
+      toolUseId: 'codex-change',
+      content: 'update: src/app.ts\nadd: src/new.ts',
+      timestamp: '2026-09-12T08:00:01.000Z',
+    });
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
+    expect(button.textContent).toContain('Change files');
+    expect(button.textContent).toContain('src/app.ts +1');
+    expect(button.textContent).toContain('2 files · +2 -1');
+    button.click();
+    fixture.detectChanges();
+
+    const diffs = fixture.nativeElement.querySelectorAll(
+      'cw-inline-diff',
+    ) as NodeListOf<HTMLElement>;
+    expect(diffs).toHaveLength(2);
+    expect(diffs[0].textContent).toContain('src/app.ts');
+    expect(diffs[0].textContent).toContain('+1');
+    expect(diffs[0].textContent).toContain('-1');
+    expect(diffs[0].querySelector('.cw-inline-diff__body')?.innerHTML).toContain('cw-diff-change');
+    expect(diffs[1].textContent).toContain('src/new.ts · Created');
+    expect(diffs[1].textContent).toContain('+1');
+    expect(diffs[1].textContent).toContain('-0');
+  });
+
+  it('keeps a live Codex file change expandable before its result arrives', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeToolCallComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'codex-live-change',
+      kind: 'tool_use',
+      toolUseId: 'codex-live-change',
+      toolName: 'FileChanges',
+      toolKind: 'file_changes',
+      toolInput: {
+        changes: [
+          {
+            path: 'src/old.ts',
+            kind: { type: 'delete' },
+            diff: 'const obsolete = true;\n',
+          },
+        ],
+      },
+      timestamp: '2026-09-12T08:00:00.000Z',
+    });
+    fixture.componentRef.setInput('isLive', true);
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
+    expect(button.querySelector('.cw-tool__chevron')).not.toBeNull();
+    button.click();
+    fixture.detectChanges();
+
+    const diff = fixture.nativeElement.querySelector('cw-inline-diff') as HTMLElement;
+    expect(diff.textContent).toContain('src/old.ts · Deleted');
+    expect(diff.textContent).toContain('+0');
+    expect(diff.textContent).toContain('-1');
+  });
 });

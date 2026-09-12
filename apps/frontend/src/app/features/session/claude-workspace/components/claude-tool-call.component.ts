@@ -6,6 +6,7 @@ import DOMPurify from 'dompurify';
 import {
   detectHljsLang,
   escapeHtml,
+  highlightedPatchHtml,
   highlightedUnifiedDiffHtml,
   splitHighlightedLines,
 } from '../util/code-highlight';
@@ -259,6 +260,23 @@ type Todo = ToolTodoItem;
                       }
                     </button>
                   }
+                }
+              }
+              @case ('file_changes') {
+                @for (diff of fileChangeDiffs(); track diff.path + ':' + $index) {
+                  <cw-inline-diff
+                    [html]="diff.html"
+                    [label]="diff.label"
+                    [additions]="diff.additions"
+                    [deletions]="diff.deletions"
+                    [emptyText]="diff.emptyText"
+                  />
+                }
+                @if (!fileChangeDiffs().length) {
+                  <div class="cw-tool__web">No file change details were captured.</div>
+                }
+                @if (resultText() && state() === 'error') {
+                  <cw-tool-output [text]="resultText()" [error]="true" />
                 }
               }
               @case ('task_agent') {
@@ -1087,6 +1105,16 @@ export class ClaudeToolCallComponent {
       return null;
     }
     if (this.state() === 'waiting') return null;
+    if (this.display().kind === 'file_changes' && !isHardError(this.result())) {
+      const diffs = this.fileChangeDiffs();
+      const additions = diffs.reduce((sum, diff) => sum + diff.additions, 0);
+      const deletions = diffs.reduce((sum, diff) => sum + diff.deletions, 0);
+      const files = diffs.length;
+      return {
+        text: `${files} ${files === 1 ? 'file' : 'files'} · +${additions} -${deletions}`,
+        tone: this.result()?.isError ? 'warn' : 'ok',
+      };
+    }
     return resultSummary(this.display().kind, this.result(), this.interaction());
   });
 
@@ -1123,6 +1151,7 @@ export class ClaudeToolCallComponent {
       || !!this.interaction()
       || !!this.agentPrompt()
       || this.isEditDiff()
+      || this.fileChangeDiffs().length > 0
       || !!this.bashCommand()
       || this.childUnits().length > 0
     );
@@ -1198,6 +1227,55 @@ export class ClaudeToolCallComponent {
   });
 
   readonly isEditDiff = computed(() => this.editDiffs().length > 0);
+
+  readonly fileChangeDiffs = computed<
+    Array<{
+      path: string;
+      html: SafeHtml | string;
+      label: string;
+      additions: number;
+      deletions: number;
+      emptyText: string;
+    }>
+  >(() => {
+    if (this.display().kind !== 'file_changes') return [];
+    const data = this.call().toolInput as Record<string, unknown> | undefined;
+    const changes = Array.isArray(data?.['changes']) ? data['changes'] : [];
+
+    return changes.flatMap((rawChange) => {
+      if (!rawChange || typeof rawChange !== 'object') return [];
+      const change = rawChange as Record<string, unknown>;
+      const path = firstString(change, 'path', 'file_path', 'filePath');
+      const patch = firstString(change, 'diff', 'patch', 'unifiedDiff');
+      const kind = fileChangeKind(change['kind']);
+      const movePath = fileChangeMovePath(change['kind']);
+      const label = fileChangeLabel(path, movePath, kind);
+      const stats = fileChangeStats(kind, patch, change);
+
+      let html: SafeHtml | string = '';
+      if (patch) {
+        const rendered =
+          kind === 'add'
+            ? highlightedUnifiedDiffHtml('', patch, path)
+            : kind === 'delete'
+              ? highlightedUnifiedDiffHtml(patch, '', path)
+              : highlightedPatchHtml(patch, path);
+        const safe = DOMPurify.sanitize(rendered, { USE_PROFILES: { html: true } });
+        html = this.sanitizer.bypassSecurityTrustHtml(safe);
+      }
+
+      return [
+        {
+          path,
+          html,
+          label,
+          additions: stats.additions,
+          deletions: stats.deletions,
+          emptyText: `${fileChangeKindLabel(kind)}; inline diff was not captured.`,
+        },
+      ];
+    });
+  });
 
   readonly writeContent = computed(() => {
     if (this.display().kind !== 'write') return '';
@@ -1499,4 +1577,72 @@ function countTextLines(text: string | undefined): number {
   if (!text) return 0;
   const parts = text.split('\n');
   return text.endsWith('\n') ? parts.length - 1 : parts.length;
+}
+
+type FileChangeKind = 'add' | 'delete' | 'update';
+
+function firstString(data: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = data[key];
+    if (typeof value === 'string' && value) return value;
+  }
+  return '';
+}
+
+function fileChangeKind(value: unknown): FileChangeKind {
+  const raw =
+    typeof value === 'string'
+      ? value
+      : value && typeof value === 'object'
+        ? (value as Record<string, unknown>)['type']
+        : '';
+  const normalized = String(raw ?? '').toLowerCase();
+  if (normalized === 'add' || normalized === 'create' || normalized === 'created') return 'add';
+  if (normalized === 'delete' || normalized === 'deleted' || normalized === 'remove')
+    return 'delete';
+  return 'update';
+}
+
+function fileChangeMovePath(value: unknown): string {
+  if (!value || typeof value !== 'object') return '';
+  const kind = value as Record<string, unknown>;
+  const movePath = kind['move_path'] ?? kind['movePath'];
+  return typeof movePath === 'string' ? movePath : '';
+}
+
+function fileChangeLabel(path: string, movePath: string, kind: FileChangeKind): string {
+  const shownPath = path || 'File';
+  if (movePath) return `${shownPath} → ${movePath}`;
+  if (kind === 'add') return `${shownPath} · Created`;
+  if (kind === 'delete') return `${shownPath} · Deleted`;
+  return shownPath;
+}
+
+function fileChangeKindLabel(kind: FileChangeKind): string {
+  if (kind === 'add') return 'File created';
+  if (kind === 'delete') return 'File deleted';
+  return 'File updated';
+}
+
+function fileChangeStats(
+  kind: FileChangeKind,
+  patch: string,
+  change: Record<string, unknown>,
+): { additions: number; deletions: number } {
+  const additions = change['additions'];
+  const deletions = change['deletions'];
+  if (typeof additions === 'number' && typeof deletions === 'number') {
+    return { additions, deletions };
+  }
+  if (kind === 'add') return { additions: countTextLines(patch), deletions: 0 };
+  if (kind === 'delete') return { additions: 0, deletions: countTextLines(patch) };
+
+  let added = 0;
+  let removed = 0;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    if (line.startsWith('+')) added++;
+    else if (line.startsWith('-')) removed++;
+  }
+  return { additions: added, deletions: removed };
 }
