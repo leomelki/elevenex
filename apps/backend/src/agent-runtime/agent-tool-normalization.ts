@@ -123,7 +123,10 @@ export function canonicalizeAgentTool(
       toolDisplayName: normalized === 'powershell' ? 'PowerShell' : 'Bash',
       toolInput: {
         ...data,
-        command: typeof data['command'] === 'string' ? data['command'] : '',
+        command:
+          typeof data['command'] === 'string'
+            ? stripShellCommandWrapper(data['command'])
+            : '',
       },
     };
   }
@@ -243,6 +246,90 @@ export function canonicalizeAgentTool(
     toolDisplayName: rawName,
     toolInput: input ?? {},
   };
+}
+
+/**
+ * Removes a shell executable and its command-string switch from the command
+ * shown in a run tool. The provider input remains untouched, so transcripts
+ * retain the exact command that was executed.
+ *
+ * This intentionally recognizes only command-string invocation forms. A shell
+ * used to run a script file or passed unrelated flags is still shown verbatim.
+ */
+export function stripShellCommandWrapper(command: string): string {
+  const parsed = splitExecutable(command);
+  if (!parsed) return command;
+
+  const executable = parsed.executable
+    .replace(/\\/g, '/')
+    .split('/')
+    .pop()
+    ?.toLowerCase();
+  if (!executable) return command;
+
+  let payload: string | null = null;
+  if (
+    executable === 'powershell' ||
+    executable === 'powershell.exe' ||
+    executable === 'pwsh' ||
+    executable === 'pwsh.exe'
+  ) {
+    const match = parsed.rest.match(
+      /^(?:(?:-NoLogo|-NoProfile|-NonInteractive|-MTA|-STA)\s+)*(?:-Command|-c)\s+([\s\S]+)$/i,
+    );
+    payload = match?.[1] ?? null;
+  } else if (
+    ['sh', 'bash', 'zsh', 'dash', 'ash', 'ksh', 'fish'].includes(executable)
+  ) {
+    const match = parsed.rest.match(/^-(?:c|lc|cl)\s+([\s\S]+)$/);
+    payload = match?.[1] ?? null;
+  } else if (executable === 'cmd' || executable === 'cmd.exe') {
+    const match = parsed.rest.match(/^(?:(?:\/d|\/s)\s+)*\/c\s+([\s\S]+)$/i);
+    payload = match?.[1] ?? null;
+  }
+
+  return payload === null ? command : unwrapOuterQuotes(payload.trim());
+}
+
+function splitExecutable(
+  command: string,
+): { executable: string; rest: string } | null {
+  const trimmed = command.trimStart();
+  if (!trimmed) return null;
+
+  const quote = trimmed[0];
+  if (quote === '"' || quote === "'") {
+    const end = trimmed.indexOf(quote, 1);
+    if (end < 0 || !/\s/.test(trimmed[end + 1] ?? '')) return null;
+    return {
+      executable: trimmed.slice(1, end),
+      rest: trimmed.slice(end + 1).trimStart(),
+    };
+  }
+
+  const match = trimmed.match(/^(\S+)\s+([\s\S]+)$/);
+  return match ? { executable: match[1], rest: match[2] } : null;
+}
+
+function unwrapOuterQuotes(value: string): string {
+  if (value.length < 2) return value;
+  const quote = value[0];
+  if ((quote !== '"' && quote !== "'") || value.at(-1) !== quote) {
+    return value;
+  }
+
+  for (let index = 1; index < value.length - 1; index++) {
+    if (value[index] !== quote) continue;
+    let escapes = 0;
+    for (let cursor = index - 1; cursor >= 0; cursor--) {
+      const character = value[cursor];
+      if (character !== '\\' && character !== '`') break;
+      escapes++;
+    }
+    if (escapes % 2 === 0) return value;
+  }
+
+  return value.slice(1, -1);
 }
 
 function stringField(data: JsonRecord, ...keys: string[]): string {

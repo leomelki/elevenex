@@ -1,4 +1,7 @@
-import { canonicalizeAgentTool } from './agent-tool-normalization.js';
+import {
+  canonicalizeAgentTool,
+  stripShellCommandWrapper,
+} from './agent-tool-normalization.js';
 
 describe('agent-tool-normalization', () => {
   it.each([
@@ -50,6 +53,58 @@ describe('agent-tool-normalization', () => {
     expect(result.toolInput).toMatchObject({
       file_path: '/repo/package.json',
       command: "sed -n '1,20p' package.json",
+    });
+  });
+
+  describe('shell command display', () => {
+    it.each([
+      [
+        '"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem -Force"',
+        'Get-ChildItem -Force',
+      ],
+      [
+        'powershell.exe -NoLogo -NoProfile -NonInteractive -Command Get-Content README.md',
+        'Get-Content README.md',
+      ],
+      ['/bin/zsh -lc "pnpm test"', 'pnpm test'],
+      ["bash -c 'git status --short'", 'git status --short'],
+      ['fish -c pnpm lint', 'pnpm lint'],
+      ['cmd.exe /d /s /c "pnpm build"', 'pnpm build'],
+    ])('strips the command-string wrapper from %s', (command, expected) => {
+      expect(stripShellCommandWrapper(command)).toBe(expected);
+    });
+
+    it.each([
+      'zsh scripts/check.zsh',
+      'powershell.exe -File scripts/check.ps1',
+      'node -Command "console.log(1)"',
+      'echo powershell.exe -Command Get-Date',
+      'zsh -x -c "pnpm test"',
+    ])('leaves non-wrapper command forms unchanged: %s', (command) => {
+      expect(stripShellCommandWrapper(command)).toBe(command);
+    });
+
+    it('keeps separate quoted command arguments quoted', () => {
+      expect(
+        stripShellCommandWrapper(
+          'pwsh -Command "Write-Output one" "Write-Output two"',
+        ),
+      ).toBe('"Write-Output one" "Write-Output two"');
+    });
+
+    it('uses the unwrapped command only in canonical run-tool input', () => {
+      const providerInput = {
+        command: '/bin/zsh -lc "pnpm test"',
+        description: 'Run tests',
+      };
+
+      const result = canonicalizeAgentTool('exec_command', providerInput);
+
+      expect(result.toolInput).toEqual({
+        command: 'pnpm test',
+        description: 'Run tests',
+      });
+      expect(providerInput.command).toBe('/bin/zsh -lc "pnpm test"');
     });
   });
 });
