@@ -161,10 +161,8 @@ export class CodexHistoryService {
           model;
       }
       if (this.isVisibleUserMessage(record)) {
-        const rawMessage = stringValue(asRecord(record.payload)?.message);
-        latestUserMessage = rawMessage
-          ? this.stripInjectedWorktreeContext(rawMessage)
-          : latestUserMessage;
+        latestUserMessage =
+          this.extractUserMessageText(record) || latestUserMessage;
         messageCount += 1;
       }
     }
@@ -189,13 +187,12 @@ export class CodexHistoryService {
       const timestamp =
         stringValue(record.timestamp) ?? new Date().toISOString();
       if (this.isVisibleUserMessage(record)) {
-        const payload = asRecord(record.payload);
-        const rawContent = stringValue(payload?.message);
-        if (rawContent) {
+        const content = this.extractUserMessageText(record);
+        if (content) {
           items.push({
             id: `codex-history:${index}:user`,
             kind: 'user',
-            content: this.stripInjectedWorktreeContext(rawContent),
+            content,
             transcriptMessageId: this.recordAnchorId(index),
             timestamp,
             authoredAt: timestamp,
@@ -327,15 +324,7 @@ export class CodexHistoryService {
   }
 
   private isVisibleUserMessage(record: JsonRecord): boolean {
-    if (record.type !== 'event_msg') {
-      return false;
-    }
-    const payload = asRecord(record.payload);
-    return (
-      payload?.type === 'user_message' &&
-      (!payload.kind || payload.kind === 'plain') &&
-      Boolean(stringValue(payload.message))
-    );
+    return Boolean(this.extractUserMessageText(record).trim());
   }
 
   private isForkAnchorRecord(
@@ -379,8 +368,29 @@ export class CodexHistoryService {
   }
 
   private extractUserMessageText(record: JsonRecord): string {
-    const rawMessage = stringValue(asRecord(record.payload)?.message) ?? '';
-    return this.stripInjectedWorktreeContext(rawMessage);
+    if (record.type !== 'event_msg') {
+      return '';
+    }
+    const payload = asRecord(record.payload);
+    if (
+      payload?.type === 'user_message' &&
+      (!payload.kind || payload.kind === 'plain')
+    ) {
+      return this.stripInjectedWorktreeContext(
+        stringValue(payload.message) ?? '',
+      );
+    }
+
+    const completedItem = asRecord(payload?.item);
+    if (
+      payload?.type !== 'item_completed' ||
+      completedItem?.type !== 'UserMessage'
+    ) {
+      return '';
+    }
+    return this.stripInjectedWorktreeContext(
+      this.contentToText(completedItem.content),
+    );
   }
 
   private extractAssistantMessageText(record: JsonRecord): string {

@@ -113,6 +113,60 @@ describe('CodexHistoryService', () => {
     });
   });
 
+  it('restores user messages from the current Codex item_completed format', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      const service = new CodexHistoryService(root);
+      await writeFile(
+        join(root, 'thread-modern.jsonl'),
+        [
+          JSON.stringify({
+            type: 'session_meta',
+            payload: { id: 'modern-thread', cwd: '/repo' },
+          }),
+          JSON.stringify({
+            type: 'response_item',
+            payload: {
+              id: 'internal-context',
+              type: 'message',
+              role: 'user',
+              content: [{ type: 'input_text', text: 'hidden runtime context' }],
+            },
+          }),
+          JSON.stringify({
+            type: 'event_msg',
+            timestamp: '2026-09-12T00:00:00.000Z',
+            payload: {
+              type: 'item_completed',
+              item: {
+                type: 'UserMessage',
+                id: 'user-1',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'visible user prompt',
+                    text_elements: [],
+                  },
+                ],
+              },
+            },
+          }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+
+      await expect(service.getHistory('modern-thread')).resolves.toEqual([
+        expect.objectContaining({
+          kind: 'user',
+          content: 'visible user prompt',
+          timestamp: '2026-09-12T00:00:00.000Z',
+        }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('clones, slices, and rewrites a Codex JSONL thread for assistant anchors', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
     try {

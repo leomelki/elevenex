@@ -264,13 +264,10 @@ export class CodexRuntimeService
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
     const codexSessionId = session.codexSessionId ?? null;
-    const state = this.ensureRuntimeState(sessionId, codexSessionId);
     if (!codexSessionId || codexSessionId === '-1') {
       return [];
     }
-    const history = await this.historyService.getHistory(codexSessionId);
-    state.liveItems = [];
-    return history;
+    return this.historyService.getHistory(codexSessionId);
   }
 
   async getRuntimeState(sessionId: number): Promise<CodexRuntimeStatePayload> {

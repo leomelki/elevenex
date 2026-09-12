@@ -135,6 +135,34 @@ describe('CodexRuntimeService', () => {
     };
   }
 
+  it('keeps live run items when history is read during hydration', async () => {
+    const { service, sessionsService, historyService } = createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'thread-1',
+    });
+    historyService.getHistory.mockResolvedValue([
+      { id: 'history-1', kind: 'user', content: 'prompt' },
+    ]);
+    const liveItems = [
+      { id: 'live-1', kind: 'assistant', content: 'Working on it' },
+    ];
+    const runtimeState = (
+      service as unknown as {
+        ensureRuntimeState: (
+          sessionId: number,
+          codexSessionId: string,
+        ) => { liveItems: unknown[] };
+      }
+    ).ensureRuntimeState(7, 'thread-1');
+    runtimeState.liveItems = liveItems;
+
+    await expect(service.getHistory(7)).resolves.toEqual([
+      { id: 'history-1', kind: 'user', content: 'prompt' },
+    ]);
+    expect(runtimeState.liveItems).toBe(liveItems);
+  });
+
   async function startAppServerTurn(
     service: CodexRuntimeService,
     selectedPermissionMode: string,
