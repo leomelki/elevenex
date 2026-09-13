@@ -39,6 +39,7 @@ describe('ClaudeWorkspaceComponent', () => {
     pendingPermissionRequest: null,
     pendingUserInputRequest: null,
     pendingPrompts: [],
+    queuePaused: false,
     liveItems: [],
     lastError: null,
     selectedModel: null,
@@ -1924,6 +1925,7 @@ describe('ClaudeWorkspaceComponent', () => {
         pendingPermissionRequest: null,
         pendingUserInputRequest: null,
         pendingPrompts: [],
+        queuePaused: false,
       },
     });
 

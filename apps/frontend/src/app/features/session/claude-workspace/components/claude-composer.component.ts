@@ -18,15 +18,14 @@ import {
   lucideLoaderCircle,
   lucideMessageSquare,
   lucidePaperclip,
+  lucidePlay,
   lucideSend,
   lucideSquare,
+  lucideTrash2,
   lucideX,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
-import {
-  ClaudeAutocompleteItem,
-  ClaudePendingPrompt,
-} from '@/shared/models/claude-runtime.model';
+import { ClaudeAutocompleteItem, ClaudePendingPrompt } from '@/shared/models/claude-runtime.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import {
   diffSelectionMentionLineLabel,
@@ -34,7 +33,10 @@ import {
   parseDiffSelectionMentions,
 } from '@/shared/utils/diff-selection-mention';
 import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
-import type { SessionMention, SessionMentionCandidate } from '@/shared/models/session-mention.model';
+import type {
+  SessionMention,
+  SessionMentionCandidate,
+} from '@/shared/models/session-mention.model';
 import { SESSION_MENTION_DRAG_TYPE } from '@/shared/models/session-mention.model';
 import { parseSessionMentions } from '@/shared/utils/session-mention';
 import { DictateTargetDirective } from '@/shared/speech/dictate-target.directive';
@@ -45,11 +47,7 @@ interface Range {
   end: number;
 }
 
-export type ComposerImageMediaType =
-  | 'image/png'
-  | 'image/jpeg'
-  | 'image/gif'
-  | 'image/webp';
+export type ComposerImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 
 export interface ComposerImageAttachment {
   id: string;
@@ -82,19 +80,23 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 @Component({
   selector: 'cw-composer',
   standalone: true,
-  imports: [
-    CommonModule,
-    FormsModule,
-    NgIcon,
-    DictateTargetDirective,
-    DictationButtonComponent,
-  ],
+  imports: [CommonModule, FormsModule, NgIcon, DictateTargetDirective, DictationButtonComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     '(document:mousedown)': 'onDocumentMousedown($event)',
   },
   viewProviders: [
-    provideIcons({ lucideFileCode, lucideLoaderCircle, lucideMessageSquare, lucidePaperclip, lucideSend, lucideSquare, lucideX }),
+    provideIcons({
+      lucideFileCode,
+      lucideLoaderCircle,
+      lucideMessageSquare,
+      lucidePaperclip,
+      lucidePlay,
+      lucideSend,
+      lucideSquare,
+      lucideTrash2,
+      lucideX,
+    }),
   ],
   template: `
     <div class="cw-comp">
@@ -111,7 +113,9 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
               @if (item.type === 'session') {
                 <span class="cw-comp__ac-label">&#64;{{ item.item.title }}</span>
                 <span class="cw-comp__ac-kind">session #{{ item.item.sessionId }}</span>
-                <span class="cw-comp__ac-desc">{{ item.item.branch }} · {{ item.item.status }}</span>
+                <span class="cw-comp__ac-desc"
+                  >{{ item.item.branch }} · {{ item.item.status }}</span
+                >
               } @else {
                 <span class="cw-comp__ac-label">{{ item.item.label }}</span>
                 <span class="cw-comp__ac-kind">{{ item.item.kind }}</span>
@@ -168,10 +172,20 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
                     <strong class="cw-comp__mention-name">{{ mention.title }}</strong>
                     <span class="cw-comp__mention-lines">#{{ mention.sessionId }}</span>
                   </div>
-                  <p class="cw-comp__mention-preview">{{ mention.provider }} · {{ mention.branch }}</p>
-                  <span class="cw-comp__mention-meta">Compact transcript snapshot · full export available to the agent</span>
+                  <p class="cw-comp__mention-preview">
+                    {{ mention.provider }} · {{ mention.branch }}
+                  </p>
+                  <span class="cw-comp__mention-meta"
+                    >Compact transcript snapshot · full export available to the agent</span
+                  >
                 </div>
-                <button type="button" class="cw-comp__mention-remove" title="Remove session mention" [attr.aria-label]="'Remove ' + mention.title" (click)="removeSessionMention.emit(mention.sessionId)">
+                <button
+                  type="button"
+                  class="cw-comp__mention-remove"
+                  title="Remove session mention"
+                  [attr.aria-label]="'Remove ' + mention.title"
+                  (click)="removeSessionMention.emit(mention.sessionId)"
+                >
                   <ng-icon name="lucideX" size="12" />
                 </button>
               </article>
@@ -204,7 +218,9 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
                   </div>
                   <p class="cw-comp__mention-preview">{{ mentionPreview(mention) }}</p>
                   <span class="cw-comp__mention-meta">
-                    {{ mention.status }} · {{ mention.context.before.length + mention.context.after.length }} context lines{{ mention.truncated ? ' · truncated' : '' }}
+                    {{ mention.status }} ·
+                    {{ mention.context.before.length + mention.context.after.length }} context
+                    lines{{ mention.truncated ? ' · truncated' : '' }}
                   </span>
                 </div>
                 <button
@@ -229,8 +245,49 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         }
         @if (pendingPrompts().length) {
           <div class="cw-comp__pending" role="list" aria-label="Queued messages">
-            @for (p of pendingPrompts(); track p.id) {
+            @if (queuePaused()) {
+              <div class="cw-comp__pending-header" role="status">
+                <span>
+                  @if (running()) {
+                    <strong>Stopping current response…</strong>
+                    <small>
+                      {{ pendingPrompts().length }} queued
+                      {{ pendingPrompts().length === 1 ? 'message will' : 'messages will' }} pause.
+                    </small>
+                  } @else {
+                    <strong
+                      >{{ pendingPrompts().length }}
+                      {{ pendingPrompts().length === 1 ? 'message' : 'messages' }} paused</strong
+                    >
+                    <small>Nothing will run until you resume.</small>
+                  }
+                </span>
+                @if (!running()) {
+                  <span class="cw-comp__pending-actions">
+                    <button
+                      type="button"
+                      class="cw-comp__pending-action cw-comp__pending-action--primary"
+                      (click)="resumePending.emit()"
+                    >
+                      <ng-icon name="lucidePlay" size="12" /> Resume queue
+                    </button>
+                    <button
+                      type="button"
+                      class="cw-comp__pending-action"
+                      [class.cw-comp__pending-action--confirm]="clearPendingArmed()"
+                      (click)="requestClearPending()"
+                      title="Remove all queued messages"
+                    >
+                      <ng-icon name="lucideTrash2" size="12" />
+                      {{ clearPendingArmed() ? 'Confirm clear' : 'Clear all' }}
+                    </button>
+                  </span>
+                }
+              </div>
+            }
+            @for (p of pendingPrompts(); track p.id; let i = $index) {
               <div class="cw-comp__pending-item" role="listitem">
+                <span class="cw-comp__pending-index" aria-hidden="true">{{ i + 1 }}</span>
                 <span class="cw-comp__pending-text">{{ pendingPromptPreview(p.prompt) }}</span>
                 <button
                   type="button"
@@ -274,22 +331,26 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         <div class="cw-comp__bar">
           <span class="cw-comp__hint">
             @if (disconnected()) {
-              <ng-icon name="lucideLoaderCircle" size="12" class="animate-spin cw-comp__hint-icon" />
+              <ng-icon
+                name="lucideLoaderCircle"
+                size="12"
+                class="animate-spin cw-comp__hint-icon"
+              />
               Reconnecting…
             } @else if (autocompleteOpen() && filtered().length) {
               ↑↓ navigate · ↵ insert
             } @else if (blockedByPermission()) {
-              {{ sendDisabledReason() || 'Respond to the approval request before sending another message.' }}
+              {{
+                sendDisabledReason() ||
+                  'Respond to the approval request before sending another message.'
+              }}
             } @else {
               &#64; sessions · / commands · $ skills · ↵ send · ⇧↵ line break
             }
           </span>
 
           <div class="cw-comp__btns">
-            <app-dictation-button
-              [target]="dictate"
-              [disabled]="disconnected()"
-            />
+            <app-dictation-button [target]="dictate" [disabled]="disconnected()" />
             @if (allowImages()) {
               <button
                 type="button"
@@ -308,7 +369,11 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
                 class="cw-comp__btn cw-comp__btn--stop"
                 [disabled]="!canInterrupt() || disconnected()"
                 (click)="interrupt.emit()"
-                title="Interrupt"
+                [title]="
+                  pendingPrompts().length
+                    ? 'Stop current response and pause queued messages'
+                    : 'Stop current response'
+                "
               >
                 <ng-icon name="lucideSquare" size="14" />
                 Stop
@@ -317,7 +382,16 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
             <button
               type="button"
               class="cw-comp__btn cw-comp__btn--send"
-              [disabled]="(!value().trim() && !attachedImages().length && !diffMentions().length && !sessionMentions().length) || loadingSessionMention() || (submitting() && !queueing()) || blockedByPermission() || disconnected()"
+              [disabled]="
+                (!value().trim() &&
+                  !attachedImages().length &&
+                  !diffMentions().length &&
+                  !sessionMentions().length) ||
+                loadingSessionMention() ||
+                (submitting() && !queueing()) ||
+                blockedByPermission() ||
+                disconnected()
+              "
               (click)="submit()"
               [title]="queueing() ? 'Queue message' : 'Send'"
             >
@@ -391,6 +465,67 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         gap: 0.25rem;
         padding: 0.5rem 0.625rem 0.25rem 0.875rem;
         border-bottom: 1px dashed color-mix(in oklab, var(--foreground) 12%, transparent);
+      }
+      .cw-comp__pending-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.25rem 0 0.375rem;
+        color: var(--foreground);
+      }
+      .cw-comp__pending-header > span:first-child {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+        min-width: 0;
+      }
+      .cw-comp__pending-header strong {
+        font-size: 0.75rem;
+        line-height: 1.25;
+      }
+      .cw-comp__pending-header small {
+        color: var(--muted-foreground);
+        font-size: 0.6875rem;
+      }
+      .cw-comp__pending-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        flex-shrink: 0;
+      }
+      .cw-comp__pending-action {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        min-height: 1.75rem;
+        padding: 0.25rem 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: 0.4rem;
+        background: var(--background);
+        color: var(--muted-foreground);
+        font: inherit;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .cw-comp__pending-action:hover {
+        color: var(--foreground);
+        background: var(--accent);
+      }
+      .cw-comp__pending-action--primary {
+        border-color: var(--primary);
+        background: var(--primary);
+        color: var(--primary-foreground);
+      }
+      .cw-comp__pending-action--primary:hover {
+        background: color-mix(in oklab, var(--primary) 88%, var(--surface-shade));
+        color: var(--primary-foreground);
+      }
+      .cw-comp__pending-action--confirm {
+        border-color: color-mix(in oklab, var(--destructive) 45%, var(--border));
+        color: var(--destructive);
+        background: color-mix(in oklab, var(--destructive) 8%, var(--background));
       }
       .cw-comp__bg-agent {
         display: flex;
@@ -532,6 +667,24 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+      .cw-comp__pending-index {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.15rem;
+        height: 1.15rem;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: color-mix(in oklab, var(--foreground) 8%, transparent);
+        font-size: 0.625rem;
+        font-weight: 700;
+      }
+      @media (max-width: 36rem) {
+        .cw-comp__pending-header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
       }
       .cw-comp__pending-remove {
         display: inline-flex;
@@ -735,6 +888,7 @@ export class ClaudeComposerComponent {
   readonly loadingSessionMention = input<boolean>(false);
   readonly placeholderText = input<string>('Tell Claude what to do…');
   readonly pendingPrompts = input<ClaudePendingPrompt[]>([]);
+  readonly queuePaused = input<boolean>(false);
   readonly disconnected = input<boolean>(false);
   readonly diffMentions = input<DiffSelectionMention[]>([]);
   readonly imageAttachments = input<ComposerImageAttachment[]>([]);
@@ -746,20 +900,34 @@ export class ClaudeComposerComponent {
   readonly sessionId = input<number | null>(null);
   readonly worktreePath = input<string | null>(null);
 
-  readonly queueing = computed(() => this.running() || this.backgroundAgentCount() > 0);
+  readonly queueing = computed(
+    () => this.running() || this.backgroundAgentCount() > 0 || this.pendingPrompts().length > 0,
+  );
 
   readonly send = output<ComposerSendPayload>();
   readonly valueChange = output<string>();
   readonly imageAttachmentsChange = output<ComposerImageAttachment[]>();
   readonly interrupt = output<void>();
   readonly cancelPending = output<string>();
+  readonly resumePending = output<void>();
+  readonly clearPending = output<void>();
   readonly removeDiffMention = output<string>();
   readonly requestSessionMention = output<number>();
   readonly removeSessionMention = output<number>();
 
   readonly attachedImages = signal<ComposerImageAttachment[]>([]);
   readonly isDropTarget = signal(false);
+  readonly clearPendingArmed = signal(false);
   private dragDepth = 0;
+
+  requestClearPending(): void {
+    if (!this.clearPendingArmed()) {
+      this.clearPendingArmed.set(true);
+      return;
+    }
+    this.clearPendingArmed.set(false);
+    this.clearPending.emit();
+  }
 
   readonly activeTrigger = signal<'/' | '$' | '@' | null>(null);
   readonly activeQuery = signal('');
@@ -944,10 +1112,14 @@ export class ClaudeComposerComponent {
           : prompt);
     const labels: string[] = [];
     if (sessions.mentions.length) {
-      labels.push(`${sessions.mentions.length} session mention${sessions.mentions.length === 1 ? '' : 's'}`);
+      labels.push(
+        `${sessions.mentions.length} session mention${sessions.mentions.length === 1 ? '' : 's'}`,
+      );
     }
     if (parsed.mentions.length) {
-      labels.push(`${parsed.mentions.length} diff mention${parsed.mentions.length === 1 ? '' : 's'}`);
+      labels.push(
+        `${parsed.mentions.length} diff mention${parsed.mentions.length === 1 ? '' : 's'}`,
+      );
     }
     return labels.length ? `${text} · ${labels.join(' · ')}` : text;
   }
@@ -1129,8 +1301,14 @@ export class ClaudeComposerComponent {
   }
 
   onDocumentMousedown(event: MouseEvent): void {
-    if (!this.autocompleteOpen()) return;
     const target = event.target as Node | null;
+    if (
+      this.clearPendingArmed() &&
+      (!(target instanceof Element) || !target.closest('.cw-comp__pending-action--confirm'))
+    ) {
+      this.clearPendingArmed.set(false);
+    }
+    if (!this.autocompleteOpen()) return;
     if (target && this.host.nativeElement.contains(target)) return;
     this.close();
   }

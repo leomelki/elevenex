@@ -309,6 +309,7 @@ interface RuntimeState {
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   pendingPrompts: ClaudePendingPrompt[];
+  queuePaused: boolean;
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
@@ -663,7 +664,7 @@ export class ClaudeRuntimeService
   async getCliStatus(): Promise<AgentAuthStatus> {
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     const binaryPath = configuredPath
-      ? findBinary(configuredPath) ?? configuredPath
+      ? (findBinary(configuredPath) ?? configuredPath)
       : findBinary('claude');
     if (!binaryPath) {
       const installHint =
@@ -698,9 +699,7 @@ export class ClaudeRuntimeService
           process.platform === 'win32'
             ? 'irm https://claude.ai/install.ps1 | iex'
             : 'curl -fsSL https://claude.ai/install.sh | bash',
-        output: [
-          `Claude Code CLI could not be executed at ${binaryPath}.`,
-        ],
+        output: [`Claude Code CLI could not be executed at ${binaryPath}.`],
       };
     }
 
@@ -1823,7 +1822,8 @@ export class ClaudeRuntimeService
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId) ||
-      this.shouldQueueBehindBackground(sessionId)
+      this.shouldQueueBehindBackground(sessionId) ||
+      this.runtimeStates.get(sessionId)?.queuePaused
     ) {
       await this.queuePendingPrompt(sessionId, trimmedPrompt, validatedImages);
       return;
@@ -1846,18 +1846,22 @@ export class ClaudeRuntimeService
       // so the runtime starts a fresh session instead.
       const preExistingState = this.runtimeStates.get(sessionId);
       const isBlankTuiSession =
-        Boolean(rawSession.claudeSessionId && rawSession.claudeSessionId !== '-1') &&
+        Boolean(
+          rawSession.claudeSessionId && rawSession.claudeSessionId !== '-1',
+        ) &&
         preExistingState?.lastHistoryItemCount === 0 &&
         preExistingState?.lastHistorySource === null;
       if (isBlankTuiSession) {
         this.logger.log(
           `Claude blank TUI session detected, clearing stale session ID session=${sessionId} claudeSessionId=${rawSession.claudeSessionId}`,
         );
-        void this.sessionsService.updateClaudeSessionId(sessionId, '-1').catch((e) => {
-          this.logger.warn(
-            `Failed to clear blank TUI session ID session=${sessionId}: ${String(e)}`,
-          );
-        });
+        void this.sessionsService
+          .updateClaudeSessionId(sessionId, '-1')
+          .catch((e) => {
+            this.logger.warn(
+              `Failed to clear blank TUI session ID session=${sessionId}: ${String(e)}`,
+            );
+          });
       }
       const session = isBlankTuiSession
         ? { ...rawSession, claudeSessionId: null }
@@ -2122,6 +2126,9 @@ export class ClaudeRuntimeService
         ...(images.length ? { images } : {}),
       },
     ];
+    if (this.activeRuns.get(sessionId)?.interruptRequested) {
+      existingState.queuePaused = true;
+    }
     this.emitRunState(sessionId);
   }
 
@@ -2211,12 +2218,18 @@ export class ClaudeRuntimeService
     const state = this.ensureRuntimeState(sessionId);
     const before = state.pendingPrompts.length;
     state.pendingPrompts = state.pendingPrompts.filter((p) => p.id !== id);
+    if (state.pendingPrompts.length === 0) state.queuePaused = false;
     if (state.pendingPrompts.length !== before) {
       this.emitRunState(sessionId);
     }
   }
 
   async interrupt(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (state.pendingPrompts.length > 0) {
+      state.queuePaused = true;
+      this.emitRunState(sessionId);
+    }
     const run = this.activeRuns.get(sessionId);
     if (!run) {
       // The run may still be initializing (between submitPrompt start and
@@ -2235,6 +2248,26 @@ export class ClaudeRuntimeService
       this.activeRuns.delete(sessionId);
       this.finalizeInterruptedRun(sessionId);
     }
+  }
+
+  resumePendingPrompts(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (!state.pendingPrompts.length) return Promise.resolve();
+    state.queuePaused = false;
+    state.lastError = null;
+    this.emitRunState(sessionId);
+    this.drainPendingPrompts(sessionId);
+    return Promise.resolve();
+  }
+
+  clearPendingPrompts(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (!state.pendingPrompts.length && !state.queuePaused)
+      return Promise.resolve();
+    state.pendingPrompts = [];
+    state.queuePaused = false;
+    this.emitRunState(sessionId);
+    return Promise.resolve();
   }
 
   async approvePermission(
@@ -2621,7 +2654,9 @@ export class ClaudeRuntimeService
     const live = state.backgroundWork.filter((item) => {
       const startedAtMs = Date.parse(item.startedAt);
       if (Number.isNaN(startedAtMs)) return true;
-      return now - startedAtMs < ClaudeRuntimeService.BACKGROUND_WORK_MAX_AGE_MS;
+      return (
+        now - startedAtMs < ClaudeRuntimeService.BACKGROUND_WORK_MAX_AGE_MS
+      );
     });
 
     if (live.length !== state.backgroundWork.length) {
@@ -2955,7 +2990,7 @@ export class ClaudeRuntimeService
     if (!state || this.invalidatedSessions.has(sessionId)) {
       return;
     }
-    if (!state.pendingPrompts.length || state.lastError) {
+    if (!state.pendingPrompts.length || state.lastError || state.queuePaused) {
       return;
     }
     if (
@@ -3532,7 +3567,8 @@ export class ClaudeRuntimeService
               ? 'Structured output retries exceeded'
               : 'Run failed';
       const errorMessage =
-        ('errors' in message ? message.errors.join('\n') : '') || subtypeFallback;
+        ('errors' in message ? message.errors.join('\n') : '') ||
+        subtypeFallback;
       state.lastError = errorMessage;
       // If the error indicates that the stored session no longer exists
       // (e.g. corrupted file or Claude Code pruned the conversation), reset
@@ -4574,6 +4610,7 @@ export class ClaudeRuntimeService
     state.pendingUserInputRequest = null;
     state.liveItems = [];
     state.lastError = null;
+    state.queuePaused = state.pendingPrompts.length > 0;
     // Stopping the session stops its background work too — the interrupt goes
     // to the whole agent loop, not just the visible turn.
     this.clearAllBackgroundWork(sessionId, 'run_interrupted');
@@ -4675,6 +4712,7 @@ export class ClaudeRuntimeService
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
       pendingPrompts: [],
+      queuePaused: false,
       liveItems: [],
       lastError: null,
       selectedModel: startup.selectedModel,
@@ -4754,6 +4792,7 @@ export class ClaudeRuntimeService
         pendingPermissionRequest: state.pendingPermissionRequest,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        queuePaused: state.queuePaused,
       },
     });
   }
@@ -5171,9 +5210,9 @@ export class ClaudeRuntimeService
       effort: (reasoningEffort as EffortLevel | null) ?? undefined,
       fastMode,
       fastModePerSessionOptIn: true,
-      permissionMode: (effectivePlanMode
-        ? 'plan'
-        : effectivePermissionMode) as PermissionMode | undefined,
+      permissionMode: (effectivePlanMode ? 'plan' : effectivePermissionMode) as
+        | PermissionMode
+        | undefined,
       resume:
         claudeSessionId && claudeSessionId !== '-1'
           ? claudeSessionId
@@ -5519,10 +5558,13 @@ export class ClaudeRuntimeService
       canInterrupt: state.canInterrupt,
       sessionState: state.sessionState,
       backgroundWork: [...state.backgroundWork],
-      backgroundRunActive: Boolean(this.activeRuns.get(sessionId)?.isBackground),
+      backgroundRunActive: Boolean(
+        this.activeRuns.get(sessionId)?.isBackground,
+      ),
       pendingPermissionRequest: state.pendingPermissionRequest,
       pendingUserInputRequest: state.pendingUserInputRequest,
       pendingPrompts: state.pendingPrompts,
+      queuePaused: state.queuePaused,
       liveItems: state.liveItems,
       lastError: state.lastError,
       selectedModel: state.selectedModel,
@@ -5922,7 +5964,8 @@ export class ClaudeRuntimeService
               kind: 'user',
               content: normalizedText,
               parentToolUseId,
-              isSynthetic: this.isSyntheticUserMessage(normalizedText) || undefined,
+              isSynthetic:
+                this.isSyntheticUserMessage(normalizedText) || undefined,
               sourceMessageId: message.uuid,
               transcriptMessageId: message.uuid,
               timestamp,

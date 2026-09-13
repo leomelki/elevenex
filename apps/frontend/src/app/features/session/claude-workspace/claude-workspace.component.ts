@@ -49,7 +49,10 @@ import {
 } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
-import type { SessionMention, SessionMentionCandidate } from '@/shared/models/session-mention.model';
+import type {
+  SessionMention,
+  SessionMentionCandidate,
+} from '@/shared/models/session-mention.model';
 import {
   AgentAuthStatus,
   AgentPlanUsage,
@@ -106,10 +109,7 @@ import {
   type TranscriptMessageAffordances,
 } from './components/claude-transcript.component';
 import { PairedTranscriptUnit, pairTranscript } from './util/paired-transcript';
-import {
-  TranscriptRenderItem,
-  buildTranscriptRenderItems,
-} from './util/transcript-render-items';
+import { TranscriptRenderItem, buildTranscriptRenderItems } from './util/transcript-render-items';
 import {
   PlanFeedbackPayload,
   PlanReviewRequest,
@@ -273,6 +273,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly pendingPermissionRequest = signal<ClaudePermissionRequest | null>(null);
   readonly pendingUserInputRequest = signal<ClaudeUserInputRequest | null>(null);
   readonly pendingPrompts = signal<ClaudePendingPrompt[]>([]);
+  readonly queuePaused = signal(false);
   private readonly cancelledPendingPromptIds = new Set<string>();
   private readonly autoApprovedPermissionRequestIds = new Set<string>();
   private bootstrappedProvider: AgentProviderId | null = null;
@@ -319,9 +320,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
    * but keeping a map means switching provider doesn't leak the previous one's
    * status into the login card, and a new provider needs no extra signal.
    */
-  private readonly authStatusByProvider = signal<
-    Record<string, AgentAuthStatus | null>
-  >({});
+  private readonly authStatusByProvider = signal<Record<string, AgentAuthStatus | null>>({});
   readonly providerAuthStatus = computed(
     () => this.authStatusByProvider()[this.currentProvider()] ?? null,
   );
@@ -760,7 +759,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     // Keep private signals in sync with @Input() changes so computed() calls stay reactive.
     if (changes['archived']) this._archived.set(this.archived);
     if (changes['readOnlyTranscript']) this._readOnlyTranscript.set(this.readOnlyTranscript);
-    if (changes['terminalTranscriptMirror']) this._terminalTranscriptMirror.set(this.terminalTranscriptMirror);
+    if (changes['terminalTranscriptMirror'])
+      this._terminalTranscriptMirror.set(this.terminalTranscriptMirror);
 
     if (changes['sessionId'] && !changes['sessionId'].firstChange) {
       const previousSessionId = changes['sessionId'].previousValue as number;
@@ -795,7 +795,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       }
     }
     // Skip archived-change bootstrap if sessionId already triggered a full reset+bootstrap above.
-    if (changes['archived'] && !changes['archived'].firstChange && this.isVisible && !changes['sessionId']) {
+    if (
+      changes['archived'] &&
+      !changes['archived'].firstChange &&
+      this.isVisible &&
+      !changes['sessionId']
+    ) {
       this.reset();
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       this.providerSelection.setProvider(this.activeAgentProvider);
@@ -862,7 +867,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       sessionId === this.sessionId ||
       this.loadingSessionMentionId() !== null ||
       this.pendingSessionMentions().some((mention) => mention.sessionId === sessionId)
-    ) return;
+    )
+      return;
     this.loadingSessionMentionId.set(sessionId);
     try {
       const mention = await firstValueFrom(this.agentApi.getConversationMention(sessionId));
@@ -905,10 +911,14 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     const promptWithMentions = appendSessionMentions(promptWithDiffMentions, sessionMentions);
     const images = this.currentProviderSupportsImages() ? normalized.images : [];
     if (!promptWithMentions.trim() && !images.length) return;
-    const isIdle = this.runPhase() === 'idle';
-    if (isIdle && this.submitting()) return;
+    const startsImmediately =
+      this.runPhase() === 'idle' &&
+      this.backgroundWork().length === 0 &&
+      this.pendingPrompts().length === 0 &&
+      !this.queuePaused();
+    if (startsImmediately && this.submitting()) return;
     const now = new Date().toISOString();
-    if (isIdle) {
+    if (startsImmediately) {
       this.submitting.set(true);
       const optimisticContent = images.length
         ? [promptWithMentions, ...images.map(() => '[image]')].filter(Boolean).join('\n')
@@ -1073,6 +1083,19 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (this.isTranscriptReadOnly()) return;
     this.cancelledPendingPromptIds.add(id);
     this.sendRuntimeAction({ type: 'cancel_pending_prompt', id });
+  }
+
+  resumePendingPrompts(): void {
+    if (this.isTranscriptReadOnly() || !this.pendingPrompts().length) return;
+    this.sendRuntimeAction({ type: 'resume_pending_prompts' });
+  }
+
+  clearPendingPrompts(): void {
+    if (this.isTranscriptReadOnly() || !this.pendingPrompts().length) return;
+    for (const prompt of this.pendingPrompts()) {
+      this.cancelledPendingPromptIds.add(prompt.id);
+    }
+    this.sendRuntimeAction({ type: 'clear_pending_prompts' });
   }
 
   private updatePendingPrompts(next: ClaudePendingPrompt[]): void {
@@ -1671,6 +1694,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.pendingPermissionRequest.set(null);
       this.pendingUserInputRequest.set(null);
       this.pendingPrompts.set([]);
+      this.queuePaused.set(false);
       this.lastError.set(null);
       this.hydrated.set(true);
     } catch (error) {
@@ -1984,6 +2008,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.applyPendingPermissionFromRuntime(event.payload.pendingPermissionRequest);
         this.pendingUserInputRequest.set(event.payload.pendingUserInputRequest);
         this.updatePendingPrompts(event.payload.pendingPrompts ?? []);
+        this.queuePaused.set(event.payload.queuePaused ?? false);
         if (event.payload.runPhase !== 'running') this.submitting.set(false);
         return;
       case 'plan_usage':
@@ -2071,10 +2096,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         void this.handleCompletion();
         return;
       case 'auth_status':
-        this.setAuthStatus(
-          this.currentProvider(),
-          event.payload.status as AgentAuthStatus,
-        );
+        this.setAuthStatus(this.currentProvider(), event.payload.status as AgentAuthStatus);
         return;
       default:
         return;
@@ -2238,6 +2260,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.applyPendingPermissionFromRuntime(state.pendingPermissionRequest);
     this.pendingUserInputRequest.set(state.pendingUserInputRequest);
     this.updatePendingPrompts(state.pendingPrompts ?? []);
+    this.queuePaused.set(state.queuePaused ?? false);
     this.lastError.set(state.lastError);
     this.tasks.set(state.tasks);
     this.toolProgressByToolUseId.set(
@@ -2249,10 +2272,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.subagents.set(state.subagents);
     this.recentHookEvents.set(state.recentHookEvents);
     if (state.authStatus != null) {
-      this.setAuthStatus(
-        this.currentProvider(),
-        state.authStatus as AgentAuthStatus,
-      );
+      this.setAuthStatus(this.currentProvider(), state.authStatus as AgentAuthStatus);
     }
   }
 
@@ -2332,6 +2352,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.pendingPermissionRequest.set(null);
     this.pendingUserInputRequest.set(null);
     this.pendingPrompts.set([]);
+    this.queuePaused.set(false);
     this.cancelledPendingPromptIds.clear();
     this.autocompleteItems.set([]);
     this.tasks.set([]);

@@ -631,6 +631,7 @@ export interface ClaudeRuntimeStatePayload {
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   pendingPrompts: ClaudePendingPrompt[];
+  queuePaused: boolean;
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
@@ -714,6 +715,7 @@ export type ClaudeRuntimeEvent =
         pendingPermissionRequest: ClaudePermissionRequest | null;
         pendingUserInputRequest: ClaudeUserInputRequest | null;
         pendingPrompts: ClaudePendingPrompt[];
+        queuePaused: boolean;
       };
     }
   | {
@@ -902,4 +904,6 @@ export type ClaudeRuntimeClientAction =
       content?: Record<string, unknown>;
     }
   | { type: 'cancel_pending_prompt'; id: string }
+  | { type: 'resume_pending_prompts' }
+  | { type: 'clear_pending_prompts' }
   | { type: 'open_terminal_fallback' };

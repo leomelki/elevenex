@@ -185,6 +185,8 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
   ): Promise<void>;
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;
+  resumePendingPrompts(sessionId: number): Promise<void>;
+  clearPendingPrompts(sessionId: number): Promise<void>;
   cleanupSession(sessionId: number): Promise<void>;
 }
 

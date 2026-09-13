@@ -101,8 +101,7 @@ export class AntigravityRuntimeService
   >();
 
   private readonly idleShutdownMs =
-    Number(process.env.ANTIGRAVITY_RUNTIME_IDLE_MS) ||
-    DEFAULT_IDLE_SHUTDOWN_MS;
+    Number(process.env.ANTIGRAVITY_RUNTIME_IDLE_MS) || DEFAULT_IDLE_SHUTDOWN_MS;
   private readonly idleRuntimeCap =
     Number(process.env.ANTIGRAVITY_RUNTIME_IDLE_CAP) ||
     DEFAULT_IDLE_RUNTIME_CAP;
@@ -257,7 +256,8 @@ export class AntigravityRuntimeService
 
     if (
       this.activeRuns.has(sessionId) ||
-      this.initializingRuns.has(sessionId)
+      this.initializingRuns.has(sessionId) ||
+      this.runtimeStates.get(sessionId)?.queuePaused
     ) {
       this.queuePendingPrompt(sessionId, trimmed, images);
       return;
@@ -429,12 +429,22 @@ export class AntigravityRuntimeService
         ...(images?.length ? { images } : {}),
       },
     ];
+    if (this.activeRuns.get(sessionId)?.interruptRequested) {
+      state.queuePaused = true;
+    }
     this.emitRunState(sessionId);
   }
 
   private drainPendingPrompt(sessionId: number): void {
     const state = this.ensureRuntimeState(sessionId);
-    if (state.lastError || state.pendingPrompts.length === 0) return;
+    if (
+      state.lastError ||
+      state.queuePaused ||
+      state.pendingPrompts.length === 0
+    )
+      return;
+    if (this.activeRuns.has(sessionId) || this.initializingRuns.has(sessionId))
+      return;
     const [next, ...rest] = state.pendingPrompts;
     state.pendingPrompts = rest;
     this.emitRunState(sessionId);
@@ -450,6 +460,11 @@ export class AntigravityRuntimeService
   }
 
   interrupt(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (state.pendingPrompts.length > 0) {
+      state.queuePaused = true;
+      this.emitRunState(sessionId);
+    }
     const run = this.activeRuns.get(sessionId);
     if (!run) return Promise.resolve();
     run.interruptRequested = true;
@@ -462,6 +477,27 @@ export class AntigravityRuntimeService
     state.pendingPrompts = state.pendingPrompts.filter(
       (prompt) => prompt.id !== id,
     );
+    if (state.pendingPrompts.length === 0) state.queuePaused = false;
+    this.emitRunState(sessionId);
+    return Promise.resolve();
+  }
+
+  resumePendingPrompts(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (!state.pendingPrompts.length) return Promise.resolve();
+    state.queuePaused = false;
+    state.lastError = null;
+    this.emitRunState(sessionId);
+    this.drainPendingPrompt(sessionId);
+    return Promise.resolve();
+  }
+
+  clearPendingPrompts(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (!state.pendingPrompts.length && !state.queuePaused)
+      return Promise.resolve();
+    state.pendingPrompts = [];
+    state.queuePaused = false;
     this.emitRunState(sessionId);
     return Promise.resolve();
   }
@@ -497,9 +533,7 @@ export class AntigravityRuntimeService
     return this.mcpService.recheckServer(worktreePath);
   }
 
-  private async resolveWorktreePath(
-    sessionId: number,
-  ): Promise<string | null> {
+  private async resolveWorktreePath(sessionId: number): Promise<string | null> {
     const state = this.runtimeStates.get(sessionId);
     if (state?.cachedWorktreePath) return state.cachedWorktreePath;
     try {
@@ -536,7 +570,10 @@ export class AntigravityRuntimeService
     sessionId: number,
   ): Promise<AntigravityProcessClient> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.antigravitySessionId);
+    const state = this.ensureRuntimeState(
+      sessionId,
+      session.antigravitySessionId,
+    );
     state.cachedWorktreePath = session.worktreePath;
 
     const options: AntigravityProcessOptions = {
@@ -932,6 +969,7 @@ export class AntigravityRuntimeService
       sessionState: 'idle',
       canInterrupt: false,
       pendingPrompts: [],
+      queuePaused: false,
       liveItems: [],
       streamingAssistantMessageId: null,
       streamingThoughtMessageId: null,
@@ -979,6 +1017,8 @@ export class AntigravityRuntimeService
     state.liveItems = [];
     state.streamingAssistantMessageId = null;
     state.streamingThoughtMessageId = null;
+    state.lastError = null;
+    state.queuePaused = state.pendingPrompts.length > 0;
     this.emitEvent({ type: 'complete', payload: { sessionId } });
     this.emitRunState(sessionId);
   }
@@ -1032,6 +1072,7 @@ export class AntigravityRuntimeService
         pendingPermissionRequest: null,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        queuePaused: state.queuePaused,
       },
     });
   }
@@ -1064,6 +1105,7 @@ export class AntigravityRuntimeService
       pendingPermissionRequest: null,
       pendingUserInputRequest: state.pendingUserInputRequest,
       pendingPrompts: state.pendingPrompts,
+      queuePaused: state.queuePaused,
       liveItems: state.liveItems,
       lastError: state.lastError,
       selectedModel: state.selectedModel,

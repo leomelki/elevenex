@@ -573,6 +573,7 @@ export class ClaudeTerminalTranscriptMirrorService
         pendingPermissionRequest: null,
         pendingUserInputRequest: null,
         pendingPrompts: [],
+        queuePaused: false,
       },
     });
   }
@@ -622,6 +623,7 @@ export class ClaudeTerminalTranscriptMirrorService
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
       pendingPrompts: [],
+      queuePaused: false,
       liveItems: [],
       lastError: state.lastError,
       selectedModel: null,

@@ -127,6 +127,14 @@ export class PiAgentRuntimeProvider
     return this.runtimeService.cancelPendingPrompt(sessionId, id);
   }
 
+  resumePendingPrompts(sessionId: number) {
+    return this.runtimeService.resumePendingPrompts(sessionId);
+  }
+
+  clearPendingPrompts(sessionId: number) {
+    return this.runtimeService.clearPendingPrompts(sessionId);
+  }
+
   answerUserInput(
     sessionId: number,
     requestId: string,

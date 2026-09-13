@@ -68,6 +68,7 @@ export interface PiRuntimeState {
     queuedAt: string;
     images?: AgentImageInput[];
   }[];
+  queuePaused: boolean;
   liveItems: ClaudeTranscriptItem[];
   // Stable id for the assistant message currently being streamed, shared by
   // every `message_update` event and the terminating `message_end` event so

@@ -389,7 +389,8 @@ export class PiRuntimeService
 
     if (
       this.activeRuns.has(sessionId) ||
-      this.initializingRuns.has(sessionId)
+      this.initializingRuns.has(sessionId) ||
+      this.runtimeStates.get(sessionId)?.queuePaused
     ) {
       this.queuePendingPrompt(sessionId, trimmedPrompt, images);
       return;
@@ -481,7 +482,11 @@ export class PiRuntimeService
       } finally {
         this.activeRuns.delete(sessionId);
         this.scheduleIdleShutdown(sessionId);
-        if (!state.lastError && state.pendingPrompts.length > 0) {
+        if (
+          !state.lastError &&
+          !state.queuePaused &&
+          state.pendingPrompts.length > 0
+        ) {
           const [next, ...rest] = state.pendingPrompts;
           state.pendingPrompts = rest;
           this.emitRunState(sessionId);
@@ -529,10 +534,18 @@ export class PiRuntimeService
         ...(images?.length ? { images } : {}),
       },
     ];
+    if (this.activeRuns.get(sessionId)?.interruptRequested) {
+      state.queuePaused = true;
+    }
     this.emitRunState(sessionId);
   }
 
   async interrupt(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (state.pendingPrompts.length > 0) {
+      state.queuePaused = true;
+      this.emitRunState(sessionId);
+    }
     const run = this.activeRuns.get(sessionId);
     if (!run) return;
     run.interruptRequested = true;
@@ -553,7 +566,48 @@ export class PiRuntimeService
     state.pendingPrompts = state.pendingPrompts.filter(
       (prompt) => prompt.id !== id,
     );
+    if (state.pendingPrompts.length === 0) state.queuePaused = false;
     this.emitRunState(sessionId);
+  }
+
+  resumePendingPrompts(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (!state.pendingPrompts.length) return Promise.resolve();
+    state.queuePaused = false;
+    state.lastError = null;
+    if (
+      this.activeRuns.has(sessionId) ||
+      this.initializingRuns.has(sessionId)
+    ) {
+      this.emitRunState(sessionId);
+      return Promise.resolve();
+    }
+    const [next, ...rest] = state.pendingPrompts;
+    state.pendingPrompts = rest;
+    this.emitRunState(sessionId);
+    setImmediate(() => {
+      void this.submitPrompt(
+        sessionId,
+        next.prompt,
+        undefined,
+        next.images,
+      ).catch((error) => {
+        this.logger.error(
+          `Resumed Pi prompt failed session=${sessionId}: ${String(error)}`,
+        );
+      });
+    });
+    return Promise.resolve();
+  }
+
+  clearPendingPrompts(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (!state.pendingPrompts.length && !state.queuePaused)
+      return Promise.resolve();
+    state.pendingPrompts = [];
+    state.queuePaused = false;
+    this.emitRunState(sessionId);
+    return Promise.resolve();
   }
 
   async answerUserInput(
@@ -1127,6 +1181,7 @@ export class PiRuntimeService
     state.sessionState = 'idle';
     state.canInterrupt = false;
     state.lastError = null;
+    state.queuePaused = state.pendingPrompts.length > 0;
     state.pendingUserInputRequest = null;
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
@@ -1225,6 +1280,7 @@ export class PiRuntimeService
       sessionState: 'idle',
       canInterrupt: false,
       pendingPrompts: [],
+      queuePaused: false,
       liveItems: [],
       streamingAssistantMessageId: null,
       pendingUserInputRequest: null,
@@ -1289,6 +1345,7 @@ export class PiRuntimeService
         pendingPermissionRequest: null,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        queuePaused: state.queuePaused,
       },
     });
   }
@@ -1299,7 +1356,7 @@ export class PiRuntimeService
         activityStatus: 'waiting',
         actionKind: 'user_input',
         actionLabel: 'Input needed',
-      backgroundActive: false,
+        backgroundActive: false,
       };
     }
     return {
@@ -1326,6 +1383,7 @@ export class PiRuntimeService
       pendingPermissionRequest: null,
       pendingUserInputRequest: state.pendingUserInputRequest,
       pendingPrompts: state.pendingPrompts,
+      queuePaused: state.queuePaused,
       liveItems: state.liveItems,
       lastError: state.lastError,
       selectedModel: state.selectedModel,

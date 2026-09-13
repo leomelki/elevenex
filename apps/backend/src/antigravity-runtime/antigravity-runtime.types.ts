@@ -133,23 +133,23 @@ export interface AntigravityAuthStatus extends ClaudeAuthStatus {
   installHint: string | null;
 }
 
-export interface AntigravityRuntimeSessionMetadata
-  extends Omit<
-    ClaudeRuntimeSessionMetadata,
-    'claudeCodeVersion' | 'apiKeySource' | 'plugins'
-  > {
+export interface AntigravityRuntimeSessionMetadata extends Omit<
+  ClaudeRuntimeSessionMetadata,
+  'claudeCodeVersion' | 'apiKeySource' | 'plugins'
+> {
   antigravityVersion: string;
   plugins: [];
 }
 
-export interface AntigravityRuntimeStatePayload
-  extends Omit<ClaudeRuntimeStatePayload, 'sessionMetadata' | 'authStatus'> {
+export interface AntigravityRuntimeStatePayload extends Omit<
+  ClaudeRuntimeStatePayload,
+  'sessionMetadata' | 'authStatus'
+> {
   sessionMetadata: AntigravityRuntimeSessionMetadata | null;
   authStatus: AntigravityAuthStatus | ClaudeAuthStatus | null;
 }
 
-export interface AntigravitySessionSnapshotPayload
-  extends AntigravityRuntimeStatePayload {
+export interface AntigravitySessionSnapshotPayload extends AntigravityRuntimeStatePayload {
   history: ClaudeTranscriptItem[];
 }
 
@@ -169,6 +169,7 @@ export interface AntigravityRuntimeState {
     queuedAt: string;
     images?: AgentImageInput[];
   }[];
+  queuePaused: boolean;
   liveItems: ClaudeTranscriptItem[];
   /**
    * Stable id for the assistant message / thought currently being streamed.

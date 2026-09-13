@@ -591,6 +591,7 @@ export interface ClaudeRuntimeState {
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   pendingPrompts: ClaudePendingPrompt[];
+  queuePaused: boolean;
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
@@ -664,6 +665,7 @@ export type ClaudeRuntimeEvent =
         pendingPermissionRequest: ClaudePermissionRequest | null;
         pendingUserInputRequest: ClaudeUserInputRequest | null;
         pendingPrompts: ClaudePendingPrompt[];
+        queuePaused: boolean;
       };
     }
   | {

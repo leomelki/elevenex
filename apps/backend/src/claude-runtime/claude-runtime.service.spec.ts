@@ -1439,6 +1439,47 @@ describe('ClaudeRuntimeService', () => {
     ]);
   });
 
+  it('pauses queued prompts on interrupt and resumes them explicitly', async () => {
+    const state = (service as any).ensureRuntimeState(7);
+    state.pendingPrompts = [
+      {
+        id: 'queued-1',
+        prompt: 'Run after resume',
+        queuedAt: new Date().toISOString(),
+      },
+    ];
+    const drainPendingPrompts = jest
+      .spyOn(service as any, 'drainPendingPrompts')
+      .mockImplementation(() => undefined);
+
+    await service.interrupt(7);
+
+    expect(state.queuePaused).toBe(true);
+    expect(state.pendingPrompts).toHaveLength(1);
+
+    await service.resumePendingPrompts(7);
+
+    expect(state.queuePaused).toBe(false);
+    expect(drainPendingPrompts).toHaveBeenCalledWith(7);
+  });
+
+  it('clears a paused prompt queue without treating messages as consumed', async () => {
+    const state = (service as any).ensureRuntimeState(7);
+    state.pendingPrompts = [
+      {
+        id: 'queued-1',
+        prompt: 'Discard me',
+        queuedAt: new Date().toISOString(),
+      },
+    ];
+    state.queuePaused = true;
+
+    await service.clearPendingPrompts(7);
+
+    expect(state.pendingPrompts).toEqual([]);
+    expect(state.queuePaused).toBe(false);
+  });
+
   it('clears the initializing guard if async runtime setup fails before the run is active', async () => {
     (service as any).buildQueryOptions = jest
       .fn()
@@ -1504,7 +1545,10 @@ describe('ClaudeRuntimeService', () => {
       submitTurn,
     });
 
-    const submitPromise = service.submitPrompt(7, 'Please implement auto names');
+    const submitPromise = service.submitPrompt(
+      7,
+      'Please implement auto names',
+    );
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
     await Promise.resolve();
@@ -3544,7 +3588,9 @@ describe('ClaudeRuntimeService', () => {
       startSubagent('agent-1');
 
       expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(true);
-      expect((service as any).shouldQueueBehindBackground(SESSION_ID)).toBe(true);
+      expect((service as any).shouldQueueBehindBackground(SESSION_ID)).toBe(
+        true,
+      );
       expect(backgroundIds()).toEqual(['subagent:agent-1']);
     });
 
@@ -3563,7 +3609,9 @@ describe('ClaudeRuntimeService', () => {
       startSubagent('agent-1');
       ageItem('subagent:agent-1', 10 * 60 * 1000);
 
-      expect((service as any).shouldQueueBehindBackground(SESSION_ID)).toBe(false);
+      expect((service as any).shouldQueueBehindBackground(SESSION_ID)).toBe(
+        false,
+      );
     });
 
     // ...but must NOT release the runtime. Nothing the SDK emits carries an
@@ -3734,7 +3782,11 @@ describe('ClaudeRuntimeService', () => {
       const state = (service as any).ensureRuntimeState(SESSION_ID);
       startSubagent('agent-1');
       state.pendingPrompts = [
-        { id: 'p1', prompt: 'queued while busy', queuedAt: new Date().toISOString() },
+        {
+          id: 'p1',
+          prompt: 'queued while busy',
+          queuedAt: new Date().toISOString(),
+        },
       ];
       const submitPrompt = jest
         .spyOn(service, 'submitPrompt')
@@ -3882,9 +3934,13 @@ describe('ClaudeRuntimeService', () => {
       state.runPhase = 'idle';
 
       const canUseTool = (service as any).createCanUseTool(SESSION_ID, state);
-      const decision = canUseTool('Bash', { command: 'ls' }, {
-        toolUseID: 'tool-1',
-      });
+      const decision = canUseTool(
+        'Bash',
+        { command: 'ls' },
+        {
+          toolUseID: 'tool-1',
+        },
+      );
 
       await new Promise((resolve) => setImmediate(resolve));
 
@@ -3903,9 +3959,13 @@ describe('ClaudeRuntimeService', () => {
       state.runPhase = 'idle';
 
       const canUseTool = (service as any).createCanUseTool(SESSION_ID, state);
-      const result = await canUseTool('Bash', { command: 'ls' }, {
-        toolUseID: 'tool-1',
-      });
+      const result = await canUseTool(
+        'Bash',
+        { command: 'ls' },
+        {
+          toolUseID: 'tool-1',
+        },
+      );
 
       expect(result.behavior).toBe('deny');
       expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);

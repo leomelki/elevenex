@@ -446,7 +446,10 @@ export class CodexRuntimeService
     if (!trimmedPrompt && !validatedImages.length) {
       return;
     }
-    if (this.activeRuns.has(sessionId)) {
+    if (
+      this.activeRuns.has(sessionId) ||
+      this.runtimeStates.get(sessionId)?.queuePaused
+    ) {
       const state = this.ensureRuntimeState(sessionId);
       state.pendingPrompts = [
         ...state.pendingPrompts,
@@ -457,6 +460,9 @@ export class CodexRuntimeService
           ...(validatedImages.length ? { images: validatedImages } : {}),
         },
       ];
+      if (this.activeRuns.get(sessionId)?.interruptRequested) {
+        state.queuePaused = true;
+      }
       this.emitRunState(sessionId);
       return;
     }
@@ -602,7 +608,11 @@ export class CodexRuntimeService
       if (stagedImageDir) {
         void rm(stagedImageDir, { recursive: true, force: true });
       }
-      if (!state.lastError && state.pendingPrompts.length > 0) {
+      if (
+        !state.lastError &&
+        !state.queuePaused &&
+        state.pendingPrompts.length > 0
+      ) {
         const [next, ...rest] = state.pendingPrompts;
         state.pendingPrompts = rest;
         this.emitRunState(sessionId);
@@ -623,6 +633,11 @@ export class CodexRuntimeService
   }
 
   async interrupt(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (state.pendingPrompts.length > 0) {
+      state.queuePaused = true;
+      this.emitRunState(sessionId);
+    }
     const run = this.activeRuns.get(sessionId);
     if (!run) {
       return;
@@ -657,7 +672,45 @@ export class CodexRuntimeService
     state.pendingPrompts = state.pendingPrompts.filter(
       (prompt) => prompt.id !== id,
     );
+    if (state.pendingPrompts.length === 0) state.queuePaused = false;
     this.emitRunState(sessionId);
+  }
+
+  resumePendingPrompts(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (!state.pendingPrompts.length) return Promise.resolve();
+    state.queuePaused = false;
+    state.lastError = null;
+    if (this.activeRuns.has(sessionId)) {
+      this.emitRunState(sessionId);
+      return Promise.resolve();
+    }
+    const [next, ...rest] = state.pendingPrompts;
+    state.pendingPrompts = rest;
+    this.emitRunState(sessionId);
+    setImmediate(() => {
+      void this.submitPrompt(
+        sessionId,
+        next.prompt,
+        undefined,
+        next.images,
+      ).catch((error) => {
+        this.logger.error(
+          `Resumed Codex prompt failed session=${sessionId}: ${String(error)}`,
+        );
+      });
+    });
+    return Promise.resolve();
+  }
+
+  clearPendingPrompts(sessionId: number): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    if (!state.pendingPrompts.length && !state.queuePaused)
+      return Promise.resolve();
+    state.pendingPrompts = [];
+    state.queuePaused = false;
+    this.emitRunState(sessionId);
+    return Promise.resolve();
   }
 
   async approvePermission(
@@ -1109,6 +1162,7 @@ export class CodexRuntimeService
     state.sessionState = 'idle';
     state.canInterrupt = false;
     state.lastError = null;
+    state.queuePaused = state.pendingPrompts.length > 0;
     state.liveItems = [];
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
@@ -1153,6 +1207,7 @@ export class CodexRuntimeService
       sessionState: 'idle',
       canInterrupt: false,
       pendingPrompts: [],
+      queuePaused: false,
       liveItems: [],
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
@@ -1197,6 +1252,7 @@ export class CodexRuntimeService
         pendingPermissionRequest: state.pendingPermissionRequest,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        queuePaused: state.queuePaused,
       },
     });
   }
@@ -1207,7 +1263,7 @@ export class CodexRuntimeService
         activityStatus: 'waiting',
         actionKind: 'permission',
         actionLabel: 'Permission needed',
-      backgroundActive: false,
+        backgroundActive: false,
       };
     }
     if (state.pendingUserInputRequest) {
@@ -1215,7 +1271,7 @@ export class CodexRuntimeService
         activityStatus: 'waiting',
         actionKind: 'user_input',
         actionLabel: 'Input needed',
-      backgroundActive: false,
+        backgroundActive: false,
       };
     }
     return {
@@ -1652,6 +1708,7 @@ export class CodexRuntimeService
       pendingPermissionRequest: state.pendingPermissionRequest,
       pendingUserInputRequest: state.pendingUserInputRequest,
       pendingPrompts: state.pendingPrompts,
+      queuePaused: state.queuePaused,
       liveItems: state.liveItems,
       lastError: state.lastError,
       selectedModel: state.selectedModel,

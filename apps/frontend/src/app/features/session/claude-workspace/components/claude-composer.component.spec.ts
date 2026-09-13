@@ -1,10 +1,7 @@
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  ClaudeComposerComponent,
-  ComposerImageAttachment,
-} from './claude-composer.component';
+import { ClaudeComposerComponent, ComposerImageAttachment } from './claude-composer.component';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 
 const mention = (overrides: Partial<DiffSelectionMention> = {}): DiffSelectionMention => ({
@@ -74,7 +71,10 @@ describe('ClaudeComposerComponent', () => {
     const fixture = TestBed.createComponent(ClaudeComposerComponent);
     fixture.componentRef.setInput('value', 'Continue');
     fixture.componentRef.setInput('blockedByPermission', true);
-    fixture.componentRef.setInput('sendDisabledReason', 'Approve or deny the pending request to resume the conversation.');
+    fixture.componentRef.setInput(
+      'sendDisabledReason',
+      'Approve or deny the pending request to resume the conversation.',
+    );
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
@@ -129,7 +129,9 @@ describe('ClaudeComposerComponent', () => {
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
-    expect(element.querySelector('.cw-comp__mention-dir')?.textContent).toBe('src/main/java/package/folder');
+    expect(element.querySelector('.cw-comp__mention-dir')?.textContent).toBe(
+      'src/main/java/package/folder',
+    );
     expect(element.querySelector('.cw-comp__mention-name')?.textContent).toBe('Test.java');
     expect(element.querySelector('.cw-comp__mention-name')?.tagName.toLowerCase()).toBe('strong');
     expect(element.textContent).toContain('const value = true;');
@@ -210,5 +212,39 @@ describe('ClaudeComposerComponent', () => {
       diffMentions: [],
     });
     expect(imageChangeSpy).toHaveBeenCalledWith([]);
+  });
+
+  it('shows actionable paused queue controls and keeps new messages queued', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('value', 'Add another task');
+    fixture.componentRef.setInput('queuePaused', true);
+    fixture.componentRef.setInput('pendingPrompts', [
+      { id: 'queued-1', prompt: 'First queued task', queuedAt: new Date().toISOString() },
+      { id: 'queued-2', prompt: 'Second queued task', queuedAt: new Date().toISOString() },
+    ]);
+    const resumeSpy = vi.fn();
+    const clearSpy = vi.fn();
+    fixture.componentInstance.resumePending.subscribe(resumeSpy);
+    fixture.componentInstance.clearPending.subscribe(clearSpy);
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.textContent).toContain('2 messages paused');
+    expect(element.querySelector('.cw-comp__btn--send')?.textContent).toContain('Queue');
+
+    const actions = element.querySelectorAll<HTMLButtonElement>('.cw-comp__pending-action');
+    actions[0].click();
+    actions[1].click();
+
+    expect(resumeSpy).toHaveBeenCalledOnce();
+    expect(clearSpy).not.toHaveBeenCalled();
+    fixture.detectChanges();
+    expect(actions[1].textContent).toContain('Confirm clear');
+    actions[1].click();
+    expect(clearSpy).toHaveBeenCalledOnce();
   });
 });

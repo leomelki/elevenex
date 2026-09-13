@@ -115,6 +115,7 @@ export interface CodexRuntimeState {
     queuedAt: string;
     images?: AgentImageInput[];
   }[];
+  queuePaused: boolean;
   liveItems: ClaudeTranscriptItem[];
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
