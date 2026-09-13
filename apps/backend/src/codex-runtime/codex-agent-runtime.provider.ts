@@ -156,6 +156,10 @@ export class CodexAgentRuntimeProvider
     return this.runtimeService.cancelPendingPrompt(sessionId, id);
   }
 
+  steerPendingPrompt(sessionId: number, id: string) {
+    return this.runtimeService.steerPendingPrompt(sessionId, id);
+  }
+
   resumePendingPrompts(sessionId: number) {
     return this.runtimeService.resumePendingPrompts(sessionId);
   }

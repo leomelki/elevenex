@@ -45,6 +45,7 @@ type AgentRuntimeClientAction =
       content?: Record<string, unknown>;
     }
   | { type: 'cancel_pending_prompt'; id: string }
+  | { type: 'steer_pending_prompt'; id: string }
   | { type: 'resume_pending_prompts' }
   | { type: 'clear_pending_prompts' }
   | { type: 'open_terminal_fallback' };
@@ -231,6 +232,10 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
         case 'cancel_pending_prompt':
           await this.assertSessionMutable(sessionId);
           await provider.cancelPendingPrompt(sessionId, action.id);
+          return;
+        case 'steer_pending_prompt':
+          await this.assertSessionMutable(sessionId);
+          await provider.steerPendingPrompt(sessionId, action.id);
           return;
         case 'resume_pending_prompts':
           await this.assertSessionMutable(sessionId);

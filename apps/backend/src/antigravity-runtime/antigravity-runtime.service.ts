@@ -86,6 +86,7 @@ export class AntigravityRuntimeService
   private readonly runtimeStates = new Map<number, AntigravityRuntimeState>();
   private readonly sessionHistories = new Map<number, ClaudeTranscriptItem[]>();
   private readonly activeRuns = new Map<number, AntigravityActiveRun>();
+  private readonly steerAfterInterrupt = new Set<number>();
   private readonly initializingRuns = new Set<number>();
   private readonly clientCounts = new Map<number, number>();
   /**
@@ -319,6 +320,11 @@ export class AntigravityRuntimeService
       } finally {
         this.activeRuns.delete(sessionId);
         this.scheduleIdleShutdown(sessionId);
+        if (this.steerAfterInterrupt.delete(sessionId)) {
+          state.queuePaused = false;
+          state.lastError = null;
+          this.emitRunState(sessionId);
+        }
         this.drainPendingPrompt(sessionId);
       }
     } catch (error) {
@@ -480,6 +486,30 @@ export class AntigravityRuntimeService
     if (state.pendingPrompts.length === 0) state.queuePaused = false;
     this.emitRunState(sessionId);
     return Promise.resolve();
+  }
+
+  async steerPendingPrompt(sessionId: number, id: string): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    const selected = state.pendingPrompts.find((prompt) => prompt.id === id);
+    if (!selected) return;
+
+    state.pendingPrompts = [
+      selected,
+      ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
+    ];
+    state.queuePaused = true;
+    state.lastError = null;
+    this.emitRunState(sessionId);
+
+    if (this.activeRuns.has(sessionId)) {
+      this.steerAfterInterrupt.add(sessionId);
+      await this.interrupt(sessionId);
+      return;
+    }
+
+    state.queuePaused = false;
+    this.emitRunState(sessionId);
+    this.drainPendingPrompt(sessionId);
   }
 
   resumePendingPrompts(sessionId: number): Promise<void> {

@@ -904,6 +904,7 @@ export type ClaudeRuntimeClientAction =
       content?: Record<string, unknown>;
     }
   | { type: 'cancel_pending_prompt'; id: string }
+  | { type: 'steer_pending_prompt'; id: string }
   | { type: 'resume_pending_prompts' }
   | { type: 'clear_pending_prompts' }
   | { type: 'open_terminal_fallback' };

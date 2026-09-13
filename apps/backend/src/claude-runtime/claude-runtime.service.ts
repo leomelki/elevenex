@@ -2224,6 +2224,25 @@ export class ClaudeRuntimeService
     }
   }
 
+  async steerPendingPrompt(sessionId: number, id: string): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    const selected = state.pendingPrompts.find((prompt) => prompt.id === id);
+    if (!selected) return;
+
+    state.pendingPrompts = [
+      selected,
+      ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
+    ];
+    state.queuePaused = true;
+    state.lastError = null;
+    this.emitRunState(sessionId);
+
+    await this.interrupt(sessionId);
+    state.queuePaused = false;
+    this.emitRunState(sessionId);
+    this.drainPendingPrompts(sessionId);
+  }
+
   async interrupt(sessionId: number): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
     if (state.pendingPrompts.length > 0) {

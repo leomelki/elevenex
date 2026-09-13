@@ -1463,6 +1463,37 @@ describe('ClaudeRuntimeService', () => {
     expect(drainPendingPrompts).toHaveBeenCalledWith(7);
   });
 
+  it('steers a selected queued prompt by interrupting and running it next', async () => {
+    const state = (service as any).ensureRuntimeState(7);
+    state.pendingPrompts = [
+      {
+        id: 'queued-1',
+        prompt: 'Keep waiting',
+        queuedAt: new Date().toISOString(),
+      },
+      {
+        id: 'queued-2',
+        prompt: 'Send this now',
+        queuedAt: new Date().toISOString(),
+      },
+    ];
+    const interrupt = jest
+      .spyOn(service, 'interrupt')
+      .mockResolvedValue(undefined);
+    const drainPendingPrompts = jest
+      .spyOn(service as any, 'drainPendingPrompts')
+      .mockImplementation(() => undefined);
+
+    await service.steerPendingPrompt(7, 'queued-2');
+
+    expect(interrupt).toHaveBeenCalledWith(7);
+    expect(state.queuePaused).toBe(false);
+    expect(
+      state.pendingPrompts.map((prompt: { id: string }) => prompt.id),
+    ).toEqual(['queued-2', 'queued-1']);
+    expect(drainPendingPrompts).toHaveBeenCalledWith(7);
+  });
+
   it('clears a paused prompt queue without treating messages as consumed', async () => {
     const state = (service as any).ensureRuntimeState(7);
     state.pendingPrompts = [

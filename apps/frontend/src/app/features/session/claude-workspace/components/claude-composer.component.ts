@@ -291,6 +291,15 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
                 <span class="cw-comp__pending-text">{{ pendingPromptPreview(p.prompt) }}</span>
                 <button
                   type="button"
+                  class="cw-comp__pending-steer"
+                  title="Stop the current response and send this message next"
+                  aria-label="Stop the current response and send this queued message next"
+                  (click)="steerPending.emit(p.id)"
+                >
+                  <ng-icon name="lucideSend" size="11" /> Steer
+                </button>
+                <button
+                  type="button"
                   class="cw-comp__pending-remove"
                   title="Cancel queued message"
                   aria-label="Cancel queued message"
@@ -698,6 +707,26 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
         color: inherit;
         cursor: pointer;
       }
+      .cw-comp__pending-steer {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        min-height: 1.5rem;
+        padding: 0.2rem 0.45rem;
+        flex: 0 0 auto;
+        border: 1px solid color-mix(in oklab, var(--primary) 35%, var(--border));
+        border-radius: 0.375rem;
+        background: color-mix(in oklab, var(--primary) 7%, transparent);
+        color: var(--primary);
+        font: inherit;
+        font-size: 0.625rem;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      .cw-comp__pending-steer:hover {
+        border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+        background: color-mix(in oklab, var(--primary) 13%, transparent);
+      }
       .cw-comp__pending-remove:hover {
         background: color-mix(in oklab, var(--foreground) 10%, transparent);
         color: var(--foreground);
@@ -909,6 +938,7 @@ export class ClaudeComposerComponent {
   readonly imageAttachmentsChange = output<ComposerImageAttachment[]>();
   readonly interrupt = output<void>();
   readonly cancelPending = output<string>();
+  readonly steerPending = output<string>();
   readonly resumePending = output<void>();
   readonly clearPending = output<void>();
   readonly removeDiffMention = output<string>();

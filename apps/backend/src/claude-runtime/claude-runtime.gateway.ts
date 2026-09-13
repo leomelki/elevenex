@@ -160,6 +160,10 @@ export class ClaudeRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           await this.assertSessionMutable(sessionId);
           await claudeProvider.cancelPendingPrompt(sessionId, action.id);
           return;
+        case 'steer_pending_prompt':
+          await this.assertSessionMutable(sessionId);
+          await claudeProvider.steerPendingPrompt(sessionId, action.id);
+          return;
         case 'resume_pending_prompts':
           await this.assertSessionMutable(sessionId);
           await claudeProvider.resumePendingPrompts(sessionId);

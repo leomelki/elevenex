@@ -1085,6 +1085,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.sendRuntimeAction({ type: 'cancel_pending_prompt', id });
   }
 
+  steerPendingPrompt(id: string): void {
+    if (this.isTranscriptReadOnly()) return;
+    this.sendRuntimeAction({ type: 'steer_pending_prompt', id });
+  }
+
   resumePendingPrompts(): void {
     if (this.isTranscriptReadOnly() || !this.pendingPrompts().length) return;
     this.sendRuntimeAction({ type: 'resume_pending_prompts' });

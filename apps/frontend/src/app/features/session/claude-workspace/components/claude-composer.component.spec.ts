@@ -228,13 +228,20 @@ describe('ClaudeComposerComponent', () => {
     ]);
     const resumeSpy = vi.fn();
     const clearSpy = vi.fn();
+    const steerSpy = vi.fn();
     fixture.componentInstance.resumePending.subscribe(resumeSpy);
     fixture.componentInstance.clearPending.subscribe(clearSpy);
+    fixture.componentInstance.steerPending.subscribe(steerSpy);
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).toContain('2 messages paused');
     expect(element.querySelector('.cw-comp__btn--send')?.textContent).toContain('Queue');
+
+    const steerButtons = element.querySelectorAll<HTMLButtonElement>('.cw-comp__pending-steer');
+    expect(steerButtons).toHaveLength(2);
+    steerButtons[1].click();
+    expect(steerSpy).toHaveBeenCalledWith('queued-2');
 
     const actions = element.querySelectorAll<HTMLButtonElement>('.cw-comp__pending-action');
     actions[0].click();
