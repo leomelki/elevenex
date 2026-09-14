@@ -25,6 +25,8 @@ import {
   lucideMoon,
   lucideSun,
   lucideSparkles,
+  lucideFolderPlus,
+  lucidePencil,
 } from '@ng-icons/lucide';
 import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
@@ -33,7 +35,7 @@ import { SessionsService } from '../../../shared/services/sessions.service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { TabService } from '../../session/tab-service';
 import { NavigationBranch, NavigationProject, NavigationRepo, NavigationWorkspace } from '../../../shared/models/navigation-tree.model';
-import { SessionInTree } from '../../../shared/models/session.model';
+import { SessionFolder, SessionInTree } from '../../../shared/models/session.model';
 import { SESSION_MENTION_DRAG_TYPE } from '../../../shared/models/session-mention.model';
 import { BranchInfo } from '../../../shared/models/branch.model';
 import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
@@ -61,6 +63,7 @@ import { EnvironmentSwitcherComponent } from '../environment-switcher/environmen
 import { ThemeService } from '@/shared/services/theme.service';
 import { PendingWorkspaceCreation, PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
+import { SessionFoldersService } from '@/shared/services/session-folders.service';
 
 @Component({
   selector: 'app-sidebar',
@@ -92,6 +95,8 @@ import { AgentControlStateService } from '@/features/agent-control/agent-control
       lucideMoon,
       lucideSun,
       lucideSparkles,
+      lucideFolderPlus,
+      lucidePencil,
     }),
   ],
 })
@@ -109,6 +114,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private router = inject(Router);
   private workspacesService = inject(WorkspacesService);
   private sessionsService = inject(SessionsService);
+  private sessionFoldersService = inject(SessionFoldersService);
   private tabService = inject(TabService);
   private reviewChatsApi = inject(ReviewChatsService);
   private vscodeWebState = inject(VSCodeWebStateService);
@@ -190,6 +196,8 @@ export class Sidebar implements OnInit, OnDestroy {
   @ViewChild('removeFromProjectDialog') removeFromProjectDialogRef!: TrackNativeModalDirective;
   @ViewChild('deleteWorktreeDialog') deleteWorktreeDialogRef!: TrackNativeModalDirective;
   @ViewChild('sessionTitleInput') sessionTitleInputRef!: ElementRef<HTMLInputElement>;
+  @ViewChild('folderNameInput') folderNameInputRef?: ElementRef<HTMLInputElement>;
+  @ViewChild('deleteFolderDialog') deleteFolderDialogRef!: TrackNativeModalDirective;
 
   editingSessionTitleId = signal<number | null>(null);
   showCreateWizard = signal(false);
@@ -213,6 +221,14 @@ export class Sidebar implements OnInit, OnDestroy {
   removeWorkspaceId = signal(0);
   removingFromProject = signal(false);
   openingWorkspaceRepoId = signal<number | null>(null);
+  creatingFolderWorkspaceId = signal<number | null>(null);
+  creatingFolderRepoId = signal<number | null>(null);
+  creatingFolder = signal(false);
+  editingFolderId = signal<number | null>(null);
+  folderBusyId = signal<number | null>(null);
+  draggedOverFolderId = signal<number | null>(null);
+  draggingSession = signal<SessionInTree | null>(null);
+  deleteFolderTarget = signal<SessionFolder | null>(null);
 
   armedDeleteSessionId = signal<number | null>(null);
   deleteSessionConfirmEnabled = signal(false);
@@ -352,7 +368,7 @@ export class Sidebar implements OnInit, OnDestroy {
         this.navService.refreshTree();
         this.navService.revealProject(project.id);
       },
-      error: (err) => {
+      error: err => {
         const msg = err?.error?.message || err?.message || 'Could not add repository.';
         this.addRepoError.set(msg);
         this.addRepoSubmitting.set(false);
@@ -398,9 +414,15 @@ export class Sidebar implements OnInit, OnDestroy {
 
   onSessionDragStart(event: DragEvent, session: SessionInTree): void {
     if (!event.dataTransfer) return;
-    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.effectAllowed = 'copyMove';
     event.dataTransfer.setData(SESSION_MENTION_DRAG_TYPE, String(session.id));
     event.dataTransfer.setData('text/plain', `@${session.name?.trim() || `Session ${session.id}`}`);
+    this.draggingSession.set(session);
+  }
+
+  onSessionDragEnd(): void {
+    this.draggingSession.set(null);
+    this.draggedOverFolderId.set(null);
   }
 
   onSessionClick(session: SessionInTree) {
@@ -432,7 +454,7 @@ export class Sidebar implements OnInit, OnDestroy {
     try {
       const threads = await firstValueFrom(this.reviewChatsApi.list(sessionId));
       if (this.activeSessionId() !== sessionId) return;
-      this.reviewThreads.set(threads.filter((thread) => thread.status !== 'resolved'));
+      this.reviewThreads.set(threads.filter(thread => thread.status !== 'resolved'));
     } catch {
       // The tree must render even when discussions cannot be listed.
       this.reviewThreads.set([]);
@@ -552,9 +574,7 @@ export class Sidebar implements OnInit, OnDestroy {
           ? 'Claude is awaiting input'
           : 'Claude is idle';
 
-    return activity.backgroundActive && activity.activityStatus !== 'running'
-      ? `${base} · background work running`
-      : base;
+    return activity.backgroundActive && activity.activityStatus !== 'running' ? `${base} · background work running` : base;
   }
 
   getSessionLastStateChangeLabel(session: SessionInTree): string | null {
@@ -610,13 +630,11 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   hasUnreviewedCompletion(session: SessionInTree): boolean {
-    return this.claudeStatus.getSessionCompletion(session.id)?.hasUnreviewedCompletion
-      ?? session.hasUnreviewedCompletion;
+    return this.claudeStatus.getSessionCompletion(session.id)?.hasUnreviewedCompletion ?? session.hasUnreviewedCompletion;
   }
 
   private getSessionLastStateChangeAt(session: SessionInTree): number | null {
-    const value = this.claudeStatus.getSessionCompletion(session.id)?.lastStateChangeAt
-      ?? session.lastStateChangeAt;
+    const value = this.claudeStatus.getSessionCompletion(session.id)?.lastStateChangeAt ?? session.lastStateChangeAt;
 
     if (!value) {
       return null;
@@ -639,48 +657,263 @@ export class Sidebar implements OnInit, OnDestroy {
       return;
     }
 
-    const entries = await Promise.all(projects.map(async (project) => {
-      const forwards = await this.loadProjectForwards(project.id);
-      return [
-        project.id,
-        {
-          saved: forwards.length,
-          active: forwards.filter(forward => forward.status === 'active').length,
-          error: forwards.filter(forward => forward.status === 'error').length,
-        },
-      ] as const;
-    }));
+    const entries = await Promise.all(
+      projects.map(async project => {
+        const forwards = await this.loadProjectForwards(project.id);
+        return [
+          project.id,
+          {
+            saved: forwards.length,
+            active: forwards.filter(forward => forward.status === 'active').length,
+            error: forwards.filter(forward => forward.status === 'error').length,
+          },
+        ] as const;
+      }),
+    );
 
     this.sshProjectStats.set(new Map(entries));
   }
 
   private loadProjectForwards(projectId: number): Promise<SshForward[]> {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       this.sshForwardsService.getByProject(projectId).subscribe({
-        next: (forwards) => resolve(forwards),
+        next: forwards => resolve(forwards),
         error: () => resolve([]),
       });
     });
   }
 
   createSessionOnWorkspace(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    this.createSession(repo, workspace, null);
+  }
+
+  createSessionInFolder(repo: NavigationRepo, workspace: NavigationWorkspace, folder: SessionFolder, event: Event) {
+    event.stopPropagation();
+    this.createSession(repo, workspace, folder.id);
+  }
+
+  private createSession(repo: NavigationRepo, workspace: NavigationWorkspace, folderId: number | null) {
     if (this.openingWorkspaceRepoId() !== null || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) {
       return;
     }
 
-    this.sessionsService.create({
-      repoId: repo.id,
-      workspaceId: workspace.id,
-    }).subscribe({
-      next: (session) => {
+    this.sessionsService
+      .create({
+        repoId: repo.id,
+        workspaceId: workspace.id,
+        folderId: folderId ?? undefined,
+      })
+      .subscribe({
+        next: session => {
+          this.navService.refreshTree();
+          this.navService.openSession(session.id);
+        },
+        error: err => {
+          const msg = err?.error?.message || 'Unknown error';
+          toast.error(`Could not create session. ${msg}`);
+        },
+      });
+  }
+
+  startCreateFolder(repo: NavigationRepo, workspace: NavigationWorkspace, event: Event) {
+    event.stopPropagation();
+    if (workspace.id <= 0 || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) return;
+    this.navService.expandKey(`workspace-${repo.id}-${workspace.id}`);
+    this.creatingFolderRepoId.set(repo.id);
+    this.creatingFolderWorkspaceId.set(workspace.id);
+    window.setTimeout(() => this.folderNameInputRef?.nativeElement.focus());
+  }
+
+  cancelCreateFolder() {
+    if (this.creatingFolder()) return;
+    this.creatingFolderRepoId.set(null);
+    this.creatingFolderWorkspaceId.set(null);
+  }
+
+  submitCreateFolder(repo: NavigationRepo, workspace: NavigationWorkspace, event: Event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const name = this.folderNameInputRef?.nativeElement.value.trim() ?? '';
+    if (!name || this.creatingFolder()) return;
+    this.creatingFolder.set(true);
+    this.sessionFoldersService.create({ repoId: repo.id, workspaceId: workspace.id, name }).subscribe({
+      next: folder => {
+        this.creatingFolder.set(false);
+        this.cancelCreateFolder();
+        this.navService.expandKey(`session-folder-${folder.id}`);
         this.navService.refreshTree();
-        this.navService.openSession(session.id);
+        toast.success('Session folder created');
       },
-      error: (err) => {
-        const msg = err?.error?.message || 'Unknown error';
-        toast.error(`Could not create session. ${msg}`);
+      error: err => {
+        this.creatingFolder.set(false);
+        toast.error(err?.error?.message || 'Could not create session folder');
       },
     });
+  }
+
+  startEditFolder(folder: SessionFolder, event: Event) {
+    event.stopPropagation();
+    this.editingFolderId.set(folder.id);
+    window.setTimeout(() => {
+      const input = (this.host.nativeElement as HTMLElement).querySelector(
+        `[data-folder-name-input="${folder.id}"]`,
+      ) as HTMLInputElement | null;
+      input?.focus();
+      input?.select();
+    });
+  }
+
+  saveFolderName(folder: SessionFolder, event: Event) {
+    event.stopPropagation();
+    const name = (event.target as HTMLInputElement).value.trim();
+    if (!name || name === folder.name) {
+      this.editingFolderId.set(null);
+      return;
+    }
+    this.folderBusyId.set(folder.id);
+    this.sessionFoldersService.rename(folder.id, name).subscribe({
+      next: () => this.finishFolderAction('Folder renamed'),
+      error: err => this.failFolderAction(err, 'Could not rename folder'),
+    });
+  }
+
+  onFolderDragOver(event: DragEvent, folder: SessionFolder) {
+    if (folder.archivedAt) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    this.draggedOverFolderId.set(folder.id);
+  }
+
+  onFolderDrop(event: DragEvent, folder: SessionFolder) {
+    event.preventDefault();
+    event.stopPropagation();
+    this.draggedOverFolderId.set(null);
+    const rawId = event.dataTransfer?.getData(SESSION_MENTION_DRAG_TYPE);
+    const sessionId = Number(rawId);
+    if (!Number.isInteger(sessionId) || folder.archivedAt) return;
+    this.sessionsService.moveToFolder(sessionId, folder.id).subscribe({
+      next: () => {
+        this.navService.expandKey(`session-folder-${folder.id}`);
+        this.navService.refreshTree();
+        toast.success(`Session moved to ${folder.name}`);
+      },
+      error: err => toast.error(err?.error?.message || 'Could not move session'),
+    });
+  }
+
+  onUngroupedDragOver(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  }
+
+  onUngroupedDrop(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    const sessionId = Number(event.dataTransfer?.getData(SESSION_MENTION_DRAG_TYPE));
+    if (!Number.isInteger(sessionId)) return;
+    this.sessionsService.moveToFolder(sessionId, null).subscribe({
+      next: () => {
+        this.onSessionDragEnd();
+        this.navService.refreshTree();
+        toast.success('Session moved out of folder');
+      },
+      error: err => toast.error(err?.error?.message || 'Could not move session'),
+    });
+  }
+
+  archiveFolder(folder: SessionFolder, event: Event) {
+    event.stopPropagation();
+    if (this.folderBusyId() !== null) return;
+    this.folderBusyId.set(folder.id);
+    this.sessionFoldersService.archive(folder.id).subscribe({
+      next: () => {
+        for (const session of folder.sessions) this.tabService.updateTabStatus(session.id, 'archived');
+        this.finishFolderAction('Folder and sessions archived');
+      },
+      error: err => this.failFolderAction(err, 'Could not archive folder'),
+    });
+  }
+
+  unarchiveFolder(folder: SessionFolder, event: Event) {
+    event.stopPropagation();
+    if (this.folderBusyId() !== null) return;
+    this.folderBusyId.set(folder.id);
+    this.sessionFoldersService.unarchive(folder.id).subscribe({
+      next: () => {
+        for (const session of folder.archivedSessions) {
+          if (session.archivedByFolder) this.tabService.updateTabStatus(session.id, 'stopped');
+        }
+        this.finishFolderAction('Folder restored');
+      },
+      error: err => this.failFolderAction(err, 'Could not restore folder'),
+    });
+  }
+
+  openDeleteFolder(folder: SessionFolder, event: Event) {
+    event.stopPropagation();
+    this.deleteFolderTarget.set(folder);
+    this.deleteFolderDialogRef.open();
+  }
+
+  confirmDeleteFolder() {
+    const folder = this.deleteFolderTarget();
+    if (!folder || this.folderBusyId() !== null) return;
+    this.folderBusyId.set(folder.id);
+    this.sessionFoldersService.delete(folder.id).subscribe({
+      next: result => {
+        const deletedIds = new Set(result.deletedSessionIds);
+        const deletedActiveSession = deletedIds.has(this.activeSessionId() ?? -1);
+        const affectedIframes = new Set(
+          this.tabService
+            .tabs()
+            .filter(tab => deletedIds.has(tab.sessionId))
+            .map(tab => buildVSCodeIframeKey(tab.projectId, tab.worktreePath)),
+        );
+        let nextActiveSessionId: number | null = null;
+        for (const sessionId of deletedIds) {
+          nextActiveSessionId = this.tabService.closeTab(sessionId);
+        }
+        const remainingIframeKeys = new Set(
+          this.tabService.tabs().map(tab => buildVSCodeIframeKey(tab.projectId, tab.worktreePath)),
+        );
+        for (const iframeKey of affectedIframes) {
+          if (!remainingIframeKeys.has(iframeKey)) this.vscodeWebState.destroyIframe(iframeKey);
+        }
+        this.deleteFolderDialogRef.close();
+        this.deleteFolderTarget.set(null);
+        this.finishFolderAction(`Folder deleted with ${result.deletedSessionIds.length} session${result.deletedSessionIds.length === 1 ? '' : 's'}`);
+        if (deletedActiveSession) {
+          void this.router.navigate(nextActiveSessionId ? ['/sessions', nextActiveSessionId] : ['/projects']);
+        }
+      },
+      error: err => this.failFolderAction(err, 'Could not delete folder'),
+    });
+  }
+
+  folderSessionCount(folder: SessionFolder): number {
+    return folder.sessions.length + folder.archivedSessions.length;
+  }
+
+  archivedItemCount(workspace: NavigationWorkspace): number {
+    return (workspace.archivedSessions?.length ?? 0) + (workspace.archivedSessionFolders?.length ?? 0);
+  }
+
+  private finishFolderAction(message: string) {
+    this.folderBusyId.set(null);
+    this.editingFolderId.set(null);
+    this.navService.refreshTree();
+    toast.success(message);
+  }
+
+  private failFolderAction(error: unknown, fallback: string) {
+    this.folderBusyId.set(null);
+    const message =
+      typeof error === 'object' && error !== null && 'error' in error
+        ? (error as { error?: { message?: string } }).error?.message
+        : undefined;
+    toast.error(message || fallback);
   }
 
   openCreateWorkspace(repo: NavigationRepo) {
@@ -695,9 +928,7 @@ export class Sidebar implements OnInit, OnDestroy {
     if (!workspace.path || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) return;
 
     const snapshot = this.onboardingState.readSnapshot();
-    const activeServer = snapshot.mode === 'ssh' && snapshot.remoteConnectionReady
-      ? this.onboardingState.getActiveServer(snapshot)
-      : null;
+    const activeServer = snapshot.mode === 'ssh' && snapshot.remoteConnectionReady ? this.onboardingState.getActiveServer(snapshot) : null;
 
     if (activeServer) {
       this.cursorService.saveSettings({
@@ -735,19 +966,13 @@ export class Sidebar implements OnInit, OnDestroy {
     this.removingFromProject.set(true);
     const worktreePath = this.removeFromProjectPath();
 
-    this.workspacesService.removeFromProject(
-      this.removeFromProjectRepoId(),
-      this.removeWorkspaceId(),
-    ).subscribe({
+    this.workspacesService.removeFromProject(this.removeFromProjectRepoId(), this.removeWorkspaceId()).subscribe({
       next: () => {
-        this.handleWorktreeSessionsRemoved(
-          worktreePath,
-          'Worktree removed from project',
-        );
+        this.handleWorktreeSessionsRemoved(worktreePath, 'Worktree removed from project');
         this.removingFromProject.set(false);
         this.removeFromProjectDialogRef.close();
       },
-      error: (err) => {
+      error: err => {
         const msg = err?.error?.message || 'Unknown error';
         toast.error(`Could not remove worktree from project. ${msg}`);
         this.removingFromProject.set(false);
@@ -764,7 +989,7 @@ export class Sidebar implements OnInit, OnDestroy {
         this.deleting.set(false);
         this.deleteWorktreeDialogRef.close();
       },
-      error: (err) => {
+      error: err => {
         const msg = err?.error?.message || 'Unknown error';
         toast.error(`Could not delete worktree. ${msg}`);
         this.deleting.set(false);
@@ -776,18 +1001,14 @@ export class Sidebar implements OnInit, OnDestroy {
     toast.success(successMessage);
 
     const openTabs = this.tabService.getTabsByWorktree(worktreePath);
-    const activeWasInRemovedWorktree = openTabs.some(
-      tab => tab.sessionId === this.activeSessionId(),
-    );
+    const activeWasInRemovedWorktree = openTabs.some(tab => tab.sessionId === this.activeSessionId());
 
     for (const tab of openTabs) {
       this.tabService.closeTab(tab.sessionId);
     }
 
     if (openTabs.length > 0) {
-      this.vscodeWebState.destroyIframe(
-        buildVSCodeIframeKey(openTabs[0].projectId, worktreePath),
-      );
+      this.vscodeWebState.destroyIframe(buildVSCodeIframeKey(openTabs[0].projectId, worktreePath));
     }
 
     if (activeWasInRemovedWorktree) {
@@ -877,9 +1098,7 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   isSessionDeleteConfirmReady(sessionId: number): boolean {
-    return this.armedDeleteSessionId() === sessionId
-      && this.deleteSessionConfirmEnabled()
-      && this.deletingSessionId() === null;
+    return this.armedDeleteSessionId() === sessionId && this.deleteSessionConfirmEnabled() && this.deletingSessionId() === null;
   }
 
   isDeletingSession(sessionId: number): boolean {
@@ -903,13 +1122,13 @@ export class Sidebar implements OnInit, OnDestroy {
     this.clearDeleteSessionConfirmation();
     this.archivingSessionId.set(session.id);
     this.sessionsService.archive(session.id).subscribe({
-      next: (updated) => {
+      next: updated => {
         toast.success('Session archived');
         this.archivingSessionId.set(null);
         this.tabService.updateTabStatus(session.id, updated.status);
         this.navService.refreshTree();
       },
-      error: (err) => {
+      error: err => {
         const msg = err?.error?.message || 'Unknown error';
         toast.error(`Could not archive session. ${msg}`);
         this.archivingSessionId.set(null);
@@ -926,13 +1145,13 @@ export class Sidebar implements OnInit, OnDestroy {
     this.clearDeleteSessionConfirmation();
     this.unarchivingSessionId.set(session.id);
     this.sessionsService.unarchive(session.id).subscribe({
-      next: (updated) => {
+      next: updated => {
         toast.success('Session unarchived');
         this.unarchivingSessionId.set(null);
         this.tabService.updateTabStatus(session.id, updated.status);
         this.navService.refreshTree();
       },
-      error: (err) => {
+      error: err => {
         const msg = err?.error?.message || 'Unknown error';
         toast.error(`Could not unarchive session. ${msg}`);
         this.unarchivingSessionId.set(null);
@@ -963,8 +1182,7 @@ export class Sidebar implements OnInit, OnDestroy {
         // Close the tab if open and handle navigation
         const wasActive = this.activeSessionId() === sessionId;
         const newActiveId = this.tabService.closeTab(sessionId);
-        if (iframeKey && worktreePath && projectId !== null &&
-            this.tabService.tabs().every(tab => tab.worktreePath !== worktreePath || tab.projectId !== projectId)) {
+        if (iframeKey && worktreePath && projectId !== null && this.tabService.tabs().every(tab => tab.worktreePath !== worktreePath || tab.projectId !== projectId)) {
           this.vscodeWebState.destroyIframe(iframeKey);
         }
         if (wasActive) {
@@ -976,7 +1194,7 @@ export class Sidebar implements OnInit, OnDestroy {
         }
         this.navService.refreshTree();
       },
-      error: (err) => {
+      error: err => {
         const msg = err?.error?.message || 'Unknown error';
         toast.error(`Could not delete session. ${msg}`);
         this.deletingSessionId.set(null);
@@ -1018,12 +1236,18 @@ export class Sidebar implements OnInit, OnDestroy {
             return true;
           }
 
+          for (const folder of workspace.sessionFolders ?? []) {
+            if (this.navService.isExpanded(`session-folder-${folder.id}`) && [...folder.sessions, ...folder.archivedSessions].some(session => session.id === sessionId)) return true;
+          }
+
           const archiveKey = `archive-${repo.id}-${workspace.id}`;
-          if (
-            this.navService.isExpanded(archiveKey) &&
-            workspace.archivedSessions?.some(session => session.id === sessionId)
-          ) {
+          if (this.navService.isExpanded(archiveKey) && workspace.archivedSessions?.some(session => session.id === sessionId)) {
             return true;
+          }
+          if (this.navService.isExpanded(archiveKey)) {
+            for (const folder of workspace.archivedSessionFolders ?? []) {
+              if (this.navService.isExpanded(`session-folder-${folder.id}`) && [...folder.sessions, ...folder.archivedSessions].some(session => session.id === sessionId)) return true;
+            }
           }
         }
       }
@@ -1083,11 +1307,13 @@ export class Sidebar implements OnInit, OnDestroy {
       checkedOutElsewherePath: null,
       sessions: branch.sessions,
       archivedSessions: branch.archivedSessions ?? [],
+      sessionFolders: [],
+      archivedSessionFolders: [],
     }));
   }
 
   getPendingWorkspaces(repo: NavigationRepo): PendingWorkspaceCreation[] {
-    const existingPaths = this.filterWorkspaces(repo).map((workspace) => workspace.path);
+    const existingPaths = this.filterWorkspaces(repo).map(workspace => workspace.path);
     return this.pendingWorkspaceCreations.getVisibleByRepo(repo.id, existingPaths);
   }
 
@@ -1110,13 +1336,7 @@ export class Sidebar implements OnInit, OnDestroy {
 
     if (target) {
       if (event.branch.hasWorktree) {
-        this.worktreeSheet.open(
-          event.repo.id,
-          event.branch.name,
-          event.repo.path,
-          event.repo.name,
-          false,
-        );
+        this.worktreeSheet.open(event.repo.id, event.branch.name, event.repo.path, event.repo.name, false);
         return;
       }
       this.checkoutWorkspaceBranch(target.repo, target.workspace, event.branch.name);
@@ -1189,7 +1409,7 @@ export class Sidebar implements OnInit, OnDestroy {
         this.switchingWorkspace.set(null);
         this.navService.refreshTree();
       },
-      error: (err) => {
+      error: err => {
         this.switchingWorkspace.set(null);
         toast.error(err?.error?.message || 'Could not switch branch');
       },
@@ -1197,13 +1417,7 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   openLinkWorkspaceBack(repo: NavigationRepo, workspace: NavigationWorkspace) {
-    this.worktreeSheet.open(
-      repo.id,
-      workspace.desiredBranch || workspace.currentBranch || 'HEAD',
-      repo.path,
-      repo.name,
-      false,
-    );
+    this.worktreeSheet.open(repo.id, workspace.desiredBranch || workspace.currentBranch || 'HEAD', repo.path, repo.name, false);
   }
 
   isWorkspaceUnlinked(workspace: NavigationWorkspace): boolean {

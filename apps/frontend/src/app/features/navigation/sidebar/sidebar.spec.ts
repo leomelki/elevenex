@@ -35,6 +35,7 @@ import { Project } from '@/shared/models/project.model';
 import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 import { ReposService } from '@/shared/services/repos.service';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
+import { SessionFoldersService } from '@/shared/services/session-folders.service';
 
 @Directive({
   selector: 'dialog[trackNativeModal]',
@@ -182,12 +183,20 @@ describe('Sidebar', () => {
     markReviewed: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    moveToFolder: vi.fn(),
     updateStatus: vi.fn(),
     delete: vi.fn(() => of({})),
     archive: vi.fn(),
     reset: vi.fn(),
     fork: vi.fn(),
     kill: vi.fn(),
+  };
+  const sessionFoldersServiceMock = {
+    create: vi.fn(),
+    rename: vi.fn(),
+    archive: vi.fn(),
+    unarchive: vi.fn(),
+    delete: vi.fn(),
   };
 
   const tabServiceMock = {
@@ -355,6 +364,7 @@ describe('Sidebar', () => {
         { provide: Router, useValue: routerMock },
         { provide: NavigationService, useValue: navigationServiceMock },
         { provide: SessionsService, useValue: sessionsServiceMock },
+        { provide: SessionFoldersService, useValue: sessionFoldersServiceMock },
         { provide: WorkspacesService, useValue: workspacesServiceMock },
         { provide: TabColorService, useValue: { getRepoColor: vi.fn(() => '#5b7fff') } },
         { provide: TabService, useValue: tabServiceMock },
@@ -362,7 +372,14 @@ describe('Sidebar', () => {
         { provide: VSCodeWebStateService, useValue: vscodeWebStateMock },
         { provide: ClaudeStatusService, useValue: claudeStatusMock },
         { provide: SshForwardsService, useValue: { getByProject: vi.fn(() => of([])) } },
-        { provide: CursorService, useValue: { isConfigured: vi.fn(() => true), open: vi.fn(), getSettings: vi.fn(() => null) } },
+        {
+          provide: CursorService,
+          useValue: {
+            isConfigured: vi.fn(() => true),
+            open: vi.fn(),
+            getSettings: vi.fn(() => null),
+          },
+        },
         { provide: TodosService, useValue: todosServiceMock },
         { provide: PendingWorkspaceCreationsService, useValue: pendingWorkspaceCreationsMock },
         { provide: ReposService, useValue: reposServiceMock },
@@ -412,9 +429,7 @@ describe('Sidebar', () => {
   it('opens the app-wide agent drawer from the sidebar header', () => {
     const fixture = createSidebar();
 
-    const button = (fixture.nativeElement as HTMLElement).querySelector(
-      '[aria-label="Open agent drawer"]',
-    ) as HTMLButtonElement;
+    const button = (fixture.nativeElement as HTMLElement).querySelector('[aria-label="Open agent drawer"]') as HTMLButtonElement;
     button.click();
 
     const agentControl = TestBed.inject(AgentControlStateService);
@@ -454,7 +469,7 @@ describe('Sidebar', () => {
     const project = tree()[0];
     component.addRepoProject.set(project);
     component.addRepoPath.set('/tmp/repo-one');
-    
+
     reposServiceMock.add.mockReturnValueOnce(of({ id: 2, name: 'repo-one', path: '/tmp/repo-one', branches: [] }));
 
     await component.submitAddRepo(project);
@@ -516,12 +531,14 @@ describe('Sidebar', () => {
             name: 'Repo One',
             path: '/tmp/repo-one',
             workspaces: [],
-            branches: [{
-              ...makeBranch(),
-              hasWorktree: false,
-              worktreePath: null,
-              sessions: [],
-            }],
+            branches: [
+              {
+                ...makeBranch(),
+                hasWorktree: false,
+                worktreePath: null,
+                sessions: [],
+              },
+            ],
           },
         ],
       },
@@ -712,19 +729,20 @@ describe('Sidebar', () => {
   });
 
   it('renders a pending workspace row while creation is in progress', () => {
-    pendingWorkspaceCreationsMock.getVisibleByRepo.mockImplementation(((repoId: number) => (
+    pendingWorkspaceCreationsMock.getVisibleByRepo.mockImplementation(((repoId: number) =>
       repoId === 1
-        ? [{
-          jobId: 'job-1',
-          repoId: 1,
-          name: 'Feature',
-          startPoint: 'feature',
-          worktreePath: '/tmp/repo-one/.worktrees/feature',
-          status: 'running',
-          autoCreateSession: false,
-        }]
-        : []
-    )) as any);
+        ? [
+            {
+              jobId: 'job-1',
+              repoId: 1,
+              name: 'Feature',
+              startPoint: 'feature',
+              worktreePath: '/tmp/repo-one/.worktrees/feature',
+              status: 'running',
+              autoCreateSession: false,
+            },
+          ]
+        : []) as any);
 
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
@@ -733,19 +751,20 @@ describe('Sidebar', () => {
   });
 
   it('renders a finalizing pending workspace row after creation succeeds before tree refresh catches up', () => {
-    pendingWorkspaceCreationsMock.getVisibleByRepo.mockImplementation(((repoId: number) => (
+    pendingWorkspaceCreationsMock.getVisibleByRepo.mockImplementation(((repoId: number) =>
       repoId === 1
-        ? [{
-          jobId: 'job-1',
-          repoId: 1,
-          name: 'Feature',
-          startPoint: 'feature',
-          worktreePath: '/tmp/repo-one/.worktrees/feature',
-          status: 'succeeded',
-          autoCreateSession: false,
-        }]
-        : []
-    )) as any);
+        ? [
+            {
+              jobId: 'job-1',
+              repoId: 1,
+              name: 'Feature',
+              startPoint: 'feature',
+              worktreePath: '/tmp/repo-one/.worktrees/feature',
+              status: 'succeeded',
+              autoCreateSession: false,
+            },
+          ]
+        : []) as any);
 
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
@@ -795,14 +814,12 @@ describe('Sidebar', () => {
             id: 1,
             name: 'Repo One',
             path: '/tmp/repo-one',
-            branches: [{
-              ...completedBranch,
-              sessions: completedBranch.sessions.map(session =>
-                session.id === 11
-                  ? { ...session, hasUnreviewedCompletion: false }
-                  : session,
-              ),
-            }],
+            branches: [
+              {
+                ...completedBranch,
+                sessions: completedBranch.sessions.map(session => (session.id === 11 ? { ...session, hasUnreviewedCompletion: false } : session)),
+              },
+            ],
           },
         ],
       },
@@ -840,24 +857,24 @@ describe('Sidebar', () => {
                 isDirty: false,
                 branchCheckedOutElsewhere: false,
                 checkedOutElsewherePath: null,
-                sessions: [{
-                  id: 99,
-                  repoId: 1,
-                  branchName: 'feature',
-                  workspaceId: 2,
-                  name: 'Feature Session',
-                  status: 'active' as const,
-                  hasUnreviewedCompletion: false,
-                  lastCompletionAt: null,
-                  lastCompletionKind: null,
-                  lastStateChangeAt: null,
-                }],
+                sessions: [
+                  {
+                    id: 99,
+                    repoId: 1,
+                    branchName: 'feature',
+                    workspaceId: 2,
+                    name: 'Feature Session',
+                    status: 'active' as const,
+                    hasUnreviewedCompletion: false,
+                    lastCompletionAt: null,
+                    lastCompletionKind: null,
+                    lastStateChangeAt: null,
+                  },
+                ],
                 archivedSessions: [],
               },
             ],
-            branches: [
-              makeBranch(),
-            ],
+            branches: [makeBranch()],
           },
         ],
       },
@@ -870,9 +887,7 @@ describe('Sidebar', () => {
 
     expect(el.querySelectorAll('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')).toHaveLength(0);
     expect(el.textContent).toContain('Feature Session');
-    expect(pendingWorkspaceCreationsMock.getVisibleByRepo).toHaveBeenCalledWith(1, expect.arrayContaining([
-      '/tmp/repo-one/.worktrees/feature',
-    ]));
+    expect(pendingWorkspaceCreationsMock.getVisibleByRepo).toHaveBeenCalledWith(1, expect.arrayContaining(['/tmp/repo-one/.worktrees/feature']));
   });
 
   it('shows an opening state and ignores duplicate worktree sheet opens', () => {
@@ -994,10 +1009,9 @@ describe('Sidebar', () => {
   });
 
   it('renders the running activity indicator for a working Claude session', () => {
-    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => sessionId === 11 ? 'running' : 'idle') as any);
-    claudeStatusMock.getActivity.mockImplementation(((sessionId: number) => sessionId === 11
-      ? { activityStatus: 'running', actionKind: null, actionLabel: null }
-      : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
+    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => (sessionId === 11 ? 'running' : 'idle')) as any);
+    claudeStatusMock.getActivity.mockImplementation(((sessionId: number) =>
+      sessionId === 11 ? { activityStatus: 'running', actionKind: null, actionLabel: null } : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
 
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
@@ -1009,10 +1023,9 @@ describe('Sidebar', () => {
   });
 
   it('renders an action chip for pending permission prompts', () => {
-    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => sessionId === 11 ? 'waiting' : 'idle') as any);
-    claudeStatusMock.getActivity.mockImplementation(((sessionId: number) => sessionId === 11
-      ? { activityStatus: 'waiting', actionKind: 'permission', actionLabel: 'Permission needed' }
-      : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
+    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => (sessionId === 11 ? 'waiting' : 'idle')) as any);
+    claudeStatusMock.getActivity.mockImplementation(((sessionId: number) =>
+      sessionId === 11 ? { activityStatus: 'waiting', actionKind: 'permission', actionLabel: 'Permission needed' } : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
 
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
@@ -1023,10 +1036,9 @@ describe('Sidebar', () => {
   });
 
   it('renders an action chip for pending user input prompts', () => {
-    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => sessionId === 11 ? 'waiting' : 'idle') as any);
-    claudeStatusMock.getActivity.mockImplementation(((sessionId: number) => sessionId === 11
-      ? { activityStatus: 'waiting', actionKind: 'user_input', actionLabel: 'Input needed' }
-      : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
+    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => (sessionId === 11 ? 'waiting' : 'idle')) as any);
+    claudeStatusMock.getActivity.mockImplementation(((sessionId: number) =>
+      sessionId === 11 ? { activityStatus: 'waiting', actionKind: 'user_input', actionLabel: 'Input needed' } : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
 
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;

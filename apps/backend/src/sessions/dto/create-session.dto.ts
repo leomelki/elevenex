@@ -8,6 +8,10 @@ export class CreateSessionDto {
   @IsOptional()
   workspaceId?: number;
 
+  @IsNumber()
+  @IsOptional()
+  folderId?: number;
+
   @IsString()
   @IsNotEmpty()
   @IsOptional()

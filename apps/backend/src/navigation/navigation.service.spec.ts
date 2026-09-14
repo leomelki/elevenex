@@ -7,6 +7,7 @@ import {
   WorkspacesService,
   WorkspaceSnapshot,
 } from '../workspaces/workspaces.service.js';
+import { SessionFoldersService } from '../sessions/session-folders.service.js';
 
 describe('NavigationService', () => {
   let service: NavigationService;
@@ -14,6 +15,7 @@ describe('NavigationService', () => {
   let mockReposService: jest.Mocked<ReposService>;
   let mockSessionsService: jest.Mocked<SessionsService>;
   let mockWorkspacesService: jest.Mocked<WorkspacesService>;
+  let mockSessionFoldersService: jest.Mocked<SessionFoldersService>;
 
   const repo = {
     id: 1,
@@ -50,10 +52,12 @@ describe('NavigationService', () => {
       id: 1,
       repoId: 1,
       workspaceId: 1,
+      folderId: null,
       branchName: 'main',
       worktreePath: '/path/to/repo',
       name: 'Session',
       status: 'active',
+      archivedByFolder: false,
       activeAgentProvider: 'claude',
       claudeSessionId: '-1',
       codexSessionId: '-1',
@@ -82,6 +86,9 @@ describe('NavigationService', () => {
       listForRepo: jest.fn(),
       listCachedForRepo: jest.fn(),
     } as unknown as jest.Mocked<WorkspacesService>;
+    mockSessionFoldersService = {
+      listByRepo: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<SessionFoldersService>;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -90,6 +97,7 @@ describe('NavigationService', () => {
         { provide: ReposService, useValue: mockReposService },
         { provide: SessionsService, useValue: mockSessionsService },
         { provide: WorkspacesService, useValue: mockWorkspacesService },
+        { provide: SessionFoldersService, useValue: mockSessionFoldersService },
       ],
     }).compile();
 
@@ -282,6 +290,55 @@ describe('NavigationService', () => {
       id: 1,
       name: 'Default',
     });
+  });
+
+  it('groups sessions into active and archived workspace folders', async () => {
+    mockProjectsService.findAll.mockResolvedValue([
+      {
+        id: 1,
+        name: 'Project 1',
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+      },
+    ]);
+    mockReposService.findByProject.mockResolvedValue([repo]);
+    mockWorkspacesService.listCachedForRepo.mockResolvedValue([workspace({})]);
+    mockSessionFoldersService.listByRepo.mockResolvedValue([
+      {
+        id: 10,
+        repoId: 1,
+        workspaceId: 1,
+        name: 'Feature area',
+        archivedAt: null,
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+      },
+      {
+        id: 11,
+        repoId: 1,
+        workspaceId: 1,
+        name: 'Finished',
+        archivedAt: '2024-01-02',
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-02',
+      },
+    ]);
+    mockSessionsService.findByRepo.mockResolvedValue([
+      session({ id: 4, folderId: 10 }),
+      session({ id: 5, folderId: 10, status: 'archived' }),
+      session({ id: 6, folderId: 11, status: 'archived' }),
+      session({ id: 7, folderId: null }),
+    ]);
+
+    const result = await service.getNavigationTreeLight();
+    const resultWorkspace = result[0].repos[0].workspaces[0];
+
+    expect(resultWorkspace.sessions.map(item => item.id)).toEqual([7]);
+    expect(resultWorkspace.sessionFolders[0].sessions.map(item => item.id)).toEqual([4]);
+    expect(resultWorkspace.sessionFolders[0].archivedSessions.map(item => item.id)).toEqual([5]);
+    expect(resultWorkspace.archivedSessionFolders[0].archivedSessions.map(item => item.id)).toEqual([
+      6,
+    ]);
   });
 
   it('marks repo errors when workspace reconciliation fails', async () => {

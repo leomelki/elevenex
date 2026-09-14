@@ -67,11 +67,13 @@ function createTestDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
       workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
+      folder_id INTEGER,
       branch_name TEXT NOT NULL,
       worktree_path TEXT NOT NULL,
       name TEXT,
       surface TEXT NOT NULL DEFAULT 'session',
       status TEXT NOT NULL DEFAULT 'created',
+      archived_by_folder INTEGER NOT NULL DEFAULT 0,
       active_agent_provider TEXT NOT NULL DEFAULT 'claude',
       claude_session_id TEXT DEFAULT '-1',
       codex_session_id TEXT DEFAULT '-1',
@@ -99,8 +101,12 @@ describe('WorkspacesService', () => {
   let sessionsServiceMock: jest.Mocked<
     Pick<SessionsService, 'findByRepo' | 'deleteByRepoAndWorktreePath'>
   >;
-  let projectsServiceMock: jest.Mocked<Pick<ProjectsService, 'assertProjectIsActive'>>;
-  let worktreePoolServiceMock: jest.Mocked<Pick<WorktreePoolService, 'reconcileRepo'>>;
+  let projectsServiceMock: jest.Mocked<
+    Pick<ProjectsService, 'assertProjectIsActive'>
+  >;
+  let worktreePoolServiceMock: jest.Mocked<
+    Pick<WorktreePoolService, 'reconcileRepo'>
+  >;
 
   const mainWorktree: WorktreeInfo = {
     path: '/tmp/repo',

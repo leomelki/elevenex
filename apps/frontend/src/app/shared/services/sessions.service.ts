@@ -27,6 +27,7 @@ export class SessionsService {
   create(data: {
     repoId: number;
     workspaceId?: number;
+    folderId?: number;
     branchName?: string;
     worktreePath?: string;
     name?: string;
@@ -36,6 +37,10 @@ export class SessionsService {
 
   update(id: number, data: { name?: string }) {
     return this.http.patch<Session>(`/api/sessions/${id}`, data);
+  }
+
+  moveToFolder(id: number, folderId: number | null) {
+    return this.http.patch<Session>(`/api/sessions/${id}/folder`, { folderId });
   }
 
   updateStatus(id: number, status: string) {

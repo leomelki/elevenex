@@ -1,6 +1,7 @@
 import { integer, text, sqliteTable } from 'drizzle-orm/sqlite-core';
 import { repos } from './repos.schema.js';
 import { workspaces } from './workspaces.schema.js';
+import { sessionFolders } from './session-folders.schema.js';
 
 export const sessions = sqliteTable('sessions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -10,11 +11,19 @@ export const sessions = sqliteTable('sessions', {
   workspaceId: integer('workspace_id').references(() => workspaces.id, {
     onDelete: 'set null',
   }),
+  folderId: integer('folder_id').references(() => sessionFolders.id, {
+    onDelete: 'set null',
+  }),
   branchName: text('branch_name').notNull(),
   worktreePath: text('worktree_path').notNull(),
   name: text('name'),
   surface: text('surface').notNull().default('session'),
   status: text('status').notNull().default('created'),
+  // Tracks which sessions should be restored when their folder is unarchived.
+  // Sessions already archived before the folder action remain archived.
+  archivedByFolder: integer('archived_by_folder', { mode: 'boolean' })
+    .notNull()
+    .default(false),
   // Bearer token minted for "agent" sessions (the meta-agent that operates
   // elevenex). Injected as ELEVENEX_AGENT_TOKEN into the inner process env and
   // presented by the Elevenex MCP server to resolve this session's identity so

@@ -159,6 +159,7 @@ export class PlanChatForksService {
       child = await this.sessionsService.create({
         repoId: parent.repoId,
         workspaceId: parent.workspaceId ?? undefined,
+        folderId: parent.folderId ?? undefined,
         branchName: parent.branchName,
         worktreePath: parent.worktreePath,
         name: childName,
@@ -322,6 +323,7 @@ export class PlanChatForksService {
       child = await this.sessionsService.create({
         repoId: parent.repoId,
         workspaceId: parent.workspaceId ?? undefined,
+        folderId: parent.folderId ?? undefined,
         branchName: parent.branchName,
         worktreePath: parent.worktreePath,
         name: childName,

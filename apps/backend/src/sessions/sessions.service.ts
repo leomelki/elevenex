@@ -73,6 +73,7 @@ export class SessionsService extends EventEmitter {
   async create(dto: {
     repoId: number;
     workspaceId?: number;
+    folderId?: number;
     branchName?: string;
     worktreePath?: string;
     name?: string;
@@ -84,6 +85,11 @@ export class SessionsService extends EventEmitter {
     const surface = this.normalizeSurface(dto.surface);
     const activeAgentProvider = await this.resolveInitialAgentProvider(
       dto.activeAgentProvider,
+    );
+    await this.assertFolderAcceptsSession(
+      dto.folderId,
+      dto.repoId,
+      resolved.workspaceId,
     );
 
     // Auto-generate name if not provided
@@ -99,6 +105,7 @@ export class SessionsService extends EventEmitter {
       .values({
         repoId: dto.repoId,
         workspaceId: resolved.workspaceId,
+        folderId: dto.folderId ?? null,
         branchName: resolved.branchName,
         worktreePath: resolved.worktreePath,
         name: sessionName,
@@ -322,6 +329,54 @@ export class SessionsService extends EventEmitter {
     }
 
     return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
+  async moveToFolder(id: number, folderId: number | null) {
+    if (folderId !== null && !Number.isInteger(folderId)) {
+      throw new BadRequestException('folderId must be an integer or null');
+    }
+    const session = await this.findOne(id);
+    await this.assertFolderAcceptsSession(
+      folderId ?? undefined,
+      session.repoId,
+      session.workspaceId,
+    );
+
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({ folderId, updatedAt: new Date().toISOString() })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+    return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
+  private async assertFolderAcceptsSession(
+    folderId: number | undefined,
+    repoId: number,
+    workspaceId: number | null,
+  ): Promise<void> {
+    if (folderId === undefined) return;
+    if (workspaceId === null) {
+      throw new BadRequestException('A folder requires a persisted workspace');
+    }
+
+    const folders = await this.db
+      .select()
+      .from(schema.sessionFolders)
+      .where(eq(schema.sessionFolders.id, folderId));
+    const folder = folders[0];
+    if (
+      !folder ||
+      folder.repoId !== repoId ||
+      folder.workspaceId !== workspaceId
+    ) {
+      throw new BadRequestException('Folder does not belong to this workspace');
+    }
+    if (folder.archivedAt) {
+      throw new BadRequestException(
+        'Cannot add a session to an archived folder',
+      );
+    }
   }
 
   /**
@@ -715,32 +770,46 @@ export class SessionsService extends EventEmitter {
   }
 
   async delete(id: number) {
-    await this.findOne(id);
+    const deleted = await this.deleteMany([id]);
+    if (deleted.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+    return this.withInferredActiveAgentProvider(deleted[0]);
+  }
+
+  /** Cleans up runtimes first, then removes the requested sessions in one DB transaction. */
+  async deleteMany(ids: number[]) {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) return [];
+
+    const existing = await this.db
+      .select()
+      .from(schema.sessions)
+      .where(inArray(schema.sessions.id, uniqueIds));
+    if (existing.length === 0) return [];
+
     const embeddedChildRows = await this.db
       .select({ childSessionId: schema.planChatForks.childSessionId })
       .from(schema.planChatForks)
-      .where(eq(schema.planChatForks.parentSessionId, id));
+      .where(inArray(schema.planChatForks.parentSessionId, uniqueIds));
     const embeddedChildIds = embeddedChildRows.map((row) => row.childSessionId);
 
-    await this.cleanupSessionsBeforeBulkDelete([id, ...embeddedChildIds]);
+    await this.cleanupSessionsBeforeBulkDelete([
+      ...new Set([...uniqueIds, ...embeddedChildIds]),
+    ]);
 
-    if (embeddedChildIds.length > 0) {
-      await this.db
+    return this.db.transaction((tx) => {
+      if (embeddedChildIds.length > 0) {
+        tx.delete(schema.sessions)
+          .where(inArray(schema.sessions.id, embeddedChildIds))
+          .run();
+      }
+      return tx
         .delete(schema.sessions)
-        .where(inArray(schema.sessions.id, embeddedChildIds));
-    }
-
-    // 3. Delete from database
-    const rows = await this.db
-      .delete(schema.sessions)
-      .where(eq(schema.sessions.id, id))
-      .returning();
-
-    if (rows.length === 0) {
-      throw new NotFoundException(`Session with id ${id} not found`);
-    }
-
-    return this.withInferredActiveAgentProvider(rows[0]);
+        .where(inArray(schema.sessions.id, uniqueIds))
+        .returning()
+        .all();
+    });
   }
 
   async deleteByWorktreePath(worktreePath: string) {
@@ -807,7 +876,16 @@ export class SessionsService extends EventEmitter {
       return this.withInferredActiveAgentProvider(session);
     }
 
-    return this.archiveAndStop(id);
+    const archived = await this.archiveAndStop(id);
+    if (archived.archivedByFolder) {
+      const rows = await this.db
+        .update(schema.sessions)
+        .set({ archivedByFolder: false, updatedAt: new Date().toISOString() })
+        .where(eq(schema.sessions.id, id))
+        .returning();
+      return this.withInferredActiveAgentProvider(rows[0]);
+    }
+    return archived;
   }
 
   async archiveAndStop(id: number) {
@@ -877,9 +955,25 @@ export class SessionsService extends EventEmitter {
     if (session.status !== 'archived') {
       throw new BadRequestException('Only archived sessions can be unarchived');
     }
+    if (session.folderId) {
+      const folder = await this.db
+        .select({ archivedAt: schema.sessionFolders.archivedAt })
+        .from(schema.sessionFolders)
+        .where(eq(schema.sessionFolders.id, session.folderId));
+      if (folder[0]?.archivedAt) {
+        throw new BadRequestException('Unarchive the folder first');
+      }
+    }
     await this.assertSessionWorkspaceLinked(session.id);
 
-    return this.updateStatus(id, 'stopped');
+    const updated = await this.updateStatus(id, 'stopped');
+    if (!updated.archivedByFolder) return updated;
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({ archivedByFolder: false, updatedAt: new Date().toISOString() })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+    return this.withInferredActiveAgentProvider(rows[0]);
   }
 
   async reset(id: number) {
@@ -893,6 +987,7 @@ export class SessionsService extends EventEmitter {
     const newSession = await this.create({
       repoId: session.repoId,
       workspaceId: session.workspaceId ?? undefined,
+      folderId: session.folderId ?? undefined,
       branchName: session.branchName,
       worktreePath: session.worktreePath,
       name: `${session.name} (reset)`,
@@ -917,6 +1012,7 @@ export class SessionsService extends EventEmitter {
     const newSession = await this.create({
       repoId: session.repoId,
       workspaceId: session.workspaceId ?? undefined,
+      folderId: session.folderId ?? undefined,
       branchName: session.branchName,
       worktreePath: session.worktreePath,
       name: forkName,
@@ -1050,7 +1146,9 @@ export class SessionsService extends EventEmitter {
     return rows[0] ?? null;
   }
 
-  private assertWorkspaceLinked(workspace: typeof schema.workspaces.$inferSelect) {
+  private assertWorkspaceLinked(
+    workspace: typeof schema.workspaces.$inferSelect,
+  ) {
     if (workspace.linkStatus === 'unlinked') {
       throw new BadRequestException(
         'This workspace is unlinked from its worktree. Link it back before using sessions.',

@@ -3,6 +3,7 @@ import { ProjectsService } from '../projects/projects.service.js';
 import { ReposService } from '../repos/repos.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorkspacesService } from '../workspaces/workspaces.service.js';
+import { SessionFoldersService } from '../sessions/session-folders.service.js';
 
 export interface SessionInTree {
   id: number;
@@ -11,10 +12,22 @@ export interface SessionInTree {
   branchName: string;
   workspaceId: number | null;
   repoId: number;
+  folderId: number | null;
+  archivedByFolder: boolean;
   hasUnreviewedCompletion: boolean;
   lastCompletionAt: string | null;
   lastCompletionKind: string | null;
   lastStateChangeAt: string | null;
+}
+
+export interface SessionFolderInTree {
+  id: number;
+  name: string;
+  repoId: number;
+  workspaceId: number;
+  archivedAt: string | null;
+  sessions: SessionInTree[];
+  archivedSessions: SessionInTree[];
 }
 
 export interface WorkspaceInTree {
@@ -43,6 +56,8 @@ export interface WorkspaceInTree {
   checkedOutElsewherePath: string | null;
   sessions: SessionInTree[];
   archivedSessions: SessionInTree[];
+  sessionFolders: SessionFolderInTree[];
+  archivedSessionFolders: SessionFolderInTree[];
 }
 
 export interface BranchInTree {
@@ -82,6 +97,7 @@ export class NavigationService {
     private readonly reposService: ReposService,
     private readonly sessionsService: SessionsService,
     private readonly workspacesService: WorkspacesService,
+    private readonly sessionFoldersService: SessionFoldersService,
   ) {}
 
   async getNavigationTreeLight(): Promise<ProjectInTree[]> {
@@ -93,14 +109,16 @@ export class NavigationService {
 
         const reposWithSessions = await Promise.all(
           repos.map(async (repo) => {
-            const [workspaces, sessions] = await Promise.all([
+            const [workspaces, sessions, folders] = await Promise.all([
               this.workspacesService.listCachedForRepo(repo),
               this.sessionsService.findByRepo(repo.id),
+              this.sessionFoldersService.listByRepo(repo.id),
             ]);
             const workspacesWithSessions = this.attachSessionsToWorkspaces(
               repo.id,
               workspaces,
               sessions,
+              folders,
             );
 
             return {
@@ -148,15 +166,17 @@ export class NavigationService {
         const reposWithBranches = await Promise.all(
           repos.map(async (repo) => {
             try {
-              const [workspaces, sessions] = await Promise.all([
+              const [workspaces, sessions, folders] = await Promise.all([
                 this.workspacesService.listForRepo(repo),
                 this.sessionsService.findByRepo(repo.id),
+                this.sessionFoldersService.listByRepo(repo.id),
               ]);
 
               const workspacesWithSessions = this.attachSessionsToWorkspaces(
                 repo.id,
                 workspaces,
                 sessions,
+                folders,
               );
 
               return {
@@ -196,13 +216,26 @@ export class NavigationService {
 
   private attachSessionsToWorkspaces(
     repoId: number,
-    workspaces: Omit<WorkspaceInTree, 'sessions' | 'archivedSessions'>[],
+    workspaces: Omit<
+      WorkspaceInTree,
+      | 'sessions'
+      | 'archivedSessions'
+      | 'sessionFolders'
+      | 'archivedSessionFolders'
+    >[],
     sessions: Awaited<ReturnType<SessionsService['findByRepo']>>,
+    folders: Awaited<ReturnType<SessionFoldersService['listByRepo']>>,
   ): WorkspaceInTree[] {
     const workspaceMap = new Map<number, WorkspaceInTree>(
       workspaces.map((workspace) => [
         workspace.id,
-        { ...workspace, sessions: [], archivedSessions: [] },
+        {
+          ...workspace,
+          sessions: [],
+          archivedSessions: [],
+          sessionFolders: [],
+          archivedSessionFolders: [],
+        },
       ]),
     );
     const workspaceByPath = new Map<string, WorkspaceInTree>();
@@ -211,6 +244,21 @@ export class NavigationService {
     }
 
     const virtualWorkspaceByPath = new Map<string, WorkspaceInTree>();
+    const folderMap = new Map<number, SessionFolderInTree>();
+    for (const folder of folders) {
+      const workspace = workspaceMap.get(folder.workspaceId);
+      if (!workspace) continue;
+      const item: SessionFolderInTree = {
+        ...folder,
+        sessions: [],
+        archivedSessions: [],
+      };
+      folderMap.set(folder.id, item);
+      (folder.archivedAt
+        ? workspace.archivedSessionFolders
+        : workspace.sessionFolders
+      ).push(item);
+    }
 
     for (const session of sessions) {
       const entry =
@@ -231,6 +279,8 @@ export class NavigationService {
         branchName: session.branchName,
         workspaceId: entry.id > 0 ? entry.id : null,
         repoId,
+        folderId: session.folderId,
+        archivedByFolder: session.archivedByFolder,
         hasUnreviewedCompletion: session.hasUnreviewedCompletion,
         lastCompletionAt: session.lastCompletionAt,
         lastCompletionKind: session.lastCompletionKind,
@@ -241,11 +291,21 @@ export class NavigationService {
         entry.currentBranch = session.branchName;
       }
 
+      const folder = session.folderId
+        ? folderMap.get(session.folderId)
+        : undefined;
       if (session.status === 'archived') {
-        entry.archivedSessions.push(sessionInTree);
+        (folder?.archivedSessions ?? entry.archivedSessions).push(
+          sessionInTree,
+        );
       } else {
-        entry.sessions.push(sessionInTree);
+        (folder?.sessions ?? entry.sessions).push(sessionInTree);
       }
+    }
+
+    for (const workspace of workspaceMap.values()) {
+      workspace.sessionFolders.sort((a, b) => a.name.localeCompare(b.name));
+      workspace.archivedSessionFolders.sort((a, b) => a.name.localeCompare(b.name));
     }
 
     return [
@@ -293,6 +353,8 @@ export class NavigationService {
       checkedOutElsewherePath: null,
       sessions: [],
       archivedSessions: [],
+      sessionFolders: [],
+      archivedSessionFolders: [],
     };
 
     virtualWorkspaceByPath.set(session.worktreePath, workspace);

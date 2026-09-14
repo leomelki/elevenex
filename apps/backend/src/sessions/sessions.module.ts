@@ -8,6 +8,8 @@ import { ComposerDraftsService } from './composer-drafts.service.js';
 import { TerminalModule } from '../terminal/terminal.module.js';
 import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
+import { SessionFoldersController } from './session-folders.controller.js';
+import { SessionFoldersService } from './session-folders.service.js';
 
 @Module({
   imports: [
@@ -15,13 +17,14 @@ import { SettingsModule } from '../settings/settings.module.js';
     forwardRef(() => TerminalModule),
     SettingsModule,
   ],
-  controllers: [SessionsController],
+  controllers: [SessionsController, SessionFoldersController],
   providers: [
     SessionsService,
     SessionForksService,
     PlanChatForksService,
     ReviewChatsService,
     ComposerDraftsService,
+    SessionFoldersService,
   ],
   exports: [
     SessionsService,
@@ -29,6 +32,7 @@ import { SettingsModule } from '../settings/settings.module.js';
     PlanChatForksService,
     ReviewChatsService,
     ComposerDraftsService,
+    SessionFoldersService,
   ],
 })
 export class SessionsModule {}

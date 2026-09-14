@@ -40,6 +40,126 @@
   opacity: 0.86;
 }
 
+.session-folder-row {
+  min-height: 1.8rem;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding-right: 0.45rem;
+  border-radius: 0.35rem;
+  color: var(--muted-foreground);
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.session-folder-row:hover {
+  background: color-mix(in oklch, var(--sidebar-accent) 54%, transparent);
+}
+
+.session-folder-row--drop {
+  background: color-mix(in oklch, var(--primary) 13%, var(--sidebar));
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--primary) 58%, transparent);
+}
+
+.session-folder-row--archived {
+  opacity: 0.78;
+}
+
+.session-folder-toggle {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.session-folder-label {
+  color: color-mix(in oklch, var(--foreground) 72%, var(--muted-foreground));
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.session-folder-actions {
+  gap: 0.1rem;
+}
+
+.session-folder-action,
+.session-folder-inline-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.session-folder-action:hover,
+.session-folder-inline-action:hover {
+  color: var(--foreground);
+  background: var(--sidebar-accent);
+}
+
+.session-folder-action--danger:hover {
+  color: var(--destructive);
+}
+
+.session-folder-create {
+  min-height: 2rem;
+  padding-right: 0.45rem;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.session-folder-name-input {
+  min-width: 0;
+  flex: 1;
+  height: 1.55rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--input);
+  border-radius: 0.3rem;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.78rem;
+}
+
+.session-folder-name-input:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--primary) 68%, transparent);
+  outline-offset: 1px;
+}
+
+.session-folder-empty {
+  min-height: 1.6rem;
+  display: flex;
+  align-items: center;
+  color: color-mix(in oklch, var(--muted-foreground) 70%, transparent);
+  font-size: 0.7rem;
+  font-style: italic;
+}
+
+.session-ungroup-drop {
+  margin: 0.2rem 0.45rem 0.3rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px dashed color-mix(in oklch, var(--primary) 48%, var(--border));
+  border-radius: 0.4rem;
+  background: color-mix(in oklch, var(--primary) 7%, var(--sidebar));
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.session-folder-session {
+  border-left: 1px solid color-mix(in oklch, var(--border) 58%, transparent);
+}
+
 .session-overflow-row {
   position: relative;
   display: flex;
@@ -141,8 +261,7 @@
   flex-shrink: 0;
   padding: 0.6rem 0.75rem 0.55rem;
   border-bottom: 1px solid color-mix(in oklch, var(--sidebar-border) 82%, var(--surface-tint) 12%);
-  background:
-    linear-gradient(180deg, color-mix(in oklch, var(--sidebar) 92%, var(--surface-tint) 8%), color-mix(in oklch, var(--sidebar) 98%, transparent));
+  background: linear-gradient(180deg, color-mix(in oklch, var(--sidebar) 92%, var(--surface-tint) 8%), color-mix(in oklch, var(--sidebar) 98%, transparent));
   min-width: 0;
 }
 
@@ -267,7 +386,11 @@
   border: 1px solid color-mix(in oklch, var(--sidebar-border) 84%, var(--surface-tint) 12%);
   background: color-mix(in oklch, var(--sidebar-accent) 40%, var(--surface-tint) 18%);
   color: var(--muted-foreground);
-  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
   -webkit-app-region: no-drag;
   text-decoration: none;
 }
@@ -375,12 +498,19 @@
 }
 
 @keyframes status-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes status-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 @keyframes project-row-highlight {
@@ -438,7 +568,9 @@
   background: transparent;
   border: 0;
   border-radius: 0.85rem;
-  transition: background-color 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 .project-toggle--highlighted {
@@ -491,10 +623,12 @@
   height: 1.7rem;
   border-radius: 999px;
   border: 1px solid transparent;
-  background:
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 94%, oklch(0.96 0.02 220)), color-mix(in oklch, var(--muted) 55%, transparent));
+  background: linear-gradient(180deg, color-mix(in oklch, var(--background) 94%, oklch(0.96 0.02 220)), color-mix(in oklch, var(--muted) 55%, transparent));
   color: var(--muted-foreground);
-  transition: border-color 0.18s ease, color 0.18s ease, background-color 0.18s ease;
+  transition:
+    border-color 0.18s ease,
+    color 0.18s ease,
+    background-color 0.18s ease;
 }
 
 .project-action-button:hover {
@@ -561,8 +695,13 @@
 }
 
 @keyframes sidebar-review-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 @keyframes ssh-badge-ping {
@@ -578,8 +717,15 @@
 }
 
 @keyframes ssh-badge-alert {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(1.18); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(1.18);
+  }
 }
 
 .sidebar-tree-row {
@@ -609,7 +755,9 @@
   color: var(--muted-foreground);
   text-align: left;
   cursor: pointer;
-  transition: background-color 0.12s ease, color 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .sidebar-empty-branch-action:hover {
@@ -702,7 +850,11 @@
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted-foreground);
-  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
 }
 
 .sidebar-branch-action:hover {
@@ -801,7 +953,7 @@
   border-radius: 0.95rem;
   border: 1px solid color-mix(in oklch, var(--border) 84%, var(--surface-tint) 10%);
   background: color-mix(in oklch, var(--muted) 44%, transparent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   font-size: 0.83rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -837,7 +989,11 @@
   border: 1px solid transparent;
   font-size: 0.9rem;
   font-weight: 600;
-  transition: transform 0.18s ease, border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
 }
 
 .worktree-dialog__button:hover:not(:disabled) {
@@ -923,8 +1079,7 @@
   padding: 0 0.62rem;
   border-radius: 999px;
   border: 1px solid color-mix(in oklch, var(--destructive) 20%, var(--border));
-  background:
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 84%, var(--surface-tint) 16%), color-mix(in oklch, var(--destructive) 7%, transparent));
+  background: linear-gradient(180deg, color-mix(in oklch, var(--background) 84%, var(--surface-tint) 16%), color-mix(in oklch, var(--destructive) 7%, transparent));
   color: color-mix(in oklch, var(--destructive) 72%, var(--foreground));
   font-size: 0.68rem;
   font-weight: 700;
@@ -951,8 +1106,7 @@
   outline: none;
   transform: translateY(-1px);
   border-color: color-mix(in oklch, var(--destructive) 38%, var(--border));
-  background:
-    linear-gradient(180deg, color-mix(in oklch, var(--background) 72%, var(--surface-tint) 18%), color-mix(in oklch, var(--destructive) 14%, transparent));
+  background: linear-gradient(180deg, color-mix(in oklch, var(--background) 72%, var(--surface-tint) 18%), color-mix(in oklch, var(--destructive) 14%, transparent));
   color: color-mix(in oklch, var(--destructive) 82%, var(--foreground));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.32),
@@ -966,8 +1120,7 @@
 
 .session-delete-confirm--ready {
   border-color: color-mix(in oklch, var(--destructive) 42%, var(--border));
-  background:
-    linear-gradient(180deg, color-mix(in oklch, var(--destructive) 12%, var(--surface-tint) 10%), color-mix(in oklch, var(--destructive) 18%, transparent));
+  background: linear-gradient(180deg, color-mix(in oklch, var(--destructive) 12%, var(--surface-tint) 10%), color-mix(in oklch, var(--destructive) 18%, transparent));
   color: color-mix(in oklch, var(--destructive) 86%, var(--foreground));
 }
 
@@ -987,7 +1140,11 @@
   justify-content: center;
   font-size: 0.95rem;
   line-height: 1;
-  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
 }
 
 .session-delete-cancel:hover,

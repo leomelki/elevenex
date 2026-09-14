@@ -1,10 +1,12 @@
-import { SessionInTree } from './session.model';
+import { SessionFolder, SessionInTree } from './session.model';
 import { Workspace } from './workspace.model';
 import { BranchInfo } from './branch.model';
 
 export interface NavigationWorkspace extends Workspace {
   sessions: SessionInTree[];
   archivedSessions?: SessionInTree[];
+  sessionFolders?: SessionFolder[];
+  archivedSessionFolders?: SessionFolder[];
 }
 
 export interface NavigationBranch extends BranchInfo {

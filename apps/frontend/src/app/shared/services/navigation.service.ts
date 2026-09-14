@@ -138,6 +138,24 @@ export class NavigationService {
             archivedSessions: workspace.archivedSessions?.map((session) =>
               session.id === sessionId ? { ...session, name } : session,
             ),
+            sessionFolders: workspace.sessionFolders?.map((folder) => ({
+              ...folder,
+              sessions: folder.sessions.map((session) =>
+                session.id === sessionId ? { ...session, name } : session,
+              ),
+              archivedSessions: folder.archivedSessions.map((session) =>
+                session.id === sessionId ? { ...session, name } : session,
+              ),
+            })),
+            archivedSessionFolders: workspace.archivedSessionFolders?.map((folder) => ({
+              ...folder,
+              sessions: folder.sessions.map((session) =>
+                session.id === sessionId ? { ...session, name } : session,
+              ),
+              archivedSessions: folder.archivedSessions.map((session) =>
+                session.id === sessionId ? { ...session, name } : session,
+              ),
+            })),
           })),
         })),
       })),
@@ -162,6 +180,28 @@ export class NavigationService {
             const cached = this.cachedSessionNames.get(session.id);
             return cached !== undefined ? { ...session, name: cached } : session;
           }),
+          sessionFolders: workspace.sessionFolders?.map((folder) => ({
+            ...folder,
+            sessions: folder.sessions.map((session) => {
+              const cached = this.cachedSessionNames.get(session.id);
+              return cached !== undefined ? { ...session, name: cached } : session;
+            }),
+            archivedSessions: folder.archivedSessions.map((session) => {
+              const cached = this.cachedSessionNames.get(session.id);
+              return cached !== undefined ? { ...session, name: cached } : session;
+            }),
+          })),
+          archivedSessionFolders: workspace.archivedSessionFolders?.map((folder) => ({
+            ...folder,
+            sessions: folder.sessions.map((session) => {
+              const cached = this.cachedSessionNames.get(session.id);
+              return cached !== undefined ? { ...session, name: cached } : session;
+            }),
+            archivedSessions: folder.archivedSessions.map((session) => {
+              const cached = this.cachedSessionNames.get(session.id);
+              return cached !== undefined ? { ...session, name: cached } : session;
+            }),
+          })),
         })),
       })),
     }));
@@ -181,6 +221,24 @@ export class NavigationService {
             archivedSessions: workspace.archivedSessions?.map((session) =>
               session.id === sessionId ? { ...session, ...completion } : session,
             ),
+            sessionFolders: workspace.sessionFolders?.map((folder) => ({
+              ...folder,
+              sessions: folder.sessions.map((session) =>
+                session.id === sessionId ? { ...session, ...completion } : session,
+              ),
+              archivedSessions: folder.archivedSessions.map((session) =>
+                session.id === sessionId ? { ...session, ...completion } : session,
+              ),
+            })),
+            archivedSessionFolders: workspace.archivedSessionFolders?.map((folder) => ({
+              ...folder,
+              sessions: folder.sessions.map((session) =>
+                session.id === sessionId ? { ...session, ...completion } : session,
+              ),
+              archivedSessions: folder.archivedSessions.map((session) =>
+                session.id === sessionId ? { ...session, ...completion } : session,
+              ),
+            })),
           })),
         })),
       })),
@@ -260,9 +318,18 @@ export class NavigationService {
       previous.flatMap((project) =>
         project.repos.flatMap((repo) =>
           (repo.workspaces ?? []).flatMap((workspace) =>
-            [...workspace.sessions, ...(workspace.archivedSessions ?? [])].map(
-              (session) => session.id,
-            ),
+            [
+              ...workspace.sessions,
+              ...(workspace.archivedSessions ?? []),
+              ...(workspace.sessionFolders ?? []).flatMap((folder) => [
+                ...folder.sessions,
+                ...folder.archivedSessions,
+              ]),
+              ...(workspace.archivedSessionFolders ?? []).flatMap((folder) => [
+                ...folder.sessions,
+                ...folder.archivedSessions,
+              ]),
+            ].map((session) => session.id),
           ),
         ),
       ),
@@ -293,9 +360,18 @@ export class NavigationService {
         for (const workspace of repo.workspaces ?? []) {
           const workspaceKey = this.workspaceKey(repo.id, workspace.id);
           const hasNewWorkspace = !previousWorkspaceKeys.has(workspaceKey);
-          const hasNewSession = [...workspace.sessions, ...(workspace.archivedSessions ?? [])].some(
-            (session) => !previousSessionIds.has(session.id),
-          );
+          const hasNewSession = [
+            ...workspace.sessions,
+            ...(workspace.archivedSessions ?? []),
+            ...(workspace.sessionFolders ?? []).flatMap((folder) => [
+              ...folder.sessions,
+              ...folder.archivedSessions,
+            ]),
+            ...(workspace.archivedSessionFolders ?? []).flatMap((folder) => [
+              ...folder.sessions,
+              ...folder.archivedSessions,
+            ]),
+          ].some((session) => !previousSessionIds.has(session.id));
 
           if (hasNewWorkspace || hasNewSession) {
             add(`project-${project.id}`);

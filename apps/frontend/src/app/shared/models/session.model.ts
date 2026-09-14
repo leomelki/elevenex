@@ -3,12 +3,14 @@ export interface Session {
   repoId: number;
   projectId: number;
   workspaceId?: number | null;
+  folderId?: number | null;
   branchName: string;
   worktreePath: string;
   name: string | null;
   surface?: 'session' | 'embedded_plan_chat' | string;
   workspaceName?: string | null;
   status: 'created' | 'active' | 'archived' | 'stopped';
+  archivedByFolder?: boolean;
   activeAgentProvider: string;
   claudeSessionId: string;
   codexSessionId: string;
@@ -29,13 +31,27 @@ export interface SessionInTree {
   id: number;
   repoId: number;
   workspaceId?: number | null;
+  folderId?: number | null;
   branchName: string;
   name: string | null;
   status: 'created' | 'active' | 'archived' | 'stopped';
+  archivedByFolder?: boolean;
   hasUnreviewedCompletion: boolean;
   lastCompletionAt: string | null;
   lastCompletionKind: 'completed' | null;
   lastStateChangeAt: string | null;
+}
+
+export interface SessionFolder {
+  id: number;
+  repoId: number;
+  workspaceId: number;
+  name: string;
+  archivedAt: string | null;
+  sessions: SessionInTree[];
+  archivedSessions: SessionInTree[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SessionFork {

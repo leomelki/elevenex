@@ -75,6 +75,14 @@ export class SessionsController {
     return this.sessionsService.updateStatus(+id, body.status);
   }
 
+  @Patch(':id/folder')
+  moveToFolder(
+    @Param('id') id: string,
+    @Body() body: { folderId: number | null },
+  ) {
+    return this.sessionsService.moveToFolder(+id, body.folderId);
+  }
+
   @Patch(':id/agent-provider')
   updateActiveAgentProvider(
     @Param('id') id: string,
@@ -157,7 +165,10 @@ export class SessionsController {
   // Review-chat routes must stay above `@Get(':id')` so `:id/review-chats` is
   // not swallowed by the single-segment session lookup.
   @Get(':id/review-chats')
-  findReviewChats(@Param('id') id: string, @Query('filePath') filePath?: string) {
+  findReviewChats(
+    @Param('id') id: string,
+    @Query('filePath') filePath?: string,
+  ) {
     return this.reviewChatsService.findByParent(Number(id), filePath);
   }
 
@@ -198,10 +209,7 @@ export class SessionsController {
   }
 
   @Post(':id/review-chats/:chatId/promote')
-  promoteReviewChat(
-    @Param('id') id: string,
-    @Param('chatId') chatId: string,
-  ) {
+  promoteReviewChat(@Param('id') id: string, @Param('chatId') chatId: string) {
     return this.reviewChatsService.promote(Number(id), Number(chatId));
   }
 
