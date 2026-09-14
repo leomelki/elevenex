@@ -132,7 +132,11 @@ interface AlwaysAllowPattern {
               Review the plan in the annotator before approving or requesting changes.
             </span>
             @if (planReviewAvailable()) {
-              <button type="button" class="cw-btn cw-btn--secondary" (click)="openPlanReview.emit()">
+              <button
+                type="button"
+                class="cw-btn cw-btn--secondary"
+                (click)="openPlanReview.emit()"
+              >
                 <ng-icon name="lucideClipboardList" size="13" aria-hidden="true" />
                 Open review
               </button>
@@ -177,6 +181,19 @@ interface AlwaysAllowPattern {
           }
           @if (requestSubtitle(); as sub) {
             <p class="cw-perm__sub">{{ sub }}</p>
+          }
+
+          @if (request().batch; as batch) {
+            <div class="cw-perm__batch" role="list" aria-label="Actions in this approval">
+              @for (item of batch; track item.toolUseId) {
+                <div class="cw-perm__batch-item" role="listitem">
+                  <span>{{ batchItemLabel(item) }}</span>
+                  @if (batchItemTarget(item); as target) {
+                    <code [title]="target">{{ target }}</code>
+                  }
+                </div>
+              }
+            </div>
           }
 
           @if (permDiffHtml(); as diff) {
@@ -235,7 +252,7 @@ interface AlwaysAllowPattern {
                 (click)="approve.emit({ remember: false })"
               >
                 <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
-                Allow once
+                {{ allowOnceLabel() }}
               </button>
               @if (alwaysAllowPatterns().length) {
                 <button
@@ -316,6 +333,27 @@ interface AlwaysAllowPattern {
         gap: 0.45rem;
         flex-wrap: wrap;
         min-width: 0;
+      }
+      .cw-perm__batch {
+        display: grid;
+        gap: 0.35rem;
+        padding: 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius, 0.625rem) - 0.15rem);
+        background: color-mix(in oklab, var(--muted) 55%, transparent);
+      }
+      .cw-perm__batch-item {
+        display: grid;
+        grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
+        gap: 0.55rem;
+        align-items: baseline;
+      }
+      .cw-perm__batch-item code {
+        overflow: hidden;
+        color: var(--muted-foreground);
+        font-size: 0.72rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .cw-perm__icon {
         display: inline-flex;
@@ -745,6 +783,8 @@ export class ClaudePermissionInlineComponent {
   );
 
   readonly requestTitle = computed(() => {
+    const batchSize = this.request().batch?.length ?? 0;
+    if (batchSize > 1) return `Approve ${batchSize} actions?`;
     const title = this.request().title?.trim();
     if (title) return title;
     const displayName = this.request().displayName?.trim();
@@ -778,10 +818,45 @@ export class ClaudePermissionInlineComponent {
     return path;
   });
 
-  readonly allowOnceCopy = computed(
-    () =>
-      `Approve this single action only. ${this.request().agentId ? 'The subagent' : 'Claude'} will ask again next time.`,
-  );
+  readonly allowOnceCopy = computed(() => {
+    const batchSize = this.request().batch?.length ?? 0;
+    return batchSize > 1
+      ? `Approve these ${batchSize} actions from this tool-call batch only.`
+      : `Approve this single action only. ${this.request().agentId ? 'The subagent' : 'Claude'} will ask again next time.`;
+  });
+
+  readonly allowOnceLabel = computed(() => {
+    const batchSize = this.request().batch?.length ?? 0;
+    return batchSize > 1 ? `Allow ${batchSize} actions` : 'Allow once';
+  });
+
+  batchItemLabel(item: { toolDisplayName?: string; toolName: string }): string {
+    return item.toolDisplayName?.trim() || normalizeToolNameForUi(item.toolName) || item.toolName;
+  }
+
+  batchItemTarget(item: { input: unknown }): string {
+    const data = asRecord(item.input);
+    for (const key of [
+      'worktreePath',
+      'worktree_path',
+      'file_path',
+      'path',
+      'url',
+      'query',
+      'sessionId',
+      'repoId',
+    ]) {
+      const value = data[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+      if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    }
+    try {
+      const serialized = JSON.stringify(data);
+      return serialized.length > 180 ? `${serialized.slice(0, 177)}…` : serialized;
+    } catch {
+      return '';
+    }
+  }
 
   readonly allowAlwaysCopy = computed(() =>
     this.request().suggestions?.length

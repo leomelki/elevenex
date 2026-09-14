@@ -118,7 +118,16 @@ export interface ClaudePermissionRequest {
   decisionReason?: string;
   blockedPath?: string;
   suggestions?: ClaudePermissionUpdate[];
+  /** Repeated MCP calls emitted together. One decision applies to this one-shot batch. */
+  batch?: ClaudePermissionBatchItem[];
   createdAt: string;
+}
+
+export interface ClaudePermissionBatchItem {
+  toolUseId: string;
+  toolName: string;
+  toolDisplayName?: string;
+  input: unknown;
 }
 
 export interface ClaudeUserInputRequest {

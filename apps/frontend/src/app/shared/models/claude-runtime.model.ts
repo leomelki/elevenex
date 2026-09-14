@@ -138,7 +138,15 @@ export interface ClaudePermissionRequest {
   decisionReason?: string;
   blockedPath?: string;
   suggestions?: ClaudePermissionUpdate[];
+  batch?: ClaudePermissionBatchItem[];
   createdAt: string;
+}
+
+export interface ClaudePermissionBatchItem {
+  toolUseId: string;
+  toolName: string;
+  toolDisplayName?: string;
+  input: unknown;
 }
 
 export interface ClaudePermissionApproval {

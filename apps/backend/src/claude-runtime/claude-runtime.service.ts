@@ -177,6 +177,12 @@ interface ActivePermissionRequest {
   suggestions?: PermissionUpdate[];
 }
 
+interface ActivePermissionBatch {
+  items: NonNullable<ClaudePermissionRequest['batch']>;
+  decision?: PermissionDecision;
+  primaryRequestId?: string;
+}
+
 interface ActiveUserInputRequest {
   request: ClaudeUserInputRequest;
   resolve: (value: UserInputDecision) => void;
@@ -195,6 +201,8 @@ interface ActiveRunState {
   tornDown: boolean;
   permissionRequests: Map<string, ActivePermissionRequest>;
   permissionRequestOrder: string[];
+  /** Tool-use id -> shared batch. Optional keeps restored/test run shapes compatible. */
+  permissionBatchesByToolUseId?: Map<string, ActivePermissionBatch>;
   userInputRequests: Map<string, ActiveUserInputRequest>;
   partialAssistantItems: Map<string, string>;
   partialThinkingItems: Map<string, string>;
@@ -1369,6 +1377,10 @@ export class ClaudeRuntimeService
 
       const requestId = randomUUID();
       const canonicalTool = canonicalizeAgentTool(toolName, input);
+      const activeRun = this.activeRuns.get(sessionId);
+      const permissionBatch = activeRun?.permissionBatchesByToolUseId?.get(
+        options.toolUseID,
+      );
       const request: ClaudePermissionRequest = {
         requestId,
         toolUseId: options.toolUseID,
@@ -1385,39 +1397,55 @@ export class ClaudeRuntimeService
         decisionReason: options.decisionReason,
         blockedPath: options.blockedPath,
         suggestions: options.suggestions ?? undefined,
+        batch: permissionBatch?.items,
         createdAt: new Date().toISOString(),
       };
 
-      const decisionContext = await new Promise<{
-        decision: PermissionDecision;
-        suggestions?: PermissionUpdate[];
-      }>((resolve) => {
-        // Being asked to authorize a tool call is itself proof the runtime is
-        // live and mid-turn — including a resumed `run_in_background` agent
-        // whose wake-up hasn't reached reconcileBackgroundResume yet, or a
-        // turn that this session's own finishRun already retired from
-        // activeRuns moments before this RPC arrived. Attach it to a freshly
-        // registered run instead of auto-denying on nobody's behalf.
-        const run = this.ensureActiveRunForCallback(sessionId, state);
-        if (!run) {
-          resolve({
-            decision: { behavior: 'deny', message: 'Session no longer active' },
-          });
-          return;
-        }
+      const decisionContext = permissionBatch?.decision
+        ? {
+            decision: permissionBatch.decision,
+            suggestions: options.suggestions,
+          }
+        : await new Promise<{
+            decision: PermissionDecision;
+            suggestions?: PermissionUpdate[];
+          }>((resolve) => {
+            // Being asked to authorize a tool call is itself proof the runtime is
+            // live and mid-turn — including a resumed `run_in_background` agent
+            // whose wake-up hasn't reached reconcileBackgroundResume yet, or a
+            // turn that this session's own finishRun already retired from
+            // activeRuns moments before this RPC arrived. Attach it to a freshly
+            // registered run instead of auto-denying on nobody's behalf.
+            const run = this.ensureActiveRunForCallback(sessionId, state);
+            if (!run) {
+              resolve({
+                decision: {
+                  behavior: 'deny',
+                  message: 'Session no longer active',
+                },
+              });
+              return;
+            }
 
-        run.permissionRequests.set(requestId, {
-          request,
-          resolve: (decision) =>
-            resolve({
-              decision,
+            run.permissionRequests.set(requestId, {
+              request,
+              resolve: (decision) =>
+                resolve({
+                  decision,
+                  suggestions: options.suggestions,
+                }),
               suggestions: options.suggestions,
-            }),
-          suggestions: options.suggestions,
-        });
-        run.permissionRequestOrder.push(requestId);
-        this.promoteNextPendingPermissionRequest(sessionId, state, run);
-      });
+            });
+            // Repeated parallel MCP calls share one visible approval. The
+            // remaining callbacks either wait here too (SDKs that dispatch them
+            // concurrently) or consume the cached one-shot decision below (SDKs
+            // that ask immediately before executing each call).
+            if (!permissionBatch?.primaryRequestId) {
+              if (permissionBatch) permissionBatch.primaryRequestId = requestId;
+              run.permissionRequestOrder.push(requestId);
+            }
+            this.promoteNextPendingPermissionRequest(sessionId, state, run);
+          });
 
       const run = this.activeRuns.get(sessionId);
       run?.permissionRequests.delete(requestId);
@@ -2297,7 +2325,7 @@ export class ClaudeRuntimeService
   ): Promise<void> {
     const run = this.activeRuns.get(sessionId);
     const request = run?.permissionRequests.get(requestId);
-    if (!request) {
+    if (!run || !request) {
       return;
     }
 
@@ -2317,7 +2345,12 @@ export class ClaudeRuntimeService
       this.emitRunState(sessionId);
     }
 
-    request.resolve({ behavior: 'allow', remember, content });
+    const decision: PermissionDecision = {
+      behavior: 'allow',
+      remember,
+      content,
+    };
+    this.resolvePermissionBatch(run, request, decision);
   }
 
   async denyPermission(
@@ -2327,11 +2360,33 @@ export class ClaudeRuntimeService
   ): Promise<void> {
     const run = this.activeRuns.get(sessionId);
     const request = run?.permissionRequests.get(requestId);
-    if (!request) {
+    if (!run || !request) {
       return;
     }
 
-    request.resolve({ behavior: 'deny', message });
+    this.resolvePermissionBatch(run, request, { behavior: 'deny', message });
+  }
+
+  private resolvePermissionBatch(
+    run: ActiveRunState,
+    request: ActivePermissionRequest,
+    decision: PermissionDecision,
+  ): void {
+    const batch = run.permissionBatchesByToolUseId?.get(
+      request.request.toolUseId,
+    );
+    if (!batch) {
+      request.resolve(decision);
+      return;
+    }
+
+    batch.decision = decision;
+    const toolUseIds = new Set(batch.items.map((item) => item.toolUseId));
+    for (const pending of run.permissionRequests.values()) {
+      if (toolUseIds.has(pending.request.toolUseId)) {
+        pending.resolve(decision);
+      }
+    }
   }
 
   private promoteNextPendingPermissionRequest(
@@ -3255,6 +3310,7 @@ export class ClaudeRuntimeService
     const receivedAt = this.resolveMessageTimestamp(message);
     const streamMessageId =
       message.message.id ?? run?.currentStreamMessageId ?? message.uuid;
+    this.registerParallelMcpPermissionBatches(content, run);
     let assistantPartOrdinal = 0;
     let thinkingPartOrdinal = 0;
     for (const [partIndex, part] of (
@@ -3384,6 +3440,46 @@ export class ClaudeRuntimeService
             part.id,
           );
         }
+      }
+    }
+  }
+
+  private registerParallelMcpPermissionBatches(
+    content: unknown[],
+    run: ActiveRunState | undefined,
+  ): void {
+    if (!run) return;
+    run.permissionBatchesByToolUseId ??= new Map();
+    const itemsByToolName = new Map<
+      string,
+      NonNullable<ClaudePermissionRequest['batch']>
+    >();
+
+    for (const part of content as Array<Record<string, unknown>>) {
+      if (
+        part['type'] !== 'tool_use' ||
+        typeof part['id'] !== 'string' ||
+        typeof part['name'] !== 'string' ||
+        !part['name'].startsWith('mcp__')
+      ) {
+        continue;
+      }
+      const canonical = canonicalizeAgentTool(part['name'], part['input']);
+      const items = itemsByToolName.get(part['name']) ?? [];
+      items.push({
+        toolUseId: part['id'],
+        toolName: part['name'],
+        toolDisplayName: canonical.toolDisplayName,
+        input: canonical.toolInput,
+      });
+      itemsByToolName.set(part['name'], items);
+    }
+
+    for (const items of itemsByToolName.values()) {
+      if (items.length < 2) continue;
+      const batch: ActivePermissionBatch = { items };
+      for (const item of items) {
+        run.permissionBatchesByToolUseId.set(item.toolUseId, batch);
       }
     }
   }
@@ -6390,6 +6486,7 @@ export class ClaudeRuntimeService
       decisionReason: request.decisionReason ?? null,
       blockedPath: request.blockedPath ?? null,
       input: request.input ?? null,
+      batch: request.batch ?? null,
     };
     const createdAt = request.createdAt;
     const resolvedAt = new Date().toISOString();

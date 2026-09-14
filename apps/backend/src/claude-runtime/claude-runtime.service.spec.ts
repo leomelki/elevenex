@@ -4002,6 +4002,124 @@ describe('ClaudeRuntimeService', () => {
       expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
     });
 
+    it('approves parallel destructive ElevenEx calls as one visible batch', async () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.surface = 'agent';
+      state.agentAutonomyMode = 'review';
+      const run = (service as any).ensureActiveRunForCallback(
+        SESSION_ID,
+        state,
+      );
+
+      await (service as any).handleAssistantMessage(SESSION_ID, {
+        type: 'assistant',
+        uuid: 'assistant-batch-1',
+        session_id: 'claude-session-1',
+        message: {
+          id: 'message-batch-1',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'delete-1',
+              name: 'mcp__elevenex__delete_worktree',
+              input: { repoId: 1, worktreePath: '/tmp/one' },
+            },
+            {
+              type: 'tool_use',
+              id: 'delete-2',
+              name: 'mcp__elevenex__delete_worktree',
+              input: { repoId: 1, worktreePath: '/tmp/two' },
+            },
+          ],
+        },
+      });
+
+      const canUseTool = (service as any).createCanUseTool(SESSION_ID, state);
+      const first = canUseTool(
+        'mcp__elevenex__delete_worktree',
+        { repoId: 1, worktreePath: '/tmp/one' },
+        { toolUseID: 'delete-1' },
+      );
+      const second = canUseTool(
+        'mcp__elevenex__delete_worktree',
+        { repoId: 1, worktreePath: '/tmp/two' },
+        { toolUseID: 'delete-2' },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(run.permissionRequests.size).toBe(2);
+      expect(run.permissionRequestOrder).toHaveLength(1);
+      expect(state.pendingPermissionRequest.batch).toEqual([
+        expect.objectContaining({ toolUseId: 'delete-1' }),
+        expect.objectContaining({ toolUseId: 'delete-2' }),
+      ]);
+
+      await service.approvePermission(
+        SESSION_ID,
+        state.pendingPermissionRequest.requestId,
+      );
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        expect.objectContaining({ behavior: 'allow' }),
+        expect.objectContaining({ behavior: 'allow' }),
+      ]);
+    });
+
+    it('reuses a batch decision when the SDK requests permissions sequentially', async () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.surface = 'agent';
+      state.agentAutonomyMode = 'review';
+      (service as any).ensureActiveRunForCallback(SESSION_ID, state);
+
+      await (service as any).handleAssistantMessage(SESSION_ID, {
+        type: 'assistant',
+        uuid: 'assistant-batch-2',
+        session_id: 'claude-session-1',
+        message: {
+          id: 'message-batch-2',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'delete-1',
+              name: 'mcp__elevenex__delete_worktree',
+              input: { repoId: 1, worktreePath: '/tmp/one' },
+            },
+            {
+              type: 'tool_use',
+              id: 'delete-2',
+              name: 'mcp__elevenex__delete_worktree',
+              input: { repoId: 1, worktreePath: '/tmp/two' },
+            },
+          ],
+        },
+      });
+
+      const canUseTool = (service as any).createCanUseTool(SESSION_ID, state);
+      const first = canUseTool(
+        'mcp__elevenex__delete_worktree',
+        { repoId: 1, worktreePath: '/tmp/one' },
+        { toolUseID: 'delete-1' },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      await service.approvePermission(
+        SESSION_ID,
+        state.pendingPermissionRequest.requestId,
+      );
+      await expect(first).resolves.toEqual(
+        expect.objectContaining({ behavior: 'allow' }),
+      );
+
+      await expect(
+        canUseTool(
+          'mcp__elevenex__delete_worktree',
+          { repoId: 1, worktreePath: '/tmp/two' },
+          { toolUseID: 'delete-2' },
+        ),
+      ).resolves.toEqual(expect.objectContaining({ behavior: 'allow' }));
+      expect(state.pendingPermissionRequest).toBeNull();
+    });
+
     // Same bug, on the elicitation RPC path used for MCP user-input prompts
     // (e.g. AskUserQuestion-style flows): a resumed run with no activeRuns
     // entry used to auto-decline instead of surfacing an answerable request.

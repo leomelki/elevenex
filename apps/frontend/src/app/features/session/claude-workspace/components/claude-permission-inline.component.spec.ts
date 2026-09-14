@@ -219,3 +219,39 @@ describe('ClaudePermissionInlineComponent ask-user wizard', () => {
     expect(checkedOption(fixture, 'Option A')).toBe(false);
   });
 });
+
+describe('ClaudePermissionInlineComponent destructive batch', () => {
+  it('shows every action and approves the complete batch once', async () => {
+    const fixture = await render({
+      requestId: 'perm-batch-1',
+      toolUseId: 'delete-1',
+      toolName: 'mcp__elevenex__delete_worktree',
+      input: { repoId: 1, worktreePath: '/tmp/one' },
+      batch: [
+        {
+          toolUseId: 'delete-1',
+          toolName: 'mcp__elevenex__delete_worktree',
+          toolDisplayName: 'Delete worktree',
+          input: { repoId: 1, worktreePath: '/tmp/one' },
+        },
+        {
+          toolUseId: 'delete-2',
+          toolName: 'mcp__elevenex__delete_worktree',
+          toolDisplayName: 'Delete worktree',
+          input: { repoId: 1, worktreePath: '/tmp/two' },
+        },
+      ],
+      createdAt: '2026-09-14T08:00:00.000Z',
+    });
+    const approvals: unknown[] = [];
+    fixture.componentInstance.approve.subscribe((approval) => approvals.push(approval));
+
+    expect(text(fixture)).toContain('Approve 2 actions?');
+    expect(text(fixture)).toContain('/tmp/one');
+    expect(text(fixture)).toContain('/tmp/two');
+    expect(text(fixture)).toContain('Allow 2 actions');
+
+    clickButton(fixture, 'Allow 2 actions');
+    expect(approvals).toEqual([{ remember: false }]);
+  });
+});
