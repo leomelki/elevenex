@@ -18,6 +18,14 @@ export const MAX_WORKTREES_PER_REPO_CEILING = 100;
  */
 export type AgentProviderPreferenceMap = Record<string, string>;
 
+export interface AgentModelPreset {
+  id: string;
+  name: string;
+  provider: string;
+  model: string | null;
+  reasoningEffort: string | null;
+}
+
 export const SPEECH_TO_TEXT_PROVIDERS = [
   'local-whisper',
   'elevenlabs',
@@ -104,6 +112,7 @@ export interface AppSettings {
   sessionToolbarButtons: SessionToolbarButtonPreference[] | null;
   defaultModelByProvider: AgentProviderPreferenceMap;
   defaultReasoningEffortByProvider: AgentProviderPreferenceMap;
+  agentModelPresets: AgentModelPreset[];
   /** Worktrees allowed per repo before creation needs confirming; 0 = no cap. */
   maxWorktreesPerRepo: number;
   speechToText: SpeechToTextSettings;

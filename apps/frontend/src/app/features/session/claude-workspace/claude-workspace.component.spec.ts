@@ -14,6 +14,7 @@ import { ConversationForkDraftService } from '@/shared/services/conversation-for
 import { ComposerDraftService } from './composer-draft.service';
 import type { ComposerImageAttachment } from './components/claude-composer.component';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import { AppSettingsService } from '@/shared/services/app-settings.service';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -372,6 +373,32 @@ describe('ClaudeWorkspaceComponent', () => {
         },
       ],
     }).compileComponents();
+  });
+
+  it('shows model presets as one-click choices in a new empty session', () => {
+    const settings = TestBed.inject(AppSettingsService);
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    (settings as unknown as { settingsState: { set(value: unknown): void } }).settingsState.set({
+      ...settings.settings(),
+      agentModelPresets: [
+        {
+          id: 'fast-fixes',
+          name: 'Fast fixes',
+          provider: 'codex',
+          model: 'gpt-5-mini',
+          reasoningEffort: 'low',
+        },
+      ],
+    });
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(text).toContain('Start with a preset');
+    expect(text).toContain('Fast fixes');
+    expect(text).toContain('Codex · gpt-5-mini · Low');
   });
 
   it('refreshes autocomplete after session metadata arrives', async () => {

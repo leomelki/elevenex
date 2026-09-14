@@ -9,6 +9,7 @@ import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import {
   AGENT_PROVIDER_KEY_PATTERN,
+  AgentModelPreset,
   AgentProviderDefaults,
   AgentProviderPreferenceMap,
   AgentProviderPreferencePatch,
@@ -26,6 +27,8 @@ import {
   LocalWhisperModelId,
   MAX_AGENT_PREFERENCE_ENTRIES,
   MAX_AGENT_PREFERENCE_VALUE_LENGTH,
+  MAX_AGENT_MODEL_PRESETS,
+  MAX_AGENT_MODEL_PRESET_NAME_LENGTH,
   MAX_SPEECH_LANGUAGES,
   MAX_SPEECH_SETTING_VALUE_LENGTH,
   MAX_WORKTREES_PER_REPO_CEILING,
@@ -124,6 +127,7 @@ export class SettingsService implements OnModuleInit {
         sessionToolbarButtons: null,
         defaultModelByProvider: {},
         defaultReasoningEffortByProvider: {},
+        agentModelPresets: [],
         maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
         speechToText,
         speechToTextApiKeyConfigured: envKey !== null,
@@ -163,7 +167,9 @@ export class SettingsService implements OnModuleInit {
     };
   }
 
-  private resolveApiKeyFromEnv(provider: SpeechToTextProviderId): string | null {
+  private resolveApiKeyFromEnv(
+    provider: SpeechToTextProviderId,
+  ): string | null {
     for (const name of SPEECH_API_KEY_ENV_VARS[provider] ?? []) {
       const value = process.env[name]?.trim();
       if (value) {
@@ -228,6 +234,10 @@ export class SettingsService implements OnModuleInit {
       input.defaultReasoningEffortByProvider,
       'default thinking level',
     );
+    const agentModelPresets =
+      input.agentModelPresets === undefined
+        ? current.agentModelPresets
+        : this.normalizeAgentModelPresets(input.agentModelPresets, true);
 
     const maxWorktreesPerRepo =
       input.maxWorktreesPerRepo === undefined
@@ -253,6 +263,7 @@ export class SettingsService implements OnModuleInit {
       defaultReasoningEffortByProvider: this.serializeAgentPreferences(
         defaultReasoningEffortByProvider,
       ),
+      agentModelPresets: JSON.stringify(agentModelPresets),
       speechToText: JSON.stringify(speechToText),
       onboardingCompletedAt: current.onboardingCompletedAt,
       updatedAt: timestamp,
@@ -309,6 +320,7 @@ export class SettingsService implements OnModuleInit {
       defaultReasoningEffortByProvider: this.serializeAgentPreferences(
         current.defaultReasoningEffortByProvider,
       ),
+      agentModelPresets: JSON.stringify(current.agentModelPresets),
       onboardingCompletedAt: timestamp,
       updatedAt: timestamp,
     };
@@ -358,6 +370,7 @@ export class SettingsService implements OnModuleInit {
       ),
       defaultModelByProvider,
       defaultReasoningEffortByProvider,
+      agentModelPresets: this.parseAgentModelPresets(row.agentModelPresets),
       maxWorktreesPerRepo: this.parseMaxWorktreesPerRepo(
         row.maxWorktreesPerRepo,
       ),
@@ -398,7 +411,9 @@ export class SettingsService implements OnModuleInit {
 
     const next: SpeechToTextSettings = { ...current };
 
-    const bool = (key: 'enabled' | 'keytermsEnabled' | 'autoSend' | 'silenceAutoStop') => {
+    const bool = (
+      key: 'enabled' | 'keytermsEnabled' | 'autoSend' | 'silenceAutoStop',
+    ) => {
       const value = patch[key];
       if (value === undefined) return;
       if (typeof value !== 'boolean') {
@@ -566,6 +581,61 @@ export class SettingsService implements OnModuleInit {
     if (!CLAUDE_SESSION_SURFACES.includes(defaultClaudeSessionSurface)) {
       throw new BadRequestException('Unsupported Claude session surface.');
     }
+  }
+
+  private parseAgentModelPresets(
+    value: string | null | undefined,
+  ): AgentModelPreset[] {
+    if (!value) return [];
+    try {
+      return this.normalizeAgentModelPresets(JSON.parse(value), false);
+    } catch {
+      return [];
+    }
+  }
+
+  private normalizeAgentModelPresets(
+    value: unknown,
+    strict: boolean,
+  ): AgentModelPreset[] {
+    const fail = () => {
+      if (strict) throw new BadRequestException('Unsupported model presets.');
+      return [] as AgentModelPreset[];
+    };
+    if (!Array.isArray(value) || value.length > MAX_AGENT_MODEL_PRESETS)
+      return fail();
+    const result: AgentModelPreset[] = [];
+    const ids = new Set<string>();
+    for (const item of value) {
+      if (!item || typeof item !== 'object' || Array.isArray(item))
+        return fail();
+      const raw = item as Record<string, unknown>;
+      const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+      const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+      const provider =
+        typeof raw.provider === 'string' ? raw.provider.trim() : '';
+      const nullable = (field: unknown): string | null | undefined => {
+        if (field === null || field === undefined || field === '') return null;
+        return typeof field === 'string' ? field.trim() : undefined;
+      };
+      const model = nullable(raw.model);
+      const reasoningEffort = nullable(raw.reasoningEffort);
+      if (
+        !AGENT_PROVIDER_KEY_PATTERN.test(id) ||
+        ids.has(id) ||
+        !name ||
+        name.length > MAX_AGENT_MODEL_PRESET_NAME_LENGTH ||
+        !AGENT_PROVIDER_KEY_PATTERN.test(provider) ||
+        model === undefined ||
+        reasoningEffort === undefined ||
+        (model?.length ?? 0) > MAX_AGENT_PREFERENCE_VALUE_LENGTH ||
+        (reasoningEffort?.length ?? 0) > MAX_AGENT_PREFERENCE_VALUE_LENGTH
+      )
+        return fail();
+      ids.add(id);
+      result.push({ id, name, provider, model, reasoningEffort });
+    }
+    return result;
   }
 
   private assertDefaultAgentProvider(

@@ -1,0 +1,1 @@
+ALTER TABLE `app_settings` ADD `agent_model_presets` text;

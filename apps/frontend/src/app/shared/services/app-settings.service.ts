@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import {
   AgentProviderPreferenceMap,
+  AgentModelPreset,
   AppSettings,
   DEFAULT_MAX_WORKTREES_PER_REPO,
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
@@ -32,6 +33,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sessionToolbarButtons: null,
   defaultModelByProvider: {},
   defaultReasoningEffortByProvider: {},
+  agentModelPresets: [],
   maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
   speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   speechToTextApiKeyConfigured: false,
@@ -160,6 +162,10 @@ export class AppSettingsService {
       provider,
       reasoningEffort,
     );
+  }
+
+  saveAgentModelPresets(agentModelPresets: AgentModelPreset[]): Promise<AppSettings> {
+    return this.saveSettings({ agentModelPresets });
   }
 
   private savePreferencePatch(
@@ -320,6 +326,7 @@ export class AppSettingsService {
       defaultReasoningEffortByProvider: this.normalizePreferenceMap(
         settings?.defaultReasoningEffortByProvider,
       ),
+      agentModelPresets: this.normalizeAgentModelPresets(settings?.agentModelPresets),
       maxWorktreesPerRepo: this.normalizeMaxWorktreesPerRepo(
         settings?.maxWorktreesPerRepo,
       ),
@@ -352,6 +359,27 @@ export class AppSettingsService {
       return DEFAULT_MAX_WORKTREES_PER_REPO;
     }
     return value;
+  }
+
+  private normalizeAgentModelPresets(value: unknown): AgentModelPreset[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => {
+      if (!item || typeof item !== 'object') return [];
+      const raw = item as Record<string, unknown>;
+      if (
+        typeof raw['id'] !== 'string' ||
+        typeof raw['name'] !== 'string' ||
+        typeof raw['provider'] !== 'string'
+      ) return [];
+      return [{
+        id: raw['id'],
+        name: raw['name'],
+        provider: raw['provider'],
+        model: typeof raw['model'] === 'string' ? raw['model'] : null,
+        reasoningEffort:
+          typeof raw['reasoningEffort'] === 'string' ? raw['reasoningEffort'] : null,
+      }];
+    });
   }
 
   /** Tolerates a backend that predates dictation, or malformed entries. */

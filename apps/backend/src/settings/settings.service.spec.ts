@@ -97,6 +97,7 @@ describe('SettingsService', () => {
       sessionToolbarButtons: null,
       defaultModelByProvider: {},
       defaultReasoningEffortByProvider: {},
+      agentModelPresets: [],
       maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
       speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
       speechToTextApiKeyConfigured: false,
@@ -525,6 +526,53 @@ describe('SettingsService', () => {
     expect(settings.defaultModelByProvider).toEqual({
       opencode: 'some-model-released-tomorrow',
     });
+  });
+
+  it('stores ordered quick-launch model presets', async () => {
+    const { db, getRows } = createDbMock();
+    const service = new SettingsService(db);
+    const presets = [
+      {
+        id: 'fast-fixes',
+        name: 'Fast fixes',
+        provider: 'codex',
+        model: 'gpt-5.4-mini',
+        reasoningEffort: 'low',
+      },
+      {
+        id: 'deep-review',
+        name: 'Deep review',
+        provider: 'claude',
+        model: 'opus',
+        reasoningEffort: 'high',
+      },
+    ];
+
+    const settings = await service.update({ agentModelPresets: presets });
+
+    expect(settings.agentModelPresets).toEqual(presets);
+    expect(getRows()[0]).toMatchObject({
+      agentModelPresets: JSON.stringify(presets),
+    });
+  });
+
+  it('rejects malformed or duplicate model presets', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+    const preset = {
+      id: 'same-id',
+      name: 'Useful preset',
+      provider: 'codex',
+      model: null,
+      reasoningEffort: null,
+    };
+
+    await expect(
+      service.update({ agentModelPresets: [preset, preset] }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update({ agentModelPresets: [{ ...preset, name: ' ' }] }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects malformed provider default entries', async () => {

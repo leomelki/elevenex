@@ -54,6 +54,17 @@ export type AgentProviderPreferenceMap = Record<string, string>;
  */
 export type AgentProviderPreferencePatch = Record<string, string | null>;
 
+export interface AgentModelPreset {
+  id: string;
+  name: string;
+  provider: string;
+  model: string | null;
+  reasoningEffort: string | null;
+}
+
+export const MAX_AGENT_MODEL_PRESETS = 24;
+export const MAX_AGENT_MODEL_PRESET_NAME_LENGTH = 48;
+
 /** Resolved startup defaults for one provider. */
 export interface AgentProviderDefaults {
   model: string | null;
@@ -110,7 +121,11 @@ export function speechProviderRequiresApiKey(
  *   on, with that provider's configured default model.
  * - `fixed`: an explicit provider + model the user pinned in settings.
  */
-export const SPEECH_CLEANUP_MODES = ['off', 'session-harness', 'fixed'] as const;
+export const SPEECH_CLEANUP_MODES = [
+  'off',
+  'session-harness',
+  'fixed',
+] as const;
 export type SpeechCleanupMode = (typeof SPEECH_CLEANUP_MODES)[number];
 
 /**
@@ -217,6 +232,7 @@ export interface AppSettings {
   sessionToolbarButtons: SessionToolbarButtonSetting[] | null;
   defaultModelByProvider: AgentProviderPreferenceMap;
   defaultReasoningEffortByProvider: AgentProviderPreferenceMap;
+  agentModelPresets: AgentModelPreset[];
   /** Worktrees allowed per repo before creation needs confirming; 0 = no cap. */
   maxWorktreesPerRepo: number;
   speechToText: SpeechToTextSettings;
@@ -243,6 +259,7 @@ export interface UpdateAppSettingsInput {
   sessionToolbarButtons?: SessionToolbarButtonSetting[] | null;
   defaultModelByProvider?: AgentProviderPreferencePatch | null;
   defaultReasoningEffortByProvider?: AgentProviderPreferencePatch | null;
+  agentModelPresets?: AgentModelPreset[];
   /** `0` clears the cap; omitted keeps the stored value. */
   maxWorktreesPerRepo?: number;
   /** Partial patch; omitted keys keep their stored value. */

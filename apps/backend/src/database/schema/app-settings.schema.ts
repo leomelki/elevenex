@@ -11,7 +11,11 @@ export const appSettings = sqliteTable('app_settings', {
   // JSON objects keyed by agent provider id (`{"claude":"opus"}`), so a newly
   // supported provider needs no schema change.
   defaultModelByProvider: text('default_model_by_provider'),
-  defaultReasoningEffortByProvider: text('default_reasoning_effort_by_provider'),
+  defaultReasoningEffortByProvider: text(
+    'default_reasoning_effort_by_provider',
+  ),
+  // Ordered JSON array of named provider/model/thinking combinations.
+  agentModelPresets: text('agent_model_presets'),
   sessionToolbarButtons: text('session_toolbar_buttons'),
   // Worktrees a single repo may hold before creating another one has to be
   // confirmed by the human. 0 disables the cap.

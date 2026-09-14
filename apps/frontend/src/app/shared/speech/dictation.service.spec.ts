@@ -24,6 +24,7 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     sessionToolbarButtons: null,
     defaultModelByProvider: {},
     defaultReasoningEffortByProvider: {},
+    agentModelPresets: [],
     maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
     // These cases are about the cloud path; the local engine has its own
     // block below, since its readiness is a download rather than a key.

@@ -40,6 +40,7 @@ function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     sessionToolbarButtons: null,
     defaultModelByProvider: {},
     defaultReasoningEffortByProvider: {},
+    agentModelPresets: [],
     maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
     speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
     speechToTextApiKeyConfigured: false,

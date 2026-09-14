@@ -220,7 +220,7 @@ describe('Settings', () => {
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
-    expect(element.textContent).toContain('Model defaults');
+    expect(element.textContent).toContain('Agent configurations');
     expect(element.textContent).toContain('Claude Code');
     expect(
       element.querySelector('[aria-label="Default model for Claude Code"]'),

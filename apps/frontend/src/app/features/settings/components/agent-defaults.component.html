@@ -1,9 +1,159 @@
 <div class="grid gap-4 p-5">
-  <p class="text-sm text-muted-foreground">
-    New sessions start on the model and thinking level you pick here. Leave either on
-    <span class="font-medium text-foreground">Agent default</span> to let the agent decide.
-    You can still change both per session.
-  </p>
+  <div class="flex flex-wrap items-start justify-between gap-3">
+    <div>
+      <div class="text-sm font-medium text-foreground">Quick-launch presets</div>
+      <p class="mt-1 text-sm text-muted-foreground">
+        Named agent, model, and thinking combinations shown when you create a session.
+      </p>
+    </div>
+    <button z-button zType="outline" zSize="sm" type="button" (click)="openNewPreset()">
+      <ng-icon name="lucidePlus" size="14" />
+      <span>New preset</span>
+    </button>
+  </div>
+
+  @if (appSettings.settings().agentModelPresets.length) {
+    <div class="grid gap-2 sm:grid-cols-2">
+      @for (preset of appSettings.settings().agentModelPresets; track preset.id) {
+        <div
+          class="group flex min-w-0 items-center gap-3 rounded-lg border border-border bg-background p-3"
+        >
+          <span
+            class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
+          >
+            <ng-icon [name]="presetIcon(preset.provider)" size="16" />
+          </span>
+          <button type="button" class="min-w-0 flex-1 text-left" (click)="editPreset(preset)">
+            <span class="block truncate text-sm font-medium text-foreground">{{
+              preset.name
+            }}</span>
+            <span class="mt-0.5 block truncate text-xs text-muted-foreground">{{
+              presetSummary(preset)
+            }}</span>
+          </button>
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-sm"
+            type="button"
+            title="Edit preset"
+            [zDisabled]="appSettings.saving()"
+            (click)="editPreset(preset)"
+          >
+            <ng-icon name="lucidePencil" size="14" />
+          </button>
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-sm"
+            type="button"
+            title="Delete preset"
+            [zDisabled]="appSettings.saving()"
+            (click)="deletePreset(preset)"
+          >
+            <ng-icon name="lucideTrash2" size="14" class="text-destructive" />
+          </button>
+        </div>
+      }
+    </div>
+  } @else if (!presetEditorOpen()) {
+    <button
+      type="button"
+      class="rounded-lg border border-dashed border-border bg-muted/25 px-4 py-5 text-left transition-colors hover:bg-muted/45"
+      (click)="openNewPreset()"
+    >
+      <span class="block text-sm font-medium text-foreground">Create your first preset</span>
+      <span class="mt-1 block text-sm text-muted-foreground"
+        >For example: “Fast fixes” with Codex, a lightweight model, and low thinking.</span
+      >
+    </button>
+  }
+
+  @if (presetEditorOpen()) {
+    <form
+      class="grid gap-4 rounded-lg border border-primary/35 bg-primary/5 p-4"
+      (submit)="$event.preventDefault(); savePreset()"
+    >
+      <div class="flex items-center justify-between gap-3">
+        <div class="text-sm font-semibold text-foreground">
+          {{ editingPresetId() ? 'Edit preset' : 'New preset' }}
+        </div>
+        <button
+          type="button"
+          class="text-xs text-muted-foreground hover:text-foreground"
+          (click)="presetEditorOpen.set(false)"
+        >
+          Cancel
+        </button>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <label class="flex flex-col gap-1.5 sm:col-span-2">
+          <span class="text-xs font-medium text-muted-foreground">Name</span>
+          <input
+            z-input
+            maxlength="48"
+            placeholder="Fast fixes"
+            [ngModel]="presetName()"
+            (ngModelChange)="presetName.set($event)"
+            name="presetName"
+            autofocus
+          />
+        </label>
+        <div class="flex flex-col gap-1.5">
+          <span class="text-xs font-medium text-muted-foreground">Agent</span>
+          <app-option-select
+            [options]="providerOptions()"
+            [value]="presetProvider()"
+            ariaLabel="Preset agent"
+            (valueChange)="onPresetProviderChange($event)"
+          />
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <span class="text-xs font-medium text-muted-foreground">Model</span>
+          <app-option-select
+            [options]="presetModelOptions()"
+            [value]="presetModel()"
+            ariaLabel="Preset model"
+            (valueChange)="presetModel.set($event); presetEffort.set('')"
+          />
+        </div>
+        <div class="flex flex-col gap-1.5 sm:col-span-2">
+          <span class="text-xs font-medium text-muted-foreground">Thinking level</span>
+          <app-option-select
+            [options]="presetEffortOptions()"
+            [value]="presetEffort()"
+            [disabled]="!presetCanChooseEffort()"
+            ariaLabel="Preset thinking level"
+            (valueChange)="presetEffort.set($event)"
+          />
+          @if (!presetCanChooseEffort()) {
+            <span class="text-xs text-muted-foreground">This model uses a fixed thinking level.</span>
+          }
+        </div>
+      </div>
+      <div class="flex justify-end">
+        <button
+          z-button
+          zType="default"
+          zSize="sm"
+          type="submit"
+          [zDisabled]="!presetName().trim() || appSettings.saving()"
+        >
+          Save preset
+        </button>
+      </div>
+    </form>
+  }
+
+  <div class="my-1 border-t border-border"></div>
+  <div>
+    <div class="text-sm font-medium text-foreground">Per-agent defaults</div>
+    <p class="text-sm text-muted-foreground">
+      New sessions start on the model and thinking level you pick here. Leave either on
+      <span class="font-medium text-foreground">Agent default</span> to let the agent decide. You
+      can still change both per session.
+    </p>
+  </div>
 
   @if (catalog.error()) {
     <div

@@ -17,12 +17,32 @@ import {
   MAX_WORKTREES_PER_REPO_CEILING,
 } from '../settings.types.js';
 import type {
+  AgentModelPreset,
   AgentProviderPreferencePatch,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
   SessionToolbarButtonSetting,
   SpeechToTextSettings,
 } from '../settings.types.js';
+
+class AgentModelPresetDto implements AgentModelPreset {
+  @IsString()
+  id!: string;
+
+  @IsString()
+  name!: string;
+
+  @IsString()
+  provider!: string;
+
+  @IsOptional()
+  @IsString()
+  model!: string | null;
+
+  @IsOptional()
+  @IsString()
+  reasoningEffort!: string | null;
+}
 
 class SessionToolbarButtonDto implements SessionToolbarButtonSetting {
   @IsString()
@@ -66,6 +86,12 @@ export class UpdateAppSettingsDto {
   @IsOptional()
   @IsObject()
   defaultReasoningEffortByProvider?: AgentProviderPreferencePatch | null;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AgentModelPresetDto)
+  agentModelPresets?: AgentModelPresetDto[];
 
   // Partial dictation patch. Field-level validation lives in `SettingsService.
   // mergeSpeechToTextSettings` so provider ids and cleanup modes are checked

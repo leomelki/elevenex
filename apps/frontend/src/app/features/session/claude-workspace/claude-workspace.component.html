@@ -103,10 +103,46 @@
               {{ lastError() }}
             </div>
           } @else {
-            <div class="text-[0.9375rem] text-foreground font-medium">
-              {{ isTranscriptReadOnly() ? 'No transcript available.' : 'Start with a prompt.' }}
-            </div>
-            @if (!isTranscriptReadOnly()) {
+            @if (!isTranscriptReadOnly() && !runtimeStarted() && modelPresets().length) {
+              <div class="flex w-full max-w-[52rem] flex-col items-center gap-4 px-2">
+                <div class="text-center">
+                  <div class="text-[0.9375rem] font-medium text-foreground">Start with a preset</div>
+                  <div class="mt-1 text-xs text-muted-foreground">Choose a setup, or just start typing below.</div>
+                </div>
+                <div class="flex w-full flex-wrap justify-center gap-2">
+                  @for (preset of modelPresets(); track preset.id) {
+                    <button
+                      type="button"
+                      class="group flex min-w-44 max-w-64 items-center gap-2.5 rounded-lg border bg-card px-3 py-2.5 text-left shadow-sm transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-px hover:bg-accent/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-60"
+                      [class.border-primary]="isModelPresetSelected(preset)"
+                      [class.bg-primary/5]="isModelPresetSelected(preset)"
+                      [class.border-border]="!isModelPresetSelected(preset)"
+                      [disabled]="!!applyingPresetId()"
+                      [attr.aria-pressed]="isModelPresetSelected(preset)"
+                      (click)="applyModelPreset(preset)"
+                    >
+                      <span class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <ng-icon [name]="modelPresetIcon(preset.provider)" size="15" />
+                      </span>
+                      <span class="min-w-0 flex-1">
+                        <span class="block truncate text-sm font-medium text-foreground">{{ preset.name }}</span>
+                        <span class="mt-0.5 block truncate text-xs text-muted-foreground">{{ modelPresetSummary(preset) }}</span>
+                      </span>
+                      @if (isModelPresetSelected(preset)) {
+                        <ng-icon name="lucideCheck" size="15" class="shrink-0 text-primary" />
+                      } @else if (applyingPresetId() === preset.id) {
+                        <span class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary"></span>
+                      }
+                    </button>
+                  }
+                </div>
+              </div>
+            } @else {
+              <div class="text-[0.9375rem] text-foreground font-medium">
+                {{ isTranscriptReadOnly() ? 'No transcript available.' : 'Start with a prompt.' }}
+              </div>
+            }
+            @if (!isTranscriptReadOnly() && !modelPresets().length) {
               <div>
                 Type
                 <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded"

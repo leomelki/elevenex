@@ -126,6 +126,11 @@ import {
   lucideRefreshCw,
   lucideArchive,
   lucideArchiveRestore,
+  lucideCheck,
+  lucideFileText,
+  lucideNotebookPen,
+  lucideOrbit,
+  lucideSparkles,
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '@/shared/components/button/button.component';
 import type { CreateSessionForkResponse, SessionFork } from '@/shared/models/session.model';
@@ -138,6 +143,12 @@ import {
 } from '@/shared/utils/diff-selection-mention';
 import { appendSessionMentions, parseSessionMentions } from '@/shared/utils/session-mention';
 import { ComposerDraftService } from './composer-draft.service';
+import { AppSettingsService } from '@/shared/services/app-settings.service';
+import type { AgentModelPreset } from '@/shared/models/app-settings.model';
+import {
+  AGENT_PROVIDER_ICONS,
+  AGENT_PROVIDER_PRESENTATIONS,
+} from '@/shared/models/agent-provider-presentation';
 
 @Component({
   selector: 'app-claude-workspace',
@@ -174,6 +185,11 @@ import { ComposerDraftService } from './composer-draft.service';
       lucideRefreshCw,
       lucideArchive,
       lucideArchiveRestore,
+      lucideCheck,
+      lucideFileText,
+      lucideNotebookPen,
+      lucideOrbit,
+      lucideSparkles,
     }),
   ],
 })
@@ -224,12 +240,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly composerDrafts = inject(ComposerDraftService);
   private readonly agentShowsService = inject(AgentShowsService);
   private readonly navigationService = inject(NavigationService);
+  readonly appSettings = inject(AppSettingsService);
 
   readonly liveShows = computed<AgentShow[]>(() =>
     this.agentShowsService.liveShows().filter((s) => s.agentSessionId === this.sessionId),
   );
 
   readonly loading = signal(true);
+  readonly applyingPresetId = signal<string | null>(null);
+  readonly modelPresets = computed(() => this.appSettings.settings().agentModelPresets);
   readonly hydrated = signal(false);
   readonly submitting = signal(false);
   readonly prompt = signal('');
@@ -686,6 +705,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
 
   constructor() {
+    void this.appSettings.load().catch(() => undefined);
     effect(() => {
       this.pairedTranscript();
       this.runPhase();
@@ -1191,6 +1211,68 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     if (this.readOnlyTranscript) return;
     const next = await firstValueFrom(this.api.setSelectedModel(this.sessionId, model || null));
     this.applyRuntimeState(next);
+  }
+
+  async applyModelPreset(preset: AgentModelPreset): Promise<void> {
+    if (this.readOnlyTranscript || this.runtimeStarted() || this.applyingPresetId()) return;
+    this.applyingPresetId.set(preset.id);
+    try {
+      if (preset.provider !== this.currentProvider()) {
+        await firstValueFrom(
+          this.sessionsService.updateActiveAgentProvider(this.sessionId, preset.provider),
+        );
+        this.disconnectTranscriptSocket(this.sessionId);
+        this.providerSelection.setProvider(preset.provider);
+        this.activeAgentProvider = preset.provider;
+        this.activeAgentProviderChange.emit(preset.provider);
+        this.reset();
+        this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
+        await this.bootstrap();
+      }
+
+      const modelState = await firstValueFrom(
+        this.agentApi.setSelectedModel(this.sessionId, preset.model, preset.provider),
+      );
+      this.applyRuntimeState(modelState);
+      const effortState = await firstValueFrom(
+        this.agentApi.setReasoningEffort(
+          this.sessionId,
+          preset.reasoningEffort,
+          preset.provider,
+        ),
+      );
+      this.applyRuntimeState(effortState);
+      queueMicrotask(() => this.composer?.focusAtEnd());
+    } catch {
+      toast.error(`Could not apply “${preset.name}”.`);
+    } finally {
+      this.applyingPresetId.set(null);
+    }
+  }
+
+  isModelPresetSelected(preset: AgentModelPreset): boolean {
+    return (
+      preset.provider === this.currentProvider() &&
+      preset.model === this.selectedModel() &&
+      preset.reasoningEffort === this.reasoningEffort()
+    );
+  }
+
+  modelPresetIcon(provider: string): string {
+    return AGENT_PROVIDER_ICONS[provider] || 'lucideSparkles';
+  }
+
+  modelPresetSummary(preset: AgentModelPreset): string {
+    const provider = AGENT_PROVIDER_PRESENTATIONS.find((item) => item.id === preset.provider);
+    const parts = [provider?.label ?? preset.provider, preset.model ?? 'Agent default'];
+    if (preset.reasoningEffort) parts.push(this.reasoningEffortLabel(preset.reasoningEffort));
+    return parts.join(' · ');
+  }
+
+  private reasoningEffortLabel(effort: string): string {
+    return effort === 'xhigh'
+      ? 'Extra high'
+      : effort.charAt(0).toUpperCase() + effort.slice(1);
   }
 
   async onReasoningEffortChange(effort: ClaudeReasoningEffort | null): Promise<void> {
