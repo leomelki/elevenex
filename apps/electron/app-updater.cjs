@@ -33,6 +33,7 @@ const {
   mkdirSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } = require('fs');
 const os = require('os');
@@ -62,6 +63,7 @@ const QUIT_AFTER_HANDOFF_MS = 800;
 // the update anyway; the bash one sleeps 0.2s per turn.
 const PROCESS_EXIT_POLL_ATTEMPTS = 600;
 const WINDOWS_EXIT_WAIT_SECONDS = 120;
+const MAC_SYSTEM_SIGNED_APP = '/System/Library/CoreServices/Finder.app';
 
 const REQUEST_HEADERS = {
   Accept: 'application/vnd.github+json',
@@ -154,6 +156,39 @@ function toCrlf(text) {
   return text.replaceAll('\n', '\r\n');
 }
 
+function parseMacSignatureDetails(output) {
+  const details = {};
+  for (const key of ['Identifier', 'TeamIdentifier', 'Notarization Ticket']) {
+    const value = new RegExp(`^${key}=(.+)$`, 'm').exec(output || '')?.[1]?.trim();
+    if (value) {
+      details[key] = value;
+    }
+  }
+  return {
+    identifier: details.Identifier || null,
+    teamIdentifier: details.TeamIdentifier === 'not set' ? null : details.TeamIdentifier || null,
+    notarized: details['Notarization Ticket'] === 'stapled',
+  };
+}
+
+/**
+ * Some macOS installations have a broken system certificate trust store. On
+ * those machines `codesign --verify` rejects Apple system apps as well as every
+ * third-party app, even though the bundle hashes and embedded signature are
+ * intact. Only permit the recovery path when the downloaded bundle still has a
+ * stapled notarization ticket and its signed identity matches the running app.
+ * The downloaded DMG has already passed its release SHA-256 check at this point.
+ */
+function canUseMacTrustStoreFallback(current, downloaded) {
+  return Boolean(
+    current?.identifier
+    && current.identifier === downloaded?.identifier
+    && current?.teamIdentifier
+    && current.teamIdentifier === downloaded?.teamIdentifier
+    && downloaded?.notarized,
+  );
+}
+
 /**
  * The macOS and AppImage flows quit the app before touching disk, so a
  * permission problem discovered by the handoff script is invisible to the user.
@@ -164,6 +199,15 @@ function assertWritableDirectory(directory, what) {
     accessSync(directory, fsConstants.W_OK);
   } catch {
     throw new Error(`Elevenex cannot write to ${directory}, so it cannot replace ${what} itself.`);
+  }
+}
+
+function isWritableDirectory(directory) {
+  try {
+    accessSync(directory, fsConstants.W_OK);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -359,7 +403,7 @@ function createAppUpdater({ app, shell, getCurrentVersion, onStateChanged, reque
     return inFlightCheck;
   }
 
-  /** Download the artifact and fail closed when the release publishes a checksum. */
+  /** Download the artifact and fail closed unless its required checksum matches. */
   async function downloadRelease(release) {
     const asset = findAsset(release, target.assetName);
     if (!asset) {
@@ -390,17 +434,20 @@ function createAppUpdater({ app, shell, getCurrentVersion, onStateChanged, reque
     }, { headers: githubHeaders() });
 
     const checksumAsset = findAsset(release, `${target.assetName}.sha256`);
-    if (checksumAsset) {
-      setState({ status: 'verifying', percent: 100, message: 'Verifying download…' });
-      const expected = parseChecksumFile(
-        await fetchText(checksumAsset.browser_download_url, { headers: githubHeaders() }),
-      );
-      const actual = await sha256File(destination);
+    if (!checksumAsset) {
+      rmSync(destination, { force: true });
+      throw new Error('The update release is missing its required checksum.');
+    }
 
-      if (!expected || expected !== actual) {
-        rmSync(destination, { force: true });
-        throw new Error('Downloaded update failed checksum verification.');
-      }
+    setState({ status: 'verifying', percent: 100, message: 'Verifying download…' });
+    const expected = parseChecksumFile(
+      await fetchText(checksumAsset.browser_download_url, { headers: githubHeaders() }),
+    );
+    const actual = await sha256File(destination);
+
+    if (!expected || expected !== actual) {
+      rmSync(destination, { force: true });
+      throw new Error('Downloaded update failed checksum verification.');
     }
 
     return destination;
@@ -480,6 +527,23 @@ start "" "%APP_EXE%"
     const mountBase = path.join(os.tmpdir(), 'elevenex-update-mnt');
     mkdirSync(mountBase, { recursive: true });
 
+    // A failed validation used to leave its image attached. Besides leaking a
+    // device, enough stale images eventually make hdiutil fail with "Device not
+    // configured", preventing all later update attempts on that Mac.
+    for (const entry of readdirSync(mountBase)) {
+      const staleMount = path.join(mountBase, entry);
+      try {
+        await execFileAsync('hdiutil', ['detach', staleMount, '-quiet']);
+      } catch {
+        try {
+          await execFileAsync('hdiutil', ['detach', staleMount, '-quiet', '-force']);
+        } catch {
+          // It may be an ordinary directory or a mount still in use. hdiutil's
+          // attach error below remains visible if no new image can be mounted.
+        }
+      }
+    }
+
     const { stdout } = await execFileAsync('hdiutil', [
       'attach', dmgPath,
       '-nobrowse', '-readonly', '-noverify', '-noautoopen',
@@ -508,12 +572,26 @@ start "" "%APP_EXE%"
   }
 
   async function readTeamIdentifier(bundlePath) {
+    return (await readMacSignatureDetails(bundlePath)).teamIdentifier;
+  }
+
+  async function readMacSignatureDetails(bundlePath) {
     try {
       // `codesign -d` reports on stderr.
       const { stderr } = await execFileAsync('codesign', ['-dv', '--verbose=4', bundlePath]);
-      return /TeamIdentifier=(\S+)/.exec(stderr || '')?.[1] ?? null;
+      return parseMacSignatureDetails(stderr);
     } catch {
-      return null;
+      return parseMacSignatureDetails('');
+    }
+  }
+
+  async function macSystemTrustStoreIsUnavailable() {
+    try {
+      await execFileAsync('codesign', ['--verify', '--deep', '--strict', MAC_SYSTEM_SIGNED_APP]);
+      return false;
+    } catch (error) {
+      const output = `${error?.stderr || ''}\n${error?.message || ''}`;
+      return output.includes('CSSMERR_TP_NOT_TRUSTED');
     }
   }
 
@@ -526,7 +604,13 @@ start "" "%APP_EXE%"
     try {
       await execFileAsync('codesign', ['--verify', '--deep', '--strict', newAppPath]);
     } catch (error) {
-      throw new Error(`The downloaded app is not validly signed: ${error?.stderr || error?.message}`);
+      const trustStoreUnavailable = await macSystemTrustStoreIsUnavailable();
+      const currentSignature = await readMacSignatureDetails(currentAppPath);
+      const newSignature = await readMacSignatureDetails(newAppPath);
+
+      if (!trustStoreUnavailable || !canUseMacTrustStoreFallback(currentSignature, newSignature)) {
+        throw new Error(`The downloaded app is not validly signed: ${error?.stderr || error?.message}`);
+      }
     }
 
     const currentTeam = currentAppPath ? await readTeamIdentifier(currentAppPath) : null;
@@ -541,6 +625,109 @@ start "" "%APP_EXE%"
     }
   }
 
+  /**
+   * Copy first, then replace with a backup in place. This body is also used by
+   * the privileged path, so every value is shell-quoted before it reaches the
+   * root shell and no user-writable helper script is ever executed as root.
+   */
+  function macBundleSwapSnippet({
+    newAppPath,
+    currentAppPath,
+    stagePath,
+    backupPath,
+    owner,
+    signedIdentity,
+  }) {
+    const preserveOwner = owner
+      ? `if ! /usr/sbin/chown -R ${owner.uid}:${owner.gid} ${shellQuote(stagePath)}; then
+  /bin/rm -rf ${shellQuote(stagePath)}
+  exit 23
+fi`
+      : ':';
+    const reverifyPrivilegedCopy = signedIdentity
+      ? `if ! /usr/bin/codesign --verify --deep --strict ${shellQuote(stagePath)}; then
+  /bin/rm -rf ${shellQuote(stagePath)}
+  exit 24
+fi
+if ! /usr/bin/codesign -dv --verbose=4 ${shellQuote(stagePath)} 2>&1 | /usr/bin/grep -Fqx ${shellQuote(`Identifier=${signedIdentity.identifier}`)}; then
+  /bin/rm -rf ${shellQuote(stagePath)}
+  exit 25
+fi
+if ! /usr/bin/codesign -dv --verbose=4 ${shellQuote(stagePath)} 2>&1 | /usr/bin/grep -Fqx ${shellQuote(`TeamIdentifier=${signedIdentity.teamIdentifier}`)}; then
+  /bin/rm -rf ${shellQuote(stagePath)}
+  exit 26
+fi`
+      : '';
+
+    return `/bin/rm -rf ${shellQuote(stagePath)}
+if ! /usr/bin/ditto ${shellQuote(newAppPath)} ${shellQuote(stagePath)}; then
+  /bin/rm -rf ${shellQuote(stagePath)}
+  exit 20
+fi
+${reverifyPrivilegedCopy}
+/usr/bin/xattr -dr com.apple.quarantine ${shellQuote(stagePath)} || true
+${preserveOwner}
+
+/bin/rm -rf ${shellQuote(backupPath)}
+if ! /bin/mv ${shellQuote(currentAppPath)} ${shellQuote(backupPath)}; then
+  /bin/rm -rf ${shellQuote(stagePath)}
+  exit 21
+fi
+if /bin/mv ${shellQuote(stagePath)} ${shellQuote(currentAppPath)}; then
+  /bin/rm -rf ${shellQuote(backupPath)}
+else
+  /bin/mv ${shellQuote(backupPath)} ${shellQuote(currentAppPath)} || true
+  /bin/rm -rf ${shellQuote(stagePath)}
+  exit 22
+fi`;
+  }
+
+  async function installMacBundleWithPermission(paths) {
+    setState({
+      status: 'installing',
+      message: 'Administrator permission is required to update Elevenex in this location…',
+    });
+
+    const owner = statSync(paths.currentAppPath);
+    const signedIdentity = await readMacSignatureDetails(paths.currentAppPath);
+    if (!signedIdentity.identifier || !signedIdentity.teamIdentifier) {
+      throw new Error('Elevenex cannot request administrator permission because the installed app has no verifiable signing identity.');
+    }
+    const command = `set -u\n${macBundleSwapSnippet({
+      ...paths,
+      owner: { uid: owner.uid, gid: owner.gid },
+      signedIdentity,
+    })}`;
+    const authorizationScript = `function run(argv) {
+  if (argv.length === 0) return;
+  const currentApp = Application.currentApplication();
+  currentApp.includeStandardAdditions = true;
+  return currentApp.doShellScript(argv[0], {
+    administratorPrivileges: true,
+    withPrompt: 'Elevenex needs permission to replace the installed application.',
+  });
+}`;
+
+    try {
+      // Passing the command as argv avoids interpolating paths into AppleScript.
+      // The command itself contains only absolute tools and shell-quoted paths.
+      await execFileAsync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', authorizationScript, command], {
+        maxBuffer: 1024 * 1024,
+      });
+    } catch (error) {
+      const details = `${error?.stderr || ''}\n${error?.message || ''}`;
+      if (/user canceled|cancelled|\(-128\)/i.test(details)) {
+        throw new Error('The update was cancelled because administrator permission was not granted.');
+      }
+      if (/read-only file system/i.test(details)) {
+        throw new Error('Elevenex is running from a read-only location. Move it to Applications and try again.');
+      }
+      throw new Error(`macOS could not install the update with administrator permission: ${error?.stderr || error?.message}`);
+    }
+
+    setState({ message: 'Update installed. Restarting Elevenex…' });
+  }
+
   async function installDmg(dmgPath) {
     const currentAppPath = getMacAppBundlePath();
     if (!currentAppPath) {
@@ -548,7 +735,6 @@ start "" "%APP_EXE%"
     }
 
     setState({ status: 'installing', percent: null, message: 'Preparing the update…' });
-    assertWritableDirectory(path.dirname(currentAppPath), 'Elevenex.app');
 
     const mountPoint = await attachDmg(dmgPath);
     try {
@@ -566,30 +752,30 @@ start "" "%APP_EXE%"
       const scriptPath = path.join(getUpdatesDir(), 'apply-macos-update.sh');
       const logPath = path.join(getUpdatesDir(), 'apply-macos-update.log');
 
+      if (!isWritableDirectory(path.dirname(currentAppPath))) {
+        await installMacBundleWithPermission({
+          newAppPath,
+          currentAppPath,
+          stagePath,
+          backupPath,
+        });
+        await detachDmg(mountPoint);
+        app.relaunch();
+        quitSoon();
+        return;
+      }
+
       writeFileSync(scriptPath, `#!/bin/bash
 set -u
 exec >>${shellQuote(logPath)} 2>&1
 ${waitForPidSnippet(process.pid)}
 
-rm -rf ${shellQuote(stagePath)}
-if ! ditto ${shellQuote(newAppPath)} ${shellQuote(stagePath)}; then
+if ! (${macBundleSwapSnippet({ newAppPath, currentAppPath, stagePath, backupPath })}); then
   hdiutil detach ${shellQuote(mountPoint)} -quiet || true
   open ${shellQuote(currentAppPath)}
   exit 1
 fi
 hdiutil detach ${shellQuote(mountPoint)} -quiet || true
-xattr -dr com.apple.quarantine ${shellQuote(stagePath)} || true
-
-rm -rf ${shellQuote(backupPath)}
-if mv ${shellQuote(currentAppPath)} ${shellQuote(backupPath)}; then
-  if mv ${shellQuote(stagePath)} ${shellQuote(currentAppPath)}; then
-    rm -rf ${shellQuote(backupPath)}
-  else
-    # Put the working app back rather than leaving the user with nothing.
-    mv ${shellQuote(backupPath)} ${shellQuote(currentAppPath)}
-    rm -rf ${shellQuote(stagePath)}
-  fi
-fi
 
 open ${shellQuote(currentAppPath)}
 `, { mode: 0o700 });
@@ -759,4 +945,9 @@ ${launchSnippet(app.getPath('exe'))}
   return { check, downloadAndInstall, getState, openReleasePage };
 }
 
-module.exports = { createAppUpdater, resolveUpdateTarget };
+module.exports = {
+  canUseMacTrustStoreFallback,
+  createAppUpdater,
+  parseMacSignatureDetails,
+  resolveUpdateTarget,
+};

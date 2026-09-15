@@ -27,7 +27,8 @@ import {
 /** What actually happens to the running app once the artifact is downloaded. */
 const HANDOFF_NOTES: Record<AppUpdateInstallKind, string> = {
   nsis: 'Elevenex closes, installs the update in the background, and reopens automatically.',
-  dmg: 'Elevenex closes, swaps itself for the new build, and reopens automatically.',
+  dmg:
+    'Elevenex installs and reopens automatically. macOS asks for administrator permission only when the app location requires it.',
   appimage: 'Elevenex closes, replaces its AppImage in place, and reopens automatically.',
   deb: 'Your system asks for a password to install the package, then Elevenex restarts automatically.',
 };
