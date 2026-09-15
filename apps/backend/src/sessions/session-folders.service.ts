@@ -41,6 +41,39 @@ export class SessionFoldersService {
     }
   }
 
+  async groupSessions(input: { repoId: number; workspaceId: number; name: string; sessionIds: number[] }) {
+    const name = this.normalizedName(input.name);
+    await this.assertWorkspace(input.repoId, input.workspaceId);
+    const sessionIds = [...new Set(input.sessionIds)];
+    if (sessionIds.length !== 2 || sessionIds.some((id) => !Number.isInteger(id))) {
+      throw new BadRequestException('Exactly two different sessions are required');
+    }
+
+    const sessions = await this.db
+      .select({ id: schema.sessions.id, repoId: schema.sessions.repoId, workspaceId: schema.sessions.workspaceId, status: schema.sessions.status })
+      .from(schema.sessions)
+      .where(inArray(schema.sessions.id, sessionIds));
+    if (
+      sessions.length !== 2 ||
+      sessions.some((session) => session.repoId !== input.repoId || session.workspaceId !== input.workspaceId || session.status === 'archived')
+    ) {
+      throw new BadRequestException('Sessions must be active and belong to this workspace');
+    }
+
+    try {
+      return this.db.transaction((tx) => {
+        const folder = tx.insert(schema.sessionFolders).values({ repoId: input.repoId, workspaceId: input.workspaceId, name }).returning().get();
+        tx.update(schema.sessions).set({ folderId: folder.id, updatedAt: new Date().toISOString() }).where(inArray(schema.sessions.id, sessionIds)).run();
+        return folder;
+      });
+    } catch (error) {
+      if (this.isUniqueConstraint(error)) {
+        throw new ConflictException('A folder with this name already exists');
+      }
+      throw error;
+    }
+  }
+
   async rename(id: number, rawName: string) {
     await this.findOne(id);
     try {

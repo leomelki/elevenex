@@ -29,7 +29,7 @@ import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
 import { CursorService } from '@/shared/services/cursor.service';
 import { TodosService } from '@/features/productivity/todos.service';
-import { NavigationBranch, NavigationProject } from '../../../shared/models/navigation-tree.model';
+import { NavigationBranch, NavigationProject, NavigationWorkspace } from '../../../shared/models/navigation-tree.model';
 import { BranchInfo } from '../../../shared/models/branch.model';
 import { Project } from '@/shared/models/project.model';
 import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
@@ -95,6 +95,32 @@ describe('Sidebar', () => {
       isRemote: false,
       hasWorktree: false,
       worktreePath: null,
+    };
+  }
+
+  function makeWorkspace(linkStatus: 'linked' | 'unlinked' = 'linked'): NavigationWorkspace {
+    return {
+      id: 2,
+      repoId: 1,
+      name: 'main',
+      path: '/tmp/repo-one-main',
+      isDefault: false,
+      createdFromRef: 'main',
+      currentBranch: 'main',
+      head: 'abc123',
+      isDetached: false,
+      isBare: false,
+      isLocked: false,
+      lockReason: null,
+      isMissing: false,
+      isDirty: false,
+      linkStatus,
+      branchCheckedOutElsewhere: false,
+      checkedOutElsewherePath: null,
+      sessions: makeBranch().sessions.map(session => ({ ...session, workspaceId: 2 })),
+      archivedSessions: [],
+      sessionFolders: [],
+      archivedSessionFolders: [],
     };
   }
 
@@ -193,6 +219,7 @@ describe('Sidebar', () => {
   };
   const sessionFoldersServiceMock = {
     create: vi.fn(),
+    groupSessions: vi.fn(),
     rename: vi.fn(),
     archive: vi.fn(),
     unarchive: vi.fn(),
@@ -306,6 +333,8 @@ describe('Sidebar', () => {
     navigationServiceMock.clearHighlightedProject.mockClear();
     sessionsServiceMock.create.mockReset();
     sessionsServiceMock.create.mockReturnValue(of({ id: 21 }));
+    sessionFoldersServiceMock.groupSessions.mockReset();
+    sessionFoldersServiceMock.groupSessions.mockReturnValue(of({ id: 8, name: 'Feature work' }));
     sessionsServiceMock.delete.mockReset();
     sessionsServiceMock.delete.mockReturnValue(of({}));
     workspacesServiceMock.attach.mockReset();
@@ -425,6 +454,51 @@ describe('Sidebar', () => {
   function getWorkspaceRow(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
     return container.querySelector(`[data-workspace-row="${worktreePath}"]`);
   }
+
+  function showPersistedWorkspace(linkStatus: 'linked' | 'unlinked' = 'linked') {
+    tree.set([
+      {
+        id: 1,
+        name: 'Project One',
+        repos: [{ id: 1, name: 'Repo One', path: '/tmp/repo-one', workspaces: [makeWorkspace(linkStatus)], branches: [] }],
+      },
+    ]);
+    expandedKeys.set(new Set(['project-1', 'repo-1', 'workspace-1-2']));
+  }
+
+  it('offers folder creation on linked workspaces and not on unlinked workspaces', () => {
+    showPersistedWorkspace('linked');
+    const fixture = createSidebar();
+    expect(fixture.nativeElement.querySelector('[aria-label="New session folder"]')).toBeTruthy();
+
+    showPersistedWorkspace('unlinked');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-label="New session folder"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[aria-label="Link back"]')).toBeTruthy();
+  });
+
+  it('proposes and atomically creates a folder when one session is dropped on another', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const repo = tree()[0].repos[0];
+    const workspace = repo.workspaces![0];
+    const [source, target] = workspace.sessions;
+    component.draggingSession.set(source);
+
+    component.onSessionRowDrop({ preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as DragEvent, target, repo, workspace);
+    fixture.detectChanges();
+
+    expect(component.pendingSessionGroup()).toMatchObject({ source, target });
+    expect(fixture.nativeElement.textContent).toContain('Create a folder with both?');
+
+    component.groupFolderName.set('Feature work');
+    component.confirmGroupSessions();
+
+    expect(sessionFoldersServiceMock.groupSessions).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, name: 'Feature work', sessionIds: [11, 12] });
+    expect(navigationServiceMock.expandKey).toHaveBeenCalledWith('session-folder-8');
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
+  });
 
   it('opens the app-wide agent drawer from the sidebar header', () => {
     const fixture = createSidebar();

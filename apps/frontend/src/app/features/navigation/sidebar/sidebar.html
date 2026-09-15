@@ -196,19 +196,19 @@
                     } @else if (isSwitchingWorkspace(repo, workspace)) {
                       <span class="text-xs text-muted-foreground">Switching…</span>
                     } @else if (isWorkspaceUnlinked(workspace)) {
-                      <button
-                        class="sidebar-branch-action"
-                        title="New session folder"
-                        aria-label="New session folder"
-                        [disabled]="workspace.isMissing || isWorkspaceUnlinked(workspace) || workspace.id <= 0"
-                        (click)="startCreateFolder(repo, workspace, $event)"
-                      >
-                        <ng-icon name="lucideFolderPlus" class="!w-3.5 !h-3.5" />
-                      </button>
                       <button class="sidebar-branch-action" title="Link back" aria-label="Link back" (click)="$event.stopPropagation(); openLinkWorkspaceBack(repo, workspace)">
                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                       </button>
                     } @else {
+                      <button
+                        class="sidebar-branch-action"
+                        title="New session folder"
+                        aria-label="New session folder"
+                        [disabled]="workspace.isMissing || workspace.id <= 0"
+                        (click)="startCreateFolder(repo, workspace, $event)"
+                      >
+                        <ng-icon name="lucideFolderPlus" class="!w-3.5 !h-3.5" />
+                      </button>
                       <button
                         class="sidebar-branch-action"
                         title="Branches"
@@ -345,11 +345,16 @@
                         <div
                           class="sidebar-tree-row session-folder-session w-full cursor-pointer group"
                           [class.session-selected]="session.id === activeSessionId()"
+                          [class.session-drag-source]="draggingSession()?.id === session.id"
+                          [class.session-drop-target]="sessionDropTargetId() === session.id"
                           [style.padding-left]="'82px'"
                           [attr.data-session-row-id]="session.id"
                           draggable="true"
                           [attr.title]="'Open ' + (session.name || 'Session ' + session.id) + ' · drag to move or mention'"
                           (dragstart)="onSessionDragStart($event, session)"
+                          (dragover)="onSessionRowDragOver($event, session, workspace)"
+                          (dragleave)="onSessionRowDragLeave($event, session)"
+                          (drop)="onSessionRowDrop($event, session, repo, workspace)"
                           (dragend)="onSessionDragEnd()"
                           (click)="onSessionClick(session)"
                         >
@@ -480,11 +485,16 @@
                       class="sidebar-tree-row w-full cursor-pointer group"
                       [class.opacity-60]="isWorkspaceUnlinked(workspace)"
                       [class.session-selected]="session.id === activeSessionId()"
+                      [class.session-drag-source]="draggingSession()?.id === session.id"
+                      [class.session-drop-target]="sessionDropTargetId() === session.id"
                       [attr.data-session-row-id]="session.id"
                       [style.padding-left]="'64px'"
                       draggable="true"
-                      [attr.title]="'Open ' + (session.name || 'Session ' + session.id) + ' · drag into a chat to mention'"
+                      [attr.title]="'Open ' + (session.name || 'Session ' + session.id) + ' · drag onto another session to group, or into a chat to mention'"
                       (dragstart)="onSessionDragStart($event, session)"
+                      (dragover)="onSessionRowDragOver($event, session, workspace)"
+                      (dragleave)="onSessionRowDragLeave($event, session)"
+                      (drop)="onSessionRowDrop($event, session, repo, workspace)"
                       (dragend)="onSessionDragEnd()"
                       (click)="isWorkspaceUnlinked(workspace) ? $event.stopPropagation() : onSessionClick(session)"
                     >
@@ -898,6 +908,58 @@
         Delete workspace
       </button>
     </div>
+  </dialog>
+
+  <dialog #groupSessionsDialog="trackedNativeModal" trackNativeModal class="worktree-dialog session-group-dialog" (close)="onGroupSessionsDialogClosed()">
+    @if (pendingSessionGroup(); as group) {
+      <div class="session-group-dialog__icon" aria-hidden="true">
+        <ng-icon name="lucideFolderPlus" class="!w-5 !h-5" />
+      </div>
+      <div class="worktree-dialog__eyebrow">Organize sessions</div>
+      <h2 class="worktree-dialog__title">Create a folder with both?</h2>
+      <p class="worktree-dialog__copy">They’ll stay in this workspace and move together into a new folder.</p>
+
+      <div class="session-group-dialog__sessions" aria-label="Sessions to group">
+        <div class="session-group-dialog__session">
+          <span class="sidebar-status-dot status-idle"></span>
+          <span>{{ sessionDisplayName(group.source) }}</span>
+        </div>
+        <div class="session-group-dialog__connector" aria-hidden="true">
+          <span></span><ng-icon name="lucideFolder" class="!w-4 !h-4" /><span></span>
+        </div>
+        <div class="session-group-dialog__session">
+          <span class="sidebar-status-dot status-idle"></span>
+          <span>{{ sessionDisplayName(group.target) }}</span>
+        </div>
+      </div>
+
+      <form (submit)="$event.preventDefault(); confirmGroupSessions()">
+        <label class="session-group-dialog__label" for="group-folder-name">Folder name</label>
+        <input
+          #groupFolderNameInput
+          id="group-folder-name"
+          z-input
+          class="session-group-dialog__input"
+          maxlength="80"
+          autocomplete="off"
+          [value]="groupFolderName()"
+          [disabled]="groupingSessions()"
+          (input)="groupFolderName.set($any($event.target).value)"
+        />
+        <div class="worktree-dialog__actions">
+          <button type="button" class="worktree-dialog__button worktree-dialog__button--ghost" [disabled]="groupingSessions()" (click)="cancelGroupSessions()">Cancel</button>
+          <button type="submit" class="worktree-dialog__button worktree-dialog__button--soft" [disabled]="!groupFolderName().trim() || groupingSessions()">
+            @if (groupingSessions()) {
+              <span class="worktree-dialog__spinner" aria-hidden="true"></span>
+              Creating…
+            } @else {
+              <ng-icon name="lucideFolderPlus" class="!w-4 !h-4" />
+              Create folder
+            }
+          </button>
+        </div>
+      </form>
+    }
   </dialog>
 
   <dialog #deleteFolderDialog="trackedNativeModal" trackNativeModal class="worktree-dialog worktree-dialog--danger">

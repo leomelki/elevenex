@@ -198,6 +198,8 @@ export class Sidebar implements OnInit, OnDestroy {
   @ViewChild('sessionTitleInput') sessionTitleInputRef!: ElementRef<HTMLInputElement>;
   @ViewChild('folderNameInput') folderNameInputRef?: ElementRef<HTMLInputElement>;
   @ViewChild('deleteFolderDialog') deleteFolderDialogRef!: TrackNativeModalDirective;
+  @ViewChild('groupSessionsDialog') groupSessionsDialogRef!: TrackNativeModalDirective;
+  @ViewChild('groupFolderNameInput') groupFolderNameInputRef?: ElementRef<HTMLInputElement>;
 
   editingSessionTitleId = signal<number | null>(null);
   showCreateWizard = signal(false);
@@ -228,6 +230,10 @@ export class Sidebar implements OnInit, OnDestroy {
   folderBusyId = signal<number | null>(null);
   draggedOverFolderId = signal<number | null>(null);
   draggingSession = signal<SessionInTree | null>(null);
+  sessionDropTargetId = signal<number | null>(null);
+  pendingSessionGroup = signal<{ repoId: number; workspaceId: number; source: SessionInTree; target: SessionInTree } | null>(null);
+  groupFolderName = signal('');
+  groupingSessions = signal(false);
   deleteFolderTarget = signal<SessionFolder | null>(null);
 
   armedDeleteSessionId = signal<number | null>(null);
@@ -423,6 +429,94 @@ export class Sidebar implements OnInit, OnDestroy {
   onSessionDragEnd(): void {
     this.draggingSession.set(null);
     this.draggedOverFolderId.set(null);
+    this.sessionDropTargetId.set(null);
+  }
+
+  onSessionRowDragOver(event: DragEvent, target: SessionInTree, workspace: NavigationWorkspace): void {
+    const source = this.draggingSession();
+    if (!source || !this.canGroupSessions(source, target, workspace)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    this.sessionDropTargetId.set(target.id);
+  }
+
+  onSessionRowDragLeave(event: DragEvent, target: SessionInTree): void {
+    const row = event.currentTarget as HTMLElement | null;
+    if (row?.contains(event.relatedTarget as Node | null)) return;
+    if (this.sessionDropTargetId() === target.id) this.sessionDropTargetId.set(null);
+  }
+
+  onSessionRowDrop(event: DragEvent, target: SessionInTree, repo: NavigationRepo, workspace: NavigationWorkspace): void {
+    const source = this.draggingSession();
+    this.sessionDropTargetId.set(null);
+    if (!source || !this.canGroupSessions(source, target, workspace)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.pendingSessionGroup.set({ repoId: repo.id, workspaceId: workspace.id, source, target });
+    this.groupFolderName.set(this.suggestFolderName(source, target));
+    this.groupSessionsDialogRef.open();
+    window.setTimeout(() => {
+      this.groupFolderNameInputRef?.nativeElement.focus();
+      this.groupFolderNameInputRef?.nativeElement.select();
+    });
+  }
+
+  confirmGroupSessions(): void {
+    const pending = this.pendingSessionGroup();
+    const name = this.groupFolderName().trim();
+    if (!pending || !name || this.groupingSessions()) return;
+    this.groupingSessions.set(true);
+    this.sessionFoldersService
+      .groupSessions({ repoId: pending.repoId, workspaceId: pending.workspaceId, name, sessionIds: [pending.source.id, pending.target.id] })
+      .subscribe({
+        next: folder => {
+          this.groupingSessions.set(false);
+          this.groupSessionsDialogRef.close();
+          this.pendingSessionGroup.set(null);
+          this.navService.expandKey(`session-folder-${folder.id}`);
+          this.navService.refreshTree();
+          toast.success(`Created ${folder.name} with both sessions`);
+        },
+        error: err => {
+          this.groupingSessions.set(false);
+          toast.error(err?.error?.message || 'Could not group sessions');
+        },
+      });
+  }
+
+  cancelGroupSessions(): void {
+    if (this.groupingSessions()) return;
+    this.groupSessionsDialogRef.close();
+    this.pendingSessionGroup.set(null);
+  }
+
+  onGroupSessionsDialogClosed(): void {
+    if (!this.groupingSessions()) this.pendingSessionGroup.set(null);
+  }
+
+  sessionDisplayName(session: SessionInTree): string {
+    return session.name?.trim() || `Session ${session.id}`;
+  }
+
+  private canGroupSessions(source: SessionInTree, target: SessionInTree, workspace: NavigationWorkspace): boolean {
+    return (
+      source.id !== target.id &&
+      source.status !== 'archived' &&
+      target.status !== 'archived' &&
+      source.repoId === target.repoId &&
+      source.workspaceId === workspace.id &&
+      target.workspaceId === workspace.id &&
+      !workspace.isMissing &&
+      !this.isWorkspaceUnlinked(workspace)
+    );
+  }
+
+  private suggestFolderName(source: SessionInTree, target: SessionInTree): string {
+    const targetName = this.sessionDisplayName(target);
+    const sourceName = this.sessionDisplayName(source);
+    const sharedWords = targetName.split(/\s+/).filter(word => word.length > 2 && sourceName.toLocaleLowerCase().includes(word.toLocaleLowerCase()));
+    return sharedWords.length > 0 ? sharedWords.slice(0, 3).join(' ') : 'New folder';
   }
 
   onSessionClick(session: SessionInTree) {

@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Param, Patch, Post } from '@nestjs/common';
 import {
   CreateSessionFolderDto,
+  GroupSessionsDto,
   RenameSessionFolderDto,
 } from './dto/create-session-folder.dto.js';
 import { SessionFoldersService } from './session-folders.service.js';
@@ -12,6 +13,11 @@ export class SessionFoldersController {
   @Post()
   create(@Body() body: CreateSessionFolderDto) {
     return this.folders.create(body);
+  }
+
+  @Post('group-sessions')
+  groupSessions(@Body() body: GroupSessionsDto) {
+    return this.folders.groupSessions(body);
   }
 
   @Patch(':id')

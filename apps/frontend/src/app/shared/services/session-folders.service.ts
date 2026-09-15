@@ -10,6 +10,10 @@ export class SessionFoldersService {
     return this.http.post<SessionFolder>('/api/session-folders', data);
   }
 
+  groupSessions(data: { repoId: number; workspaceId: number; name: string; sessionIds: [number, number] }) {
+    return this.http.post<SessionFolder>('/api/session-folders/group-sessions', data);
+  }
+
   rename(id: number, name: string) {
     return this.http.patch<SessionFolder>(`/api/session-folders/${id}`, { name });
   }
