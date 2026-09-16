@@ -1076,6 +1076,13 @@ describe('ClaudeWorkspaceComponent', () => {
         content: 'The second response',
         timestamp: '2026-04-24T08:00:03.000Z',
       },
+      {
+        id: 'task-notification',
+        kind: 'user',
+        content:
+          '<task-notification><task-id>task-1</task-id><status>completed</status><summary>Background work completed</summary></task-notification>',
+        timestamp: '2026-04-24T08:00:04.000Z',
+      },
     ]);
     fixture.detectChanges();
     await flushPromises();
@@ -1084,6 +1091,7 @@ describe('ClaudeWorkspaceComponent', () => {
     const [firstPrompt, secondPrompt] = fixture.nativeElement.querySelectorAll(
       '[data-user-prompt-id]',
     ) as NodeListOf<HTMLElement>;
+    expect(fixture.nativeElement.querySelectorAll('[data-user-prompt-id]')).toHaveLength(2);
     vi.spyOn(transcript, 'getBoundingClientRect').mockReturnValue({
       top: 100,
     } as DOMRect);

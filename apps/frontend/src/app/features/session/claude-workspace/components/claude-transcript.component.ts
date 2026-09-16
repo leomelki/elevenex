@@ -8,6 +8,7 @@ import type {
 import type { ReviewChat } from '@/shared/models/review-chat.model';
 import type { SessionFork } from '@/shared/models/session.model';
 import type { PlanReviewRequest } from '@/features/plan-annotator';
+import { parseTaskNotifications } from '@/shared/utils/task-notification';
 import type { PairedTranscriptUnit } from '../util/paired-transcript';
 import type { TranscriptRenderItem } from '../util/transcript-render-items';
 
@@ -160,7 +161,8 @@ export class ClaudeTranscriptComponent {
   }
 
   userPromptId(item: ClaudeTranscriptItem): string | null {
-    return item.kind === 'user' && !item.isSynthetic && !item.parentToolUseId ? item.id : null;
+    if (item.kind !== 'user' || item.isSynthetic || item.parentToolUseId) return null;
+    return parseTaskNotifications(item.content).text.trim() ? item.id : null;
   }
 
   isTurnExpanded(turnId: string): boolean {

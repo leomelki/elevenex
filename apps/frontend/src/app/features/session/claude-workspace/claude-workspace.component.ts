@@ -597,7 +597,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     let lastId: string | null = null;
     const items = this.transcriptItems();
     for (const item of items) {
-      if (item.kind === 'user' && !item.isSynthetic && !item.parentToolUseId) {
+      if (
+        item.kind === 'user' &&
+        !item.isSynthetic &&
+        !item.parentToolUseId &&
+        parseTaskNotifications(item.content).text.trim()
+      ) {
         byId.set(item.id, item);
         firstId ??= item.id;
         lastId = item.id;
