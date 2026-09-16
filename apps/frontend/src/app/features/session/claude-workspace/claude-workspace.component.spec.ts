@@ -5,6 +5,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { toast } from 'ngx-sonner';
 import { ClaudeWorkspaceComponent } from './claude-workspace.component';
 import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
 import { ClaudeTerminalTranscriptWebsocketService } from '@/shared/services/claude-terminal-transcript-websocket.service';
 import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
@@ -672,6 +673,42 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(composerDraftsMock.load).toHaveBeenCalledTimes(2);
     expect(composerDraftsMock.load).toHaveBeenLastCalledWith(7);
     expect(fixture.componentInstance.runtimeStarted()).toBe(false);
+  });
+
+  it('preserves composer input when applying a preset for another provider', async () => {
+    const savedPrompt = 'Typed before applying preset';
+    composerDraftsMock.load.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      version: 1,
+      sessionId: 7,
+      text: savedPrompt,
+      diffMentions: [],
+      images: [],
+      updatedAt: '2026-04-24T08:00:00.000Z',
+    });
+    const agentApi = TestBed.inject(AgentRuntimeApiService);
+    vi.spyOn(agentApi, 'setSelectedModel').mockReturnValue(of(runtimeState()));
+    vi.spyOn(agentApi, 'setReasoningEffort').mockReturnValue(of(runtimeState()));
+
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.hasStartedAgentRuntime = false;
+    fixture.detectChanges();
+    await flushPromises();
+
+    fixture.componentInstance.onPromptChange(savedPrompt);
+    await fixture.componentInstance.applyModelPreset({
+      id: 'fast-fixes',
+      name: 'Fast fixes',
+      provider: 'codex',
+      model: 'gpt-5-mini',
+      reasoningEffort: 'low',
+    });
+    await flushPromises();
+
+    expect(fixture.componentInstance.activeAgentProvider).toBe('codex');
+    expect(fixture.componentInstance.prompt()).toBe(savedPrompt);
+    expect(composerDraftsMock.load).toHaveBeenCalledTimes(2);
+    expect(composerDraftsMock.load).toHaveBeenLastCalledWith(7);
   });
 
   it('copies message content to the clipboard', async () => {

@@ -1280,6 +1280,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.reset();
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
         await this.bootstrap();
+        this.restoreInitialComposerDraft();
       }
 
       const modelState = await firstValueFrom(
