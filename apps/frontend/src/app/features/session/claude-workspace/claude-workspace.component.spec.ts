@@ -1041,6 +1041,78 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(transcript.scrollTop).toBe(1400);
   });
 
+  it('pins the latest user message only after it has scrolled above the transcript', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.historyItems.set([
+      {
+        id: 'user-1',
+        kind: 'user',
+        content: 'Keep this prompt in view',
+        timestamp: '2026-04-24T08:00:00.000Z',
+      },
+      {
+        id: 'assistant-1',
+        kind: 'assistant',
+        content: 'A long response',
+        timestamp: '2026-04-24T08:00:01.000Z',
+      },
+    ]);
+    fixture.detectChanges();
+    await flushPromises();
+
+    const transcript = fixture.nativeElement.querySelector('.cw-transcript') as HTMLElement;
+    const source = fixture.nativeElement.querySelector(
+      '[data-tracked-user-message]',
+    ) as HTMLElement;
+    vi.spyOn(transcript, 'getBoundingClientRect').mockReturnValue({
+      top: 100,
+    } as DOMRect);
+    const sourceRect = vi.spyOn(source, 'getBoundingClientRect');
+
+    sourceRect.mockReturnValue({ bottom: 80 } as DOMRect);
+    transcript.dispatchEvent(new Event('scroll'));
+    fixture.detectChanges();
+
+    const pinned = fixture.nativeElement.querySelector('.cw-pinned-prompt') as HTMLElement;
+    expect(pinned.classList.contains('cw-pinned-prompt--visible')).toBe(true);
+    expect(pinned.textContent).toContain('Keep this prompt in view');
+
+    sourceRect.mockReturnValue({ bottom: 140 } as DOMRect);
+    transcript.dispatchEvent(new Event('scroll'));
+    fixture.detectChanges();
+
+    expect(pinned.classList.contains('cw-pinned-prompt--visible')).toBe(false);
+  });
+
+  it('bounds very long pinned prompts in an independently scrollable viewport', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.historyItems.set([
+      {
+        id: 'user-long',
+        kind: 'user',
+        content: linesOf(200),
+        timestamp: '2026-04-24T08:00:00.000Z',
+      },
+    ]);
+    fixture.detectChanges();
+    await flushPromises();
+
+    const viewport = fixture.nativeElement.querySelector(
+      '.cw-pinned-prompt__viewport',
+    ) as HTMLElement;
+    expect(viewport).not.toBeNull();
+    expect(getComputedStyle(viewport).overflow).toBe('auto');
+    expect(getComputedStyle(viewport).maxHeight).toContain('8.5rem');
+  });
+
   it('rewinds conversation and restores the prompt into the composer state', async () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;

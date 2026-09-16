@@ -104,6 +104,7 @@ import {
   ClaudeSubagentHistoryState,
 } from './components/claude-agent-inspector.component';
 import { ClaudeContextNoteComponent } from './components/claude-context-note.component';
+import { ClaudeMessageComponent } from './components/claude-message.component';
 import {
   ClaudeTranscriptComponent,
   type TranscriptMessageAffordances,
@@ -165,6 +166,7 @@ import {
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
     ClaudeTranscriptComponent,
+    ClaudeMessageComponent,
     ClaudeContextNoteComponent,
     ClaudeInstallCardComponent,
     CodexLoginCardComponent,
@@ -371,6 +373,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
   private shouldAutoScrollTranscript = true;
   private readonly transcriptBottomThresholdPx = 48;
+  readonly pinnedLastUserMessage = signal(false);
   readonly permissionMode = computed<ClaudePermissionMode>(() => {
     return this._permissionMode() ?? 'auto';
   });
@@ -566,6 +569,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     ),
   );
 
+  readonly lastUserMessage = computed<ClaudeTranscriptItem | null>(() => {
+    const items = this.transcriptItems();
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (item.kind === 'user' && !item.isSynthetic && !item.parentToolUseId) return item;
+    }
+    return null;
+  });
+
   readonly topLevelTranscriptItems = computed(() =>
     this.transcriptItems().filter((item) => !item.parentToolUseId),
   );
@@ -709,7 +721,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     effect(() => {
       this.pairedTranscript();
       this.runPhase();
-      queueMicrotask(() => this.scrollTranscriptToBottomIfPinned());
+      this.lastUserMessage();
+      queueMicrotask(() => {
+        this.scrollTranscriptToBottomIfPinned();
+        this.updatePinnedLastUserMessage();
+      });
     });
 
     // Re-hydrate the runtime WS after server reconnection to catch any missed events.
@@ -2465,12 +2481,32 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.closeAgentInspector();
     this.agentHistoryById.set({});
     this.shouldAutoScrollTranscript = true;
+    this.pinnedLastUserMessage.set(false);
   }
 
   onTranscriptScroll(): void {
     const el = this.transcriptContainer?.nativeElement;
     if (!el) return;
     this.shouldAutoScrollTranscript = this.isTranscriptScrolledToBottom(el);
+    this.updatePinnedLastUserMessage();
+  }
+
+  @HostListener('window:resize')
+  onWindowResize(): void {
+    this.updatePinnedLastUserMessage();
+  }
+
+  scrollToLastUserMessage(): void {
+    const container = this.transcriptContainer?.nativeElement;
+    const message = this.findLastUserMessageElement();
+    if (!container || !message) return;
+
+    const containerTop = container.getBoundingClientRect().top;
+    const messageTop = message.getBoundingClientRect().top;
+    container.scrollTo({
+      top: Math.max(0, container.scrollTop + messageTop - containerTop - 16),
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
   }
 
   private scrollTranscriptToBottomIfPinned(): void {
@@ -2486,6 +2522,27 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   private isTranscriptScrolledToBottom(el: HTMLDivElement): boolean {
     return el.scrollHeight - el.scrollTop - el.clientHeight <= this.transcriptBottomThresholdPx;
+  }
+
+  private updatePinnedLastUserMessage(): void {
+    const container = this.transcriptContainer?.nativeElement;
+    const message = this.findLastUserMessageElement();
+    if (!container || !message) {
+      this.pinnedLastUserMessage.set(false);
+      return;
+    }
+
+    const containerTop = container.getBoundingClientRect().top;
+    const messageBottom = message.getBoundingClientRect().bottom;
+    this.pinnedLastUserMessage.set(messageBottom < containerTop - 1);
+  }
+
+  private findLastUserMessageElement(): HTMLElement | null {
+    const container = this.transcriptContainer?.nativeElement;
+    const messageId = this.lastUserMessage()?.id;
+    if (!container || !messageId) return null;
+
+    return container.querySelector<HTMLElement>('[data-tracked-user-message]');
   }
 
   private enqueueDelta(itemId: string, delta: string): void {

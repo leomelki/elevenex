@@ -100,6 +100,8 @@ export const READ_ONLY_MESSAGE_AFFORDANCES: TranscriptMessageAffordances = {
 export class ClaudeTranscriptComponent {
   readonly items = input.required<TranscriptRenderItem[]>();
   readonly worktreePath = input<string | null>(null);
+  /** Marks one rendered user message so a host can track its viewport position. */
+  readonly trackedUserMessageId = input<string | null>(null);
   /** The one item currently receiving deltas, if any. */
   readonly streamingMessageId = input<string | null>(null);
   /** Renders the empty pulsing reply bubble while the first token is awaited. */

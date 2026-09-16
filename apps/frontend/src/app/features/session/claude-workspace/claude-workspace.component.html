@@ -58,11 +58,12 @@
       }
     </div>
   } @else {
-    <div
-      #transcriptContainer
-      class="cw-transcript flex-1 min-h-0 overflow-auto py-5 px-[clamp(0.75rem,4vw,2rem)] scroll-smooth"
-      (scroll)="onTranscriptScroll()"
-    >
+    <div class="cw-transcript-shell relative flex flex-1 min-h-0">
+      <div
+        #transcriptContainer
+        class="cw-transcript w-full flex-1 min-h-0 overflow-auto py-5 px-[clamp(0.75rem,4vw,2rem)] scroll-smooth"
+        (scroll)="onTranscriptScroll()"
+      >
       @if (showLoading()) {
         <div class="h-full flex items-center justify-center">
           <div class="flex flex-col gap-4 w-full max-w-[52rem] mx-auto">
@@ -202,6 +203,7 @@
           <cw-transcript
             [items]="renderItems()"
             [worktreePath]="worktreePath"
+            [trackedUserMessageId]="lastUserMessage()?.id ?? null"
             [streamingMessageId]="streamingMessageId()"
             [pendingReply]="isAwaitingFirstAssistantToken()"
             [childItemsByParentToolUseId]="childTranscriptItemsByParentToolUseId()"
@@ -242,6 +244,35 @@
             </div>
           }
         </div>
+      }
+      </div>
+
+      @if (lastUserMessage(); as lastUser) {
+        <aside
+          class="cw-pinned-prompt"
+          [class.cw-pinned-prompt--visible]="pinnedLastUserMessage()"
+          [attr.aria-hidden]="!pinnedLastUserMessage()"
+          aria-label="Latest prompt"
+        >
+          <div class="cw-pinned-prompt__card">
+            <button
+              type="button"
+              class="cw-pinned-prompt__header"
+              [attr.tabindex]="pinnedLastUserMessage() ? 0 : -1"
+              title="Jump to the latest prompt"
+              (click)="scrollToLastUserMessage()"
+            >
+              <span>Latest prompt</span>
+              <span class="cw-pinned-prompt__jump">
+                Show in conversation
+                <ng-icon name="lucideChevronDown" size="13" aria-hidden="true" />
+              </span>
+            </button>
+            <div class="cw-pinned-prompt__viewport" aria-hidden="true">
+              <cw-message [item]="lastUser" />
+            </div>
+          </div>
+        </aside>
       }
     </div>
 
