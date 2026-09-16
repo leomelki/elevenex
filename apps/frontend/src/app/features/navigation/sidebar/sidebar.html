@@ -204,7 +204,7 @@
                         class="sidebar-branch-action"
                         title="New session folder"
                         aria-label="New session folder"
-                        [disabled]="workspace.isMissing || workspace.id <= 0"
+                        [disabled]="creatingFolder() || workspace.isMissing || workspace.id <= 0"
                         (click)="startCreateFolder(repo, workspace, $event)"
                       >
                         <ng-icon name="lucideFolderPlus" class="!w-3.5 !h-3.5" />
@@ -262,25 +262,6 @@
                 </button>
 
                 @if (isExpanded('workspace-' + repo.id + '-' + workspace.id)) {
-                  @if (creatingFolderRepoId() === repo.id && creatingFolderWorkspaceId() === workspace.id) {
-                    <form class="session-folder-create" [style.padding-left]="'64px'" (submit)="submitCreateFolder(repo, workspace, $event)">
-                      <ng-icon name="lucideFolder" class="!w-3.5 !h-3.5 text-muted-foreground shrink-0" />
-                      <input
-                        #folderNameInput
-                        z-input
-                        class="session-folder-name-input"
-                        placeholder="Folder name"
-                        maxlength="80"
-                        [disabled]="creatingFolder()"
-                        (keydown.escape)="cancelCreateFolder()"
-                      />
-                      <button type="submit" class="session-folder-inline-action" title="Create folder" aria-label="Create folder" [disabled]="creatingFolder()">
-                        <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
-                      </button>
-                      <button type="button" class="session-folder-inline-action" title="Cancel" aria-label="Cancel" [disabled]="creatingFolder()" (click)="cancelCreateFolder()">×</button>
-                    </form>
-                  }
-
                   @for (folder of workspace.sessionFolders ?? []; track folder.id) {
                     <div
                       class="session-folder-row group"
@@ -299,13 +280,14 @@
                             class="session-folder-name-input"
                             [attr.data-folder-name-input]="folder.id"
                             [value]="folder.name"
+                            maxlength="80"
                             (click)="$event.stopPropagation()"
                             (blur)="saveFolderName(folder, $event)"
                             (keydown.enter)="saveFolderName(folder, $event)"
                             (keydown.escape)="editingFolderId.set(null)"
                           />
                         } @else {
-                          <span class="session-folder-label truncate">{{ folder.name }}</span>
+                          <span class="session-folder-label truncate" (dblclick)="startEditFolder(folder, $event)">{{ folder.name }}</span>
                         }
                         <span class="sidebar-archive-count">{{ folderSessionCount(folder) }}</span>
                       </button>

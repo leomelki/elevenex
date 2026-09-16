@@ -196,7 +196,6 @@ export class Sidebar implements OnInit, OnDestroy {
   @ViewChild('removeFromProjectDialog') removeFromProjectDialogRef!: TrackNativeModalDirective;
   @ViewChild('deleteWorktreeDialog') deleteWorktreeDialogRef!: TrackNativeModalDirective;
   @ViewChild('sessionTitleInput') sessionTitleInputRef!: ElementRef<HTMLInputElement>;
-  @ViewChild('folderNameInput') folderNameInputRef?: ElementRef<HTMLInputElement>;
   @ViewChild('deleteFolderDialog') deleteFolderDialogRef!: TrackNativeModalDirective;
 
   editingSessionTitleId = signal<number | null>(null);
@@ -221,8 +220,6 @@ export class Sidebar implements OnInit, OnDestroy {
   removeWorkspaceId = signal(0);
   removingFromProject = signal(false);
   openingWorkspaceRepoId = signal<number | null>(null);
-  creatingFolderWorkspaceId = signal<number | null>(null);
-  creatingFolderRepoId = signal<number | null>(null);
   creatingFolder = signal(false);
   editingFolderId = signal<number | null>(null);
   folderBusyId = signal<number | null>(null);
@@ -802,32 +799,15 @@ export class Sidebar implements OnInit, OnDestroy {
 
   startCreateFolder(repo: NavigationRepo, workspace: NavigationWorkspace, event: Event) {
     event.stopPropagation();
-    if (workspace.id <= 0 || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) return;
+    if (this.creatingFolder() || workspace.id <= 0 || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) return;
     this.navService.expandKey(`workspace-${repo.id}-${workspace.id}`);
-    this.creatingFolderRepoId.set(repo.id);
-    this.creatingFolderWorkspaceId.set(workspace.id);
-    window.setTimeout(() => this.folderNameInputRef?.nativeElement.focus());
-  }
-
-  cancelCreateFolder() {
-    if (this.creatingFolder()) return;
-    this.creatingFolderRepoId.set(null);
-    this.creatingFolderWorkspaceId.set(null);
-  }
-
-  submitCreateFolder(repo: NavigationRepo, workspace: NavigationWorkspace, event: Event) {
-    event.preventDefault();
-    event.stopPropagation();
-    const name = this.folderNameInputRef?.nativeElement.value.trim() ?? '';
-    if (!name || this.creatingFolder()) return;
     this.creatingFolder.set(true);
-    this.sessionFoldersService.create({ repoId: repo.id, workspaceId: workspace.id, name }).subscribe({
+    this.sessionFoldersService.create({ repoId: repo.id, workspaceId: workspace.id, name: 'New folder' }).subscribe({
       next: folder => {
         this.creatingFolder.set(false);
-        this.cancelCreateFolder();
         this.navService.expandKey(`session-folder-${folder.id}`);
-        this.navService.refreshTree();
-        toast.success('Session folder created');
+        this.navService.addSessionFolder({ ...folder, sessions: [], archivedSessions: [] });
+        this.editingFolderId.set(folder.id);
       },
       error: err => {
         this.creatingFolder.set(false);
@@ -843,6 +823,7 @@ export class Sidebar implements OnInit, OnDestroy {
 
   saveFolderName(folder: SessionFolder, event: Event) {
     event.stopPropagation();
+    if (this.folderBusyId() !== null) return;
     const name = (event.target as HTMLInputElement).value.trim();
     if (!name || name === folder.name) {
       this.editingFolderId.set(null);

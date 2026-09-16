@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
 import { NavigationProject } from '../models/navigation-tree.model';
-import { Session } from '../models/session.model';
+import { Session, SessionFolder } from '../models/session.model';
 import { ClaudeStatusService } from './claude-status.service';
 import { migratedWindowScopedKey } from './scoped-storage';
 
@@ -122,6 +122,24 @@ export class NavigationService {
   patchSessionName(sessionId: number, name: string): void {
     this.cachedSessionNames.set(sessionId, name);
     this.applySessionNamePatch(sessionId, name);
+  }
+
+  addSessionFolder(folder: SessionFolder): void {
+    this.tree.update((projects) =>
+      projects.map((project) => ({
+        ...project,
+        repos: project.repos.map((repo) => ({
+          ...repo,
+          workspaces: (repo.workspaces ?? []).map((workspace) => {
+            if (workspace.id !== folder.workspaceId) return workspace;
+            const folders = workspace.sessionFolders ?? [];
+            return folders.some((existing) => existing.id === folder.id)
+              ? workspace
+              : { ...workspace, sessionFolders: [...folders, folder] };
+          }),
+        })),
+      })),
+    );
   }
 
   private applySessionNamePatch(sessionId: number, name: string): void {

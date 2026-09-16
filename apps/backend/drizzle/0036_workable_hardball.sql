@@ -1,0 +1,1 @@
+DROP INDEX `session_folders_workspace_name_idx`;

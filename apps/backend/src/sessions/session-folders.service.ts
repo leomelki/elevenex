@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -27,18 +26,11 @@ export class SessionFoldersService {
   async create(input: { repoId: number; workspaceId: number; name: string }) {
     const name = this.normalizedName(input.name);
     await this.assertWorkspace(input.repoId, input.workspaceId);
-    try {
-      const rows = await this.db
-        .insert(schema.sessionFolders)
-        .values({ ...input, name })
-        .returning();
-      return rows[0];
-    } catch (error) {
-      if (this.isUniqueConstraint(error)) {
-        throw new ConflictException('A folder with this name already exists');
-      }
-      throw error;
-    }
+    const rows = await this.db
+      .insert(schema.sessionFolders)
+      .values({ ...input, name })
+      .returning();
+    return rows[0];
   }
 
   async groupSessions(input: { repoId: number; workspaceId: number; name: string; sessionIds: number[] }) {
@@ -60,38 +52,24 @@ export class SessionFoldersService {
       throw new BadRequestException('Sessions must be active and belong to this workspace');
     }
 
-    try {
-      return this.db.transaction((tx) => {
-        const folder = tx.insert(schema.sessionFolders).values({ repoId: input.repoId, workspaceId: input.workspaceId, name }).returning().get();
-        tx.update(schema.sessions).set({ folderId: folder.id, updatedAt: new Date().toISOString() }).where(inArray(schema.sessions.id, sessionIds)).run();
-        return folder;
-      });
-    } catch (error) {
-      if (this.isUniqueConstraint(error)) {
-        throw new ConflictException('A folder with this name already exists');
-      }
-      throw error;
-    }
+    return this.db.transaction((tx) => {
+      const folder = tx.insert(schema.sessionFolders).values({ repoId: input.repoId, workspaceId: input.workspaceId, name }).returning().get();
+      tx.update(schema.sessions).set({ folderId: folder.id, updatedAt: new Date().toISOString() }).where(inArray(schema.sessions.id, sessionIds)).run();
+      return folder;
+    });
   }
 
   async rename(id: number, rawName: string) {
     await this.findOne(id);
-    try {
-      const rows = await this.db
-        .update(schema.sessionFolders)
-        .set({
-          name: this.normalizedName(rawName),
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(schema.sessionFolders.id, id))
-        .returning();
-      return rows[0];
-    } catch (error) {
-      if (this.isUniqueConstraint(error)) {
-        throw new ConflictException('A folder with this name already exists');
-      }
-      throw error;
-    }
+    const rows = await this.db
+      .update(schema.sessionFolders)
+      .set({
+        name: this.normalizedName(rawName),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessionFolders.id, id))
+      .returning();
+    return rows[0];
   }
 
   async archive(id: number) {
@@ -224,12 +202,5 @@ export class SessionFoldersService {
     const normalized = name.trim().replace(/\s+/g, ' ');
     if (!normalized) throw new BadRequestException('Folder name is required');
     return normalized;
-  }
-
-  private isUniqueConstraint(error: unknown): boolean {
-    return (
-      error instanceof Error &&
-      error.message.includes('UNIQUE constraint failed')
-    );
   }
 }

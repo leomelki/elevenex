@@ -171,6 +171,17 @@ describe('Sidebar', () => {
     loadTree: vi.fn(),
     refreshTree: vi.fn(),
     openSession: vi.fn(),
+    addSessionFolder: vi.fn((folder) => {
+      tree.update(projects => projects.map(project => ({
+        ...project,
+        repos: project.repos.map(repo => ({
+          ...repo,
+          workspaces: (repo.workspaces ?? []).map(workspace => workspace.id === folder.workspaceId
+            ? { ...workspace, sessionFolders: [...(workspace.sessionFolders ?? []), folder] }
+            : workspace),
+        })),
+      })));
+    }),
     toggleExpand: vi.fn((key: string) => {
       const next = new Set(expandedKeys());
       if (next.has(key)) {
@@ -325,6 +336,7 @@ describe('Sidebar', () => {
     navigationServiceMock.loadTree.mockReset();
     navigationServiceMock.refreshTree.mockReset();
     navigationServiceMock.openSession.mockReset();
+    navigationServiceMock.addSessionFolder.mockClear();
     navigationServiceMock.toggleExpand.mockClear();
     navigationServiceMock.isExpanded.mockClear();
     navigationServiceMock.expandKey.mockClear();
@@ -333,6 +345,8 @@ describe('Sidebar', () => {
     navigationServiceMock.clearHighlightedProject.mockClear();
     sessionsServiceMock.create.mockReset();
     sessionsServiceMock.create.mockReturnValue(of({ id: 21 }));
+    sessionFoldersServiceMock.create.mockReset();
+    sessionFoldersServiceMock.create.mockReturnValue(of({ id: 9, repoId: 1, workspaceId: 2, name: 'New folder', archivedAt: null }));
     sessionFoldersServiceMock.groupSessions.mockReset();
     sessionFoldersServiceMock.groupSessions.mockReturnValue(of({ id: 8, name: 'Feature work' }));
     sessionsServiceMock.delete.mockReset();
@@ -494,6 +508,39 @@ describe('Sidebar', () => {
     expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
     expect(component.editingFolderId()).toBe(8);
     expect(fixture.nativeElement.textContent).not.toContain('Create a folder with both?');
+  });
+
+  it('creates a folder immediately and enters title edit mode', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[aria-label="New session folder"]')?.click();
+    fixture.detectChanges();
+    vi.runOnlyPendingTimers();
+    fixture.detectChanges();
+
+    expect(sessionFoldersServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, name: 'New folder' });
+    expect(navigationServiceMock.addSessionFolder).toHaveBeenCalled();
+    expect(fixture.componentInstance.editingFolderId()).toBe(9);
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-folder-name-input="9"]')).toBeTruthy();
+  });
+
+  it('enters title edit mode when a folder name is double-clicked', () => {
+    const workspace = makeWorkspace();
+    workspace.sessionFolders = [{ id: 9, repoId: 1, workspaceId: 2, name: 'Design', archivedAt: null, sessions: [], archivedSessions: [] }];
+    tree.set([{ id: 1, name: 'Project One', repos: [{ id: 1, name: 'Repo One', path: '/tmp/repo-one', workspaces: [workspace], branches: [] }] }]);
+    expandedKeys.set(new Set(['project-1', 'repo-1', 'workspace-1-2']));
+    const fixture = createSidebar();
+    const label = (fixture.nativeElement as HTMLElement).querySelector('.session-folder-label') as HTMLElement;
+
+    label.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.editingFolderId()).toBe(9);
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-folder-name-input="9"]')).toBeTruthy();
+    expect((fixture.nativeElement as HTMLElement).querySelector('[aria-label="New session in folder"]')).toBeTruthy();
+    expect((fixture.nativeElement as HTMLElement).querySelector('[aria-label="Archive folder and sessions"]')).toBeTruthy();
+    expect((fixture.nativeElement as HTMLElement).querySelector('[aria-label="Delete folder and sessions"]')).toBeTruthy();
   });
 
   it('opens the app-wide agent drawer from the sidebar header', () => {
