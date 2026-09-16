@@ -181,14 +181,17 @@ function createService(options?: {
 }) {
   if (options?.idleMs) process.env.PI_RUNTIME_IDLE_MS = options.idleMs;
   if (options?.idleCap) process.env.PI_RUNTIME_IDLE_CAP = options.idleCap;
+  let piSessionPath = options?.piSessionPath ?? '-1';
   const sessions = {
     findOne: jest.fn(async (sessionId: number) => ({
       id: sessionId,
       worktreePath: `/repo/session-${sessionId}`,
-      piSessionPath: options?.piSessionPath ?? '-1',
+      piSessionPath,
     })),
     updateStatus: jest.fn(async () => undefined),
-    updatePiSessionPath: jest.fn(async () => undefined),
+    updatePiSessionPath: jest.fn(async (_sessionId: number, path: string) => {
+      piSessionPath = path;
+    }),
   };
   const auth = {
     on: jest.fn(),
@@ -372,6 +375,128 @@ describe('PiRuntimeService lifecycle', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it('rewinds before a selected Pi user message into a new session file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-rewind-'));
+    try {
+      const sessionPath = join(root, 'session.jsonl');
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({ type: 'session', version: 3 }),
+          JSON.stringify({
+            id: 'first-user',
+            type: 'message',
+            message: {
+              role: 'user',
+              timestamp: Date.parse('2026-05-22T10:00:00.000Z'),
+              content: [{ type: 'text', text: 'first' }],
+            },
+          }),
+          JSON.stringify({
+            id: 'first-assistant',
+            type: 'message',
+            message: {
+              role: 'assistant',
+              timestamp: Date.parse('2026-05-22T10:01:00.000Z'),
+              content: [{ type: 'text', text: 'done' }],
+            },
+          }),
+          JSON.stringify({
+            id: 'edit-user',
+            type: 'message',
+            message: {
+              role: 'user',
+              timestamp: Date.parse('2026-05-22T10:02:00.000Z'),
+              content: [{ type: 'text', text: 'edit this' }],
+            },
+          }),
+          JSON.stringify({
+            id: 'old-assistant',
+            type: 'message',
+            message: {
+              role: 'assistant',
+              timestamp: Date.parse('2026-05-22T10:03:00.000Z'),
+              content: [{ type: 'text', text: 'old answer' }],
+            },
+          }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+      const child = createPiProcess(sessionPath);
+      mockSpawn.mockReturnValue(child as never);
+      const { service, sessions } = createService({
+        piSessionPath: sessionPath,
+      });
+
+      const beforeRewind = await service.getHistory(1);
+      const editMessageId = beforeRewind.find(
+        (item) => item.content === 'edit this',
+      )?.sourceMessageId;
+      expect(editMessageId).toBe('edit-user');
+      await service.getRuntimeState(1);
+      await (service as any).ensureRuntime(1);
+      const history = await service.rewindConversation(1, editMessageId!);
+
+      expect(history.map((item) => item.content)).toEqual(['first', 'done']);
+      expect(sessions.updatePiSessionPath).toHaveBeenCalledWith(
+        1,
+        expect.stringContaining('-fork-'),
+      );
+      const rewoundPath = sessions.updatePiSessionPath.mock.calls[0]?.[1];
+      const raw = await readFile(rewoundPath!, 'utf8');
+      expect(raw).toContain('first-assistant');
+      expect(raw).not.toContain('edit this');
+      expect(raw).not.toContain('old answer');
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+      expect((await service.getRuntimeState(1)).liveItems).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('clears the Pi session path when rewinding its first user message', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-rewind-first-'));
+    try {
+      const sessionPath = join(root, 'session.jsonl');
+      await writeFile(
+        sessionPath,
+        JSON.stringify({
+          id: 'first-user',
+          type: 'message',
+          message: {
+            role: 'user',
+            timestamp: Date.parse('2026-05-22T10:00:00.000Z'),
+            content: [{ type: 'text', text: 'start over' }],
+          },
+        }) + '\n',
+        'utf8',
+      );
+      const { service, sessions } = createService({
+        piSessionPath: sessionPath,
+      });
+
+      await expect(
+        service.rewindConversation(1, 'first-user'),
+      ).resolves.toEqual([]);
+      expect(sessions.updatePiSessionPath).toHaveBeenCalledWith(1, '-1');
+      expect((await service.getRuntimeState(1)).claudeSessionId).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects Pi rewinds while a run is active', async () => {
+    const { service, sessions } = createService({
+      piSessionPath: '/tmp/pi-session.jsonl',
+    });
+    (service as any).activeRuns.set(1, {});
+
+    await expect(service.rewindConversation(1, 'user-entry')).rejects.toThrow(
+      'Cannot edit a message while Pi is actively running.',
+    );
+    expect(sessions.updatePiSessionPath).not.toHaveBeenCalled();
   });
 
   afterEach(() => {

@@ -28,7 +28,7 @@ export class PiAgentRuntimeProvider
       userInput: true,
       multimodalPrompts: true,
       terminalFallback: false,
-      rewindConversation: false,
+      rewindConversation: true,
     },
   };
 
@@ -103,6 +103,10 @@ export class PiAgentRuntimeProvider
 
   forkConversation(request: AgentForkConversationRequest) {
     return this.runtimeService.forkConversation(request);
+  }
+
+  rewindConversation(sessionId: number, messageId: string) {
+    return this.runtimeService.rewindConversation(sessionId, messageId);
   }
 
   submitPrompt(

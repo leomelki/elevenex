@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -326,6 +327,83 @@ export class PiRuntimeService
       draft,
       anchorExcerpt,
     };
+  }
+
+  async rewindConversation(
+    sessionId: number,
+    messageId: string,
+  ): Promise<ClaudeTranscriptItem[]> {
+    const trimmedMessageId = messageId.trim();
+    if (!trimmedMessageId) {
+      throw new BadRequestException('A messageId is required.');
+    }
+    if (
+      this.activeRuns.has(sessionId) ||
+      this.initializingRuns.has(sessionId)
+    ) {
+      throw new ConflictException(
+        'Cannot edit a message while Pi is actively running.',
+      );
+    }
+
+    const session = await this.sessionsService.findOne(sessionId);
+    const sessionPath = session.piSessionPath;
+    if (!sessionPath || sessionPath === '-1') {
+      throw new NotFoundException('Pi session file not found.');
+    }
+
+    const records = await this.readPiSessionRecords(sessionPath);
+    const targetIndex = records.findIndex((entry, index) =>
+      this.isEditAnchorEntry(entry, index, trimmedMessageId),
+    );
+    if (targetIndex === -1) {
+      if (
+        records.some((entry, index) =>
+          this.isMessageAnchorEntry(entry, index, trimmedMessageId),
+        )
+      ) {
+        throw new BadRequestException('Only user messages can be edited.');
+      }
+      throw new NotFoundException('Message not found in Pi session.');
+    }
+
+    const retainedRecords = records.slice(0, targetIndex);
+    const hasRetainedConversation = retainedRecords.some((entry) => {
+      const role = asRecord(entry.message)?.role;
+      return role === 'user' || role === 'assistant';
+    });
+    const rewoundPath = hasRetainedConversation
+      ? this.buildForkSessionPath(sessionPath)
+      : null;
+    if (rewoundPath) {
+      await this.writePiSessionRecords(rewoundPath, retainedRecords);
+    }
+
+    // A warm Pi RPC process owns the original session file and retains its
+    // full in-memory history. Restart it on the next prompt so the new,
+    // truncated file is the only source of conversation state.
+    await this.stopRuntime(sessionId);
+    await this.sessionsService.updatePiSessionPath(
+      sessionId,
+      rewoundPath ?? '-1',
+    );
+
+    const state = this.ensureRuntimeState(sessionId);
+    state.piSessionPath = rewoundPath;
+    state.runPhase = 'idle';
+    state.sessionState = 'idle';
+    state.canInterrupt = false;
+    state.pendingPrompts = [];
+    state.queuePaused = false;
+    state.liveItems = [];
+    state.streamingAssistantMessageId = null;
+    state.pendingUserInputRequest = null;
+    state.lastError = null;
+    state.contextUsage = null;
+    this.emitRunState(sessionId);
+    this.emitEvent({ type: 'complete', payload: { sessionId } });
+
+    return rewoundPath ? this.readHistoryFromSessionFile(rewoundPath) : [];
   }
 
   async setSelectedModel(
@@ -1611,6 +1689,27 @@ export class PiRuntimeService
     return role === anchorKind;
   }
 
+  private isEditAnchorEntry(
+    entry: Record<string, unknown>,
+    index: number,
+    messageId: string,
+  ): boolean {
+    if (!this.isMessageAnchorEntry(entry, index, messageId)) return false;
+    return asRecord(entry.message)?.role === 'user';
+  }
+
+  private isMessageAnchorEntry(
+    entry: Record<string, unknown>,
+    index: number,
+    messageId: string,
+  ): boolean {
+    if (entry.type !== 'message') return false;
+    const entryId = this.piEntryAnchorId(entry, index);
+    if (entryId === messageId) return true;
+    const message = asRecord(entry.message);
+    return !!message && this.messageId(message, entryId) === messageId;
+  }
+
   private piEntryAnchorId(
     entry: Record<string, unknown>,
     index: number,
@@ -1648,7 +1747,11 @@ export class PiRuntimeService
           content: this.stripInjectedWorktreeContext(
             this.contentToText(message.content),
           ),
-          sourceMessageId: id,
+          // Persisted Pi entry ids are stable across history reads and are
+          // also the anchors used for forks and rewinds. In particular,
+          // Claude-compatible entries may store timestamps as strings, which
+          // cannot safely participate in the generated fallback id.
+          sourceMessageId: transcriptMessageId ?? id,
           transcriptMessageId,
           timestamp,
           authoredAt: timestamp,
