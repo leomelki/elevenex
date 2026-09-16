@@ -126,6 +126,7 @@
                         (activeAgentProviderChange)="onSessionProviderChange(tab.sessionId, $event)"
                         (agentRuntimeStarted)="onSessionRuntimeStarted(tab.sessionId)"
                         (openReviewWorkspace)="openReviewWorkspace($event)"
+                        (openLocalFile)="openFileInEditor($event)"
                         (conversationForkCreated)="onConversationForkCreated($event)"
                         (conversationForkOpened)="onConversationForkOpened($event)"
                         (unarchive)="onTabUnarchiveRequest(tab.sessionId)"

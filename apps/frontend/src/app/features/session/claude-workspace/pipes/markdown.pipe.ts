@@ -4,6 +4,7 @@ import { Marked, type Tokens } from 'marked';
 import hljs from 'highlight.js/lib/common';
 import DOMPurify from 'dompurify';
 import { getApiBaseUrl } from '@/shared/runtime/runtime-config';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 
 function codeRenderer(this: unknown, { text, lang }: { text: string; lang?: string }) {
   const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
@@ -20,6 +21,7 @@ function codeRenderer(this: unknown, { text, lang }: { text: string; lang?: stri
 // treated as local files and rewritten to the backend's worktree file API so they can
 // be loaded regardless of whether the backend is local or reached through an SSH tunnel.
 const HAS_URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+const WINDOWS_ABSOLUTE_PATH = /^[a-z]:[\\/]/i;
 
 /**
  * Collapse `.` and `..` segments into a clean worktree-relative path.
@@ -97,11 +99,119 @@ function resolveImageSrc(src: string, worktreePath: string, baseDir: readonly st
  * app's own URL. A `<template>` keeps the pass inert — images parsed into it do
  * not start fetching the unresolved `src`.
  */
-function resolveLocalImages(html: string, worktreePath: string, baseDir: readonly string[]): string {
+function resolveLocalImages(
+  html: string,
+  worktreePath: string,
+  baseDir: readonly string[],
+): string {
   const template = document.createElement('template');
   template.innerHTML = html;
   for (const image of Array.from(template.content.querySelectorAll('img[src]'))) {
-    image.setAttribute('src', resolveImageSrc(image.getAttribute('src') ?? '', worktreePath, baseDir));
+    image.setAttribute(
+      'src',
+      resolveImageSrc(image.getAttribute('src') ?? '', worktreePath, baseDir),
+    );
+  }
+  return template.innerHTML;
+}
+
+function normalizeLocalFilePath(segments: readonly string[]): string | null {
+  const resolved: string[] = [];
+  for (const segment of segments) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (!resolved.length) return null;
+      resolved.pop();
+      continue;
+    }
+    resolved.push(segment);
+  }
+  return resolved.join('/') || null;
+}
+
+/** Resolve a Markdown href to a location inside the current worktree. */
+export function resolveLocalFileTarget(
+  href: string,
+  worktreePath: string,
+  sourcePath?: string | null,
+): LocalFileTarget | null {
+  if (!href || href.startsWith('#') || href.startsWith('//')) return null;
+
+  let rawTarget = href;
+  if (rawTarget.startsWith('file://')) {
+    try {
+      rawTarget = new URL(rawTarget).pathname;
+    } catch {
+      return null;
+    }
+  } else if (HAS_URL_SCHEME.test(rawTarget) && !WINDOWS_ABSOLUTE_PATH.test(rawTarget)) {
+    return null;
+  }
+
+  const hashIndex = rawTarget.indexOf('#');
+  const fragment = hashIndex >= 0 ? rawTarget.slice(hashIndex + 1) : '';
+  rawTarget = hashIndex >= 0 ? rawTarget.slice(0, hashIndex) : rawTarget;
+  rawTarget = rawTarget.split('?')[0];
+
+  let line: number | undefined;
+  let column: number | undefined;
+  const fragmentLocation = /^L(\d+)(?:C(\d+))?(?:-L\d+(?:C\d+)?)?$/i.exec(fragment);
+  if (fragmentLocation) {
+    line = Number(fragmentLocation[1]);
+    column = fragmentLocation[2] ? Number(fragmentLocation[2]) : undefined;
+  } else {
+    const suffixLocation = /:(\d+)(?::(\d+))?$/.exec(rawTarget);
+    if (suffixLocation) {
+      line = Number(suffixLocation[1]);
+      column = suffixLocation[2] ? Number(suffixLocation[2]) : undefined;
+      rawTarget = rawTarget.slice(0, suffixLocation.index);
+    }
+  }
+
+  let decodedPath = decodePath(rawTarget).replace(/\\/g, '/');
+  const root = worktreePath.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (WINDOWS_ABSOLUTE_PATH.test(root) && /^\/[a-z]:\//i.test(decodedPath)) {
+    decodedPath = decodedPath.slice(1);
+  }
+  const pathIsInsideRoot = WINDOWS_ABSOLUTE_PATH.test(root)
+    ? decodedPath.toLowerCase().startsWith(`${root.toLowerCase()}/`)
+    : decodedPath.startsWith(`${root}/`);
+  let segments: string[];
+  if (pathIsInsideRoot) {
+    segments = decodedPath.slice(root.length + 1).split('/');
+  } else if (WINDOWS_ABSOLUTE_PATH.test(decodedPath)) {
+    return null;
+  } else if (decodedPath.startsWith('/')) {
+    // Root-relative links make sense in repository documents. Agent links with
+    // unrelated absolute paths must not be allowed to escape the worktree.
+    if (!sourcePath) return null;
+    segments = decodedPath.slice(1).split('/');
+  } else {
+    segments = [...baseDirSegments(sourcePath), ...decodedPath.split('/')];
+  }
+
+  const path = normalizeLocalFilePath(segments);
+  if (!path) return null;
+  return { path, ...(line ? { line } : {}), ...(column ? { column } : {}) };
+}
+
+function annotateLocalFileLinks(
+  html: string,
+  worktreePath: string,
+  sourcePath?: string | null,
+): string {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  for (const anchor of Array.from(
+    template.content.querySelectorAll<HTMLAnchorElement>('a[href]'),
+  )) {
+    const target = resolveLocalFileTarget(
+      anchor.getAttribute('href') ?? '',
+      worktreePath,
+      sourcePath,
+    );
+    if (!target) continue;
+    anchor.classList.add('cw-local-file-link');
   }
   return template.innerHTML;
 }
@@ -141,8 +251,13 @@ export class MarkdownPipe implements PipeTransform {
     if (!value) return '';
     const rendered = marked.parse(value) as string;
     let clean = DOMPurify.sanitize(rendered, { USE_PROFILES: { html: true } });
-    if (worktreePath && clean.includes('<img')) {
-      clean = resolveLocalImages(clean, worktreePath, baseDirSegments(sourcePath));
+    if (worktreePath) {
+      if (clean.includes('<img')) {
+        clean = resolveLocalImages(clean, worktreePath, baseDirSegments(sourcePath));
+      }
+      if (clean.includes('<a')) {
+        clean = annotateLocalFileLinks(clean, worktreePath, sourcePath);
+      }
     }
     return this.sanitizer.sanitize(SecurityContext.HTML, clean) ?? '';
   }

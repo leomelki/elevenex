@@ -310,4 +310,26 @@ describe('ClaudeMessageComponent', () => {
     expect(element.textContent).not.toContain(DIFF_SELECTION_MENTION_TAG);
     expect(element.querySelector('.cw-msg__mention')).not.toBeNull();
   });
+
+  it('emits an editor target when a rendered local file link is clicked', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeMessageComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeMessageComponent);
+    fixture.componentRef.setInput('item', {
+      id: 'assistant-file-link',
+      kind: 'assistant',
+      content: '[open](/tmp/project/src/app.ts:14:2)',
+      timestamp: '2026-04-24T08:00:01.000Z',
+    });
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
+    const openSpy = vi.fn();
+    fixture.componentInstance.openLocalFile.subscribe(openSpy);
+    fixture.detectChanges();
+
+    (fixture.nativeElement.querySelector('.cw-md a') as HTMLAnchorElement).click();
+
+    expect(openSpy).toHaveBeenCalledWith({ path: 'src/app.ts', line: 14, column: 2 });
+  });
 });

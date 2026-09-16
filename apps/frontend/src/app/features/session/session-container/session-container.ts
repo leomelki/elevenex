@@ -80,6 +80,7 @@ import {
 import { CreateSessionForkResponse, Session, SessionFork } from '@/shared/models/session.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import { shouldAutoReviewSessionCompletion } from '../session-completion-review.util';
 import { shouldCloseActiveSessionTab } from '../close-tab-shortcut.util';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
@@ -644,8 +645,12 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   openDiffFileInEditor(path: string): void {
+    this.openFileInEditor({ path });
+  }
+
+  openFileInEditor(target: LocalFileTarget): void {
     const wt = this.worktreePath();
-    const normalizedPath = path.replace(/^\/+/, '');
+    const normalizedPath = target.path.replace(/^\/+/, '');
     if (!wt || !normalizedPath) return;
 
     const changesOpen = new Map(this.changesOpenByWorktree());
@@ -657,7 +662,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     this.saveSidePanelPreference('files');
 
     afterNextRender(() => {
-      this.vscodePanel()?.openFile(normalizedPath, false);
+      this.vscodePanel()?.openFile({ ...target, path: normalizedPath }, false);
     }, { injector: this.injector });
   }
 

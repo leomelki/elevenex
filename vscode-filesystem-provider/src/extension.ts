@@ -2,6 +2,7 @@ import {
   commands,
   ExtensionContext,
   QuickPickItem,
+  Range,
   Uri,
   window as vscodeWindow,
   workspace
@@ -30,6 +31,8 @@ interface ElevenExOpenFileMessage {
   type: 'elevenex-open-file';
   path: string;
   preserveFocus?: boolean;
+  line?: number;
+  column?: number;
 }
 
 interface FileSearchQuickPickItem extends QuickPickItem {
@@ -67,19 +70,36 @@ async function openOrRevealFile(worktreePath: string, message: ElevenExOpenFileM
   const existingEditor = vscodeWindow.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
 
   if (existingEditor) {
+    const selection = targetRange(existingEditor.document, message);
     await vscodeWindow.showTextDocument(existingEditor.document, {
       preserveFocus,
       preview: false,
       viewColumn: existingEditor.viewColumn,
+      ...(selection ? { selection } : {}),
     });
     return;
   }
 
   const doc = await workspace.openTextDocument(uri);
+  const selection = targetRange(doc, message);
   await vscodeWindow.showTextDocument(doc, {
     preserveFocus,
     preview: false,
+    ...(selection ? { selection } : {}),
   });
+}
+
+function targetRange(
+  document: { lineCount: number; lineAt(line: number): { text: string } },
+  message: ElevenExOpenFileMessage,
+): Range | undefined {
+  if (!Number.isInteger(message.line) || (message.line ?? 0) < 1 || document.lineCount < 1) {
+    return undefined;
+  }
+  const line = Math.min(message.line! - 1, document.lineCount - 1);
+  const requestedColumn = Number.isInteger(message.column) ? message.column! - 1 : 0;
+  const column = Math.min(Math.max(0, requestedColumn), document.lineAt(line).text.length);
+  return new Range(line, column, line, column);
 }
 
 function toFileSearchItem(result: { path: string; name: string }): FileSearchQuickPickItem {
@@ -300,6 +320,8 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
         type: 'elevenex-open-file',
         path: data.path,
         preserveFocus: data.preserveFocus,
+        line: data.line,
+        column: data.column,
       }).catch(error => {
         console.error('Failed to open or reveal file from parent bridge', error);
       });

@@ -49,6 +49,7 @@ import {
 } from '@/shared/models/claude-runtime.model';
 import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import type {
   SessionMention,
   SessionMentionCandidate,
@@ -226,6 +227,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly conversationForkCreated = output<CreateSessionForkResponse>();
   /** Ask the container to open the review workspace, optionally deep-linked. */
   readonly openReviewWorkspace = output<{ path?: string; thread?: number }>();
+  readonly openLocalFile = output<LocalFileTarget>();
   readonly conversationForkOpened = output<SessionFork>();
   readonly unarchive = output<void>();
 

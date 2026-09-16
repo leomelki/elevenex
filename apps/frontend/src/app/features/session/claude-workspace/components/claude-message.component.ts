@@ -3,6 +3,7 @@ import {
   Component,
   computed,
   ElementRef,
+  HostListener,
   inject,
   input,
   output,
@@ -30,7 +31,7 @@ import {
 } from '@ng-icons/lucide';
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import type { SessionFork } from '@/shared/models/session.model';
-import { MarkdownPipe } from '../pipes/markdown.pipe';
+import { MarkdownPipe, resolveLocalFileTarget } from '../pipes/markdown.pipe';
 import { hasProposedPlan } from '../util/proposed-plan';
 import { PlanReviewRequest } from '@/features/plan-annotator';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
@@ -42,6 +43,7 @@ import {
 import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
 import { type TaskNotification, parseTaskNotifications } from '@/shared/utils/task-notification';
 import { parseSessionMentions } from '@/shared/utils/session-mention';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 
 @Component({
   selector: 'cw-message',
@@ -104,6 +106,7 @@ export class ClaudeMessageComponent {
   readonly planFeedback = output<string>();
   readonly openPlanReview = output<PlanReviewRequest>();
   readonly openPlanChat = output<PlanReviewRequest>();
+  readonly openLocalFile = output<LocalFileTarget>();
 
   readonly isEmpty = computed(() => !this.item().content);
   readonly syntheticMessageInfo = computed(() => getSyntheticMessageInfo(this.item()));
@@ -132,13 +135,10 @@ export class ClaudeMessageComponent {
   readonly userTaskNotificationDisplay = computed(() =>
     parseTaskNotifications(this.item().content),
   );
-  readonly userTaskNotifications = computed(
-    () => this.userTaskNotificationDisplay().notifications,
-  );
+  readonly userTaskNotifications = computed(() => this.userTaskNotificationDisplay().notifications);
   readonly isTaskNotificationOnly = computed(
     () =>
-      this.userTaskNotifications().length > 0 &&
-      !this.userTaskNotificationDisplay().text.trim(),
+      this.userTaskNotifications().length > 0 && !this.userTaskNotificationDisplay().text.trim(),
   );
   readonly userSessionMentionDisplay = computed(() =>
     parseSessionMentions(this.userTaskNotificationDisplay().text),
@@ -172,6 +172,23 @@ export class ClaudeMessageComponent {
 
   preserveSelection(event: MouseEvent): void {
     event.preventDefault();
+  }
+
+  @HostListener('click', ['$event'])
+  @HostListener('auxclick', ['$event'])
+  openLinkedLocalFile(event: MouseEvent): void {
+    if (event.type === 'auxclick' && event.button !== 1) return;
+    const target = event.target;
+    const element =
+      target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+    const anchor = element?.closest<HTMLAnchorElement>('a.cw-local-file-link');
+    if (!anchor || !this.elementRef.nativeElement.contains(anchor)) return;
+
+    event.preventDefault();
+    const worktreePath = this.worktreePath();
+    if (!worktreePath) return;
+    const fileTarget = resolveLocalFileTarget(anchor.getAttribute('href') ?? '', worktreePath);
+    if (fileTarget) this.openLocalFile.emit(fileTarget);
   }
 
   getSelectedText(): string | null {
@@ -241,7 +258,10 @@ interface SyntheticMessageInfo {
 function getSyntheticMessageInfo(item: ClaudeTranscriptItem): SyntheticMessageInfo | null {
   if (!item.isSynthetic || item.kind !== 'user') return null;
   const text = item.content ?? '';
-  if (text === '[Request interrupted by user]' || text === '[Request interrupted by user for tool use]') {
+  if (
+    text === '[Request interrupted by user]' ||
+    text === '[Request interrupted by user for tool use]'
+  ) {
     return { icon: 'lucideSquare', label: 'Request interrupted' };
   }
   if (text.startsWith("The user doesn't want to take this action right now.")) {

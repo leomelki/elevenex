@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { DomSanitizer } from '@angular/platform-browser';
 import { provideZonelessChangeDetection, SecurityContext } from '@angular/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { MarkdownPipe } from './markdown.pipe';
+import { MarkdownPipe, resolveLocalFileTarget } from './markdown.pipe';
 
 const API_BASE = 'http://backend.test/api';
 const WORKTREE = '/tmp/repo';
@@ -30,8 +30,10 @@ describe('MarkdownPipe', () => {
     sourcePath?: string | null,
   ): string {
     return (
-      sanitizer.sanitize(SecurityContext.HTML, pipe.transform(markdown, worktreePath, sourcePath)) ??
-      ''
+      sanitizer.sanitize(
+        SecurityContext.HTML,
+        pipe.transform(markdown, worktreePath, sourcePath),
+      ) ?? ''
     );
   }
 
@@ -77,9 +79,7 @@ describe('MarkdownPipe', () => {
   });
 
   it('resolves a relative image against the document’s own directory', () => {
-    expect(imageSrc('![a](./img/a.png)', WORKTREE, 'docs/guide.md')).toBe(
-      rawUrl('docs/img/a.png'),
-    );
+    expect(imageSrc('![a](./img/a.png)', WORKTREE, 'docs/guide.md')).toBe(rawUrl('docs/img/a.png'));
     expect(imageSrc('![a](img/a.png)', WORKTREE, 'docs/guide.md')).toBe(rawUrl('docs/img/a.png'));
   });
 
@@ -90,9 +90,7 @@ describe('MarkdownPipe', () => {
   });
 
   it('treats a leading slash as worktree-root-relative', () => {
-    expect(imageSrc('![a](/assets/a.png)', WORKTREE, 'docs/guide.md')).toBe(
-      rawUrl('assets/a.png'),
-    );
+    expect(imageSrc('![a](/assets/a.png)', WORKTREE, 'docs/guide.md')).toBe(rawUrl('assets/a.png'));
   });
 
   it('resolves against the worktree root when no source path is given', () => {
@@ -107,9 +105,7 @@ describe('MarkdownPipe', () => {
     expect(imageSrc('![a](https://cdn.test/a.png)', WORKTREE, 'docs/guide.md')).toBe(
       'https://cdn.test/a.png',
     );
-    expect(imageSrc('![a](//cdn.test/a.png)', WORKTREE, 'docs/guide.md')).toBe(
-      '//cdn.test/a.png',
-    );
+    expect(imageSrc('![a](//cdn.test/a.png)', WORKTREE, 'docs/guide.md')).toBe('//cdn.test/a.png');
     expect(imageSrc('![a](data:image/png;base64,AAA)', WORKTREE, 'docs/guide.md')).toBe(
       'data:image/png;base64,AAA',
     );
@@ -123,7 +119,11 @@ describe('MarkdownPipe', () => {
     // Documents size images with `<img width>`; left alone, the browser would
     // look for the file next to the app instead of in the worktree.
     const host = document.createElement('div');
-    host.innerHTML = render('<img src="./img/a.png" width="240" alt="Diagram">', WORKTREE, 'docs/guide.md');
+    host.innerHTML = render(
+      '<img src="./img/a.png" width="240" alt="Diagram">',
+      WORKTREE,
+      'docs/guide.md',
+    );
     const image = host.querySelector('img');
 
     expect(image?.getAttribute('src')).toBe(rawUrl('docs/img/a.png'));
@@ -163,6 +163,42 @@ describe('MarkdownPipe', () => {
       'cw-task cw-task--todo',
     ]);
     expect(markers.map((marker) => marker.textContent)).toEqual(['☑', '☐']);
+  });
+
+  it('marks worktree file links with editor targets and source positions', () => {
+    const host = document.createElement('div');
+    host.innerHTML = render(`[component](${WORKTREE}/src/app.component.ts:42:7)`, WORKTREE);
+    const anchor = host.querySelector('a');
+
+    expect(anchor?.classList.contains('cw-local-file-link')).toBe(true);
+    expect(resolveLocalFileTarget(anchor?.getAttribute('href') ?? '', WORKTREE)).toEqual({
+      path: 'src/app.component.ts',
+      line: 42,
+      column: 7,
+    });
+  });
+
+  it('resolves repository-relative links and GitHub-style line fragments', () => {
+    expect(resolveLocalFileTarget('../src/app.ts#L12C3', WORKTREE, 'docs/guide.md')).toEqual({
+      path: 'src/app.ts',
+      line: 12,
+      column: 3,
+    });
+    expect(resolveLocalFileTarget('src/app.ts', WORKTREE)).toEqual({ path: 'src/app.ts' });
+  });
+
+  it('does not turn external or out-of-worktree absolute links into editor targets', () => {
+    expect(resolveLocalFileTarget('https://example.com/file.ts', WORKTREE)).toBeNull();
+    expect(resolveLocalFileTarget('/tmp/another-repo/file.ts:4', WORKTREE)).toBeNull();
+    expect(resolveLocalFileTarget('../../outside.ts', WORKTREE, 'docs/guide.md')).toBeNull();
+  });
+
+  it('supports Windows worktree paths without treating the drive letter as a URL scheme', () => {
+    expect(resolveLocalFileTarget('C:\\repo\\src\\app.ts:9', 'C:\\repo')).toEqual({
+      path: 'src/app.ts',
+      line: 9,
+    });
+    expect(resolveLocalFileTarget('D:\\other\\app.ts:9', 'C:\\repo')).toBeNull();
   });
 
   it('strips scripts', () => {

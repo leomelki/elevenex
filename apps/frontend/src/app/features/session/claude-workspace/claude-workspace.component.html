@@ -241,6 +241,7 @@
               (openPlanReview)="openPlanReview($event)"
               (openPlanChat)="openPlanQuestion($event)"
               (openReview)="openReviewWorkspace.emit($event)"
+              (openLocalFile)="openLocalFile.emit($event)"
             />
 
             @if (liveShows().length > 0) {

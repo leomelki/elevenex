@@ -11,6 +11,7 @@ import type { PlanReviewRequest } from '@/features/plan-annotator';
 import { parseTaskNotifications } from '@/shared/utils/task-notification';
 import type { PairedTranscriptUnit } from '../util/paired-transcript';
 import type { TranscriptRenderItem } from '../util/transcript-render-items';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 
 type CollapsedTurnRenderItem = Extract<TranscriptRenderItem, { kind: 'collapsed-turn' }>;
 import { ClaudeMessageComponent } from './claude-message.component';
@@ -136,6 +137,7 @@ export class ClaudeTranscriptComponent {
   readonly openFork = output<SessionFork>();
   readonly openPlanReview = output<PlanReviewRequest>();
   readonly openPlanChat = output<PlanReviewRequest>();
+  readonly openLocalFile = output<LocalFileTarget>();
 
   /** Emitted for the turn-changes panel and the anchored discussion cards. */
   readonly openReview = output<{ path?: string; thread?: number }>();

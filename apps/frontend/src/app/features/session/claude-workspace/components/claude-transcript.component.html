@@ -37,6 +37,7 @@
         (forkAgain)="fork.emit(unit.item)"
         (openPlanReview)="openPlanReview.emit($event)"
         (openPlanChat)="openPlanChat.emit($event)"
+        (openLocalFile)="openLocalFile.emit($event)"
       />
     }
     @case ('thinking') {
@@ -57,7 +58,11 @@
       />
     }
     @case ('system') {
-      <cw-message [item]="unit.item" [worktreePath]="worktreePath()" />
+      <cw-message
+        [item]="unit.item"
+        [worktreePath]="worktreePath()"
+        (openLocalFile)="openLocalFile.emit($event)"
+      />
     }
   }
 </ng-template>

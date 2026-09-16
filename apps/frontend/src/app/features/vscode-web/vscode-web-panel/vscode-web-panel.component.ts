@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { VSCodeWebStateService, buildVSCodeIframeKey } from '../vscode-web-state.service';
 import { getWebSocketUrl } from '@/shared/runtime/runtime-config';
 import { ThemeService } from '@/shared/services/theme.service';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 
 @Component({
   selector: 'app-vscode-web-panel',
@@ -148,7 +149,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
   private currentWorktreePath: string | null = null;
   private readyTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private fileChangeSocket: WebSocket | null = null;
-  private pendingFileToReveal: { path: string; preserveFocus: boolean } | null = null;
+  private pendingFileToReveal: { target: LocalFileTarget; preserveFocus: boolean } | null = null;
   private readonly handleWindowMessage = (event: MessageEvent): void => {
     if (event.data?.type !== 'vscode-workbench-ready' || this.currentIframeKey === null) {
       return;
@@ -332,34 +333,36 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   private openOrRevealChangedFile(path: string): void {
-    this.openFile(path, true);
+    this.openFile({ path }, true);
   }
 
-  openFile(path: string, preserveFocus = false): void {
-    const normalizedPath = path.replace(/^\/+/, '');
+  openFile(target: string | LocalFileTarget, preserveFocus = false): void {
+    const requestedTarget = typeof target === 'string' ? { path: target } : target;
+    const normalizedPath = requestedTarget.path.replace(/^\/+/, '');
     if (!normalizedPath) {
       return;
     }
+    const normalizedTarget = { ...requestedTarget, path: normalizedPath };
 
     if (this.currentIframeKey === null) {
-      this.pendingFileToReveal = { path: normalizedPath, preserveFocus };
+      this.pendingFileToReveal = { target: normalizedTarget, preserveFocus };
       return;
     }
 
     if (!this.stateService.isReady(this.currentIframeKey)) {
-      this.pendingFileToReveal = { path: normalizedPath, preserveFocus };
+      this.pendingFileToReveal = { target: normalizedTarget, preserveFocus };
       return;
     }
 
     const iframe = this.stateService.getIframe(this.currentIframeKey);
     if (!iframe?.contentWindow) {
-      this.pendingFileToReveal = { path: normalizedPath, preserveFocus };
+      this.pendingFileToReveal = { target: normalizedTarget, preserveFocus };
       return;
     }
 
     iframe.contentWindow.postMessage({
       type: 'elevenex-open-file',
-      path: normalizedPath,
+      ...normalizedTarget,
       preserveFocus,
     }, '*');
   }
@@ -371,7 +374,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
 
     const pending = this.pendingFileToReveal;
     this.pendingFileToReveal = null;
-    this.openFile(pending.path, pending.preserveFocus);
+    this.openFile(pending.target, pending.preserveFocus);
   }
 
   ngOnDestroy(): void {
