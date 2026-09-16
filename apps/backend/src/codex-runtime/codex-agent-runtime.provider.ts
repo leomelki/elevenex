@@ -32,7 +32,7 @@ export class CodexAgentRuntimeProvider
       userInput: true,
       multimodalPrompts: true,
       terminalFallback: false,
-      rewindConversation: false,
+      rewindConversation: true,
     },
   };
 
@@ -132,6 +132,10 @@ export class CodexAgentRuntimeProvider
 
   forkConversation(request: AgentForkConversationRequest) {
     return this.runtimeService.forkConversation(request);
+  }
+
+  rewindConversation(sessionId: number, messageId: string) {
+    return this.runtimeService.rewindConversation(sessionId, messageId);
   }
 
   submitPrompt(

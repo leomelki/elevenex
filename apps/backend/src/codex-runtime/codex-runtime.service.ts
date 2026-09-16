@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   OnModuleDestroy,
@@ -299,6 +300,45 @@ export class CodexRuntimeService
   ): Promise<AgentForkConversationResult> {
     const session = await this.sessionsService.findOne(request.parentSessionId);
     return this.historyService.forkHistory(session.codexSessionId, request);
+  }
+
+  async rewindConversation(
+    sessionId: number,
+    messageId: string,
+  ): Promise<ClaudeTranscriptItem[]> {
+    if (this.activeRuns.has(sessionId)) {
+      throw new ConflictException(
+        'Cannot edit a message while Codex is actively running.',
+      );
+    }
+
+    const session = await this.sessionsService.findOne(sessionId);
+    const rewoundSessionId = await this.historyService.rewindHistory(
+      session.codexSessionId,
+      messageId,
+    );
+    const persistedSessionId = rewoundSessionId ?? '-1';
+    await this.sessionsService.updateCodexSessionId(
+      sessionId,
+      persistedSessionId,
+    );
+
+    const state = this.ensureRuntimeState(sessionId);
+    state.codexSessionId = rewoundSessionId;
+    state.runPhase = 'idle';
+    state.sessionState = 'idle';
+    state.canInterrupt = false;
+    state.pendingPrompts = [];
+    state.queuePaused = false;
+    state.liveItems = [];
+    state.pendingPermissionRequest = null;
+    state.pendingUserInputRequest = null;
+    state.lastError = null;
+    state.contextUsage = null;
+    this.emitRunState(sessionId);
+    this.emitEvent({ type: 'complete', payload: { sessionId } });
+
+    return this.historyService.getHistory(rewoundSessionId);
   }
 
   async prewarmSession(sessionId: number): Promise<void> {

@@ -40,6 +40,9 @@ describe('CodexRuntimeService', () => {
     };
     const historyService = {
       getHistory: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
+      rewindHistory: jest
+        .fn<() => Promise<string | null>>()
+        .mockResolvedValue('rewound-thread'),
       forkHistory: jest.fn<() => Promise<unknown>>().mockResolvedValue({
         providerSessionId: 'forked-thread',
         draft: null,
@@ -322,6 +325,40 @@ describe('CodexRuntimeService', () => {
       draft: null,
       anchorExcerpt: 'answer',
     });
+  });
+
+  it('rewinds a Codex user message into a new persisted thread', async () => {
+    const { service, sessionsService, historyService } = createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'source-thread',
+    });
+    historyService.getHistory.mockResolvedValue([
+      { id: 'user-1', kind: 'user', content: 'first' },
+    ]);
+
+    const result = await service.rewindConversation(7, 'codex-record:3');
+
+    expect(historyService.rewindHistory).toHaveBeenCalledWith(
+      'source-thread',
+      'codex-record:3',
+    );
+    expect(sessionsService.updateCodexSessionId).toHaveBeenCalledWith(
+      7,
+      'rewound-thread',
+    );
+    expect(historyService.getHistory).toHaveBeenCalledWith('rewound-thread');
+    expect(result).toEqual([{ id: 'user-1', kind: 'user', content: 'first' }]);
+  });
+
+  it('rejects Codex rewinds while a run is active', async () => {
+    const { service, historyService } = createService();
+    (service as any).activeRuns.set(7, {});
+
+    await expect(
+      service.rewindConversation(7, 'codex-record:3'),
+    ).rejects.toThrow('Cannot edit a message while Codex is actively running.');
+    expect(historyService.rewindHistory).not.toHaveBeenCalled();
   });
 
   it('lists models through the shared app-server client', async () => {

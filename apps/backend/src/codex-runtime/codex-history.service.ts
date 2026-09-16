@@ -116,6 +116,50 @@ export class CodexHistoryService {
     };
   }
 
+  async rewindHistory(
+    codexSessionId: string | null,
+    messageId: string,
+  ): Promise<string | null> {
+    const trimmedMessageId = messageId.trim();
+    if (!trimmedMessageId) {
+      throw new BadRequestException('A messageId is required.');
+    }
+    if (!codexSessionId || codexSessionId === '-1') {
+      throw new NotFoundException('Codex thread not found.');
+    }
+
+    const path = await this.findSessionFile(codexSessionId);
+    if (!path) {
+      throw new NotFoundException('Codex thread file not found.');
+    }
+
+    const records = await this.readJsonl(path);
+    const targetIndex = records.findIndex(
+      (_record, index) => this.recordAnchorId(index) === trimmedMessageId,
+    );
+    if (targetIndex === -1) {
+      throw new NotFoundException('Message not found in Codex thread.');
+    }
+    if (!this.isVisibleUserMessage(records[targetIndex])) {
+      throw new BadRequestException('Only user messages can be edited.');
+    }
+
+    const retainedRecords = records.slice(0, targetIndex);
+    if (retainedRecords.length === 0) {
+      return null;
+    }
+
+    // Codex app-server can retain a resumed thread in memory. Rewinding into a
+    // new thread id makes the truncated history authoritative even when the
+    // original thread has already been loaded by the long-lived app-server.
+    const newSessionId = randomUUID();
+    const rewritten = retainedRecords.map((record) =>
+      this.rewriteSessionMetadata(record, newSessionId),
+    );
+    await this.writeJsonl(this.buildForkPath(path, newSessionId), rewritten);
+    return newSessionId;
+  }
+
   async listSessions(): Promise<CodexHistorySessionSummary[]> {
     const paths = await this.findJsonlFiles(this.sessionsRoot);
     const summaries = await Promise.all(
@@ -193,6 +237,7 @@ export class CodexHistoryService {
             id: `codex-history:${index}:user`,
             kind: 'user',
             content,
+            sourceMessageId: this.recordAnchorId(index),
             transcriptMessageId: this.recordAnchorId(index),
             timestamp,
             authoredAt: timestamp,

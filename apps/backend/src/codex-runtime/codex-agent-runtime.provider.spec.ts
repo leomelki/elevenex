@@ -2,6 +2,16 @@ import { jest } from '@jest/globals';
 import { CodexAgentRuntimeProvider } from './codex-agent-runtime.provider.js';
 
 describe('CodexAgentRuntimeProvider', () => {
+  it('exposes conversation rewind support', () => {
+    const provider = new CodexAgentRuntimeProvider(
+      { on: jest.fn() } as never,
+      {} as never,
+      { on: jest.fn() } as never,
+    );
+
+    expect(provider.info.capabilities.rewindConversation).toBe(true);
+  });
+
   it('prewarms the runtime when a client attaches', async () => {
     const runtimeService = {
       on: jest.fn(),

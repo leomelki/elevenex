@@ -159,6 +159,8 @@ describe('CodexHistoryService', () => {
         expect.objectContaining({
           kind: 'user',
           content: 'visible user prompt',
+          sourceMessageId: 'codex-record:2',
+          transcriptMessageId: 'codex-record:2',
           timestamp: '2026-09-12T00:00:00.000Z',
         }),
       ]);
@@ -283,6 +285,103 @@ describe('CodexHistoryService', () => {
       const raw = await readFile(forkSummary!.path, 'utf8');
       expect(raw).toContain('assistant-1');
       expect(raw).not.toContain('retry this');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rewinds before a selected user message into a new Codex thread', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      const service = new CodexHistoryService(root);
+      await writeFile(
+        join(root, 'thread-source.jsonl'),
+        [
+          JSON.stringify({
+            type: 'session_meta',
+            payload: { id: 'source-thread', cwd: '/repo' },
+          }),
+          JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'user_message', message: 'first' },
+          }),
+          JSON.stringify({
+            type: 'response_item',
+            payload: {
+              item: {
+                id: 'assistant-1',
+                type: 'message',
+                role: 'assistant',
+                content: [{ text: 'done' }],
+              },
+            },
+          }),
+          JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'user_message', message: 'edit this' },
+          }),
+          JSON.stringify({
+            type: 'response_item',
+            payload: {
+              item: {
+                id: 'assistant-2',
+                type: 'message',
+                role: 'assistant',
+                content: [{ text: 'old answer' }],
+              },
+            },
+          }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+
+      const rewoundId = await service.rewindHistory(
+        'source-thread',
+        'codex-record:3',
+      );
+
+      expect(rewoundId).toEqual(expect.any(String));
+      const history = await service.getHistory(rewoundId);
+      expect(history.map((item) => item.content)).toEqual(['first', 'done']);
+      const summaries = await service.listSessions();
+      const rewound = summaries.find((summary) => summary.id === rewoundId);
+      const raw = await readFile(rewound!.path, 'utf8');
+      expect(raw).not.toContain('edit this');
+      expect(raw).not.toContain('old answer');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects rewinding from a non-user Codex record', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      const service = new CodexHistoryService(root);
+      await writeFile(
+        join(root, 'thread-source.jsonl'),
+        [
+          JSON.stringify({
+            type: 'session_meta',
+            payload: { id: 'source-thread', cwd: '/repo' },
+          }),
+          JSON.stringify({
+            type: 'response_item',
+            payload: {
+              item: {
+                id: 'assistant-1',
+                type: 'message',
+                role: 'assistant',
+                content: [{ text: 'answer' }],
+              },
+            },
+          }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+
+      await expect(
+        service.rewindHistory('source-thread', 'codex-record:1'),
+      ).rejects.toThrow('Only user messages can be edited.');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
