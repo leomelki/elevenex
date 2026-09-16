@@ -36,6 +36,8 @@ import { PendingWorkspaceCreationsService } from '@/shared/services/pending-work
 import { ReposService } from '@/shared/services/repos.service';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 import { SessionFoldersService } from '@/shared/services/session-folders.service';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { ComposerDraftService } from '@/features/session/claude-workspace/composer-draft.service';
 
 @Directive({
   selector: 'dialog[trackNativeModal]',
@@ -236,6 +238,25 @@ describe('Sidebar', () => {
     unarchive: vi.fn(),
     delete: vi.fn(),
   };
+  const sessionMention = {
+    sessionId: 11,
+    title: 'Alpha',
+    provider: 'codex',
+    providerSessionId: 'provider-session-11',
+    branch: 'main',
+    status: 'active',
+    transcriptExportPath: '/tmp/session-11.md',
+    contextMarkdown: 'Previous session context',
+    omittedTurns: 0,
+    generatedAt: '2026-09-16T00:00:00.000Z',
+  };
+  const agentRuntimeApiMock = {
+    getConversationMention: vi.fn(() => of(sessionMention)),
+  };
+  const composerDraftsMock = {
+    save: vi.fn(),
+    flush: vi.fn(() => Promise.resolve()),
+  };
 
   const tabServiceMock = {
     activeSessionId,
@@ -349,6 +370,9 @@ describe('Sidebar', () => {
     sessionFoldersServiceMock.create.mockReturnValue(of({ id: 9, repoId: 1, workspaceId: 2, name: 'New folder', archivedAt: null }));
     sessionFoldersServiceMock.groupSessions.mockReset();
     sessionFoldersServiceMock.groupSessions.mockReturnValue(of({ id: 8, name: 'Feature work' }));
+    agentRuntimeApiMock.getConversationMention.mockClear();
+    composerDraftsMock.save.mockClear();
+    composerDraftsMock.flush.mockClear();
     sessionsServiceMock.delete.mockReset();
     sessionsServiceMock.delete.mockReturnValue(of({}));
     workspacesServiceMock.attach.mockReset();
@@ -408,6 +432,8 @@ describe('Sidebar', () => {
         { provide: NavigationService, useValue: navigationServiceMock },
         { provide: SessionsService, useValue: sessionsServiceMock },
         { provide: SessionFoldersService, useValue: sessionFoldersServiceMock },
+        { provide: AgentRuntimeApiService, useValue: agentRuntimeApiMock },
+        { provide: ComposerDraftService, useValue: composerDraftsMock },
         { provide: WorkspacesService, useValue: workspacesServiceMock },
         { provide: TabColorService, useValue: { getRepoColor: vi.fn(() => '#5b7fff') } },
         { provide: TabService, useValue: tabServiceMock },
@@ -523,6 +549,59 @@ describe('Sidebar', () => {
     expect(navigationServiceMock.addSessionFolder).toHaveBeenCalled();
     expect(fixture.componentInstance.editingFolderId()).toBe(9);
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-folder-name-input="9"]')).toBeTruthy();
+  });
+
+  it('creates a related session in a folder named after the original and mentions it', async () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const repo = tree()[0].repos[0];
+    const workspace = repo.workspaces![0];
+    const source = workspace.sessions[0];
+
+    await component.createRelatedSession(repo, workspace, source, { stopPropagation: vi.fn() } as unknown as Event);
+
+    expect(agentRuntimeApiMock.getConversationMention).toHaveBeenCalledWith(11);
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, folderId: undefined });
+    expect(sessionFoldersServiceMock.groupSessions).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, name: 'Alpha', sessionIds: [11, 21] });
+    expect(composerDraftsMock.save).toHaveBeenCalledWith({
+      sessionId: 21,
+      text: '',
+      diffMentions: [],
+      sessionMentions: [sessionMention],
+      images: [],
+    });
+    expect(composerDraftsMock.flush).toHaveBeenCalledWith(21);
+    expect(navigationServiceMock.expandKey).toHaveBeenCalledWith('session-folder-8');
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
+    expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
+  });
+
+  it('creates a related session directly in the same folder when the original is grouped', async () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const repo = tree()[0].repos[0];
+    const workspace = repo.workspaces![0];
+    const source = { ...workspace.sessions[0], folderId: 9 };
+
+    await component.createRelatedSession(repo, workspace, source, { stopPropagation: vi.fn() } as unknown as Event);
+
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, folderId: 9 });
+    expect(sessionFoldersServiceMock.groupSessions).not.toHaveBeenCalled();
+    expect(composerDraftsMock.save).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 21,
+      sessionMentions: [sessionMention],
+    }));
+    expect(navigationServiceMock.expandKey).toHaveBeenCalledWith('session-folder-9');
+    expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
+  });
+
+  it('shows the related-session button on active sessions', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-session-related-trigger-id="11"]')).toBeTruthy();
   });
 
   it('enters title edit mode when a folder name is double-clicked', () => {

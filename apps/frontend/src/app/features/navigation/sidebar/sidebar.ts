@@ -64,6 +64,8 @@ import { ThemeService } from '@/shared/services/theme.service';
 import { PendingWorkspaceCreation, PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 import { SessionFoldersService } from '@/shared/services/session-folders.service';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { ComposerDraftService } from '@/features/session/claude-workspace/composer-draft.service';
 
 @Component({
   selector: 'app-sidebar',
@@ -115,6 +117,8 @@ export class Sidebar implements OnInit, OnDestroy {
   private workspacesService = inject(WorkspacesService);
   private sessionsService = inject(SessionsService);
   private sessionFoldersService = inject(SessionFoldersService);
+  private agentRuntimeApi = inject(AgentRuntimeApiService);
+  private composerDrafts = inject(ComposerDraftService);
   private tabService = inject(TabService);
   private reviewChatsApi = inject(ReviewChatsService);
   private vscodeWebState = inject(VSCodeWebStateService);
@@ -227,6 +231,7 @@ export class Sidebar implements OnInit, OnDestroy {
   draggingSession = signal<SessionInTree | null>(null);
   sessionDropTargetId = signal<number | null>(null);
   groupingSessions = signal(false);
+  creatingRelatedSessionId = signal<number | null>(null);
   deleteFolderTarget = signal<SessionFolder | null>(null);
 
   armedDeleteSessionId = signal<number | null>(null);
@@ -772,6 +777,50 @@ export class Sidebar implements OnInit, OnDestroy {
   createSessionInFolder(repo: NavigationRepo, workspace: NavigationWorkspace, folder: SessionFolder, event: Event) {
     event.stopPropagation();
     this.createSession(repo, workspace, folder.id);
+  }
+
+  async createRelatedSession(
+    repo: NavigationRepo,
+    workspace: NavigationWorkspace,
+    source: SessionInTree,
+    event: Event,
+  ): Promise<void> {
+    event.stopPropagation();
+    if (this.creatingRelatedSessionId() !== null || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) return;
+
+    this.creatingRelatedSessionId.set(source.id);
+    try {
+      const mention = await firstValueFrom(this.agentRuntimeApi.getConversationMention(source.id));
+      const existingFolderId = source.folderId ?? null;
+      const session = await firstValueFrom(this.sessionsService.create({
+        repoId: repo.id,
+        workspaceId: workspace.id,
+        folderId: existingFolderId ?? undefined,
+      }));
+      const folderId = existingFolderId ?? (await firstValueFrom(this.sessionFoldersService.groupSessions({
+        repoId: repo.id,
+        workspaceId: workspace.id,
+        name: this.sessionDisplayName(source),
+        sessionIds: [source.id, session.id],
+      }))).id;
+
+      this.composerDrafts.save({
+        sessionId: session.id,
+        text: '',
+        diffMentions: [],
+        sessionMentions: [mention],
+        images: [],
+      });
+      await this.composerDrafts.flush(session.id);
+
+      this.navService.expandKey(`session-folder-${folderId}`);
+      this.navService.refreshTree();
+      this.navService.openSession(session.id);
+    } catch (error: any) {
+      toast.error(error?.error?.message || 'Could not create related session');
+    } finally {
+      this.creatingRelatedSessionId.set(null);
+    }
   }
 
   private createSession(repo: NavigationRepo, workspace: NavigationWorkspace, folderId: number | null) {

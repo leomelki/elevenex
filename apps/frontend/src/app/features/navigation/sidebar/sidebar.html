@@ -387,6 +387,16 @@
                                 Delete
                               </button>
                             } @else {
+                              <button
+                                class="session-folder-action"
+                                title="Create related session"
+                                aria-label="Create related session"
+                                [attr.data-session-related-trigger-id]="session.id"
+                                [disabled]="creatingRelatedSessionId() !== null"
+                                (click)="createRelatedSession(repo, workspace, session, $event)"
+                              >
+                                <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                              </button>
                               <button class="session-folder-action" title="Archive session" aria-label="Archive session" (click)="archiveSession(session, $event)">
                                 <ng-icon name="lucideArchive" class="!w-3.5 !h-3.5" />
                               </button>
@@ -581,6 +591,16 @@
                             }
                           </span>
                         } @else {
+                          <button
+                            class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground"
+                            [attr.data-session-related-trigger-id]="session.id"
+                            title="Create related session"
+                            aria-label="Create related session"
+                            [disabled]="creatingRelatedSessionId() !== null"
+                            (click)="createRelatedSession(repo, workspace, session, $event)"
+                          >
+                            <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                          </button>
                           <button
                             class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground"
                             [attr.data-session-archive-trigger-id]="session.id"
