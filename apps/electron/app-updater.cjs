@@ -31,6 +31,7 @@ const {
   constants: fsConstants,
   existsSync,
   mkdirSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -169,6 +170,33 @@ function parseMacSignatureDetails(output) {
     teamIdentifier: details.TeamIdentifier === 'not set' ? null : details.TeamIdentifier || null,
     notarized: details['Notarization Ticket'] === 'stapled',
   };
+}
+
+function parseHdiutilMountPoint(output, mountBase) {
+  const canonicalMountBase = realpathSync(mountBase);
+
+  return (output || '')
+    .split('\n')
+    .map((line) => line.split('\t').pop()?.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      try {
+        return realpathSync(entry);
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry) => {
+      if (!entry) {
+        return false;
+      }
+      const relative = path.relative(canonicalMountBase, entry);
+      return relative !== ''
+        && relative !== '..'
+        && !relative.startsWith(`..${path.sep}`)
+        && !path.isAbsolute(relative);
+    })
+    .pop() || null;
 }
 
 /**
@@ -550,11 +578,11 @@ start "" "%APP_EXE%"
       '-mountrandom', mountBase,
     ]);
 
-    const mountPoint = stdout
-      .split('\n')
-      .map((line) => line.split('\t').pop()?.trim())
-      .filter((entry) => entry && entry.startsWith(mountBase))
-      .pop();
+    // macOS commonly exposes the same temporary directory through both
+    // /var/folders and /private/var/folders. hdiutil prints the canonical form,
+    // while os.tmpdir() can return the symlinked form, so compare real paths
+    // rather than their textual prefixes.
+    const mountPoint = parseHdiutilMountPoint(stdout, mountBase);
 
     if (!mountPoint) {
       throw new Error('Could not determine where the update disk image was mounted.');
@@ -948,6 +976,7 @@ ${launchSnippet(app.getPath('exe'))}
 module.exports = {
   canUseMacTrustStoreFallback,
   createAppUpdater,
+  parseHdiutilMountPoint,
   parseMacSignatureDetails,
   resolveUpdateTarget,
 };

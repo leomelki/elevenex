@@ -1,10 +1,42 @@
 const assert = require('node:assert/strict');
+const { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { describe, it } = require('node:test');
 
 const {
   canUseMacTrustStoreFallback,
+  parseHdiutilMountPoint,
   parseMacSignatureDetails,
 } = require('../app-updater.cjs');
+
+describe('macOS disk image mount parsing', () => {
+  it('accepts an hdiutil mount point printed through the canonical path', (context) => {
+    const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), 'elevenex-updater-test-'));
+    context.after(() => rmSync(temporaryDirectory, { recursive: true, force: true }));
+
+    const canonicalMountBase = path.join(temporaryDirectory, 'canonical');
+    const aliasedMountBase = path.join(temporaryDirectory, 'alias');
+    const mountPoint = path.join(canonicalMountBase, 'dmg.example');
+    mkdirSync(mountPoint, { recursive: true });
+    symlinkSync(canonicalMountBase, aliasedMountBase, 'dir');
+
+    assert.equal(
+      parseHdiutilMountPoint(
+        `/dev/disk4s1\tApple_HFS\t${mountPoint}\n`,
+        aliasedMountBase,
+      ),
+      realpathSync(mountPoint),
+    );
+  });
+
+  it('ignores paths outside the requested mount directory', () => {
+    assert.equal(
+      parseHdiutilMountPoint('/dev/disk4s1\tApple_HFS\t/Volumes/Elevenex\n', os.tmpdir()),
+      null,
+    );
+  });
+});
 
 describe('macOS update signature fallback', () => {
   const current = {
