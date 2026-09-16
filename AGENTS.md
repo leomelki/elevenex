@@ -9,6 +9,7 @@ The project is meant to be used in repositories with multiple thousands of files
 
 - Use Zard UI components and Tailwind CSS utilities as much as possible when building or modifying frontend UI.
 - When a needed Zard UI component is not already installed, do not hesitate to install the relevant component instead of hand-rolling a replacement.
+- When a user asks to see an Elevenex UI change, use the repository skill at `.agents/skills/elevenex-screenshot/SKILL.md`. Its single capture command starts or reuses the app, verifies the requested state, saves the PNG in the repository, and returns the absolute path to embed in chat.
 
 ### Angular component organization
 

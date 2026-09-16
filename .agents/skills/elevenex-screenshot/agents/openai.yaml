@@ -1,0 +1,5 @@
+interface:
+  display_name: "Elevenex Screenshot"
+  short_description: "Capture and embed verified Elevenex UI states"
+  default_prompt: "Use $elevenex-screenshot to capture the requested Elevenex UI state, save it in the repository, and embed it in chat."
+
