@@ -235,6 +235,13 @@ contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
       };
     },
   },
+  localBash: {
+    getState: () => ipcRenderer.invoke('elevenex-local-bash:get-state'),
+    setEnabled: (enabled) => ipcRenderer.invoke('elevenex-local-bash:set-enabled', enabled),
+    run: (payload) => ipcRenderer.invoke('elevenex-local-bash:run', payload),
+    cancel: (id) => ipcRenderer.invoke('elevenex-local-bash:cancel', id),
+    onStateChanged: (callback) => subscribe('elevenex-local-bash:state-changed', callback),
+  },
   cursor: {
     open: (payload) => ipcRenderer.invoke('elevenex-cursor:open', payload),
   },

@@ -1,10 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import {
-  DragDropModule,
-  CdkDragDrop,
-  moveItemInArray,
-} from '@angular/cdk/drag-drop';
+import { DragDropModule, CdkDragDrop, moveItemInArray } from '@angular/cdk/drag-drop';
 import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -49,6 +45,7 @@ import { AppUpdateComponent } from './components/app-update.component';
 import { SpeechToTextSettingsComponent } from './components/speech-to-text.component';
 import { getElectronExternalLinksApi } from '@/shared/runtime/electron-external-links';
 import { FRONTEND_GIT_SHA } from '../../../build-info';
+import { LocalComputerBashService } from '@/shared/services/local-computer-bash.service';
 import {
   SESSION_TOOLBAR_BUTTON_DEFINITION_MAP,
   SessionToolbarButtonPreference,
@@ -102,14 +99,13 @@ export class Settings {
   private readonly http = inject(HttpClient);
   private readonly externalLinks = getElectronExternalLinksApi();
   readonly appSettings = inject(AppSettingsService);
+  readonly localComputerBash = inject(LocalComputerBashService);
 
   readonly agentProviders = AGENT_PROVIDER_PRESENTATIONS;
   readonly frontendSha = FRONTEND_GIT_SHA.slice(0, 7);
   readonly backendSha = signal('...');
   readonly maxWorktreesCeiling = MAX_WORKTREES_PER_REPO_CEILING;
-  readonly maxWorktreesPerRepo = computed(
-    () => this.appSettings.settings().maxWorktreesPerRepo,
-  );
+  readonly maxWorktreesPerRepo = computed(() => this.appSettings.settings().maxWorktreesPerRepo);
   /**
    * Kept separate from `appSettings.error()` so a rejected keystroke ("101")
    * reads as feedback on this field rather than as a failed save.
@@ -152,6 +148,12 @@ export class Settings {
     void this.appSettings
       .saveDefaultAgentProvider(provider)
       .catch(() => toast.error('Could not save settings.'));
+  }
+
+  setLocalBashEnabled(enabled: boolean): void {
+    void this.localComputerBash
+      .setEnabled(enabled)
+      .catch(() => toast.error('Could not update local computer Bash access.'));
   }
 
   stepMaxWorktrees(delta: -1 | 1): void {
@@ -265,9 +267,7 @@ export class Settings {
       });
   }
 
-  private saveToolbarButtons(
-    buttons: SessionToolbarButtonPreference[],
-  ): Promise<void> {
+  private saveToolbarButtons(buttons: SessionToolbarButtonPreference[]): Promise<void> {
     return this.appSettings
       .saveSessionToolbarButtons(buttons)
       .then(() => undefined)

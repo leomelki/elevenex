@@ -46,6 +46,7 @@ const {
 const { rewriteLocalhostToProxy: rewriteMcpCallbackToProxy } = require('./mcp-proxy-url.cjs');
 const { shouldGrantAppPermission } = require('./permission-policy.cjs');
 const { createWindowRegistry } = require('./window-manager.cjs');
+const { isLocalBashSupported, localBashExecutable, runLocalBash } = require('./local-bash.cjs');
 const {
   DEFAULT_WINDOW_BOUNDS,
   MIN_WINDOW_SIZE,
@@ -1471,11 +1472,13 @@ function readSettings() {
     return {
       backendUrl: typeof parsed.backendUrl === 'string' ? parsed.backendUrl : '',
       frontendUrl: typeof parsed.frontendUrl === 'string' ? parsed.frontendUrl : '',
+      localBashEnabled: parsed.localBashEnabled === true,
     };
   } catch {
     return {
       backendUrl: '',
       frontendUrl: '',
+      localBashEnabled: false,
     };
   }
 }
@@ -4316,6 +4319,7 @@ ipcMain.handle('elevenex-settings:save', (_event, nextSettings) => {
     const normalized = {
       backendUrl: normalizeUrl(nextSettings.backendUrl),
       frontendUrl: normalizeUrl(nextSettings.frontendUrl),
+      localBashEnabled: readSettings().localBashEnabled,
     };
 
     writeSettings(normalized);
@@ -4330,6 +4334,54 @@ ipcMain.handle('elevenex-settings:save', (_event, nextSettings) => {
       error: error instanceof Error ? error.message : 'Invalid settings',
     };
   }
+});
+
+ipcMain.handle('elevenex-local-bash:get-state', async () => ({
+  enabled: readSettings().localBashEnabled,
+  supported: await isLocalBashSupported(),
+  shell: localBashExecutable(),
+  platform: process.platform,
+  label: os.hostname() || 'Local computer',
+}));
+
+ipcMain.handle('elevenex-local-bash:set-enabled', async (_event, enabled) => {
+  const supported = await isLocalBashSupported();
+  if (enabled && !supported) {
+    throw new Error('Bash is not available on this computer.');
+  }
+  const current = readSettings();
+  writeSettings({ ...current, localBashEnabled: enabled === true });
+  const state = {
+    enabled: enabled === true,
+    supported,
+    shell: localBashExecutable(),
+    platform: process.platform,
+    label: os.hostname() || 'Local computer',
+  };
+  broadcastToWindows('elevenex-local-bash:state-changed', state);
+  return state;
+});
+
+const localBashRuns = new Map();
+ipcMain.handle('elevenex-local-bash:run', async (_event, payload) => {
+  const id = typeof payload?.id === 'string' ? payload.id : '';
+  if (!id || localBashRuns.has(id)) throw new Error('Invalid local Bash request id.');
+  const controller = new AbortController();
+  localBashRuns.set(id, controller);
+  try {
+    return await runLocalBash(payload, {
+      enabled: readSettings().localBashEnabled,
+      env: process.env,
+      signal: controller.signal,
+    });
+  } finally {
+    localBashRuns.delete(id);
+  }
+});
+ipcMain.handle('elevenex-local-bash:cancel', (_event, id) => {
+  const controller = localBashRuns.get(`${id || ''}`);
+  controller?.abort();
+  return Boolean(controller);
 });
 
 // Every window-scoped handler resolves the *calling* window. Reaching for a

@@ -6,7 +6,9 @@
           <ng-icon name="lucideSettings" size="16" />
           Settings
         </div>
-        <h1 class="text-2xl font-semibold tracking-normal text-foreground">Workspace Preferences</h1>
+        <h1 class="text-2xl font-semibold tracking-normal text-foreground">
+          Workspace Preferences
+        </h1>
       </div>
     </header>
 
@@ -18,13 +20,17 @@
       <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
         <div class="min-w-0">
           <div class="text-sm font-medium text-foreground">Default agent</div>
-          <div class="mt-1 text-sm text-muted-foreground">Used when new sessions are created on this backend.</div>
+          <div class="mt-1 text-sm text-muted-foreground">
+            Used when new sessions are created on this backend.
+          </div>
           @if (appSettings.error()) {
             <div class="mt-2 text-sm text-destructive" role="alert">{{ appSettings.error() }}</div>
           }
         </div>
 
-        <div class="inline-grid grid-cols-2 rounded-lg border border-border bg-muted p-1 sm:grid-cols-4">
+        <div
+          class="inline-grid grid-cols-2 rounded-lg border border-border bg-muted p-1 sm:grid-cols-4"
+        >
           @for (provider of agentProviders; track provider.id) {
             <button
               type="button"
@@ -43,6 +49,54 @@
         </div>
       </div>
     </section>
+
+    @if (localComputerBash.state().supported) {
+      <section class="rounded-lg border border-border bg-card">
+        <div class="border-b border-border px-5 py-4">
+          <h2 class="text-sm font-semibold text-foreground">Local computer access</h2>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Let the Elevenex agent reach this computer while its backend runs remotely.
+          </p>
+        </div>
+
+        <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 text-sm font-medium text-foreground">
+              <ng-icon name="lucideTerminal" size="15" />
+              Local computer Bash
+            </div>
+            <div class="mt-1 text-sm text-muted-foreground">
+              Adds a
+              <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground"
+                >run_local_bash</code
+              >
+              tool while this desktop is connected to SSH, WSL, or a paired desktop. Commands run on
+              <span class="font-medium text-foreground">{{ localComputerBash.state().label }}</span
+              >, outside the remote environment. Disabled by default.
+            </div>
+            @if (localComputerBash.state().enabled) {
+              <div class="mt-2 flex items-center gap-1.5 text-sm text-warning">
+                <ng-icon name="lucideTriangleAlert" size="14" />
+                <span>The remote agent can run commands with your local user permissions.</span>
+              </div>
+            }
+            @if (localComputerBash.error()) {
+              <div class="mt-2 text-sm text-destructive" role="alert">
+                {{ localComputerBash.error() }}
+              </div>
+            }
+          </div>
+
+          <z-checkbox
+            [zDisabled]="localComputerBash.saving()"
+            [ngModel]="localComputerBash.state().enabled"
+            (ngModelChange)="setLocalBashEnabled($event)"
+          >
+            Enable
+          </z-checkbox>
+        </div>
+      </section>
+    }
 
     <section class="rounded-lg border border-border bg-card">
       <div class="border-b border-border px-5 py-4">
@@ -63,7 +117,9 @@
       <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
         <div class="min-w-0">
           <div class="text-sm font-medium text-foreground">Default session surface</div>
-          <div class="mt-1 text-sm text-muted-foreground">Used when Claude sessions are opened.</div>
+          <div class="mt-1 text-sm text-muted-foreground">
+            Used when Claude sessions are opened.
+          </div>
           @if (appSettings.error()) {
             <div class="mt-2 text-sm text-destructive" role="alert">{{ appSettings.error() }}</div>
           }
@@ -73,8 +129,12 @@
           <button
             type="button"
             class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-            [class.bg-background]="appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'"
-            [class.text-foreground]="appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'"
+            [class.bg-background]="
+              appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'
+            "
+            [class.text-foreground]="
+              appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'
+            "
             [class.shadow-sm]="appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'"
             [disabled]="appSettings.saving()"
             [attr.aria-pressed]="appSettings.settings().defaultClaudeSessionSurface === 'claude-ui'"
@@ -124,7 +184,9 @@
           } @else if (maxWorktreesPerRepo() === 0) {
             <div class="mt-2 flex items-center gap-1.5 text-sm text-warning">
               <ng-icon name="lucideTriangleAlert" size="14" />
-              <span>No limit — nothing will warn you before a repository fills up with worktrees.</span>
+              <span
+                >No limit — nothing will warn you before a repository fills up with worktrees.</span
+              >
             </div>
           }
         </div>
@@ -180,10 +242,15 @@
     </section>
 
     <section class="rounded-lg border border-border bg-card">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+      <div
+        class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4"
+      >
         <div>
           <h2 class="text-sm font-semibold text-foreground">Session toolbar</h2>
-          <p class="mt-1 text-sm text-muted-foreground">Choose which square buttons appear after commit and arrange them in the order you use most.</p>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Choose which square buttons appear after commit and arrange them in the order you use
+            most.
+          </p>
         </div>
         <button
           z-button
@@ -201,8 +268,13 @@
       <div class="grid gap-5 p-5">
         <div class="rounded-lg border border-border bg-background p-3">
           <div class="mb-3 text-sm font-medium text-foreground">Preview</div>
-          <div class="flex min-h-11 flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/45 px-3 py-2">
-            <span class="flex h-8 items-center rounded-md border border-border bg-background px-3 text-xs font-medium text-muted-foreground">Commit</span>
+          <div
+            class="flex min-h-11 flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/45 px-3 py-2"
+          >
+            <span
+              class="flex h-8 items-center rounded-md border border-border bg-background px-3 text-xs font-medium text-muted-foreground"
+              >Commit</span
+            >
             @if (visibleToolbarButtons().length > 0) {
               @for (button of visibleToolbarButtons(); track button.id) {
                 <span
@@ -241,13 +313,19 @@
                 <ng-icon name="lucideGripVertical" size="16" />
               </button>
 
-              <span class="flex size-8 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
+              <span
+                class="flex size-8 items-center justify-center rounded-md border border-border bg-card text-muted-foreground"
+              >
                 <ng-icon [name]="toolbarButtonIcon(button.id)" size="16" />
               </span>
 
               <div class="min-w-0">
-                <div class="text-sm font-medium text-foreground">{{ toolbarButtonLabel(button.id) }}</div>
-                <div class="mt-0.5 text-sm text-muted-foreground">{{ toolbarButtonDescription(button.id) }}</div>
+                <div class="text-sm font-medium text-foreground">
+                  {{ toolbarButtonLabel(button.id) }}
+                </div>
+                <div class="mt-0.5 text-sm text-muted-foreground">
+                  {{ toolbarButtonDescription(button.id) }}
+                </div>
               </div>
 
               <z-checkbox
@@ -313,7 +391,9 @@
           </div>
 
           <div class="mt-5 divide-y divide-border rounded-lg border border-border">
-            <div class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-2">
+            <div
+              class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-2"
+            >
               <span class="text-sm text-muted-foreground">Developer</span>
               <a
                 z-button
@@ -326,7 +406,9 @@
                 &#64;leomelki
               </a>
             </div>
-            <div class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-2">
+            <div
+              class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-2"
+            >
               <span class="text-sm text-muted-foreground">Project</span>
               <a
                 z-button
@@ -340,13 +422,19 @@
                 <ng-icon name="lucideArrowUpRight" size="14" />
               </a>
             </div>
-            <div class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-1">
+            <div
+              class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-1"
+            >
               <span class="text-sm text-muted-foreground">Frontend commit</span>
               <code class="font-mono text-sm font-semibold text-foreground">{{ frontendSha }}</code>
             </div>
-            <div class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-1">
+            <div
+              class="flex items-center justify-between gap-4 px-4 py-3 max-sm:flex-col max-sm:items-start max-sm:gap-1"
+            >
               <span class="text-sm text-muted-foreground">Backend commit</span>
-              <code class="font-mono text-sm font-semibold text-foreground">{{ backendSha() }}</code>
+              <code class="font-mono text-sm font-semibold text-foreground">{{
+                backendSha()
+              }}</code>
             </div>
           </div>
         </div>

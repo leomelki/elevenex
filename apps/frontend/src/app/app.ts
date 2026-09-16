@@ -29,7 +29,10 @@ import {
 import { TmuxRequiredOverlayComponent } from './features/tmux-required/tmux-required-overlay.component';
 import { OnboardingStateService } from './shared/services/onboarding-state.service';
 import { OnboardingStartupService } from './shared/services/onboarding-startup.service';
-import { CONNECTING_PHASES, SshRuntimeRecoveryService } from './shared/services/ssh-runtime-recovery.service';
+import {
+  CONNECTING_PHASES,
+  SshRuntimeRecoveryService,
+} from './shared/services/ssh-runtime-recovery.service';
 import { BackendLogsWebsocketService } from './shared/services/backend-logs-websocket.service';
 import { EnvironmentConnectionManagerService } from './shared/services/environment-connection-manager.service';
 import { ThemeService } from './shared/services/theme.service';
@@ -38,6 +41,7 @@ import { AgentControlDrawerComponent } from './features/agent-control/agent-cont
 import { AgentCommandBarComponent } from './features/agent-control/agent-command-bar.component';
 import { ZardInputDirective } from './shared/components/input';
 import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
+import { LocalComputerBashService } from '@/shared/services/local-computer-bash.service';
 
 const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 420;
@@ -59,7 +63,21 @@ function readSidebarWidth(): number {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, NgxSonnerToaster, Sidebar, RemoteShareStatusBarComponent, NgIcon, RemoteInstallModalComponent, WslInstallModalComponent, EnvironmentSwitcherComponent, AgentControlDrawerComponent, AgentCommandBarComponent, ZardInputDirective, TmuxRequiredOverlayComponent],
+  imports: [
+    RouterOutlet,
+    RouterLink,
+    NgxSonnerToaster,
+    Sidebar,
+    RemoteShareStatusBarComponent,
+    NgIcon,
+    RemoteInstallModalComponent,
+    WslInstallModalComponent,
+    EnvironmentSwitcherComponent,
+    AgentControlDrawerComponent,
+    AgentCommandBarComponent,
+    ZardInputDirective,
+    TmuxRequiredOverlayComponent,
+  ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   viewProviders: [
@@ -87,6 +105,7 @@ export class App implements OnInit, OnDestroy {
   private readonly serverConnection = inject(ServerConnectionService);
   private readonly onboardingState = inject(OnboardingStateService);
   private readonly theme = inject(ThemeService);
+  private readonly localComputerBash = inject(LocalComputerBashService);
   private readonly windowControls = getElectronWindowControlsApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
 
@@ -108,11 +127,12 @@ export class App implements OnInit, OnDestroy {
   readonly connectingPhases = CONNECTING_PHASES;
   readonly serverConnectionState = this.serverConnection.state;
   readonly showServerConnectionOverlay = this.serverConnection.showOverlay;
-  readonly showServerBlockOverlay = computed(() =>
-    this.serverConnection.showOverlay() &&
-    !this.sshRuntimeRecovery.remoteConnecting() &&
-    !this.sshRuntimeRecovery.remoteDisconnect() &&
-    !this.isOnboardingRoute(),
+  readonly showServerBlockOverlay = computed(
+    () =>
+      this.serverConnection.showOverlay() &&
+      !this.sshRuntimeRecovery.remoteConnecting() &&
+      !this.sshRuntimeRecovery.remoteDisconnect() &&
+      !this.isOnboardingRoute(),
   );
   // Remote POSIX runtimes use tmux for persistence. Local and Windows runtimes
   // manage child processes directly and must never be blocked on its presence.
@@ -156,7 +176,9 @@ export class App implements OnInit, OnDestroy {
     this.removeRouteListener = () => subscription.unsubscribe();
 
     if (!this.windowControls) {
-      this.isElectronDesktop.set(this.runtimeMode === 'electron-local' || this.runtimeMode === 'electron-debug');
+      this.isElectronDesktop.set(
+        this.runtimeMode === 'electron-local' || this.runtimeMode === 'electron-debug',
+      );
       this.windowEnvironmentReady.set(true);
       void this.startupService.initialize();
       await this.sshRuntimeRecovery.startMonitoring();
@@ -198,11 +220,15 @@ export class App implements OnInit, OnDestroy {
   });
 
   get shouldShowWindowControls(): boolean {
-    return this.windowEnvironmentReady() && this.isElectronDesktop() && !this.usesNativeMacControls();
+    return (
+      this.windowEnvironmentReady() && this.isElectronDesktop() && !this.usesNativeMacControls()
+    );
   }
 
   get shouldShowDesktopChrome(): boolean {
-    return this.windowEnvironmentReady() && this.isElectronDesktop() && !this.usesNativeMacControls();
+    return (
+      this.windowEnvironmentReady() && this.isElectronDesktop() && !this.usesNativeMacControls()
+    );
   }
 
   get shouldEnableWindowChromeInteractions(): boolean {
@@ -245,7 +271,9 @@ export class App implements OnInit, OnDestroy {
     const target = event.target;
     if (
       target instanceof Element &&
-      target.closest('button, a, input, textarea, select, option, [role="button"], [data-no-window-drag]')
+      target.closest(
+        'button, a, input, textarea, select, option, [role="button"], [data-no-window-drag]',
+      )
     ) {
       return;
     }
