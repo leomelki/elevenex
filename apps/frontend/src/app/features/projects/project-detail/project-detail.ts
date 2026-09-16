@@ -107,7 +107,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
     sshPort: 22,
     bindAddress: '127.0.0.1',
     localPort: 3001,
-    remoteHost: '127.0.0.1',
+    remoteHost: 'localhost',
     remotePort: 3000,
     startImmediately: true,
   });
@@ -233,7 +233,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
         sshUser: activeServer.sshUser ?? undefined,
         sshPort: activeServer.sshPort,
         bindAddress: '127.0.0.1',
-        remoteHost: '127.0.0.1',
+        remoteHost: 'localhost',
         startImmediately: true,
       };
       fromActiveServer = true;
@@ -253,7 +253,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
       sshPort: defaults?.sshPort ?? 22,
       bindAddress: defaults?.bindAddress ?? '127.0.0.1',
       localPort: suggestedPort,
-      remoteHost: defaults?.remoteHost ?? '127.0.0.1',
+      remoteHost: defaults?.remoteHost ?? 'localhost',
       remotePort: suggestedPort,
       startImmediately: defaults?.startImmediately ?? true,
     });

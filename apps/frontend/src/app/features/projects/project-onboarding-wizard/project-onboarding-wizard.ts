@@ -301,7 +301,7 @@ export class ProjectOnboardingWizard implements OnInit {
       sshPort: defaults?.sshPort ?? 22,
       bindAddress: defaults?.bindAddress ?? '127.0.0.1',
       localPort: suggestedPort,
-      remoteHost: defaults?.remoteHost ?? '127.0.0.1',
+      remoteHost: defaults?.remoteHost ?? 'localhost',
       remotePort: suggestedPort,
       startImmediately: defaults?.startImmediately ?? true,
       showAdvanced: !defaults,

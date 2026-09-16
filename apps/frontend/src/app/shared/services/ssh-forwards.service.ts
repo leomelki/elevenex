@@ -52,11 +52,27 @@ type SshForwardStore = Record<string, StoredSshForward[]>;
 const STORAGE_KEY_BASE = 'elevenex-ssh-forwards';
 // Defaults are a user preference, and stay app-global.
 const DEFAULTS_STORAGE_KEY = 'elevenex-ssh-forward-defaults';
+// Marks the one-time rewrite of IPv4-only loopback targets, per environment.
+const LOOPBACK_UPGRADE_KEY_BASE = 'elevenex-ssh-forwards-loopback-upgraded';
 
 function forwardsStorageKey(): string {
   const scoped = serverScopedKey(STORAGE_KEY_BASE);
   migrateScopedKey(STORAGE_KEY_BASE, scoped);
   return scoped;
+}
+
+// A loopback IP literal pins the remote end of `-L` to one address family, so a
+// forward aimed at 127.0.0.1 misses a server bound to ::1 and vice versa (a dev
+// server that defaults to `localhost` on Node >= 17 binds ::1 only). `localhost`
+// lets the remote sshd try every address it resolves to.
+const LOOPBACK_LITERALS = new Set(['127.0.0.1', '::1', '[::1]']);
+
+function preferredRemoteHost(remoteHost: string): string {
+  return LOOPBACK_LITERALS.has(remoteHost.trim()) ? 'localhost' : remoteHost;
+}
+
+function loopbackUpgradeStorageKey(): string {
+  return serverScopedKey(LOOPBACK_UPGRADE_KEY_BASE);
 }
 
 @Injectable({ providedIn: 'root' })
@@ -119,7 +135,7 @@ export class SshForwardsService {
         sshUser: parsed.sshUser,
         sshPort: Number(parsed.sshPort) || 22,
         bindAddress: parsed.bindAddress || '127.0.0.1',
-        remoteHost: parsed.remoteHost || '127.0.0.1',
+        remoteHost: parsed.remoteHost || 'localhost',
         startImmediately: parsed.startImmediately ?? true,
       };
     } catch {
@@ -272,10 +288,41 @@ export class SshForwardsService {
         return {};
       }
       const parsed = JSON.parse(raw) as SshForwardStore;
-      return typeof parsed === 'object' && parsed !== null ? parsed : {};
+      if (typeof parsed !== 'object' || parsed === null) {
+        return {};
+      }
+      return this.upgradeLoopbackRemoteHostsOnce(parsed);
     } catch {
       return {};
     }
+  }
+
+  // Forwards created before `localhost` became the default kept an IPv4-only
+  // target, so they are rewritten in place rather than left silently unable to
+  // reach an IPv6 listener. Runs once per environment: a remote host typed by
+  // hand afterwards is a deliberate choice and stays as it is.
+  private upgradeLoopbackRemoteHostsOnce(store: SshForwardStore): SshForwardStore {
+    if (localStorage.getItem(loopbackUpgradeStorageKey()) === 'done') {
+      return store;
+    }
+
+    let changed = false;
+    for (const entries of Object.values(store)) {
+      for (const entry of entries ?? []) {
+        const upgraded = preferredRemoteHost(`${entry.remoteHost ?? ''}`);
+        if (upgraded !== entry.remoteHost) {
+          entry.remoteHost = upgraded;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      this.writeStore(store);
+    }
+    localStorage.setItem(loopbackUpgradeStorageKey(), 'done');
+
+    return store;
   }
 
   private writeStore(store: SshForwardStore) {

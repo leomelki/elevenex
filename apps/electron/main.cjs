@@ -2838,6 +2838,16 @@ function isRemoteBackendProbeMissing(runtime) {
     );
 }
 
+// `-L` splits on colons, so an IPv6 literal has to be bracketed or the spec is
+// unparseable. Hostnames and IPv4 literals pass through untouched.
+function formatSshForwardHost(host) {
+  const value = `${host || ''}`.trim();
+  if (!value.includes(':') || value.startsWith('[')) {
+    return value;
+  }
+  return `[${value}]`;
+}
+
 function assertNoSshBindConflict(forward) {
   for (const [id, runtime] of sshForwardRuntimes.entries()) {
     if (
@@ -2863,7 +2873,8 @@ async function startSshForwardRuntime(forward, resolvedSshOutput) {
   const resolvedConfig = buildResolvedSshConfig(forward, resolvedSshOutput);
   const askPass = createSshAskPassRuntime(forward);
   const target = forward.sshHost;
-  const bindSpec = `${forward.bindAddress}:${forward.localPort}:${forward.remoteHost}:${forward.remotePort}`;
+  const bindSpec = `${formatSshForwardHost(forward.bindAddress)}:${forward.localPort}`
+    + `:${formatSshForwardHost(forward.remoteHost)}:${forward.remotePort}`;
   const batchMode = askPass ? 'no' : 'yes';
   // Set only when resolveAgentForwardPlan found an agent worth carrying, which
   // already rules out non-POSIX remotes — so the keepalive below can safely be
@@ -4715,7 +4726,7 @@ ipcMain.handle('elevenex-ssh-forwarding:start', async (_event, payload) => {
     sshPort: Number(payload?.sshPort || 22),
     bindAddress: `${payload?.bindAddress || '127.0.0.1'}`.trim(),
     localPort: Number(payload?.localPort),
-    remoteHost: `${payload?.remoteHost || '127.0.0.1'}`.trim(),
+    remoteHost: `${payload?.remoteHost || 'localhost'}`.trim(),
     remotePort: Number(payload?.remotePort),
     authMode: payload?.authMode === 'password' || payload?.authMode === 'key' ? payload.authMode : 'agent',
     password: `${payload?.password || ''}`,
