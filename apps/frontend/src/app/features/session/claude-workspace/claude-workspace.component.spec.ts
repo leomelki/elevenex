@@ -1100,9 +1100,9 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(pinned.textContent).not.toContain('A newer prompt below the viewport');
     expect(pinned.textContent).not.toContain('Latest prompt');
     expect(pinned.textContent).not.toContain('Show in conversation');
-    expect(pinned.querySelector('button')?.getAttribute('aria-label')).toBe(
-      'Jump to this prompt in the conversation',
-    );
+    expect(
+      pinned.querySelector('[aria-label="Jump to this prompt in the conversation"]'),
+    ).not.toBeNull();
 
     firstRect.mockReturnValue({ top: 110, bottom: 140 } as DOMRect);
     transcript.dispatchEvent(new Event('scroll'));
@@ -1151,6 +1151,74 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(text).not.toBeNull();
     expect(getComputedStyle(text).overflow).toBe('hidden');
     expect(getComputedStyle(text).getPropertyValue('-webkit-line-clamp')).toBe('3');
+  });
+
+  it('collapses prompt context to a recoverable tab for the rest of the session', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.historyItems.set([
+      {
+        id: 'user-1',
+        kind: 'user',
+        content: 'Keep this prompt available',
+        timestamp: '2026-04-24T08:00:00.000Z',
+      },
+      {
+        id: 'assistant-1',
+        kind: 'assistant',
+        content: 'A long response',
+        timestamp: '2026-04-24T08:00:01.000Z',
+      },
+    ]);
+    fixture.detectChanges();
+    await flushPromises();
+
+    const transcript = fixture.nativeElement.querySelector('.cw-transcript') as HTMLElement;
+    const source = fixture.nativeElement.querySelector('[data-user-prompt-id]') as HTMLElement;
+    vi.spyOn(transcript, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect);
+    const sourceRect = vi.spyOn(source, 'getBoundingClientRect');
+    sourceRect.mockReturnValue({ top: -100, bottom: 80 } as DOMRect);
+    transcript.dispatchEvent(new Event('scroll'));
+    fixture.detectChanges();
+
+    const collapse = fixture.nativeElement.querySelector(
+      '[aria-label="Collapse prompt context"]',
+    ) as HTMLButtonElement;
+    collapse.click();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.cw-contextual-prompt__surface')).toBeNull();
+    const restore = fixture.nativeElement.querySelector(
+      '[aria-label="Show prompt context"]',
+    ) as HTMLButtonElement;
+    expect(restore).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('.cw-contextual-prompt')?.textContent).not.toContain(
+      'Keep this prompt available',
+    );
+
+    // Temporarily seeing the source prompt must not discard the user's choice.
+    sourceRect.mockReturnValue({ top: 110, bottom: 150 } as DOMRect);
+    transcript.dispatchEvent(new Event('scroll'));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.cw-contextual-prompt')).toBeNull();
+
+    sourceRect.mockReturnValue({ top: -100, bottom: 80 } as DOMRect);
+    transcript.dispatchEvent(new Event('scroll'));
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('[aria-label="Show prompt context"]'),
+    ).not.toBeNull();
+
+    (
+      fixture.nativeElement.querySelector('[aria-label="Show prompt context"]') as HTMLButtonElement
+    ).click();
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('.cw-contextual-prompt__text')?.textContent,
+    ).toContain('Keep this prompt available');
   });
 
   it('rewinds conversation and restores the prompt into the composer state', async () => {

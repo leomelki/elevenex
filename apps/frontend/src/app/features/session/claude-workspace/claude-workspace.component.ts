@@ -121,6 +121,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideWandSparkles,
   lucideChevronDown,
+  lucideChevronUp,
   lucideGitBranch,
   lucideTriangleAlert,
   lucideRefreshCw,
@@ -183,6 +184,7 @@ import {
     provideIcons({
       lucideWandSparkles,
       lucideChevronDown,
+      lucideChevronUp,
       lucideGitBranch,
       lucideTriangleAlert,
       lucideRefreshCw,
@@ -377,6 +379,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private shouldAutoScrollTranscript = true;
   private readonly transcriptBottomThresholdPx = 48;
   readonly contextualPrompt = signal<ClaudeTranscriptItem | null>(null);
+  readonly contextualPromptCollapsed = signal(false);
   readonly contextualPromptText = computed(() => {
     const item = this.contextualPrompt();
     if (!item) return '';
@@ -2503,6 +2506,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.shouldAutoScrollTranscript = true;
     this.userPromptElements = [];
     this.contextualPrompt.set(null);
+    this.contextualPromptCollapsed.set(false);
   }
 
   onTranscriptScroll(): void {
@@ -2531,6 +2535,14 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       top: Math.max(0, container.scrollTop + messageTop - containerTop - 16),
       behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     });
+  }
+
+  collapseContextualPrompt(): void {
+    this.contextualPromptCollapsed.set(true);
+  }
+
+  expandContextualPrompt(): void {
+    this.contextualPromptCollapsed.set(false);
   }
 
   private scrollTranscriptToBottomIfPinned(): void {

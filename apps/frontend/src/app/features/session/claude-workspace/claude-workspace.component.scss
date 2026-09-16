@@ -34,6 +34,10 @@
   }
 }
 
+.cw-contextual-prompt--collapsed {
+  padding-bottom: 0.45rem;
+}
+
 .cw-contextual-prompt__surface {
   position: relative;
   display: grid;
@@ -48,6 +52,7 @@
   box-shadow: 0 10px 24px -22px color-mix(in oklab, var(--foreground) 42%, transparent);
   backdrop-filter: blur(12px);
   pointer-events: auto;
+  animation: cw-contextual-prompt-content-in 140ms ease-out both;
 }
 
 .cw-contextual-prompt__marker {
@@ -76,13 +81,19 @@
   -webkit-line-clamp: 3;
 }
 
-.cw-contextual-prompt__jump {
+.cw-contextual-prompt__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  margin-top: -0.18rem;
+}
+
+.cw-contextual-prompt__action {
   display: inline-flex;
   width: 1.75rem;
   height: 1.75rem;
   align-items: center;
   justify-content: center;
-  margin-top: -0.18rem;
   border: 0;
   border-radius: 0.4rem;
   background: transparent;
@@ -103,6 +114,49 @@
   }
 }
 
+.cw-contextual-prompt__collapsed-wrap {
+  position: relative;
+  display: flex;
+  width: min(100%, 52rem);
+  margin: 0 auto;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.cw-contextual-prompt__restore {
+  display: inline-flex;
+  height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.05rem;
+  padding: 0 0.4rem 0 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  border-top: 0;
+  border-radius: 0 0 0.5rem 0.5rem;
+  background: color-mix(in oklab, var(--background) 94%, transparent);
+  box-shadow: 0 8px 20px -16px color-mix(in oklab, var(--foreground) 45%, transparent);
+  color: var(--muted-foreground);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  cursor: pointer;
+  animation: cw-contextual-prompt-tab-in 140ms ease-out both;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+
+  &:hover {
+    border-color: color-mix(in oklab, var(--primary) 30%, var(--border));
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
 @keyframes cw-contextual-prompt-in {
   from {
     opacity: 0;
@@ -114,8 +168,32 @@
   }
 }
 
+@keyframes cw-contextual-prompt-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.2rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cw-contextual-prompt-tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.3rem) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .cw-contextual-prompt {
+  .cw-contextual-prompt,
+  .cw-contextual-prompt__surface,
+  .cw-contextual-prompt__restore {
     animation-duration: 1ms;
   }
 }

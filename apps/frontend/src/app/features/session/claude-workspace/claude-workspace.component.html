@@ -259,26 +259,56 @@
       </div>
 
       @if (contextualPrompt()) {
-        <aside class="cw-contextual-prompt" aria-label="Prompt for the response in view">
-          <div class="cw-contextual-prompt__surface">
-            <span class="cw-contextual-prompt__marker" aria-hidden="true"></span>
-            <ng-icon
-              class="cw-contextual-prompt__icon"
-              name="lucideMessageSquareQuote"
-              size="14"
-              aria-hidden="true"
-            />
-            <p class="cw-contextual-prompt__text">{{ contextualPromptText() }}</p>
-            <button
-              type="button"
-              class="cw-contextual-prompt__jump"
-              title="Jump to prompt"
-              aria-label="Jump to this prompt in the conversation"
-              (click)="scrollToContextualPrompt()"
-            >
-              <ng-icon name="lucideArrowUp" size="14" aria-hidden="true" />
-            </button>
-          </div>
+        <aside
+          class="cw-contextual-prompt"
+          [class.cw-contextual-prompt--collapsed]="contextualPromptCollapsed()"
+          aria-label="Prompt for the response in view"
+        >
+          @if (contextualPromptCollapsed()) {
+            <div class="cw-contextual-prompt__collapsed-wrap">
+              <button
+                type="button"
+                class="cw-contextual-prompt__restore"
+                title="Show prompt context"
+                aria-label="Show prompt context"
+                (click)="expandContextualPrompt()"
+              >
+                <ng-icon name="lucideMessageSquareQuote" size="13" aria-hidden="true" />
+                <ng-icon name="lucideChevronDown" size="11" aria-hidden="true" />
+              </button>
+            </div>
+          } @else {
+            <div class="cw-contextual-prompt__surface">
+              <span class="cw-contextual-prompt__marker" aria-hidden="true"></span>
+              <ng-icon
+                class="cw-contextual-prompt__icon"
+                name="lucideMessageSquareQuote"
+                size="14"
+                aria-hidden="true"
+              />
+              <p class="cw-contextual-prompt__text">{{ contextualPromptText() }}</p>
+              <div class="cw-contextual-prompt__actions">
+                <button
+                  type="button"
+                  class="cw-contextual-prompt__action"
+                  title="Collapse prompt context"
+                  aria-label="Collapse prompt context"
+                  (click)="collapseContextualPrompt()"
+                >
+                  <ng-icon name="lucideChevronUp" size="14" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  class="cw-contextual-prompt__action"
+                  title="Jump to prompt"
+                  aria-label="Jump to this prompt in the conversation"
+                  (click)="scrollToContextualPrompt()"
+                >
+                  <ng-icon name="lucideArrowUp" size="14" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          }
         </aside>
       }
     </div>
