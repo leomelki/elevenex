@@ -750,32 +750,22 @@
 .session-drop-target {
   z-index: 2;
   border-radius: 0.5rem;
-  background: color-mix(in oklch, var(--primary) 12%, var(--sidebar));
+  overflow: hidden;
+  background: color-mix(in oklch, var(--primary) 10%, var(--sidebar));
   box-shadow:
-    inset 0 0 0 1px color-mix(in oklch, var(--primary) 58%, transparent),
-    0 6px 18px -12px color-mix(in oklch, var(--primary) 60%, transparent);
-  animation: session-drop-target-in 160ms ease-out;
+    inset 0 0 0 1px color-mix(in oklch, var(--primary) 52%, transparent),
+    0 8px 22px -14px color-mix(in oklch, var(--primary) 70%, transparent);
+  animation: session-drop-target-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.session-drop-target::after {
-  content: 'Create folder together';
+.session-drop-target::before {
+  content: '';
   position: absolute;
-  right: 0.35rem;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  height: 1.35rem;
-  padding: 0 0.5rem;
-  border-radius: 999px;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  box-shadow: 0 4px 12px -7px color-mix(in oklch, var(--primary) 72%, transparent);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 25%, color-mix(in oklch, var(--primary) 16%, transparent) 58%, transparent 88%);
+  transform: translateX(-100%);
+  animation: session-group-sheen 1.35s ease-in-out infinite;
   pointer-events: none;
-  white-space: nowrap;
 }
 
 .session-drop-target > .sidebar-actions,
@@ -783,9 +773,83 @@
   opacity: 0;
 }
 
+.session-group-preview {
+  position: relative;
+  z-index: 1;
+  width: 3.45rem;
+  height: 1.5rem;
+  margin-left: auto;
+  flex: 0 0 3.45rem;
+  pointer-events: none;
+}
+
+.session-group-preview__item {
+  position: absolute;
+  top: 0.53rem;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 0.16rem;
+  background: color-mix(in oklch, var(--primary) 70%, var(--foreground));
+  box-shadow: 0 2px 5px color-mix(in oklch, var(--primary) 28%, transparent);
+}
+
+.session-group-preview__item--one {
+  left: 0.1rem;
+  animation: session-group-item-one 1.15s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+.session-group-preview__item--two {
+  left: 0.88rem;
+  animation: session-group-item-two 1.15s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+.session-group-preview__folder {
+  position: absolute;
+  right: 0.12rem;
+  top: 0.38rem;
+  width: 1.15rem;
+  height: 0.86rem;
+  border-radius: 0.18rem;
+  background: var(--primary);
+  box-shadow: 0 4px 10px -5px color-mix(in oklch, var(--primary) 80%, transparent);
+  animation: session-group-folder 1.15s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+.session-group-preview__folder::before {
+  content: '';
+  position: absolute;
+  left: 0.12rem;
+  top: -0.2rem;
+  width: 0.48rem;
+  height: 0.28rem;
+  border-radius: 0.14rem 0.14rem 0 0;
+  background: var(--primary);
+}
+
 @keyframes session-drop-target-in {
-  from { transform: scale(0.975); }
+  from { opacity: 0.7; transform: scale(0.975); }
   to { transform: scale(1); }
+}
+
+@keyframes session-group-item-one {
+  0%, 18% { opacity: 1; transform: translateX(0) scale(1); }
+  62%, 100% { opacity: 0; transform: translateX(1.8rem) scale(0.62); }
+}
+
+@keyframes session-group-item-two {
+  0%, 12% { opacity: 1; transform: translateX(0) scale(1); }
+  68%, 100% { opacity: 0; transform: translateX(1.08rem) scale(0.62); }
+}
+
+@keyframes session-group-folder {
+  0%, 48% { transform: scale(0.9); }
+  72% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+@keyframes session-group-sheen {
+  0%, 24% { transform: translateX(-100%); }
+  75%, 100% { transform: translateX(100%); }
 }
 
 .sidebar-empty-branch-action {
@@ -1078,108 +1142,11 @@
   animation: status-spin 0.7s linear infinite;
 }
 
-.session-group-dialog[open] {
-  animation: session-group-dialog-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.session-group-dialog[open]::backdrop {
-  animation: session-group-backdrop-in 180ms ease-out;
-}
-
-.session-group-dialog__icon {
-  float: right;
-  width: 2.5rem;
-  height: 2.5rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.85rem;
-  border: 1px solid color-mix(in oklch, var(--primary) 22%, var(--border));
-  background: color-mix(in oklch, var(--primary) 10%, var(--card));
-  color: color-mix(in oklch, var(--primary) 76%, var(--foreground));
-  box-shadow: 0 10px 24px -18px color-mix(in oklch, var(--primary) 68%, transparent);
-}
-
-.session-group-dialog__sessions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0.6rem;
-  margin-top: 1.15rem;
-}
-
-.session-group-dialog__session {
-  min-width: 0;
-  height: 2.6rem;
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0 0.75rem;
-  border: 1px solid color-mix(in oklch, var(--border) 88%, transparent);
-  border-radius: 0.8rem;
-  background: color-mix(in oklch, var(--muted) 46%, transparent);
-  color: var(--foreground);
-  font-size: 0.82rem;
-  font-weight: 600;
-}
-
-.session-group-dialog__session > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-group-dialog__connector {
-  display: flex;
-  align-items: center;
-  gap: 0.2rem;
-  color: color-mix(in oklch, var(--primary) 70%, var(--muted-foreground));
-}
-
-.session-group-dialog__connector > span {
-  width: 0.5rem;
-  height: 1px;
-  background: color-mix(in oklch, var(--primary) 36%, var(--border));
-}
-
-.session-group-dialog__label {
-  display: block;
-  margin: 1.15rem 0 0.4rem;
-  color: var(--muted-foreground);
-  font-size: 0.76rem;
-  font-weight: 650;
-}
-
-.session-group-dialog__input {
-  width: 100%;
-  height: 2.65rem;
-  border-radius: 0.75rem;
-  border: 1px solid var(--input);
-  background: var(--background);
-  color: var(--foreground);
-  padding: 0 0.8rem;
-  font-size: 0.9rem;
-}
-
-.session-group-dialog__input:focus-visible {
-  outline: 2px solid color-mix(in oklch, var(--primary) 58%, transparent);
-  outline-offset: 2px;
-}
-
-@keyframes session-group-dialog-in {
-  from { opacity: 0; transform: translateY(10px) scale(0.975); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes session-group-backdrop-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .session-drop-target,
-  .session-group-dialog[open],
-  .session-group-dialog[open]::backdrop {
+  .session-drop-target::before,
+  .session-group-preview__item,
+  .session-group-preview__folder {
     animation: none;
   }
 }

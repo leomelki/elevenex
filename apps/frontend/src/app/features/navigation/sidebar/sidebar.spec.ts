@@ -477,7 +477,7 @@ describe('Sidebar', () => {
     expect(fixture.nativeElement.querySelector('[aria-label="Link back"]')).toBeTruthy();
   });
 
-  it('proposes and atomically creates a folder when one session is dropped on another', () => {
+  it('immediately groups dropped sessions and enters inline folder rename mode', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();
     const component = fixture.componentInstance;
@@ -489,15 +489,11 @@ describe('Sidebar', () => {
     component.onSessionRowDrop({ preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as DragEvent, target, repo, workspace);
     fixture.detectChanges();
 
-    expect(component.pendingSessionGroup()).toMatchObject({ source, target });
-    expect(fixture.nativeElement.textContent).toContain('Create a folder with both?');
-
-    component.groupFolderName.set('Feature work');
-    component.confirmGroupSessions();
-
-    expect(sessionFoldersServiceMock.groupSessions).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, name: 'Feature work', sessionIds: [11, 12] });
+    expect(sessionFoldersServiceMock.groupSessions).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, name: 'New folder', sessionIds: [11, 12] });
     expect(navigationServiceMock.expandKey).toHaveBeenCalledWith('session-folder-8');
     expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
+    expect(component.editingFolderId()).toBe(8);
+    expect(fixture.nativeElement.textContent).not.toContain('Create a folder with both?');
   });
 
   it('opens the app-wide agent drawer from the sidebar header', () => {
