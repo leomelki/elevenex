@@ -148,6 +148,131 @@
   text-align: center;
 }
 
+.session-create-zone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: calc(100% - 4.5rem);
+  min-height: 2.65rem;
+  margin: 0.4rem 0.5rem 0.5rem 4rem;
+  padding: 0.38rem 0.55rem;
+  overflow: hidden;
+  border: 1px dashed color-mix(in oklch, var(--sidebar-border) 88%, var(--muted-foreground) 12%);
+  border-radius: 0.55rem;
+  background: color-mix(in oklch, var(--sidebar-accent) 28%, transparent);
+  color: var(--muted-foreground);
+  text-align: left;
+  cursor: pointer;
+  transition: min-height 160ms ease, border-color 160ms ease, background-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.session-create-zone:hover:not(:disabled),
+.session-create-zone:focus-visible {
+  outline: none;
+  border-style: solid;
+  border-color: color-mix(in oklch, var(--primary) 42%, var(--sidebar-border));
+  background: color-mix(in oklch, var(--primary) 6%, var(--sidebar-accent));
+  color: var(--foreground);
+  box-shadow: 0 7px 18px -16px color-mix(in oklch, var(--primary) 72%, transparent);
+  transform: translateY(-1px);
+}
+
+.session-create-zone:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 34%, transparent), 0 7px 18px -16px color-mix(in oklch, var(--primary) 72%, transparent);
+}
+
+.session-create-zone:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.session-create-zone--dragging:not(:disabled) {
+  border-color: color-mix(in oklch, var(--primary) 38%, var(--sidebar-border));
+}
+
+.session-create-zone--drop-ready:not(:disabled) {
+  min-height: 3rem;
+  border-style: solid;
+  border-color: color-mix(in oklch, var(--primary) 76%, var(--sidebar-border));
+  background: color-mix(in oklch, var(--primary) 13%, var(--sidebar));
+  color: var(--foreground);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--primary) 18%, transparent), 0 9px 22px -15px color-mix(in oklch, var(--primary) 70%, transparent);
+  transform: translateY(-1px);
+}
+
+.session-create-zone--drop-ready::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 18%, color-mix(in oklch, var(--primary) 12%, transparent) 52%, transparent 84%);
+  transform: translateX(-100%);
+  animation: session-group-sheen 1.35s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.session-create-zone__icon {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  flex: 0 0 1.65rem;
+  border: 1px solid color-mix(in oklch, var(--sidebar-border) 84%, var(--primary) 16%);
+  border-radius: 0.45rem;
+  background: color-mix(in oklch, var(--background) 72%, var(--sidebar-accent));
+  color: color-mix(in oklch, var(--primary) 72%, var(--foreground));
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+
+.session-create-zone:hover:not(:disabled) .session-create-zone__icon,
+.session-create-zone--drop-ready:not(:disabled) .session-create-zone__icon {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  transform: scale(1.04);
+}
+
+.session-create-zone__copy {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.session-create-zone__title {
+  overflow: hidden;
+  color: color-mix(in oklch, var(--foreground) 82%, var(--muted-foreground));
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-create-zone__hint {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.64rem;
+  line-height: 0.85rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-create-zone__spinner {
+  width: 0.8rem;
+  height: 0.8rem;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 999px;
+  animation: status-spin 0.7s linear infinite;
+}
+
 .session-folder-session {
   border-left: 1px solid color-mix(in oklch, var(--border) 58%, transparent);
 }
@@ -1138,7 +1263,9 @@
   .session-drop-target,
   .session-drop-target::before,
   .session-group-preview__item,
-  .session-group-preview__folder {
+  .session-group-preview__folder,
+  .session-create-zone--drop-ready::after,
+  .session-create-zone__spinner {
     animation: none;
   }
 }

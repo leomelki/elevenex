@@ -514,7 +514,60 @@ describe('Sidebar', () => {
     showPersistedWorkspace('unlinked');
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[aria-label="New session folder"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-workspace-new-session="2"]')).toBeNull();
     expect(fixture.nativeElement.querySelector('[aria-label="Link back"]')).toBeTruthy();
+  });
+
+  it('shows a persistent new-session zone below a linked workspace session list', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const zone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-session="2"]');
+
+    expect(zone).toBeTruthy();
+    expect(zone?.textContent).toContain('New session');
+    expect(zone?.textContent).toContain('drop a session to relate');
+
+    zone?.click();
+
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, folderId: undefined });
+    expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
+  });
+
+  it('turns the new-session zone into a related-session drop target', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const workspace = tree()[0].repos[0].workspaces![0];
+    component.draggingSession.set(workspace.sessions[0]);
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn(), dataTransfer: { dropEffect: 'none' } } as unknown as DragEvent;
+
+    component.onNewSessionZoneDragOver(event, workspace);
+    fixture.detectChanges();
+
+    const zone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-session="2"]');
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(event.stopPropagation).toHaveBeenCalled();
+    expect(event.dataTransfer?.dropEffect).toBe('copy');
+    expect(zone?.classList.contains('session-create-zone--drop-ready')).toBe(true);
+    expect(zone?.textContent).toContain('Create related session');
+    expect(zone?.textContent).toContain('Use Alpha as context');
+  });
+
+  it('creates the same related-session flow when a session is dropped on the new-session zone', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const repo = tree()[0].repos[0];
+    const workspace = repo.workspaces![0];
+    component.draggingSession.set(workspace.sessions[0]);
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as DragEvent;
+
+    component.onNewSessionZoneDrop(event, repo, workspace);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(event.stopPropagation).toHaveBeenCalled();
+    expect(agentRuntimeApiMock.getConversationMention).toHaveBeenCalledWith(11);
+    expect(component.draggingSession()).toBeNull();
   });
 
   it('immediately groups dropped sessions and enters inline folder rename mode', () => {

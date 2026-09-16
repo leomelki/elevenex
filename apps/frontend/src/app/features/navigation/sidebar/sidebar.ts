@@ -230,7 +230,9 @@ export class Sidebar implements OnInit, OnDestroy {
   draggedOverFolderId = signal<number | null>(null);
   draggingSession = signal<SessionInTree | null>(null);
   sessionDropTargetId = signal<number | null>(null);
+  newSessionDropWorkspaceId = signal<number | null>(null);
   groupingSessions = signal(false);
+  creatingSessionWorkspaceId = signal<number | null>(null);
   creatingRelatedSessionId = signal<number | null>(null);
   deleteFolderTarget = signal<SessionFolder | null>(null);
 
@@ -442,6 +444,43 @@ export class Sidebar implements OnInit, OnDestroy {
     this.draggingSession.set(null);
     this.draggedOverFolderId.set(null);
     this.sessionDropTargetId.set(null);
+    this.newSessionDropWorkspaceId.set(null);
+  }
+
+  canCreateRelatedSessionIn(workspace: NavigationWorkspace): boolean {
+    const source = this.draggingSession();
+    return !!source &&
+      !this.groupingSessions() &&
+      this.creatingRelatedSessionId() === null &&
+      source.status !== 'archived' &&
+      source.repoId === workspace.repoId &&
+      source.workspaceId === workspace.id &&
+      !workspace.isMissing &&
+      !this.isWorkspaceUnlinked(workspace);
+  }
+
+  onNewSessionZoneDragOver(event: DragEvent, workspace: NavigationWorkspace): void {
+    if (!this.canCreateRelatedSessionIn(workspace)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    this.newSessionDropWorkspaceId.set(workspace.id);
+  }
+
+  onNewSessionZoneDragLeave(event: DragEvent, workspace: NavigationWorkspace): void {
+    const zone = event.currentTarget as HTMLElement | null;
+    if (zone?.contains(event.relatedTarget as Node | null)) return;
+    if (this.newSessionDropWorkspaceId() === workspace.id) this.newSessionDropWorkspaceId.set(null);
+  }
+
+  onNewSessionZoneDrop(event: DragEvent, repo: NavigationRepo, workspace: NavigationWorkspace): void {
+    const source = this.draggingSession();
+    this.newSessionDropWorkspaceId.set(null);
+    if (!source || !this.canCreateRelatedSessionIn(workspace)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.onSessionDragEnd();
+    void this.createRelatedSession(repo, workspace, source, event);
   }
 
   onSessionRowDragOver(event: DragEvent, target: SessionInTree, workspace: NavigationWorkspace): void {
@@ -824,10 +863,11 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   private createSession(repo: NavigationRepo, workspace: NavigationWorkspace, folderId: number | null) {
-    if (this.openingWorkspaceRepoId() !== null || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) {
+    if (this.openingWorkspaceRepoId() !== null || this.creatingSessionWorkspaceId() !== null || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) {
       return;
     }
 
+    this.creatingSessionWorkspaceId.set(workspace.id);
     this.sessionsService
       .create({
         repoId: repo.id,
@@ -836,10 +876,12 @@ export class Sidebar implements OnInit, OnDestroy {
       })
       .subscribe({
         next: session => {
+          this.creatingSessionWorkspaceId.set(null);
           this.navService.refreshTree();
           this.navService.openSession(session.id);
         },
         error: err => {
+          this.creatingSessionWorkspaceId.set(null);
           const msg = err?.error?.message || 'Unknown error';
           toast.error(`Could not create session. ${msg}`);
         },
