@@ -100,8 +100,6 @@ export const READ_ONLY_MESSAGE_AFFORDANCES: TranscriptMessageAffordances = {
 export class ClaudeTranscriptComponent {
   readonly items = input.required<TranscriptRenderItem[]>();
   readonly worktreePath = input<string | null>(null);
-  /** Marks one rendered user message so a host can track its viewport position. */
-  readonly trackedUserMessageId = input<string | null>(null);
   /** The one item currently receiving deltas, if any. */
   readonly streamingMessageId = input<string | null>(null);
   /** Renders the empty pulsing reply bubble while the first token is awaited. */
@@ -114,9 +112,7 @@ export class ClaudeTranscriptComponent {
   readonly expandedTurns = input<Record<string, boolean>>({});
   readonly expandedTurnChanges = input<Record<string, boolean>>({});
 
-  readonly messageAffordances = input<TranscriptMessageAffordances>(
-    READ_ONLY_MESSAGE_AFFORDANCES,
-  );
+  readonly messageAffordances = input<TranscriptMessageAffordances>(READ_ONLY_MESSAGE_AFFORDANCES);
 
   /** Review discussions anchored to a turn, keyed by turn id. Empty when unused. */
   readonly reviewThreadsByTurnId = input<Record<string, readonly ReviewChat[]>>({});
@@ -161,6 +157,10 @@ export class ClaudeTranscriptComponent {
 
   isStreaming(itemId: string): boolean {
     return this.streamingMessageId() === itemId;
+  }
+
+  userPromptId(item: ClaudeTranscriptItem): string | null {
+    return item.kind === 'user' && !item.isSynthetic && !item.parentToolUseId ? item.id : null;
   }
 
   isTurnExpanded(turnId: string): boolean {

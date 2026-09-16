@@ -64,213 +64,220 @@
         class="cw-transcript w-full flex-1 min-h-0 overflow-auto py-5 px-[clamp(0.75rem,4vw,2rem)] scroll-smooth"
         (scroll)="onTranscriptScroll()"
       >
-      @if (showLoading()) {
-        <div class="h-full flex items-center justify-center">
-          <div class="flex flex-col gap-4 w-full max-w-[52rem] mx-auto">
-            <div class="flex flex-col gap-1.5 items-end">
-              <div
-                class="w-48 h-9 rounded-[1rem_1rem_0.25rem_1rem] bg-foreground/7 animate-pulse"
-              ></div>
-            </div>
-            <div class="flex flex-col gap-2 max-w-[40ch]">
-              <div
-                class="h-3 rounded bg-foreground/7 animate-pulse w-full [animation-delay:150ms]"
-              ></div>
-              <div
-                class="h-3 rounded bg-foreground/7 animate-pulse w-3/4 [animation-delay:150ms]"
-              ></div>
-              <div
-                class="h-3 rounded bg-foreground/7 animate-pulse w-[45%] [animation-delay:150ms]"
-              ></div>
-            </div>
-            <div class="flex flex-col gap-2 max-w-[40ch]">
-              <div
-                class="h-3 rounded bg-foreground/7 animate-pulse w-full [animation-delay:300ms]"
-              ></div>
-              <div
-                class="h-3 rounded bg-foreground/7 animate-pulse w-[45%] [animation-delay:300ms]"
-              ></div>
+        @if (showLoading()) {
+          <div class="h-full flex items-center justify-center">
+            <div class="flex flex-col gap-4 w-full max-w-[52rem] mx-auto">
+              <div class="flex flex-col gap-1.5 items-end">
+                <div
+                  class="w-48 h-9 rounded-[1rem_1rem_0.25rem_1rem] bg-foreground/7 animate-pulse"
+                ></div>
+              </div>
+              <div class="flex flex-col gap-2 max-w-[40ch]">
+                <div
+                  class="h-3 rounded bg-foreground/7 animate-pulse w-full [animation-delay:150ms]"
+                ></div>
+                <div
+                  class="h-3 rounded bg-foreground/7 animate-pulse w-3/4 [animation-delay:150ms]"
+                ></div>
+                <div
+                  class="h-3 rounded bg-foreground/7 animate-pulse w-[45%] [animation-delay:150ms]"
+                ></div>
+              </div>
+              <div class="flex flex-col gap-2 max-w-[40ch]">
+                <div
+                  class="h-3 rounded bg-foreground/7 animate-pulse w-full [animation-delay:300ms]"
+                ></div>
+                <div
+                  class="h-3 rounded bg-foreground/7 animate-pulse w-[45%] [animation-delay:300ms]"
+                ></div>
+              </div>
             </div>
           </div>
-        </div>
-      } @else if (!pairedTranscript().length) {
-        <div
-          class="h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground text-sm"
-        >
-          @if (lastError()) {
-            <div
-              class="max-w-lg rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
-            >
-              {{ lastError() }}
-            </div>
-          } @else {
-            @if (!isTranscriptReadOnly() && !runtimeStarted() && modelPresets().length) {
-              <div class="flex w-full max-w-[52rem] flex-col items-center gap-4 px-2">
-                <div class="text-center">
-                  <div class="text-[0.9375rem] font-medium text-foreground">Start with a preset</div>
-                  <div class="mt-1 text-xs text-muted-foreground">Choose a setup, or just start typing below.</div>
-                </div>
-                <div class="flex w-full flex-wrap justify-center gap-2">
-                  @for (preset of modelPresets(); track preset.id) {
-                    <button
-                      type="button"
-                      class="group flex min-w-44 max-w-64 items-center gap-2.5 rounded-lg border bg-card px-3 py-2.5 text-left shadow-sm transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-px hover:bg-accent/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-60"
-                      [class.border-primary]="isModelPresetSelected(preset)"
-                      [class.bg-primary/5]="isModelPresetSelected(preset)"
-                      [class.border-border]="!isModelPresetSelected(preset)"
-                      [disabled]="!!applyingPresetId()"
-                      [attr.aria-pressed]="isModelPresetSelected(preset)"
-                      (click)="applyModelPreset(preset)"
-                    >
-                      <span class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                        <ng-icon [name]="modelPresetIcon(preset.provider)" size="15" />
-                      </span>
-                      <span class="min-w-0 flex-1">
-                        <span class="block truncate text-sm font-medium text-foreground">{{ preset.name }}</span>
-                        <span class="mt-0.5 block truncate text-xs text-muted-foreground">{{ modelPresetSummary(preset) }}</span>
-                      </span>
-                      @if (isModelPresetSelected(preset)) {
-                        <ng-icon name="lucideCheck" size="15" class="shrink-0 text-primary" />
-                      } @else if (applyingPresetId() === preset.id) {
-                        <span class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary"></span>
-                      }
-                    </button>
-                  }
-                </div>
+        } @else if (!pairedTranscript().length) {
+          <div
+            class="h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground text-sm"
+          >
+            @if (lastError()) {
+              <div
+                class="max-w-lg rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
+              >
+                {{ lastError() }}
               </div>
             } @else {
-              <div class="text-[0.9375rem] text-foreground font-medium">
-                {{ isTranscriptReadOnly() ? 'No transcript available.' : 'Start with a prompt.' }}
-              </div>
-            }
-            @if (!isTranscriptReadOnly() && !modelPresets().length) {
-              <div>
-                Type
-                <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded"
-                  >/</code
-                >
-                for commands or
-                <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded"
-                  >$</code
-                >
-                for skills. ⌘↵ to send.
-              </div>
-            }
-          }
-        </div>
-      } @else {
-        <div class="flex flex-col gap-3.5 max-w-[52rem] mx-auto">
-          @if (firstMessageContext(); as fmc) {
-            <cw-context-note
-              class="mb-1"
-              label="Context"
-              [summary]="fmc.sentence"
-              ariaLabel="Context attached to this conversation"
-            >
-              <ng-icon note-icon name="lucideWandSparkles" size="13" />
-              @if (fmc.rootRef) {
-                <span
-                  note-chip
-                  class="inline-flex items-center gap-[0.3rem] px-[0.4rem] py-[0.1rem] rounded-full bg-foreground/6 text-muted-foreground text-[0.68rem] shrink-0 max-w-56"
-                  title="Compared against"
-                >
-                  <ng-icon name="lucideGitBranch" size="10" aria-hidden="true" />
-                  <code
-                    class="font-mono text-[0.68rem] text-foreground whitespace-nowrap overflow-hidden text-ellipsis"
-                    >{{ fmc.rootRef }}</code
-                  >
-                </span>
+              @if (!isTranscriptReadOnly() && !runtimeStarted() && modelPresets().length) {
+                <div class="flex w-full max-w-[52rem] flex-col items-center gap-4 px-2">
+                  <div class="text-center">
+                    <div class="text-[0.9375rem] font-medium text-foreground">
+                      Start with a preset
+                    </div>
+                    <div class="mt-1 text-xs text-muted-foreground">
+                      Choose a setup, or just start typing below.
+                    </div>
+                  </div>
+                  <div class="flex w-full flex-wrap justify-center gap-2">
+                    @for (preset of modelPresets(); track preset.id) {
+                      <button
+                        type="button"
+                        class="group flex min-w-44 max-w-64 items-center gap-2.5 rounded-lg border bg-card px-3 py-2.5 text-left shadow-sm transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-px hover:bg-accent/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-60"
+                        [class.border-primary]="isModelPresetSelected(preset)"
+                        [class.bg-primary/5]="isModelPresetSelected(preset)"
+                        [class.border-border]="!isModelPresetSelected(preset)"
+                        [disabled]="!!applyingPresetId()"
+                        [attr.aria-pressed]="isModelPresetSelected(preset)"
+                        (click)="applyModelPreset(preset)"
+                      >
+                        <span
+                          class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
+                        >
+                          <ng-icon [name]="modelPresetIcon(preset.provider)" size="15" />
+                        </span>
+                        <span class="min-w-0 flex-1">
+                          <span class="block truncate text-sm font-medium text-foreground">{{
+                            preset.name
+                          }}</span>
+                          <span class="mt-0.5 block truncate text-xs text-muted-foreground">{{
+                            modelPresetSummary(preset)
+                          }}</span>
+                        </span>
+                        @if (isModelPresetSelected(preset)) {
+                          <ng-icon name="lucideCheck" size="15" class="shrink-0 text-primary" />
+                        } @else if (applyingPresetId() === preset.id) {
+                          <span
+                            class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary"
+                          ></span>
+                        }
+                      </button>
+                    }
+                  </div>
+                </div>
+              } @else {
+                <div class="text-[0.9375rem] text-foreground font-medium">
+                  {{ isTranscriptReadOnly() ? 'No transcript available.' : 'Start with a prompt.' }}
+                </div>
               }
-
-              <p class="m-0 text-[0.82rem] leading-[1.5] text-foreground">{{ fmc.sentence }}</p>
-              @if (fmc.rootRef) {
-                <dl class="m-0 flex items-center gap-2 text-[0.72rem]">
-                  <dt class="text-muted-foreground font-medium">Comparing against</dt>
-                  <dd class="m-0">
+              @if (!isTranscriptReadOnly() && !modelPresets().length) {
+                <div>
+                  Type
+                  <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded"
+                    >/</code
+                  >
+                  for commands or
+                  <code class="font-mono text-[0.8125rem] bg-foreground/8 px-1 py-0.5 rounded"
+                    >$</code
+                  >
+                  for skills. ⌘↵ to send.
+                </div>
+              }
+            }
+          </div>
+        } @else {
+          <div class="flex flex-col gap-3.5 max-w-[52rem] mx-auto">
+            @if (firstMessageContext(); as fmc) {
+              <cw-context-note
+                class="mb-1"
+                label="Context"
+                [summary]="fmc.sentence"
+                ariaLabel="Context attached to this conversation"
+              >
+                <ng-icon note-icon name="lucideWandSparkles" size="13" />
+                @if (fmc.rootRef) {
+                  <span
+                    note-chip
+                    class="inline-flex items-center gap-[0.3rem] px-[0.4rem] py-[0.1rem] rounded-full bg-foreground/6 text-muted-foreground text-[0.68rem] shrink-0 max-w-56"
+                    title="Compared against"
+                  >
+                    <ng-icon name="lucideGitBranch" size="10" aria-hidden="true" />
                     <code
-                      class="font-mono text-[0.72rem] px-[0.35rem] py-[0.05rem] rounded-[0.3rem] bg-foreground/6 text-foreground"
+                      class="font-mono text-[0.68rem] text-foreground whitespace-nowrap overflow-hidden text-ellipsis"
                       >{{ fmc.rootRef }}</code
                     >
-                  </dd>
-                </dl>
-              }
-              <p class="m-0 text-[0.7rem] text-muted-foreground italic">
-                This summary was attached to the first prompt to orient the assistant.
-              </p>
-            </cw-context-note>
-          }
+                  </span>
+                }
 
-          <cw-transcript
-            [items]="renderItems()"
-            [worktreePath]="worktreePath"
-            [trackedUserMessageId]="lastUserMessage()?.id ?? null"
-            [streamingMessageId]="streamingMessageId()"
-            [pendingReply]="isAwaitingFirstAssistantToken()"
-            [childItemsByParentToolUseId]="childTranscriptItemsByParentToolUseId()"
-            [liveToolUseIds]="liveToolUseIds()"
-            [toolProgressByToolUseId]="toolProgressByToolUseId()"
-            [expandedTurns]="expandedTurns()"
-            [expandedTurnChanges]="expandedTurnChanges()"
-            [messageAffordances]="messageAffordances"
-            [reviewThreadsByTurnId]="reviewThreadsByTurnId()"
-            [unreadReviewThreadIds]="unreadReviewThreadIds()"
-            (approve)="approvePermission($event)"
-            (deny)="denyPermission($event)"
-            (toggleTurn)="toggleTurn($event)"
-            (toggleTurnChanges)="toggleTurnChanges($event)"
-            (closeTurnChanges)="closeTurnChanges($event)"
-            (inspectTurn)="openAgentInspector($event)"
-            (messageCopy)="copyMessage($event.item, $event.text)"
-            (fork)="forkMessage($event)"
-            (armEdit)="armEditMessage($event)"
-            (confirmEdit)="confirmEditMessage($event)"
-            (cancelEdit)="cancelArmedEdit()"
-            (toggleForks)="toggleForksForItem($event)"
-            (openFork)="openFork($event)"
-            (openPlanReview)="openPlanReview($event)"
-            (openPlanChat)="openPlanQuestion($event)"
-            (openReview)="openReviewWorkspace.emit($event)"
-          />
+                <p class="m-0 text-[0.82rem] leading-[1.5] text-foreground">{{ fmc.sentence }}</p>
+                @if (fmc.rootRef) {
+                  <dl class="m-0 flex items-center gap-2 text-[0.72rem]">
+                    <dt class="text-muted-foreground font-medium">Comparing against</dt>
+                    <dd class="m-0">
+                      <code
+                        class="font-mono text-[0.72rem] px-[0.35rem] py-[0.05rem] rounded-[0.3rem] bg-foreground/6 text-foreground"
+                        >{{ fmc.rootRef }}</code
+                      >
+                    </dd>
+                  </dl>
+                }
+                <p class="m-0 text-[0.7rem] text-muted-foreground italic">
+                  This summary was attached to the first prompt to orient the assistant.
+                </p>
+              </cw-context-note>
+            }
 
-          @if (liveShows().length > 0) {
-            <div class="flex flex-col gap-2">
-              @for (show of liveShows(); track show.id) {
-                <cw-agent-show-card
-                  [show]="show"
-                  (dismiss)="dismissShow($event)"
-                  (open)="openShowDeepLink($event)"
-                />
-              }
-            </div>
-          }
-        </div>
-      }
+            <cw-transcript
+              [items]="renderItems()"
+              [worktreePath]="worktreePath"
+              [streamingMessageId]="streamingMessageId()"
+              [pendingReply]="isAwaitingFirstAssistantToken()"
+              [childItemsByParentToolUseId]="childTranscriptItemsByParentToolUseId()"
+              [liveToolUseIds]="liveToolUseIds()"
+              [toolProgressByToolUseId]="toolProgressByToolUseId()"
+              [expandedTurns]="expandedTurns()"
+              [expandedTurnChanges]="expandedTurnChanges()"
+              [messageAffordances]="messageAffordances"
+              [reviewThreadsByTurnId]="reviewThreadsByTurnId()"
+              [unreadReviewThreadIds]="unreadReviewThreadIds()"
+              (approve)="approvePermission($event)"
+              (deny)="denyPermission($event)"
+              (toggleTurn)="toggleTurn($event)"
+              (toggleTurnChanges)="toggleTurnChanges($event)"
+              (closeTurnChanges)="closeTurnChanges($event)"
+              (inspectTurn)="openAgentInspector($event)"
+              (messageCopy)="copyMessage($event.item, $event.text)"
+              (fork)="forkMessage($event)"
+              (armEdit)="armEditMessage($event)"
+              (confirmEdit)="confirmEditMessage($event)"
+              (cancelEdit)="cancelArmedEdit()"
+              (toggleForks)="toggleForksForItem($event)"
+              (openFork)="openFork($event)"
+              (openPlanReview)="openPlanReview($event)"
+              (openPlanChat)="openPlanQuestion($event)"
+              (openReview)="openReviewWorkspace.emit($event)"
+            />
+
+            @if (liveShows().length > 0) {
+              <div class="flex flex-col gap-2">
+                @for (show of liveShows(); track show.id) {
+                  <cw-agent-show-card
+                    [show]="show"
+                    (dismiss)="dismissShow($event)"
+                    (open)="openShowDeepLink($event)"
+                  />
+                }
+              </div>
+            }
+          </div>
+        }
       </div>
 
-      @if (lastUserMessage(); as lastUser) {
-        <aside
-          class="cw-pinned-prompt"
-          [class.cw-pinned-prompt--visible]="pinnedLastUserMessage()"
-          [attr.aria-hidden]="!pinnedLastUserMessage()"
-          aria-label="Latest prompt"
-        >
-          <div class="cw-pinned-prompt__card">
+      @if (contextualPrompt()) {
+        <aside class="cw-contextual-prompt" aria-label="Prompt for the response in view">
+          <div class="cw-contextual-prompt__surface">
+            <span class="cw-contextual-prompt__marker" aria-hidden="true"></span>
+            <ng-icon
+              class="cw-contextual-prompt__icon"
+              name="lucideMessageSquareQuote"
+              size="14"
+              aria-hidden="true"
+            />
+            <p class="cw-contextual-prompt__text">{{ contextualPromptText() }}</p>
             <button
               type="button"
-              class="cw-pinned-prompt__header"
-              [attr.tabindex]="pinnedLastUserMessage() ? 0 : -1"
-              title="Jump to the latest prompt"
-              (click)="scrollToLastUserMessage()"
+              class="cw-contextual-prompt__jump"
+              title="Jump to prompt"
+              aria-label="Jump to this prompt in the conversation"
+              (click)="scrollToContextualPrompt()"
             >
-              <span>Latest prompt</span>
-              <span class="cw-pinned-prompt__jump">
-                Show in conversation
-                <ng-icon name="lucideChevronDown" size="13" aria-hidden="true" />
-              </span>
+              <ng-icon name="lucideArrowUp" size="14" aria-hidden="true" />
             </button>
-            <div class="cw-pinned-prompt__viewport" aria-hidden="true">
-              <cw-message [item]="lastUser" />
-            </div>
           </div>
         </aside>
       }

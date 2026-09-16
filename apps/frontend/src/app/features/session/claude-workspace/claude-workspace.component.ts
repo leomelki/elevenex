@@ -104,7 +104,6 @@ import {
   ClaudeSubagentHistoryState,
 } from './components/claude-agent-inspector.component';
 import { ClaudeContextNoteComponent } from './components/claude-context-note.component';
-import { ClaudeMessageComponent } from './components/claude-message.component';
 import {
   ClaudeTranscriptComponent,
   type TranscriptMessageAffordances,
@@ -132,6 +131,8 @@ import {
   lucideNotebookPen,
   lucideOrbit,
   lucideSparkles,
+  lucideArrowUp,
+  lucideMessageSquareQuote,
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '@/shared/components/button/button.component';
 import type { CreateSessionForkResponse, SessionFork } from '@/shared/models/session.model';
@@ -143,6 +144,7 @@ import {
   parseDiffSelectionMentions,
 } from '@/shared/utils/diff-selection-mention';
 import { appendSessionMentions, parseSessionMentions } from '@/shared/utils/session-mention';
+import { parseTaskNotifications } from '@/shared/utils/task-notification';
 import { ComposerDraftService } from './composer-draft.service';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
 import type { AgentModelPreset } from '@/shared/models/app-settings.model';
@@ -166,7 +168,6 @@ import {
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
     ClaudeTranscriptComponent,
-    ClaudeMessageComponent,
     ClaudeContextNoteComponent,
     ClaudeInstallCardComponent,
     CodexLoginCardComponent,
@@ -192,6 +193,8 @@ import {
       lucideNotebookPen,
       lucideOrbit,
       lucideSparkles,
+      lucideArrowUp,
+      lucideMessageSquareQuote,
     }),
   ],
 })
@@ -373,7 +376,23 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
   private shouldAutoScrollTranscript = true;
   private readonly transcriptBottomThresholdPx = 48;
-  readonly pinnedLastUserMessage = signal(false);
+  readonly contextualPrompt = signal<ClaudeTranscriptItem | null>(null);
+  readonly contextualPromptText = computed(() => {
+    const item = this.contextualPrompt();
+    if (!item) return '';
+
+    const taskDisplay = parseTaskNotifications(item.content);
+    const sessionDisplay = parseSessionMentions(taskDisplay.text);
+    const messageDisplay = parseDiffSelectionMentions(sessionDisplay.text);
+    const text = messageDisplay.text.trim();
+    if (text) return text;
+
+    const attachmentCount = sessionDisplay.mentions.length + messageDisplay.mentions.length;
+    if (attachmentCount) {
+      return `${attachmentCount} attached ${attachmentCount === 1 ? 'reference' : 'references'}`;
+    }
+    return item.content?.trim() || 'Prompt';
+  });
   readonly permissionMode = computed<ClaudePermissionMode>(() => {
     return this._permissionMode() ?? 'auto';
   });
@@ -569,13 +588,19 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     ),
   );
 
-  readonly lastUserMessage = computed<ClaudeTranscriptItem | null>(() => {
+  readonly userPromptIndex = computed(() => {
+    const byId = new Map<string, ClaudeTranscriptItem>();
+    let firstId: string | null = null;
+    let lastId: string | null = null;
     const items = this.transcriptItems();
-    for (let i = items.length - 1; i >= 0; i--) {
-      const item = items[i];
-      if (item.kind === 'user' && !item.isSynthetic && !item.parentToolUseId) return item;
+    for (const item of items) {
+      if (item.kind === 'user' && !item.isSynthetic && !item.parentToolUseId) {
+        byId.set(item.id, item);
+        firstId ??= item.id;
+        lastId = item.id;
+      }
     }
-    return null;
+    return { byId, firstId, lastId };
   });
 
   readonly topLevelTranscriptItems = computed(() =>
@@ -721,10 +746,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     effect(() => {
       this.pairedTranscript();
       this.runPhase();
-      this.lastUserMessage();
+      this.userPromptIndex();
       queueMicrotask(() => {
         this.scrollTranscriptToBottomIfPinned();
-        this.updatePinnedLastUserMessage();
+        this.refreshUserPromptElements();
+        this.updateContextualPrompt();
       });
     });
 
@@ -1251,11 +1277,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       );
       this.applyRuntimeState(modelState);
       const effortState = await firstValueFrom(
-        this.agentApi.setReasoningEffort(
-          this.sessionId,
-          preset.reasoningEffort,
-          preset.provider,
-        ),
+        this.agentApi.setReasoningEffort(this.sessionId, preset.reasoningEffort, preset.provider),
       );
       this.applyRuntimeState(effortState);
       queueMicrotask(() => this.composer?.focusAtEnd());
@@ -1286,9 +1308,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private reasoningEffortLabel(effort: string): string {
-    return effort === 'xhigh'
-      ? 'Extra high'
-      : effort.charAt(0).toUpperCase() + effort.slice(1);
+    return effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1);
   }
 
   async onReasoningEffortChange(effort: ClaudeReasoningEffort | null): Promise<void> {
@@ -2481,24 +2501,28 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.closeAgentInspector();
     this.agentHistoryById.set({});
     this.shouldAutoScrollTranscript = true;
-    this.pinnedLastUserMessage.set(false);
+    this.userPromptElements = [];
+    this.contextualPrompt.set(null);
   }
 
   onTranscriptScroll(): void {
     const el = this.transcriptContainer?.nativeElement;
     if (!el) return;
     this.shouldAutoScrollTranscript = this.isTranscriptScrolledToBottom(el);
-    this.updatePinnedLastUserMessage();
+    this.updateContextualPrompt();
   }
 
   @HostListener('window:resize')
   onWindowResize(): void {
-    this.updatePinnedLastUserMessage();
+    this.updateContextualPrompt();
   }
 
-  scrollToLastUserMessage(): void {
+  scrollToContextualPrompt(): void {
     const container = this.transcriptContainer?.nativeElement;
-    const message = this.findLastUserMessageElement();
+    const promptId = this.contextualPrompt()?.id;
+    const message = promptId
+      ? this.userPromptElements.find((element) => element.dataset['userPromptId'] === promptId)
+      : null;
     if (!container || !message) return;
 
     const containerTop = container.getBoundingClientRect().top;
@@ -2524,25 +2548,72 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     return el.scrollHeight - el.scrollTop - el.clientHeight <= this.transcriptBottomThresholdPx;
   }
 
-  private updatePinnedLastUserMessage(): void {
+  private userPromptElements: HTMLElement[] = [];
+
+  private refreshUserPromptElements(): void {
     const container = this.transcriptContainer?.nativeElement;
-    const message = this.findLastUserMessageElement();
-    if (!container || !message) {
-      this.pinnedLastUserMessage.set(false);
+    if (!container) {
+      this.userPromptElements = [];
+      return;
+    }
+
+    const promptIndex = this.userPromptIndex();
+    if (!promptIndex.byId.size) {
+      this.userPromptElements = [];
+      return;
+    }
+    const firstElement = this.userPromptElements[0];
+    const lastElement = this.userPromptElements.at(-1);
+    if (
+      this.userPromptElements.length === promptIndex.byId.size &&
+      firstElement?.isConnected &&
+      lastElement?.isConnected &&
+      firstElement.dataset['userPromptId'] === promptIndex.firstId &&
+      lastElement.dataset['userPromptId'] === promptIndex.lastId
+    ) {
+      return;
+    }
+
+    this.userPromptElements = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-user-prompt-id]'),
+    );
+  }
+
+  private updateContextualPrompt(): void {
+    const container = this.transcriptContainer?.nativeElement;
+    if (!container || !this.userPromptElements.length) {
+      this.contextualPrompt.set(null);
       return;
     }
 
     const containerTop = container.getBoundingClientRect().top;
-    const messageBottom = message.getBoundingClientRect().bottom;
-    this.pinnedLastUserMessage.set(messageBottom < containerTop - 1);
-  }
+    // A point near the top represents the response the reader is currently
+    // following. Selecting the last prompt above it makes turn hand-offs feel
+    // stable without waiting until the next prompt has left the viewport.
+    const probeY = containerTop + Math.min(160, Math.max(48, container.clientHeight * 0.28));
+    let low = 0;
+    let high = this.userPromptElements.length - 1;
+    let candidate: HTMLElement | null = null;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      const element = this.userPromptElements[middle];
+      if (element.getBoundingClientRect().top <= probeY) {
+        candidate = element;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
 
-  private findLastUserMessageElement(): HTMLElement | null {
-    const container = this.transcriptContainer?.nativeElement;
-    const messageId = this.lastUserMessage()?.id;
-    if (!container || !messageId) return null;
+    if (!candidate || candidate.getBoundingClientRect().bottom >= containerTop - 1) {
+      this.contextualPrompt.set(null);
+      return;
+    }
 
-    return container.querySelector<HTMLElement>('[data-tracked-user-message]');
+    const promptId = candidate.dataset['userPromptId'];
+    this.contextualPrompt.set(
+      promptId ? (this.userPromptIndex().byId.get(promptId) ?? null) : null,
+    );
   }
 
   private enqueueDelta(itemId: string, delta: string): void {

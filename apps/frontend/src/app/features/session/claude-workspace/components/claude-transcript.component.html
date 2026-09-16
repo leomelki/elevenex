@@ -11,7 +11,7 @@
   @switch (unit.kind) {
     @case ('message') {
       <cw-message
-        [attr.data-tracked-user-message]="unit.item.id === trackedUserMessageId() ? '' : null"
+        [attr.data-user-prompt-id]="userPromptId(unit.item)"
         [item]="unit.item"
         [worktreePath]="worktreePath()"
         [streaming]="isStreaming(unit.item.id)"

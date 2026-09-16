@@ -508,8 +508,12 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(wsMock.send).not.toHaveBeenCalled();
     expect(el.querySelector('cw-composer')).toBeNull();
     expect(el.querySelector('cw-status-bar')).toBeNull();
-    expect(fixture.componentInstance.canEditMessage(fixture.componentInstance.historyItems()[0])).toBe(false);
-    expect(fixture.componentInstance.canForkMessage(fixture.componentInstance.historyItems()[1])).toBe(false);
+    expect(
+      fixture.componentInstance.canEditMessage(fixture.componentInstance.historyItems()[0]),
+    ).toBe(false);
+    expect(
+      fixture.componentInstance.canForkMessage(fixture.componentInstance.historyItems()[1]),
+    ).toBe(false);
 
     await fixture.componentInstance.submitPrompt('should not send');
     expect(terminalTranscriptWsMock.send).toHaveBeenCalledTimes(1);
@@ -1041,7 +1045,7 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(transcript.scrollTop).toBe(1400);
   });
 
-  it('pins the latest user message only after it has scrolled above the transcript', async () => {
+  it('pins the prompt that belongs to the response currently in view', async () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
     fixture.detectChanges();
@@ -1057,38 +1061,66 @@ describe('ClaudeWorkspaceComponent', () => {
       {
         id: 'assistant-1',
         kind: 'assistant',
-        content: 'A long response',
+        content: 'The first long response',
         timestamp: '2026-04-24T08:00:01.000Z',
+      },
+      {
+        id: 'user-2',
+        kind: 'user',
+        content: 'A newer prompt below the viewport',
+        timestamp: '2026-04-24T08:00:02.000Z',
+      },
+      {
+        id: 'assistant-2',
+        kind: 'assistant',
+        content: 'The second response',
+        timestamp: '2026-04-24T08:00:03.000Z',
       },
     ]);
     fixture.detectChanges();
     await flushPromises();
 
     const transcript = fixture.nativeElement.querySelector('.cw-transcript') as HTMLElement;
-    const source = fixture.nativeElement.querySelector(
-      '[data-tracked-user-message]',
-    ) as HTMLElement;
+    const [firstPrompt, secondPrompt] = fixture.nativeElement.querySelectorAll(
+      '[data-user-prompt-id]',
+    ) as NodeListOf<HTMLElement>;
     vi.spyOn(transcript, 'getBoundingClientRect').mockReturnValue({
       top: 100,
     } as DOMRect);
-    const sourceRect = vi.spyOn(source, 'getBoundingClientRect');
+    const firstRect = vi.spyOn(firstPrompt, 'getBoundingClientRect');
+    const secondRect = vi.spyOn(secondPrompt, 'getBoundingClientRect');
 
-    sourceRect.mockReturnValue({ bottom: 80 } as DOMRect);
+    firstRect.mockReturnValue({ top: -40, bottom: 80 } as DOMRect);
+    secondRect.mockReturnValue({ top: 500, bottom: 540 } as DOMRect);
     transcript.dispatchEvent(new Event('scroll'));
     fixture.detectChanges();
 
-    const pinned = fixture.nativeElement.querySelector('.cw-pinned-prompt') as HTMLElement;
-    expect(pinned.classList.contains('cw-pinned-prompt--visible')).toBe(true);
+    const pinned = fixture.nativeElement.querySelector('.cw-contextual-prompt') as HTMLElement;
     expect(pinned.textContent).toContain('Keep this prompt in view');
+    expect(pinned.textContent).not.toContain('A newer prompt below the viewport');
+    expect(pinned.textContent).not.toContain('Latest prompt');
+    expect(pinned.textContent).not.toContain('Show in conversation');
+    expect(pinned.querySelector('button')?.getAttribute('aria-label')).toBe(
+      'Jump to this prompt in the conversation',
+    );
 
-    sourceRect.mockReturnValue({ bottom: 140 } as DOMRect);
+    firstRect.mockReturnValue({ top: 110, bottom: 140 } as DOMRect);
     transcript.dispatchEvent(new Event('scroll'));
     fixture.detectChanges();
 
-    expect(pinned.classList.contains('cw-pinned-prompt--visible')).toBe(false);
+    expect(fixture.nativeElement.querySelector('.cw-contextual-prompt')).toBeNull();
+
+    firstRect.mockReturnValue({ top: -500, bottom: -460 } as DOMRect);
+    secondRect.mockReturnValue({ top: 60, bottom: 80 } as DOMRect);
+    transcript.dispatchEvent(new Event('scroll'));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.cw-contextual-prompt').textContent).toContain(
+      'A newer prompt below the viewport',
+    );
   });
 
-  it('bounds very long pinned prompts in an independently scrollable viewport', async () => {
+  it('clamps very long contextual prompts without taking over the transcript', async () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;
     fixture.detectChanges();
@@ -1105,12 +1137,20 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.detectChanges();
     await flushPromises();
 
-    const viewport = fixture.nativeElement.querySelector(
-      '.cw-pinned-prompt__viewport',
-    ) as HTMLElement;
-    expect(viewport).not.toBeNull();
-    expect(getComputedStyle(viewport).overflow).toBe('auto');
-    expect(getComputedStyle(viewport).maxHeight).toContain('8.5rem');
+    const transcript = fixture.nativeElement.querySelector('.cw-transcript') as HTMLElement;
+    const source = fixture.nativeElement.querySelector('[data-user-prompt-id]') as HTMLElement;
+    vi.spyOn(transcript, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect);
+    vi.spyOn(source, 'getBoundingClientRect').mockReturnValue({
+      top: -400,
+      bottom: 80,
+    } as DOMRect);
+    transcript.dispatchEvent(new Event('scroll'));
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.querySelector('.cw-contextual-prompt__text') as HTMLElement;
+    expect(text).not.toBeNull();
+    expect(getComputedStyle(text).overflow).toBe('hidden');
+    expect(getComputedStyle(text).getPropertyValue('-webkit-line-clamp')).toBe('3');
   });
 
   it('rewinds conversation and restores the prompt into the composer state', async () => {
