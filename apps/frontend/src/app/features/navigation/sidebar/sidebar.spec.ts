@@ -518,14 +518,14 @@ describe('Sidebar', () => {
     expect(fixture.nativeElement.querySelector('[aria-label="Link back"]')).toBeTruthy();
   });
 
-  it('shows a persistent new-session zone below a linked workspace session list', () => {
+  it('shows a compact new-session action below a linked workspace session list', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();
     const zone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-session="2"]');
 
     expect(zone).toBeTruthy();
-    expect(zone?.textContent).toContain('New session');
-    expect(zone?.textContent).toContain('Click or drop a session');
+    expect(zone?.getAttribute('aria-label')).toBe('Create new session');
+    expect(zone?.textContent?.trim()).toBe('');
 
     zone?.click();
 
@@ -549,8 +549,7 @@ describe('Sidebar', () => {
     expect(event.stopPropagation).toHaveBeenCalled();
     expect(event.dataTransfer?.dropEffect).toBe('copy');
     expect(zone?.classList.contains('session-create-zone--drop-ready')).toBe(true);
-    expect(zone?.textContent).toContain('Create related session');
-    expect(zone?.textContent).toContain('Use Alpha as context');
+    expect(zone?.textContent).toContain('Create from Alpha');
   });
 
   it('creates the same related-session flow when a session is dropped on the new-session zone', () => {

@@ -652,46 +652,39 @@
                   }
 
                   @if (!workspace.isMissing && !isWorkspaceUnlinked(workspace)) {
-                    <button
-                      type="button"
-                      class="session-create-zone"
-                      [class.session-create-zone--drop-ready]="newSessionDropWorkspaceId() === workspace.id"
-                      [class.session-create-zone--dragging]="canCreateRelatedSessionIn(workspace)"
-                      [attr.data-workspace-new-session]="workspace.id"
-                      [attr.aria-label]="newSessionDropWorkspaceId() === workspace.id ? 'Drop to create a related session' : 'Create new session'"
-                      [attr.title]="draggingSession() ? 'Drop a session from this workspace to create a related session' : 'Create a new session in ' + workspace.name"
-                      [disabled]="creatingSessionWorkspaceId() !== null || creatingRelatedSessionId() !== null"
-                      (click)="$event.stopPropagation(); createSessionOnWorkspace(repo, workspace)"
-                      (dragover)="onNewSessionZoneDragOver($event, workspace)"
-                      (dragleave)="onNewSessionZoneDragLeave($event, workspace)"
-                      (drop)="onNewSessionZoneDrop($event, repo, workspace)"
-                    >
-                      <span class="session-create-zone__icon" aria-hidden="true">
-                        @if (creatingSessionWorkspaceId() === workspace.id) {
-                          <span class="session-create-zone__spinner"></span>
-                        } @else {
-                          <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                    <div class="session-quick-actions">
+                      <button
+                        type="button"
+                        class="session-create-zone"
+                        [class.session-create-zone--drop-ready]="newSessionDropWorkspaceId() === workspace.id"
+                        [class.session-create-zone--dragging]="canCreateRelatedSessionIn(workspace)"
+                        [attr.data-workspace-new-session]="workspace.id"
+                        [attr.aria-label]="newSessionDropWorkspaceId() === workspace.id ? 'Drop to create a related session' : 'Create new session'"
+                        [attr.title]="draggingSession() ? 'Drop to create a related session' : 'Create a new session in ' + workspace.name"
+                        [disabled]="creatingSessionWorkspaceId() !== null || creatingRelatedSessionId() !== null"
+                        (click)="$event.stopPropagation(); createSessionOnWorkspace(repo, workspace)"
+                        (dragover)="onNewSessionZoneDragOver($event, workspace)"
+                        (dragleave)="onNewSessionZoneDragLeave($event, workspace)"
+                        (drop)="onNewSessionZoneDrop($event, repo, workspace)"
+                      >
+                        <span class="session-create-zone__icon" aria-hidden="true">
+                          @if (creatingSessionWorkspaceId() === workspace.id) {
+                            <span class="session-create-zone__spinner"></span>
+                          } @else {
+                            <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                          }
+                        </span>
+                        @if (canCreateRelatedSessionIn(workspace)) {
+                          <span class="session-create-zone__drop-copy">
+                            @if (newSessionDropWorkspaceId() === workspace.id) {
+                              Create from {{ sessionDisplayName(draggingSession()!) }}
+                            } @else {
+                              Drop to create related session
+                            }
+                          </span>
                         }
-                      </span>
-                      <span class="session-create-zone__copy">
-                        <span class="session-create-zone__title">
-                          @if (newSessionDropWorkspaceId() === workspace.id) {
-                            Create related session
-                          } @else if (creatingSessionWorkspaceId() === workspace.id) {
-                            Creating session…
-                          } @else {
-                            New session
-                          }
-                        </span>
-                        <span class="session-create-zone__hint">
-                          @if (newSessionDropWorkspaceId() === workspace.id) {
-                            Use {{ sessionDisplayName(draggingSession()!) }} as context
-                          } @else {
-                            Click or drop a session
-                          }
-                        </span>
-                      </span>
-                    </button>
+                      </button>
+                    </div>
                   }
 
                   @if (archivedItemCount(workspace) > 0) {
