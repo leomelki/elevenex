@@ -525,7 +525,7 @@ describe('Sidebar', () => {
 
     expect(zone).toBeTruthy();
     expect(zone?.textContent).toContain('New session');
-    expect(zone?.textContent).toContain('drop a session to relate');
+    expect(zone?.textContent).toContain('Click or drop a session');
 
     zone?.click();
 

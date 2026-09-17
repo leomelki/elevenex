@@ -27,6 +27,9 @@ Options:
   --state <mode>       contextual-prompt (default for sessions) or none.
   --prompt <text>      Pin the prompt containing this text.
   --prompt-index <n>   Pin a zero-based prompt index; negative counts from end.
+  --actions <json>     Run ordered browser actions before capture (JSON array).
+  --verify-selector <css>
+                       Fail unless this element is visible before capture.
   --selector <css>     Capture one element instead of the full viewport.
   --backend-url <url>  Backend origin (default: http://127.0.0.1:11111).
   --frontend-url <url> Frontend origin (default: http://127.0.0.1:4200).
@@ -61,6 +64,100 @@ function integer(value, fallback, label) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${label} must be a non-negative integer`);
   return parsed;
+}
+
+function parseActions(value) {
+  if (value === undefined) return [];
+
+  let actions;
+  try {
+    actions = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`--actions must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!Array.isArray(actions)) throw new Error('--actions must be a JSON array');
+  if (actions.length > 50) throw new Error('--actions supports at most 50 steps');
+
+  const selectorActions = new Set(['click', 'dblclick', 'hover', 'fill', 'press', 'waitFor']);
+  const supportedActions = new Set([...selectorActions, 'wait', 'dragTo']);
+  return actions.map((step, index) => {
+    if (!step || typeof step !== 'object' || Array.isArray(step)) {
+      throw new Error(`--actions step ${index + 1} must be an object`);
+    }
+    if (!supportedActions.has(step.action)) {
+      throw new Error(`--actions step ${index + 1} has unsupported action: ${String(step.action)}`);
+    }
+    if (selectorActions.has(step.action) && (typeof step.selector !== 'string' || !step.selector)) {
+      throw new Error(`--actions step ${index + 1} (${step.action}) requires a selector`);
+    }
+    if (step.index !== undefined && (!Number.isInteger(step.index) || step.index < 0)) {
+      throw new Error(`--actions step ${index + 1} index must be a non-negative integer`);
+    }
+    if (step.action === 'fill' && typeof step.value !== 'string') {
+      throw new Error(`--actions step ${index + 1} (fill) requires a string value`);
+    }
+    if (step.action === 'press' && (typeof step.key !== 'string' || !step.key)) {
+      throw new Error(`--actions step ${index + 1} (press) requires a key`);
+    }
+    if (step.action === 'wait' && (!Number.isInteger(step.ms) || step.ms < 0 || step.ms > 60_000)) {
+      throw new Error(`--actions step ${index + 1} wait must be between 0 and 60000 ms`);
+    }
+    if (step.action === 'waitFor' && step.state !== undefined && !['attached', 'detached', 'visible', 'hidden'].includes(step.state)) {
+      throw new Error(`--actions step ${index + 1} waitFor state must be attached, detached, visible, or hidden`);
+    }
+    if (step.action === 'dragTo' && (
+      typeof step.source !== 'string' || !step.source || typeof step.target !== 'string' || !step.target
+    )) {
+      throw new Error(`--actions step ${index + 1} (dragTo) requires source and target selectors`);
+    }
+    for (const key of ['sourceIndex', 'targetIndex']) {
+      if (step[key] !== undefined && (!Number.isInteger(step[key]) || step[key] < 0)) {
+        throw new Error(`--actions step ${index + 1} ${key} must be a non-negative integer`);
+      }
+    }
+    return step;
+  });
+}
+
+function actionLocator(page, step) {
+  const locator = page.locator(step.selector);
+  return step.index === undefined ? locator : locator.nth(step.index);
+}
+
+async function runActions(page, actions) {
+  for (const [index, step] of actions.entries()) {
+    console.log(`Action ${index + 1}/${actions.length}: ${step.action}`);
+    switch (step.action) {
+      case 'click':
+        await actionLocator(page, step).click();
+        break;
+      case 'dblclick':
+        await actionLocator(page, step).dblclick();
+        break;
+      case 'hover':
+        await actionLocator(page, step).hover();
+        break;
+      case 'fill':
+        await actionLocator(page, step).fill(step.value);
+        break;
+      case 'press':
+        await actionLocator(page, step).press(step.key);
+        break;
+      case 'waitFor':
+        await actionLocator(page, step).waitFor({ state: step.state || 'visible' });
+        break;
+      case 'wait':
+        await page.waitForTimeout(step.ms);
+        break;
+      case 'dragTo': {
+        const source = page.locator(step.source);
+        const target = page.locator(step.target);
+        await (step.sourceIndex === undefined ? source : source.nth(step.sourceIndex))
+          .dragTo(step.targetIndex === undefined ? target : target.nth(step.targetIndex));
+        break;
+      }
+    }
+  }
 }
 
 function slug(value) {
@@ -246,6 +343,7 @@ async function main() {
   const width = integer(args.width, 1600, '--width');
   const height = integer(args.height, 1000, '--height');
   const settleMs = integer(args.wait, 3500, '--wait');
+  const actions = parseActions(args.actions);
   const promptIndex = args['prompt-index'] === undefined ? undefined : Number(args['prompt-index']);
   if (promptIndex !== undefined && !Number.isInteger(promptIndex)) throw new Error('--prompt-index must be an integer');
 
@@ -319,11 +417,19 @@ async function main() {
 
     await page.goto(`${frontendUrl}${route}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await page.waitForTimeout(settleMs);
+    await runActions(page, actions);
 
     let contextualPrompt = null;
     if (state === 'contextual-prompt') {
       await page.waitForSelector('.cw-transcript', { timeout: 30_000 });
       contextualPrompt = await positionContextualPrompt(page, args.prompt, promptIndex);
+    }
+
+    let verifiedSelector = null;
+    if (args['verify-selector']) {
+      const target = page.locator(args['verify-selector']).first();
+      await target.waitFor({ state: 'visible', timeout: 20_000 });
+      verifiedSelector = args['verify-selector'];
     }
 
     await mkdir(path.dirname(outputPath), { recursive: true });
@@ -343,6 +449,8 @@ async function main() {
       state,
       theme: args.theme || 'light',
       contextualPrompt,
+      actions: actions.length,
+      verifiedSelector,
       width,
       height,
       output: outputPath,

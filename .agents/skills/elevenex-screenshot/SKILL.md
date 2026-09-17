@@ -29,6 +29,24 @@ pnpm screenshot:ui --session 213 --name prompt-chat-only --selector .cw-workspac
 pnpm screenshot:ui --session 213 --name remote-session --backend-url http://127.0.0.1:45678
 ```
 
+When the requested state needs interaction, pass an ordered JSON action plan. Prefer stable
+attributes and accessible selectors. Add `--verify-selector` for the element the screenshot
+is meant to demonstrate so the command fails instead of returning the wrong UI state:
+
+```bash
+pnpm screenshot:ui --path /projects --name expanded-sidebar --state none \
+  --actions '[{"action":"click","selector":"[data-project-row-id=\"3\"]"},{"action":"click","selector":"[data-workspace-row]","index":0},{"action":"waitFor","selector":".session-create-zone"}]' \
+  --verify-selector .session-create-zone
+```
+
+Supported actions are `click`, `dblclick`, `hover`, `fill`, `press`, `waitFor`, `wait`, and
+`dragTo`. Selectors use Playwright locator syntax. Add a zero-based `index` when a selector
+intentionally matches multiple elements. `fill` takes `value`, `press` takes `key`, `wait`
+takes `ms`, and `dragTo` takes `source` and `target` selectors with optional `sourceIndex`
+and `targetIndex`. Use an explicit `waitFor` on the resulting UI instead of timing-only waits
+when possible. The action plan is intentionally declarative; do not add arbitrary JavaScript
+or evaluation hooks to capture one-off states.
+
 Run `pnpm screenshot:ui --help` only when an option is unclear. Do not manually start
 servers, write ad-hoc Playwright scripts, install a browser, or probe several endpoints
 before trying the command. The script explains any missing prerequisite and prints useful
