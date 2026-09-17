@@ -673,6 +673,7 @@ describe('Sidebar', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('[aria-label="New session in folder"]')).toBeTruthy();
     expect((fixture.nativeElement as HTMLElement).querySelector('[aria-label="Archive folder and sessions"]')).toBeTruthy();
     expect((fixture.nativeElement as HTMLElement).querySelector('[aria-label="Delete folder and sessions"]')).toBeTruthy();
+    expect(getComputedStyle((fixture.nativeElement as HTMLElement).querySelector('.session-folder-row') as HTMLElement).position).toBe('relative');
   });
 
   it('opens the app-wide agent drawer from the sidebar header', () => {
