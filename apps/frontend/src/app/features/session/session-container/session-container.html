@@ -67,12 +67,17 @@
               [zMin]="30"
               [zMax]="sidePanelVisible() ? 70 : 100"
             >
-              <div class="claude-terminal-area h-full">
-                @if (activeTab(); as tab) {
-                  <div class="claude-terminal-wrapper h-full">
-                    @if (tab.status !== 'archived' && showClaudeTerminalFallback()) {
+              <div class="claude-terminal-area relative h-full">
+                @for (tab of tabs(); track tab.sessionId) {
+                  <div
+                    class="claude-terminal-wrapper absolute inset-0 h-full"
+                    [class.invisible]="tab.sessionId !== activeSessionId()"
+                    [class.pointer-events-none]="tab.sessionId !== activeSessionId()"
+                    [attr.aria-hidden]="tab.sessionId !== activeSessionId() ? 'true' : null"
+                  >
+                    @if (tab.status !== 'archived' && usesClaudeTerminalFallback(tab.sessionId)) {
                       <z-resizable zLayout="vertical" class="h-full">
-                        @if (showClaudeTerminalTranscriptMirror()) {
+                        @if (usesClaudeTerminalTranscriptMirror(tab.sessionId)) {
                           <z-resizable-panel [zDefaultSize]="67" [zMin]="30" [zMax]="85">
                             <app-claude-workspace
                               [sessionId]="tab.sessionId"
@@ -81,7 +86,7 @@
                               [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
                               [activeAgentProvider]="tab.activeAgentProvider"
                               [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
-                              [isVisible]="true"
+                              [isVisible]="tab.sessionId === activeSessionId()"
                               [readOnlyTranscript]="true"
                               [terminalTranscriptMirror]="true"
                               [sessionName]="tab.sessionName"
@@ -95,13 +100,13 @@
                           <z-resizable-handle />
                         }
                         <z-resizable-panel
-                          [zDefaultSize]="showClaudeTerminalTranscriptMirror() ? 33 : 100"
+                          [zDefaultSize]="usesClaudeTerminalTranscriptMirror(tab.sessionId) ? 33 : 100"
                           [zMin]="15"
-                          [zMax]="showClaudeTerminalTranscriptMirror() ? 70 : 100"
+                          [zMax]="usesClaudeTerminalTranscriptMirror(tab.sessionId) ? 70 : 100"
                         >
                           <app-claude-terminal
                             [sessionId]="tab.sessionId"
-                            [isVisible]="true"
+                            [isVisible]="tab.sessionId === activeSessionId()"
                             class="h-full block"
                           />
                         </z-resizable-panel>
@@ -114,7 +119,7 @@
                         [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
                         [activeAgentProvider]="tab.activeAgentProvider"
                         [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
-                        [isVisible]="true"
+                        [isVisible]="tab.sessionId === activeSessionId()"
                         [archived]="tab.status === 'archived'"
                         [sessionName]="tab.sessionName"
                         [unarchiveBusy]="unarchivingSessionId() === tab.sessionId"

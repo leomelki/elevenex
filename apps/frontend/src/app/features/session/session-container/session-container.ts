@@ -288,6 +288,17 @@ export class SessionContainer implements OnInit, OnDestroy {
     if (id === null || !this.showClaudeTerminalFallback()) return false;
     return this.claudeTerminalMirrorModes().get(id) !== false;
   });
+
+  usesClaudeTerminalFallback(sessionId: number): boolean {
+    return this.claudeSurfaceModes().get(sessionId) === 'terminal';
+  }
+
+  usesClaudeTerminalTranscriptMirror(sessionId: number): boolean {
+    return (
+      this.usesClaudeTerminalFallback(sessionId) &&
+      this.claudeTerminalMirrorModes().get(sessionId) !== false
+    );
+  }
   claudeTerminalReturnDisabled = computed(() => {
     const id = this.activeSessionId();
     if (id === null || this.claudeSurfaceModes().get(id) !== 'terminal') return false;

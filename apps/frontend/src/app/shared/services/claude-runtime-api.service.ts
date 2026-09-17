@@ -10,14 +10,24 @@ import type {
   ClaudeSubagentHistoryPayload,
   ClaudeTranscriptItem,
 } from '../models/claude-runtime.model';
+import type { AgentProviderId } from '../models/agent-runtime.model';
 
 @Injectable({ providedIn: 'root' })
 export class ClaudeRuntimeApiService {
   private readonly agentRuntimeApi = inject(AgentRuntimeApiService);
   private readonly providerSelection = inject(AgentRuntimeProviderService);
+  private readonly sessionProviders = new Map<number, AgentProviderId>();
+
+  setProvider(sessionId: number, provider: AgentProviderId): void {
+    this.sessionProviders.set(sessionId, provider);
+  }
+
+  clearProvider(sessionId: number): void {
+    this.sessionProviders.delete(sessionId);
+  }
 
   getHistory(sessionId: number) {
-    return this.agentRuntimeApi.getHistory(sessionId, this.provider()) as Observable<
+    return this.agentRuntimeApi.getHistory(sessionId, this.provider(sessionId)) as Observable<
       ClaudeTranscriptItem[]
     >;
   }
@@ -25,7 +35,7 @@ export class ClaudeRuntimeApiService {
   getRuntimeState(sessionId: number) {
     return this.agentRuntimeApi.getRuntimeState(
       sessionId,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeRuntimeState>;
   }
 
@@ -33,21 +43,22 @@ export class ClaudeRuntimeApiService {
     return this.agentRuntimeApi.getSubagentHistory(
       sessionId,
       agentId,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeSubagentHistoryPayload>;
   }
 
   getAutocompleteItems(sessionId: number) {
-    return this.agentRuntimeApi.getAutocompleteItems(sessionId, this.provider()) as Observable<
-      ClaudeAutocompleteItem[]
-    >;
+    return this.agentRuntimeApi.getAutocompleteItems(
+      sessionId,
+      this.provider(sessionId),
+    ) as Observable<ClaudeAutocompleteItem[]>;
   }
 
   getMcpSnapshot(sessionId: number, forceRefresh = false) {
     return this.agentRuntimeApi.getMcpSnapshot(
       sessionId,
       forceRefresh,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeMcpSnapshot>;
   }
 
@@ -55,7 +66,7 @@ export class ClaudeRuntimeApiService {
     return this.agentRuntimeApi.toggleMcpServer(
       sessionId,
       serverName,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeMcpSnapshot>;
   }
 
@@ -63,7 +74,7 @@ export class ClaudeRuntimeApiService {
     return this.agentRuntimeApi.recheckMcpServer(
       sessionId,
       serverName,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeMcpSnapshot>;
   }
 
@@ -71,7 +82,7 @@ export class ClaudeRuntimeApiService {
     return this.agentRuntimeApi.startMcpAuth(
       sessionId,
       serverName,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeMcpAuthStartResult>;
   }
 
@@ -79,7 +90,7 @@ export class ClaudeRuntimeApiService {
     return this.agentRuntimeApi.setSelectedModel(
       sessionId,
       model,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeRuntimeState>;
   }
 
@@ -87,7 +98,7 @@ export class ClaudeRuntimeApiService {
     return this.agentRuntimeApi.setPermissionMode(
       sessionId,
       mode,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeRuntimeState>;
   }
 
@@ -95,7 +106,7 @@ export class ClaudeRuntimeApiService {
     return this.agentRuntimeApi.setPlanMode(
       sessionId,
       enabled,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeRuntimeState>;
   }
 
@@ -103,7 +114,7 @@ export class ClaudeRuntimeApiService {
     return this.agentRuntimeApi.setReasoningEffort(
       sessionId,
       effort,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeRuntimeState>;
   }
 
@@ -111,21 +122,23 @@ export class ClaudeRuntimeApiService {
     return this.agentRuntimeApi.setFastMode(
       sessionId,
       enabled,
-      this.provider(),
+      this.provider(sessionId),
     ) as Observable<ClaudeRuntimeState>;
   }
 
   openTerminalFallback(sessionId: number) {
-    return this.agentRuntimeApi.openTerminalFallback(sessionId, this.provider());
+    return this.agentRuntimeApi.openTerminalFallback(sessionId, this.provider(sessionId));
   }
 
   rewindConversation(sessionId: number, messageId: string) {
-    return this.agentRuntimeApi.rewindConversation(sessionId, messageId, this.provider()) as Observable<
-      ClaudeTranscriptItem[]
-    >;
+    return this.agentRuntimeApi.rewindConversation(
+      sessionId,
+      messageId,
+      this.provider(sessionId),
+    ) as Observable<ClaudeTranscriptItem[]>;
   }
 
-  private provider() {
-    return this.providerSelection.currentProvider;
+  private provider(sessionId: number): AgentProviderId {
+    return this.sessionProviders.get(sessionId) ?? this.providerSelection.currentProvider;
   }
 }

@@ -272,7 +272,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly lastError = signal<string | null>(null);
   readonly claudeSessionId = signal<string | null>(null);
   readonly providers = signal<AgentRuntimeProviderInfo[]>([]);
-  readonly currentProvider = this.providerSelection.selectedProvider;
+  // Provider selection is session-local. Multiple open tabs stay mounted and
+  // connected concurrently, so a background tab must not start using the
+  // provider selected by whichever tab is currently visible.
+  readonly currentProvider = signal<AgentProviderId>('claude');
   readonly currentProviderInfo = computed(
     () => this.providers().find((provider) => provider.id === this.currentProvider()) ?? null,
   );
@@ -811,6 +814,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       // fires after the composer this text belongs to is gone.
       void this.composerDrafts.flush(this.sessionId);
       this.disconnectTranscriptSocket(this.sessionId);
+      this.ws.clearProvider?.(this.sessionId);
+      this.api.clearProvider?.(this.sessionId);
     });
   }
 
@@ -820,11 +825,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this._terminalTranscriptMirror.set(this.terminalTranscriptMirror);
     this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
     this.runtimeStarted.set(this.hasStartedAgentRuntime);
+    this.currentProvider.set(this.activeAgentProvider);
+    this.syncSessionProvider(this.activeAgentProvider);
     if (this.isVisible) {
       this.providerSelection.setProvider(this.activeAgentProvider);
-      void this.bootstrapForMode();
-      this.restoreInitialComposerDraft();
     }
+    // Every open tab is kept warm, including background tabs. Its websocket
+    // continues applying runtime events while another tab is selected.
+    void this.bootstrapForMode();
+    this.restoreInitialComposerDraft();
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -838,13 +847,16 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       const previousSessionId = changes['sessionId'].previousValue as number;
       void this.composerDrafts.flush(previousSessionId);
       this.disconnectTranscriptSocket(previousSessionId);
+      this.ws.clearProvider?.(previousSessionId);
+      this.api.clearProvider?.(previousSessionId);
+      this.syncSessionProvider(this.activeAgentProvider);
       this.reset();
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       if (this.isVisible) {
         this.providerSelection.setProvider(this.activeAgentProvider);
-        void this.bootstrapForMode();
-        this.restoreInitialComposerDraft();
       }
+      void this.bootstrapForMode();
+      this.restoreInitialComposerDraft();
     }
     if (
       changes['hasInjectedWorktreeContext'] &&
@@ -867,34 +879,36 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       }
     }
     // Skip archived-change bootstrap if sessionId already triggered a full reset+bootstrap above.
-    if (
-      changes['archived'] &&
-      !changes['archived'].firstChange &&
-      this.isVisible &&
-      !changes['sessionId']
-    ) {
+    if (changes['archived'] && !changes['archived'].firstChange && !changes['sessionId']) {
       this.reset();
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
-      this.providerSelection.setProvider(this.activeAgentProvider);
+      if (this.isVisible) {
+        this.providerSelection.setProvider(this.activeAgentProvider);
+      }
       void this.bootstrapForMode();
       this.restoreInitialComposerDraft();
     }
     const transcriptModeChanged =
       (changes['readOnlyTranscript'] && !changes['readOnlyTranscript'].firstChange) ||
       (changes['terminalTranscriptMirror'] && !changes['terminalTranscriptMirror'].firstChange);
-    if (transcriptModeChanged && this.isVisible) {
+    if (transcriptModeChanged) {
       this.disconnectTranscriptSocket(this.sessionId);
       this.reset();
       this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
       void this.bootstrapForMode();
     }
-    if (
-      changes['activeAgentProvider'] &&
-      this.isVisible &&
-      !changes['activeAgentProvider'].firstChange
-    ) {
-      this.providerSelection.setProvider(this.activeAgentProvider);
-      if (this.bootstrappedProvider !== this.currentProvider()) {
+    if (changes['activeAgentProvider'] && !changes['activeAgentProvider'].firstChange) {
+      const providerChangedSinceBootstrap =
+        this.bootstrappedProvider !== this.activeAgentProvider;
+      if (providerChangedSinceBootstrap) {
+        this.ws.disconnect(this.sessionId);
+      }
+      this.currentProvider.set(this.activeAgentProvider);
+      this.syncSessionProvider(this.activeAgentProvider);
+      if (this.isVisible) {
+        this.providerSelection.setProvider(this.activeAgentProvider);
+      }
+      if (providerChangedSinceBootstrap) {
         this.reset();
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
         void this.bootstrapForMode();
@@ -1276,6 +1290,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.disconnectTranscriptSocket(this.sessionId);
         this.providerSelection.setProvider(preset.provider);
         this.activeAgentProvider = preset.provider;
+        this.currentProvider.set(preset.provider);
+        this.syncSessionProvider(preset.provider);
         this.activeAgentProviderChange.emit(preset.provider);
         this.reset();
         this.hasInjectedContext.set(this.hasInjectedWorktreeContext);
@@ -1367,6 +1383,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.disconnectTranscriptSocket(this.sessionId);
     this.providerSelection.setProvider(provider);
     this.activeAgentProvider = provider;
+    this.currentProvider.set(provider);
+    this.syncSessionProvider(provider);
     this.activeAgentProviderChange.emit(provider);
     void firstValueFrom(
       this.sessionsService.updateActiveAgentProvider(this.sessionId, provider),
@@ -1738,6 +1756,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private disconnectTranscriptSocket(sessionId: number): void {
     this.ws.disconnect(sessionId);
     this.terminalTranscriptWs.disconnect(sessionId);
+  }
+
+  private syncSessionProvider(provider: AgentProviderId): void {
+    // Optional chaining keeps lightweight component test doubles compatible.
+    this.ws.setProvider?.(this.sessionId, provider);
+    this.api.setProvider?.(this.sessionId, provider);
   }
 
   private rehydrate(): void {

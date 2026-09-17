@@ -520,6 +520,16 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(terminalTranscriptWsMock.send).toHaveBeenCalledTimes(1);
   });
 
+  it('hydrates and stays connected while its tab is in the background', () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.isVisible = false;
+    fixture.detectChanges();
+
+    expect(wsMock.connect).toHaveBeenCalledWith(7);
+    expect(wsMock.send).toHaveBeenCalledWith(7, { type: 'hydrate' });
+  });
+
   it('restores saved composer drafts with text, diff mentions, and images', async () => {
     const diffMention = {
       id: 'mention-1',
