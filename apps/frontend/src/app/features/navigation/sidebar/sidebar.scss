@@ -176,6 +176,54 @@
   transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
+.session-create-zone--temporary {
+  border-style: dashed;
+  color: color-mix(in oklch, var(--muted-foreground) 88%, var(--primary));
+}
+
+.session-create-zone--temporary:hover:not(:disabled),
+.session-create-zone--temporary:focus-visible {
+  border-style: solid;
+  background: color-mix(in oklch, var(--primary) 8%, var(--sidebar-accent));
+}
+
+.temporary-session-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 1.25rem;
+  margin-top: 0.15rem;
+  padding-right: 0.65rem;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.temporary-session-heading__count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.temporary-session-row {
+  color: color-mix(in oklch, var(--foreground) 90%, var(--muted-foreground));
+}
+
+.temporary-session-badge {
+  flex: 0 0 auto;
+  border: 1px dashed color-mix(in oklch, var(--muted-foreground) 34%, var(--sidebar-border));
+  border-radius: 999px;
+  padding: 0.05rem 0.3rem;
+  color: var(--muted-foreground);
+  font-size: 0.58rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .session-create-zone:hover:not(:disabled),
 .session-create-zone:focus-visible {
   outline: none;

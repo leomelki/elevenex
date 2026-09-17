@@ -48,6 +48,9 @@
             [title]="getClaudeStatus(tab)"
           >
           </span>
+          @if (tab.isTemporary) {
+            <ng-icon name="lucideMessageCircleDashed" size="13" class="shrink-0 text-muted-foreground" title="Temporary session" />
+          }
           @if (hasUnreviewedCompletion(tab)) {
             <span class="completion-indicator flex size-4 items-center justify-center rounded-full border border-[oklch(0.86_0.06_160)] bg-[linear-gradient(135deg,oklch(0.95_0.03_154),oklch(0.91_0.05_170))] text-[oklch(0.46_0.13_154)]" title="Completed, not reviewed yet">
               <ng-icon name="lucideCheck" size="12" />
@@ -61,7 +64,7 @@
           <button
             class="flex size-5 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent p-0 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-destructive"
             [attr.aria-label]="'Close tab for ' + tab.sessionName"
-            title="Close tab (session keeps running)"
+            [title]="tab.isTemporary ? 'Close and discard temporary session' : 'Close tab (session keeps running)'"
             (click)="onCloseClick($event, tab.sessionId)"
           >
             <ng-icon name="lucideX" size="16" />
@@ -272,7 +275,9 @@
         Close All Tabs
       </button>
       <div class="my-1 h-px bg-border"></div>
-      @if (contextMenuTab()?.status === 'archived') {
+      @if (contextMenuTab()?.isTemporary) {
+        <div class="px-2 py-1 text-xs text-muted-foreground">Closing this tab discards the session.</div>
+      } @else if (contextMenuTab()?.status === 'archived') {
         <button
           class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground hover:bg-accent cursor-pointer"
           (click)="onContextMenuUnarchive()"
@@ -294,7 +299,7 @@
         (click)="onContextMenuDelete()"
       >
         <ng-icon name="lucideTrash2" size="14" />
-        Delete Session
+        {{ contextMenuTab()?.isTemporary ? 'Discard Temporary Session' : 'Delete Session' }}
       </button>
     </div>
   }

@@ -533,6 +533,19 @@ describe('Sidebar', () => {
     expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
   });
 
+  it('creates a temporary session from the companion quick action', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-temporary-session="2"]');
+
+    expect(button).toBeTruthy();
+    expect(button?.getAttribute('aria-label')).toBe('Create temporary session');
+    button?.click();
+
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, folderId: undefined, isTemporary: true });
+    expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
+  });
+
   it('turns the new-session zone into a related-session drop target', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();

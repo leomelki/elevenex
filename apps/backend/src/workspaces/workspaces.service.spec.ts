@@ -72,6 +72,7 @@ function createTestDb() {
       worktree_path TEXT NOT NULL,
       name TEXT,
       surface TEXT NOT NULL DEFAULT 'session',
+      is_temporary INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'created',
       archived_by_folder INTEGER NOT NULL DEFAULT 0,
       active_agent_provider TEXT NOT NULL DEFAULT 'claude',

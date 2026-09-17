@@ -97,6 +97,12 @@ describe('TabService', () => {
 
       expect(service.tabs()[0].activeAgentProvider).toBe('codex');
     });
+
+    it('preserves whether a session is temporary', () => {
+      service.openTab({ ...mockSession(8), isTemporary: true });
+
+      expect(service.tabs()[0].isTemporary).toBe(true);
+    });
   });
 
   describe('updateTabWorktreeContext', () => {

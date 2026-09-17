@@ -42,14 +42,14 @@ export class SessionFoldersService {
     }
 
     const sessions = await this.db
-      .select({ id: schema.sessions.id, repoId: schema.sessions.repoId, workspaceId: schema.sessions.workspaceId, status: schema.sessions.status })
+      .select({ id: schema.sessions.id, repoId: schema.sessions.repoId, workspaceId: schema.sessions.workspaceId, status: schema.sessions.status, isTemporary: schema.sessions.isTemporary })
       .from(schema.sessions)
       .where(inArray(schema.sessions.id, sessionIds));
     if (
       sessions.length !== 2 ||
-      sessions.some((session) => session.repoId !== input.repoId || session.workspaceId !== input.workspaceId || session.status === 'archived')
+      sessions.some((session) => session.repoId !== input.repoId || session.workspaceId !== input.workspaceId || session.status === 'archived' || session.isTemporary)
     ) {
-      throw new BadRequestException('Sessions must be active and belong to this workspace');
+      throw new BadRequestException('Sessions must be durable, active, and belong to this workspace');
     }
 
     return this.db.transaction((tx) => {

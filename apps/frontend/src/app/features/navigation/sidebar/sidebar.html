@@ -160,6 +160,7 @@
                   @if (
                     (!workspace.isMissing && !isWorkspaceUnlinked(workspace)) ||
                     (workspace.sessions && workspace.sessions.length > 0) ||
+                    (workspace.temporarySessions?.length ?? 0) > 0 ||
                     (workspace.archivedSessions?.length ?? 0) > 0 ||
                     (workspace.sessionFolders?.length ?? 0) > 0 ||
                     (workspace.archivedSessionFolders?.length ?? 0) > 0
@@ -651,6 +652,76 @@
                     }
                   }
 
+                  @if ((workspace.temporarySessions?.length ?? 0) > 0) {
+                    <div class="temporary-session-heading" [style.padding-left]="'64px'">
+                      <ng-icon name="lucideMessageCircleDashed" class="!w-3 !h-3" />
+                      <span>Temporary</span>
+                      <span class="temporary-session-heading__count">{{ workspace.temporarySessions!.length }}</span>
+                    </div>
+                    @for (session of workspace.temporarySessions ?? []; track session.id) {
+                      <div
+                        class="sidebar-tree-row temporary-session-row w-full cursor-pointer group"
+                        [class.session-selected]="session.id === activeSessionId()"
+                        [attr.data-temporary-session-row-id]="session.id"
+                        [style.padding-left]="'64px'"
+                        draggable="true"
+                        [attr.title]="'Open ' + (session.name || 'Temporary session') + ' · discarded when its tab is closed'"
+                        (dragstart)="onSessionDragStart($event, session)"
+                        (dragend)="onSessionDragEnd()"
+                        (click)="onSessionClick(session)"
+                      >
+                        <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                          <span
+                            class="sidebar-status-dot"
+                            [class.status-running]="claudeStatus.getStatus(session.id) === 'running'"
+                            [class.status-waiting]="claudeStatus.getStatus(session.id) === 'waiting'"
+                            [class.status-idle]="claudeStatus.getStatus(session.id) === 'idle'"
+                            [class.has-background-work]="hasSessionBackgroundWork(session)"
+                            [title]="getSessionActivityTitle(session)"
+                          ></span>
+                          <span class="sidebar-label--session text-sm truncate">{{ session.name || 'Temporary session' }}</span>
+                          @if (hasUnreviewedCompletion(session)) {
+                            <span class="sidebar-completion-dot" title="Completed, not reviewed yet"></span>
+                          }
+                        </div>
+                        <span class="temporary-session-badge">Temp</span>
+                        <span class="sidebar-actions session-actions" data-session-delete-controls="true" [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id)">
+                          @if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
+                            <span class="session-delete-inline" data-session-delete-controls="true">
+                              <button
+                                class="session-delete-confirm"
+                                data-session-delete-controls="true"
+                                [class.session-delete-confirm--ready]="isSessionDeleteConfirmReady(session.id)"
+                                [class.session-delete-confirm--loading]="isDeletingSession(session.id)"
+                                [disabled]="!isSessionDeleteConfirmReady(session.id) || isDeletingSession(session.id)"
+                                [attr.aria-label]="isDeletingSession(session.id) ? 'Discarding temporary session' : 'Confirm discard temporary session'"
+                                (click)="confirmDeleteSession(session, $event)"
+                              >
+                                @if (isDeletingSession(session.id)) {
+                                  <span class="session-delete-spinner" aria-hidden="true"></span><span>Discarding</span>
+                                } @else {
+                                  <span>Discard</span>
+                                }
+                              </button>
+                              @if (!isDeletingSession(session.id)) {
+                                <button class="session-delete-cancel" data-session-delete-controls="true" aria-label="Cancel discard" (click)="cancelDeleteSession($event)"><span aria-hidden="true">×</span></button>
+                              }
+                            </span>
+                          } @else {
+                            <button
+                              class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-destructive"
+                              [attr.data-session-delete-trigger-id]="session.id"
+                              data-session-delete-controls="true"
+                              title="Discard temporary session"
+                              aria-label="Discard temporary session"
+                              (click)="armDeleteSession(session, $event)"
+                            ><ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" /></button>
+                          }
+                        </span>
+                      </div>
+                    }
+                  }
+
                   @if (!workspace.isMissing && !isWorkspaceUnlinked(workspace)) {
                     <div class="session-quick-actions">
                       <button
@@ -668,7 +739,7 @@
                         (drop)="onNewSessionZoneDrop($event, repo, workspace)"
                       >
                         <span class="session-create-zone__icon" aria-hidden="true">
-                          @if (creatingSessionWorkspaceId() === workspace.id) {
+                          @if (creatingSessionWorkspaceId() === workspace.id && !creatingTemporarySession()) {
                             <span class="session-create-zone__spinner"></span>
                           } @else {
                             <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
@@ -684,6 +755,25 @@
                           </span>
                         }
                       </button>
+                      @if (!canCreateRelatedSessionIn(workspace)) {
+                        <button
+                          type="button"
+                          class="session-create-zone session-create-zone--temporary"
+                          [attr.data-workspace-new-temporary-session]="workspace.id"
+                          aria-label="Create temporary session"
+                          [attr.title]="'Create a temporary session in ' + workspace.name + ' · discarded when its tab is closed'"
+                          [disabled]="creatingSessionWorkspaceId() !== null || creatingRelatedSessionId() !== null"
+                          (click)="$event.stopPropagation(); createTemporarySessionOnWorkspace(repo, workspace)"
+                        >
+                          <span class="session-create-zone__icon" aria-hidden="true">
+                            @if (creatingSessionWorkspaceId() === workspace.id && creatingTemporarySession()) {
+                              <span class="session-create-zone__spinner"></span>
+                            } @else {
+                              <ng-icon name="lucideMessageCircleDashed" class="!w-3.5 !h-3.5" />
+                            }
+                          </span>
+                        </button>
+                      }
                     </div>
                   }
 

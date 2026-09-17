@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, IsBoolean } from 'class-validator';
 
 export class CreateSessionDto {
   @IsNumber()
@@ -25,4 +25,8 @@ export class CreateSessionDto {
   @IsString()
   @IsOptional()
   name?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  isTemporary?: boolean;
 }

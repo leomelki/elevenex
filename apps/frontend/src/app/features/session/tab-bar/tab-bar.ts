@@ -1,7 +1,7 @@
 import { Component, output, input, inject, computed, signal, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList, lucidePanelRight, lucideSparkles } from '@ng-icons/lucide';
+import { lucideX, lucideCircle, lucideCircleDashed, lucideFileText, lucideCheckSquare, lucideFolderTree, lucideTerminal, lucideSquareTerminal, lucideTrash2, lucideMessageSquare, lucideMessageCircleDashed, lucideNotebookPen, lucideGlobe, lucidePlay, lucideGitPullRequest, lucideCheck, lucideArchive, lucideArchiveRestore, lucideClipboardList, lucidePanelRight, lucideSparkles } from '@ng-icons/lucide';
 import { Tab } from '../tab-service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { ProductivityStateService } from '@/features/productivity/productivity-state.service';
@@ -40,6 +40,7 @@ import { SESSION_MENTION_DRAG_TYPE } from '@/shared/models/session-mention.model
       lucidePanelRight,
       lucideSparkles,
       lucideMessageSquare,
+      lucideMessageCircleDashed,
       lucideNotebookPen,
       lucideGlobe,
       lucidePlay,

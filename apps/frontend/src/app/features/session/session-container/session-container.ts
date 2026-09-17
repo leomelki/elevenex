@@ -1472,6 +1472,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   onTabClose(sessionId: number): void {
+    const isTemporary = this.tabs().find(tab => tab.sessionId === sessionId)?.isTemporary ?? false;
     const worktreePath = this.getWorktreePathForSession(sessionId);
     const iframeKey = this.getIframeKeyForSession(sessionId);
     const browserKey = this.getBrowserKeyForSession(sessionId);
@@ -1492,34 +1493,46 @@ export class SessionContainer implements OnInit, OnDestroy {
       this.router.navigate(['/sessions', newActiveId], { replaceUrl: true });
     }
 
-    toast.success('Tab closed (session keeps running)');
+    if (isTemporary) {
+      this.discardTemporarySessions([sessionId]);
+    } else {
+      toast.success('Tab closed (session keeps running)');
+    }
   }
 
   onCloseAllTabs(): void {
+    const temporarySessionIds = this.tabs().filter(tab => tab.isTemporary).map(tab => tab.sessionId);
     const result = this.tabService.closeAllTabs();
-    this.handleBulkTabCloseResult(result);
+    this.handleBulkTabCloseResult(result, temporarySessionIds);
     toast.success('Closed all tabs');
   }
 
   onCloseOtherTabs(sessionId: number): void {
+    const temporarySessionIds = this.tabs().filter(tab => tab.sessionId !== sessionId && tab.isTemporary).map(tab => tab.sessionId);
     const result = this.tabService.closeOtherTabs(sessionId);
-    this.handleBulkTabCloseResult(result);
+    this.handleBulkTabCloseResult(result, temporarySessionIds);
     if (result.closedSessionIds.length > 0) {
       toast.success('Closed other tabs');
     }
   }
 
   onCloseTabsToRight(sessionId: number): void {
+    const tabs = this.tabs();
+    const index = tabs.findIndex(tab => tab.sessionId === sessionId);
+    const temporarySessionIds = tabs.slice(index + 1).filter(tab => tab.isTemporary).map(tab => tab.sessionId);
     const result = this.tabService.closeTabsToRight(sessionId);
-    this.handleBulkTabCloseResult(result);
+    this.handleBulkTabCloseResult(result, temporarySessionIds);
     if (result.closedSessionIds.length > 0) {
       toast.success('Closed tabs to the right');
     }
   }
 
   onCloseTabsToLeft(sessionId: number): void {
+    const tabs = this.tabs();
+    const index = tabs.findIndex(tab => tab.sessionId === sessionId);
+    const temporarySessionIds = tabs.slice(0, Math.max(0, index)).filter(tab => tab.isTemporary).map(tab => tab.sessionId);
     const result = this.tabService.closeTabsToLeft(sessionId);
-    this.handleBulkTabCloseResult(result);
+    this.handleBulkTabCloseResult(result, temporarySessionIds);
     if (result.closedSessionIds.length > 0) {
       toast.success('Closed tabs to the left');
     }
@@ -1734,7 +1747,7 @@ export class SessionContainer implements OnInit, OnDestroy {
     }
   }
 
-  private handleBulkTabCloseResult(result: TabCloseResult): void {
+  private handleBulkTabCloseResult(result: TabCloseResult, temporarySessionIds: number[] = []): void {
     for (const sessionId of result.closedSessionIds) {
       const worktreePath = this.getWorktreePathForSession(sessionId);
       const iframeKey = this.getIframeKeyForSession(sessionId);
@@ -1743,6 +1756,8 @@ export class SessionContainer implements OnInit, OnDestroy {
       this.maybeDestroyWorktreeIframe(iframeKey, worktreePath, projectId);
       this.maybeDestroyProjectBrowser(browserKey, projectId);
     }
+
+    this.discardTemporarySessions(temporarySessionIds.filter(sessionId => result.closedSessionIds.includes(sessionId)));
 
     if (!result.activeSessionId) {
       this.router.navigate(['/projects']);
@@ -1753,6 +1768,22 @@ export class SessionContainer implements OnInit, OnDestroy {
       this.tabs().find((tab) => tab.sessionId === result.activeSessionId)?.activeAgentProvider,
     );
     this.router.navigate(['/sessions', result.activeSessionId], { replaceUrl: true });
+  }
+
+  private discardTemporarySessions(sessionIds: number[]): void {
+    for (const sessionId of sessionIds) {
+      this.sessionsService.delete(sessionId).subscribe({
+        next: () => {
+          this.clearClaudeSurfaceMode(sessionId);
+          this.navService.refreshTree();
+          toast.success('Temporary session discarded');
+        },
+        error: (err) => {
+          this.navService.refreshTree();
+          toast.error('Could not discard temporary session. ' + (err.error?.message || ''));
+        },
+      });
+    }
   }
 
   private switchToSessionProvider(provider: AgentProviderId | null | undefined): void {

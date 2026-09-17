@@ -57,6 +57,7 @@ export interface Tab {
   hasInjectedWorktreeContext: boolean;
   activeAgentProvider: AgentProviderId;
   hasStartedAgentRuntime: boolean;
+  isTemporary?: boolean;
 }
 
 export interface TabCloseResult {
@@ -103,6 +104,7 @@ export class TabService {
                 ...t,
                 activeAgentProvider: this.providerForSession(session),
                 hasStartedAgentRuntime: this.hasStartedAgentRuntime(session),
+                isTemporary: session.isTemporary,
               }
             : t,
         ),
@@ -129,6 +131,7 @@ export class TabService {
       hasInjectedWorktreeContext: session.hasInjectedWorktreeContext,
       activeAgentProvider: this.providerForSession(session),
       hasStartedAgentRuntime: this.hasStartedAgentRuntime(session),
+      isTemporary: session.isTemporary,
     };
 
     this._tabs.update(tabs => [...tabs, newTab]);

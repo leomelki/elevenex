@@ -8,6 +8,7 @@ export interface Session {
   worktreePath: string;
   name: string | null;
   surface?: 'session' | 'embedded_plan_chat' | string;
+  isTemporary?: boolean;
   workspaceName?: string | null;
   status: 'created' | 'active' | 'archived' | 'stopped';
   archivedByFolder?: boolean;
@@ -32,6 +33,7 @@ export interface SessionInTree {
   repoId: number;
   workspaceId?: number | null;
   folderId?: number | null;
+  isTemporary?: boolean;
   branchName: string;
   name: string | null;
   status: 'created' | 'active' | 'archived' | 'stopped';

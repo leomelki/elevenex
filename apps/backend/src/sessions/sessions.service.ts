@@ -77,6 +77,7 @@ export class SessionsService extends EventEmitter {
     branchName?: string;
     worktreePath?: string;
     name?: string;
+    isTemporary?: boolean;
     surface?: SessionSurface;
     activeAgentProvider?: AgentProviderId;
   }) {
@@ -90,6 +91,7 @@ export class SessionsService extends EventEmitter {
       dto.folderId,
       dto.repoId,
       resolved.workspaceId,
+      dto.isTemporary ?? false,
     );
 
     // Auto-generate name if not provided
@@ -97,7 +99,9 @@ export class SessionsService extends EventEmitter {
       const sessionCount = resolved.workspaceId
         ? await this.countByWorkspace(resolved.workspaceId)
         : await this.countByRepoAndBranch(dto.repoId, resolved.branchName);
-      sessionName = `Session ${sessionCount + 1}`;
+      sessionName = dto.isTemporary
+        ? 'Temporary session'
+        : `Session ${sessionCount + 1}`;
     }
 
     const rows = await this.db
@@ -110,6 +114,7 @@ export class SessionsService extends EventEmitter {
         worktreePath: resolved.worktreePath,
         name: sessionName,
         surface,
+        isTemporary: dto.isTemporary ?? false,
         status: 'created',
         activeAgentProvider,
         claudeSessionId: '-1',
@@ -340,6 +345,7 @@ export class SessionsService extends EventEmitter {
       folderId ?? undefined,
       session.repoId,
       session.workspaceId,
+      session.isTemporary,
     );
 
     const rows = await this.db
@@ -354,8 +360,12 @@ export class SessionsService extends EventEmitter {
     folderId: number | undefined,
     repoId: number,
     workspaceId: number | null,
+    isTemporary = false,
   ): Promise<void> {
     if (folderId === undefined) return;
+    if (isTemporary) {
+      throw new BadRequestException('Temporary sessions cannot be added to folders');
+    }
     if (workspaceId === null) {
       throw new BadRequestException('A folder requires a persisted workspace');
     }
@@ -1074,6 +1084,7 @@ export class SessionsService extends EventEmitter {
           eq(schema.sessions.repoId, repoId),
           eq(schema.sessions.branchName, branchName),
           eq(schema.sessions.surface, 'session'),
+          eq(schema.sessions.isTemporary, false),
         ),
       );
 
@@ -1088,6 +1099,7 @@ export class SessionsService extends EventEmitter {
         and(
           eq(schema.sessions.workspaceId, workspaceId),
           eq(schema.sessions.surface, 'session'),
+          eq(schema.sessions.isTemporary, false),
         ),
       );
 

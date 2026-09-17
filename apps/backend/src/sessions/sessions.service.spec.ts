@@ -51,6 +51,7 @@ function createTestDb() {
       worktree_path TEXT NOT NULL,
       name TEXT,
       surface TEXT NOT NULL DEFAULT 'session',
+      is_temporary INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'created',
       archived_by_folder INTEGER NOT NULL DEFAULT 0,
       active_agent_provider TEXT NOT NULL DEFAULT 'claude',
@@ -187,6 +188,7 @@ describe('SessionsService', () => {
       expect(result.worktreePath).toBe('/tmp/worktree');
       expect(result.name).toBe('My Session');
       expect(result.status).toBe('created');
+      expect(result.isTemporary).toBe(false);
       expect(result.activeAgentProvider).toBe('claude');
       expect(result.claudeSessionId).toBe('-1');
       expect(result.codexSessionId).toBe('-1');
@@ -194,6 +196,19 @@ describe('SessionsService', () => {
       expect(result.lastCompletionAt).toBeNull();
       expect(result.lastCompletionKind).toBeNull();
       expect(result.lastStateChangeAt).toBeNull();
+    });
+
+    it('creates a temporary session with a distinct default name', async () => {
+      const result = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/temporary-worktree',
+        isTemporary: true,
+      });
+
+      expect(result.name).toBe('Temporary session');
+      expect(result.isTemporary).toBe(true);
+      expect(result.folderId).toBeNull();
     });
 
     it('should use the configured default agent provider for new sessions', async () => {

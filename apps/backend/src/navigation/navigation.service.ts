@@ -13,6 +13,7 @@ export interface SessionInTree {
   workspaceId: number | null;
   repoId: number;
   folderId: number | null;
+  isTemporary: boolean;
   archivedByFolder: boolean;
   hasUnreviewedCompletion: boolean;
   lastCompletionAt: string | null;
@@ -55,6 +56,7 @@ export interface WorkspaceInTree {
   branchCheckedOutElsewhere: boolean;
   checkedOutElsewherePath: string | null;
   sessions: SessionInTree[];
+  temporarySessions: SessionInTree[];
   archivedSessions: SessionInTree[];
   sessionFolders: SessionFolderInTree[];
   archivedSessionFolders: SessionFolderInTree[];
@@ -219,6 +221,7 @@ export class NavigationService {
     workspaces: Omit<
       WorkspaceInTree,
       | 'sessions'
+      | 'temporarySessions'
       | 'archivedSessions'
       | 'sessionFolders'
       | 'archivedSessionFolders'
@@ -232,6 +235,7 @@ export class NavigationService {
         {
           ...workspace,
           sessions: [],
+          temporarySessions: [],
           archivedSessions: [],
           sessionFolders: [],
           archivedSessionFolders: [],
@@ -280,6 +284,7 @@ export class NavigationService {
         workspaceId: entry.id > 0 ? entry.id : null,
         repoId,
         folderId: session.folderId,
+        isTemporary: session.isTemporary,
         archivedByFolder: session.archivedByFolder,
         hasUnreviewedCompletion: session.hasUnreviewedCompletion,
         lastCompletionAt: session.lastCompletionAt,
@@ -294,7 +299,9 @@ export class NavigationService {
       const folder = session.folderId
         ? folderMap.get(session.folderId)
         : undefined;
-      if (session.status === 'archived') {
+      if (session.isTemporary) {
+        entry.temporarySessions.push(sessionInTree);
+      } else if (session.status === 'archived') {
         (folder?.archivedSessions ?? entry.archivedSessions).push(
           sessionInTree,
         );
@@ -352,6 +359,7 @@ export class NavigationService {
       branchCheckedOutElsewhere: false,
       checkedOutElsewherePath: null,
       sessions: [],
+      temporarySessions: [],
       archivedSessions: [],
       sessionFolders: [],
       archivedSessionFolders: [],

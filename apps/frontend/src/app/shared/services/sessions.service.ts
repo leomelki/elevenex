@@ -31,6 +31,7 @@ export class SessionsService {
     branchName?: string;
     worktreePath?: string;
     name?: string;
+    isTemporary?: boolean;
   }) {
     return this.http.post<Session>('/api/sessions', data);
   }

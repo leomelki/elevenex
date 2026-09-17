@@ -4,6 +4,7 @@ import { BranchInfo } from './branch.model';
 
 export interface NavigationWorkspace extends Workspace {
   sessions: SessionInTree[];
+  temporarySessions?: SessionInTree[];
   archivedSessions?: SessionInTree[];
   sessionFolders?: SessionFolder[];
   archivedSessionFolders?: SessionFolder[];

@@ -27,6 +27,7 @@ import {
   lucideSparkles,
   lucideFolderPlus,
   lucidePencil,
+  lucideMessageCircleDashed,
 } from '@ng-icons/lucide';
 import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
@@ -99,6 +100,7 @@ import { ComposerDraftService } from '@/features/session/claude-workspace/compos
       lucideSparkles,
       lucideFolderPlus,
       lucidePencil,
+      lucideMessageCircleDashed,
     }),
   ],
 })
@@ -233,6 +235,7 @@ export class Sidebar implements OnInit, OnDestroy {
   newSessionDropWorkspaceId = signal<number | null>(null);
   groupingSessions = signal(false);
   creatingSessionWorkspaceId = signal<number | null>(null);
+  creatingTemporarySession = signal(false);
   creatingRelatedSessionId = signal<number | null>(null);
   deleteFolderTarget = signal<SessionFolder | null>(null);
 
@@ -452,6 +455,7 @@ export class Sidebar implements OnInit, OnDestroy {
     return !!source &&
       !this.groupingSessions() &&
       this.creatingRelatedSessionId() === null &&
+      !source.isTemporary &&
       source.status !== 'archived' &&
       source.repoId === workspace.repoId &&
       source.workspaceId === workspace.id &&
@@ -534,6 +538,8 @@ export class Sidebar implements OnInit, OnDestroy {
   private canGroupSessions(source: SessionInTree, target: SessionInTree, workspace: NavigationWorkspace): boolean {
     return (
       source.id !== target.id &&
+      !source.isTemporary &&
+      !target.isTemporary &&
       source.status !== 'archived' &&
       target.status !== 'archived' &&
       source.repoId === target.repoId &&
@@ -810,12 +816,16 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   createSessionOnWorkspace(repo: NavigationRepo, workspace: NavigationWorkspace) {
-    this.createSession(repo, workspace, null);
+    this.createSession(repo, workspace, null, false);
+  }
+
+  createTemporarySessionOnWorkspace(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    this.createSession(repo, workspace, null, true);
   }
 
   createSessionInFolder(repo: NavigationRepo, workspace: NavigationWorkspace, folder: SessionFolder, event: Event) {
     event.stopPropagation();
-    this.createSession(repo, workspace, folder.id);
+    this.createSession(repo, workspace, folder.id, false);
   }
 
   async createRelatedSession(
@@ -862,26 +872,30 @@ export class Sidebar implements OnInit, OnDestroy {
     }
   }
 
-  private createSession(repo: NavigationRepo, workspace: NavigationWorkspace, folderId: number | null) {
+  private createSession(repo: NavigationRepo, workspace: NavigationWorkspace, folderId: number | null, isTemporary: boolean) {
     if (this.openingWorkspaceRepoId() !== null || this.creatingSessionWorkspaceId() !== null || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) {
       return;
     }
 
     this.creatingSessionWorkspaceId.set(workspace.id);
+    this.creatingTemporarySession.set(isTemporary);
     this.sessionsService
       .create({
         repoId: repo.id,
         workspaceId: workspace.id,
         folderId: folderId ?? undefined,
+        ...(isTemporary ? { isTemporary: true } : {}),
       })
       .subscribe({
         next: session => {
           this.creatingSessionWorkspaceId.set(null);
+          this.creatingTemporarySession.set(false);
           this.navService.refreshTree();
           this.navService.openSession(session.id);
         },
         error: err => {
           this.creatingSessionWorkspaceId.set(null);
+          this.creatingTemporarySession.set(false);
           const msg = err?.error?.message || 'Unknown error';
           toast.error(`Could not create session. ${msg}`);
         },

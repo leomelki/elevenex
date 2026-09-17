@@ -18,6 +18,11 @@ export const sessions = sqliteTable('sessions', {
   worktreePath: text('worktree_path').notNull(),
   name: text('name'),
   surface: text('surface').notNull().default('session'),
+  // Temporary sessions survive refreshes/reconnects, but are deleted when
+  // their UI tab is explicitly closed instead of becoming durable history.
+  isTemporary: integer('is_temporary', { mode: 'boolean' })
+    .notNull()
+    .default(false),
   status: text('status').notNull().default('created'),
   // Tracks which sessions should be restored when their folder is unarchived.
   // Sessions already archived before the folder action remain archived.

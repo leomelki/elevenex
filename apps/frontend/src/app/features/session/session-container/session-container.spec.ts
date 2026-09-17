@@ -91,6 +91,7 @@ describe('SessionContainer modal browser gating', () => {
           (session.claudeSessionId && session.claudeSessionId !== '-1')
             || (session.codexSessionId && session.codexSessionId !== '-1'),
         ),
+        isTemporary: session.isTemporary,
       };
       tabsSignal.set([...tabsSignal().filter(current => current.sessionId !== session.id), tab]);
       activeSessionIdSignal.set(session.id);
@@ -112,10 +113,12 @@ describe('SessionContainer modal browser gating', () => {
   const sessionsServiceMock = {
     getOne: vi.fn(() => of(null)),
     markReviewed: vi.fn(() => of(null)),
+    delete: vi.fn(() => of({})),
   };
 
   const navigationServiceMock = {
     patchSessionCompletion: vi.fn(),
+    refreshTree: vi.fn(),
   };
 
   const productivityStateMock = {
@@ -342,6 +345,28 @@ describe('SessionContainer modal browser gating', () => {
     const element = fixture.nativeElement as HTMLElement;
     expect(element.querySelector('.browser-panel-live')).toBeTruthy();
     expect(element.querySelector('.browser-panel-placeholder')).toBeNull();
+  });
+
+  it('discards a temporary session when its tab is closed', () => {
+    tabsSignal.update(tabs => tabs.map(tab => ({ ...tab, isTemporary: true })));
+    tabServiceMock.closeTab.mockReturnValue(null);
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    fixture.componentInstance.onTabClose(42);
+
+    expect(sessionsServiceMock.delete).toHaveBeenCalledWith(42);
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
+  });
+
+  it('keeps a durable session running when its tab is closed', () => {
+    tabServiceMock.closeTab.mockReturnValue(null);
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+
+    fixture.componentInstance.onTabClose(42);
+
+    expect(sessionsServiceMock.delete).not.toHaveBeenCalled();
   });
 
   it('switches to the browser placeholder while a modal is open and restores after close', () => {
