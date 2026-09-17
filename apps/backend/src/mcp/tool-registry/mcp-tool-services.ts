@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ProjectsService } from '../../projects/projects.service.js';
 import { ReposService } from '../../repos/repos.service.js';
 import { SessionsService } from '../../sessions/sessions.service.js';
+import { SessionFoldersService } from '../../sessions/session-folders.service.js';
 import { SessionForksService } from '../../sessions/session-forks.service.js';
 import { PlanChatForksService } from '../../sessions/plan-chat-forks.service.js';
 import { WorktreePoolService } from '../../worktrees/worktree-pool.service.js';
@@ -31,6 +32,7 @@ export class McpToolServices {
     readonly projects: ProjectsService,
     readonly repos: ReposService,
     readonly sessions: SessionsService,
+    readonly sessionFolders: SessionFoldersService,
     readonly sessionForks: SessionForksService,
     readonly planChatForks: PlanChatForksService,
     readonly worktreePool: WorktreePoolService,

@@ -14,6 +14,7 @@ You are operating **elevenex** â€” a workbench that orchestrates AI coding 
   Each repo also has a worktree cap set by the human in Elevenex settings. At the cap, \`create_worktree\` stops creating even with \`force\` — exhaust reuse, then ask the human with \`request_approval\` and re-call with \`forceReason:"user_confirmed"\` only if they agree.
 - **Workspace** â€” elevenex's binding of a worktree+branch you can run sessions in.
 - **Session** â€” an inner coding agent running in a worktree. Identified by \`sessionId\`. Has a provider (claude/codex/pi/antigravity), a status, a transcript, a permission mode, and pending permission **actions**.
+- **Session folder** — a user-defined sidebar grouping of durable sessions inside one workspace. Identified by \`folderId\`. Use \`list_session_folders\` to discover folders and memberships; archiving a folder archives its active sessions, while deleting one permanently deletes every session still inside it.
 - **Action** — a named shell command saved on a worktree (the Actions panel the human sees): \`test\`, \`build\`, \`dev server\`. Identified by \`actionId\`, scoped to a \`worktreePath\`. Runs in the worktree itself, in a pty that survives a backend restart. Do NOT confuse it with the *pending permission* actions above: those belong to a session and are handled by \`get_pending_action\`/\`resolve_action\`.
 
 ## How to drive (compose primitives â€” there are no bundled workflows)

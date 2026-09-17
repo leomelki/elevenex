@@ -6,6 +6,7 @@ import { SETUP_TOOLS } from './setup/index.js';
 import { ACTION_TOOLS } from './actions/index.js';
 import { HUMAN_TOOLS } from './human/index.js';
 import { LOCAL_COMPUTER_TOOLS } from './local-computer/index.js';
+import { FOLDER_TOOLS } from './folders/index.js';
 
 /**
  * Barrel collecting every elevenex MCP tool. The registry registers exactly
@@ -17,6 +18,7 @@ import { LOCAL_COMPUTER_TOOLS } from './local-computer/index.js';
 export const ALL_TOOLS: ToolDefinition[] = [
   ...OBSERVE_TOOLS,
   ...SETUP_TOOLS,
+  ...FOLDER_TOOLS,
   ...DRIVE_TOOLS,
   ...ASK_TOOLS,
   ...ACTION_TOOLS,

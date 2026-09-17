@@ -31,7 +31,7 @@ human-channel/                    notify/show/approval sink (panel consumes its 
 deep-link/                        /projects/:id, /sessions/:id (+ panel/diff)
 tool-registry/                    ToolDefinition contract, registry (caps+guards+envelope), cursors
 server-instructions.ts            the elevenex object-model primer (sent once)
-tools/{observe,setup,drive,ask}/  the 32 tool primitives, grouped + barrelled
+tools/{observe,setup,folders,drive,ask}/  tool primitives, grouped + barrelled
 __tests__/                        per-group unit specs (mock the service bag)
 ```
 
@@ -51,7 +51,7 @@ guarantees so individual tools can't regress them:
   `prompt_session`, `ask_session`, `generate_worktree_context`, `await_session_event`) return a
   handle/state immediately and never block.
 
-## Tools (37)
+## Tools
 
 - **Observe**: `project_overview`, `find_sessions`, `session_status`, `read_session`, `text_search`,
   `file_search`, `read_file`, `change_review`, `get_worktree_context`, `await_session_event`.
@@ -59,6 +59,9 @@ guarantees so individual tools can't regress them:
   `create_worktree`, `get_worktree_job`, `link_worktree`, `steal_worktree`, `create_session`
   (bridges worktree → session, ready for `prompt_session`), `generate_worktree_context`, `set_todo`,
   `set_scratchpad`.
+- **Folders**: `list_session_folders`, `create_session_folder`, `rename_session_folder`,
+  `move_session_to_folder`, `archive_session_folder`, `unarchive_session_folder`,
+  `delete_session_folder`.
 - **Drive**: `prompt_session`, `interrupt_session`, `fork_session`, `archive_session`,
   `reset_session`, `get_pending_action`, `resolve_action`, `set_provider`, `set_model`,
   `set_permission_mode`.
