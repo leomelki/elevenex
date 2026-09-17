@@ -1,5 +1,7 @@
+import { unlink } from 'node:fs/promises';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import {
+  ConversationExportService,
   buildExportModel,
   renderMarkdown,
   type ConversationExportMeta,
@@ -154,5 +156,49 @@ describe('renderMarkdown options', () => {
     const md = renderMarkdown(model, { precision: 'full', ...ALL_ON });
     expect(md).toContain('line1\nline2');
     expect(md).not.toContain('line1\\nline2');
+  });
+});
+
+describe('buildMention', () => {
+  it('embeds every turn without truncating the context', async () => {
+    const transcript = Array.from({ length: 10 }, (_, index) => [
+      item({
+        id: `u${index + 1}`,
+        kind: 'user',
+        content: `Question ${index + 1}`,
+      }),
+      item({
+        id: `a${index + 1}`,
+        kind: 'assistant',
+        content: `Response ${index + 1}: ${'x'.repeat(2_000)}`,
+      }),
+    ]).flat();
+    const runtime = {
+      getHistory: jest.fn().mockResolvedValue(transcript),
+      getRuntimeState: jest.fn().mockResolvedValue({ sessionState: 'idle' }),
+    };
+    const service = new ConversationExportService(
+      { getProvider: jest.fn().mockReturnValue(runtime) } as never,
+      {
+        findOne: jest.fn().mockResolvedValue({
+          name: 'Long conversation',
+          branchName: 'main',
+          activeAgentProvider: 'claude',
+          status: 'idle',
+          claudeSessionId: 'provider-session',
+        }),
+      } as never,
+    );
+
+    const mention = await service.buildMention(42);
+    try {
+      expect(mention.contextMarkdown.length).toBeGreaterThan(14_000);
+      expect(mention.contextMarkdown).toContain('## Turn 1');
+      expect(mention.contextMarkdown).toContain('## Turn 10');
+      expect(mention.contextMarkdown).toContain('Response 1:');
+      expect(mention.omittedTurns).toBe(0);
+    } finally {
+      await unlink(mention.transcriptExportPath);
+    }
   });
 });

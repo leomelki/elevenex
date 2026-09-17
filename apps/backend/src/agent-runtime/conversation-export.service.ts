@@ -97,8 +97,6 @@ export interface ConversationDeltaResult {
 }
 
 const COMPACT_TEXT_LIMIT = 280;
-const MENTION_CONTEXT_MAX_CHARS = 14_000;
-const MENTION_INITIAL_TURN_LIMIT = 8;
 
 @Injectable()
 export class ConversationExportService {
@@ -172,31 +170,10 @@ export class ConversationExportService {
       'utf8',
     );
 
-    const totalTurns = mentionModel.turns.length;
-    let firstTurn = Math.max(0, totalTurns - MENTION_INITIAL_TURN_LIMIT);
-    let contextMarkdown = '';
-    do {
-      const sliced: ConversationExportModel = {
-        ...mentionModel,
-        preamble: [],
-        turns: mentionModel.turns.slice(firstTurn),
-      };
-      contextMarkdown = renderMarkdown(sliced, {
-        ...options,
-        turnNumberOffset: firstTurn,
-      });
-      if (contextMarkdown.length <= MENTION_CONTEXT_MAX_CHARS || firstTurn >= totalTurns - 1) {
-        break;
-      }
-      firstTurn += 1;
-    } while (firstTurn < totalTurns);
-
-    if (contextMarkdown.length > MENTION_CONTEXT_MAX_CHARS) {
-      contextMarkdown = `${contextMarkdown.slice(0, MENTION_CONTEXT_MAX_CHARS)}\n\n[Snapshot truncated; read the transcript export for the remainder.]\n`;
-    }
-    if (firstTurn > 0) {
-      contextMarkdown = `[${firstTurn} earlier turn${firstTurn === 1 ? '' : 's'} omitted; the transcript export contains the complete conversation.]\n\n${contextMarkdown}`;
-    }
+    const contextMarkdown = renderMarkdown(
+      { ...mentionModel, preamble: [] },
+      options,
+    );
 
     const providerSessionId =
       provider === 'claude'
@@ -219,7 +196,7 @@ export class ConversationExportService {
       status: session.status,
       transcriptExportPath: artifactPath,
       contextMarkdown,
-      omittedTurns: firstTurn,
+      omittedTurns: 0,
       generatedAt: model.meta.exportedAt,
     };
   }
