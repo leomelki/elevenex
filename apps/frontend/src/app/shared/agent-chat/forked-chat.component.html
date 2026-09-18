@@ -24,7 +24,9 @@
       </cw-context-note>
     }
 
-    @if (!chat.renderItems().length && !showPendingReply()) {
+    @if (chat.loading() && !chat.renderItems().length) {
+      <cw-transcript-loading-skeleton />
+    } @else if (!chat.renderItems().length && !showPendingReply()) {
       <div class="fc-empty">
         <span class="fc-empty__icon" aria-hidden="true">
           <ng-icon name="lucideMessageSquare" size="16" />

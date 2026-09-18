@@ -44,6 +44,7 @@ import {
   ForkedChatTranscript,
   type ForkedChatLens,
 } from './forked-chat-transcript';
+import { TranscriptLoadingSkeletonComponent } from './transcript-loading-skeleton.component';
 
 export interface ForkedChatTarget {
   sessionId: number;
@@ -91,6 +92,7 @@ export interface ForkedChatContextNote {
     ClaudeUserInputComponent,
     ClaudeAgentInspectorComponent,
     ClaudeComposerComponent,
+    TranscriptLoadingSkeletonComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [provideIcons({ lucideGitFork, lucideMessageSquare })],

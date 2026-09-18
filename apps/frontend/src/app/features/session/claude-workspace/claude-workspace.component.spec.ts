@@ -402,6 +402,31 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(text).toContain('Codex · gpt-5-mini · Low');
   });
 
+  it('keeps the transcript skeleton visible until asynchronously loaded history arrives', () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.componentInstance.activeAgentProvider = 'codex';
+    fixture.detectChanges();
+
+    events$.next({ type: 'runtime_snapshot', payload: runtimeState() });
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('cw-transcript-loading-skeleton')).not.toBeNull();
+    expect(element.textContent).not.toContain('Start with a prompt.');
+
+    events$.next({
+      type: 'history_snapshot',
+      payload: { sessionId: 7, history: [] },
+    });
+    fixture.detectChanges();
+
+    expect(element.querySelector('cw-transcript-loading-skeleton')).toBeNull();
+    expect(element.textContent).toContain('Start with a prompt.');
+  });
+
   it('refreshes autocomplete after session metadata arrives', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());

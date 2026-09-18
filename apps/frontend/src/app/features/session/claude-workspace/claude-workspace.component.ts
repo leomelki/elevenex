@@ -154,6 +154,7 @@ import {
   AGENT_PROVIDER_ICONS,
   AGENT_PROVIDER_PRESENTATIONS,
 } from '@/shared/models/agent-provider-presentation';
+import { TranscriptLoadingSkeletonComponent } from '@/shared/agent-chat/transcript-loading-skeleton.component';
 
 @Component({
   selector: 'app-claude-workspace',
@@ -175,6 +176,7 @@ import {
     CodexLoginCardComponent,
     PiLoginCardComponent,
     AgentShowCardComponent,
+    TranscriptLoadingSkeletonComponent,
     NgIcon,
     ZardButtonComponent,
   ],
@@ -2109,17 +2111,18 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.historyItems.set(event.payload.history);
         this.applyRuntimeState(event.payload);
         this.hydrated.set(true);
+        this.loading.set(false);
         return;
       case 'runtime_snapshot':
         this.applyRuntimeState(event.payload);
-        this.hydrated.set(true);
-        this.loading.set(false);
         return;
       case 'history_snapshot':
         this.historyItems.set(event.payload.history);
         if (this.runPhase() === 'idle' && !this.submitting()) {
           this.optimisticUserItems.set([]);
         }
+        this.hydrated.set(true);
+        this.loading.set(false);
         return;
       case 'runtime_warm_state':
         this.warmState.set(event.payload.warmState);
@@ -2241,6 +2244,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
           this.persistComposerDraft();
         }
         this.submitting.set(false);
+        // A history fetch can fail after its runtime snapshot has arrived. Stop
+        // the initial skeleton so the actionable error is visible.
+        if (!this.hydrated()) {
+          this.hydrated.set(true);
+          this.loading.set(false);
+        }
         return;
       }
       case 'complete':

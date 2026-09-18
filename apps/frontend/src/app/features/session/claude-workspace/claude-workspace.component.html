@@ -65,34 +65,7 @@
         (scroll)="onTranscriptScroll()"
       >
         @if (showLoading()) {
-          <div class="h-full flex items-center justify-center">
-            <div class="flex flex-col gap-4 w-full max-w-[52rem] mx-auto">
-              <div class="flex flex-col gap-1.5 items-end">
-                <div
-                  class="w-48 h-9 rounded-[1rem_1rem_0.25rem_1rem] bg-foreground/7 animate-pulse"
-                ></div>
-              </div>
-              <div class="flex flex-col gap-2 max-w-[40ch]">
-                <div
-                  class="h-3 rounded bg-foreground/7 animate-pulse w-full [animation-delay:150ms]"
-                ></div>
-                <div
-                  class="h-3 rounded bg-foreground/7 animate-pulse w-3/4 [animation-delay:150ms]"
-                ></div>
-                <div
-                  class="h-3 rounded bg-foreground/7 animate-pulse w-[45%] [animation-delay:150ms]"
-                ></div>
-              </div>
-              <div class="flex flex-col gap-2 max-w-[40ch]">
-                <div
-                  class="h-3 rounded bg-foreground/7 animate-pulse w-full [animation-delay:300ms]"
-                ></div>
-                <div
-                  class="h-3 rounded bg-foreground/7 animate-pulse w-[45%] [animation-delay:300ms]"
-                ></div>
-              </div>
-            </div>
-          </div>
+          <cw-transcript-loading-skeleton class="h-full" />
         } @else if (!pairedTranscript().length) {
           <div
             class="h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground text-sm"

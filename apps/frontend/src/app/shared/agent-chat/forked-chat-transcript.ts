@@ -61,6 +61,7 @@ export const OPTIMISTIC_ID_PREFIX = 'forked-chat-opt-';
  * live-vs-history reconciliation can be unit tested directly.
  */
 export class ForkedChatTranscript {
+  readonly loading = signal(true);
   readonly history = signal<ClaudeTranscriptItem[]>([]);
   readonly live = signal<ClaudeTranscriptItem[]>([]);
   readonly optimistic = signal<ForkedChatVisibleItem[]>([]);
@@ -175,6 +176,7 @@ export class ForkedChatTranscript {
         this.history.set(event.payload.history ?? []);
         this.reconcileOptimistic(event.payload.history ?? []);
         this.applyRuntimeState(event.payload);
+        this.loading.set(false);
         return;
       case 'runtime_snapshot':
         this.applyRuntimeState(event.payload);
@@ -182,6 +184,7 @@ export class ForkedChatTranscript {
       case 'history_snapshot':
         this.history.set(event.payload.history ?? []);
         this.reconcileOptimistic(event.payload.history ?? []);
+        this.loading.set(false);
         return;
       case 'run_state':
         this.runPhase.set(event.payload.runPhase);
@@ -241,6 +244,7 @@ export class ForkedChatTranscript {
       case 'error': {
         const now = new Date().toISOString();
         this.lastError.set(event.payload.message);
+        this.loading.set(false);
         this.live.update((items) => [
           ...items,
           {
@@ -299,6 +303,7 @@ export class ForkedChatTranscript {
   }
 
   reset(): void {
+    this.loading.set(true);
     this.history.set([]);
     this.live.set([]);
     this.optimistic.set([]);

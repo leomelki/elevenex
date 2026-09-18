@@ -26,6 +26,30 @@ function item(
 }
 
 describe('ForkedChatTranscript', () => {
+  it('stays loading until transcript history arrives after the runtime snapshot', () => {
+    const transcript = new ForkedChatTranscript(lens);
+
+    transcript.apply({ type: 'runtime_snapshot', payload: {} } as never);
+    expect(transcript.loading()).toBe(true);
+
+    transcript.apply({
+      type: 'history_snapshot',
+      payload: { history: [] },
+    } as never);
+    expect(transcript.loading()).toBe(false);
+  });
+
+  it('finishes loading from a combined session snapshot', () => {
+    const transcript = new ForkedChatTranscript(lens);
+
+    transcript.apply({
+      type: 'session_snapshot',
+      payload: { history: [] },
+    } as never);
+
+    expect(transcript.loading()).toBe(false);
+  });
+
   it('hides the inherited parent conversation before the first own prompt', () => {
     const transcript = new ForkedChatTranscript(lens);
 
