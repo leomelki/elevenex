@@ -233,6 +233,7 @@ export class Sidebar implements OnInit, OnDestroy {
   draggingSession = signal<SessionInTree | null>(null);
   sessionDropTargetId = signal<number | null>(null);
   newSessionDropWorkspaceId = signal<number | null>(null);
+  newSessionDropTemporary = signal(false);
   groupingSessions = signal(false);
   creatingSessionWorkspaceId = signal<number | null>(null);
   creatingTemporarySession = signal(false);
@@ -448,6 +449,7 @@ export class Sidebar implements OnInit, OnDestroy {
     this.draggedOverFolderId.set(null);
     this.sessionDropTargetId.set(null);
     this.newSessionDropWorkspaceId.set(null);
+    this.newSessionDropTemporary.set(false);
   }
 
   canCreateRelatedSessionIn(workspace: NavigationWorkspace): boolean {
@@ -455,7 +457,6 @@ export class Sidebar implements OnInit, OnDestroy {
     return !!source &&
       !this.groupingSessions() &&
       this.creatingRelatedSessionId() === null &&
-      !source.isTemporary &&
       source.status !== 'archived' &&
       source.repoId === workspace.repoId &&
       source.workspaceId === workspace.id &&
@@ -463,28 +464,33 @@ export class Sidebar implements OnInit, OnDestroy {
       !this.isWorkspaceUnlinked(workspace);
   }
 
-  onNewSessionZoneDragOver(event: DragEvent, workspace: NavigationWorkspace): void {
+  onNewSessionZoneDragOver(event: DragEvent, workspace: NavigationWorkspace, isTemporary = false): void {
     if (!this.canCreateRelatedSessionIn(workspace)) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
     this.newSessionDropWorkspaceId.set(workspace.id);
+    this.newSessionDropTemporary.set(isTemporary);
   }
 
-  onNewSessionZoneDragLeave(event: DragEvent, workspace: NavigationWorkspace): void {
+  onNewSessionZoneDragLeave(event: DragEvent, workspace: NavigationWorkspace, isTemporary = false): void {
     const zone = event.currentTarget as HTMLElement | null;
     if (zone?.contains(event.relatedTarget as Node | null)) return;
-    if (this.newSessionDropWorkspaceId() === workspace.id) this.newSessionDropWorkspaceId.set(null);
+    if (this.newSessionDropWorkspaceId() === workspace.id && this.newSessionDropTemporary() === isTemporary) {
+      this.newSessionDropWorkspaceId.set(null);
+      this.newSessionDropTemporary.set(false);
+    }
   }
 
-  onNewSessionZoneDrop(event: DragEvent, repo: NavigationRepo, workspace: NavigationWorkspace): void {
+  onNewSessionZoneDrop(event: DragEvent, repo: NavigationRepo, workspace: NavigationWorkspace, isTemporary = false): void {
     const source = this.draggingSession();
     this.newSessionDropWorkspaceId.set(null);
+    this.newSessionDropTemporary.set(false);
     if (!source || !this.canCreateRelatedSessionIn(workspace)) return;
     event.preventDefault();
     event.stopPropagation();
     this.onSessionDragEnd();
-    void this.createRelatedSession(repo, workspace, source, event);
+    void this.createRelatedSession(repo, workspace, source, event, isTemporary);
   }
 
   onSessionRowDragOver(event: DragEvent, target: SessionInTree, workspace: NavigationWorkspace): void {
@@ -833,6 +839,7 @@ export class Sidebar implements OnInit, OnDestroy {
     workspace: NavigationWorkspace,
     source: SessionInTree,
     event: Event,
+    isTemporary = false,
   ): Promise<void> {
     event.stopPropagation();
     if (this.creatingRelatedSessionId() !== null || workspace.isMissing || this.isWorkspaceUnlinked(workspace)) return;
@@ -840,18 +847,22 @@ export class Sidebar implements OnInit, OnDestroy {
     this.creatingRelatedSessionId.set(source.id);
     try {
       const mention = await firstValueFrom(this.agentRuntimeApi.getConversationMention(source.id));
-      const existingFolderId = source.folderId ?? null;
+      const shouldGroup = !isTemporary && !source.isTemporary;
+      const existingFolderId = shouldGroup ? source.folderId ?? null : null;
       const session = await firstValueFrom(this.sessionsService.create({
         repoId: repo.id,
         workspaceId: workspace.id,
         folderId: existingFolderId ?? undefined,
+        ...(isTemporary ? { isTemporary: true } : {}),
       }));
-      const folderId = existingFolderId ?? (await firstValueFrom(this.sessionFoldersService.groupSessions({
-        repoId: repo.id,
-        workspaceId: workspace.id,
-        name: this.sessionDisplayName(source),
-        sessionIds: [source.id, session.id],
-      }))).id;
+      const folderId = shouldGroup
+        ? existingFolderId ?? (await firstValueFrom(this.sessionFoldersService.groupSessions({
+            repoId: repo.id,
+            workspaceId: workspace.id,
+            name: this.sessionDisplayName(source),
+            sessionIds: [source.id, session.id],
+          }))).id
+        : null;
 
       this.composerDrafts.save({
         sessionId: session.id,
@@ -862,7 +873,7 @@ export class Sidebar implements OnInit, OnDestroy {
       });
       await this.composerDrafts.flush(session.id);
 
-      this.navService.expandKey(`session-folder-${folderId}`);
+      if (folderId !== null) this.navService.expandKey(`session-folder-${folderId}`);
       this.navService.refreshTree();
       this.navService.openSession(session.id);
     } catch (error: any) {

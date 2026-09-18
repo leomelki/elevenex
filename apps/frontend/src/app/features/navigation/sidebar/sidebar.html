@@ -727,16 +727,16 @@
                       <button
                         type="button"
                         class="session-create-zone"
-                        [class.session-create-zone--drop-ready]="newSessionDropWorkspaceId() === workspace.id"
+                        [class.session-create-zone--drop-ready]="newSessionDropWorkspaceId() === workspace.id && !newSessionDropTemporary()"
                         [class.session-create-zone--dragging]="canCreateRelatedSessionIn(workspace)"
                         [attr.data-workspace-new-session]="workspace.id"
-                        [attr.aria-label]="newSessionDropWorkspaceId() === workspace.id ? 'Drop to create a related session' : 'Create new session'"
+                        [attr.aria-label]="newSessionDropWorkspaceId() === workspace.id && !newSessionDropTemporary() ? 'Drop to create a related session' : 'Create new session'"
                         [attr.title]="draggingSession() ? 'Drop to create a related session' : 'Create a new session in ' + workspace.name"
                         [disabled]="creatingSessionWorkspaceId() !== null || creatingRelatedSessionId() !== null"
                         (click)="$event.stopPropagation(); createSessionOnWorkspace(repo, workspace)"
-                        (dragover)="onNewSessionZoneDragOver($event, workspace)"
-                        (dragleave)="onNewSessionZoneDragLeave($event, workspace)"
-                        (drop)="onNewSessionZoneDrop($event, repo, workspace)"
+                        (dragover)="onNewSessionZoneDragOver($event, workspace, false)"
+                        (dragleave)="onNewSessionZoneDragLeave($event, workspace, false)"
+                        (drop)="onNewSessionZoneDrop($event, repo, workspace, false)"
                       >
                         <span class="session-create-zone__icon" aria-hidden="true">
                           @if (creatingSessionWorkspaceId() === workspace.id && !creatingTemporarySession()) {
@@ -746,34 +746,34 @@
                           }
                         </span>
                         @if (canCreateRelatedSessionIn(workspace)) {
-                          <span class="session-create-zone__drop-copy">
-                            @if (newSessionDropWorkspaceId() === workspace.id) {
-                              Create from {{ sessionDisplayName(draggingSession()!) }}
-                            } @else {
-                              Drop to create related session
-                            }
-                          </span>
+                          <span class="session-create-zone__drop-copy">Session</span>
                         }
                       </button>
-                      @if (!canCreateRelatedSessionIn(workspace)) {
-                        <button
-                          type="button"
-                          class="session-create-zone session-create-zone--temporary"
-                          [attr.data-workspace-new-temporary-session]="workspace.id"
-                          aria-label="Create temporary session"
-                          [attr.title]="'Create a temporary session in ' + workspace.name + ' · discarded when its tab is closed'"
-                          [disabled]="creatingSessionWorkspaceId() !== null || creatingRelatedSessionId() !== null"
-                          (click)="$event.stopPropagation(); createTemporarySessionOnWorkspace(repo, workspace)"
-                        >
-                          <span class="session-create-zone__icon" aria-hidden="true">
-                            @if (creatingSessionWorkspaceId() === workspace.id && creatingTemporarySession()) {
-                              <span class="session-create-zone__spinner"></span>
-                            } @else {
-                              <ng-icon name="lucideMessageCircleDashed" class="!w-3.5 !h-3.5" />
-                            }
-                          </span>
-                        </button>
-                      }
+                      <button
+                        type="button"
+                        class="session-create-zone session-create-zone--temporary"
+                        [class.session-create-zone--drop-ready]="newSessionDropWorkspaceId() === workspace.id && newSessionDropTemporary()"
+                        [class.session-create-zone--dragging]="canCreateRelatedSessionIn(workspace)"
+                        [attr.data-workspace-new-temporary-session]="workspace.id"
+                        [attr.aria-label]="newSessionDropWorkspaceId() === workspace.id && newSessionDropTemporary() ? 'Drop to create a related temporary session' : 'Create temporary session'"
+                        [attr.title]="draggingSession() ? 'Drop to create a related temporary session' : 'Create a temporary session in ' + workspace.name + ' · discarded when its tab is closed'"
+                        [disabled]="creatingSessionWorkspaceId() !== null || creatingRelatedSessionId() !== null"
+                        (click)="$event.stopPropagation(); createTemporarySessionOnWorkspace(repo, workspace)"
+                        (dragover)="onNewSessionZoneDragOver($event, workspace, true)"
+                        (dragleave)="onNewSessionZoneDragLeave($event, workspace, true)"
+                        (drop)="onNewSessionZoneDrop($event, repo, workspace, true)"
+                      >
+                        <span class="session-create-zone__icon" aria-hidden="true">
+                          @if (creatingSessionWorkspaceId() === workspace.id && creatingTemporarySession()) {
+                            <span class="session-create-zone__spinner"></span>
+                          } @else {
+                            <ng-icon name="lucideMessageCircleDashed" class="!w-3.5 !h-3.5" />
+                          }
+                        </span>
+                        @if (canCreateRelatedSessionIn(workspace)) {
+                          <span class="session-create-zone__drop-copy">Temp</span>
+                        }
+                      </button>
                     </div>
                   }
 

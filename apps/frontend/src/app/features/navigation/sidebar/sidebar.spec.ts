@@ -558,11 +558,33 @@ describe('Sidebar', () => {
     fixture.detectChanges();
 
     const zone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-session="2"]');
+    const temporaryZone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-temporary-session="2"]');
     expect(event.preventDefault).toHaveBeenCalled();
     expect(event.stopPropagation).toHaveBeenCalled();
     expect(event.dataTransfer?.dropEffect).toBe('copy');
     expect(zone?.classList.contains('session-create-zone--drop-ready')).toBe(true);
-    expect(zone?.textContent).toContain('Create from Alpha');
+    expect(zone?.textContent).toContain('Session');
+    expect(temporaryZone).toBeTruthy();
+    expect(temporaryZone?.classList.contains('session-create-zone--dragging')).toBe(true);
+    expect(temporaryZone?.textContent).toContain('Temp');
+  });
+
+  it('uses the temporary action as its own related-session drop target', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const workspace = tree()[0].repos[0].workspaces![0];
+    component.draggingSession.set(workspace.sessions[0]);
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn(), dataTransfer: { dropEffect: 'none' } } as unknown as DragEvent;
+
+    component.onNewSessionZoneDragOver(event, workspace, true);
+    fixture.detectChanges();
+
+    const regularZone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-session="2"]');
+    const temporaryZone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-temporary-session="2"]');
+    expect(regularZone?.classList.contains('session-create-zone--drop-ready')).toBe(false);
+    expect(temporaryZone?.classList.contains('session-create-zone--drop-ready')).toBe(true);
+    expect(temporaryZone?.getAttribute('aria-label')).toBe('Drop to create a related temporary session');
   });
 
   it('creates the same related-session flow when a session is dropped on the new-session zone', () => {
@@ -659,6 +681,30 @@ describe('Sidebar', () => {
       sessionMentions: [sessionMention],
     }));
     expect(navigationServiceMock.expandKey).toHaveBeenCalledWith('session-folder-9');
+    expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
+  });
+
+  it('creates a related temporary session without grouping it', async () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const repo = tree()[0].repos[0];
+    const workspace = repo.workspaces![0];
+    const source = workspace.sessions[0];
+
+    await component.createRelatedSession(repo, workspace, source, { stopPropagation: vi.fn() } as unknown as Event, true);
+
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({
+      repoId: 1,
+      workspaceId: 2,
+      folderId: undefined,
+      isTemporary: true,
+    });
+    expect(sessionFoldersServiceMock.groupSessions).not.toHaveBeenCalled();
+    expect(composerDraftsMock.save).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 21,
+      sessionMentions: [sessionMention],
+    }));
     expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
   });
 
