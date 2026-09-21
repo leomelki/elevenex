@@ -3571,12 +3571,16 @@ export class ClaudeRuntimeService
           sessionId,
           part.tool_use_id,
         );
+        const normalizedResult = normalizeToolResultContent(part.content);
         const item: ClaudeTranscriptItem = {
           id: `${message.uuid ?? randomUUID()}:tool_result:${part.tool_use_id ?? partIndex}`,
           kind: 'tool_result',
           toolUseId: part.tool_use_id,
           parentToolUseId: message.parent_tool_use_id ?? undefined,
-          content: serializeToolResultContent(part.content),
+          content: normalizedResult.content,
+          ...(normalizedResult.images.length
+            ? { images: normalizedResult.images }
+            : {}),
           isError: Boolean(part.is_error),
           transcriptMessageId: message.uuid,
           timestamp: authoredAt,
@@ -6087,6 +6091,7 @@ export class ClaudeRuntimeService
               authoredAt: timestamp,
             });
           } else if (part.type === 'tool_result') {
+            const normalizedResult = normalizeToolResultContent(part.content);
             normalized.push({
               id: `${message.uuid}:tool_result:${part.tool_use_id ?? index}`,
               kind: 'tool_result',
@@ -6094,10 +6099,10 @@ export class ClaudeRuntimeService
               parentToolUseId,
               sourceMessageId: message.uuid,
               transcriptMessageId: message.uuid,
-              content:
-                typeof part.content === 'string'
-                  ? part.content
-                  : JSON.stringify(part.content),
+              content: normalizedResult.content,
+              ...(normalizedResult.images.length
+                ? { images: normalizedResult.images }
+                : {}),
               isError: Boolean(part.is_error),
               timestamp,
               authoredAt: timestamp,
@@ -7522,9 +7527,16 @@ function sanitizeClaudeProjectPath(worktreePath: string): string {
   return `${encoded.slice(0, MAX_PROJECT_KEY_LENGTH)}-${hash}`;
 }
 
-function serializeToolResultContent(content: unknown): string {
-  if (content === null || content === undefined) return '';
-  if (typeof content === 'string') return content;
+function normalizeToolResultContent(content: unknown): Pick<
+  ClaudeTranscriptItem,
+  'content' | 'images'
+> & {
+  images: NonNullable<ClaudeTranscriptItem['images']>;
+} {
+  if (content === null || content === undefined)
+    return { content: '', images: [] };
+  if (typeof content === 'string') return { content, images: [] };
+  const images: NonNullable<ClaudeTranscriptItem['images']> = [];
   if (Array.isArray(content)) {
     const parts = content.map((block) => {
       if (typeof block === 'string') return block;
@@ -7534,7 +7546,18 @@ function serializeToolResultContent(content: unknown): string {
           return b['text'];
         }
         if (b['type'] === 'image') {
-          return '[image]';
+          const source = asRecord(b['source']);
+          const mediaType = source?.['media_type'];
+          const data = source?.['data'];
+          if (
+            source?.['type'] === 'base64' &&
+            isSupportedTranscriptImageType(mediaType) &&
+            typeof data === 'string' &&
+            data.length > 0
+          ) {
+            images.push({ mediaType, data });
+          }
+          return '';
         }
       }
       try {
@@ -7543,13 +7566,27 @@ function serializeToolResultContent(content: unknown): string {
         return String(block);
       }
     });
-    return parts.filter((p) => p.length > 0).join('\n\n');
+    return {
+      content: parts.filter((p) => p.length > 0).join('\n\n'),
+      images,
+    };
   }
   try {
-    return JSON.stringify(content);
+    return { content: JSON.stringify(content), images };
   } catch {
-    return String(content);
+    return { content: String(content), images };
   }
+}
+
+function isSupportedTranscriptImageType(
+  value: unknown,
+): value is NonNullable<ClaudeTranscriptItem['images']>[number]['mediaType'] {
+  return (
+    value === 'image/png' ||
+    value === 'image/jpeg' ||
+    value === 'image/gif' ||
+    value === 'image/webp'
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

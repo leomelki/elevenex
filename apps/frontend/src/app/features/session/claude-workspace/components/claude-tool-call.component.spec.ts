@@ -350,6 +350,40 @@ describe('ClaudeToolCallComponent', () => {
     expect(diffs[1].textContent).toContain('-0');
   });
 
+  it('renders image results in an expanded Read tool instead of an image placeholder', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeToolCallComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'read-image',
+      kind: 'tool_use',
+      toolUseId: 'read-image',
+      toolName: 'Read',
+      toolInput: { file_path: 'assets/preview.png' },
+      timestamp: '2026-09-12T08:00:00.000Z',
+    });
+    fixture.componentRef.setInput('result', {
+      id: 'read-image-result',
+      kind: 'tool_result',
+      toolUseId: 'read-image',
+      content: '',
+      images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=' }],
+      timestamp: '2026-09-12T08:00:01.000Z',
+    });
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
+    button.click();
+    fixture.detectChanges();
+
+    const image = fixture.nativeElement.querySelector('.cw-tool__image') as HTMLImageElement;
+    expect(image.getAttribute('src')).toBe('data:image/png;base64,iVBORw0KGgo=');
+    expect(image.alt).toBe('Image read from assets/preview.png');
+    expect((fixture.nativeElement as HTMLElement).textContent).not.toContain('[image]');
+  });
+
   it('keeps a live Codex file change expandable before its result arrives', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeToolCallComponent],

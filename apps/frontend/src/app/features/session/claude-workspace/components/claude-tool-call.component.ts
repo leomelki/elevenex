@@ -436,6 +436,18 @@ type Todo = ToolTodoItem;
                   <pre class="cw-tool__output">{{ resultText() }}</pre>
                 }
               }
+              @case ('read') {
+                @if (resultImages().length) {
+                  <div class="cw-tool__images">
+                    @for (image of resultImages(); track $index) {
+                      <img class="cw-tool__image" [src]="image.dataUrl" [alt]="readImageAlt()" />
+                    }
+                  </div>
+                }
+                @if (resultText()) {
+                  <cw-tool-output [text]="resultText()" [error]="state() === 'error'" />
+                }
+              }
               @case ('glob') {
                 @if (resultText()) {
                   <pre class="cw-tool__output">{{ resultText() }}</pre>
@@ -756,6 +768,20 @@ type Todo = ToolTodoItem;
         white-space: pre-wrap;
         max-height: 28rem;
         overflow: auto;
+      }
+      .cw-tool__images {
+        display: grid;
+        gap: 0.5rem;
+        justify-items: start;
+      }
+      .cw-tool__image {
+        display: block;
+        max-width: 100%;
+        max-height: 32rem;
+        border: 1px solid var(--border);
+        border-radius: 0.375rem;
+        background: color-mix(in oklab, var(--muted) 55%, transparent);
+        object-fit: contain;
       }
       .cw-tool__write {
         margin: 0;
@@ -1328,6 +1354,20 @@ export class ClaudeToolCallComponent {
   readonly resultText = computed(() => {
     const raw = contentToString(this.result()?.content);
     return isHardError(this.result()) ? extractToolError(raw) : raw;
+  });
+
+  readonly resultImages = computed(() =>
+    (this.result()?.images ?? []).map((image) => ({
+      dataUrl: `data:${image.mediaType};base64,${image.data}`,
+    })),
+  );
+
+  readonly readImageAlt = computed(() => {
+    const input = this.call().toolInput as
+      | { file_path?: string; filePath?: string; path?: string }
+      | undefined;
+    const path = input?.file_path ?? input?.filePath ?? input?.path;
+    return path ? `Image read from ${path}` : 'Image read by tool';
   });
 
   readonly canExpand = computed(() => {

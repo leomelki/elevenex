@@ -84,6 +84,7 @@ export interface ClaudeTranscriptItem {
   kind: ClaudeTranscriptItemKind;
   contentType?: 'message' | 'plan';
   content?: string;
+  images?: ClaudeTranscriptImage[];
   toolUseId?: string;
   parentToolUseId?: string;
   toolName?: string;
@@ -100,6 +101,11 @@ export interface ClaudeTranscriptItem {
   timestamp: string;
   authoredAt?: string;
   receivedAt?: string;
+}
+
+export interface ClaudeTranscriptImage {
+  mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  data: string;
 }
 
 export interface ClaudePermissionRequest {

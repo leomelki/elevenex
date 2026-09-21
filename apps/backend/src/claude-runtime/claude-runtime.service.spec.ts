@@ -2670,6 +2670,48 @@ describe('ClaudeRuntimeService', () => {
     );
   });
 
+  it('preserves image blocks from tool results for transcript rendering', async () => {
+    await (service as any).handleSdkMessage(7, {
+      type: 'user',
+      uuid: 'user-image-result-1',
+      session_id: 'claude-session-1',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'read-image-1',
+            content: [
+              { type: 'text', text: 'Image dimensions: 20x10.' },
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/png',
+                  data: 'iVBORw0KGgo=',
+                },
+              },
+            ],
+            is_error: false,
+          },
+        ],
+      },
+    });
+
+    const state = await service.getRuntimeState(7);
+    const result = state.liveItems.find(
+      (item) =>
+        item.kind === 'tool_result' && item.toolUseId === 'read-image-1',
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        content: 'Image dimensions: 20x10.',
+        images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=' }],
+      }),
+    );
+    expect(result?.content).not.toContain('[image]');
+  });
+
   it('returns normalized subagent history for a tracked agent transcript', async () => {
     (service as any).ensureRuntimeState(7, 'claude-session-1').subagents = [
       {
