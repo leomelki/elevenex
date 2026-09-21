@@ -313,14 +313,29 @@ export class CodexRuntimeService
     }
 
     const session = await this.sessionsService.findOne(sessionId);
-    const rewoundSessionId = await this.historyService.rewindHistory(
+    const rewindTarget = await this.historyService.rewindHistory(
       session.codexSessionId,
       messageId,
     );
-    const persistedSessionId = rewoundSessionId ?? '-1';
+    // Codex must create the fork so its durable history store and rollout file
+    // agree. A copied JSONL prefix can be resumed in memory but later reopen as
+    // only the newly submitted turn.
+    const fork = await this.appServer.request<CodexThreadStartResult>(
+      'thread/fork',
+      {
+        threadId: rewindTarget.threadId,
+        beforeTurnId: rewindTarget.beforeTurnId,
+        excludeTurns: true,
+      },
+    );
+    const rewoundSessionId =
+      typeof fork.thread?.id === 'string' ? fork.thread.id : null;
+    if (!rewoundSessionId) {
+      throw new Error('codex app-server thread/fork did not return an id');
+    }
     await this.sessionsService.updateCodexSessionId(
       sessionId,
-      persistedSessionId,
+      rewoundSessionId,
     );
 
     const state = this.ensureRuntimeState(sessionId);

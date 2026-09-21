@@ -41,8 +41,11 @@ describe('CodexRuntimeService', () => {
     const historyService = {
       getHistory: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
       rewindHistory: jest
-        .fn<() => Promise<string | null>>()
-        .mockResolvedValue('rewound-thread'),
+        .fn<() => Promise<{ threadId: string; beforeTurnId: string }>>()
+        .mockResolvedValue({
+          threadId: 'source-thread',
+          beforeTurnId: 'turn-2',
+        }),
       forkHistory: jest.fn<() => Promise<unknown>>().mockResolvedValue({
         providerSessionId: 'forked-thread',
         draft: null,
@@ -328,7 +331,8 @@ describe('CodexRuntimeService', () => {
   });
 
   it('rewinds a Codex user message into a new persisted thread', async () => {
-    const { service, sessionsService, historyService } = createService();
+    const { service, sessionsService, historyService, appServer } =
+      createService();
     sessionsService.findOne.mockResolvedValue({
       ...session,
       codexSessionId: 'source-thread',
@@ -336,6 +340,9 @@ describe('CodexRuntimeService', () => {
     historyService.getHistory.mockResolvedValue([
       { id: 'user-1', kind: 'user', content: 'first' },
     ]);
+    appServer.request.mockResolvedValue({
+      thread: { id: 'rewound-thread' },
+    });
 
     const result = await service.rewindConversation(7, 'codex-record:3');
 
@@ -343,6 +350,11 @@ describe('CodexRuntimeService', () => {
       'source-thread',
       'codex-record:3',
     );
+    expect(appServer.request).toHaveBeenCalledWith('thread/fork', {
+      threadId: 'source-thread',
+      beforeTurnId: 'turn-2',
+      excludeTurns: true,
+    });
     expect(sessionsService.updateCodexSessionId).toHaveBeenCalledWith(
       7,
       'rewound-thread',

@@ -20,6 +20,11 @@ import type {
 
 type JsonRecord = Record<string, unknown>;
 
+export interface CodexRewindTarget {
+  threadId: string;
+  beforeTurnId: string;
+}
+
 export const CODEX_HISTORY_SESSIONS_ROOT = Symbol(
   'CODEX_HISTORY_SESSIONS_ROOT',
 );
@@ -119,7 +124,7 @@ export class CodexHistoryService {
   async rewindHistory(
     codexSessionId: string | null,
     messageId: string,
-  ): Promise<string | null> {
+  ): Promise<CodexRewindTarget> {
     const trimmedMessageId = messageId.trim();
     if (!trimmedMessageId) {
       throw new BadRequestException('A messageId is required.');
@@ -144,20 +149,14 @@ export class CodexHistoryService {
       throw new BadRequestException('Only user messages can be edited.');
     }
 
-    const retainedRecords = records.slice(0, targetIndex);
-    if (retainedRecords.length === 0) {
-      return null;
+    const beforeTurnId = this.findOwningTurnId(records, targetIndex);
+    if (!beforeTurnId) {
+      throw new BadRequestException(
+        'Could not identify the Codex turn for this message.',
+      );
     }
 
-    // Codex app-server can retain a resumed thread in memory. Rewinding into a
-    // new thread id makes the truncated history authoritative even when the
-    // original thread has already been loaded by the long-lived app-server.
-    const newSessionId = randomUUID();
-    const rewritten = retainedRecords.map((record) =>
-      this.rewriteSessionMetadata(record, newSessionId),
-    );
-    await this.writeJsonl(this.buildForkPath(path, newSessionId), rewritten);
-    return newSessionId;
+    return { threadId: codexSessionId, beforeTurnId };
   }
 
   async listSessions(): Promise<CodexHistorySessionSummary[]> {
@@ -450,6 +449,26 @@ export class CodexHistoryService {
 
   private recordAnchorId(index: number): string {
     return `codex-record:${index}`;
+  }
+
+  private findOwningTurnId(
+    records: JsonRecord[],
+    targetIndex: number,
+  ): string | null {
+    for (let index = targetIndex; index >= 0; index -= 1) {
+      const record = records[index];
+      const payload = asRecord(record.payload);
+      const turnId = stringValue(payload?.turn_id ?? payload?.turnId);
+      if (
+        turnId &&
+        (index === targetIndex ||
+          record.type === 'turn_context' ||
+          (record.type === 'event_msg' && payload?.type === 'task_started'))
+      ) {
+        return turnId;
+      }
+    }
+    return null;
   }
 
   private rewriteSessionMetadata(

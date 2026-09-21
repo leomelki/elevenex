@@ -290,7 +290,7 @@ describe('CodexHistoryService', () => {
     }
   });
 
-  it('rewinds before a selected user message into a new Codex thread', async () => {
+  it('resolves the owning turn when rewinding before a user message', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
     try {
       const service = new CodexHistoryService(root);
@@ -300,6 +300,10 @@ describe('CodexHistoryService', () => {
           JSON.stringify({
             type: 'session_meta',
             payload: { id: 'source-thread', cwd: '/repo' },
+          }),
+          JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'task_started', turn_id: 'turn-1' },
           }),
           JSON.stringify({
             type: 'event_msg',
@@ -315,6 +319,10 @@ describe('CodexHistoryService', () => {
                 content: [{ text: 'done' }],
               },
             },
+          }),
+          JSON.stringify({
+            type: 'turn_context',
+            payload: { turn_id: 'turn-2' },
           }),
           JSON.stringify({
             type: 'event_msg',
@@ -335,19 +343,56 @@ describe('CodexHistoryService', () => {
         'utf8',
       );
 
-      const rewoundId = await service.rewindHistory(
+      const rewindTarget = await service.rewindHistory(
         'source-thread',
-        'codex-record:3',
+        'codex-record:5',
       );
 
-      expect(rewoundId).toEqual(expect.any(String));
-      const history = await service.getHistory(rewoundId);
-      expect(history.map((item) => item.content)).toEqual(['first', 'done']);
-      const summaries = await service.listSessions();
-      const rewound = summaries.find((summary) => summary.id === rewoundId);
-      const raw = await readFile(rewound!.path, 'utf8');
-      expect(raw).not.toContain('edit this');
-      expect(raw).not.toContain('old answer');
+      expect(rewindTarget).toEqual({
+        threadId: 'source-thread',
+        beforeTurnId: 'turn-2',
+      });
+      const raw = await readFile(join(root, 'thread-source.jsonl'), 'utf8');
+      expect(raw).toContain('edit this');
+      expect(raw).toContain('old answer');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the turn id attached to a current-format Codex user item', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      const service = new CodexHistoryService(root);
+      await writeFile(
+        join(root, 'thread-modern.jsonl'),
+        [
+          JSON.stringify({
+            type: 'session_meta',
+            payload: { id: 'modern-thread', cwd: '/repo' },
+          }),
+          JSON.stringify({
+            type: 'event_msg',
+            payload: {
+              type: 'item_completed',
+              turn_id: 'modern-turn',
+              item: {
+                type: 'UserMessage',
+                id: 'user-1',
+                content: [{ type: 'text', text: 'edit this' }],
+              },
+            },
+          }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+
+      await expect(
+        service.rewindHistory('modern-thread', 'codex-record:1'),
+      ).resolves.toEqual({
+        threadId: 'modern-thread',
+        beforeTurnId: 'modern-turn',
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
