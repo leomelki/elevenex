@@ -39,6 +39,13 @@ export const sessions = sqliteTable('sessions', {
   // and which autonomy clause is substituted into the meta-agent system prompt.
   // Null for ordinary coding sessions; defaults to 'review' when read.
   agentAutonomyMode: text('agent_autonomy_mode'),
+  // Composer plan mode belongs to the session, not the ephemeral runtime. Keep
+  // it durable so a backend/app restart can still review a plan already present
+  // in the provider transcript.
+  // Null is reserved for sessions created before plan-mode persistence existed;
+  // Codex resolves those once from the latest transcript item, then saves a
+  // concrete value.
+  planMode: integer('plan_mode', { mode: 'boolean' }),
   activeAgentProvider: text('active_agent_provider')
     .notNull()
     .default('claude'),

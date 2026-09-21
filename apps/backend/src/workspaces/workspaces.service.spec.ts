@@ -75,6 +75,7 @@ function createTestDb() {
       is_temporary INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'created',
       archived_by_folder INTEGER NOT NULL DEFAULT 0,
+      plan_mode INTEGER,
       active_agent_provider TEXT NOT NULL DEFAULT 'claude',
       claude_session_id TEXT DEFAULT '-1',
       codex_session_id TEXT DEFAULT '-1',

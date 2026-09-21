@@ -279,7 +279,14 @@ export class CodexRuntimeService
 
   async getRuntimeState(sessionId: number): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const persistedPlanMode =
+      session.planMode ??
+      (await this.recoverLegacyPlanMode(sessionId, session.codexSessionId));
+    const state = this.ensureRuntimeState(
+      sessionId,
+      session.codexSessionId,
+      persistedPlanMode,
+    );
     state.cachedWorktreePath = session.worktreePath;
     await this.refreshAuthStatusFast(state, sessionId);
     if (state.authStatus?.authMethod === 'oauth') {
@@ -287,6 +294,35 @@ export class CodexRuntimeService
     }
     this.scheduleModelCatalogRefresh();
     return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  private async recoverLegacyPlanMode(
+    sessionId: number,
+    codexSessionId: string | null,
+  ): Promise<boolean> {
+    if (!codexSessionId || codexSessionId === '-1') {
+      await this.sessionsService.updatePlanMode(sessionId, false);
+      return false;
+    }
+
+    try {
+      const history = await this.historyService.getHistory(codexSessionId);
+      const latestConversationItem = history
+        .slice()
+        .reverse()
+        .find((item) => item.kind === 'user' || item.kind === 'assistant');
+      const recovered =
+        latestConversationItem?.kind === 'assistant' &&
+        latestConversationItem.contentType === 'plan' &&
+        Boolean(latestConversationItem.content?.trim());
+      await this.sessionsService.updatePlanMode(sessionId, recovered);
+      return recovered;
+    } catch (error) {
+      this.logger.warn(
+        `Could not recover persisted Codex plan mode for session ${sessionId}: ${String(error)}`,
+      );
+      return false;
+    }
   }
 
   async getSnapshot(sessionId: number): Promise<CodexSessionSnapshotPayload> {
@@ -424,6 +460,7 @@ export class CodexRuntimeService
     state.selectedPermissionMode = normalized.permissionMode;
     if (normalized.planMode !== undefined) {
       state.planMode = normalized.planMode;
+      await this.sessionsService.updatePlanMode(sessionId, normalized.planMode);
     }
     if (state.sessionMetadata) {
       state.sessionMetadata = {
@@ -440,7 +477,12 @@ export class CodexRuntimeService
     enabled: boolean,
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(
+      sessionId,
+      session.codexSessionId,
+      session.planMode ?? undefined,
+    );
+    await this.sessionsService.updatePlanMode(sessionId, enabled);
     state.planMode = enabled;
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
@@ -1330,11 +1372,15 @@ export class CodexRuntimeService
   private ensureRuntimeState(
     sessionId: number,
     codexSessionId?: string | null,
+    persistedPlanMode?: boolean,
   ): CodexRuntimeState {
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
       if (codexSessionId && codexSessionId !== '-1') {
         existing.codexSessionId = codexSessionId;
+      }
+      if (persistedPlanMode !== undefined) {
+        existing.planMode = persistedPlanMode;
       }
       return existing;
     }
@@ -1362,7 +1408,7 @@ export class CodexRuntimeService
       reasoningEffort: startup.reasoningEffort,
       fastMode: false,
       selectedPermissionMode: 'auto',
-      planMode: false,
+      planMode: persistedPlanMode ?? false,
       availableModels,
       contextUsage: null,
       sessionMetadata: null,

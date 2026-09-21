@@ -220,6 +220,20 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
+  async updatePlanMode(id: number, enabled: boolean) {
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({ planMode: enabled, updatedAt: new Date().toISOString() })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
   async findAllCompletionStates() {
     return this.db
       .select({

@@ -12,6 +12,7 @@ describe('CodexRuntimeService', () => {
     repoId: 1,
     worktreePath: '/tmp/project',
     codexSessionId: '-1',
+    planMode: false as boolean | null,
   };
 
   function createService() {
@@ -23,6 +24,7 @@ describe('CodexRuntimeService', () => {
       updateCodexSessionId: jest
         .fn<() => Promise<unknown>>()
         .mockResolvedValue({}),
+      updatePlanMode: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
     };
     const authService = {
       getFastStatus: jest.fn<() => Promise<unknown>>().mockResolvedValue({
@@ -309,6 +311,64 @@ describe('CodexRuntimeService', () => {
     expect((service as any).runtimeStates.get(7).cachedWorktreePath).toBe(
       '/tmp/project',
     );
+  });
+
+  it('restores persisted plan mode after prewarm created runtime state', async () => {
+    const { service, sessionsService } = createService();
+    (service as any).ensureRuntimeState(7);
+    sessionsService.findOne.mockResolvedValueOnce({
+      ...session,
+      planMode: true,
+    });
+
+    const state = await service.getRuntimeState(7);
+
+    expect(state.planMode).toBe(true);
+  });
+
+  it('recovers legacy plan mode from the latest Codex transcript item', async () => {
+    const { service, sessionsService, historyService } = createService();
+    sessionsService.findOne.mockResolvedValueOnce({
+      ...session,
+      codexSessionId: 'thread-1',
+      planMode: null,
+    });
+    historyService.getHistory.mockResolvedValueOnce([
+      {
+        id: 'plan-1',
+        kind: 'assistant',
+        contentType: 'plan',
+        content: '# Proposed plan',
+      },
+    ]);
+
+    const state = await service.getRuntimeState(7);
+
+    expect(state.planMode).toBe(true);
+    expect(sessionsService.updatePlanMode).toHaveBeenCalledWith(7, true);
+  });
+
+  it('does not recover a legacy plan after the conversation continued', async () => {
+    const { service, sessionsService, historyService } = createService();
+    sessionsService.findOne.mockResolvedValueOnce({
+      ...session,
+      codexSessionId: 'thread-1',
+      planMode: null,
+    });
+    historyService.getHistory.mockResolvedValueOnce([
+      {
+        id: 'plan-1',
+        kind: 'assistant',
+        contentType: 'plan',
+        content: '# Old plan',
+      },
+      { id: 'user-2', kind: 'user', content: 'Do something else' },
+    ]);
+
+    const state = await service.getRuntimeState(7);
+
+    expect(state.planMode).toBe(false);
+    expect(sessionsService.updatePlanMode).toHaveBeenCalledWith(7, false);
   });
 
   it('maps Codex subscription windows to remaining plan allowance', () => {
@@ -687,12 +747,22 @@ describe('CodexRuntimeService', () => {
   });
 
   it('normalizes legacy Codex plan permission mode into separate plan mode', async () => {
-    const { service } = createService();
+    const { service, sessionsService } = createService();
 
     const state = await service.setPermissionMode(7, 'plan');
 
     expect(state.permissionMode).toBe('auto');
     expect(state.planMode).toBe(true);
+    expect(sessionsService.updatePlanMode).toHaveBeenCalledWith(7, true);
+  });
+
+  it('persists explicit Codex plan mode changes', async () => {
+    const { service, sessionsService } = createService();
+
+    const state = await service.setPlanMode(7, true);
+
+    expect(state.planMode).toBe(true);
+    expect(sessionsService.updatePlanMode).toHaveBeenCalledWith(7, true);
   });
 
   it('normalizes streamed Codex plan deltas and completed plan items', async () => {

@@ -267,6 +267,13 @@
       "when": 1789654897702,
       "tag": "0037_panoramic_zodiak",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1789995587583,
+      "tag": "0038_puzzling_pretty_boy",
+      "breakpoints": true
     }
   ]
 }
