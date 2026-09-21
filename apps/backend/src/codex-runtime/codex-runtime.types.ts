@@ -78,8 +78,11 @@ export interface CodexLoginStartResult {
 
 export interface CodexActiveRunState {
   threadId: string | null;
-  /** The active app-server turnId, captured from `turn/started`; needed for `turn/interrupt`. */
+  /** The active app-server turnId; needed for `turn/interrupt` and `turn/steer`. */
   turnId: string | null;
+  /** Resolves once the app-server has returned enough ids to address the turn. */
+  turnReadyPromise: Promise<void>;
+  resolveTurnReady: () => void;
   abortController: AbortController;
   interruptRequested: boolean;
   completionPromise: Promise<void>;

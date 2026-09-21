@@ -169,6 +169,109 @@ describe('CodexRuntimeService', () => {
     expect(runtimeState.liveItems).toBe(liveItems);
   });
 
+  it('steers a queued prompt into the active Codex turn', async () => {
+    const { service, appServer } = createService();
+    const state = (service as any).ensureRuntimeState(7);
+    state.pendingPrompts = [
+      {
+        id: 'queued-1',
+        prompt: 'Keep this queued',
+        queuedAt: new Date().toISOString(),
+      },
+      {
+        id: 'queued-2',
+        prompt: 'Use this guidance now',
+        queuedAt: new Date().toISOString(),
+      },
+    ];
+    (service as any).activeRuns.set(7, {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      turnReadyPromise: Promise.resolve(),
+      resolveTurnReady: jest.fn(),
+      abortController: new AbortController(),
+      interruptRequested: false,
+      completionPromise: new Promise<void>(() => undefined),
+      resolveCompletion: jest.fn(),
+      startedAtMs: Date.now(),
+      permissionRequests: new Map(),
+      userInputRequests: new Map(),
+    });
+    const interrupt = jest.spyOn(service, 'interrupt');
+
+    await service.steerPendingPrompt(7, 'queued-2');
+
+    expect(appServer.request).toHaveBeenCalledWith('turn/steer', {
+      threadId: 'thread-1',
+      expectedTurnId: 'turn-1',
+      input: [{ type: 'text', text: 'Use this guidance now' }],
+    });
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(state.pendingPrompts).toEqual([
+      expect.objectContaining({ id: 'queued-1' }),
+    ]);
+  });
+
+  it('adds a live question receipt when Codex user input is answered', async () => {
+    const { service } = createService();
+    const state = (service as any).ensureRuntimeState(7);
+    (service as any).activeRuns.set(7, {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      turnReadyPromise: Promise.resolve(),
+      resolveTurnReady: jest.fn(),
+      abortController: new AbortController(),
+      interruptRequested: false,
+      completionPromise: new Promise<void>(() => undefined),
+      resolveCompletion: jest.fn(),
+      startedAtMs: Date.now(),
+      permissionRequests: new Map(),
+      userInputRequests: new Map(),
+    });
+
+    const response = (service as any).requestCodexToolUserInput(
+      7,
+      'request-1',
+      {
+        itemId: 'question-tool-1',
+        questions: [
+          {
+            id: 'approach',
+            header: 'Approach',
+            question: 'Which approach should we use?',
+            options: [{ label: 'Option A', description: 'Use A.' }],
+          },
+        ],
+      },
+    );
+
+    expect(state.liveItems).toEqual([
+      expect.objectContaining({
+        kind: 'tool_use',
+        toolUseId: 'question-tool-1',
+        toolKind: 'ask_user_question',
+      }),
+    ]);
+
+    await service.answerUserInput(7, 'request-1', 'accept', {
+      approach: 'Option A',
+    });
+
+    await expect(response).resolves.toEqual({
+      answers: { approach: { answers: ['Option A'] } },
+    });
+    expect(state.liveItems).toEqual([
+      expect.objectContaining({ kind: 'tool_use' }),
+      expect.objectContaining({
+        kind: 'tool_result',
+        toolUseId: 'question-tool-1',
+        content: JSON.stringify({
+          answers: { approach: { answers: ['Option A'] } },
+        }),
+      }),
+    ]);
+  });
+
   async function startAppServerTurn(
     service: CodexRuntimeService,
     selectedPermissionMode: string,

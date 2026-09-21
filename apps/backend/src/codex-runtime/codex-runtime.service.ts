@@ -138,6 +138,12 @@ interface CodexThreadStartResult {
   };
 }
 
+interface CodexTurnStartResult {
+  turn?: {
+    id?: unknown;
+  };
+}
+
 interface CodexRateLimitWindow {
   usedPercent?: unknown;
   resetsAt?: unknown;
@@ -598,9 +604,15 @@ export class CodexRuntimeService
     const completionPromise = new Promise<void>((resolve) => {
       resolveCompletion = resolve;
     });
+    let resolveTurnReady = () => {};
+    const turnReadyPromise = new Promise<void>((resolve) => {
+      resolveTurnReady = resolve;
+    });
     this.activeRuns.set(sessionId, {
       threadId: state.codexSessionId,
       turnId: null,
+      turnReadyPromise,
+      resolveTurnReady,
       abortController,
       interruptRequested: false,
       completionPromise,
@@ -659,6 +671,7 @@ export class CodexRuntimeService
     } finally {
       const run = this.activeRuns.get(sessionId);
       this.activeRuns.delete(sessionId);
+      run?.resolveTurnReady();
       run?.resolveCompletion();
       if (stagedImageDir) {
         void rm(stagedImageDir, { recursive: true, force: true });
@@ -736,15 +749,74 @@ export class CodexRuntimeService
     const selected = state.pendingPrompts.find((prompt) => prompt.id === id);
     if (!selected) return;
 
+    state.lastError = null;
+    const run = this.activeRuns.get(sessionId);
+
+    // Codex can inject input into the current turn directly. Interrupting and
+    // immediately starting a replacement turn races the app-server's turn
+    // cleanup: the new user message is persisted, but no inference starts for
+    // it until another follow-up arrives.
+    if (run) {
+      await Promise.race([run.turnReadyPromise, run.completionPromise]);
+      if (
+        this.activeRuns.get(sessionId) === run &&
+        run.threadId &&
+        run.turnId &&
+        !run.interruptRequested
+      ) {
+        let stagedImageDir: string | null = null;
+        state.pendingPrompts = state.pendingPrompts.filter(
+          (prompt) => prompt.id !== id,
+        );
+        state.queuePaused = true;
+        try {
+          const built = await this.buildCodexInput(
+            selected.prompt,
+            selected.images ?? [],
+          );
+          stagedImageDir = built.tempDir;
+          const steerInput = built.input.map((entry) =>
+            entry.type === 'text'
+              ? { type: 'text' as const, text: entry.text }
+              : { type: 'localImage' as const, path: entry.path },
+          );
+          await this.appServer.request('turn/steer', {
+            threadId: run.threadId,
+            expectedTurnId: run.turnId,
+            input: steerInput,
+          });
+          state.queuePaused = false;
+          this.emitRunState(sessionId);
+          if (!this.activeRuns.has(sessionId)) {
+            await this.resumePendingPrompts(sessionId);
+          }
+          return;
+        } catch (error) {
+          state.pendingPrompts = [
+            selected,
+            ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
+          ];
+          state.queuePaused = false;
+          this.emitRunState(sessionId);
+          if (!this.activeRuns.has(sessionId)) {
+            await this.resumePendingPrompts(sessionId);
+            return;
+          }
+          throw error;
+        } finally {
+          if (stagedImageDir) {
+            void rm(stagedImageDir, { recursive: true, force: true });
+          }
+        }
+      }
+    }
+
+    // The turn may have completed while the steer action was in flight. In
+    // that case promote the selected message and run it as the next turn.
     state.pendingPrompts = [
       selected,
       ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
     ];
-    state.queuePaused = true;
-    state.lastError = null;
-    this.emitRunState(sessionId);
-
-    await this.interrupt(sessionId);
     state.queuePaused = false;
     this.emitRunState(sessionId);
     await this.resumePendingPrompts(sessionId);
@@ -1911,6 +1983,7 @@ export class CodexRuntimeService
           const newTurnId = params?.turn?.id;
           if (run && typeof newTurnId === 'string') {
             run.turnId = newTurnId;
+            run.resolveTurnReady();
           }
           push({ type: 'turn.started' });
           return;
@@ -2183,11 +2256,19 @@ export class CodexRuntimeService
       if (activeRun) activeRun.threadId = threadIdFilter;
 
       // Now start the turn.
-      await this.appServer.request('turn/start', {
-        threadId: threadIdFilter,
-        input,
-        ...this.buildCollaborationModeParams(state),
-      });
+      const turnStart = await this.appServer.request<CodexTurnStartResult>(
+        'turn/start',
+        {
+          threadId: threadIdFilter,
+          input,
+          ...this.buildCollaborationModeParams(state),
+        },
+      );
+      const startedTurnId = turnStart.turn?.id;
+      if (activeRun && typeof startedTurnId === 'string') {
+        activeRun.turnId = startedTurnId;
+        activeRun.resolveTurnReady();
+      }
 
       while (!endStream || queue.length > 0) {
         if (signal.aborted) return;
@@ -2368,6 +2449,11 @@ export class CodexRuntimeService
   ): Promise<unknown> {
     const uiRequestId = String(requestId);
     const questions = Array.isArray(params?.questions) ? params.questions : [];
+    const toolUseId =
+      typeof params?.itemId === 'string' && params.itemId
+        ? params.itemId
+        : `codex-user-input:${uiRequestId}`;
+    const createdAt = new Date().toISOString();
     const request: ClaudeUserInputRequest = {
       requestId: uiRequestId,
       serverName: 'Codex',
@@ -2379,8 +2465,29 @@ export class CodexRuntimeService
           : 'Answer the requested questions.',
       requestedSchema: this.questionsToJsonSchema(questions),
       questions: this.toCodexUserInputQuestions(questions),
-      createdAt: new Date().toISOString(),
+      createdAt,
     };
+    const canonicalTool = canonicalizeAgentTool('AskUserQuestion', {
+      questions,
+    });
+    this.pushItem(
+      sessionId,
+      {
+        id: `${toolUseId}:tool_use`,
+        kind: 'tool_use',
+        toolUseId,
+        toolName: 'AskUserQuestion',
+        providerToolName: 'request_user_input',
+        toolKind: canonicalTool.toolKind,
+        toolDisplayName: canonicalTool.toolDisplayName,
+        toolInput: canonicalTool.toolInput,
+        providerToolInput: { questions },
+        sourceMessageId: toolUseId,
+        timestamp: createdAt,
+        receivedAt: createdAt,
+      },
+      'tool_use',
+    );
     const result = await this.waitForUserInput(sessionId, uiRequestId, request);
     const content = result.action === 'accept' ? (result.content ?? {}) : {};
     const answerEntries: Array<[string, { answers: string[] }]> = questions
@@ -2400,6 +2507,20 @@ export class CodexRuntimeService
       })
       .filter(([id]: [string, { answers: string[] }]) => Boolean(id));
     const answers = Object.fromEntries(answerEntries);
+    const resolvedAt = new Date().toISOString();
+    this.pushItem(
+      sessionId,
+      {
+        id: `${toolUseId}:tool_result`,
+        kind: 'tool_result',
+        toolUseId,
+        content: JSON.stringify({ answers }),
+        sourceMessageId: toolUseId,
+        timestamp: resolvedAt,
+        authoredAt: resolvedAt,
+      },
+      'tool_result',
+    );
     return { answers };
   }
 

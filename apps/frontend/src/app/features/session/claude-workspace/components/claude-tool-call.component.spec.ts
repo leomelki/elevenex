@@ -8,7 +8,7 @@ describe('ClaudeToolCallComponent', () => {
     vi.useRealTimers();
   });
 
-  it('renders structured ask-user-question answers from interaction metadata', async () => {
+  it('keeps answered questions visible as a decision receipt without expanding the tool', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeToolCallComponent],
     }).compileComponents();
@@ -36,14 +36,86 @@ describe('ClaudeToolCallComponent', () => {
     });
     fixture.detectChanges();
 
-    const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
-    button.click();
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(fixture.nativeElement.querySelector('.cw-answer-receipt')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('.cw-tool__head')).toBeNull();
+    expect(text).toContain('Your response');
+    expect(text).toContain('Sent to agent');
+    expect(text).toContain('Which approach should we use?');
+    expect(text).toContain('Option A');
+  });
+
+  it('renders Codex nested answer results with their human-readable question text', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeToolCallComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'tool-codex-question',
+      kind: 'tool_use',
+      toolUseId: 'tool-codex-question',
+      toolName: 'AskUserQuestion',
+      toolInput: {
+        questions: [
+          { id: 'framework', question: 'Which framework should we use?' },
+          { id: 'features', question: 'Which features matter?' },
+        ],
+      },
+      timestamp: '2026-04-24T08:00:00.000Z',
+    });
+    fixture.componentRef.setInput('result', {
+      id: 'tool-codex-question-result',
+      kind: 'tool_result',
+      toolUseId: 'tool-codex-question',
+      content: JSON.stringify({
+        answers: {
+          framework: { answers: ['Angular'] },
+          features: { answers: ['Fast', 'Accessible'] },
+        },
+      }),
+      timestamp: '2026-04-24T08:00:05.000Z',
+    });
     fixture.detectChanges();
 
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
-    expect(text).toContain('Which approach should we use?');
-    expect(text).toContain('Option A');
-    expect(text).toContain('Answered');
+    expect(text).toContain('Which framework should we use?');
+    expect(text).toContain('Angular');
+    expect(text).toContain('Which features matter?');
+    expect(text).toContain('Fast, Accessible');
+    expect(text).not.toContain('[object Object]');
+  });
+
+  it('keeps a declined question visible as an explicit response', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeToolCallComponent],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'tool-declined-question',
+      kind: 'tool_use',
+      toolUseId: 'tool-declined-question',
+      toolName: 'AskUserQuestion',
+      toolInput: { questions: [{ question: 'Should we migrate now?' }] },
+      interaction: {
+        kind: 'ask_user_question',
+        decision: 'denied',
+        decisionLabel: 'Declined',
+        decisionTone: 'warn',
+        remember: false,
+        answers: [],
+        createdAt: '2026-04-24T08:00:00.000Z',
+        resolvedAt: '2026-04-24T08:00:05.000Z',
+      },
+      timestamp: '2026-04-24T08:00:00.000Z',
+    });
+    fixture.detectChanges();
+
+    const receipt = fixture.nativeElement.querySelector('.cw-answer-receipt') as HTMLElement;
+    expect(receipt.dataset['outcome']).toBe('declined');
+    expect(receipt.textContent).toContain('Should we migrate now?');
+    expect(receipt.textContent).toContain('No answer was sent.');
   });
 
   it('shows the explicit decision for denied permission prompts and keeps request details visible', async () => {

@@ -1,4 +1,18 @@
-import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, effect, ElementRef, forwardRef, inject, input, output, signal, untracked, viewChild } from '@angular/core';
+import {
+  afterRenderEffect,
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  ElementRef,
+  forwardRef,
+  inject,
+  input,
+  output,
+  signal,
+  untracked,
+  viewChild,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import hljs from 'highlight.js/lib/common';
@@ -156,9 +170,43 @@ type Todo = ToolTodoItem;
     }),
   ],
   template: `
-    <div class="cw-tool" [attr.data-state]="state()">
+    <div
+      class="cw-tool"
+      [class.cw-tool--answer-receipt]="isQuestionResponse()"
+      [attr.data-state]="state()"
+    >
       <!-- TodoWrite gets special inline rendering — no toggle needed, checklist is the point. -->
-      @if (display().kind === 'todo_write') {
+      @if (isQuestionResponse()) {
+        <section
+          class="cw-answer-receipt"
+          [attr.data-outcome]="questionResponseSent() ? 'sent' : 'declined'"
+          aria-label="Your response"
+        >
+          <header class="cw-answer-receipt__header">
+            <span class="cw-answer-receipt__icon" aria-hidden="true">
+              <ng-icon name="lucideCheck" size="13" />
+            </span>
+            <span class="cw-answer-receipt__title">Your response</span>
+            <span class="cw-answer-receipt__status">
+              {{ questionResponseSent() ? 'Sent to agent' : 'Declined' }}
+            </span>
+          </header>
+
+          <div class="cw-answer-receipt__answers">
+            @for (entry of questionReceiptEntries(); track entry.question; let index = $index) {
+              <div class="cw-answer-receipt__answer">
+                @if (questionReceiptEntries().length > 1) {
+                  <span class="cw-answer-receipt__number">{{ index + 1 }}</span>
+                }
+                <div class="cw-answer-receipt__copy">
+                  <div class="cw-answer-receipt__question">{{ entry.question }}</div>
+                  <div class="cw-answer-receipt__value">{{ entry.answer }}</div>
+                </div>
+              </div>
+            }
+          </div>
+        </section>
+      } @else if (display().kind === 'todo_write') {
         <div class="cw-tool__head cw-tool__head--static">
           <span class="cw-tool__state-icon"><ng-icon name="lucideListTodo" size="13" /></span>
           <span class="cw-tool__verb">Todos</span>
@@ -252,11 +300,16 @@ type Todo = ToolTodoItem;
                 @if (writeContent()) {
                   <pre class="cw-tool__write" [innerHTML]="writeContentHtml()"></pre>
                   @if (writeHiddenLines() > 0) {
-                    <button type="button" class="cw-tool__write-expand" (click)="toggleWriteExpand()">
+                    <button
+                      type="button"
+                      class="cw-tool__write-expand"
+                      (click)="toggleWriteExpand()"
+                    >
                       @if (writeExpanded()) {
                         Show less
                       } @else {
-                        Show {{ writeHiddenLines() }} more {{ writeHiddenLines() === 1 ? 'line' : 'lines' }}
+                        Show {{ writeHiddenLines() }} more
+                        {{ writeHiddenLines() === 1 ? 'line' : 'lines' }}
                       }
                     </button>
                   }
@@ -300,7 +353,10 @@ type Todo = ToolTodoItem;
                       }
                     </button>
                     @if (promptOpen()) {
-                      <div class="cw-agent__prompt cw-agent__markdown" [innerHTML]="agentPrompt() | cwMarkdown"></div>
+                      <div
+                        class="cw-agent__prompt cw-agent__markdown"
+                        [innerHTML]="agentPrompt() | cwMarkdown"
+                      ></div>
                     }
                   </div>
                 }
@@ -331,7 +387,11 @@ type Todo = ToolTodoItem;
                       }
                     </button>
                     @if (streamOpen()) {
-                      <div class="cw-subagent-stream__body" #streamBody (scroll)="onStreamScroll($event)">
+                      <div
+                        class="cw-subagent-stream__body"
+                        #streamBody
+                        (scroll)="onStreamScroll($event)"
+                      >
                         @for (unit of childUnits(); track unit.id) {
                           @switch (unit.kind) {
                             @case ('message') {
@@ -359,7 +419,10 @@ type Todo = ToolTodoItem;
                 @if (agentResponse()) {
                   <div class="cw-agent">
                     <div class="cw-agent__label">Response</div>
-                    <div class="cw-agent__response cw-agent__markdown" [innerHTML]="agentResponse() | cwMarkdown"></div>
+                    <div
+                      class="cw-agent__response cw-agent__markdown"
+                      [innerHTML]="agentResponse() | cwMarkdown"
+                    ></div>
                   </div>
                 }
                 @if (turnId() && hasAgentHistory() && state() === 'done') {
@@ -404,7 +467,9 @@ type Todo = ToolTodoItem;
                 }
               }
               @case ('enter_plan_mode') {
-                <div class="cw-tool__web">Claude switched into planning mode and stayed read-only.</div>
+                <div class="cw-tool__web">
+                  Claude switched into planning mode and stayed read-only.
+                </div>
               }
               @case ('exit_plan_mode') {
                 @if (planFilePath()) {
@@ -414,7 +479,10 @@ type Todo = ToolTodoItem;
                   </div>
                 }
                 @if (planMarkdown()) {
-                  <div class="cw-tool__plan cw-agent__markdown" [innerHTML]="planMarkdown() | cwMarkdown"></div>
+                  <div
+                    class="cw-tool__plan cw-agent__markdown"
+                    [innerHTML]="planMarkdown() | cwMarkdown"
+                  ></div>
                 }
               }
               @default {
@@ -446,6 +514,116 @@ type Todo = ToolTodoItem;
       }
       .cw-tool[data-state='running'] {
         border-color: color-mix(in oklab, var(--primary) 30%, var(--border));
+      }
+      .cw-tool--answer-receipt {
+        overflow: visible;
+        border: 0;
+        background: transparent;
+      }
+      .cw-answer-receipt {
+        overflow: hidden;
+        border: 1px solid color-mix(in oklab, var(--success) 38%, var(--border));
+        border-radius: 0.625rem;
+        background: color-mix(in oklab, var(--success) 4%, var(--card));
+        box-shadow: 0 1px 2px color-mix(in oklab, var(--foreground) 5%, transparent);
+      }
+      .cw-answer-receipt__header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-height: 2.25rem;
+        padding: 0.4375rem 0.625rem;
+        border-bottom: 1px solid color-mix(in oklab, var(--success) 18%, var(--border));
+        background: color-mix(in oklab, var(--success) 7%, transparent);
+      }
+      .cw-answer-receipt__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.25rem;
+        height: 1.25rem;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--success);
+        color: var(--success-foreground);
+      }
+      .cw-answer-receipt__title {
+        color: var(--foreground);
+        font-size: 0.75rem;
+        font-weight: 650;
+      }
+      .cw-answer-receipt__status {
+        margin-left: auto;
+        color: color-mix(in oklab, var(--success) 72%, var(--foreground));
+        font-size: 0.6875rem;
+        font-weight: 600;
+      }
+      .cw-answer-receipt__answers {
+        display: grid;
+        gap: 0.75rem;
+        padding: 0.75rem;
+      }
+      .cw-answer-receipt__answer {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 0.5rem;
+        align-items: start;
+      }
+      .cw-answer-receipt__answer + .cw-answer-receipt__answer {
+        padding-top: 0.75rem;
+        border-top: 1px solid var(--border);
+      }
+      .cw-answer-receipt__number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.25rem;
+        height: 1.25rem;
+        margin-top: 0.0625rem;
+        border-radius: 999px;
+        background: var(--muted);
+        color: var(--muted-foreground);
+        font-size: 0.625rem;
+        font-weight: 700;
+      }
+      .cw-answer-receipt__copy {
+        min-width: 0;
+      }
+      .cw-answer-receipt__question {
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+        line-height: 1.45;
+      }
+      .cw-answer-receipt__value {
+        margin-top: 0.25rem;
+        padding-left: 0.625rem;
+        border-left: 2px solid var(--success);
+        color: var(--foreground);
+        font-size: 0.875rem;
+        font-weight: 600;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .cw-answer-receipt[data-outcome='declined'] {
+        border-color: color-mix(in oklab, var(--warning) 38%, var(--border));
+        background: color-mix(in oklab, var(--warning) 4%, var(--card));
+      }
+      .cw-answer-receipt[data-outcome='declined'] .cw-answer-receipt__header {
+        border-color: color-mix(in oklab, var(--warning) 18%, var(--border));
+        background: color-mix(in oklab, var(--warning) 7%, transparent);
+      }
+      .cw-answer-receipt[data-outcome='declined'] .cw-answer-receipt__icon {
+        background: var(--warning);
+        color: var(--warning-foreground);
+      }
+      .cw-answer-receipt[data-outcome='declined'] .cw-answer-receipt__status {
+        color: color-mix(in oklab, var(--warning) 72%, var(--foreground));
+      }
+      .cw-answer-receipt[data-outcome='declined'] .cw-answer-receipt__value {
+        border-color: var(--warning);
+        color: var(--muted-foreground);
+        font-weight: 500;
       }
       .cw-tool__head {
         display: flex;
@@ -711,12 +889,18 @@ type Todo = ToolTodoItem;
       .cw-agent__markdown {
         white-space: normal;
       }
-      :host ::ng-deep .cw-agent__markdown > :first-child { margin-top: 0; }
-      :host ::ng-deep .cw-agent__markdown > :last-child { margin-bottom: 0; }
+      :host ::ng-deep .cw-agent__markdown > :first-child {
+        margin-top: 0;
+      }
+      :host ::ng-deep .cw-agent__markdown > :last-child {
+        margin-bottom: 0;
+      }
       :host ::ng-deep .cw-agent__markdown p {
         margin: 0 0 0.5rem 0;
       }
-      :host ::ng-deep .cw-agent__markdown p:last-child { margin-bottom: 0; }
+      :host ::ng-deep .cw-agent__markdown p:last-child {
+        margin-bottom: 0;
+      }
       :host ::ng-deep .cw-agent__markdown strong {
         color: var(--foreground);
         font-weight: 700;
@@ -733,12 +917,18 @@ type Todo = ToolTodoItem;
         line-height: 1.3;
         letter-spacing: 0;
       }
-      :host ::ng-deep .cw-agent__markdown h1 { font-size: 1rem; }
-      :host ::ng-deep .cw-agent__markdown h2 { font-size: 0.9375rem; }
+      :host ::ng-deep .cw-agent__markdown h1 {
+        font-size: 1rem;
+      }
+      :host ::ng-deep .cw-agent__markdown h2 {
+        font-size: 0.9375rem;
+      }
       :host ::ng-deep .cw-agent__markdown h3,
       :host ::ng-deep .cw-agent__markdown h4,
       :host ::ng-deep .cw-agent__markdown h5,
-      :host ::ng-deep .cw-agent__markdown h6 { font-size: 0.875rem; }
+      :host ::ng-deep .cw-agent__markdown h6 {
+        font-size: 0.875rem;
+      }
       :host ::ng-deep .cw-agent__markdown ul,
       :host ::ng-deep .cw-agent__markdown ol {
         margin: 0 0 0.5rem;
@@ -849,7 +1039,9 @@ type Todo = ToolTodoItem;
         font-size: 0.75rem;
         font-weight: 500;
         cursor: pointer;
-        transition: background 120ms ease, border-color 120ms ease;
+        transition:
+          background 120ms ease,
+          border-color 120ms ease;
       }
       .cw-agent__deepdive:hover {
         background: color-mix(in oklab, var(--primary) 13%, var(--card));
@@ -1122,10 +1314,9 @@ export class ClaudeToolCallComponent {
     const progress = this.progress();
     if (progress && Number.isFinite(progress.elapsedTimeSeconds)) {
       const updatedAt = Date.parse(progress.timestamp);
-      const secondsSinceProgress =
-        Number.isFinite(updatedAt)
-          ? Math.floor((this.timerTick() - updatedAt) / 1000)
-          : 0;
+      const secondsSinceProgress = Number.isFinite(updatedAt)
+        ? Math.floor((this.timerTick() - updatedAt) / 1000)
+        : 0;
       return Math.max(0, Math.floor(progress.elapsedTimeSeconds) + secondsSinceProgress);
     }
 
@@ -1143,17 +1334,22 @@ export class ClaudeToolCallComponent {
     const k = this.display().kind;
     if (k === 'todo_write' || k === 'worktree') return false;
     // Always expandable if we have a result, or if this is an agent (has prompt)
-    if (k === 'plan_mode' || k === 'enter_plan_mode' || k === 'exit_plan_mode' || k === 'ask_user_question') {
+    if (
+      k === 'plan_mode' ||
+      k === 'enter_plan_mode' ||
+      k === 'exit_plan_mode' ||
+      k === 'ask_user_question'
+    ) {
       return !!this.result() || !!this.interaction();
     }
     return (
-      !!this.result()
-      || !!this.interaction()
-      || !!this.agentPrompt()
-      || this.isEditDiff()
-      || this.fileChangeDiffs().length > 0
-      || !!this.bashCommand()
-      || this.childUnits().length > 0
+      !!this.result() ||
+      !!this.interaction() ||
+      !!this.agentPrompt() ||
+      this.isEditDiff() ||
+      this.fileChangeDiffs().length > 0 ||
+      !!this.bashCommand() ||
+      this.childUnits().length > 0
     );
   });
 
@@ -1190,12 +1386,14 @@ export class ClaudeToolCallComponent {
     return data?.file_path ?? data?.filePath ?? data?.path ?? '';
   });
 
-  readonly editDiffs = computed<Array<{
-    html: SafeHtml;
-    label: string;
-    additions: number;
-    deletions: number;
-  }>>(() => {
+  readonly editDiffs = computed<
+    Array<{
+      html: SafeHtml;
+      label: string;
+      additions: number;
+      deletions: number;
+    }>
+  >(() => {
     if (this.display().kind !== 'edit') return [];
     const data = this.call().toolInput as Record<string, unknown> | undefined;
     if (!data) return [];
@@ -1209,20 +1407,17 @@ export class ClaudeToolCallComponent {
       if (typeof oldString !== 'string' || typeof newString !== 'string') return [];
 
       const startLine = typeof edit['__startLine'] === 'number' ? edit['__startLine'] : 1;
-      const html = highlightedUnifiedDiffHtml(
-        oldString,
-        newString,
-        this.editFilePath(),
-        startLine,
-      );
+      const html = highlightedUnifiedDiffHtml(oldString, newString, this.editFilePath(), startLine);
       const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
       const baseLabel = this.editFilePath() || 'Edit';
-      return [{
-        html: this.sanitizer.bypassSecurityTrustHtml(safe),
-        label: rawEdits.length > 1 ? `${baseLabel} · Edit ${index + 1}` : baseLabel,
-        additions: countTextLines(newString),
-        deletions: countTextLines(oldString),
-      }];
+      return [
+        {
+          html: this.sanitizer.bypassSecurityTrustHtml(safe),
+          label: rawEdits.length > 1 ? `${baseLabel} · Edit ${index + 1}` : baseLabel,
+          additions: countTextLines(newString),
+          deletions: countTextLines(oldString),
+        },
+      ];
     });
   });
 
@@ -1360,7 +1555,9 @@ export class ClaudeToolCallComponent {
     }
   });
 
-  readonly interaction = computed<ClaudeToolInteractionSummary | null>(() => this.call().interaction ?? null);
+  readonly interaction = computed<ClaudeToolInteractionSummary | null>(
+    () => this.call().interaction ?? null,
+  );
 
   readonly interactionAnswers = computed<Array<{ question: string; answer: string }>>(() => {
     const answers = this.interaction()?.answers ?? [];
@@ -1381,10 +1578,51 @@ export class ClaudeToolCallComponent {
     const answers = this.parsedResult()?.['answers'];
     if (!answers || typeof answers !== 'object') return [];
     return Object.entries(answers as Record<string, unknown>).map(([question, answer]) => ({
-      question,
-      answer: String(answer ?? ''),
+      question: this.askQuestionLabel(question),
+      answer: this.askAnswerText(answer),
     }));
   });
+
+  readonly isQuestionResponse = computed(
+    () => this.display().kind === 'ask_user_question' && (!!this.result() || !!this.interaction()),
+  );
+
+  readonly questionResponseSent = computed(() => this.askAnswers().length > 0);
+
+  readonly questionReceiptEntries = computed<Array<{ question: string; answer: string }>>(() => {
+    const answers = this.askAnswers();
+    if (answers.length) return answers;
+    const input = this.call().toolInput as { questions?: unknown[] } | undefined;
+    const questions = Array.isArray(input?.questions) ? input.questions : [];
+    return questions
+      .map((candidate) => {
+        if (!candidate || typeof candidate !== 'object') return null;
+        const question = (candidate as Record<string, unknown>)['question'];
+        return typeof question === 'string' ? { question, answer: 'No answer was sent.' } : null;
+      })
+      .filter((entry): entry is { question: string; answer: string } => entry !== null);
+  });
+
+  private askQuestionLabel(key: string): string {
+    const input = this.call().toolInput as { questions?: unknown[] } | undefined;
+    const questions = Array.isArray(input?.questions) ? input.questions : [];
+    const match = questions.find((candidate) => {
+      if (!candidate || typeof candidate !== 'object') return false;
+      const question = candidate as Record<string, unknown>;
+      return question['id'] === key || question['question'] === key;
+    }) as Record<string, unknown> | undefined;
+    return typeof match?.['question'] === 'string' ? match['question'] : key;
+  }
+
+  private askAnswerText(value: unknown): string {
+    if (Array.isArray(value)) return value.map(String).join(', ');
+    if (value && typeof value === 'object') {
+      const nested = (value as Record<string, unknown>)['answers'];
+      if (Array.isArray(nested)) return nested.map(String).join(', ');
+      if (typeof nested === 'string') return nested;
+    }
+    return String(value ?? '');
+  }
 
   readonly planMarkdown = computed(() => {
     if (this.display().kind !== 'exit_plan_mode') return '';
@@ -1505,7 +1743,9 @@ export class ClaudeToolCallComponent {
   }
 
   isNestedLiveToolUse(toolUseId: string): boolean {
-    return this.childItems().some((item) => item.kind === 'tool_use' && item.toolUseId === toolUseId);
+    return this.childItems().some(
+      (item) => item.kind === 'tool_use' && item.toolUseId === toolUseId,
+    );
   }
 
   contentAsString(content: unknown): string {
@@ -1549,7 +1789,9 @@ function extractTextBlocks(blocks: unknown[]): string {
 function stripAgentTrailer(text: string): string {
   if (!text) return '';
   let cleaned = text.replace(/<usage>[\s\S]*?<\/usage>\s*$/i, '').trimEnd();
-  cleaned = cleaned.replace(/\n*agentId:[^\n]*(?:\n(?:worktreePath|worktreeBranch):[^\n]*)*\s*$/i, '').trimEnd();
+  cleaned = cleaned
+    .replace(/\n*agentId:[^\n]*(?:\n(?:worktreePath|worktreeBranch):[^\n]*)*\s*$/i, '')
+    .trimEnd();
   return cleaned;
 }
 

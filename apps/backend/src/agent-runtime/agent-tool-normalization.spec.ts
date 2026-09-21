@@ -18,6 +18,11 @@ describe('agent-tool-normalization', () => {
       { questions: [{ question: 'Proceed?' }] },
       'ask_user_question',
     ],
+    [
+      'request_user_input',
+      { questions: [{ id: 'scope', question: 'Which scope?' }] },
+      'ask_user_question',
+    ],
     ['EnterPlanMode', {}, 'enter_plan_mode'],
     ['ExitPlanMode', { plan: 'Do it' }, 'exit_plan_mode'],
     [

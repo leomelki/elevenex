@@ -62,6 +62,41 @@ describe('CodexHistoryService', () => {
     });
   });
 
+  it('normalizes restored request_user_input calls as question tools', () => {
+    const service = new CodexHistoryService();
+    const item = (
+      service as unknown as {
+        normalizeResponseItem: (
+          item: Record<string, unknown>,
+          timestamp: string,
+          index: number,
+        ) => unknown;
+      }
+    ).normalizeResponseItem(
+      {
+        id: 'call-question',
+        type: 'function_call',
+        name: 'request_user_input',
+        call_id: 'question-1',
+        arguments: JSON.stringify({
+          questions: [{ id: 'scope', question: 'Which scope?', options: [] }],
+        }),
+      },
+      '2026-05-22T10:00:00.000Z',
+      0,
+    );
+
+    expect(item).toMatchObject({
+      kind: 'tool_use',
+      toolUseId: 'question-1',
+      toolKind: 'ask_user_question',
+      toolDisplayName: 'Question',
+      toolInput: {
+        questions: [{ id: 'scope', question: 'Which scope?', options: [] }],
+      },
+    });
+  });
+
   it('keeps Codex parsed read actions when restoring exec_command history', () => {
     const service = new CodexHistoryService();
     const commandActions = [
