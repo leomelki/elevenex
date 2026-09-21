@@ -22,11 +22,6 @@ function getBrowserLocation(): BrowserLocationLike | undefined {
   return (globalThis as typeof globalThis & { location?: BrowserLocationLike }).location;
 }
 
-type BrowserMessageTarget = typeof globalThis & {
-  addEventListener?: (type: 'message', listener: (event: MessageEvent) => void) => void;
-  removeEventListener?: (type: 'message', listener: (event: MessageEvent) => void) => void;
-};
-
 interface ElevenExOpenFileMessage {
   type: 'elevenex-open-file';
   path: string;
@@ -47,6 +42,10 @@ const FILE_SEARCH_DEBOUNCE_MS = 60;
 
 function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function fileBridgeChannelName(worktreePath: string): string {
+  return `elevenex-vscode:${worktreePath}`;
 }
 
 function toWorkspaceVfsUri(worktreePath: string, relativePath: string): Uri {
@@ -129,6 +128,7 @@ async function openFileSearch(worktreePath: string, backendClient: BackendClient
   let requestVersion = 0;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let inFlight: AbortController | undefined;
+  let accepting = false;
 
   const updateItems = async (query: string): Promise<void> => {
     const version = ++requestVersion;
@@ -177,19 +177,26 @@ async function openFileSearch(worktreePath: string, backendClient: BackendClient
 
   quickPick.onDidChangeValue(scheduleUpdate);
   quickPick.onDidAccept(() => {
-    const selected = quickPick.selectedItems[0];
-    if (!selected) {
+    const selected = quickPick.selectedItems[0] ?? quickPick.activeItems[0];
+    if (!selected || accepting) {
       return;
     }
 
-    const uri = toWorkspaceVfsUri(worktreePath, selected.path);
-    quickPick.hide();
+    accepting = true;
+    quickPick.busy = true;
     void (async () => {
       try {
-        const document = await workspace.openTextDocument(uri);
-        await vscodeWindow.showTextDocument(document, { preview: true });
+        await openOrRevealFile(worktreePath, {
+          type: 'elevenex-open-file',
+          path: selected.path,
+          preserveFocus: false,
+        });
+        quickPick.hide();
       } catch (error) {
         console.error('Failed to open file search selection', error);
+        accepting = false;
+        quickPick.busy = false;
+        void vscodeWindow.showErrorMessage(`Unable to open ${selected.path}`);
       }
     })();
   });
@@ -308,8 +315,8 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
     }
   });
 
-  const browserMessageTarget = globalThis as BrowserMessageTarget;
-  if (browserMessageTarget.addEventListener) {
+  if (typeof BroadcastChannel !== 'undefined') {
+    const fileBridge = new BroadcastChannel(fileBridgeChannelName(worktreePath));
     const handleParentMessage = (event: MessageEvent) => {
       const data = event.data as Partial<ElevenExOpenFileMessage> | undefined;
       if (data?.type !== 'elevenex-open-file' || typeof data.path !== 'string') {
@@ -327,13 +334,16 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
       });
     };
 
-    // Equivalent to window.addEventListener('message', handleParentMessage) in browser builds.
-    browserMessageTarget.addEventListener('message', handleParentMessage);
+    fileBridge.addEventListener('message', handleParentMessage);
+    fileBridge.postMessage({ type: 'elevenex-file-bridge-ready' });
     context.subscriptions.push({
       dispose: () => {
-        browserMessageTarget.removeEventListener?.('message', handleParentMessage);
+        fileBridge.removeEventListener('message', handleParentMessage);
+        fileBridge.close();
       }
     });
+  } else {
+    console.error('BroadcastChannel is unavailable; parent file-open requests are disabled');
   }
 
   console.log('ElevenEX FileSystemProvider extension activated successfully');

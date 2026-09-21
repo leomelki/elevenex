@@ -70,6 +70,19 @@ describe('renderVSCodeWorkbenchHtml', () => {
     expect(html).toContain('MutationObserver');
   });
 
+  it('relays parent file-open requests to the web extension worker', () => {
+    const html = renderVSCodeWorkbenchHtml(template);
+
+    expect(html).toContain(
+      "new BroadcastChannel('elevenex-vscode:' + workspacePath)",
+    );
+    expect(html).toContain("event.data.type !== 'elevenex-open-file'");
+    expect(html).toContain(
+      "event.data.type !== 'elevenex-file-bridge-ready'",
+    );
+    expect(html).toContain('pendingFileRequests.push(event.data)');
+  });
+
   it('is idempotent when rendered twice', () => {
     const first = renderVSCodeWorkbenchHtml(template);
     const second = renderVSCodeWorkbenchHtml(first);

@@ -63,6 +63,46 @@ const WORKBENCH_BOOTSTRAP_SCRIPT = `${WORKBENCH_BOOTSTRAP_MARKER}
 
   window.product = product;
 
+  // VS Code web extensions run in a Web Worker, so a message sent to the
+  // workbench window cannot be observed directly by extension code. Relay
+  // file-open requests over a workspace-scoped BroadcastChannel instead.
+  // Keep requests queued until the filesystem extension confirms that its
+  // listener is active; the workbench DOM can be ready before extensions are.
+  var fileBridge = null;
+  var fileBridgeReady = false;
+  var pendingFileRequests = [];
+  if (workspace && typeof BroadcastChannel !== 'undefined') {
+    try {
+      var workspaceUrl = new URL(workspace, window.location.origin);
+      var workspacePath = decodeURIComponent(workspaceUrl.host || workspaceUrl.pathname);
+      fileBridge = new BroadcastChannel('elevenex-vscode:' + workspacePath);
+      fileBridge.addEventListener('message', function (event) {
+        if (!event.data || event.data.type !== 'elevenex-file-bridge-ready') return;
+        fileBridgeReady = true;
+        pendingFileRequests.splice(0).forEach(function (request) {
+          fileBridge.postMessage(request);
+        });
+      });
+    } catch (error) {
+      console.error('Failed to initialize Elevenex file bridge', error);
+    }
+  }
+
+  window.addEventListener('message', function (event) {
+    if (event.source !== window.parent || !event.data || event.data.type !== 'elevenex-open-file') {
+      return;
+    }
+    if (!fileBridge) {
+      console.error('Elevenex file bridge is unavailable');
+      return;
+    }
+    if (fileBridgeReady) {
+      fileBridge.postMessage(event.data);
+    } else {
+      pendingFileRequests.push(event.data);
+    }
+  });
+
   function postReady() {
     if (window.parent !== window) {
       window.parent.postMessage({ type: 'vscode-workbench-ready' }, '*');
