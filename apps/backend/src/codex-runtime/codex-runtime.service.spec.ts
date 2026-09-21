@@ -741,7 +741,7 @@ describe('CodexRuntimeService', () => {
     await iterator.next();
   });
 
-  it('omits Codex collaboration mode for non-plan turns', async () => {
+  it('selects native Codex default mode after plan mode is disabled', async () => {
     const { service, appServer, mcpAgentTokens } = createService();
     const wire = wireAppServerTurn(appServer);
 
@@ -769,6 +769,14 @@ describe('CodexRuntimeService', () => {
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'Plan this change' }],
+      collaborationMode: {
+        mode: 'default',
+        settings: {
+          model: 'gpt-test',
+          reasoning_effort: null,
+          developer_instructions: null,
+        },
+      },
     });
 
     wire.notificationHandler({
@@ -796,6 +804,14 @@ describe('CodexRuntimeService', () => {
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'Plan this change' }],
+      collaborationMode: {
+        mode: 'default',
+        settings: {
+          model: 'gpt-test',
+          reasoning_effort: null,
+          developer_instructions: null,
+        },
+      },
     });
 
     wire.notificationHandler({

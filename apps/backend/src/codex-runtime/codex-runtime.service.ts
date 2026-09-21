@@ -2929,12 +2929,13 @@ export class CodexRuntimeService
   private buildCollaborationModeParams(
     state: CodexRuntimeState,
   ): Record<string, unknown> {
-    if (!state.planMode) {
-      return {};
-    }
     return {
       collaborationMode: {
-        mode: 'plan',
+        // Always select a native Codex mode. Omitting collaborationMode after
+        // a plan turn leaves the earlier plan-mode developer instruction in
+        // the model-visible thread history, so Codex can continue refusing
+        // edits even after Elevenex has restored write permissions.
+        mode: state.planMode ? 'plan' : 'default',
         settings: {
           model: state.selectedModel ?? this.codexDefaultModel,
           reasoning_effort: state.reasoningEffort,

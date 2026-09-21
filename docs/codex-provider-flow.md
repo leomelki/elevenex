@@ -31,18 +31,20 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
 Elevenex maps the UI permission style into Codex app-server sandbox settings
 when Plan Mode is off:
 
-| UI mode             | Codex sandbox        | Codex approval policy |
-| ------------------- | -------------------- | --------------------- |
-| `default`           | `workspace-write`    | `on-request`          |
+| UI mode             | Codex sandbox        | Codex approval policy      |
+| ------------------- | -------------------- | -------------------------- |
+| `default`           | `workspace-write`    | `on-request`               |
 | `auto`              | `workspace-write`    | `on-request` + auto-review |
-| `acceptEdits`       | `workspace-write`    | `never`               |
-| `bypassPermissions` | `danger-full-access` | `never`               |
+| `acceptEdits`       | `workspace-write`    | `never`                    |
+| `bypassPermissions` | `danger-full-access` | `never`                    |
 
-Plan Mode is tracked separately from the permission style. When Plan Mode is
-on, Codex uses a read-only sandbox with `approvalPolicy: "never"` and sends
-Codex app-server's native
-`collaborationMode: { mode: "plan" }` turn option so Codex applies its built-in
-planning instructions and emits structured plan items.
+Plan Mode is tracked separately from the permission style. Every turn selects
+Codex app-server's native collaboration mode explicitly: `plan` while Plan Mode
+is on and `default` after it is disabled. Plan turns also use a read-only
+sandbox with `approvalPolicy: "never"`. Sending the `default` collaboration
+mode on the first implementation turn replaces the earlier planning
+instructions while preserving the thread, matching Codex's native mode switch
+behavior.
 
 When Codex app-server emits server-to-client JSON-RPC requests for command
 execution, file changes, permission-profile grants, `request_user_input`, or
