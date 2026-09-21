@@ -204,7 +204,7 @@ describe('CodexHistoryService', () => {
     }
   });
 
-  it('clones, slices, and rewrites a Codex JSONL thread for assistant anchors', async () => {
+  it('resolves an inclusive app-server fork target for assistant anchors', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
     try {
       const service = new CodexHistoryService(root);
@@ -215,6 +215,10 @@ describe('CodexHistoryService', () => {
           JSON.stringify({
             type: 'session_meta',
             payload: { id: 'source-thread', cwd: '/repo' },
+          }),
+          JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'task_started', turn_id: 'turn-1' },
           }),
           JSON.stringify({
             type: 'event_msg',
@@ -242,35 +246,23 @@ describe('CodexHistoryService', () => {
       const result = await service.forkHistory('source-thread', {
         parentSessionId: 1,
         childSessionId: 2,
-        anchorMessageId: 'codex-record:2',
+        anchorMessageId: 'codex-record:3',
         anchorMessageKind: 'assistant',
         childSessionName: 'Fork',
       });
 
-      expect(result.providerSessionId).toEqual(expect.any(String));
-      expect(result.draft).toBeNull();
-      expect(result.anchorExcerpt).toBe('hi');
-
-      const summaries = await service.listSessions();
-      const forkSummary = summaries.find(
-        (summary) => summary.id === result.providerSessionId,
-      );
-      expect(forkSummary).toBeTruthy();
-      const records = (await readFile(forkSummary!.path, 'utf8'))
-        .trim()
-        .split('\n')
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
-
-      expect(records).toHaveLength(3);
-      expect((records[0].payload as Record<string, unknown>).id).toBe(
-        result.providerSessionId,
-      );
+      expect(result).toEqual({
+        threadId: 'source-thread',
+        lastTurnId: 'turn-1',
+        draft: null,
+        anchorExcerpt: 'hi',
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it('returns a user draft and excludes the selected Codex user message', async () => {
+  it('resolves an exclusive app-server fork target for user anchors', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
     try {
       const service = new CodexHistoryService(root);
@@ -280,6 +272,10 @@ describe('CodexHistoryService', () => {
           JSON.stringify({
             type: 'session_meta',
             payload: { id: 'source-thread', cwd: '/repo' },
+          }),
+          JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'task_started', turn_id: 'turn-1' },
           }),
           JSON.stringify({
             type: 'event_msg',
@@ -297,6 +293,10 @@ describe('CodexHistoryService', () => {
             },
           }),
           JSON.stringify({
+            type: 'turn_context',
+            payload: { turn_id: 'turn-2' },
+          }),
+          JSON.stringify({
             type: 'event_msg',
             payload: { type: 'user_message', message: 'retry this' },
           }),
@@ -307,19 +307,17 @@ describe('CodexHistoryService', () => {
       const result = await service.forkHistory('source-thread', {
         parentSessionId: 1,
         childSessionId: 2,
-        anchorMessageId: 'codex-record:3',
+        anchorMessageId: 'codex-record:5',
         anchorMessageKind: 'user',
         childSessionName: 'Fork',
       });
 
-      expect(result.draft).toBe('retry this');
-      const summaries = await service.listSessions();
-      const forkSummary = summaries.find(
-        (summary) => summary.id === result.providerSessionId,
-      );
-      const raw = await readFile(forkSummary!.path, 'utf8');
-      expect(raw).toContain('assistant-1');
-      expect(raw).not.toContain('retry this');
+      expect(result).toEqual({
+        threadId: 'source-thread',
+        beforeTurnId: 'turn-2',
+        draft: 'retry this',
+        anchorExcerpt: 'retry this',
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

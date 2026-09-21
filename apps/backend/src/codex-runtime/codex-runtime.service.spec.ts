@@ -49,7 +49,8 @@ describe('CodexRuntimeService', () => {
           beforeTurnId: 'turn-2',
         }),
       forkHistory: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-        providerSessionId: 'forked-thread',
+        threadId: 'source-thread',
+        lastTurnId: 'turn-1',
         draft: null,
         anchorExcerpt: 'answer',
       }),
@@ -468,8 +469,11 @@ describe('CodexRuntimeService', () => {
   });
 
   it('forks history while a Codex run is active', async () => {
-    const { service, historyService } = createService();
+    const { service, historyService, appServer } = createService();
     (service as any).activeRuns.set(7, {});
+    appServer.request.mockResolvedValueOnce({
+      thread: { id: 'forked-thread' },
+    });
 
     const result = await service.forkConversation({
       parentSessionId: 7,
@@ -486,10 +490,47 @@ describe('CodexRuntimeService', () => {
         anchorMessageId: 'assistant-1',
       }),
     );
+    expect(appServer.request).toHaveBeenCalledWith('thread/fork', {
+      threadId: 'source-thread',
+      lastTurnId: 'turn-1',
+      excludeTurns: true,
+    });
     expect(result).toEqual({
       providerSessionId: 'forked-thread',
       draft: null,
       anchorExcerpt: 'answer',
+    });
+  });
+
+  it('forks before a selected Codex user turn and returns it as a draft', async () => {
+    const { service, historyService, appServer } = createService();
+    historyService.forkHistory.mockResolvedValueOnce({
+      threadId: 'source-thread',
+      beforeTurnId: 'turn-2',
+      draft: 'try this instead',
+      anchorExcerpt: 'try this instead',
+    });
+    appServer.request.mockResolvedValueOnce({
+      thread: { id: 'forked-thread' },
+    });
+
+    const result = await service.forkConversation({
+      parentSessionId: 7,
+      childSessionId: 8,
+      anchorMessageId: 'user-2',
+      anchorMessageKind: 'user',
+      childSessionName: 'Fork',
+    });
+
+    expect(appServer.request).toHaveBeenCalledWith('thread/fork', {
+      threadId: 'source-thread',
+      beforeTurnId: 'turn-2',
+      excludeTurns: true,
+    });
+    expect(result).toEqual({
+      providerSessionId: 'forked-thread',
+      draft: 'try this instead',
+      anchorExcerpt: 'try this instead',
     });
   });
 

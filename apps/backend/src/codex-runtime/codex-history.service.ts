@@ -9,20 +9,25 @@ import {
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
-import { basename, dirname, join } from 'path';
+import { basename, join } from 'path';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import type { CodexHistorySessionSummary } from './codex-runtime.types.js';
-import type {
-  AgentForkConversationRequest,
-  AgentForkConversationResult,
-} from '../agent-runtime/agent-runtime.types.js';
+import type { AgentForkConversationRequest } from '../agent-runtime/agent-runtime.types.js';
 
 type JsonRecord = Record<string, unknown>;
 
 export interface CodexRewindTarget {
   threadId: string;
   beforeTurnId: string;
+}
+
+export interface CodexForkTarget {
+  threadId: string;
+  lastTurnId?: string;
+  beforeTurnId?: string;
+  draft: string | null;
+  anchorExcerpt: string | null;
 }
 
 export const CODEX_HISTORY_SESSIONS_ROOT = Symbol(
@@ -59,7 +64,7 @@ export class CodexHistoryService {
   async forkHistory(
     codexSessionId: string | null,
     request: AgentForkConversationRequest,
-  ): Promise<AgentForkConversationResult> {
+  ): Promise<CodexForkTarget> {
     if (!request.anchorMessageId || !request.anchorMessageKind) {
       throw new BadRequestException('A Codex fork anchor message is required.');
     }
@@ -94,28 +99,18 @@ export class CodexHistoryService {
       anchorMessageKind === 'user'
         ? draft
         : this.extractAssistantMessageText(target);
-    const retainedRecords = records.slice(
-      0,
-      anchorMessageKind === 'user' ? targetIndex : targetIndex + 1,
-    );
-
-    if (retainedRecords.length === 0) {
-      return {
-        providerSessionId: null,
-        draft,
-        anchorExcerpt,
-      };
+    const turnId = this.findOwningTurnId(records, targetIndex);
+    if (!turnId) {
+      throw new BadRequestException(
+        'Could not identify the Codex turn for this message.',
+      );
     }
 
-    const newSessionId = randomUUID();
-    const rewritten = retainedRecords.map((record) =>
-      this.rewriteSessionMetadata(record, newSessionId),
-    );
-    const forkPath = this.buildForkPath(path, newSessionId);
-    await this.writeJsonl(forkPath, rewritten);
-
     return {
-      providerSessionId: newSessionId,
+      threadId: codexSessionId,
+      ...(anchorMessageKind === 'user'
+        ? { beforeTurnId: turnId }
+        : { lastTurnId: turnId }),
       draft,
       anchorExcerpt,
     };
@@ -471,30 +466,6 @@ export class CodexHistoryService {
     return null;
   }
 
-  private rewriteSessionMetadata(
-    record: JsonRecord,
-    newSessionId: string,
-  ): JsonRecord {
-    const next = cloneJsonRecord(record);
-    if (next.type === 'session_meta') {
-      next.payload = {
-        ...(asRecord(next.payload) ?? {}),
-        id: newSessionId,
-      };
-    }
-    for (const key of ['session_id', 'thread_id', 'conversation_id']) {
-      if (typeof next[key] === 'string') {
-        next[key] = newSessionId;
-      }
-    }
-    return next;
-  }
-
-  private buildForkPath(sourcePath: string, newSessionId: string): string {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    return join(dirname(sourcePath), `fork-${stamp}-${newSessionId}.jsonl`);
-  }
-
   private normalizeToolName(name: string): string {
     if (name === 'shell_command' || name === 'exec_command') {
       return 'Bash';
@@ -646,13 +617,6 @@ export class CodexHistoryService {
         }
       });
   }
-
-  private async writeJsonl(path: string, records: JsonRecord[]): Promise<void> {
-    const serialized =
-      records.map((record) => JSON.stringify(record)).join('\n') +
-      (records.length ? '\n' : '');
-    await fs.writeFile(path, serialized, 'utf-8');
-  }
 }
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -665,8 +629,4 @@ function stringValue(value: unknown): string | undefined {
 
 function arrayValue(value: unknown): unknown[] | undefined {
   return Array.isArray(value) ? value : undefined;
-}
-
-function cloneJsonRecord(record: JsonRecord): JsonRecord {
-  return JSON.parse(JSON.stringify(record)) as JsonRecord;
 }

@@ -341,7 +341,34 @@ export class CodexRuntimeService
     request: AgentForkConversationRequest,
   ): Promise<AgentForkConversationResult> {
     const session = await this.sessionsService.findOne(request.parentSessionId);
-    return this.historyService.forkHistory(session.codexSessionId, request);
+    const target = await this.historyService.forkHistory(
+      session.codexSessionId,
+      request,
+    );
+    // Let app-server create the fork so its in-memory thread store, durable
+    // rollout, and the first turn submitted by the child all agree. A copied
+    // JSONL file can be discovered as history while still failing to start
+    // inference until a later follow-up wakes the thread.
+    const fork = await this.appServer.request<CodexThreadStartResult>(
+      'thread/fork',
+      {
+        threadId: target.threadId,
+        ...(target.lastTurnId
+          ? { lastTurnId: target.lastTurnId }
+          : { beforeTurnId: target.beforeTurnId }),
+        excludeTurns: true,
+      },
+    );
+    const forkedSessionId =
+      typeof fork.thread?.id === 'string' ? fork.thread.id : null;
+    if (!forkedSessionId) {
+      throw new Error('codex app-server thread/fork did not return an id');
+    }
+    return {
+      providerSessionId: forkedSessionId,
+      draft: target.draft,
+      anchorExcerpt: target.anchorExcerpt,
+    };
   }
 
   async rewindConversation(
