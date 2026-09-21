@@ -237,7 +237,7 @@ export const createWorktreeTool = defineTool({
     'Pass startPoint explicitly to fork from a specific ref (e.g. "origin/release/2.0"). ' +
     'Pass fetch_start_point: true (recommended for new feature branches) to fetch the base ref from origin before forking, so the new branch starts from the latest upstream commit rather than a potentially stale local tracking ref. ' +
     'Pass from_origin: true to fetch an existing remote branch instead of creating a new one; this also returns a branchSnapshot (ahead/behind, last commit). ' +
-    'Prefer passing an explicit worktreePath with a name of its own (task/feature-based, e.g. "fix-login-timeout") rather than letting it default to a slug of branchName — branches get renamed/rebased/reused across worktrees, so a worktree name tied to the branch name goes stale and gets confusing; give the worktree an identity that is decorrelated from the branch it currently holds. ' +
+    'Prefer passing an explicit worktreePath whose final segment follows the stable numbered pattern <repo> <number> (for example "elevenex 1"), using the lowest available positive number. This keeps reusable worktrees independent of branches, tasks, and projects. Use a project-scoped name only when the human explicitly prefers separate worktrees per project. ' +
     'The job dedupes on repo+branch+path. Next: poll get_worktree_job until succeeded, then link_worktree.',
   annotations: { idempotentHint: true },
   inputShape: {
@@ -281,8 +281,8 @@ export const createWorktreeTool = defineTool({
       .string()
       .optional()
       .describe(
-        'Explicit absolute path for the worktree. Choose a name for the worktree itself (its final path segment), not just a copy of branchName — worktrees often outlive or get relinked to a different branch than the one they were created for, so a good name describes the task/workspace, not the branch. ' +
-        'Omit only if you have no better name; the default falls back to .worktrees/<repo>/<slug-of-branchName>.',
+        'Explicit absolute path for the worktree. Its final segment should default to the stable numbered pattern <repo> <number> (for example "elevenex 1"), not the branch, ticket, task, or project. Use a project-scoped name only when the human prefers separate worktrees per project. ' +
+        'Omit only if you cannot determine a numbered name; the fallback is .worktrees/<repo>/<slug-of-branchName>.',
       ),
     force: z
       .boolean()
@@ -515,7 +515,7 @@ export const createWorktreeTool = defineTool({
             'so the branch it currently holds, the name it carries, and the task it was created for are all irrelevant to whether you may take it. ' +
             'Do NOT reject a candidate for looking unrelated to your task; anything you were about to worry about (someone still needs it, work would be lost) ' +
             'is already covered by the blocked list. ' +
-            'Take the first candidate: link_worktree if reclaimAction is link_worktree, steal_worktree if it is steal_worktree; then rename_worktree it for YOUR task and switch_branch (or pass branchName on link) to the branch you want. ' +
+            'Take the first candidate: link_worktree if reclaimAction is link_worktree, steal_worktree if it is steal_worktree; keep or give it the repo\'s stable numbered name, then switch_branch (or pass branchName on link) to the branch you want. ' +
             'Only if every candidate then fails to link/steal may you re-call with force:true plus forceReason.',
         };
       }

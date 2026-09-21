@@ -6,10 +6,9 @@ import { poolItemHandle, resolveRepo } from './worktree.util.js';
 /**
  * rename_worktree — mutates. Physically moves a pool worktree to
  * `.worktrees/<repo>/<slug(name)>` and updates its pool record, any workspace
- * currently linked to it, and its generated context row. Use this whenever a
- * worktree's on-disk name still reflects whatever it was created or last used
- * for — most commonly right after link_worktree/steal_worktree hands you one
- * that isn't yours: give it your own name instead of inheriting its history.
+ * currently linked to it, and its generated context row. Use this to establish
+ * or restore the repo's stable numbered naming pattern after creating, linking,
+ * or stealing a worktree.
  */
 export const renameWorktreeTool = defineTool({
   name: 'rename_worktree',
@@ -18,8 +17,8 @@ export const renameWorktreeTool = defineTool({
   mutates: true,
   description:
     'Rename a pool worktree: moves its directory to .worktrees/<repo>/<slug(name)> (git worktree move) and repoints everything keyed on the old path — pool record, linked workspace (name included), sessions, terminals, actions and context row. 🟡scoped. ' +
-    'Use this whenever you take over or reuse an existing worktree (via link_worktree or steal_worktree) — treat it as a brand-new worktree with an identity of its own, not a continuation of whatever branch/task it previously held. ' +
-    "Give it a name for what YOU are about to do with it, not the branch it currently happens to hold. Get worktreeId from assess_worktree_pool.",
+    'Use stable, project-agnostic names by default: <repo> 1, <repo> 2, and so on, choosing the lowest available positive number. Do not name a reusable worktree after its current branch, ticket, feature, or project. ' +
+    'If the human explicitly prefers separate worktrees per project, honor that preference with a clear project-scoped name. Get worktreeId from assess_worktree_pool.',
   inputShape: {
     repoId: z
       .number()
@@ -35,7 +34,7 @@ export const renameWorktreeTool = defineTool({
       .string()
       .min(1)
       .describe(
-        'New name for the worktree, decorrelated from the branch it holds — task/workspace-based (e.g. "fix-login-timeout"), not a copy of branchName.',
+        'New stable worktree name. Default to <repo> <number> (for example "elevenex 1"); use a project-scoped name only when the human prefers worktrees per project.',
       ),
   },
   handler: async (args, ctx) => {

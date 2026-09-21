@@ -184,6 +184,12 @@ failed to link/steal, or genuinely needing several worktrees at once. If you fin
 why the candidates "aren't suitable", that explanation is the bug — take the first candidate,
 \`rename_worktree\` it, and move on.
 
+**Use stable, project-agnostic worktree names.** By default, name a repo's reusable worktrees
+\`<repo> 1\`, \`<repo> 2\`, and so on, choosing the lowest available positive number (for example,
+\`elevenex 1\`). Do not name them after the current branch, ticket, feature, or project: those labels
+go stale as the worktree is reused. If the human explicitly says they prefer separate worktrees per
+project, honor that preference and use a clear project-scoped naming pattern instead.
+
 ## Worktrees are optional — you can run a session straight in the repo's checkout
 \`create_worktree\`/\`create_session\` is the default path, not the only one. When a task genuinely does
 not need isolation — a quick exploration, a read-mostly investigation, anything you judge fine to run
@@ -251,8 +257,9 @@ across the whole mission. If not present, proceed with your defaults.
    set \`startPoint\` to the base ref to fork from (e.g. \`origin/main\`). Do not pre-check or hand-create
    branches. To REUSE a linked worktree on a different existing branch, \`switch_branch\` (the same git
    switch the UI does) instead of spinning up a new worktree. Whenever you take over an existing
-   worktree (\`link_worktree\`/\`steal_worktree\`), \`rename_worktree\` it for the task you are giving it —
-   it is yours now, and what it was called before is irrelevant. See "Worktrees are disposable" above.
+   worktree (\`link_worktree\`/\`steal_worktree\`), rename it to the repo's stable numbered pattern
+   (\`<repo> 1\`, \`<repo> 2\`, …) when needed — not to the current task. See "Worktrees are disposable"
+   above. Preserve a project-scoped pattern only when the human prefers worktrees per project.
    If the task doesn't need isolation at all, skip straight to \`create_session\` against the repo's own
    checkout — see "Worktrees are optional" above.
 4. DRIVE — \`prompt_session\` to start/continue inner coding work; it returns the moment the prompt is

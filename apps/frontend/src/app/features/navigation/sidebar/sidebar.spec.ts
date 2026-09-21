@@ -282,6 +282,7 @@ describe('Sidebar', () => {
 
   const workspacesServiceMock = {
     attach: vi.fn(() => of({})),
+    rename: vi.fn(() => of({})),
     remove: vi.fn(() => of({})),
     removeFromProject: vi.fn(() => of({})),
     switchBranch: vi.fn(() => of({})),
@@ -377,6 +378,8 @@ describe('Sidebar', () => {
     sessionsServiceMock.delete.mockReturnValue(of({}));
     workspacesServiceMock.attach.mockReset();
     workspacesServiceMock.attach.mockReturnValue(of({ id: 2, repoId: 1, name: 'Feature', path: '/tmp/repo-one/.worktrees/feature' }));
+    workspacesServiceMock.rename.mockReset();
+    workspacesServiceMock.rename.mockReturnValue(of({}));
     workspacesServiceMock.remove.mockReset();
     workspacesServiceMock.remove.mockReturnValue(of({}));
     workspacesServiceMock.removeFromProject.mockReset();
@@ -968,6 +971,37 @@ describe('Sidebar', () => {
 
     expect(getWorktreeRemoveTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
     expect(getWorktreeDeleteTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
+  });
+
+  it('renames a worktree from the sidebar and refreshes navigation', () => {
+    tree.update(projects => projects.map(project => ({
+      ...project,
+      repos: project.repos.map(repo => repo.id === 1
+        ? { ...repo, workspaces: [makeWorkspace()] }
+        : repo),
+    })));
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const repo = tree()[0].repos[0];
+    const workspace = component.filterWorkspaces(repo)[0];
+    const input = document.createElement('input');
+    input.value = 'Repo One 1';
+    const event = {
+      target: input,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as Event;
+
+    component.startEditWorkspace(workspace, event);
+    expect(component.editingWorkspaceId()).toBe(workspace.id);
+
+    component.saveWorkspaceName(repo, workspace, event);
+
+    expect(workspacesServiceMock.rename).toHaveBeenCalledWith(repo.id, workspace.id, 'Repo One 1');
+    expect(component.editingWorkspaceId()).toBeNull();
+    expect(component.workspaceRenameBusyId()).toBeNull();
+    expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
+    expect(toast.success).toHaveBeenCalledWith('Worktree renamed');
   });
 
   it('shows inline loading and blocks duplicate workspace branch switches while checkout is pending', () => {

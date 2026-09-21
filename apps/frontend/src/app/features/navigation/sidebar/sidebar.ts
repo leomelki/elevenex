@@ -227,6 +227,8 @@ export class Sidebar implements OnInit, OnDestroy {
   removingFromProject = signal(false);
   openingWorkspaceRepoId = signal<number | null>(null);
   creatingFolder = signal(false);
+  editingWorkspaceId = signal<number | null>(null);
+  workspaceRenameBusyId = signal<number | null>(null);
   editingFolderId = signal<number | null>(null);
   folderBusyId = signal<number | null>(null);
   draggedOverFolderId = signal<number | null>(null);
@@ -930,6 +932,52 @@ export class Sidebar implements OnInit, OnDestroy {
         toast.error(err?.error?.message || 'Could not create session folder');
       },
     });
+  }
+
+  startEditWorkspace(workspace: NavigationWorkspace, event: Event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (
+      this.workspaceRenameBusyId() !== null ||
+      workspace.id <= 0 ||
+      workspace.isMissing ||
+      this.isWorkspaceUnlinked(workspace)
+    ) {
+      return;
+    }
+    this.editingWorkspaceId.set(workspace.id);
+  }
+
+  saveWorkspaceName(repo: NavigationRepo, workspace: NavigationWorkspace, event: Event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (this.workspaceRenameBusyId() !== null) return;
+
+    const name = (event.target as HTMLInputElement).value.trim();
+    if (!name || name === workspace.name) {
+      this.editingWorkspaceId.set(null);
+      return;
+    }
+
+    this.workspaceRenameBusyId.set(workspace.id);
+    this.workspacesService.rename(repo.id, workspace.id, name).subscribe({
+      next: () => {
+        this.workspaceRenameBusyId.set(null);
+        this.editingWorkspaceId.set(null);
+        this.navService.refreshTree();
+        toast.success('Worktree renamed');
+      },
+      error: err => {
+        this.workspaceRenameBusyId.set(null);
+        toast.error(err?.error?.message || 'Could not rename worktree');
+      },
+    });
+  }
+
+  cancelEditWorkspace(event: Event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (this.workspaceRenameBusyId() === null) this.editingWorkspaceId.set(null);
   }
 
   startEditFolder(folder: SessionFolder, event: Event) {

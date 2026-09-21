@@ -176,21 +176,42 @@
                   } @else {
                     <ng-icon name="lucideFolderOpen" class="!w-4 !h-4 text-foreground shrink-0" />
                   }
-                  <span class="text-sm truncate flex-1 sidebar-label--branch" [title]="getWorkspaceTooltip(workspace)">
-                    {{ workspace.name }}
-                    @if (workspace.currentBranch !== workspace.name) {
-                      <span class="text-xs text-muted-foreground">{{ workspace.currentBranch || 'detached' }}</span>
-                    }
-                    @if (isWorkspaceUnlinked(workspace)) {
-                      <span class="text-xs text-warning">Unlinked</span>
-                    }
-                    @if (workspace.hasConflicts) {
-                      <span class="text-xs text-destructive">Conflicts</span>
-                    }
-                    @if (workspace.pendingStashStatus === 'pending') {
-                      <span class="text-xs text-warning">Stash</span>
-                    }
-                  </span>
+                  @if (editingWorkspaceId() === workspace.id) {
+                    <input
+                      z-input
+                      class="h-7 min-w-0 flex-1 text-sm"
+                      [value]="workspace.name"
+                      maxlength="80"
+                      aria-label="Worktree name"
+                      [disabled]="workspaceRenameBusyId() === workspace.id"
+                      (click)="$event.stopPropagation()"
+                      (dblclick)="$event.stopPropagation()"
+                      (blur)="saveWorkspaceName(repo, workspace, $event)"
+                      (keydown.enter)="saveWorkspaceName(repo, workspace, $event)"
+                      (keydown.escape)="cancelEditWorkspace($event)"
+                      autofocus
+                    />
+                  } @else {
+                    <span
+                      class="text-sm truncate flex-1 sidebar-label--branch"
+                      [title]="getWorkspaceTooltip(workspace)"
+                      (dblclick)="startEditWorkspace(workspace, $event)"
+                    >
+                      {{ workspace.name }}
+                      @if (workspace.currentBranch !== workspace.name) {
+                        <span class="text-xs text-muted-foreground">{{ workspace.currentBranch || 'detached' }}</span>
+                      }
+                      @if (isWorkspaceUnlinked(workspace)) {
+                        <span class="text-xs text-warning">Unlinked</span>
+                      }
+                      @if (workspace.hasConflicts) {
+                        <span class="text-xs text-destructive">Conflicts</span>
+                      }
+                      @if (workspace.pendingStashStatus === 'pending') {
+                        <span class="text-xs text-warning">Stash</span>
+                      }
+                    </span>
+                  }
                   <!-- Action buttons (visible on hover) -->
                   <span class="sidebar-actions">
                     @if (isOpeningWorkspace(repo)) {
@@ -202,6 +223,15 @@
                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                       </button>
                     } @else {
+                      <button
+                        class="sidebar-branch-action"
+                        title="Rename worktree"
+                        aria-label="Rename worktree"
+                        [disabled]="workspace.isMissing || workspace.id <= 0 || workspaceRenameBusyId() !== null"
+                        (click)="startEditWorkspace(workspace, $event)"
+                      >
+                        <ng-icon name="lucidePencil" class="!w-3.5 !h-3.5" />
+                      </button>
                       <button
                         class="sidebar-branch-action"
                         title="New session folder"

@@ -16,7 +16,7 @@ export const stealWorktreeTool = defineTool({
   destructive: true,
   description:
     'DESTRUCTIVE: take over a worktree owned by another project (unlinks its workspace and stops its sessions). 🔴. Use only after link_worktree reported an ownership conflict and you intend to seize it. Get worktreeId from assess_worktree_pool. ' +
-    "You're seizing this worktree from whatever it was doing before — treat it as a new worktree, not a continuation. Call rename_worktree to give it a name for your own task instead of leaving the previous owner's name in place.",
+    "You're seizing this worktree from whatever it was doing before. If it lacks the repo's stable numbered pattern, call rename_worktree and use <repo> 1, <repo> 2, and so on; use a project-scoped name only when the human prefers worktrees per project.",
   annotations: { destructiveHint: true },
   inputShape: {
     repoId: z

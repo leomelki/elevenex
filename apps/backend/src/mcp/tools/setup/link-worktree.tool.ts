@@ -15,7 +15,7 @@ export const linkWorktreeTool = defineTool({
   mutates: true,
   description:
     'Link a worktree into this project as a workspace on the given branch (creates the workspace if needed). 🟡scoped. Refuses to take over another project or stash dirty changes — surfaces that so you escalate to steal_worktree or a human. Get worktreeId from assess_worktree_pool. ' +
-    "This worktree was previously used for something else — its on-disk name may still reflect that. Treat it as a new worktree: call rename_worktree first (or right after) to give it a name for what you're about to do, rather than leaving the old name in place.",
+    'If this worktree lacks the stable numbered name for its repo, call rename_worktree first (or right after). Default to <repo> 1, <repo> 2, and so on; use project-scoped names only when the human prefers worktrees per project.',
   inputShape: {
     repoId: z
       .number()
