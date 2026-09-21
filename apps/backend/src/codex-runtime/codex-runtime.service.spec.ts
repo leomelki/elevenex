@@ -74,6 +74,11 @@ describe('CodexRuntimeService', () => {
       respondToRequest: jest.fn(),
       rejectRequest: jest.fn(),
     };
+    const mcpAgentTokens = {
+      ensureToken: jest
+        .fn<(sessionId: number) => Promise<string>>()
+        .mockResolvedValue('evx_codex_test'),
+    };
 
     return {
       service: new CodexRuntimeService(
@@ -89,12 +94,14 @@ describe('CodexRuntimeService', () => {
             reasoningEffort: null,
           }),
         } as never,
+        mcpAgentTokens as never,
       ),
       sessionsService,
       authService,
       appServer,
       hooksService,
       historyService,
+      mcpAgentTokens,
     };
   }
 
@@ -735,7 +742,7 @@ describe('CodexRuntimeService', () => {
   });
 
   it('omits Codex collaboration mode for non-plan turns', async () => {
-    const { service, appServer } = createService();
+    const { service, appServer, mcpAgentTokens } = createService();
     const wire = wireAppServerTurn(appServer);
 
     const iterator = await startAppServerTurn(service, 'default');
@@ -745,8 +752,20 @@ describe('CodexRuntimeService', () => {
       expect.objectContaining({
         sandbox: 'workspace-write',
         approvalPolicy: 'on-request',
+        config: {
+          mcp_servers: {
+            elevenex_local_computer: expect.objectContaining({
+              http_headers: {
+                Authorization: 'Bearer evx_codex_test',
+              },
+              enabled_tools: ['run_local_bash'],
+              tool_timeout_sec: 125,
+            }),
+          },
+        },
       }),
     );
+    expect(mcpAgentTokens.ensureToken).toHaveBeenCalledWith(7);
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'Plan this change' }],

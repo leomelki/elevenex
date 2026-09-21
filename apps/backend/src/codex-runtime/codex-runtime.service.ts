@@ -33,6 +33,8 @@ import {
 } from '../agent-runtime/agent-model-defaults.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import { SettingsService } from '../settings/settings.service.js';
+import { getElevenexProxyPort } from '../config/ports.js';
+import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import {
   ClaudeHooksService,
   type ClaudeSessionActivity,
@@ -199,6 +201,7 @@ export class CodexRuntimeService
     private readonly hooksService: ClaudeHooksService,
     private readonly titleService: SessionTitleService,
     private readonly settingsService: SettingsService,
+    private readonly mcpAgentTokens: McpAgentTokenService,
   ) {
     super();
   }
@@ -2260,6 +2263,7 @@ export class CodexRuntimeService
         'on-request': 'on-request',
         never: 'never',
       };
+      const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
 
       // Load or create the thread before dispatching the turn. Calling
       // thread/resume on an already-loaded thread is idempotent — the server
@@ -2276,6 +2280,24 @@ export class CodexRuntimeService
         ...(permissionOptions.approvalsReviewer
           ? { approvalsReviewer: permissionOptions.approvalsReviewer }
           : {}),
+        // Elevenex's local-computer bridge is hosted by the backend MCP server.
+        // Keep this override thread-scoped so we do not modify the user's
+        // global Codex config, and allow-list only this capability so ordinary
+        // coding sessions do not receive the meta-agent's other Elevenex tools.
+        config: {
+          mcp_servers: {
+            elevenex_local_computer: {
+              url:
+                process.env.ELEVENEX_MCP_URL?.trim() ||
+                `http://127.0.0.1:${getElevenexProxyPort()}/api/mcp`,
+              http_headers: {
+                Authorization: `Bearer ${mcpAgentToken}`,
+              },
+              enabled_tools: ['run_local_bash'],
+              tool_timeout_sec: 125,
+            },
+          },
+        },
       };
 
       const startFreshThread = async (): Promise<string> => {
