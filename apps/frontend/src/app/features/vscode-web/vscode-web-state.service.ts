@@ -1,9 +1,9 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { getBackendOrigin } from '@/shared/runtime/runtime-config';
 
-function toWorkspaceRootUri(worktreePath: string): string {
-  const normalized = worktreePath.replace(/\/+$/, '');
-  return `workspace-vfs://${encodeURIComponent(normalized)}/`;
+export function toWorkspaceRootUri(worktreePath: string): string {
+  const normalized = worktreePath.replace(/\\/g, '/').replace(/\/+$/, '') || worktreePath;
+  return `workspace-vfs://elevenex/?worktreePath=${encodeURIComponent(normalized)}`;
 }
 
 export function buildVSCodeIframeKey(projectId: number, worktreePath: string): string {

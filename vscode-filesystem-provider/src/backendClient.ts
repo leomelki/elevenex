@@ -8,6 +8,7 @@ import {
   BackendTextSearchSummary,
   BackendWriteRequest,
 } from './types';
+import { toWorkspaceVfsUri } from './workspaceUri';
 
 type BrowserLocationLike = {
   origin?: string;
@@ -15,16 +16,6 @@ type BrowserLocationLike = {
 
 function getBrowserLocation(): BrowserLocationLike | undefined {
   return (globalThis as typeof globalThis & { location?: BrowserLocationLike }).location;
-}
-
-function toWorkspaceUri(worktreePath: string, path: string): Uri {
-  const normalizedRoot = worktreePath.replace(/\/$/, '');
-  const normalizedPath = path.replace(/^\/+/, '');
-  return Uri.from({
-    scheme: 'workspace-vfs',
-    authority: encodeURIComponent(normalizedRoot),
-    path: normalizedPath ? `/${normalizedPath}` : '/',
-  });
 }
 
 /**
@@ -106,7 +97,7 @@ export class BackendClient {
   }
 
   private assertSafePath(worktreePath: string, path: string): Uri {
-    const uri = toWorkspaceUri(worktreePath, path);
+    const uri = toWorkspaceVfsUri(worktreePath, path);
 
     if (path.includes('..')) {
       throw FileSystemError.NoPermissions(uri);
@@ -150,7 +141,7 @@ export class BackendClient {
    */
   async stat(worktreePath: string, path: string): Promise<{ type: FileType; ctime: number; mtime: number; size: number }> {
     const url = this.buildQueryUrl(worktreePath, 'stat', path);
-    const uri = toWorkspaceUri(worktreePath, path);
+    const uri = toWorkspaceVfsUri(worktreePath, path);
 
     const response = await fetch(url);
 
@@ -184,7 +175,7 @@ export class BackendClient {
    */
   async readFile(worktreePath: string, path: string): Promise<Uint8Array> {
     const url = this.buildQueryUrl(worktreePath, 'file', path);
-    const uri = toWorkspaceUri(worktreePath, path);
+    const uri = toWorkspaceVfsUri(worktreePath, path);
 
     const response = await fetch(url);
 
@@ -210,7 +201,7 @@ export class BackendClient {
   async readDirectory(worktreePath: string, path: string): Promise<[string, FileType][]> {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const url = `${this.baseUrl}/${encodedWorktreePath}/files${path ? `?dir=${encodeURIComponent(path)}` : ''}`;
-    const uri = toWorkspaceUri(worktreePath, path);
+    const uri = toWorkspaceVfsUri(worktreePath, path);
 
     const response = await fetch(url);
 
@@ -249,7 +240,7 @@ export class BackendClient {
     );
 
     if (!response.ok) {
-      throw this.mapHttpError(response.status, toWorkspaceUri(worktreePath, ''));
+      throw this.mapHttpError(response.status, toWorkspaceVfsUri(worktreePath));
     }
 
     return response.json() as Promise<BackendFileSearchResult[]>;
@@ -297,7 +288,7 @@ export class BackendClient {
     );
 
     if (!response.ok) {
-      throw this.mapHttpError(response.status, toWorkspaceUri(worktreePath, ''));
+      throw this.mapHttpError(response.status, toWorkspaceVfsUri(worktreePath));
     }
 
     return response.json() as Promise<BackendTextSearchResult[]>;
@@ -325,7 +316,7 @@ export class BackendClient {
     );
 
     if (!response.ok) {
-      throw this.mapHttpError(response.status, toWorkspaceUri(worktreePath, ''));
+      throw this.mapHttpError(response.status, toWorkspaceVfsUri(worktreePath));
     }
 
     const body = response.body;

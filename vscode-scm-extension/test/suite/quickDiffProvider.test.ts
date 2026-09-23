@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { GitQuickDiffProvider } from '../../src/quickDiffProvider';
 import { Uri } from 'vscode';
+import { toWorkspaceVfsUri } from '../../src/workspaceUri';
 
 suite('GitQuickDiffProvider Tests', () => {
 
@@ -16,7 +17,8 @@ suite('GitQuickDiffProvider Tests', () => {
     // Verify: Returns git-vfs:// URI pointing to HEAD version
     assert.ok(originalUri);
     assert.strictEqual(originalUri!.scheme, 'git-vfs');
-    assert.strictEqual(originalUri!.authority, worktreeId);
+    assert.strictEqual(originalUri!.authority, 'elevenex');
+    assert.strictEqual(new URLSearchParams(originalUri!.query).get('worktreePath'), worktreeId);
     assert.strictEqual(originalUri!.path, '/HEAD/src/app.ts');
   });
 
@@ -46,6 +48,19 @@ suite('GitQuickDiffProvider Tests', () => {
     // Verify: HEAD ref is used (always HEAD for working tree diff)
     assert.ok(originalUri);
     assert.ok(originalUri!.path.startsWith('/HEAD/'));
+  });
+
+  test('preserves a case-sensitive worktree path through quick diff URIs', async () => {
+    const worktreeId =
+      '/home/bits/go/src/github.com/DataDog/.worktrees/dd-go/fingerprint-migration-investigation';
+    const provider = new GitQuickDiffProvider(worktreeId);
+    const uri = Uri.parse(toWorkspaceVfsUri(worktreeId, 'rum/elf/provider/testdata/main_cgo.go').toString());
+
+    const originalUri = await provider.provideOriginalResource!(uri);
+
+    assert.ok(originalUri);
+    const reparsed = Uri.parse(originalUri!.toString());
+    assert.strictEqual(new URLSearchParams(reparsed.query).get('worktreePath'), worktreeId);
   });
 
   test('QuickDiffProvider attached to SourceControl in extension activation', async () => {

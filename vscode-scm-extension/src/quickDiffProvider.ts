@@ -1,5 +1,6 @@
 import { QuickDiffProvider, Uri, CancellationToken, ProviderResult } from 'vscode';
 import { parseUri } from './uriParser';
+import { toGitVfsUri } from './workspaceUri';
 
 /**
  * GitQuickDiffProvider - Provides original resource URI from git HEAD
@@ -50,7 +51,7 @@ export class GitQuickDiffProvider implements QuickDiffProvider {
 
       // Construct git-vfs:// URI pointing to file at HEAD
       // GitContentProvider will serve content from this URI
-      const originalUri = Uri.parse(`git-vfs://${encodeURIComponent(worktreeId)}/HEAD/${path}`);
+      const originalUri = toGitVfsUri(worktreeId, 'HEAD', path);
 
       return originalUri;
     } catch (error: any) {

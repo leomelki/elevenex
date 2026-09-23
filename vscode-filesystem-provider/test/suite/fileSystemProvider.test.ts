@@ -8,6 +8,8 @@ import {
 } from 'vscode';
 import { BackendClient } from '../../src/backendClient';
 import { WorkspaceVfsProvider } from '../../src/fileSystemProvider';
+import { parseUri } from '../../src/uriParser';
+import { toWorkspaceVfsUri } from '../../src/workspaceUri';
 
 type FileEntry = {
   content: Uint8Array;
@@ -252,6 +254,22 @@ suite('FileSystemProvider', () => {
 
   teardown(() => {
     provider.dispose();
+  });
+
+  test('preserves case-sensitive worktree paths across URI serialization', () => {
+    const caseSensitiveWorktree =
+      '/home/bits/go/src/github.com/DataDog/.worktrees/dd-go/fingerprint-migration-investigation';
+    const serialized = toWorkspaceVfsUri(
+      caseSensitiveWorktree,
+      'rum/elf/provider/testdata/main_cgo.go',
+    ).toString();
+    const reparsed = Uri.parse(serialized);
+
+    assert.deepStrictEqual(parseUri(reparsed), {
+      worktreeId: caseSensitiveWorktree,
+      path: 'rum/elf/provider/testdata/main_cgo.go',
+    });
+    assert.strictEqual(reparsed.authority, 'elevenex');
   });
 
   test('stat returns file metadata', async () => {

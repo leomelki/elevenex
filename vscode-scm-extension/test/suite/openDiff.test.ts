@@ -81,7 +81,8 @@ suite('openDiff and compareAgainst Tests', () => {
     // Verify: git-vfs:// URI used for original content
     assert.ok(capturedLeftUri);
     assert.strictEqual(capturedLeftUri!.scheme, 'git-vfs');
-    assert.strictEqual(capturedLeftUri!.authority, worktreeId);
+    assert.strictEqual(capturedLeftUri!.authority, 'elevenex');
+    assert.strictEqual(new URLSearchParams(capturedLeftUri!.query).get('worktreePath'), worktreeId);
     assert.strictEqual(capturedLeftUri!.path, '/HEAD/src/app.ts');
   });
 
@@ -112,7 +113,8 @@ suite('openDiff and compareAgainst Tests', () => {
     // Verify: workspace-vfs:// URI used for current content
     assert.ok(capturedRightUri);
     assert.strictEqual(capturedRightUri!.scheme, 'workspace-vfs');
-    assert.strictEqual(capturedRightUri!.authority, worktreeId);
+    assert.strictEqual(capturedRightUri!.authority, 'elevenex');
+    assert.strictEqual(new URLSearchParams(capturedRightUri!.query).get('worktreePath'), worktreeId);
     assert.strictEqual(capturedRightUri!.path, '/src/new-feature.ts');
   });
 

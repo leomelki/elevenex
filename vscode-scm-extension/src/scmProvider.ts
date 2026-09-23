@@ -1,15 +1,10 @@
 import { scm, SourceControl, SourceControlResourceGroup, SourceControlResourceState, Uri, ThemeColor, Command, commands } from 'vscode';
 import { BackendGitClient } from './backendGitClient';
 import { FileStatus } from './types';
+import { toGitVfsUri, toWorkspaceVfsUri } from './workspaceUri';
 
 function toWorkspaceUri(worktreePath: string, path: string): Uri {
-  const normalizedRoot = worktreePath.replace(/\/$/, '');
-  const normalizedPath = path.replace(/^\/+/, '');
-  return Uri.from({
-    scheme: 'workspace-vfs',
-    authority: encodeURIComponent(normalizedRoot),
-    path: normalizedPath ? `/${normalizedPath}` : '/',
-  });
+  return toWorkspaceVfsUri(worktreePath, path);
 }
 
 /**
@@ -213,7 +208,7 @@ export class GitScmProvider {
    */
   async openDiff(filePath: string): Promise<void> {
     // Construct URI for original content at HEAD
-    const originalUri = Uri.parse(`git-vfs://${encodeURIComponent(this.worktreeId)}/HEAD/${filePath}`);
+    const originalUri = toGitVfsUri(this.worktreeId, 'HEAD', filePath);
 
     // Construct URI for current content in working tree
     const currentUri = toWorkspaceUri(this.worktreeId, filePath);
@@ -239,7 +234,7 @@ export class GitScmProvider {
    */
   async compareAgainst(filePath: string, targetRef: string): Promise<void> {
     // Construct URI for content at target ref
-    const targetUri = Uri.parse(`git-vfs://${encodeURIComponent(this.worktreeId)}/${targetRef}/${filePath}`);
+    const targetUri = toGitVfsUri(this.worktreeId, targetRef, filePath);
 
     // Construct URI for current content in working tree
     const currentUri = toWorkspaceUri(this.worktreeId, filePath);

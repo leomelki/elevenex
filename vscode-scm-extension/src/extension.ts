@@ -2,13 +2,13 @@ import {
   ExtensionContext,
   scm,
   workspace,
-  Uri,
   commands
 } from 'vscode';
 import { BackendGitClient } from './backendGitClient';
 import { GitScmProvider } from './scmProvider';
 import { GitQuickDiffProvider } from './quickDiffProvider';
 import { GitContentProvider } from './gitContentProvider';
+import { toWorkspaceVfsUri, worktreePathFromUri } from './workspaceUri';
 
 /**
  * Extension activation
@@ -38,14 +38,15 @@ export async function activate(context: ExtensionContext): Promise<void> {
     throw new Error('No workspace-vfs folder found');
   }
 
-  const worktreePath = decodeURIComponent(rootFolder.uri.authority || rootFolder.uri.path);
+  const worktreePath = worktreePathFromUri(rootFolder.uri)
+    ?? decodeURIComponent(rootFolder.uri.authority || rootFolder.uri.path);
   const baseUrl = `${globalThis.location?.origin ?? 'http://localhost:3000'}/api`;
 
   // Create BackendGitClient for git REST API calls
   const backendClient = new BackendGitClient(baseUrl, worktreePath);
 
   // Create root URI for SourceControl
-  const rootUri = Uri.from({ scheme: 'workspace-vfs', path: worktreePath });
+  const rootUri = toWorkspaceVfsUri(worktreePath);
 
   // Register source control
   const sourceControl = scm.createSourceControl('elevenex-git', 'ElevenEX Git', rootUri);

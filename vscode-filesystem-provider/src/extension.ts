@@ -11,6 +11,7 @@ import { BackendClient } from './backendClient';
 import { WorkspaceVfsProvider } from './fileSystemProvider';
 import { createWorkspaceTextSearchProvider } from './textSearchProvider';
 import { WebSocketClient } from './wsClient';
+import { toWorkspaceVfsUri, worktreePathFromUri } from './workspaceUri';
 
 type BrowserLocationLike = {
   origin?: string;
@@ -46,15 +47,6 @@ function normalizeRelativePath(path: string): string {
 
 function fileBridgeChannelName(worktreePath: string): string {
   return `elevenex-vscode:${worktreePath}`;
-}
-
-function toWorkspaceVfsUri(worktreePath: string, relativePath: string): Uri {
-  const normalizedRelativePath = normalizeRelativePath(relativePath);
-  return Uri.from({
-    scheme: 'workspace-vfs',
-    authority: encodeURIComponent(worktreePath),
-    path: normalizedRelativePath ? `/${normalizedRelativePath}` : '/',
-  });
 }
 
 async function openOrRevealFile(worktreePath: string, message: ElevenExOpenFileMessage): Promise<void> {
@@ -245,7 +237,8 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
     throw new Error('No workspace-vfs folder found');
   }
 
-  const worktreePath = decodeURIComponent(folder.uri.authority || folder.uri.path);
+  const worktreePath = worktreePathFromUri(folder.uri)
+    ?? decodeURIComponent(folder.uri.authority || folder.uri.path);
   const browserLocation = getBrowserLocation();
   const origin = browserLocation?.origin ?? 'http://localhost:3000';
   const wsProtocol = browserLocation?.protocol === 'https:' ? 'wss:' : 'ws:';

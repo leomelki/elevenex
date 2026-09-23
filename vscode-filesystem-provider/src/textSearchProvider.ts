@@ -1,9 +1,10 @@
-import { Range, Uri } from 'vscode';
+import { Range } from 'vscode';
 import { BackendClient } from './backendClient';
 import {
   BackendTextSearchOptions,
   BackendTextSearchResult,
 } from './types';
+import { toWorkspaceVfsUri } from './workspaceUri';
 
 type CancellationTokenLike = {
   isCancellationRequested?: boolean;
@@ -43,14 +44,6 @@ function isAbortError(error: unknown): boolean {
     error !== null &&
     (error as { name?: unknown }).name === 'AbortError'
   );
-}
-
-function toWorkspaceVfsUri(worktreePath: string, relativePath: string): Uri {
-  return Uri.from({
-    scheme: 'workspace-vfs',
-    authority: encodeURIComponent(worktreePath),
-    path: `/${relativePath.replace(/\\/g, '/').replace(/^\/+/, '')}`,
-  });
 }
 
 export function toVSCodeTextSearchResult(

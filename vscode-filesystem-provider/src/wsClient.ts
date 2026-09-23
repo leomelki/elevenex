@@ -1,11 +1,11 @@
 import {
-  Uri,
   FileChangeType,
   FileChangeEvent,
   EventEmitter,
   Event as VsCodeEvent,
   Disposable
 } from 'vscode';
+import { toWorkspaceVfsUri } from './workspaceUri';
 
 type BrowserLocationLike = {
   protocol?: string;
@@ -20,16 +20,6 @@ function getBrowserLocation(): BrowserLocationLike | undefined {
 
 function getWebSocketCtor(): BrowserWebSocketCtor {
   return (globalThis as typeof globalThis & { WebSocket: BrowserWebSocketCtor }).WebSocket;
-}
-
-function toWorkspaceUri(worktreePath: string, relativePath: string): Uri {
-  const normalizedRoot = worktreePath.replace(/\/$/, '');
-  const normalizedPath = relativePath.replace(/^\/+/, '');
-  return Uri.from({
-    scheme: 'workspace-vfs',
-    authority: encodeURIComponent(normalizedRoot),
-    path: normalizedPath ? `/${normalizedPath}` : '/',
-  });
 }
 
 /**
@@ -201,7 +191,7 @@ export class WebSocketClient implements Disposable {
       // Map each backend event to VS Code FileChangeEvent
       const vsCodeEvents: FileChangeEvent[] = backendEvents.map(backendEvent => {
         // Build VS Code URI for the changed file
-        const uri = toWorkspaceUri(backendEvent.worktreePath, backendEvent.path);
+        const uri = toWorkspaceVfsUri(backendEvent.worktreePath, backendEvent.path);
 
         return { type: mapBackendEventType(backendEvent), uri };
       });

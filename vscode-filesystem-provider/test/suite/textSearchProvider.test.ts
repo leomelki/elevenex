@@ -16,9 +16,11 @@ suite('TextSearchProvider', () => {
       ranges: [{ start: 6, end: 12 }],
     });
 
+    assert.strictEqual(result.uri.authority, 'elevenex');
+    assert.strictEqual(result.uri.path, '/src/app.ts');
     assert.strictEqual(
-      result.uri.toString(),
-      `workspace-vfs://${encodeURIComponent(worktreePath)}/src/app.ts`,
+      new URLSearchParams(result.uri.query).get('worktreePath'),
+      worktreePath,
     );
     assert.deepStrictEqual(result.ranges, [new Range(3, 6, 3, 12)]);
     assert.deepStrictEqual(result.preview.matches, [new Range(0, 6, 0, 12)]);

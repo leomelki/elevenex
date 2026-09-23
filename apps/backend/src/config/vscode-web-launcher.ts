@@ -74,7 +74,8 @@ const WORKBENCH_BOOTSTRAP_SCRIPT = `${WORKBENCH_BOOTSTRAP_MARKER}
   if (workspace && typeof BroadcastChannel !== 'undefined') {
     try {
       var workspaceUrl = new URL(workspace, window.location.origin);
-      var workspacePath = decodeURIComponent(workspaceUrl.host || workspaceUrl.pathname);
+      var workspacePath = workspaceUrl.searchParams.get('worktreePath') ||
+        decodeURIComponent(workspaceUrl.host || workspaceUrl.pathname);
       fileBridge = new BroadcastChannel('elevenex-vscode:' + workspacePath);
       fileBridge.addEventListener('message', function (event) {
         if (!event.data || event.data.type !== 'elevenex-file-bridge-ready') return;

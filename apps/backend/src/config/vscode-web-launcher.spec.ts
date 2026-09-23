@@ -73,6 +73,7 @@ describe('renderVSCodeWorkbenchHtml', () => {
   it('relays parent file-open requests to the web extension worker', () => {
     const html = renderVSCodeWorkbenchHtml(template);
 
+    expect(html).toContain("workspaceUrl.searchParams.get('worktreePath')");
     expect(html).toContain(
       "new BroadcastChannel('elevenex-vscode:' + workspacePath)",
     );

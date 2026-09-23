@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { FileSystemError, FileType, Uri } from 'vscode';
 import { BackendClient } from '../../src/backendClient';
+import { toWorkspaceVfsUri } from '../../src/workspaceUri';
 
 type FetchCall = {
   input: string | URL;
@@ -255,11 +256,7 @@ suite('BackendClient', () => {
   test('mutation methods map backend errors through mapHttpError', async () => {
     stubFetch({ ok: false, status: 403 });
     const client = new BackendClient(baseUrl);
-    const uri = Uri.from({
-      scheme: 'workspace-vfs',
-      authority: encodeURIComponent(worktreePath),
-      path: '/src/protected',
-    });
+    const uri = toWorkspaceVfsUri(worktreePath, 'src/protected');
 
     await assert.rejects(
       () => client.createDirectory(worktreePath, 'src/protected'),
