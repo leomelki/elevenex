@@ -1,4 +1,4 @@
-import { effect, inject, Injectable, signal } from '@angular/core';
+import { effect, inject, Injectable, signal, untracked } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
@@ -42,7 +42,10 @@ export class NavigationService {
     effect(() => {
       const count = claudeStatus.treeInvalidated();
       if (count > 0) {
-        this.refreshTree();
+        // loadTree reads and writes `tree`. Keep those implementation details
+        // out of this effect's dependencies or every response schedules the
+        // next refresh indefinitely after the first invalidation.
+        untracked(() => this.refreshTree());
       }
     });
   }

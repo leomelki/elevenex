@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { signal } from '@angular/core';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
@@ -6,10 +7,12 @@ import { of, Subject } from 'rxjs';
 import { NavigationProject } from '../models/navigation-tree.model';
 import { NavigationService } from './navigation.service';
 import { windowScopedKey } from './scoped-storage';
+import { ClaudeStatusService } from './claude-status.service';
 
 describe('NavigationService', () => {
   let service: NavigationService;
   let httpGetMock: ReturnType<typeof vi.fn>;
+  let treeInvalidated: ReturnType<typeof signal<number>>;
   let localStorageMock: {
     getItem: ReturnType<typeof vi.fn>;
     setItem: ReturnType<typeof vi.fn>;
@@ -17,6 +20,7 @@ describe('NavigationService', () => {
 
   beforeEach(() => {
     httpGetMock = vi.fn();
+    treeInvalidated = signal(0);
     localStorageMock = {
       getItem: vi.fn(() => null),
       setItem: vi.fn(),
@@ -32,6 +36,10 @@ describe('NavigationService', () => {
         NavigationService,
         { provide: HttpClient, useValue: { get: httpGetMock } },
         { provide: Router, useValue: { navigate: vi.fn() } },
+        {
+          provide: ClaudeStatusService,
+          useValue: { treeInvalidated: treeInvalidated.asReadonly() },
+        },
       ],
     });
 
@@ -370,5 +378,25 @@ describe('NavigationService', () => {
 
     expect(service.tree()[0].repos[0].workspaces![0].sessions).toEqual([]);
     expect(service.tree()[0].repos[0].workspaces![0].head).toBe('fresh-head');
+  });
+
+  it('refreshes once per tree invalidation without depending on tree responses', () => {
+    httpGetMock.mockReturnValue(of(makeTree([42])));
+
+    treeInvalidated.set(1);
+    TestBed.tick();
+
+    expect(httpGetMock).toHaveBeenCalledTimes(2);
+    expect(httpGetMock).toHaveBeenNthCalledWith(1, '/api/navigation/tree/light');
+    expect(httpGetMock).toHaveBeenNthCalledWith(2, '/api/navigation/tree');
+
+    // Signal writes made while applying either response must not retrigger the
+    // invalidation effect. A second backend invalidation still refreshes once.
+    TestBed.tick();
+    expect(httpGetMock).toHaveBeenCalledTimes(2);
+
+    treeInvalidated.set(2);
+    TestBed.tick();
+    expect(httpGetMock).toHaveBeenCalledTimes(4);
   });
 });
