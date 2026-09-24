@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { isAbsolute } from 'node:path';
 import { FileWatcherService, FileChangeEvent } from './file-watcher.service.js';
 
 /**
@@ -76,8 +77,8 @@ export class FileChangeGateway implements OnModuleDestroy {
       const url = new URL(request.url!, `ws://${request.headers.host}`);
       const worktreePath = url.searchParams.get('worktreePath');
 
-      if (!worktreePath) {
-        ws.close(1008, 'Missing worktreePath');
+      if (!worktreePath || !isAbsolute(worktreePath)) {
+        ws.close(1008, 'worktreePath must be an absolute path');
         return;
       }
 
@@ -93,17 +94,25 @@ export class FileChangeGateway implements OnModuleDestroy {
    * @param worktreePath - The worktree path to watch
    */
   private handleConnection(ws: WebSocket, worktreePath: string): void {
-    // Add client to worktree group
+    // Start watching this worktree (if not already)
+    // The callback will broadcast events to all clients
+    try {
+      this.fileWatcher.watchWorktree(worktreePath, (event) => {
+        this.broadcast(worktreePath, event);
+      });
+    } catch (error) {
+      // fs.watch throws synchronously if a worktree disappeared or is unreadable.
+      // A failed WebSocket request must not terminate the backend process.
+      console.warn(`Could not watch worktree ${worktreePath}:`, error);
+      ws.close(1011, 'Unable to watch worktree');
+      return;
+    }
+
+    // Add client only after the watcher has started successfully.
     if (!this.clients.has(worktreePath)) {
       this.clients.set(worktreePath, new Set());
     }
     this.clients.get(worktreePath)!.add(ws);
-
-    // Start watching this worktree (if not already)
-    // The callback will broadcast events to all clients
-    this.fileWatcher.watchWorktree(worktreePath, (event) => {
-      this.broadcast(worktreePath, event);
-    });
 
     // Handle client disconnect
     ws.on('close', () => {

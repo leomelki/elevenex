@@ -177,8 +177,53 @@ describe('FileChangeGateway', () => {
         connectionHandler(mockWs, mockRequest);
       }
 
-      expect(mockWs.close).toHaveBeenCalledWith(1008, 'Missing worktreePath');
+      expect(mockWs.close).toHaveBeenCalledWith(1008, 'worktreePath must be an absolute path');
       expect(mockFileWatcher.watchWorktree).not.toHaveBeenCalled();
+    });
+
+    it('rejects a relative worktree path without starting a watcher', () => {
+      gateway.attachToServer(mockServer);
+      const connectionHandler = mockWss.on.mock.calls.find(
+        (call) => call[0] === 'connection',
+      )?.[1];
+      const mockWs = {
+        on: jest.fn().mockReturnThis(),
+        close: jest.fn(),
+      } as unknown as jest.Mocked<WebSocket>;
+
+      connectionHandler?.(mockWs, {
+        url: '/file-changes?worktreePath=elevenex',
+        headers: { host: 'localhost:3000' },
+      });
+
+      expect(mockWs.close).toHaveBeenCalledWith(1008, 'worktreePath must be an absolute path');
+      expect(mockFileWatcher.watchWorktree).not.toHaveBeenCalled();
+    });
+
+    it('closes the connection if the worktree disappears before watching', () => {
+      gateway.attachToServer(mockServer);
+      const connectionHandler = mockWss.on.mock.calls.find(
+        (call) => call[0] === 'connection',
+      )?.[1];
+      const mockWs = {
+        on: jest.fn().mockReturnThis(),
+        close: jest.fn(),
+      } as unknown as jest.Mocked<WebSocket>;
+      mockFileWatcher.watchWorktree.mockImplementationOnce(() => {
+        throw Object.assign(new Error('No such directory'), { code: 'ENOENT' });
+      });
+      const warn = jest.spyOn(console, 'warn').mockImplementation();
+
+      try {
+        expect(() => connectionHandler?.(mockWs, {
+          url: '/file-changes?worktreePath=/missing/worktree',
+          headers: { host: 'localhost:3000' },
+        })).not.toThrow();
+        expect(mockWs.close).toHaveBeenCalledWith(1011, 'Unable to watch worktree');
+        expect(mockWs.on).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 
