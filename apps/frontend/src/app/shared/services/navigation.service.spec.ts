@@ -95,6 +95,41 @@ describe('NavigationService', () => {
     ];
   }
 
+  it('shows generated names for temporary sessions across tree refreshes', () => {
+    const tree = makeTree([]);
+    tree[0].repos[0].workspaces![0].temporarySessions = [
+      {
+        id: 42,
+        repoId: 2,
+        branchName: 'main',
+        name: 'Temporary session',
+        status: 'active',
+        isTemporary: true,
+        hasUnreviewedCompletion: false,
+        lastCompletionAt: null,
+        lastCompletionKind: null,
+        lastStateChangeAt: null,
+      },
+    ];
+    service.tree.set(tree);
+
+    service.patchSessionName(42, 'Investigate sidebar names');
+    expect(service.tree()[0].repos[0].workspaces![0].temporarySessions![0].name).toBe(
+      'Investigate sidebar names',
+    );
+
+    const refreshed = makeTree([]);
+    refreshed[0].repos[0].workspaces![0].temporarySessions = [
+      { ...tree[0].repos[0].workspaces![0].temporarySessions![0] },
+    ];
+    httpGetMock.mockReturnValue(of(refreshed));
+    service.loadTree();
+
+    expect(service.tree()[0].repos[0].workspaces![0].temporarySessions![0].name).toBe(
+      'Investigate sidebar names',
+    );
+  });
+
   it('patches completion fields for a session in the navigation tree', () => {
     service.tree.set([
       {
@@ -356,7 +391,9 @@ describe('NavigationService', () => {
     service.loadTree();
     firstLight$.next(makeTree([42]));
 
-    expect(service.tree()[0].repos[0].workspaces![0].sessions.map((session) => session.id)).toEqual([42]);
+    expect(service.tree()[0].repos[0].workspaces![0].sessions.map((session) => session.id)).toEqual(
+      [42],
+    );
     expect(httpGetMock).toHaveBeenNthCalledWith(2, '/api/navigation/tree');
 
     service.loadTree();

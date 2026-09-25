@@ -17,6 +17,9 @@ function createTestDb() {
     CREATE TABLE projects (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
+      archived_at TEXT,
+      hidden INTEGER NOT NULL DEFAULT 0,
+      agent_instructions TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -35,8 +38,17 @@ function createTestDb() {
       repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       path TEXT NOT NULL,
+      pool_worktree_id INTEGER,
       is_default INTEGER NOT NULL DEFAULT 0,
       created_from_ref TEXT,
+      link_status TEXT NOT NULL DEFAULT 'linked',
+      desired_branch TEXT,
+      unlinked_at TEXT,
+      unlinked_by_project_id INTEGER,
+      pending_stash_commit TEXT,
+      pending_stash_message TEXT,
+      pending_stash_created_at TEXT,
+      pending_stash_status TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(repo_id, name),
@@ -54,11 +66,14 @@ function createTestDb() {
       is_temporary INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'created',
       archived_by_folder INTEGER NOT NULL DEFAULT 0,
+      mcp_agent_token TEXT,
+      agent_autonomy_mode TEXT,
       plan_mode INTEGER,
       active_agent_provider TEXT NOT NULL DEFAULT 'claude',
       claude_session_id TEXT DEFAULT '-1',
       codex_session_id TEXT DEFAULT '-1',
       pi_session_path TEXT DEFAULT '-1',
+      antigravity_session_id TEXT DEFAULT '-1',
       has_injected_worktree_context INTEGER NOT NULL DEFAULT 0,
       has_unreviewed_completion INTEGER NOT NULL DEFAULT 0,
       last_completion_at TEXT,
@@ -210,6 +225,31 @@ describe('SessionsService', () => {
       expect(result.name).toBe('Temporary session');
       expect(result.isTemporary).toBe(true);
       expect(result.folderId).toBeNull();
+    });
+
+    it('replaces a temporary session default name with its generated title', async () => {
+      const session = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/temporary-worktree',
+        isTemporary: true,
+      });
+      const titleChanged = jest.fn();
+      service.on('session-title-changed', titleChanged);
+
+      const renamed = await service.renameFromGeneratedTitle(
+        session.id,
+        'Investigate sidebar names',
+      );
+
+      expect(renamed.name).toBe('Investigate sidebar names');
+      expect((await service.findOne(session.id)).name).toBe(
+        'Investigate sidebar names',
+      );
+      expect(titleChanged).toHaveBeenCalledWith({
+        sessionId: session.id,
+        name: 'Investigate sidebar names',
+      });
     });
 
     it('should use the configured default agent provider for new sessions', async () => {

@@ -156,6 +156,9 @@ export class NavigationService {
             sessions: workspace.sessions.map((session) =>
               session.id === sessionId ? { ...session, name } : session,
             ),
+            temporarySessions: workspace.temporarySessions?.map((session) =>
+              session.id === sessionId ? { ...session, name } : session,
+            ),
             archivedSessions: workspace.archivedSessions?.map((session) =>
               session.id === sessionId ? { ...session, name } : session,
             ),
@@ -194,6 +197,10 @@ export class NavigationService {
         workspaces: (repo.workspaces ?? []).map((workspace) => ({
           ...workspace,
           sessions: workspace.sessions.map((session) => {
+            const cached = this.cachedSessionNames.get(session.id);
+            return cached !== undefined ? { ...session, name: cached } : session;
+          }),
+          temporarySessions: workspace.temporarySessions?.map((session) => {
             const cached = this.cachedSessionNames.get(session.id);
             return cached !== undefined ? { ...session, name: cached } : session;
           }),
