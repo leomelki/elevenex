@@ -6,9 +6,11 @@ import type {
 import { PairedTranscriptUnit, pairTranscript } from './paired-transcript';
 import { TurnAgentSummary, buildTurnAgentSummary } from './agent-deep-dive';
 import { TurnChangeDetails, computeTurnChangeDetails } from './turn-change-stats';
+import { isToolDenied, toolDenialBatch } from './tool-denial';
 
 export type TranscriptRenderItem =
   | { kind: 'unit'; id: string; unit: PairedTranscriptUnit }
+  | { kind: 'tool-denial'; id: string; call: ClaudeTranscriptItem }
   | {
       kind: 'collapsed-turn';
       id: string;
@@ -42,7 +44,7 @@ export function buildTranscriptRenderItems(
   options: TranscriptRenderOptions,
 ): TranscriptRenderItem[] {
   const { units, settled } = options;
-  const out: TranscriptRenderItem[] = [];
+  const out: Exclude<TranscriptRenderItem, { kind: 'tool-denial' }>[] = [];
 
   for (let i = 0; i < units.length; ) {
     const unit = units[i];
@@ -141,7 +143,30 @@ export function buildTranscriptRenderItems(
     i = nextUserIndex;
   }
 
-  return out;
+  // Human feedback stays in the conversation even when the agent's work is
+  // collapsed. Generate it once here so expanding a turn cannot duplicate it.
+  const seenDenials = new Set<string>();
+  const collectDenials = (entries: PairedTranscriptUnit[]): TranscriptRenderItem[] => {
+    const denials: TranscriptRenderItem[] = [];
+    for (const entry of entries) {
+      if (entry.kind !== 'tool') continue;
+      if (isToolDenied(entry.call)) {
+        // Parallel calls sharing one permission request are one human decision.
+        const key = toolDenialBatch(entry.call)[0]?.toolUseId ?? entry.toolUseId;
+        if (!seenDenials.has(key)) {
+          seenDenials.add(key);
+          denials.push({ kind: 'tool-denial', id: `denial-${key}`, call: entry.call });
+        }
+      }
+      const children = options.childItemsByParentToolUseId[entry.toolUseId];
+      if (children?.length) denials.push(...collectDenials(pairTranscript(children)));
+    }
+    return denials;
+  };
+  return out.flatMap((item): TranscriptRenderItem[] => {
+    const entries = item.kind === 'collapsed-turn' ? item.hiddenUnits : [item.unit];
+    return [item, ...collectDenials(entries)];
+  });
 }
 
 /** Subagent work counts towards its parent turn's diff stats, so recurse into children. */

@@ -144,6 +144,8 @@ describe('ClaudeToolCallComponent', () => {
     fixture.detectChanges();
 
     const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
+    expect(fixture.nativeElement.querySelector('.cw-tool').dataset['state']).toBe('denied');
+    expect(button.querySelector('.cw-tool__state-icon ng-icon')?.getAttribute('name')).toBe('lucideShield');
     button.click();
     fixture.detectChanges();
 

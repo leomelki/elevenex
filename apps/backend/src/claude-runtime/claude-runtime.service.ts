@@ -152,7 +152,7 @@ import { SettingsService } from '../settings/settings.service.js';
 
 type PermissionDecision =
   | { behavior: 'allow'; remember: boolean; content?: Record<string, unknown> }
-  | { behavior: 'deny'; message?: string };
+  | { behavior: 'deny'; message?: string; userInitiated?: boolean };
 
 type UserInputContent = Record<string, string | number | boolean | string[]>;
 
@@ -6492,8 +6492,25 @@ export class ClaudeRuntimeService
     const createdAt = request.createdAt;
     const resolvedAt = new Date().toISOString();
     const kind = this.getInteractionKind(request.toolName);
+    if (decision.behavior === 'deny' && decision.userInitiated === false) {
+      return {
+        kind,
+        decision: 'cancelled',
+        decisionLabel: 'Interrupted',
+        decisionTone: 'neutral',
+        remember: false,
+        content: null,
+        requestSnapshot,
+        createdAt,
+        resolvedAt,
+      };
+    }
     const content =
-      decision.behavior === 'allow' ? (decision.content ?? null) : null;
+      decision.behavior === 'allow'
+        ? (decision.content ?? null)
+        : decision.message?.trim()
+          ? { message: decision.message.trim() }
+          : null;
 
     if (kind === 'ask_user_question') {
       const answers = this.extractInteractionAnswers(content);
@@ -6647,6 +6664,7 @@ export class ClaudeRuntimeService
     kind: ClaudeToolInteractionKind,
     decision: string,
   ): string {
+    if (decision === 'cancelled') return 'Interrupted';
     if (kind === 'ask_user_question') {
       return decision === 'answered' ? 'Answered' : 'Declined';
     }
@@ -6664,6 +6682,7 @@ export class ClaudeRuntimeService
   private toDecisionTone(
     decision: string,
   ): ClaudeToolInteractionSummary['decisionTone'] {
+    if (decision === 'cancelled') return 'neutral';
     return decision === 'denied' || decision === 'declined' ? 'warn' : 'ok';
   }
 
@@ -7473,6 +7492,7 @@ export class ClaudeRuntimeService
       permission?.resolve({
         behavior: 'deny',
         message: 'Run interrupted by user',
+        userInitiated: false,
       });
       run.permissionRequests.delete(queuedPermissionRequestId);
     }

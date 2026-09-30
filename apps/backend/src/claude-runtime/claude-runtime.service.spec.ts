@@ -2928,10 +2928,12 @@ describe('ClaudeRuntimeService', () => {
     expect(resolvePermission).toHaveBeenCalledWith({
       behavior: 'deny',
       message: 'Run interrupted by user',
+      userInitiated: false,
     });
     expect(resolveQueuedPermission).toHaveBeenCalledWith({
       behavior: 'deny',
       message: 'Run interrupted by user',
+      userInitiated: false,
     });
     expect(interrupt).toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
@@ -3555,6 +3557,71 @@ describe('ClaudeRuntimeService', () => {
         }),
       }),
     );
+  });
+
+  it.each(['Bash', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode'])(
+    'persists denial feedback for %s and restores it after reload',
+    async (toolName) => {
+      const state = (service as any).ensureRuntimeState(7, 'claude-session-1');
+      state.liveItems = [
+        {
+          id: 'tool-denied',
+          kind: 'tool_use',
+          toolUseId: 'tool-denied',
+          toolName,
+          timestamp: '2026-04-24T08:00:00.000Z',
+        },
+      ];
+      const summary = await (service as any).recordInteractionSummary(
+        7,
+        {
+          requestId: 'perm-denied',
+          toolUseId: 'tool-denied',
+          toolName,
+          input: { command: 'rm -rf tmp' },
+          createdAt: state.liveItems[0].timestamp,
+        },
+        {
+          behavior: 'deny',
+          message: '  Keep the files.\nUse a temporary directory instead.  ',
+        },
+      );
+
+      const content = {
+        message: 'Keep the files.\nUse a temporary directory instead.',
+      };
+      expect(summary.content).toEqual(content);
+      expect(state.liveItems[0].interaction.content).toEqual(content);
+      const restored = await (service as any).getInteractionSummaryMap(7);
+      expect(restored.get('tool-denied').content).toEqual(content);
+    },
+  );
+
+  it('does not invent feedback when a tool is denied without a reason', () => {
+    const summary = (service as any).buildInteractionSummary(
+      {
+        toolName: 'Bash',
+        createdAt: '2026-04-24T08:00:00.000Z',
+      },
+      { behavior: 'deny', message: '   ' },
+    );
+    expect(summary.content).toBeNull();
+  });
+
+  it('does not present an interrupted run as denial feedback written by the user', () => {
+    const summary = (service as any).buildInteractionSummary(
+      {
+        toolName: 'Bash',
+        createdAt: '2026-04-24T08:00:00.000Z',
+      },
+      {
+        behavior: 'deny',
+        message: 'Run interrupted by user',
+        userInitiated: false,
+      },
+    );
+    expect(summary.decision).toBe('cancelled');
+    expect(summary.content).toBeNull();
   });
 
   it('hydrates persisted ask-user-question answers into history', async () => {

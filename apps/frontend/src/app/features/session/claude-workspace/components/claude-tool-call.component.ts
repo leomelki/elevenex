@@ -90,6 +90,7 @@ import {
   resultSummary,
 } from '@/shared/agent-tools/agent-tool-format';
 import { PairedTranscriptUnit, pairTranscript } from '../util/paired-transcript';
+import { isToolDenied } from '../util/tool-denial';
 import { ClaudeMessageComponent } from './claude-message.component';
 import { ClaudeThinkingComponent } from './claude-thinking.component';
 import { InlineDiffComponent } from './inline-diff.component';
@@ -220,6 +221,8 @@ type Todo = ToolTodoItem;
               <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" />
             } @else if (state() === 'waiting') {
               <ng-icon name="lucideLockKeyhole" size="12" />
+            } @else if (state() === 'denied') {
+              <ng-icon name="lucideShield" size="12" />
             } @else if (state() === 'error') {
               <ng-icon name="lucideCircleAlert" size="12" />
             } @else {
@@ -678,6 +681,9 @@ type Todo = ToolTodoItem;
       }
       .cw-tool[data-state='done'] .cw-tool__state-icon {
         color: color-mix(in oklab, #16a34a 90%, var(--muted-foreground));
+      }
+      .cw-tool[data-state='denied'] .cw-tool__state-icon {
+        color: var(--warning);
       }
       .cw-tool__glyph {
         color: var(--muted-foreground);
@@ -1306,13 +1312,17 @@ export class ClaudeToolCallComponent {
 
   readonly display = computed<ToolDisplay>(() => describeAgentTool(this.call()));
 
-  readonly state = computed<'running' | 'waiting' | 'error' | 'done'>(() => {
+  readonly state = computed<'running' | 'waiting' | 'denied' | 'error' | 'done'>(() => {
+    if (isToolDenied(this.call())) return 'denied';
     if (!this.result() && this.isLive()) return 'running';
     if (isHardError(this.result())) return 'error';
     return 'done';
   });
 
   readonly summary = computed<ResultSummary | null>(() => {
+    if (this.state() === 'denied') {
+      return { text: this.interaction()?.decisionLabel ?? 'Denied', tone: 'warn' };
+    }
     if (this.state() === 'running') {
       if (this.display().kind === 'bash') {
         return {

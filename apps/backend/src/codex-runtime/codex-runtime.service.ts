@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Inject,
   Logger,
   OnModuleDestroy,
   OnModuleInit,
@@ -15,6 +16,9 @@ import type {
 } from '@openai/codex-sdk';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
+import { and, eq } from 'drizzle-orm';
+import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
+import { claudeToolInteractions } from '../database/schema/index.js';
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -45,6 +49,7 @@ import type {
   ClaudeModelOption,
   ClaudePermissionRequest,
   ClaudeTranscriptItem,
+  ClaudeToolInteractionSummary,
   ClaudeUserInputRequest,
 } from '../claude-runtime/claude-runtime.types.js';
 import {
@@ -202,6 +207,7 @@ export class CodexRuntimeService
     private readonly titleService: SessionTitleService,
     private readonly settingsService: SettingsService,
     private readonly mcpAgentTokens: McpAgentTokenService,
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
   ) {
     super();
   }
@@ -277,7 +283,60 @@ export class CodexRuntimeService
     if (!codexSessionId || codexSessionId === '-1') {
       return [];
     }
-    return this.historyService.getHistory(codexSessionId);
+    const [history, denials] = await Promise.all([
+      this.historyService.getHistory(codexSessionId),
+      this.db
+        .select()
+        .from(claudeToolInteractions)
+        .where(
+          and(
+            eq(claudeToolInteractions.sessionId, sessionId),
+            eq(claudeToolInteractions.decision, 'denied'),
+          ),
+        ),
+    ]);
+    const callsById = new Map<string, ClaudeTranscriptItem>();
+    for (const item of history) {
+      if (item.kind !== 'tool_use') continue;
+      if (item.toolUseId) callsById.set(item.toolUseId, item);
+      if (item.sourceMessageId) callsById.set(item.sourceMessageId, item);
+    }
+    let addedCalls = false;
+    for (const row of denials) {
+      const interaction: ClaudeToolInteractionSummary = {
+        kind: 'permission',
+        decision: 'denied',
+        decisionLabel: 'Deny',
+        decisionTone: 'warn',
+        remember: false,
+        content: row.responseContent ? JSON.parse(row.responseContent) : null,
+        requestSnapshot: JSON.parse(row.requestSnapshot),
+        createdAt: row.createdAt,
+        resolvedAt: row.resolvedAt,
+      };
+      const call = callsById.get(row.toolUseId);
+      if (call) {
+        call.interaction = interaction;
+      } else {
+        if (interaction.requestSnapshot?.['codexSessionId'] !== codexSessionId)
+          continue;
+        // Some approvals (e.g. extra permissions) have no tool item in the
+        // provider's transcript. Keep their human decision in history too.
+        history.push({
+          id: `${row.toolUseId}:tool_use`,
+          kind: 'tool_use',
+          toolUseId: row.toolUseId,
+          toolName: row.toolName,
+          toolInput: interaction.requestSnapshot?.['input'],
+          interaction,
+          timestamp: row.createdAt,
+        });
+        addedCalls = true;
+      }
+    }
+    return addedCalls
+      ? history.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      : history;
   }
 
   async getRuntimeState(sessionId: number): Promise<CodexRuntimeStatePayload> {
@@ -953,9 +1012,88 @@ export class CodexRuntimeService
     const run = this.activeRuns.get(sessionId);
     const pending = run?.permissionRequests.get(requestId);
     if (!pending) return;
+    await this.recordToolDenial(sessionId, pending.request, message);
     run?.permissionRequests.delete(requestId);
     this.clearPendingPermission(sessionId, requestId);
     pending.resolve({ approved: false, message });
+  }
+
+  private async recordToolDenial(
+    sessionId: number,
+    request: ClaudePermissionRequest,
+    message?: string,
+  ): Promise<void> {
+    const interaction: ClaudeToolInteractionSummary = {
+      kind: 'permission',
+      decision: 'denied',
+      decisionLabel: 'Deny',
+      decisionTone: 'warn',
+      remember: false,
+      content: message?.trim() ? { message: message.trim() } : null,
+      requestSnapshot: {
+        title: request.title,
+        input: request.input,
+        codexSessionId: this.ensureRuntimeState(sessionId).codexSessionId,
+      },
+      createdAt: request.createdAt,
+      resolvedAt: new Date().toISOString(),
+    };
+    const values = {
+      sessionId,
+      toolUseId: request.toolUseId,
+      toolName: request.toolName,
+      interactionKind: interaction.kind,
+      decision: interaction.decision,
+      remember: false,
+      responseContent: interaction.content
+        ? JSON.stringify(interaction.content)
+        : null,
+      requestSnapshot: JSON.stringify(interaction.requestSnapshot),
+      createdAt: interaction.createdAt,
+      resolvedAt: interaction.resolvedAt,
+    };
+    await this.db
+      .insert(claudeToolInteractions)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [
+          claudeToolInteractions.sessionId,
+          claudeToolInteractions.toolUseId,
+        ],
+        set: values,
+      });
+    const state = this.ensureRuntimeState(sessionId);
+    const existing = state.liveItems.find(
+      (item) =>
+        item.kind === 'tool_use' && item.toolUseId === request.toolUseId,
+    );
+    this.pushItem(
+      sessionId,
+      {
+        ...(existing ?? {
+          id: `${request.toolUseId}:tool_use`,
+          kind: 'tool_use',
+          toolUseId: request.toolUseId,
+          toolName: request.toolName,
+          toolKind: request.toolKind,
+          toolDisplayName: request.toolDisplayName,
+          toolInput: request.input,
+          timestamp: request.createdAt,
+        }),
+        interaction,
+      },
+      'tool_use',
+    );
+    this.emitEvent({
+      type: 'permission_resolved',
+      payload: {
+        sessionId,
+        requestId: request.requestId,
+        toolUseId: request.toolUseId,
+        decision: 'denied',
+        interaction,
+      },
+    });
   }
 
   async answerUserInput(

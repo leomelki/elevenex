@@ -1,0 +1,48 @@
+<div class="flex min-w-0 justify-end" data-tool-denial>
+  <z-card
+    role="note"
+    [attr.aria-label]="label()"
+    class="w-fit min-w-0 max-w-full gap-0 rounded-2xl rounded-br-sm border-border bg-primary/5 py-3 shadow-none sm:max-w-[85%] [&>[data-slot=card-content]]:px-4"
+  >
+    <div class="flex flex-col gap-2.5">
+      <header class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span class="flex items-center gap-2 text-xs font-medium text-foreground">
+          <span
+            class="flex size-6 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning"
+            aria-hidden="true"
+          >
+            <ng-icon name="lucideShieldX" size="14" />
+          </span>
+          {{ label() }}
+        </span>
+        @if (resolvedAt(); as timestamp) {
+          <time
+            class="ml-auto text-[11px] text-muted-foreground"
+            [attr.datetime]="timestamp"
+            [title]="timestamp | date: 'medium'"
+          >
+            {{ timestamp | date: 'shortTime' }}
+          </time>
+        }
+      </header>
+      @if (display(); as tool) {
+        <div class="flex min-w-0 items-baseline gap-1.5 text-xs text-muted-foreground">
+          <span class="shrink-0 font-medium">{{ tool.verb }}</span>
+          @if (tool.target) {
+            <span aria-hidden="true">·</span>
+            <span class="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{{
+              tool.target
+            }}</span>
+          }
+        </div>
+      }
+      @if (reason(); as feedback) {
+        <p
+          class="m-0 border-t border-border/70 pt-2.5 text-[13px] leading-relaxed whitespace-pre-wrap text-foreground [overflow-wrap:anywhere]"
+        >
+          {{ feedback }}
+        </p>
+      }
+    </div>
+  </z-card>
+</div>

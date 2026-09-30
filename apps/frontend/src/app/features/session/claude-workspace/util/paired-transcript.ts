@@ -1,5 +1,6 @@
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import { shouldHideToolCall } from '@/shared/agent-tools/agent-tool-format';
+import { isToolDenied } from './tool-denial';
 
 export type PairedTranscriptUnit =
   | { kind: 'message'; id: string; item: ClaudeTranscriptItem }
@@ -25,7 +26,7 @@ export function pairTranscript(items: ClaudeTranscriptItem[]): PairedTranscriptU
 
     if (item.kind === 'tool_use') {
       const toolUseId = item.toolUseId || item.id;
-      if (shouldHideToolCall(item.toolName, item.toolInput, item.toolKind)) {
+      if (!isToolDenied(item) && shouldHideToolCall(item.toolName, item.toolInput, item.toolKind)) {
         hiddenToolUseIds.add(toolUseId);
       }
     }

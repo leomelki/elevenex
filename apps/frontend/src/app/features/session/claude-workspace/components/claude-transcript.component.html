@@ -69,6 +69,9 @@
 
 @for (item of items(); track trackItem($index, item)) {
   @switch (item.kind) {
+    @case ('tool-denial') {
+      <cw-tool-denial [call]="item.call" />
+    }
     @case ('unit') {
       <ng-container
         [ngTemplateOutlet]="unitTpl"

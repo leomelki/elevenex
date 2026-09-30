@@ -79,6 +79,17 @@ describe('CodexRuntimeService', () => {
         .fn<(sessionId: number) => Promise<string>>()
         .mockResolvedValue('evx_codex_test'),
     };
+    const interactionRows: Record<string, unknown>[] = [];
+    const db = {
+      select: () => ({ from: () => ({ where: async () => interactionRows }) }),
+      insert: () => ({
+        values: (row: Record<string, unknown>) => ({
+          onConflictDoUpdate: async () => {
+            interactionRows.push(row);
+          },
+        }),
+      }),
+    };
 
     return {
       service: new CodexRuntimeService(
@@ -95,6 +106,7 @@ describe('CodexRuntimeService', () => {
           }),
         } as never,
         mcpAgentTokens as never,
+        db as never,
       ),
       sessionsService,
       authService,
@@ -102,6 +114,7 @@ describe('CodexRuntimeService', () => {
       hooksService,
       historyService,
       mcpAgentTokens,
+      interactionRows,
     };
   }
 
@@ -177,6 +190,111 @@ describe('CodexRuntimeService', () => {
       { id: 'history-1', kind: 'user', content: 'prompt' },
     ]);
     expect(runtimeState.liveItems).toBe(liveItems);
+  });
+
+  it('persists and emits denial feedback, including approvals with no provider tool item', async () => {
+    const { service, sessionsService, interactionRows } = createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'thread-1',
+    });
+    const resolve = jest.fn();
+    const request = {
+      requestId: 'approval-1',
+      toolUseId: 'command-1',
+      toolName: 'Bash',
+      input: { command: 'rm -rf tmp' },
+      createdAt: '2026-09-30T08:00:00.000Z',
+    };
+    const run = {
+      permissionRequests: new Map([['approval-1', { request, resolve }]]),
+    };
+    (service as any).ensureRuntimeState(7, 'thread-1');
+    (service as any).activeRuns.set(7, run);
+    const events: unknown[] = [];
+    service.on('event', (event) => events.push(event));
+
+    await service.denyPermission(
+      7,
+      'approval-1',
+      'Keep these files.\nUse another folder.',
+    );
+
+    expect(resolve).toHaveBeenCalledWith({
+      approved: false,
+      message: 'Keep these files.\nUse another folder.',
+    });
+    expect(interactionRows[0].responseContent).toBe(
+      JSON.stringify({ message: 'Keep these files.\nUse another folder.' }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'permission_resolved',
+        payload: expect.objectContaining({
+          interaction: expect.objectContaining({
+            decision: 'denied',
+            content: { message: 'Keep these files.\nUse another folder.' },
+          }),
+        }),
+      }),
+    );
+    expect(await service.getHistory(7)).toEqual([
+      expect.objectContaining({
+        toolUseId: 'command-1',
+        interaction: expect.objectContaining({
+          content: { message: 'Keep these files.\nUse another folder.' },
+        }),
+      }),
+    ]);
+  });
+
+  it('attaches a restored denial to the matching provider item without duplicating the call', async () => {
+    const { service, sessionsService, historyService, interactionRows } =
+      createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'thread-1',
+    });
+    interactionRows.push({
+      toolUseId: 'command-1',
+      toolName: 'Bash',
+      decision: 'denied',
+      responseContent: JSON.stringify({ message: 'Use another folder.' }),
+      requestSnapshot: '{}',
+      createdAt: '2026-09-30T08:00:00.000Z',
+      resolvedAt: '2026-09-30T08:00:05.000Z',
+    });
+    historyService.getHistory.mockResolvedValue([
+      {
+        id: 'history-tool',
+        kind: 'tool_use',
+        toolUseId: 'call-1',
+        sourceMessageId: 'command-1',
+      },
+    ]);
+    const history = await service.getHistory(7);
+    expect(history).toHaveLength(1);
+    expect(history[0].interaction?.content).toEqual({
+      message: 'Use another folder.',
+    });
+  });
+
+  it('does not restore an orphan denial from a thread removed by rewinding', async () => {
+    const { service, sessionsService, interactionRows } = createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'rewound-thread',
+    });
+    interactionRows.push({
+      toolUseId: 'command-1',
+      toolName: 'Bash',
+      decision: 'denied',
+      responseContent: JSON.stringify({ message: 'Use another folder.' }),
+      requestSnapshot: JSON.stringify({ codexSessionId: 'old-thread' }),
+      createdAt: '2026-09-30T08:00:00.000Z',
+      resolvedAt: '2026-09-30T08:00:05.000Z',
+    });
+    expect(await service.getHistory(7)).toEqual([]);
   });
 
   it('steers a queued prompt into the active Codex turn', async () => {

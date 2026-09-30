@@ -20,6 +20,7 @@ import { ClaudeToolCallComponent } from './claude-tool-call.component';
 import { ClaudeTurnChangesComponent } from './claude-turn-changes.component';
 import { ClaudeTurnSummaryComponent } from './claude-turn-summary.component';
 import { ReviewThreadsCardComponent } from './cw-review-threads-card.component';
+import { ToolDenialComponent } from './tool-denial.component';
 
 /**
  * Per-message affordances, resolved by the host.
@@ -83,6 +84,7 @@ export const READ_ONLY_MESSAGE_AFFORDANCES: TranscriptMessageAffordances = {
     ClaudeTurnChangesComponent,
     ClaudeTurnSummaryComponent,
     ReviewThreadsCardComponent,
+    ToolDenialComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './claude-transcript.component.html',
