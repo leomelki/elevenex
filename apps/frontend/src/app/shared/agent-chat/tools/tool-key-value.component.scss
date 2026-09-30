@@ -1,0 +1,19 @@
+.cw-tool__kv {
+  display: grid;
+  gap: 0.125rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+}
+.cw-tool__kv-row {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  gap: 0.5rem;
+  padding: 0.125rem 0.25rem;
+}
+.cw-tool__kv-key {
+  color: var(--muted-foreground);
+}
+.cw-tool__kv-val {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

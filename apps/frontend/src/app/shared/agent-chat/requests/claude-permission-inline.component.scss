@@ -1,0 +1,446 @@
+:host {
+  display: block;
+}
+
+.cw-perm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 0.9rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 0.625rem);
+  background: var(--card, var(--background));
+  color: var(--card-foreground, var(--foreground));
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+/* Dock variant: snug to composer above it */
+.cw-perm--dock {
+  border-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* Header */
+.cw-perm__head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.cw-perm__batch {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius, 0.625rem) - 0.15rem);
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+.cw-perm__batch-item {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: baseline;
+}
+.cw-perm__batch-item code {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cw-perm__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 0.4rem;
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+  flex-shrink: 0;
+}
+.cw-perm__eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.cw-perm__tool {
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--foreground);
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.3rem;
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+.cw-perm__agent {
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.3rem;
+  border: 1px dashed color-mix(in oklab, var(--border) 80%, transparent);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Body */
+.cw-perm__title {
+  margin: 0.05rem 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--foreground);
+  letter-spacing: -0.005em;
+}
+.cw-perm__sub {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.cw-perm__path {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.cw-perm__plan-launcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.15rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid color-mix(in oklab, var(--primary) 24%, var(--border));
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--primary) 6%, var(--background));
+}
+.cw-perm__plan-copy {
+  min-width: 0;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+/* Preview area */
+.cw-perm__preview {
+  margin: 0.2rem 0 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--foreground) 3%, var(--background));
+  max-height: 12rem;
+  overflow: auto;
+}
+.cw-perm__preview--code,
+.cw-perm__preview--cmd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  line-height: 1.55;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--foreground);
+}
+.cw-perm__preview--md {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  max-height: 18rem;
+}
+.cw-perm__preview--md :first-child {
+  margin-top: 0;
+}
+.cw-perm__preview--md :last-child {
+  margin-bottom: 0;
+}
+
+/* Always allow pattern */
+.cw-perm__always {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.25rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--foreground) 3%, var(--background));
+}
+.cw-perm__always[data-has-patterns='false'] {
+  border-style: dashed;
+  background: transparent;
+}
+.cw-perm__always-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.cw-perm__always-kicker {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.cw-perm__always-empty {
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+}
+.cw-perm__patterns {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.cw-perm__pattern {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.cw-perm__pattern-label {
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.cw-perm__pattern-code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.18rem 0.4rem;
+  border-radius: 0.35rem;
+  background: var(--background);
+  border: 1px solid color-mix(in oklab, var(--border) 75%, transparent);
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+}
+.cw-perm__pattern-detail {
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.cw-perm__always-note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+:host ::ng-deep .cw-diff-del {
+  display: block;
+  color: oklch(0.45 0.2 20);
+  background: color-mix(in oklab, oklch(0.55 0.22 20) 10%, transparent);
+}
+:host ::ng-deep .cw-diff-add {
+  display: block;
+  color: oklch(0.42 0.18 240);
+  background: color-mix(in oklab, oklch(0.52 0.18 240) 10%, transparent);
+}
+:host ::ng-deep .cw-diff-context {
+  display: block;
+  color: var(--muted-foreground);
+}
+:host-context(.dark) ::ng-deep .cw-diff-del {
+  color: oklch(0.78 0.18 20);
+  background: color-mix(in oklab, oklch(0.72 0.18 20) 15%, transparent);
+}
+:host-context(.dark) ::ng-deep .cw-diff-add {
+  color: oklch(0.75 0.16 240);
+  background: color-mix(in oklab, oklch(0.68 0.16 240) 15%, transparent);
+}
+
+/* Actions */
+.cw-perm__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+.cw-perm__spacer {
+  flex: 1;
+}
+
+.cw-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  padding: 0.4rem 0.75rem;
+  border-radius: 0.45rem;
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 80ms ease;
+}
+.cw-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent);
+}
+.cw-btn:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+.cw-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.cw-btn ng-icon {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+/* Primary — solid, prominent (Always allow / Submit / Approve) */
+.cw-btn--primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+.cw-btn--primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--primary) 88%, var(--background));
+  border-color: color-mix(in oklab, var(--primary) 88%, var(--background));
+}
+.cw-btn--primary ng-icon {
+  opacity: 1;
+}
+
+/* Secondary — subtle filled (Allow once) */
+.cw-btn--secondary {
+  background: var(--secondary, color-mix(in oklab, var(--foreground) 6%, var(--background)));
+  color: var(--secondary-foreground, var(--foreground));
+  border-color: transparent;
+}
+.cw-btn--secondary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--foreground) 10%, var(--background));
+}
+
+/* Deny — destructive ghost on the left */
+.cw-btn--deny {
+  background: transparent;
+  color: var(--muted-foreground);
+  border-color: transparent;
+  padding-left: 0.55rem;
+  padding-right: 0.55rem;
+}
+.cw-btn--deny:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--destructive) 9%, transparent);
+  color: var(--destructive);
+}
+
+/* Confirm-deny — solid destructive */
+.cw-btn--deny-confirm {
+  background: var(--destructive);
+  color: var(--primary-foreground);
+  border-color: var(--destructive);
+}
+.cw-btn--deny-confirm:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--destructive) 88%, var(--background));
+  border-color: color-mix(in oklab, var(--destructive) 88%, var(--background));
+}
+.cw-btn--deny-confirm ng-icon {
+  opacity: 1;
+}
+
+/* Ghost — minimal */
+.cw-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted-foreground);
+}
+.cw-btn--ghost:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+  color: var(--foreground);
+}
+
+/* Deny composer */
+.cw-perm__deny {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.15rem;
+  padding: 0.6rem 0.7rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--destructive) 25%, var(--border));
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--destructive) 4%, var(--background));
+}
+.cw-perm__deny-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.cw-perm__deny-optional {
+  font-weight: 400;
+  color: var(--muted-foreground);
+  margin-left: 0.25rem;
+}
+.cw-perm__deny-input {
+  min-height: 2.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--background);
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.cw-perm__deny-input:focus {
+  border-color: color-mix(in oklab, var(--destructive) 50%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--destructive) 18%, transparent);
+}
+.cw-perm__deny-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.cw-perm__deny-hint {
+  flex: 1;
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+}
+
+@media (max-width: 540px) {
+  .cw-perm {
+    padding: 0.7rem 0.75rem;
+  }
+  .cw-perm__spacer {
+    display: none;
+  }
+  .cw-btn {
+    flex: 1;
+  }
+  .cw-perm__pattern {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+  .cw-perm__pattern-detail {
+    white-space: normal;
+  }
+}

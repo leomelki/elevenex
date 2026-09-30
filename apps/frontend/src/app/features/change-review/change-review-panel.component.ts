@@ -19,11 +19,11 @@ import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideBinary,
+  lucideCheck,
   lucideChevronDown,
   lucideChevronLeft,
   lucideChevronRight,
   lucideChevronUp,
-  lucideCheck,
   lucideExternalLink,
   lucideFileCode,
   lucideGitBranch,
@@ -41,12 +41,20 @@ import {
   lucideX,
 } from '@ng-icons/lucide';
 import hljs from 'highlight.js/lib/common';
-import { firstValueFrom, Subject, takeUntil } from 'rxjs';
 import { toast } from 'ngx-sonner';
+import { firstValueFrom, Subject, takeUntil } from 'rxjs';
 
+import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
 import {
-  ChangeReviewFileSummary,
+  detectHljsLang,
+  escapeHtml,
+  inlineChangeHtml,
+} from '@/shared/agent-chat/tools/code-highlight';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
+import {
   ChangeReviewFileStatus,
+  ChangeReviewFileSummary,
   ChangeReviewFileWindow,
   ChangeReviewLoadGuard,
   ChangeReviewRow,
@@ -62,19 +70,6 @@ import {
 import { GitStatusSummary } from '@/shared/models/git.model';
 import { ChangeReviewService } from '@/shared/services/change-review.service';
 import { GitService } from '@/shared/services/git.service';
-import { ZardButtonComponent } from '@/shared/components/button';
-import { ZardInputDirective } from '@/shared/components/input';
-import {
-  detectHljsLang,
-  escapeHtml,
-  inlineChangeHtml,
-} from '@/features/session/claude-workspace/util/code-highlight';
-import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
-import {
-  DEFAULT_DIFF_SELECTION_ACTIONS,
-  DiffSelectionMenuComponent,
-  type DiffSelectionMenuAction,
-} from './diff-selection-menu.component';
 import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
 import { diffMentionRowKey } from '@/shared/utils/diff-row-key';
 import { captureSelectionWithin, clearSelection } from '@/shared/utils/dom-selection';
@@ -85,6 +80,11 @@ import {
   ChangeReviewVirtualLayout,
   estimateChangeReviewDiffRows,
 } from './change-review-virtual-layout';
+import {
+  DEFAULT_DIFF_SELECTION_ACTIONS,
+  DiffSelectionMenuComponent,
+  type DiffSelectionMenuAction,
+} from './diff-selection-menu.component';
 
 type StatusFilter = 'all' | ChangeReviewFileStatus;
 type RenderRowKind = 'fileHeader' | 'fileMeta' | 'largeDiffGate' | 'diff';
@@ -363,7 +363,9 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly loadingContextRanges = signal<ReadonlySet<string>>(new Set());
   readonly fileChangeHashes = signal<ReadonlyMap<string, string>>(new Map());
   readonly fileFingerprints = signal<ReadonlyMap<string, string>>(new Map());
-  private readonly diffSnapshotFingerprints = signal<ReadonlyMap<string, DiffSnapshotEntry>>(new Map());
+  private readonly diffSnapshotFingerprints = signal<ReadonlyMap<string, DiffSnapshotEntry>>(
+    new Map(),
+  );
   readonly viewedFingerprints = signal<Record<string, string>>(this.readViewedFingerprints());
   readonly loadingFileFingerprints = signal<ReadonlySet<string>>(new Set());
   readonly collapsedPaths = signal<ReadonlySet<string>>(new Set());
@@ -419,9 +421,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       const fileMatches: SearchMatch[] = [];
       for (const [baseIndex, row] of state.baseRows) {
         if (row.type === 'hunk' || row.type === 'expand' || row.type === 'meta') continue;
-        const searchable = row.type === 'change'
-          ? `${row.content}\0${row.oldContent ?? ''}`.toLowerCase()
-          : row.content.toLowerCase();
+        const searchable =
+          row.type === 'change'
+            ? `${row.content}\0${row.oldContent ?? ''}`.toLowerCase()
+            : row.content.toLowerCase();
         if (searchable.includes(query)) {
           fileMatches.push({ filePath: file.path, baseIndex, diffIndex: 0 });
         }
@@ -941,11 +944,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    const placement = placeSelectionMenu(
-      captured.rect,
-      scrollEl.getBoundingClientRect(),
-      { top: scrollEl.scrollTop, left: scrollEl.scrollLeft },
-    );
+    const placement = placeSelectionMenu(captured.rect, scrollEl.getBoundingClientRect(), {
+      top: scrollEl.scrollTop,
+      left: scrollEl.scrollLeft,
+    });
     this.selectionMentionAction.set({ ...placement, mentions });
   }
 
@@ -966,10 +968,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
    * Route a selection-menu action. `mention` keeps its existing behaviour so
    * the Changes panel is unchanged; anything else is the host's to handle.
    */
-  onSelectionMenuAction(event: {
-    id: string;
-    mentions: DiffSelectionMention[];
-  }): void {
+  onSelectionMenuAction(event: { id: string; mentions: DiffSelectionMention[] }): void {
     if (event.id === 'mention') {
       this.mentionCurrentSelection();
       return;
@@ -993,9 +992,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     }
 
     const lang = detectHljsLang(row.path);
-    let html = row.type === 'change' && row.oldContent !== undefined
-      ? inlineChangeHtml(row.oldContent, row.content)
-      : escapeHtml(row.content || ' ');
+    let html =
+      row.type === 'change' && row.oldContent !== undefined
+        ? inlineChangeHtml(row.oldContent, row.content)
+        : escapeHtml(row.content || ' ');
     if (
       row.type !== 'hunk' &&
       row.type !== 'expand' &&
@@ -1870,7 +1870,11 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     const anchor = this.captureAnchor();
     this.rememberFileChangeHash(fileWindow.path, fileWindow.changeHash);
     if (fileWindow.offset === 0 && fileWindow.fingerprint !== null) {
-      this.storeDiffSnapshotFingerprint(fileWindow.path, fileWindow.fingerprint, fileWindow.changeHash);
+      this.storeDiffSnapshotFingerprint(
+        fileWindow.path,
+        fileWindow.fingerprint,
+        fileWindow.changeHash,
+      );
     }
     this.setFileState(fileWindow.path, (state) => {
       const baseRows = new Map(state.baseRows);
@@ -2405,7 +2409,11 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  private storeDiffSnapshotFingerprint(filePath: string, fingerprint: string, changeHash: string): void {
+  private storeDiffSnapshotFingerprint(
+    filePath: string,
+    fingerprint: string,
+    changeHash: string,
+  ): void {
     this.diffSnapshotFingerprints.update((current) => {
       const next = new Map(current);
       next.set(filePath, { fingerprint, changeHash });
@@ -2697,4 +2705,3 @@ function baseIndexToDiffIndex(state: FileRenderState, targetBaseIndex: number): 
   }
   return targetBaseIndex + shift;
 }
-

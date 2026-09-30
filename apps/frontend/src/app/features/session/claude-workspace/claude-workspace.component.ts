@@ -1,4 +1,96 @@
 import {
+  PlanFeedbackPayload,
+  PlanReviewRequest,
+  isSamePlanReview,
+  planReviewFromPermissionRequest,
+  planReviewFromTranscriptItem,
+} from '@/features/plan-annotator';
+import {
+  ClaudeAgentInspectorComponent,
+  ClaudeSubagentHistoryState,
+} from '@/shared/agent-chat/activity/claude-agent-inspector.component';
+import { ClaudeBackgroundActivityComponent } from '@/shared/agent-chat/activity/claude-background-activity.component';
+import { AgentConversation } from '@/shared/agent-chat/agent-conversation';
+import {
+  ClaudeComposerComponent,
+  ComposerImageAttachment,
+  ComposerSendPayload,
+} from '@/shared/agent-chat/composer/claude-composer.component';
+import { ComposerDraftService } from '@/shared/agent-chat/composer/composer-draft.service';
+import { ClaudePermissionInlineComponent } from '@/shared/agent-chat/requests/claude-permission-inline.component';
+import { ClaudeUserInputComponent } from '@/shared/agent-chat/requests/claude-user-input.component';
+import { TranscriptLoadingSkeletonComponent } from '@/shared/agent-chat/transcript-loading-skeleton.component';
+import { ClaudeContextNoteComponent } from '@/shared/agent-chat/transcript/claude-context-note.component';
+import {
+  ClaudeTranscriptComponent,
+  type TranscriptMessageAffordances,
+} from '@/shared/agent-chat/transcript/claude-transcript.component';
+import { copyChatMessage } from '@/shared/agent-chat/transcript/message-clipboard';
+import { TranscriptRenderItem } from '@/shared/agent-chat/transcript/transcript-render-items';
+import { ZardButtonComponent } from '@/shared/components/button/button.component';
+import type { AgentShow } from '@/shared/models/agent-channel.model';
+import {
+  AGENT_PROVIDER_ICONS,
+  AGENT_PROVIDER_PRESENTATIONS,
+} from '@/shared/models/agent-provider-presentation';
+import type { AgentRuntimeCommand } from '@/shared/models/agent-runtime.model';
+import {
+  AgentAuthStatus,
+  AgentPlanUsage,
+  AgentProviderId,
+  AgentRuntimeProviderInfo,
+} from '@/shared/models/agent-runtime.model';
+import type { AgentModelPreset } from '@/shared/models/app-settings.model';
+import {
+  ClaudeAutocompleteItem,
+  ClaudeContextUsage,
+  ClaudeMcpServerEntry,
+  ClaudeMcpSnapshot,
+  ClaudeModelOption,
+  ClaudePendingPrompt,
+  ClaudePermissionApproval,
+  ClaudePermissionMode,
+  ClaudePermissionRequest,
+  ClaudeReasoningEffort,
+  ClaudeRuntimeEvent,
+  ClaudeRuntimeSessionMetadata,
+  ClaudeRuntimeState,
+  ClaudeRuntimeWarmState,
+  ClaudeSessionExecutionState,
+  ClaudeStatusBarPhase,
+  ClaudeTaskState,
+  ClaudeTranscriptItem,
+} from '@/shared/models/claude-runtime.model';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
+import type { ReviewChat } from '@/shared/models/review-chat.model';
+import type {
+  SessionMention,
+  SessionMentionCandidate,
+} from '@/shared/models/session-mention.model';
+import type { CreateSessionForkResponse, SessionFork } from '@/shared/models/session.model';
+import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
+import { AgentShowsService } from '@/shared/services/agent-shows.service';
+import { AppSettingsService } from '@/shared/services/app-settings.service';
+import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
+import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
+import { ClaudeStatusService } from '@/shared/services/claude-status.service';
+import { ClaudeTerminalTranscriptWebsocketService } from '@/shared/services/claude-terminal-transcript-websocket.service';
+import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
+import { NavigationService } from '@/shared/services/navigation.service';
+import { ReviewChatsService } from '@/shared/services/review-chats.service';
+import { SessionsService } from '@/shared/services/sessions.service';
+import { WorktreeContextService } from '@/shared/services/worktree-context.service';
+import {
+  appendDiffSelectionMentions,
+  parseDiffSelectionMentions,
+} from '@/shared/utils/diff-selection-mention';
+import { appendSessionMentions, parseSessionMentions } from '@/shared/utils/session-mention';
+import { parseTaskNotifications } from '@/shared/utils/task-notification';
+import { CommonModule } from '@angular/common';
+import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
@@ -16,78 +108,36 @@ import {
   signal,
   untracked,
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Subscription, firstValueFrom } from 'rxjs';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import {
+  lucideArchive,
+  lucideArchiveRestore,
+  lucideArrowUp,
+  lucideCheck,
+  lucideChevronDown,
+  lucideChevronUp,
+  lucideFileText,
+  lucideGitBranch,
+  lucideMessageSquareQuote,
+  lucideNotebookPen,
+  lucideOrbit,
+  lucideRefreshCw,
+  lucideSparkles,
+  lucideTriangleAlert,
+  lucideWandSparkles,
+} from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
-import {
-  ClaudeAutocompleteItem,
-  ClaudeBackgroundWorkItem,
-  ClaudeContextUsage,
-  ClaudeHookEvent,
-  ClaudeMcpServerEntry,
-  ClaudeMcpSnapshot,
-  ClaudeModelOption,
-  ClaudePendingPrompt,
-  ClaudePermissionApproval,
-  ClaudePermissionMode,
-  ClaudeReasoningEffort,
-  ClaudePermissionRequest,
-  ClaudeRuntimeSessionMetadata,
-  ClaudeRunPhase,
-  ClaudeRuntimeWarmState,
-  ClaudeStatusBarPhase,
-  ClaudeRuntimeEvent,
-  ClaudeRuntimeState,
-  ClaudeSessionExecutionState,
-  ClaudeTaskState,
-  ClaudeSubagentState,
-  ClaudeToolProgress,
-  ClaudeTranscriptItemKind,
-  ClaudeTranscriptItem,
-  ClaudeUserInputRequest,
-} from '@/shared/models/claude-runtime.model';
-import { WorktreeContextSnapshot } from '@/shared/models/worktree-context.model';
-import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
-import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
-import type {
-  SessionMention,
-  SessionMentionCandidate,
-} from '@/shared/models/session-mention.model';
-import {
-  AgentAuthStatus,
-  AgentPlanUsage,
-  AgentProviderId,
-  AgentRuntimeProviderInfo,
-} from '@/shared/models/agent-runtime.model';
-import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
-import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
-import { ClaudeTerminalTranscriptWebsocketService } from '@/shared/services/claude-terminal-transcript-websocket.service';
-import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
-import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
-import { SessionsService } from '@/shared/services/sessions.service';
-import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
-import { ReviewChatsService } from '@/shared/services/review-chats.service';
-import type { ReviewChat } from '@/shared/models/review-chat.model';
-import { ClaudeStatusService } from '@/shared/services/claude-status.service';
-import { WorktreeContextService } from '@/shared/services/worktree-context.service';
-import { ClaudePermissionInlineComponent } from './components/claude-permission-inline.component';
-import { ClaudeUserInputComponent } from './components/claude-user-input.component';
+import { Observable, Subscription, firstValueFrom } from 'rxjs';
 import { AgentShowCardComponent } from './components/agent-show-card.component';
-import {
-  ClaudeComposerComponent,
-  ComposerImageAttachment,
-  ComposerSendPayload,
-} from './components/claude-composer.component';
-import { ClaudeStatusBarComponent } from './components/claude-status-bar.component';
-import { ClaudeBackgroundActivityComponent } from './components/claude-background-activity.component';
 import {
   ClaudeExportDialogComponent,
   type ExportRequest,
 } from './components/claude-export-dialog.component';
-import { ClaudeTasksDrawerComponent } from './components/claude-tasks-drawer.component';
-import { ClaudeMcpDrawerComponent } from './components/claude-mcp-drawer.component';
 import { ClaudeInstallCardComponent } from './components/claude-install-card.component';
+import { ClaudeMcpDrawerComponent } from './components/claude-mcp-drawer.component';
+import { ClaudeStatusBarComponent } from './components/claude-status-bar.component';
+import { ClaudeTasksDrawerComponent } from './components/claude-tasks-drawer.component';
 import { CodexLoginCardComponent } from './components/codex-login-card.component';
 import { PiLoginCardComponent } from './components/pi-login-card.component';
 
@@ -100,61 +150,6 @@ import { PiLoginCardComponent } from './components/pi-login-card.component';
  * surfaces its own error instead.
  */
 const LOGIN_CARD_PROVIDERS = new Set(['claude', 'codex', 'pi']);
-import {
-  ClaudeAgentInspectorComponent,
-  ClaudeSubagentHistoryState,
-} from './components/claude-agent-inspector.component';
-import { ClaudeContextNoteComponent } from './components/claude-context-note.component';
-import {
-  ClaudeTranscriptComponent,
-  type TranscriptMessageAffordances,
-} from './components/claude-transcript.component';
-import { PairedTranscriptUnit, pairTranscript } from './util/paired-transcript';
-import { TranscriptRenderItem, buildTranscriptRenderItems } from './util/transcript-render-items';
-import {
-  PlanFeedbackPayload,
-  PlanReviewRequest,
-  isSamePlanReview,
-  planReviewFromPermissionRequest,
-  planReviewFromTranscriptItem,
-} from '@/features/plan-annotator';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import {
-  lucideWandSparkles,
-  lucideChevronDown,
-  lucideChevronUp,
-  lucideGitBranch,
-  lucideTriangleAlert,
-  lucideRefreshCw,
-  lucideArchive,
-  lucideArchiveRestore,
-  lucideCheck,
-  lucideFileText,
-  lucideNotebookPen,
-  lucideOrbit,
-  lucideSparkles,
-  lucideArrowUp,
-  lucideMessageSquareQuote,
-} from '@ng-icons/lucide';
-import { ZardButtonComponent } from '@/shared/components/button/button.component';
-import type { CreateSessionForkResponse, SessionFork } from '@/shared/models/session.model';
-import { AgentShowsService } from '@/shared/services/agent-shows.service';
-import { NavigationService } from '@/shared/services/navigation.service';
-import type { AgentShow } from '@/shared/models/agent-channel.model';
-import {
-  appendDiffSelectionMentions,
-  parseDiffSelectionMentions,
-} from '@/shared/utils/diff-selection-mention';
-import { appendSessionMentions, parseSessionMentions } from '@/shared/utils/session-mention';
-import { parseTaskNotifications } from '@/shared/utils/task-notification';
-import { ComposerDraftService } from './composer-draft.service';
-import { AppSettingsService } from '@/shared/services/app-settings.service';
-import type { AgentModelPreset } from '@/shared/models/app-settings.model';
-import {
-  AGENT_PROVIDER_ICONS,
-  AGENT_PROVIDER_PRESENTATIONS,
-} from '@/shared/models/agent-provider-presentation';
-import { TranscriptLoadingSkeletonComponent } from '@/shared/agent-chat/transcript-loading-skeleton.component';
 
 @Component({
   selector: 'app-claude-workspace',
@@ -257,6 +252,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.agentShowsService.liveShows().filter((s) => s.agentSessionId === this.sessionId),
   );
 
+  private readonly conversation = new AgentConversation();
+  private historyRefresh: { version: number; promise: Promise<void> } | null = null;
   readonly loading = signal(true);
   readonly applyingPresetId = signal<string | null>(null);
   readonly modelPresets = computed(() => this.appSettings.settings().agentModelPresets);
@@ -267,11 +264,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly pendingSessionMentions = signal<SessionMention[]>([]);
   readonly loadingSessionMentionId = signal<number | null>(null);
   readonly composerImages = signal<ComposerImageAttachment[]>([]);
-  readonly runPhase = signal<ClaudeRunPhase>('idle');
+  readonly runPhase = this.conversation.runPhase;
   readonly warmState = signal<ClaudeRuntimeWarmState>('cold');
   readonly sessionState = signal<ClaudeSessionExecutionState>('idle');
-  readonly canInterrupt = signal(false);
-  readonly lastError = signal<string | null>(null);
+  readonly canInterrupt = this.conversation.canInterrupt;
+  readonly lastError = this.conversation.lastError;
   readonly claudeSessionId = signal<string | null>(null);
   readonly providers = signal<AgentRuntimeProviderInfo[]>([]);
   // Provider selection is session-local. Multiple open tabs stay mounted and
@@ -300,13 +297,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly availableModels = signal<ClaudeModelOption[]>([]);
   readonly contextUsage = signal<ClaudeContextUsage | null>(null);
   readonly planUsage = signal<AgentPlanUsage | null>(null);
-  readonly historyItems = signal<ClaudeTranscriptItem[]>([]);
-  readonly liveItems = signal<ClaudeTranscriptItem[]>([]);
-  readonly optimisticUserItems = signal<ClaudeTranscriptItem[]>([]);
-  readonly pendingPermissionRequest = signal<ClaudePermissionRequest | null>(null);
-  readonly pendingUserInputRequest = signal<ClaudeUserInputRequest | null>(null);
-  readonly pendingPrompts = signal<ClaudePendingPrompt[]>([]);
-  readonly queuePaused = signal(false);
+  readonly historyItems = this.conversation.history;
+  readonly liveItems = this.conversation.live;
+  readonly optimisticUserItems = this.conversation.optimistic;
+  readonly pendingPermissionRequest = this.conversation.pendingPermissionRequest;
+  readonly pendingUserInputRequest = this.conversation.pendingUserInputRequest;
+  readonly pendingPrompts = this.conversation.pendingPrompts;
+  readonly queuePaused = this.conversation.queuePaused;
   private readonly cancelledPendingPromptIds = new Set<string>();
   private readonly autoApprovedPermissionRequestIds = new Set<string>();
   private bootstrappedProvider: AgentProviderId | null = null;
@@ -316,7 +313,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private lastSubmittedPromptText = '';
   readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
   readonly tasks = signal<ClaudeTaskState[]>([]);
-  readonly toolProgressByToolUseId = signal<Record<string, ClaudeToolProgress>>({});
+  readonly toolProgressByToolUseId = this.conversation.toolProgressByToolUseId;
   readonly tasksDrawerOpen = signal(false);
   readonly mcpDrawerOpen = signal(false);
   readonly exportDialogOpen = signal(false);
@@ -325,17 +322,17 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly mcpSnapshot = signal<ClaudeMcpSnapshot | null>(null);
   readonly mcpBusyServerName = signal<string | null>(null);
   readonly sessionMetadata = signal<ClaudeRuntimeSessionMetadata | null>(null);
-  readonly subagents = signal<ClaudeSubagentState[]>([]);
+  readonly subagents = this.conversation.subagents;
   // Work still executing in the background after the visible turn returned to
   // idle. Comes straight from the backend's swept registry rather than being
   // re-derived from the subagent ring buffer here: a missed stop hook used to
   // leave this stuck non-empty, which silently queued every later message.
-  readonly backgroundWork = signal<ClaudeBackgroundWorkItem[]>([]);
+  readonly backgroundWork = this.conversation.backgroundWork;
   // True while the current run was started by background work reporting back
   // rather than by a user prompt. The turn itself behaves identically; this is
   // only used to label it in the UI.
   readonly backgroundRunActive = signal(false);
-  readonly recentHookEvents = signal<ClaudeHookEvent[]>([]);
+  readonly recentHookEvents = this.conversation.recentHookEvents;
   readonly expandedTurns = signal<Record<string, boolean>>({});
   readonly expandedTurnChanges = signal<Record<string, boolean>>({});
   readonly armedEditMessageId = signal<string | null>(null);
@@ -592,11 +589,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private flushScheduled = false;
   private flushRafId: number | null = null;
 
-  readonly transcriptItems = computed(() =>
-    [...this.historyItems(), ...this.optimisticUserItems(), ...this.liveItems()].sort((l, r) =>
-      l.timestamp.localeCompare(r.timestamp),
-    ),
-  );
+  readonly transcriptItems = this.conversation.items;
 
   readonly userPromptIndex = computed(() => {
     const byId = new Map<string, ClaudeTranscriptItem>();
@@ -618,41 +611,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     return { byId, firstId, lastId };
   });
 
-  readonly topLevelTranscriptItems = computed(() =>
-    this.transcriptItems().filter((item) => !item.parentToolUseId),
-  );
+  readonly topLevelTranscriptItems = this.conversation.topLevelItems;
 
-  readonly childTranscriptItemsByParentToolUseId = computed(() => {
-    const grouped: Record<string, ClaudeTranscriptItem[]> = {};
-    for (const item of this.transcriptItems()) {
-      if (!item.parentToolUseId) continue;
-      grouped[item.parentToolUseId] = [...(grouped[item.parentToolUseId] ?? []), item];
-    }
-    return grouped;
-  });
+  readonly childTranscriptItemsByParentToolUseId = this.conversation.childItemsByParentToolUseId;
 
-  readonly pairedTranscript = computed<PairedTranscriptUnit[]>(() =>
-    pairTranscript(this.topLevelTranscriptItems()),
-  );
+  readonly pairedTranscript = this.conversation.units;
 
-  readonly renderItems = computed<TranscriptRenderItem[]>(() =>
-    buildTranscriptRenderItems({
-      units: this.pairedTranscript(),
-      settled: this.runPhase() === 'idle',
-      childItemsByParentToolUseId: this.childTranscriptItemsByParentToolUseId(),
-      subagents: this.subagents(),
-      hookEvents: this.recentHookEvents(),
-    }),
-  );
+  readonly renderItems = this.conversation.renderItems;
 
-  readonly liveToolUseIds = computed(
-    () =>
-      new Set(
-        this.liveItems()
-          .filter((item) => item.kind === 'tool_use' && item.toolUseId)
-          .map((item) => item.toolUseId as string),
-      ),
-  );
+  readonly liveToolUseIds = this.conversation.liveToolUseIds;
 
   readonly reviewThreadsByTurnId = computed(() => {
     const grouped: Record<string, ReviewChat[]> = {};
@@ -664,9 +631,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   });
 
   /** Only the streaming item pulses; everything else renders settled. */
-  readonly streamingMessageId = computed(() =>
-    this.runPhase() === 'running' ? this.lastLiveMessageId() : null,
-  );
+  readonly streamingMessageId = this.conversation.streamingMessageId;
 
   /**
    * Per-message capabilities handed to the transcript view. Arrow properties so
@@ -687,21 +652,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     forkDisabledReason: () => this.forkDisabledReason(),
   };
 
-  readonly lastLiveMessageId = computed(() => {
-    const live = this.liveItems();
-    for (let i = live.length - 1; i >= 0; i--) {
-      const item = live[i];
-      if (item.kind === 'assistant' || item.kind === 'thinking') return item.id;
-    }
-    if (this.terminalTranscriptMirror && this.runPhase() === 'running') {
-      const transcript = this.transcriptItems();
-      for (let i = transcript.length - 1; i >= 0; i--) {
-        const item = transcript[i];
-        if (item.kind === 'assistant' || item.kind === 'thinking') return item.id;
-      }
-    }
-    return null;
-  });
+  readonly lastLiveMessageId = this.conversation.lastLiveMessageId;
 
   readonly lastLiveAssistantMessageId = computed(() => {
     const live = this.liveItems();
@@ -806,6 +757,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     });
 
     this.destroyRef.onDestroy(() => {
+      this.bootstrapVersion += 1;
       if (this.flushRafId !== null) {
         cancelAnimationFrame(this.flushRafId);
       }
@@ -900,8 +852,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       void this.bootstrapForMode();
     }
     if (changes['activeAgentProvider'] && !changes['activeAgentProvider'].firstChange) {
-      const providerChangedSinceBootstrap =
-        this.bootstrappedProvider !== this.activeAgentProvider;
+      const providerChangedSinceBootstrap = this.bootstrappedProvider !== this.activeAgentProvider;
       if (providerChangedSinceBootstrap) {
         this.ws.disconnect(this.sessionId);
       }
@@ -1005,22 +956,12 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.pendingPrompts().length === 0 &&
       !this.queuePaused();
     if (startsImmediately && this.submitting()) return;
-    const now = new Date().toISOString();
     if (startsImmediately) {
       this.submitting.set(true);
       const optimisticContent = images.length
         ? [promptWithMentions, ...images.map(() => '[image]')].filter(Boolean).join('\n')
         : promptWithMentions;
-      this.optimisticUserItems.update((items) => [
-        ...items,
-        {
-          id: `opt-${Date.now()}`,
-          kind: 'user',
-          content: optimisticContent,
-          timestamp: now,
-          authoredAt: now,
-        },
-      ]);
+      this.conversation.addOptimisticPrompt(optimisticContent);
     }
     this.cancelArmedEdit();
     this.lastSubmittedPromptText = normalized.text;
@@ -1276,9 +1217,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   async onModelChange(model: string): Promise<void> {
-    if (this.readOnlyTranscript) return;
-    const next = await firstValueFrom(this.api.setSelectedModel(this.sessionId, model || null));
-    this.applyRuntimeState(next);
+    return this.updateRuntimeSetting(() =>
+      this.api.setSelectedModel(this.sessionId, model || null),
+    );
   }
 
   async applyModelPreset(preset: AgentModelPreset): Promise<void> {
@@ -1341,27 +1282,38 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   async onReasoningEffortChange(effort: ClaudeReasoningEffort | null): Promise<void> {
-    if (this.readOnlyTranscript) return;
-    const next = await firstValueFrom(this.api.setReasoningEffort(this.sessionId, effort));
-    this.applyRuntimeState(next);
+    return this.updateRuntimeSetting(() => this.api.setReasoningEffort(this.sessionId, effort));
   }
 
   async onFastModeChange(enabled: boolean): Promise<void> {
-    if (this.readOnlyTranscript) return;
-    const next = await firstValueFrom(this.api.setFastMode(this.sessionId, enabled));
-    this.applyRuntimeState(next);
+    return this.updateRuntimeSetting(() => this.api.setFastMode(this.sessionId, enabled));
   }
 
   async onPermissionModeChange(mode: ClaudePermissionMode): Promise<void> {
-    if (this.readOnlyTranscript) return;
-    const next = await firstValueFrom(this.api.setPermissionMode(this.sessionId, mode || null));
-    this.applyRuntimeState(next);
+    return this.updateRuntimeSetting(() =>
+      this.api.setPermissionMode(this.sessionId, mode || null),
+    );
   }
 
   async onPlanModeChange(enabled: boolean): Promise<void> {
+    return this.updateRuntimeSetting(() => this.api.setPlanMode(this.sessionId, enabled));
+  }
+
+  private async updateRuntimeSetting(request: () => Observable<ClaudeRuntimeState>): Promise<void> {
     if (this.readOnlyTranscript) return;
-    const next = await firstValueFrom(this.api.setPlanMode(this.sessionId, enabled));
-    this.applyRuntimeState(next);
+    const version = this.bootstrapVersion;
+    try {
+      const state = await firstValueFrom(request());
+      if (this.isCurrentConversation(version)) this.applyRuntimeState(state);
+    } catch (error) {
+      if (this.isCurrentConversation(version)) {
+        toast.error(this.getHttpErrorMessage(error, 'Could not update agent settings.'));
+      }
+    }
+  }
+
+  private isCurrentConversation(version: number): boolean {
+    return version === this.bootstrapVersion && !this.destroyRef.destroyed;
   }
 
   openTerminal(): void {
@@ -1658,23 +1610,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     return !!item.sourceMessageId && this.armedEditMessageId() === item.sourceMessageId;
   }
 
-  async copyMessage(item: ClaudeTranscriptItem, selectedText?: string | null): Promise<void> {
-    const selectedContent = typeof selectedText === 'string' ? selectedText.trim() : '';
-    const itemContent = parseDiffSelectionMentions(parseSessionMentions(item.content).text).text;
-    const content = selectedContent || itemContent;
-    if (!content) return;
-    if (!navigator.clipboard?.writeText) {
-      toast.error('Clipboard is not available.');
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(content);
-      toast.success('Message copied');
-    } catch {
-      toast.error('Could not copy message.');
-    }
-  }
+  readonly copyMessage = copyChatMessage;
 
   armEditMessage(item: ClaudeTranscriptItem): void {
     if (!item.sourceMessageId || this.messageActionsDisabled()) return;
@@ -1767,15 +1703,19 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private rehydrate(): void {
+    const version = this.bootstrapVersion;
     this.disconnectTranscriptSocket(this.sessionId);
     this.activeTranscriptSocket()
       .connect(this.sessionId)
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((event) => this.handleRuntimeEvent(event));
+      .subscribe((event) => {
+        if (version === this.bootstrapVersion && !this.destroyRef.destroyed)
+          this.handleRuntimeEvent(event);
+      });
     this.activeTranscriptSocket().send(this.sessionId, { type: 'hydrate' });
   }
 
-  private sendRuntimeAction(message: Record<string, unknown>): void {
+  private sendRuntimeAction(message: AgentRuntimeCommand): void {
     if (this.readOnlyTranscript) return;
     const socket = this.activeTranscriptSocket();
     if (!socket.isConnected(this.sessionId)) {
@@ -1956,12 +1896,14 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   async saveRootRef(): Promise<void> {
+    const version = this.bootstrapVersion;
     const rootRef = this.draftRootRef().trim() || null;
     this.worktreeContextBusy.set(true);
     try {
       await firstValueFrom(
         this.worktreeContextService.updateRootRef(this.repoId, this.worktreePath, rootRef),
       );
+      if (!this.isCurrentConversation(version)) return;
       const snapshot = await firstValueFrom(
         this.worktreeContextService.generate(this.repoId, this.worktreePath, {
           force: true,
@@ -1969,16 +1911,19 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
           provider: this.currentProvider(),
         }),
       );
+      if (!this.isCurrentConversation(version)) return;
       this.worktreeContext.set(snapshot);
       this.worktreeRootEditorOpen.set(false);
     } catch (error) {
-      toast.error(this.getHttpErrorMessage(error, 'Could not update the comparison root.'));
+      if (this.isCurrentConversation(version))
+        toast.error(this.getHttpErrorMessage(error, 'Could not update the comparison root.'));
     } finally {
-      this.worktreeContextBusy.set(false);
+      if (this.isCurrentConversation(version)) this.worktreeContextBusy.set(false);
     }
   }
 
   async recomputeWorktreeContext(): Promise<void> {
+    const version = this.bootstrapVersion;
     if (this.worktreeContextBusy()) return;
     this.worktreeContextBusy.set(true);
     try {
@@ -1988,15 +1933,19 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
           provider: this.currentProvider(),
         }),
       );
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       this.worktreeContext.set(snapshot);
     } catch (error) {
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       toast.error(this.getHttpErrorMessage(error, 'Could not recompute worktree context.'));
     } finally {
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       this.worktreeContextBusy.set(false);
     }
   }
 
   private async loadWorktreeContext(triggerGenerate = true): Promise<void> {
+    const version = this.bootstrapVersion;
     this.worktreeContextLoading.set(true);
     const deferGeneration =
       triggerGenerate &&
@@ -2007,10 +1956,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
           cachedOnly: !triggerGenerate || deferGeneration,
         }),
       );
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       this.worktreeContext.set(snapshot);
       this.draftRootRef.set(snapshot.rootRef ?? '');
       if (!this.hasInjectedContext()) {
-        this.firstPromptContextEnabled.set(snapshot.contextEnabled);
+        this.firstPromptContextEnabled.set(snapshot.contextEnabled ?? true);
       }
 
       const shouldAutoGenerate =
@@ -2031,6 +1981,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
             provider: this.currentProvider(),
           }),
         );
+        if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
         this.worktreeContext.set(generated);
         console.info(
           `[worktree-context] first-time generation settled for ${this.worktreePath} (status=${generated.generationStatus})`,
@@ -2044,8 +1995,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         }
       }
     } catch (error) {
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       toast.error(this.getHttpErrorMessage(error, 'Could not load worktree context.'));
     } finally {
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       this.worktreeContextLoading.set(false);
       this.worktreeContextBusy.set(false);
     }
@@ -2108,7 +2061,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private handleRuntimeEvent(event: ClaudeRuntimeEvent): void {
     switch (event.type) {
       case 'session_snapshot':
-        this.historyItems.set(event.payload.history);
+        this.conversation.applyHistoryRefresh(event.payload.history);
         this.applyRuntimeState(event.payload);
         this.hydrated.set(true);
         this.loading.set(false);
@@ -2117,10 +2070,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.applyRuntimeState(event.payload);
         return;
       case 'history_snapshot':
-        this.historyItems.set(event.payload.history);
-        if (this.runPhase() === 'idle' && !this.submitting()) {
-          this.optimisticUserItems.set([]);
-        }
+        this.conversation.apply(event);
         this.hydrated.set(true);
         this.loading.set(false);
         return;
@@ -2137,25 +2087,11 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.sessionMetadata.set(event.payload.metadata);
         void this.refreshAutocomplete().catch(() => undefined);
         return;
-      case 'hook_event':
-        this.recentHookEvents.update((items) => [event.payload.hookEvent, ...items].slice(0, 50));
-        return;
-      case 'subagent_lifecycle':
-        this.subagents.update((items) => [
-          event.payload.subagent,
-          ...items.filter((agent) => agent.agentId !== event.payload.subagent.agentId),
-        ]);
-        return;
-      case 'background_work':
-        this.backgroundWork.set(event.payload.backgroundWork ?? []);
-        return;
       case 'run_state':
-        this.runPhase.set(event.payload.runPhase);
+        this.updatePendingPrompts(event.payload.pendingPrompts ?? []);
+        this.conversation.apply(event);
         this.sessionState.set(event.payload.sessionState);
-        this.canInterrupt.set(event.payload.canInterrupt);
-        this.backgroundWork.set(event.payload.backgroundWork ?? []);
         this.backgroundRunActive.set(event.payload.backgroundRunActive ?? false);
-        this.lastError.set(event.payload.lastError);
         this.selectedModel.set(event.payload.selectedModel);
         this.reasoningEffort.set(event.payload.reasoningEffort ?? null);
         this.fastMode.set(event.payload.fastMode ?? false);
@@ -2167,9 +2103,6 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this._permissionMode.set(event.payload.permissionMode);
         this._planMode.set(event.payload.planMode ?? false);
         this.applyPendingPermissionFromRuntime(event.payload.pendingPermissionRequest);
-        this.pendingUserInputRequest.set(event.payload.pendingUserInputRequest);
-        this.updatePendingPrompts(event.payload.pendingPrompts ?? []);
-        this.queuePaused.set(event.payload.queuePaused ?? false);
         if (event.payload.runPhase !== 'running') this.submitting.set(false);
         return;
       case 'plan_usage':
@@ -2184,25 +2117,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
           ...items.filter((t) => t.taskId !== event.payload.task.taskId),
         ]);
         return;
-      case 'tool_progress':
-        this.toolProgressByToolUseId.update((items) => ({
-          ...items,
-          [event.payload.progress.toolUseId]: event.payload.progress,
-        }));
-        return;
-      case 'message_start':
-        this.upsertLiveItem(event.payload.item);
-        return;
-      case 'tool_use':
-      case 'tool_result':
-        this.upsertLiveItem(event.payload.item);
-        return;
-      case 'thinking_start':
-        this.upsertLiveItem(event.payload.item);
-        return;
       case 'message_delta':
-        this.enqueueDelta(event.payload.itemId, event.payload.delta);
-        return;
       case 'thinking_delta':
         this.enqueueDelta(event.payload.itemId, event.payload.delta);
         return;
@@ -2213,31 +2128,10 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       }
       case 'permission_resolved':
         this.autoApprovedPermissionRequestIds.delete(event.payload.requestId);
-        this.pendingPermissionRequest.set(null);
-        this.liveItems.update((items) =>
-          items.map((item) =>
-            item.kind === 'tool_use' && item.toolUseId === event.payload.toolUseId
-              ? { ...item, interaction: event.payload.interaction }
-              : item,
-          ),
-        );
-        return;
-      case 'user_input_request':
-        this.pendingUserInputRequest.set(event.payload.request);
+        this.conversation.apply(event);
         return;
       case 'error': {
-        const now = new Date().toISOString();
-        this.lastError.set(event.payload.message);
-        this.liveItems.update((items) => [
-          ...items,
-          {
-            id: `err-${Date.now()}`,
-            kind: 'error',
-            content: event.payload.message,
-            timestamp: now,
-            receivedAt: now,
-          },
-        ]);
+        this.conversation.apply(event);
         if (this.lastSubmittedPromptText && !this.prompt()) {
           this.prompt.set(this.lastSubmittedPromptText);
           this.markComposerDraftChanged();
@@ -2253,9 +2147,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         return;
       }
       case 'complete':
+        this.flushDeltas();
+        this.conversation.apply(event);
         this.autoApprovedPermissionRequestIds.clear();
-        this.pendingPermissionRequest.set(null);
-        this.pendingUserInputRequest.set(null);
         this.submitting.set(false);
         if (this.mcpDrawerOpen()) {
           void this.loadMcpSnapshot(true);
@@ -2266,6 +2160,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         this.setAuthStatus(this.currentProvider(), event.payload.status as AgentAuthStatus);
         return;
       default:
+        this.conversation.apply(event);
         return;
     }
   }
@@ -2277,140 +2172,37 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.scheduleDeferredContextGeneration();
   }
 
-  private upsertLiveItem(item: ClaudeTranscriptItem): void {
-    this.liveItems.update((items) => [
-      ...items.filter((existing) => existing.id !== item.id),
-      item,
-    ]);
-  }
-
   private async syncHistoryAfterCompletion(): Promise<void> {
-    // Flush pending deltas synchronously before snapshotting liveItems. The RAF-based
-    // flush hasn't run yet when 'complete' fires, so without this the last streamed
-    // assistant message would have empty content in the snapshot and be dropped by
-    // pairTranscript (which skips assistant items with no content).
-    if (this.flushRafId !== null) {
-      cancelAnimationFrame(this.flushRafId);
-    }
+    const version = this.bootstrapVersion;
+    if (this.historyRefresh?.version === version) return this.historyRefresh.promise;
     this.flushDeltas();
-
-    const preSyncLiveItems = this.liveItems();
-    const preSyncOptimisticUserItems = this.optimisticUserItems();
-    const history = await firstValueFrom(this.api.getHistory(this.sessionId));
-
-    // Streaming items and history items use different ID formats:
-    //   Streaming text:    msg_abc:0              History text:    msg_abc:assistant:0
-    //   Streaming thinking: msg_abc:1             History thinking: msg_abc:thinking:1
-    //   Streaming tool:    msg_abc:tool:toolu_x   History tool:    msg_abc:tool_use:toolu_x
-    // Exact-ID dedup fails for these, so we match by UUID prefix + kind + content block index
-    // in addition to exact ID and toolUseId matching.
-    const historyIds = new Set(history.map((i) => i.id));
-    const historyToolUseIds = new Set(
-      history.map((i) => i.toolUseId).filter((id): id is string => !!id),
-    );
-
-    type KindKey = `${string}:${ClaudeTranscriptItemKind}`;
-    const historyKindKeys = new Set<KindKey>();
-    const historyContentKeys = new Set<KindKey>();
-    for (const item of history) {
-      const colonIdx = item.id.indexOf(':');
-      if (colonIdx >= 0) {
-        historyKindKeys.add(`${item.id.slice(0, colonIdx)}:${item.kind}`);
+    const promise = (async () => {
+      try {
+        const history = await firstValueFrom(this.api.getHistory(this.sessionId));
+        if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
+        this.flushDeltas();
+        this.conversation.applyHistoryRefresh(history);
+      } catch (error) {
+        if (version === this.bootstrapVersion && !this.destroyRef.destroyed) {
+          this.lastError.set(
+            this.getHttpErrorMessage(error, 'Could not refresh conversation history.'),
+          );
+        }
       }
-      const contentKey = this.transcriptContentKey(item);
-      if (contentKey) {
-        historyContentKeys.add(contentKey);
-      }
+    })();
+    this.historyRefresh = { version, promise };
+    try {
+      await promise;
+    } finally {
+      if (this.historyRefresh?.promise === promise) this.historyRefresh = null;
     }
-
-    // Keep live items not already represented in history so tool calls are never
-    // lost when the JSONL hasn't flushed before this call resolves.
-    const liveToMerge = preSyncLiveItems.filter((item) => {
-      if (historyIds.has(item.id)) return false;
-      if (item.toolUseId && historyToolUseIds.has(item.toolUseId)) return false;
-      const colonIdx = item.id.indexOf(':');
-      if (colonIdx >= 0) {
-        const key: KindKey = `${item.id.slice(0, colonIdx)}:${item.kind}`;
-        if (historyKindKeys.has(key)) return false;
-      }
-      const contentKey = this.transcriptContentKey(item);
-      if (contentKey && historyContentKeys.has(contentKey)) return false;
-      return true;
-    });
-
-    // Optimistic user items have ids like `opt-<ts>` that never appear in history,
-    // so match by trimmed content as a multiset: each history user message consumes
-    // at most one optimistic item, preserving legitimate duplicate prompts. Unmatched
-    // optimistic items stay visible until the next sync picks them up — otherwise the
-    // first user bubble disappears when the JSONL hasn't flushed yet.
-    const historyUserCounts = new Map<string, number>();
-    for (const item of history) {
-      if (item.kind !== 'user') continue;
-      const key = (item.content ?? '').trim();
-      historyUserCounts.set(key, (historyUserCounts.get(key) ?? 0) + 1);
-    }
-    const optimisticToKeep = preSyncOptimisticUserItems.filter((item) => {
-      const key = (item.content ?? '').trim();
-      const remaining = historyUserCounts.get(key) ?? 0;
-      if (remaining > 0) {
-        historyUserCounts.set(key, remaining - 1);
-        return false;
-      }
-      return true;
-    });
-
-    this.historyItems.set(
-      [...history, ...liveToMerge].sort((l, r) => l.timestamp.localeCompare(r.timestamp)),
-    );
-    // Preserve optimistic user items that arrived during the async getHistory call (e.g. a
-    // queued prompt draining right as this sync started). Without this, updatePendingPrompts'
-    // freshly-added item is silently overwritten by the stale pre-fetch snapshot below, and the
-    // queued message never appears in the transcript even though it was actually sent.
-    const postSyncOptimisticUserItems = this.optimisticUserItems();
-    const newOptimisticDuringSync = postSyncOptimisticUserItems.filter(
-      (item) => !preSyncOptimisticUserItems.some((pre) => pre.id === item.id),
-    );
-    const newOptimisticToKeep = newOptimisticDuringSync.filter((item) => {
-      const key = (item.content ?? '').trim();
-      const remaining = historyUserCounts.get(key) ?? 0;
-      if (remaining > 0) {
-        historyUserCounts.set(key, remaining - 1);
-        return false;
-      }
-      return true;
-    });
-    this.optimisticUserItems.set([...optimisticToKeep, ...newOptimisticToKeep]);
-    // Preserve items that arrived in liveItems during the async getHistory call (e.g. a
-    // second message that started streaming while the fetch was in flight). Without this,
-    // those items get wiped and their subsequent deltas find no target, leaving only the
-    // first word that the RAF had already flushed before the fetch resolved.
-    const postSyncLiveItems = this.liveItems();
-    const newItemsDuringSync = postSyncLiveItems.filter(
-      (item) => !preSyncLiveItems.some((pre) => pre.id === item.id),
-    );
-    this.liveItems.set([
-      ...preSyncLiveItems.filter((item) => item.kind === 'error'),
-      ...newItemsDuringSync,
-    ]);
-  }
-
-  private transcriptContentKey(
-    item: ClaudeTranscriptItem,
-  ): `${string}:${ClaudeTranscriptItemKind}` | null {
-    if (item.kind !== 'assistant' && item.kind !== 'thinking') {
-      return null;
-    }
-    const content = item.content?.trim().replace(/\s+/g, ' ');
-    return content ? `${content}:${item.kind}` : null;
   }
 
   private applyRuntimeState(state: ClaudeRuntimeState): void {
-    this.liveItems.set(state.liveItems);
-    this.runPhase.set(state.runPhase);
+    this.updatePendingPrompts(state.pendingPrompts ?? []);
+    this.conversation.applyRuntimeState(state);
     this.warmState.set(state.warmState);
     this.sessionState.set(state.sessionState);
-    this.canInterrupt.set(state.canInterrupt);
-    this.backgroundWork.set(state.backgroundWork ?? []);
     this.backgroundRunActive.set(state.backgroundRunActive ?? false);
     this.claudeSessionId.set(state.claudeSessionId);
     if (state.claudeSessionId && state.claudeSessionId !== '-1') {
@@ -2425,19 +2217,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this._permissionMode.set(state.permissionMode);
     this._planMode.set(state.planMode ?? false);
     this.applyPendingPermissionFromRuntime(state.pendingPermissionRequest);
-    this.pendingUserInputRequest.set(state.pendingUserInputRequest);
-    this.updatePendingPrompts(state.pendingPrompts ?? []);
-    this.queuePaused.set(state.queuePaused ?? false);
-    this.lastError.set(state.lastError);
     this.tasks.set(state.tasks);
-    this.toolProgressByToolUseId.set(
-      state.latestToolProgress
-        ? { [state.latestToolProgress.toolUseId]: state.latestToolProgress }
-        : {},
-    );
     this.sessionMetadata.set(state.sessionMetadata);
-    this.subagents.set(state.subagents);
-    this.recentHookEvents.set(state.recentHookEvents);
     if (state.authStatus != null) {
       this.setAuthStatus(this.currentProvider(), state.authStatus as AgentAuthStatus);
     }
@@ -2469,6 +2250,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private reset(): void {
+    this.conversation.reset();
     this.bootstrapVersion += 1;
     this.wsAutoReconnecting = false;
     this.wsConnected.set(false);
@@ -2488,12 +2270,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.pendingSessionMentions.set([]);
     this.loadingSessionMentionId.set(null);
     this.composerImages.set([]);
-    this.runPhase.set('idle');
     this.sessionState.set('idle');
-    this.canInterrupt.set(false);
-    this.backgroundWork.set([]);
     this.backgroundRunActive.set(false);
-    this.lastError.set(null);
     this.claudeSessionId.set(null);
     this.selectedModel.set(null);
     this.reasoningEffort.set(null);
@@ -2513,25 +2291,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     this.planUsage.set(null);
     this._permissionMode.set(null);
     this._planMode.set(false);
-    this.historyItems.set([]);
-    this.liveItems.set([]);
-    this.optimisticUserItems.set([]);
-    this.pendingPermissionRequest.set(null);
-    this.pendingUserInputRequest.set(null);
-    this.pendingPrompts.set([]);
-    this.queuePaused.set(false);
     this.cancelledPendingPromptIds.clear();
     this.autocompleteItems.set([]);
     this.tasks.set([]);
-    this.toolProgressByToolUseId.set({});
     this.tasksDrawerOpen.set(false);
     this.mcpDrawerOpen.set(false);
     this.mcpLoading.set(false);
     this.mcpSnapshot.set(null);
     this.mcpBusyServerName.set(null);
     this.sessionMetadata.set(null);
-    this.subagents.set([]);
-    this.recentHookEvents.set([]);
     this.authStatusByProvider.set({});
     this.bootstrappedProvider = null;
     this.runtimeStarted.set(this.hasStartedAgentRuntime);
@@ -2716,19 +2484,14 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private flushDeltas(): void {
+    if (this.flushRafId !== null) cancelAnimationFrame(this.flushRafId);
     this.flushRafId = null;
     this.flushScheduled = false;
-    const deltas = this.pendingDeltas.splice(0);
-    if (deltas.length === 0) return;
-    this.liveItems.update((items) => {
-      let result = items;
-      for (const { itemId, delta } of deltas) {
-        result = result.map((item) =>
-          item.id === itemId ? { ...item, content: `${item.content ?? ''}${delta}` } : item,
-        );
-      }
-      return result;
-    });
+    const deltas = new Map<string, string>();
+    for (const { itemId, delta } of this.pendingDeltas.splice(0)) {
+      deltas.set(itemId, (deltas.get(itemId) ?? '') + delta);
+    }
+    if (deltas.size) this.conversation.appendDeltas(deltas);
   }
 
   /**
@@ -2736,17 +2499,21 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
    * uuid it forked from and the turn it belongs to, because the two differ.
    */
   private async loadReviewThreads(): Promise<void> {
+    const version = this.bootstrapVersion;
     if (this.readOnlyTranscript) return;
     try {
       const threads = await firstValueFrom(this.reviewChats.list(this.sessionId));
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       this.reviewThreads.set(threads);
     } catch {
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       // A missing discussions list must never break the transcript.
       this.reviewThreads.set([]);
     }
   }
 
   private async ensureAgentHistory(agentId: string): Promise<void> {
+    const version = this.bootstrapVersion;
     const current = this.agentHistoryById()[agentId];
     if (current?.loading || current?.data) return;
 
@@ -2757,6 +2524,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
     try {
       const data = await firstValueFrom(this.api.getSubagentHistory(this.sessionId, agentId));
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       this.agentHistoryById.update((state) => ({
         ...state,
         [agentId]: {
@@ -2766,6 +2534,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         },
       }));
     } catch (error) {
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       const message =
         (error as { error?: { message?: string } })?.error?.message ||
         (error instanceof Error ? error.message : 'Could not load agent history.');
@@ -2777,13 +2546,17 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private async loadMcpSnapshot(forceRefresh = false): Promise<void> {
+    const version = this.bootstrapVersion;
     this.mcpLoading.set(true);
     try {
       const snapshot = await firstValueFrom(this.api.getMcpSnapshot(this.sessionId, forceRefresh));
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       this.mcpSnapshot.set(snapshot);
     } catch (error) {
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       toast.error(this.getHttpErrorMessage(error, 'Could not load MCP servers.'));
     } finally {
+      if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
       this.mcpLoading.set(false);
     }
   }

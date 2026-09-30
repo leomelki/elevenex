@@ -1,0 +1,331 @@
+<div
+  class="cw-tool"
+  [class.cw-tool--answer-receipt]="isQuestionResponse()"
+  [attr.data-state]="state()"
+>
+  <!-- TodoWrite gets special inline rendering — no toggle needed, checklist is the point. -->
+  @if (isQuestionResponse()) {
+    <section
+      class="cw-answer-receipt"
+      [attr.data-outcome]="questionResponseSent() ? 'sent' : 'declined'"
+      aria-label="Your response"
+    >
+      <header class="cw-answer-receipt__header">
+        <span class="cw-answer-receipt__icon" aria-hidden="true">
+          <ng-icon name="lucideCheck" size="13" />
+        </span>
+        <span class="cw-answer-receipt__title">Your response</span>
+        <span class="cw-answer-receipt__status">
+          {{ questionResponseSent() ? 'Sent to agent' : 'Declined' }}
+        </span>
+      </header>
+
+      <div class="cw-answer-receipt__answers">
+        @for (entry of questionReceiptEntries(); track entry.question; let index = $index) {
+          <div class="cw-answer-receipt__answer">
+            @if (questionReceiptEntries().length > 1) {
+              <span class="cw-answer-receipt__number">{{ index + 1 }}</span>
+            }
+            <div class="cw-answer-receipt__copy">
+              <div class="cw-answer-receipt__question">{{ entry.question }}</div>
+              <div class="cw-answer-receipt__value">{{ entry.answer }}</div>
+            </div>
+          </div>
+        }
+      </div>
+    </section>
+  } @else if (display().kind === 'todo_write') {
+    <div class="cw-tool__head cw-tool__head--static">
+      <span class="cw-tool__state-icon"><ng-icon name="lucideListTodo" size="13" /></span>
+      <span class="cw-tool__verb">Todos</span>
+      <span class="cw-tool__count">{{ todos().length }}</span>
+    </div>
+    <cw-tool-todos [todos]="todos()" />
+  } @else {
+    <button type="button" class="cw-tool__head" (click)="toggle()">
+      <span class="cw-tool__state-icon">
+        @if (state() === 'running') {
+          <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" />
+        } @else if (state() === 'waiting') {
+          <ng-icon name="lucideLockKeyhole" size="12" />
+        } @else if (state() === 'denied') {
+          <ng-icon name="lucideShield" size="12" />
+        } @else if (state() === 'error') {
+          <ng-icon name="lucideCircleAlert" size="12" />
+        } @else {
+          <ng-icon name="lucideCheck" size="12" />
+        }
+      </span>
+
+      <ng-icon [name]="display().icon" size="13" class="cw-tool__glyph" />
+      <span class="cw-tool__verb">{{ display().verb }}</span>
+
+      @if (display().target) {
+        <span class="cw-tool__target" [title]="targetTitle()">{{ display().target }}</span>
+      }
+
+      @if (summary(); as s) {
+        <span class="cw-tool__result" [attr.data-tone]="s.tone">{{ s.text }}</span>
+      }
+
+      @if (canExpand()) {
+        <ng-icon
+          name="lucideChevronRight"
+          size="12"
+          class="cw-tool__chevron"
+          [class.rotate-90]="open()"
+        />
+      }
+    </button>
+
+    @if (open() && canExpand()) {
+      <div class="cw-tool__body">
+        @if (interaction(); as interaction) {
+          <div class="cw-agent">
+            <div class="cw-agent__label">Your choice</div>
+            <div class="cw-tool__decision">
+              <span class="cw-tool__decision-pill" [attr.data-tone]="interaction.decisionTone">
+                {{ interaction.decisionLabel }}
+              </span>
+
+              @if (interactionAnswers().length) {
+                <div class="cw-tool__answers">
+                  @for (entry of interactionAnswers(); track entry.question) {
+                    <div class="cw-tool__answer-row">
+                      <span class="cw-tool__answer-question">{{ entry.question }}</span>
+                      <span class="cw-tool__answer-value">{{ entry.answer }}</span>
+                    </div>
+                  }
+                </div>
+              }
+
+              @if (interactionContentText()) {
+                <pre class="cw-tool__output">{{ interactionContentText() }}</pre>
+              }
+            </div>
+          </div>
+        }
+
+        @switch (display().kind) {
+          @case ('bash') {
+            <cw-tool-command [command]="bashCommand()" />
+            @if (resultText()) {
+              <cw-tool-output [text]="resultText()" [error]="state() === 'error'" />
+            }
+          }
+          @case ('edit') {
+            @for (diff of editDiffs(); track $index) {
+              <cw-inline-diff
+                [html]="diff.html"
+                [label]="diff.label"
+                [additions]="diff.additions"
+                [deletions]="diff.deletions"
+              />
+            }
+            @if (resultText() && state() === 'error') {
+              <cw-tool-output [text]="resultText()" [error]="true" />
+            }
+          }
+          @case ('write') {
+            @if (writeContent()) {
+              <pre class="cw-tool__write" [innerHTML]="writeContentHtml()"></pre>
+              @if (writeHiddenLines() > 0) {
+                <button type="button" class="cw-tool__write-expand" (click)="toggleWriteExpand()">
+                  @if (writeExpanded()) {
+                    Show less
+                  } @else {
+                    Show {{ writeHiddenLines() }} more
+                    {{ writeHiddenLines() === 1 ? 'line' : 'lines' }}
+                  }
+                </button>
+              }
+            }
+          }
+          @case ('file_changes') {
+            @for (diff of fileChangeDiffs(); track diff.path + ':' + $index) {
+              <cw-inline-diff
+                [html]="diff.html"
+                [label]="diff.label"
+                [additions]="diff.additions"
+                [deletions]="diff.deletions"
+                [emptyText]="diff.emptyText"
+              />
+            }
+            @if (!fileChangeDiffs().length) {
+              <div class="cw-tool__web">No file change details were captured.</div>
+            }
+            @if (resultText() && state() === 'error') {
+              <cw-tool-output [text]="resultText()" [error]="true" />
+            }
+          }
+          @case ('task_agent') {
+            @if (agentPrompt()) {
+              <div class="cw-agent">
+                <button
+                  type="button"
+                  class="cw-agent__toggle"
+                  (click)="togglePrompt()"
+                  [attr.aria-expanded]="promptOpen()"
+                >
+                  <ng-icon
+                    name="lucideChevronRight"
+                    size="11"
+                    class="cw-agent__toggle-chevron"
+                    [class.rotate-90]="promptOpen()"
+                  />
+                  <span class="cw-agent__label">Prompt</span>
+                  @if (!promptOpen()) {
+                    <span class="cw-agent__preview">{{ agentPromptPreview() }}</span>
+                  }
+                </button>
+                @if (promptOpen()) {
+                  <agent-markdown
+                    class="cw-agent__prompt cw-agent__markdown"
+                    [content]="agentPrompt()"
+                  />
+                }
+              </div>
+            }
+            @if (agentUsageSummary()) {
+              <div class="cw-agent">
+                <div class="cw-agent__label">Run summary</div>
+                <div class="cw-agent__response">{{ agentUsageSummary() }}</div>
+              </div>
+            }
+            @if (childUnits().length) {
+              <div class="cw-subagent-stream">
+                <button
+                  type="button"
+                  class="cw-subagent-stream__header"
+                  (click)="toggleStream()"
+                  [attr.aria-expanded]="streamOpen()"
+                >
+                  <ng-icon
+                    name="lucideChevronRight"
+                    size="10"
+                    class="cw-subagent-stream__chevron"
+                    [class.rotate-90]="streamOpen()"
+                  />
+                  <span class="cw-subagent-stream__label">Agent activity</span>
+                  <span class="cw-subagent-stream__count">{{ childUnits().length }}</span>
+                  @if (isLive()) {
+                    <span class="cw-subagent-stream__live">live</span>
+                  }
+                </button>
+                @if (streamOpen()) {
+                  <div
+                    class="cw-subagent-stream__body"
+                    #streamBody
+                    (scroll)="onStreamScroll($event)"
+                  >
+                    @for (unit of childUnits(); track unit.id) {
+                      @switch (unit.kind) {
+                        @case ('message') {
+                          <cw-message [item]="unit.item" />
+                        }
+                        @case ('thinking') {
+                          <cw-thinking [item]="unit.item" />
+                        }
+                        @case ('tool') {
+                          <cw-tool-call
+                            [call]="unit.call"
+                            [result]="unit.result"
+                            [childItems]="nestedChildItems(unit.toolUseId)"
+                            [isLive]="isNestedLiveToolUse(unit.toolUseId)"
+                            (approve)="approve.emit($event)"
+                            (deny)="deny.emit($event)"
+                          />
+                        }
+                      }
+                    }
+                  </div>
+                }
+              </div>
+            }
+            @if (agentResponse()) {
+              <div class="cw-agent">
+                <div class="cw-agent__label">Response</div>
+                <agent-markdown
+                  class="cw-agent__response cw-agent__markdown"
+                  [content]="agentResponse()"
+                />
+              </div>
+            }
+            @if (turnId() && hasAgentHistory() && state() === 'done') {
+              <button type="button" class="cw-agent__deepdive" (click)="onDeepDiveClick()">
+                View full agent history →
+              </button>
+            }
+          }
+          @case ('grep') {
+            @if (resultText()) {
+              <pre class="cw-tool__output">{{ resultText() }}</pre>
+            }
+          }
+          @case ('read') {
+            @if (resultImages().length) {
+              <div class="cw-tool__images">
+                @for (image of resultImages(); track $index) {
+                  <img class="cw-tool__image" [src]="image.dataUrl" [alt]="readImageAlt()" />
+                }
+              </div>
+            }
+            @if (resultText()) {
+              <cw-tool-output [text]="resultText()" [error]="state() === 'error'" />
+            }
+          }
+          @case ('glob') {
+            @if (resultText()) {
+              <pre class="cw-tool__output">{{ resultText() }}</pre>
+            }
+          }
+          @case ('web_fetch') {
+            @if (resultText()) {
+              <div class="cw-tool__web">{{ resultText() }}</div>
+            }
+          }
+          @case ('web_search') {
+            @if (resultText()) {
+              <div class="cw-tool__web">{{ resultText() }}</div>
+            }
+          }
+          @case ('ask_user_question') {
+            @if (!interaction() && askAnswers().length) {
+              <div class="cw-agent">
+                <div class="cw-agent__label">Answers</div>
+                <div class="cw-tool__answers">
+                  @for (entry of askAnswers(); track entry.question) {
+                    <div class="cw-tool__answer-row">
+                      <span class="cw-tool__answer-question">{{ entry.question }}</span>
+                      <span class="cw-tool__answer-value">{{ entry.answer }}</span>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+          }
+          @case ('enter_plan_mode') {
+            <div class="cw-tool__web">Claude switched into planning mode and stayed read-only.</div>
+          }
+          @case ('exit_plan_mode') {
+            @if (planFilePath()) {
+              <div class="cw-agent">
+                <div class="cw-agent__label">Plan file</div>
+                <div class="cw-agent__response">{{ planFilePath() }}</div>
+              </div>
+            }
+            @if (planMarkdown()) {
+              <agent-markdown class="cw-tool__plan cw-agent__markdown" [content]="planMarkdown()" />
+            }
+          }
+          @default {
+            <cw-tool-kv [entries]="fallbackEntries()" />
+            @if (resultText()) {
+              <cw-tool-output [text]="resultText()" [error]="state() === 'error'" />
+            }
+          }
+        }
+      </div>
+    }
+  }
+</div>

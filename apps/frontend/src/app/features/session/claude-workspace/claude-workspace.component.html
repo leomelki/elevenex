@@ -186,6 +186,8 @@
             }
 
             <cw-transcript
+              [canInspectAgents]="true"
+              [canReviewChanges]="true"
               [items]="renderItems()"
               [worktreePath]="worktreePath"
               [streamingMessageId]="streamingMessageId()"

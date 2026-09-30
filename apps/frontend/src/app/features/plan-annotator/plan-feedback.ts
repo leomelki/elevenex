@@ -1,4 +1,4 @@
-import { PlanAnnotatorComment, PlanReviewRequest } from './plan-review.model';
+import { PlanAnnotatorComment, PlanReviewRequest } from '@/shared/models/plan-review.model';
 
 export function fingerprintPlan(value: string): string {
   let hash = 2166136261;

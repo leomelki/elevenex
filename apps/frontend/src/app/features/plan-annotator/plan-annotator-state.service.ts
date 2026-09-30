@@ -1,5 +1,5 @@
+import { PlanReviewRequest } from '@/shared/models/plan-review.model';
 import { Injectable, signal } from '@angular/core';
-import { PlanReviewRequest } from './plan-review.model';
 
 export type PlanReviewRailMode = 'comments' | 'ask';
 
@@ -36,7 +36,7 @@ export class PlanAnnotatorStateService {
   }
 
   getReview(sessionId: number | null | undefined): PlanReviewRequest | null {
-    return sessionId ? this.reviewsSignal().get(sessionId) ?? null : null;
+    return sessionId ? (this.reviewsSignal().get(sessionId) ?? null) : null;
   }
 
   hasReview(sessionId: number | null | undefined): boolean {
@@ -48,7 +48,7 @@ export class PlanAnnotatorStateService {
   }
 
   getMode(sessionId: number | null | undefined): PlanReviewRailMode {
-    return sessionId ? this.railModesSignal().get(sessionId) ?? 'comments' : 'comments';
+    return sessionId ? (this.railModesSignal().get(sessionId) ?? 'comments') : 'comments';
   }
 
   setMode(sessionId: number, mode: PlanReviewRailMode): void {

@@ -1,10 +1,10 @@
 import { Directive, NO_ERRORS_SCHEMA, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { of, Subject } from 'rxjs';
-import { NgIcon } from '@ng-icons/core';
 import { Router } from '@angular/router';
+import { NgIcon } from '@ng-icons/core';
 import { toast } from 'ngx-sonner';
+import { of, Subject } from 'rxjs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -17,27 +17,31 @@ vi.mock('@/shared/runtime/electron-window-controls', () => ({
   getElectronWindowControlsApi: () => undefined,
 }));
 
-import { Sidebar } from './sidebar';
-import { NavigationService } from '../../../shared/services/navigation.service';
-import { SessionsService } from '../../../shared/services/sessions.service';
-import { WorkspacesService } from '@/shared/services/workspaces.service';
-import { TabColorService } from '../../../shared/services/tab-color.service';
-import { TabService, Tab } from '../../session/tab-service';
+import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 import { PlannotatorStateService } from '@/features/plannotator';
-import { VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
-import { ClaudeStatusService } from '@/shared/services/claude-status.service';
-import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
-import { CursorService } from '@/shared/services/cursor.service';
 import { TodosService } from '@/features/productivity/todos.service';
-import { NavigationBranch, NavigationProject, NavigationWorkspace } from '../../../shared/models/navigation-tree.model';
-import { BranchInfo } from '../../../shared/models/branch.model';
+import { VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
+import { ComposerDraftService } from '@/shared/agent-chat/composer/composer-draft.service';
 import { Project } from '@/shared/models/project.model';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { ClaudeStatusService } from '@/shared/services/claude-status.service';
+import { CursorService } from '@/shared/services/cursor.service';
 import { PendingWorkspaceCreationsService } from '@/shared/services/pending-workspace-creations.service';
 import { ReposService } from '@/shared/services/repos.service';
-import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 import { SessionFoldersService } from '@/shared/services/session-folders.service';
-import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
-import { ComposerDraftService } from '@/features/session/claude-workspace/composer-draft.service';
+import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
+import { WorkspacesService } from '@/shared/services/workspaces.service';
+import { BranchInfo } from '../../../shared/models/branch.model';
+import {
+  NavigationBranch,
+  NavigationProject,
+  NavigationWorkspace,
+} from '../../../shared/models/navigation-tree.model';
+import { NavigationService } from '../../../shared/services/navigation.service';
+import { SessionsService } from '../../../shared/services/sessions.service';
+import { TabColorService } from '../../../shared/services/tab-color.service';
+import { Tab, TabService } from '../../session/tab-service';
+import { Sidebar } from './sidebar';
 
 @Directive({
   selector: 'dialog[trackNativeModal]',
@@ -119,7 +123,7 @@ describe('Sidebar', () => {
       linkStatus,
       branchCheckedOutElsewhere: false,
       checkedOutElsewherePath: null,
-      sessions: makeBranch().sessions.map(session => ({ ...session, workspaceId: 2 })),
+      sessions: makeBranch().sessions.map((session) => ({ ...session, workspaceId: 2 })),
       archivedSessions: [],
       sessionFolders: [],
       archivedSessionFolders: [],
@@ -174,15 +178,19 @@ describe('Sidebar', () => {
     refreshTree: vi.fn(),
     openSession: vi.fn(),
     addSessionFolder: vi.fn((folder) => {
-      tree.update(projects => projects.map(project => ({
-        ...project,
-        repos: project.repos.map(repo => ({
-          ...repo,
-          workspaces: (repo.workspaces ?? []).map(workspace => workspace.id === folder.workspaceId
-            ? { ...workspace, sessionFolders: [...(workspace.sessionFolders ?? []), folder] }
-            : workspace),
+      tree.update((projects) =>
+        projects.map((project) => ({
+          ...project,
+          repos: project.repos.map((repo) => ({
+            ...repo,
+            workspaces: (repo.workspaces ?? []).map((workspace) =>
+              workspace.id === folder.workspaceId
+                ? { ...workspace, sessionFolders: [...(workspace.sessionFolders ?? []), folder] }
+                : workspace,
+            ),
+          })),
         })),
-      })));
+      );
     }),
     toggleExpand: vi.fn((key: string) => {
       const next = new Set(expandedKeys());
@@ -262,7 +270,7 @@ describe('Sidebar', () => {
     activeSessionId,
     tabs,
     closeTab: vi.fn((sessionId: number) => {
-      tabs.set(tabs().filter(tab => tab.sessionId !== sessionId));
+      tabs.set(tabs().filter((tab) => tab.sessionId !== sessionId));
       activeSessionId.set(12);
       return 12;
     }),
@@ -300,7 +308,9 @@ describe('Sidebar', () => {
     sessionTitles: signal(new Map<number, string>()).asReadonly(),
   };
   const pendingWorkspaceCreationsMock = {
-    getVisibleByRepo: vi.fn<(repoId: number, existingWorkspacePaths: readonly string[]) => any[]>(() => []),
+    getVisibleByRepo: vi.fn<(repoId: number, existingWorkspacePaths: readonly string[]) => any[]>(
+      () => [],
+    ),
   };
 
   const reposServiceMock = {
@@ -368,7 +378,9 @@ describe('Sidebar', () => {
     sessionsServiceMock.create.mockReset();
     sessionsServiceMock.create.mockReturnValue(of({ id: 21 }));
     sessionFoldersServiceMock.create.mockReset();
-    sessionFoldersServiceMock.create.mockReturnValue(of({ id: 9, repoId: 1, workspaceId: 2, name: 'New folder', archivedAt: null }));
+    sessionFoldersServiceMock.create.mockReturnValue(
+      of({ id: 9, repoId: 1, workspaceId: 2, name: 'New folder', archivedAt: null }),
+    );
     sessionFoldersServiceMock.groupSessions.mockReset();
     sessionFoldersServiceMock.groupSessions.mockReturnValue(of({ id: 8, name: 'Feature work' }));
     agentRuntimeApiMock.getConversationMention.mockClear();
@@ -377,7 +389,9 @@ describe('Sidebar', () => {
     sessionsServiceMock.delete.mockReset();
     sessionsServiceMock.delete.mockReturnValue(of({}));
     workspacesServiceMock.attach.mockReset();
-    workspacesServiceMock.attach.mockReturnValue(of({ id: 2, repoId: 1, name: 'Feature', path: '/tmp/repo-one/.worktrees/feature' }));
+    workspacesServiceMock.attach.mockReturnValue(
+      of({ id: 2, repoId: 1, name: 'Feature', path: '/tmp/repo-one/.worktrees/feature' }),
+    );
     workspacesServiceMock.rename.mockReset();
     workspacesServiceMock.rename.mockReturnValue(of({}));
     workspacesServiceMock.remove.mockReset();
@@ -482,15 +496,24 @@ describe('Sidebar', () => {
     return container.querySelector(`[data-session-delete-cancel-id="${sessionId}"]`);
   }
 
-  function getWorktreeRemoveTrigger(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
+  function getWorktreeRemoveTrigger(
+    container: HTMLElement,
+    worktreePath: string,
+  ): HTMLButtonElement | null {
     return container.querySelector(`[data-workspace-remove-trigger="${worktreePath}"]`);
   }
 
-  function getWorktreeDeleteTrigger(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
+  function getWorktreeDeleteTrigger(
+    container: HTMLElement,
+    worktreePath: string,
+  ): HTMLButtonElement | null {
     return container.querySelector(`[data-workspace-delete-trigger="${worktreePath}"]`);
   }
 
-  function getWorkspaceBranchTrigger(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
+  function getWorkspaceBranchTrigger(
+    container: HTMLElement,
+    worktreePath: string,
+  ): HTMLButtonElement | null {
     return container.querySelector(`[data-workspace-branch-trigger="${worktreePath}"]`);
   }
 
@@ -503,7 +526,15 @@ describe('Sidebar', () => {
       {
         id: 1,
         name: 'Project One',
-        repos: [{ id: 1, name: 'Repo One', path: '/tmp/repo-one', workspaces: [makeWorkspace(linkStatus)], branches: [] }],
+        repos: [
+          {
+            id: 1,
+            name: 'Repo One',
+            path: '/tmp/repo-one',
+            workspaces: [makeWorkspace(linkStatus)],
+            branches: [],
+          },
+        ],
       },
     ]);
     expandedKeys.set(new Set(['project-1', 'repo-1', 'workspace-1-2']));
@@ -524,7 +555,9 @@ describe('Sidebar', () => {
   it('shows a compact new-session action below a linked workspace session list', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();
-    const zone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-session="2"]');
+    const zone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      '[data-workspace-new-session="2"]',
+    );
 
     expect(zone).toBeTruthy();
     expect(zone?.getAttribute('aria-label')).toBe('Create new session');
@@ -532,20 +565,31 @@ describe('Sidebar', () => {
 
     zone?.click();
 
-    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, folderId: undefined });
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({
+      repoId: 1,
+      workspaceId: 2,
+      folderId: undefined,
+    });
     expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
   });
 
   it('creates a temporary session from the companion quick action', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();
-    const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-temporary-session="2"]');
+    const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      '[data-workspace-new-temporary-session="2"]',
+    );
 
     expect(button).toBeTruthy();
     expect(button?.getAttribute('aria-label')).toBe('Create temporary session');
     button?.click();
 
-    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, folderId: undefined, isTemporary: true });
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({
+      repoId: 1,
+      workspaceId: 2,
+      folderId: undefined,
+      isTemporary: true,
+    });
     expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
   });
 
@@ -555,13 +599,21 @@ describe('Sidebar', () => {
     const component = fixture.componentInstance;
     const workspace = tree()[0].repos[0].workspaces![0];
     component.draggingSession.set(workspace.sessions[0]);
-    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn(), dataTransfer: { dropEffect: 'none' } } as unknown as DragEvent;
+    const event = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      dataTransfer: { dropEffect: 'none' },
+    } as unknown as DragEvent;
 
     component.onNewSessionZoneDragOver(event, workspace);
     fixture.detectChanges();
 
-    const zone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-session="2"]');
-    const temporaryZone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-temporary-session="2"]');
+    const zone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      '[data-workspace-new-session="2"]',
+    );
+    const temporaryZone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      '[data-workspace-new-temporary-session="2"]',
+    );
     expect(event.preventDefault).toHaveBeenCalled();
     expect(event.stopPropagation).toHaveBeenCalled();
     expect(event.dataTransfer?.dropEffect).toBe('copy');
@@ -578,16 +630,26 @@ describe('Sidebar', () => {
     const component = fixture.componentInstance;
     const workspace = tree()[0].repos[0].workspaces![0];
     component.draggingSession.set(workspace.sessions[0]);
-    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn(), dataTransfer: { dropEffect: 'none' } } as unknown as DragEvent;
+    const event = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      dataTransfer: { dropEffect: 'none' },
+    } as unknown as DragEvent;
 
     component.onNewSessionZoneDragOver(event, workspace, true);
     fixture.detectChanges();
 
-    const regularZone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-session="2"]');
-    const temporaryZone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-workspace-new-temporary-session="2"]');
+    const regularZone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      '[data-workspace-new-session="2"]',
+    );
+    const temporaryZone = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      '[data-workspace-new-temporary-session="2"]',
+    );
     expect(regularZone?.classList.contains('session-create-zone--drop-ready')).toBe(false);
     expect(temporaryZone?.classList.contains('session-create-zone--drop-ready')).toBe(true);
-    expect(temporaryZone?.getAttribute('aria-label')).toBe('Drop to create a related temporary session');
+    expect(temporaryZone?.getAttribute('aria-label')).toBe(
+      'Drop to create a related temporary session',
+    );
   });
 
   it('creates the same related-session flow when a session is dropped on the new-session zone', () => {
@@ -616,10 +678,20 @@ describe('Sidebar', () => {
     const [source, target] = workspace.sessions;
     component.draggingSession.set(source);
 
-    component.onSessionRowDrop({ preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as DragEvent, target, repo, workspace);
+    component.onSessionRowDrop(
+      { preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as DragEvent,
+      target,
+      repo,
+      workspace,
+    );
     fixture.detectChanges();
 
-    expect(sessionFoldersServiceMock.groupSessions).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, name: 'New folder', sessionIds: [11, 12] });
+    expect(sessionFoldersServiceMock.groupSessions).toHaveBeenCalledWith({
+      repoId: 1,
+      workspaceId: 2,
+      name: 'New folder',
+      sessionIds: [11, 12],
+    });
     expect(navigationServiceMock.expandKey).toHaveBeenCalledWith('session-folder-8');
     expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
     expect(component.editingFolderId()).toBe(8);
@@ -630,15 +702,23 @@ describe('Sidebar', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();
 
-    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[aria-label="New session folder"]')?.click();
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLButtonElement>('[aria-label="New session folder"]')
+      ?.click();
     fixture.detectChanges();
     vi.runOnlyPendingTimers();
     fixture.detectChanges();
 
-    expect(sessionFoldersServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, name: 'New folder' });
+    expect(sessionFoldersServiceMock.create).toHaveBeenCalledWith({
+      repoId: 1,
+      workspaceId: 2,
+      name: 'New folder',
+    });
     expect(navigationServiceMock.addSessionFolder).toHaveBeenCalled();
     expect(fixture.componentInstance.editingFolderId()).toBe(9);
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-folder-name-input="9"]')).toBeTruthy();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-folder-name-input="9"]'),
+    ).toBeTruthy();
   });
 
   it('creates a related session in a folder named after the original and mentions it', async () => {
@@ -649,11 +729,22 @@ describe('Sidebar', () => {
     const workspace = repo.workspaces![0];
     const source = workspace.sessions[0];
 
-    await component.createRelatedSession(repo, workspace, source, { stopPropagation: vi.fn() } as unknown as Event);
+    await component.createRelatedSession(repo, workspace, source, {
+      stopPropagation: vi.fn(),
+    } as unknown as Event);
 
     expect(agentRuntimeApiMock.getConversationMention).toHaveBeenCalledWith(11);
-    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, folderId: undefined });
-    expect(sessionFoldersServiceMock.groupSessions).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, name: 'Alpha', sessionIds: [11, 21] });
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({
+      repoId: 1,
+      workspaceId: 2,
+      folderId: undefined,
+    });
+    expect(sessionFoldersServiceMock.groupSessions).toHaveBeenCalledWith({
+      repoId: 1,
+      workspaceId: 2,
+      name: 'Alpha',
+      sessionIds: [11, 21],
+    });
     expect(composerDraftsMock.save).toHaveBeenCalledWith({
       sessionId: 21,
       text: '',
@@ -675,14 +766,22 @@ describe('Sidebar', () => {
     const workspace = repo.workspaces![0];
     const source = { ...workspace.sessions[0], folderId: 9 };
 
-    await component.createRelatedSession(repo, workspace, source, { stopPropagation: vi.fn() } as unknown as Event);
+    await component.createRelatedSession(repo, workspace, source, {
+      stopPropagation: vi.fn(),
+    } as unknown as Event);
 
-    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2, folderId: 9 });
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({
+      repoId: 1,
+      workspaceId: 2,
+      folderId: 9,
+    });
     expect(sessionFoldersServiceMock.groupSessions).not.toHaveBeenCalled();
-    expect(composerDraftsMock.save).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 21,
-      sessionMentions: [sessionMention],
-    }));
+    expect(composerDraftsMock.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 21,
+        sessionMentions: [sessionMention],
+      }),
+    );
     expect(navigationServiceMock.expandKey).toHaveBeenCalledWith('session-folder-9');
     expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
   });
@@ -695,7 +794,13 @@ describe('Sidebar', () => {
     const workspace = repo.workspaces![0];
     const source = workspace.sessions[0];
 
-    await component.createRelatedSession(repo, workspace, source, { stopPropagation: vi.fn() } as unknown as Event, true);
+    await component.createRelatedSession(
+      repo,
+      workspace,
+      source,
+      { stopPropagation: vi.fn() } as unknown as Event,
+      true,
+    );
 
     expect(sessionsServiceMock.create).toHaveBeenCalledWith({
       repoId: 1,
@@ -704,10 +809,12 @@ describe('Sidebar', () => {
       isTemporary: true,
     });
     expect(sessionFoldersServiceMock.groupSessions).not.toHaveBeenCalled();
-    expect(composerDraftsMock.save).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 21,
-      sessionMentions: [sessionMention],
-    }));
+    expect(composerDraftsMock.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 21,
+        sessionMentions: [sessionMention],
+      }),
+    );
     expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
   });
 
@@ -715,32 +822,74 @@ describe('Sidebar', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();
 
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-session-related-trigger-id="11"]')).toBeTruthy();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-session-related-trigger-id="11"]',
+      ),
+    ).toBeTruthy();
   });
 
   it('enters title edit mode when a folder name is double-clicked', () => {
     const workspace = makeWorkspace();
-    workspace.sessionFolders = [{ id: 9, repoId: 1, workspaceId: 2, name: 'Design', archivedAt: null, sessions: [], archivedSessions: [] }];
-    tree.set([{ id: 1, name: 'Project One', repos: [{ id: 1, name: 'Repo One', path: '/tmp/repo-one', workspaces: [workspace], branches: [] }] }]);
+    workspace.sessionFolders = [
+      {
+        id: 9,
+        repoId: 1,
+        workspaceId: 2,
+        name: 'Design',
+        archivedAt: null,
+        sessions: [],
+        archivedSessions: [],
+      },
+    ];
+    tree.set([
+      {
+        id: 1,
+        name: 'Project One',
+        repos: [
+          { id: 1, name: 'Repo One', path: '/tmp/repo-one', workspaces: [workspace], branches: [] },
+        ],
+      },
+    ]);
     expandedKeys.set(new Set(['project-1', 'repo-1', 'workspace-1-2']));
     const fixture = createSidebar();
-    const label = (fixture.nativeElement as HTMLElement).querySelector('.session-folder-label') as HTMLElement;
+    const label = (fixture.nativeElement as HTMLElement).querySelector(
+      '.session-folder-label',
+    ) as HTMLElement;
 
     label.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     fixture.detectChanges();
 
     expect(fixture.componentInstance.editingFolderId()).toBe(9);
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-folder-name-input="9"]')).toBeTruthy();
-    expect((fixture.nativeElement as HTMLElement).querySelector('[aria-label="New session in folder"]')).toBeTruthy();
-    expect((fixture.nativeElement as HTMLElement).querySelector('[aria-label="Archive folder and sessions"]')).toBeTruthy();
-    expect((fixture.nativeElement as HTMLElement).querySelector('[aria-label="Delete folder and sessions"]')).toBeTruthy();
-    expect(getComputedStyle((fixture.nativeElement as HTMLElement).querySelector('.session-folder-row') as HTMLElement).position).toBe('relative');
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-folder-name-input="9"]'),
+    ).toBeTruthy();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[aria-label="New session in folder"]'),
+    ).toBeTruthy();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[aria-label="Archive folder and sessions"]',
+      ),
+    ).toBeTruthy();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[aria-label="Delete folder and sessions"]',
+      ),
+    ).toBeTruthy();
+    expect(
+      getComputedStyle(
+        (fixture.nativeElement as HTMLElement).querySelector('.session-folder-row') as HTMLElement,
+      ).position,
+    ).toBe('relative');
   });
 
   it('opens the app-wide agent drawer from the sidebar header', () => {
     const fixture = createSidebar();
 
-    const button = (fixture.nativeElement as HTMLElement).querySelector('[aria-label="Open agent drawer"]') as HTMLButtonElement;
+    const button = (fixture.nativeElement as HTMLElement).querySelector(
+      '[aria-label="Open agent drawer"]',
+    ) as HTMLButtonElement;
     button.click();
 
     const agentControl = TestBed.inject(AgentControlStateService);
@@ -781,7 +930,9 @@ describe('Sidebar', () => {
     component.addRepoProject.set(project);
     component.addRepoPath.set('/tmp/repo-one');
 
-    reposServiceMock.add.mockReturnValueOnce(of({ id: 2, name: 'repo-one', path: '/tmp/repo-one', branches: [] }));
+    reposServiceMock.add.mockReturnValueOnce(
+      of({ id: 2, name: 'repo-one', path: '/tmp/repo-one', branches: [] }),
+    );
 
     await component.submitAddRepo(project);
 
@@ -821,7 +972,9 @@ describe('Sidebar', () => {
     const branchSearch = { open: vi.fn() };
     component.branchSearch = branchSearch as any;
 
-    const addBranchButton = el.querySelector('[data-empty-repo-add-workspace="1"]') as HTMLButtonElement | null;
+    const addBranchButton = el.querySelector(
+      '[data-empty-repo-add-workspace="1"]',
+    ) as HTMLButtonElement | null;
     expect(addBranchButton?.textContent).toContain('New workspace');
     expect(addBranchButton?.textContent).toContain('Create a named worktree');
 
@@ -974,12 +1127,14 @@ describe('Sidebar', () => {
   });
 
   it('renames a worktree from the sidebar and refreshes navigation', () => {
-    tree.update(projects => projects.map(project => ({
-      ...project,
-      repos: project.repos.map(repo => repo.id === 1
-        ? { ...repo, workspaces: [makeWorkspace()] }
-        : repo),
-    })));
+    tree.update((projects) =>
+      projects.map((project) => ({
+        ...project,
+        repos: project.repos.map((repo) =>
+          repo.id === 1 ? { ...repo, workspaces: [makeWorkspace()] } : repo,
+        ),
+      })),
+    );
     const fixture = createSidebar();
     const component = fixture.componentInstance;
     const repo = tree()[0].repos[0];
@@ -1019,7 +1174,12 @@ describe('Sidebar', () => {
     component.onBranchSearchSelect({ repo, branch: makeBranchInfo('feature') });
     fixture.detectChanges();
 
-    expect(workspacesServiceMock.switchBranch).toHaveBeenCalledWith(1, workspace.id, 'feature', false);
+    expect(workspacesServiceMock.switchBranch).toHaveBeenCalledWith(
+      1,
+      workspace.id,
+      'feature',
+      false,
+    );
     expect(component.switchingWorkspace()).toEqual({
       repoId: 1,
       workspaceId: workspace.id,
@@ -1089,7 +1249,9 @@ describe('Sidebar', () => {
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
 
-    expect(el.querySelector('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')?.textContent).toContain('Creating');
+    expect(
+      el.querySelector('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')?.textContent,
+    ).toContain('Creating');
   });
 
   it('renders a finalizing pending workspace row after creation succeeds before tree refresh catches up', () => {
@@ -1111,8 +1273,12 @@ describe('Sidebar', () => {
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
 
-    expect(el.querySelectorAll('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')).toHaveLength(1);
-    expect(el.querySelector('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')?.textContent).toContain('Finalizing');
+    expect(
+      el.querySelectorAll('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]'),
+    ).toHaveLength(1);
+    expect(
+      el.querySelector('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')?.textContent,
+    ).toContain('Finalizing');
   });
 
   it('removes the completion dot when live and tree completion state are cleared', () => {
@@ -1159,7 +1325,9 @@ describe('Sidebar', () => {
             branches: [
               {
                 ...completedBranch,
-                sessions: completedBranch.sessions.map(session => (session.id === 11 ? { ...session, hasUnreviewedCompletion: false } : session)),
+                sessions: completedBranch.sessions.map((session) =>
+                  session.id === 11 ? { ...session, hasUnreviewedCompletion: false } : session,
+                ),
               },
             ],
           },
@@ -1227,9 +1395,14 @@ describe('Sidebar', () => {
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
 
-    expect(el.querySelectorAll('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]')).toHaveLength(0);
+    expect(
+      el.querySelectorAll('[data-pending-workspace="/tmp/repo-one/.worktrees/feature"]'),
+    ).toHaveLength(0);
     expect(el.textContent).toContain('Feature Session');
-    expect(pendingWorkspaceCreationsMock.getVisibleByRepo).toHaveBeenCalledWith(1, expect.arrayContaining(['/tmp/repo-one/.worktrees/feature']));
+    expect(pendingWorkspaceCreationsMock.getVisibleByRepo).toHaveBeenCalledWith(
+      1,
+      expect.arrayContaining(['/tmp/repo-one/.worktrees/feature']),
+    );
   });
 
   it('shows an opening state and ignores duplicate worktree sheet opens', () => {
@@ -1256,7 +1429,13 @@ describe('Sidebar', () => {
     vi.advanceTimersByTime(0);
 
     expect(worktreeSheet.open).toHaveBeenCalledOnce();
-    expect(worktreeSheet.open).toHaveBeenCalledWith(1, 'feature', '/tmp/repo-one', 'Repo One', true);
+    expect(worktreeSheet.open).toHaveBeenCalledWith(
+      1,
+      'feature',
+      '/tmp/repo-one',
+      'Repo One',
+      true,
+    );
     expect(component.openingWorktreeBranchKey()).toBeNull();
   });
 
@@ -1351,9 +1530,12 @@ describe('Sidebar', () => {
   });
 
   it('renders the running activity indicator for a working Claude session', () => {
-    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => (sessionId === 11 ? 'running' : 'idle')) as any);
+    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) =>
+      sessionId === 11 ? 'running' : 'idle') as any);
     claudeStatusMock.getActivity.mockImplementation(((sessionId: number) =>
-      sessionId === 11 ? { activityStatus: 'running', actionKind: null, actionLabel: null } : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
+      sessionId === 11
+        ? { activityStatus: 'running', actionKind: null, actionLabel: null }
+        : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
 
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
@@ -1365,22 +1547,30 @@ describe('Sidebar', () => {
   });
 
   it('renders an action chip for pending permission prompts', () => {
-    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => (sessionId === 11 ? 'waiting' : 'idle')) as any);
+    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) =>
+      sessionId === 11 ? 'waiting' : 'idle') as any);
     claudeStatusMock.getActivity.mockImplementation(((sessionId: number) =>
-      sessionId === 11 ? { activityStatus: 'waiting', actionKind: 'permission', actionLabel: 'Permission needed' } : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
+      sessionId === 11
+        ? { activityStatus: 'waiting', actionKind: 'permission', actionLabel: 'Permission needed' }
+        : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
 
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;
     const row = el.querySelector('[data-session-row-id="11"]');
 
-    expect(row?.querySelector('.sidebar-status-dot')?.classList.contains('status-waiting')).toBe(true);
+    expect(row?.querySelector('.sidebar-status-dot')?.classList.contains('status-waiting')).toBe(
+      true,
+    );
     expect(row?.querySelector('.sidebar-action-chip')?.textContent).toContain('Permission needed');
   });
 
   it('renders an action chip for pending user input prompts', () => {
-    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) => (sessionId === 11 ? 'waiting' : 'idle')) as any);
+    claudeStatusMock.getStatus.mockImplementation(((sessionId: number) =>
+      sessionId === 11 ? 'waiting' : 'idle') as any);
     claudeStatusMock.getActivity.mockImplementation(((sessionId: number) =>
-      sessionId === 11 ? { activityStatus: 'waiting', actionKind: 'user_input', actionLabel: 'Input needed' } : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
+      sessionId === 11
+        ? { activityStatus: 'waiting', actionKind: 'user_input', actionLabel: 'Input needed' }
+        : { activityStatus: 'idle', actionKind: null, actionLabel: null }) as any);
 
     const fixture = createSidebar();
     const el = fixture.nativeElement as HTMLElement;

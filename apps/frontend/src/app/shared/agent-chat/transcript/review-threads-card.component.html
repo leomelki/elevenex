@@ -1,0 +1,34 @@
+<section class="cw-threads" aria-label="Review discussions from this turn">
+  <header class="cw-threads__head">
+    <span class="cw-threads__icon" aria-hidden="true">
+      <ng-icon name="lucideMessagesSquare" size="13" />
+    </span>
+    <span class="cw-threads__title">
+      {{ threads().length }}
+      {{ threads().length === 1 ? 'review discussion' : 'review discussions' }}
+    </span>
+    @if (unreadCount() > 0) {
+      <span class="cw-threads__unread">{{ unreadCount() }} new</span>
+    }
+  </header>
+
+  <ul class="cw-threads__list">
+    @for (thread of threads(); track thread.id) {
+      <li>
+        <button type="button" class="cw-threads__item" (click)="open.emit(thread.id)">
+          @if (unreadIds().has(thread.id)) {
+            <span class="cw-threads__dot" aria-label="New reply"></span>
+          }
+          <span class="cw-threads__label">{{ thread.title }}</span>
+          @if (thread.mode === 'write') {
+            <ng-icon name="lucideLockOpen" size="11" class="cw-threads__write" />
+          }
+          @if (thread.status === 'promoted') {
+            <span class="cw-threads__badge">session</span>
+          }
+          <ng-icon name="lucideChevronRight" size="13" class="cw-threads__chevron" />
+        </button>
+      </li>
+    }
+  </ul>
+</section>

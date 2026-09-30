@@ -1,0 +1,108 @@
+<div class="cw-ui">
+  <div class="cw-ui__head">
+    <ng-icon
+      [name]="askQuestions().length ? 'lucideMessageCircleQuestion' : 'lucideBraces'"
+      size="14"
+    />
+    <strong>{{ request().title || request().displayName || request().serverName }}</strong>
+    @if (request().description || request().message) {
+      <span class="cw-ui__desc">{{ request().description || request().message }}</span>
+    }
+  </div>
+
+  @if (askQuestions().length) {
+    <cw-ask-user-question-flow
+      [requestId]="request().requestId"
+      [questions]="askQuestions()"
+      declineLabel="Decline"
+      submitLabel="Submit"
+      (decline)="answer.emit({ action: 'decline' })"
+      (submitted)="submitQuestionAnswers($event)"
+    />
+  } @else if (request().mode === 'url' && request().url) {
+    <a class="cw-ui__link" [href]="request().url" target="_blank" rel="noreferrer">
+      <ng-icon name="lucideExternalLink" size="14" />
+      Open requested URL
+    </a>
+  } @else if (fields().length) {
+    <div class="cw-ui__grid">
+      @for (field of fields(); track field.key) {
+        <label class="cw-ui__field">
+          <span class="cw-ui__label">
+            {{ field.label }}
+            @if (field.required) {
+              <em>*</em>
+            }
+          </span>
+          @switch (field.type) {
+            @case ('boolean') {
+              <input
+                type="checkbox"
+                [ngModel]="!!values()[field.key]"
+                (ngModelChange)="set(field.key, $event)"
+              />
+            }
+            @case ('enum') {
+              <select
+                [ngModel]="values()[field.key] ?? ''"
+                (ngModelChange)="set(field.key, $event)"
+              >
+                <option value="">Select…</option>
+                @for (opt of field.options; track opt) {
+                  <option [value]="opt">{{ opt }}</option>
+                }
+              </select>
+            }
+            @case ('number') {
+              <input
+                type="number"
+                [ngModel]="values()[field.key] ?? ''"
+                (ngModelChange)="set(field.key, $event === '' ? '' : Number($event))"
+              />
+            }
+            @case ('textarea') {
+              <textarea
+                [ngModel]="values()[field.key] ?? ''"
+                (ngModelChange)="set(field.key, $event)"
+              ></textarea>
+            }
+            @default {
+              <input
+                type="text"
+                [ngModel]="values()[field.key] ?? ''"
+                (ngModelChange)="set(field.key, $event)"
+              />
+            }
+          }
+          @if (field.description) {
+            <span class="cw-ui__help">{{ field.description }}</span>
+          }
+        </label>
+      }
+    </div>
+  } @else {
+    <textarea
+      class="cw-ui__json"
+      [ngModel]="jsonText()"
+      (ngModelChange)="onJsonInput($event)"
+      placeholder="{}"
+    ></textarea>
+    @if (jsonError()) {
+      <div class="cw-ui__error">{{ jsonError() }}</div>
+    }
+  }
+
+  @if (!askQuestions().length) {
+    <div class="cw-ui__actions">
+      <button type="button" class="cw-ui__btn" (click)="answer.emit({ action: 'cancel' })">
+        Cancel
+      </button>
+      <button type="button" class="cw-ui__btn" (click)="answer.emit({ action: 'decline' })">
+        Decline
+      </button>
+      <button type="button" class="cw-ui__btn cw-ui__btn--primary" (click)="submit()">
+        Accept
+      </button>
+    </div>
+  }
+</div>

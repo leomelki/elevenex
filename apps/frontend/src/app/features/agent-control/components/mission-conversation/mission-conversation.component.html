@@ -12,8 +12,8 @@
       </span>
       <p>The agent is ready.</p>
       <small>
-        It works elevenex for you — setting up projects, worktrees and sessions,
-        driving them, and checking in when it needs you. Every move shows up here.
+        It works elevenex for you — setting up projects, worktrees and sessions, driving them, and
+        checking in when it needs you. Every move shows up here.
       </small>
     </div>
   } @else {
@@ -73,7 +73,12 @@
                 <span class="mc-cluster__dot">·</span>{{ group.durationLabel }}
               }
             </span>
-            <ng-icon class="mc-cluster__chevron" name="lucideChevronRight" size="13" aria-hidden="true" />
+            <ng-icon
+              class="mc-cluster__chevron"
+              name="lucideChevronRight"
+              size="13"
+              aria-hidden="true"
+            />
           </button>
         }
       }
@@ -91,7 +96,10 @@
         <div class="mc-working" aria-label="Agent is working">
           <span class="mc-working__dots"><span></span><span></span><span></span></span>
           <span class="mc-working__label">
-            Working@if (elapsedLabel()) { · {{ elapsedLabel() }} }
+            Working
+            @if (elapsedLabel()) {
+              · {{ elapsedLabel() }}
+            }
           </span>
         </div>
       }
@@ -157,11 +165,11 @@
             <ng-icon name="lucideSparkles" size="13" />
           </span>
           <div class="mc-say__body">
-            <div
+            <agent-markdown
               class="mc-md"
               [class.mc-md--streaming]="row.id === streamingId()"
-              [innerHTML]="row.content | cwMarkdown"
-            ></div>
+              [content]="row.content"
+            />
             @if (row.id === streamingId()) {
               <span class="mc-caret" aria-hidden="true"></span>
             }
@@ -253,7 +261,7 @@
             </button>
           </div>
           @if (show.body) {
-            <div class="mc-md mc-show__body" [innerHTML]="show.body | cwMarkdown"></div>
+            <agent-markdown class="mc-md mc-show__body" [content]="show.body" />
           }
           @if (show.deepLink) {
             <button type="button" class="mc-show__open" (click)="openShow(show)">Open</button>

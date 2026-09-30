@@ -1,3 +1,7 @@
+import { AgentChatConnection } from '@/shared/agent-chat/agent-chat-connection';
+import { AgentConversation } from '@/shared/agent-chat/agent-conversation';
+import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
@@ -12,7 +16,6 @@ import {
   viewChild,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideActivity,
@@ -72,22 +75,9 @@ import {
   lucideTriangleAlert,
 } from '@ng-icons/lucide';
 
-import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
-import { AgentShowsService } from '@/shared/services/agent-shows.service';
-import { AgentChannelWebsocketService } from '../../agent-channel-websocket.service';
 import { TabService } from '@/features/session/tab-service';
-import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
-import type { AgentShow } from '@/shared/models/agent-channel.model';
-import type {
-  ClaudePermissionApproval,
-  ClaudePermissionRequest,
-  ClaudeRunPhase,
-  ClaudeRuntimeEvent,
-  ClaudeRuntimeState,
-  ClaudeToolUseSummary,
-  ClaudeTranscriptItem,
-  ClaudeUserInputRequest,
-} from '@/shared/models/claude-runtime.model';
+import { ClaudePermissionInlineComponent } from '@/shared/agent-chat/requests/claude-permission-inline.component';
+import { ClaudeUserInputComponent } from '@/shared/agent-chat/requests/claude-user-input.component';
 import {
   contentToString,
   describeAgentTool,
@@ -95,11 +85,19 @@ import {
   shouldHideToolCall,
   type ResultSummary,
 } from '@/shared/agent-tools/agent-tool-format';
-import { MarkdownPipe } from '@/features/session/claude-workspace/pipes/markdown.pipe';
+import type { AgentShow } from '@/shared/models/agent-channel.model';
+import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
+import type {
+  ClaudePermissionApproval,
+  ClaudeRuntimeEvent,
+  ClaudeToolUseSummary,
+  ClaudeTranscriptItem,
+} from '@/shared/models/claude-runtime.model';
+import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
+import { AgentShowsService } from '@/shared/services/agent-shows.service';
 import { DictateTargetDirective } from '@/shared/speech/dictate-target.directive';
 import { DictationButtonComponent } from '@/shared/speech/dictation-button.component';
-import { ClaudePermissionInlineComponent } from '@/features/session/claude-workspace/components/claude-permission-inline.component';
-import { ClaudeUserInputComponent } from '@/features/session/claude-workspace/components/claude-user-input.component';
+import { AgentChannelWebsocketService } from '../../agent-channel-websocket.service';
 import type { MissionSummary } from '../../agent-control.model';
 
 /** The four families of elevenex actions, used to tint timeline nodes. */
@@ -210,7 +208,7 @@ type TimelineGroup = ClusterGroup | SingleGroup;
     CommonModule,
     FormsModule,
     NgIcon,
-    MarkdownPipe,
+    AgentMarkdownComponent,
     ClaudePermissionInlineComponent,
     ClaudeUserInputComponent,
     DictateTargetDirective,
@@ -282,10 +280,10 @@ export class MissionConversationComponent {
   readonly mission = input.required<MissionSummary>();
 
   private readonly scrollRef = viewChild<ElementRef<HTMLElement>>('scrollRef');
-  private readonly composerRef =
-    viewChild<ElementRef<HTMLTextAreaElement>>('composerRef');
+  private readonly composerRef = viewChild<ElementRef<HTMLTextAreaElement>>('composerRef');
 
   private readonly ws = inject(AgentRuntimeWebsocketService);
+  private readonly runtime = new AgentChatConnection(this.ws, inject(AgentRuntimeApiService));
   private readonly shows = inject(AgentShowsService);
   private readonly channel = inject(AgentChannelWebsocketService);
   private readonly destroyRef = inject(DestroyRef);
@@ -293,25 +291,24 @@ export class MissionConversationComponent {
 
   private readonly provider: AgentProviderId = 'claude';
 
+  private readonly conversation = new AgentConversation();
   readonly draft = signal('');
-  readonly historyItems = signal<ClaudeTranscriptItem[]>([]);
-  readonly liveItems = signal<ClaudeTranscriptItem[]>([]);
-  readonly optimisticUserItems = signal<ClaudeTranscriptItem[]>([]);
-  readonly runPhase = signal<ClaudeRunPhase>('idle');
-  readonly canInterrupt = signal(false);
+  readonly historyItems = this.conversation.history;
+  readonly liveItems = this.conversation.live;
+  readonly optimisticUserItems = this.conversation.optimistic;
+  readonly runPhase = this.conversation.runPhase;
+  readonly canInterrupt = this.conversation.canInterrupt;
   readonly submitting = signal(false);
-  readonly lastError = signal<string | null>(null);
-  readonly pendingPermission = signal<ClaudePermissionRequest | null>(null);
-  readonly pendingUserInput = signal<ClaudeUserInputRequest | null>(null);
+  readonly lastError = this.conversation.lastError;
+  readonly pendingPermission = this.conversation.pendingPermissionRequest;
+  readonly pendingUserInput = this.conversation.pendingUserInputRequest;
   readonly expanded = signal<ReadonlySet<string>>(new Set());
   readonly expandedClusters = signal<ReadonlySet<string>>(new Set());
   readonly toolSummaries = signal<ClaudeToolUseSummary[]>([]);
   readonly elapsedLabel = signal('');
   readonly atBottom = signal(true);
 
-  readonly isRunning = computed(
-    () => this.runPhase() === 'running' || this.submitting(),
-  );
+  readonly isRunning = computed(() => this.runPhase() === 'running' || this.submitting());
 
   /** Shows pushed by the meta-agent for THIS mission, as reactive rows. */
   private readonly missionShows = computed<AgentShow[]>(() =>
@@ -319,21 +316,7 @@ export class MissionConversationComponent {
   );
 
   readonly rows = computed<ConversationRow[]>(() => {
-    const history = this.historyItems();
-    const persistedKeys = new Set(
-      history
-        .filter((item) => item.sourceMessageId)
-        .map((item) => `${item.sourceMessageId}|${item.kind}`),
-    );
-    const live = this.liveItems().filter(
-      (item) =>
-        !item.sourceMessageId ||
-        !persistedKeys.has(`${item.sourceMessageId}|${item.kind}`),
-    );
-
-    const items = [...history, ...this.optimisticUserItems(), ...live].sort(
-      (a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''),
-    );
+    const items = this.conversation.items();
 
     const resultByToolUse = new Map<string, ClaudeTranscriptItem>();
     for (const item of items) {
@@ -385,9 +368,7 @@ export class MissionConversationComponent {
           }
           const view = describeAgentTool(item);
           const meta = this.actionMeta(item);
-          const result = item.toolUseId
-            ? resultByToolUse.get(item.toolUseId)
-            : undefined;
+          const result = item.toolUseId ? resultByToolUse.get(item.toolUseId) : undefined;
           const status: ConversationRow['status'] = !result
             ? 'pending'
             : result.isError
@@ -670,11 +651,7 @@ export class MissionConversationComponent {
     const prompt = this.draft().trim();
     if (!prompt || this.submitting()) return;
 
-    const now = new Date().toISOString();
-    this.optimisticUserItems.update((items) => [
-      ...items,
-      { id: `opt-${now}`, kind: 'user', content: prompt, timestamp: now },
-    ]);
+    this.conversation.addOptimisticPrompt(prompt);
     this.stickToBottom = true;
     this.atBottom.set(true);
     this.draft.set('');
@@ -747,17 +724,13 @@ export class MissionConversationComponent {
     this.disconnect();
     this.resetState();
     this.connectedSessionId = sessionId;
-    this.ws
-      .connect(sessionId, this.provider)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((event) => this.handleEvent(event as ClaudeRuntimeEvent));
-    this.ws.send(sessionId, { type: 'hydrate' }, this.provider);
+    this.runtime.attach({ sessionId, provider: this.provider }, this.conversation, (event) =>
+      this.handleEvent(event),
+    );
   }
 
   private disconnect(): void {
-    if (this.connectedSessionId !== null) {
-      this.ws.disconnect(this.connectedSessionId, this.provider);
-    }
+    this.runtime.detach();
     this.connectedSessionId = null;
   }
 
@@ -766,124 +739,21 @@ export class MissionConversationComponent {
   }
 
   private handleEvent(event: ClaudeRuntimeEvent): void {
-    switch (event.type) {
-      case 'session_snapshot':
-        this.historyItems.set(event.payload.history ?? []);
-        this.reconcileOptimistic(event.payload.history ?? []);
-        this.applyRuntimeState(event.payload);
-        return;
-      case 'runtime_snapshot':
-        this.applyRuntimeState(event.payload);
-        return;
-      case 'history_snapshot':
-        this.historyItems.set(event.payload.history ?? []);
-        this.reconcileOptimistic(event.payload.history ?? []);
-        return;
-      case 'run_state':
-        this.runPhase.set(event.payload.runPhase);
-        this.canInterrupt.set(event.payload.canInterrupt);
-        this.lastError.set(event.payload.lastError);
-        this.pendingPermission.set(event.payload.pendingPermissionRequest);
-        this.pendingUserInput.set(event.payload.pendingUserInputRequest);
-        if (event.payload.runPhase !== 'running') this.submitting.set(false);
-        return;
-      case 'message_start':
-      case 'thinking_start':
-      case 'tool_use':
-      case 'tool_result':
-        this.upsertLiveItem(event.payload.item);
-        return;
-      case 'message_delta':
-      case 'thinking_delta':
-        this.appendDelta(event.payload.itemId, event.payload.delta);
-        return;
-      case 'tool_summary':
-        this.toolSummaries.update((items) => [...items, event.payload.summary]);
-        return;
-      case 'permission_request':
-        this.pendingPermission.set(event.payload.request);
-        return;
-      case 'permission_resolved':
-        if (this.pendingPermission()?.requestId === event.payload.requestId) {
-          this.pendingPermission.set(null);
-        }
-        return;
-      case 'user_input_request':
-        this.pendingUserInput.set(event.payload.request);
-        return;
-      case 'error':
-        this.lastError.set(event.payload.message);
-        this.submitting.set(false);
-        return;
-      case 'complete':
-        this.runPhase.set('idle');
-        this.canInterrupt.set(false);
-        this.submitting.set(false);
-        return;
-      default:
-        return;
-    }
-  }
-
-  private applyRuntimeState(state: ClaudeRuntimeState): void {
-    this.liveItems.set(state.liveItems ?? []);
-    this.runPhase.set(state.runPhase ?? 'idle');
-    this.canInterrupt.set(Boolean(state.canInterrupt));
-    this.lastError.set(state.lastError ?? null);
-    this.pendingPermission.set(state.pendingPermissionRequest ?? null);
-    this.pendingUserInput.set(state.pendingUserInputRequest ?? null);
-    if (state.runPhase !== 'running') this.submitting.set(false);
-  }
-
-  private upsertLiveItem(item: ClaudeTranscriptItem): void {
-    // A user turn now streams live (so programmatic prompts appear immediately).
-    // Typed prompts were already shown optimistically, so drop the matching
-    // optimistic entry to avoid rendering the same message twice.
-    if (item.kind === 'user') {
-      const content = (item.content ?? '').trim();
-      this.optimisticUserItems.update((items) =>
-        items.filter((existing) => (existing.content ?? '').trim() !== content),
-      );
-    }
-    this.liveItems.update((items) => [
-      ...items.filter((existing) => existing.id !== item.id),
-      item,
-    ]);
-  }
-
-  private appendDelta(itemId: string, delta: string): void {
-    this.liveItems.update((items) =>
-      items.map((item) =>
-        item.id === itemId
-          ? { ...item, content: `${item.content ?? ''}${delta}` }
-          : item,
-      ),
-    );
-  }
-
-  private reconcileOptimistic(history: ClaudeTranscriptItem[]): void {
-    const seen = new Set(
-      history
-        .filter((item) => item.kind === 'user')
-        .map((item) => (item.content ?? '').trim()),
-    );
-    this.optimisticUserItems.update((items) =>
-      items.filter((item) => !seen.has((item.content ?? '').trim())),
-    );
+    if (event.type === 'tool_summary')
+      this.toolSummaries.update((items) => [...items, event.payload.summary]);
+    if (
+      event.type === 'complete' ||
+      event.type === 'error' ||
+      (event.type === 'run_state' && event.payload.runPhase !== 'running')
+    )
+      this.submitting.set(false);
   }
 
   private resetState(): void {
-    this.historyItems.set([]);
-    this.liveItems.set([]);
-    this.optimisticUserItems.set([]);
+    this.conversation.reset();
     this.toolSummaries.set([]);
     this.expandedClusters.set(new Set());
-    this.runPhase.set('idle');
-    this.canInterrupt.set(false);
-    this.lastError.set(null);
     this.submitting.set(false);
-    this.pendingPermission.set(null);
-    this.pendingUserInput.set(null);
     this.stickToBottom = true;
     this.atBottom.set(true);
   }
@@ -916,10 +786,7 @@ export class MissionConversationComponent {
   }
 
   /** Latest LLM tool-use summary that covers any of the cluster's tool ids. */
-  private summaryFor(
-    toolIds: string[],
-    summaries: ClaudeToolUseSummary[],
-  ): string | null {
+  private summaryFor(toolIds: string[], summaries: ClaudeToolUseSummary[]): string | null {
     if (!toolIds.length || !summaries.length) return null;
     const set = new Set(toolIds);
     for (let i = summaries.length - 1; i >= 0; i--) {

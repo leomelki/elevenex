@@ -1,0 +1,92 @@
+<section class="cw-turn-changes" aria-label="Changes made in this turn">
+  <header class="cw-turn-changes__head">
+    <div class="cw-turn-changes__title">
+      <span class="cw-turn-changes__icon" aria-hidden="true">
+        <ng-icon name="lucideFilePen" size="14" />
+      </span>
+      <div class="cw-turn-changes__copy">
+        <span class="cw-turn-changes__label">Changes in this turn</span>
+        <span class="cw-turn-changes__summary">
+          {{ details().files }} file{{ details().files === 1 ? '' : 's' }}
+          <span class="cw-turn-changes__add">+{{ details().additions }}</span>
+          <span class="cw-turn-changes__del">-{{ details().deletions }}</span>
+        </span>
+      </div>
+    </div>
+    <div class="cw-turn-changes__actions">
+      @if (canReview()) {
+        <button
+          type="button"
+          class="cw-turn-changes__review"
+          aria-label="Open these changes in the review workspace"
+          title="Review whole files and discuss them"
+          (click)="review.emit({})"
+        >
+          <ng-icon name="lucideMessagesSquare" size="13" />
+          <span>Review</span>
+          @if (threadCount() > 0) {
+            <span class="cw-turn-changes__badge">{{ threadCount() }}</span>
+          }
+        </button>
+      }
+      <button
+        type="button"
+        class="cw-turn-changes__close"
+        aria-label="Close changes"
+        title="Close changes"
+        (click)="close.emit()"
+      >
+        <ng-icon name="lucideX" size="14" />
+      </button>
+    </div>
+  </header>
+
+  <div class="cw-turn-changes__files">
+    @for (file of renderedFiles(); track file.path; let i = $index) {
+      <article class="cw-turn-changes__file" [attr.data-status]="file.status">
+        <button
+          type="button"
+          class="cw-turn-changes__file-head"
+          [attr.aria-expanded]="isFileOpen(file.path, i)"
+          [title]="file.path"
+          (click)="toggleFile(file.path, i)"
+        >
+          <ng-icon
+            class="cw-turn-changes__chevron"
+            name="lucideChevronRight"
+            size="14"
+            [class.cw-turn-changes__chevron--open]="isFileOpen(file.path, i)"
+            aria-hidden="true"
+          />
+          <span class="cw-turn-changes__status">{{ file.statusGlyph }}</span>
+          <span class="cw-turn-changes__path">
+            @if (file.folder) {
+              <span class="cw-turn-changes__folder">{{ file.folder }}</span>
+              <span class="cw-turn-changes__path-separator" aria-hidden="true">/</span>
+            }
+            <span class="cw-turn-changes__base">{{ file.basename }}</span>
+          </span>
+          <span class="cw-turn-changes__file-meta">{{ file.statusLabel }}</span>
+          <span class="cw-turn-changes__file-stats">
+            <span class="cw-turn-changes__add">+{{ file.additions }}</span>
+            <span class="cw-turn-changes__del">-{{ file.deletions }}</span>
+          </span>
+        </button>
+
+        @if (isFileOpen(file.path, i)) {
+          <div class="cw-turn-changes__file-body">
+            @for (hunk of file.hunks; track hunk.id) {
+              <cw-inline-diff
+                [html]="hunk.html"
+                [label]="hunk.label"
+                [additions]="hunk.additions"
+                [deletions]="hunk.deletions"
+                emptyText="Inline diff was not captured for this file."
+              />
+            }
+          </div>
+        }
+      </article>
+    }
+  </div>
+</section>

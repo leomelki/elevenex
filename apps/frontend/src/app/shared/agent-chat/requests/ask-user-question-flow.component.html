@@ -1,0 +1,106 @@
+<div class="cw-ask">
+  <div class="cw-ask__nav">
+    <span class="cw-ask__progress">{{ progressLabel() }}</span>
+  </div>
+
+  @if (isReviewing()) {
+    <section class="cw-ask__recap" aria-label="Review answers">
+      @for (question of questions(); track questionKey(question)) {
+        <div class="cw-ask__recap-item">
+          <span class="cw-ask__recap-question">{{ question.question }}</span>
+          <span class="cw-ask__recap-answer">{{ serializeAnswer(question) }}</span>
+        </div>
+      }
+    </section>
+  } @else if (activeQuestion(); as question) {
+    <section class="cw-ask__q">
+      <div class="cw-ask__qhead">
+        @if (question.header) {
+          <span class="cw-ask__chip">{{ question.header }}</span>
+        }
+        <span class="cw-ask__qtext">{{ question.question }}</span>
+      </div>
+
+      <div class="cw-ask__options">
+        @for (option of question.options; track option.label) {
+          <label class="cw-ask__opt" [class.cw-ask__opt--on]="isSelected(question, option.label)">
+            <input
+              [type]="question.multiSelect ? 'checkbox' : 'radio'"
+              [name]="questionKey(question)"
+              [checked]="isSelected(question, option.label)"
+              (change)="toggleOption(question, option.label, $any($event.target).checked)"
+            />
+            <span class="cw-ask__opt-body">
+              <span class="cw-ask__opt-label">{{ option.label }}</span>
+              @if (option.description) {
+                <span class="cw-ask__opt-desc">{{ option.description }}</span>
+              }
+            </span>
+          </label>
+        }
+
+        <label class="cw-ask__opt" [class.cw-ask__opt--on]="isOtherSelected(question)">
+          <input
+            [type]="question.multiSelect ? 'checkbox' : 'radio'"
+            [name]="questionKey(question)"
+            [checked]="isOtherSelected(question)"
+            (change)="toggleOther(question, $any($event.target).checked)"
+          />
+          <span class="cw-ask__opt-body">
+            <span class="cw-ask__opt-label">Other...</span>
+          </span>
+        </label>
+
+        @if (isOtherSelected(question)) {
+          <textarea
+            #otherTa
+            class="cw-ask__other"
+            [ngModel]="otherAnswers()[questionKey(question)] || ''"
+            (ngModelChange)="setOtherAnswer(questionKey(question), $event)"
+            placeholder="Type your answer"
+          ></textarea>
+        }
+      </div>
+
+      @if (selectedPreview(question); as preview) {
+        <div class="cw-ask__preview" [innerHTML]="preview | cwMarkdown"></div>
+      }
+    </section>
+  }
+
+  <footer class="cw-ask__actions">
+    <button type="button" class="cw-btn cw-btn--deny" (click)="decline.emit()">
+      <ng-icon name="lucideX" size="13" aria-hidden="true" />
+      {{ declineLabel() }}
+    </button>
+    <span class="cw-ask__spacer"></span>
+    @if (canGoBack()) {
+      <button type="button" class="cw-btn cw-btn--secondary" (click)="goBack()">
+        <ng-icon name="lucideChevronLeft" size="13" aria-hidden="true" />
+        Back
+      </button>
+    }
+    @if (showNextButton()) {
+      <button
+        type="button"
+        class="cw-btn cw-btn--primary"
+        [disabled]="!canAdvanceActiveQuestion()"
+        (click)="advance()"
+      >
+        <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+        Next
+      </button>
+    }
+    @if (isReviewing()) {
+      <button
+        type="button"
+        class="cw-btn cw-btn--primary"
+        [disabled]="!canSubmit()"
+        (click)="submit()"
+      >
+        <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+        {{ submitLabel() }}
+      </button>
+    }
+  </footer>
+</div>

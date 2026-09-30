@@ -1,3 +1,13 @@
+import { MarkdownPipe } from '@/shared/agent-chat/markdown/markdown.pipe';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
+import {
+  PlanAnnotatorComment,
+  PlanFeedbackPayload,
+  PlanReviewRequest,
+} from '@/shared/models/plan-review.model';
+import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -9,7 +19,6 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -24,18 +33,14 @@ import {
   lucideTrash2,
   lucideX,
 } from '@ng-icons/lucide';
-import { ZardButtonComponent } from '@/shared/components/button';
-import { ZardInputDirective } from '@/shared/components/input';
-import { MarkdownPipe } from '../session/claude-workspace/pipes/markdown.pipe';
+import { PlanReviewRailMode } from './plan-annotator-state.service';
+import { PlanChatPanelComponent } from './plan-chat-panel.component';
 import {
   formatPlanFeedbackMessage,
   formatPlanRejectionMessage,
   planDraftStorageKey,
 } from './plan-feedback';
 import { PlanMarkdownBlocksComponent } from './plan-markdown-blocks.component';
-import { PlanAnnotatorComment, PlanFeedbackPayload, PlanReviewRequest } from './plan-review.model';
-import { PlanChatPanelComponent } from './plan-chat-panel.component';
-import { PlanReviewRailMode } from './plan-annotator-state.service';
 
 type DraftScope = 'selection' | 'document';
 
@@ -71,6 +76,7 @@ type DraftScope = 'selection' | 'document';
   styleUrls: ['./plan-annotator-panel.component.scss'],
 })
 export class PlanAnnotatorPanelComponent {
+  readonly openLocalFile = output<LocalFileTarget>();
   readonly review = input<PlanReviewRequest | null>(null);
   readonly railMode = input<PlanReviewRailMode>('comments');
 

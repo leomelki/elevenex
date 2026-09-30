@@ -1,4 +1,18 @@
 import {
+  DEFAULT_DIFF_SELECTION_ACTIONS,
+  DiffSelectionMenuComponent,
+  type DiffSelectionMenuAction,
+} from '@/features/change-review/diff-selection-menu.component';
+import { MarkdownPipe } from '@/shared/agent-chat/markdown/markdown.pipe';
+import type {
+  DiffSelectionMention,
+  DiffSelectionMentionScope,
+} from '@/shared/models/diff-selection-mention.model';
+import { FilesService } from '@/shared/services/files.service';
+import { captureSelectionWithin, clearSelection } from '@/shared/utils/dom-selection';
+import { placeSelectionMenu } from '@/shared/utils/selection-menu-position';
+import { CommonModule } from '@angular/common';
+import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
@@ -10,23 +24,9 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { firstValueFrom } from 'rxjs';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideRefreshCw, lucideTriangleAlert } from '@ng-icons/lucide';
-import type {
-  DiffSelectionMention,
-  DiffSelectionMentionScope,
-} from '@/shared/models/diff-selection-mention.model';
-import { FilesService } from '@/shared/services/files.service';
-import { captureSelectionWithin, clearSelection } from '@/shared/utils/dom-selection';
-import { placeSelectionMenu } from '@/shared/utils/selection-menu-position';
-import { MarkdownPipe } from '@/features/session/claude-workspace/pipes/markdown.pipe';
-import {
-  DEFAULT_DIFF_SELECTION_ACTIONS,
-  DiffSelectionMenuComponent,
-  type DiffSelectionMenuAction,
-} from '@/features/change-review/diff-selection-menu.component';
+import { firstValueFrom } from 'rxjs';
 import { buildMarkdownSelectionMention } from './review-markdown-selection';
 
 /** Placement of the floating action bar, relative to the scrolled document. */
@@ -140,11 +140,10 @@ export class ReviewMarkdownPreviewComponent {
       return;
     }
 
-    const placement = placeSelectionMenu(
-      captured.rect,
-      scrollEl.getBoundingClientRect(),
-      { top: scrollEl.scrollTop, left: scrollEl.scrollLeft },
-    );
+    const placement = placeSelectionMenu(captured.rect, scrollEl.getBoundingClientRect(), {
+      top: scrollEl.scrollTop,
+      left: scrollEl.scrollLeft,
+    });
     this.selectionMenu.set({ ...placement, mentions: [mention] });
   }
 

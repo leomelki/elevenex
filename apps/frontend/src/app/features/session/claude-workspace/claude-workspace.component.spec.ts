@@ -1,21 +1,21 @@
-import '@angular/compiler';
-import { TestBed } from '@angular/core/testing';
-import { of, Subject } from 'rxjs';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { toast } from 'ngx-sonner';
-import { ClaudeWorkspaceComponent } from './claude-workspace.component';
-import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
+import type { ComposerImageAttachment } from '@/shared/agent-chat/composer/claude-composer.component';
+import { ComposerDraftService } from '@/shared/agent-chat/composer/composer-draft.service';
+import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { AppSettingsService } from '@/shared/services/app-settings.service';
+import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
 import { ClaudeTerminalTranscriptWebsocketService } from '@/shared/services/claude-terminal-transcript-websocket.service';
-import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
-import { WorktreeContextService } from '@/shared/services/worktree-context.service';
-import { SessionsService } from '@/shared/services/sessions.service';
 import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
-import { ComposerDraftService } from './composer-draft.service';
-import type { ComposerImageAttachment } from './components/claude-composer.component';
-import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
-import { AppSettingsService } from '@/shared/services/app-settings.service';
+import { SessionsService } from '@/shared/services/sessions.service';
+import { WorktreeContextService } from '@/shared/services/worktree-context.service';
+import '@angular/compiler';
+import { TestBed } from '@angular/core/testing';
+import { toast } from 'ngx-sonner';
+import { of, Subject } from 'rxjs';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ClaudeWorkspaceComponent } from './claude-workspace.component';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -258,6 +258,7 @@ describe('ClaudeWorkspaceComponent', () => {
   };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     apiMock = {
       getAutocompleteItems: vi.fn(() => of([])),
       getSubagentHistory: vi.fn(() =>
@@ -374,6 +375,30 @@ describe('ClaudeWorkspaceComponent', () => {
         },
       ],
     }).compileComponents();
+  });
+
+  it('ignores a settings response from a previous conversation', async () => {
+    const response = new Subject<ClaudeRuntimeState>();
+    apiMock.setSelectedModel.mockReturnValue(response);
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    const component = fixture.componentInstance;
+    component.sessionId = 7;
+    const update = component.onModelChange('old-model');
+    (component as unknown as { reset(): void }).reset();
+    response.next({ ...runtimeState(), selectedModel: 'old-model' });
+    await update;
+    expect(component.selectedModel()).toBeNull();
+  });
+
+  it('reports settings failures without an unhandled rejection', async () => {
+    const response = new Subject<ClaudeRuntimeState>();
+    apiMock.setSelectedModel.mockReturnValue(response);
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    const update = fixture.componentInstance.onModelChange('model');
+    response.error(new Error('Unavailable model'));
+    await update;
+    expect(toast.error).toHaveBeenCalledWith('Unavailable model');
   });
 
   it('shows model presets as one-click choices in a new empty session', () => {
@@ -1502,8 +1527,18 @@ describe('ClaudeWorkspaceComponent', () => {
     apiMock.getHistory.mockReturnValue(
       of(
         editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(4), newString: linesOf(14) },
-          { tool: 'Edit', file: 'b.ts', oldString: linesOf(4), newString: linesOf(14) },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(4).replace(/line/g, 'old'),
+            newString: linesOf(14),
+          },
+          {
+            tool: 'Edit',
+            file: 'b.ts',
+            oldString: linesOf(4).replace(/line/g, 'old'),
+            newString: linesOf(14),
+          },
           { tool: 'Write', file: 'c.ts', content: linesOf(14) },
         ]),
       ),
@@ -1712,9 +1747,24 @@ describe('ClaudeWorkspaceComponent', () => {
     apiMock.getHistory.mockReturnValue(
       of(
         editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(5) },
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(5) },
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(1), newString: linesOf(3) },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(2).replace(/line/g, 'old'),
+            newString: linesOf(5),
+          },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(2).replace(/line/g, 'old'),
+            newString: linesOf(5),
+          },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(1).replace(/line/g, 'old'),
+            newString: linesOf(3),
+          },
         ]),
       ),
     );
@@ -1766,7 +1816,7 @@ describe('ClaudeWorkspaceComponent', () => {
           {
             tool: 'Edit',
             file: 'a.ts',
-            oldString: linesOf(3),
+            oldString: linesOf(3).replace(/line/g, 'old'),
             newString: linesOf(5),
             isError: true,
           },
@@ -1795,10 +1845,20 @@ describe('ClaudeWorkspaceComponent', () => {
     apiMock.getHistory.mockReturnValue(
       of([
         ...editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(2) },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(2).replace(/line/g, 'old'),
+            newString: linesOf(2),
+          },
         ]),
         ...editTurnHistory('2', '2026-04-24T08:01:00.000Z', [
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(1), newString: linesOf(5) },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(1).replace(/line/g, 'old'),
+            newString: linesOf(5),
+          },
           { tool: 'Write', file: 'b.ts', content: linesOf(4) },
         ]),
       ]),

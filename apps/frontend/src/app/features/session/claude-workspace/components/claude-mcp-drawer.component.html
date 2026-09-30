@@ -1,0 +1,243 @@
+@if (open()) {
+  <div class="cw-mcp__backdrop" (click)="close.emit()"></div>
+  <aside class="cw-mcp">
+    <header class="cw-mcp__head">
+      <div class="cw-mcp__head-title">
+        <div class="cw-mcp__head-icon">
+          <ng-icon name="lucidePlugZap" size="14" />
+        </div>
+        <div>
+          <h3>MCP Servers</h3>
+          @if (snapshot(); as current) {
+            <p>Updated {{ current.lastUpdatedAt | date: 'shortTime' }}</p>
+          } @else {
+            <p>Model Context Protocol</p>
+          }
+        </div>
+      </div>
+      <div class="cw-mcp__head-actions">
+        <button
+          type="button"
+          class="cw-mcp__icon-btn"
+          (click)="refresh.emit()"
+          [disabled]="loading()"
+          title="Refresh"
+        >
+          <ng-icon name="lucideRefreshCcw" size="13" [class.animate-spin]="loading()" />
+        </button>
+        <button type="button" class="cw-mcp__icon-btn" (click)="close.emit()" title="Close">
+          <ng-icon name="lucideX" size="13" />
+        </button>
+      </div>
+    </header>
+
+    <div class="cw-mcp__body">
+      @if (loading() && !snapshot()) {
+        <div class="cw-mcp__loading">
+          <div class="cw-mcp__skeleton cw-mcp__skeleton--summary"></div>
+          <div class="cw-mcp__skeleton"></div>
+          <div class="cw-mcp__skeleton cw-mcp__skeleton--sm"></div>
+          <div class="cw-mcp__skeleton"></div>
+        </div>
+      } @else if (snapshot(); as current) {
+        <div class="cw-mcp__summary">
+          <div
+            class="cw-mcp__metric"
+            [class.cw-mcp__metric--connected]="current.summary.connected > 0"
+          >
+            <strong>{{ current.summary.connected }}</strong>
+            <span>Connected</span>
+          </div>
+          <div class="cw-mcp__metric" [class.cw-mcp__metric--warn]="current.summary.needsAuth > 0">
+            <strong>{{ current.summary.needsAuth }}</strong>
+            <span>Auth needed</span>
+          </div>
+          <div class="cw-mcp__metric" [class.cw-mcp__metric--error]="current.summary.failed > 0">
+            <strong>{{ current.summary.failed }}</strong>
+            <span>Failed</span>
+          </div>
+          <div class="cw-mcp__metric">
+            <strong>{{ current.summary.disabled }}</strong>
+            <span>Disabled</span>
+          </div>
+        </div>
+
+        @for (group of groupedServers(); track group.scope) {
+          <section class="cw-mcp__section">
+            <div class="cw-mcp__section-head">
+              <span class="cw-mcp__section-label">{{ group.label }}</span>
+              <span class="cw-mcp__section-count">{{ group.servers.length }}</span>
+            </div>
+            @for (server of group.servers; track server.entryId) {
+              <article class="cw-mcp__card" [attr.data-status]="server.connectionStatus">
+                <div class="cw-mcp__card-top">
+                  <div
+                    class="cw-mcp__status-dot"
+                    [attr.data-status]="server.connectionStatus"
+                  ></div>
+                  <div class="cw-mcp__card-info">
+                    <div class="cw-mcp__card-name">{{ server.name }}</div>
+                    <div class="cw-mcp__card-badges">
+                      <span class="cw-mcp__badge cw-mcp__badge--transport">{{
+                        server.transport
+                      }}</span>
+                      <span
+                        class="cw-mcp__badge cw-mcp__badge--status"
+                        [attr.data-status]="server.connectionStatus"
+                      >
+                        {{ statusLabel(server) }}
+                      </span>
+                      @if (server.configStatus !== 'valid') {
+                        <span class="cw-mcp__badge cw-mcp__badge--config-warn">{{
+                          server.configStatus
+                        }}</span>
+                      }
+                    </div>
+                  </div>
+                </div>
+
+                <div class="cw-mcp__location">{{ server.configLocation }}</div>
+
+                @if (server.error) {
+                  <div class="cw-mcp__error">
+                    <ng-icon
+                      name="lucideTriangleAlert"
+                      size="11"
+                      style="flex-shrink: 0; margin-top: 0.05rem"
+                    />
+                    {{ server.error }}
+                  </div>
+                }
+
+                @if (server.counts; as counts) {
+                  @if (counts.tools > 0 || counts.prompts > 0 || counts.loadedContextTools > 0) {
+                    <div class="cw-mcp__counts">
+                      @if (counts.tools > 0) {
+                        <span>{{ counts.tools }} tools</span>
+                      }
+                      @if (counts.prompts > 0) {
+                        <span>{{ counts.prompts }} prompts</span>
+                      }
+                      @if (counts.loadedContextTools > 0) {
+                        <span>{{ counts.loadedContextTools }} in ctx</span>
+                      }
+                    </div>
+                  }
+                }
+
+                @if (server.tools?.length) {
+                  <details class="cw-mcp__tools">
+                    <summary>
+                      <ng-icon name="lucideWrench" size="10" />
+                      {{ server.tools!.length }} tool{{ server.tools!.length === 1 ? '' : 's' }}
+                    </summary>
+                    <div class="cw-mcp__tool-list">
+                      @for (tool of server.tools; track tool.name) {
+                        <div class="cw-mcp__tool-item">
+                          <span class="cw-mcp__tool-name">{{ tool.displayName || tool.name }}</span>
+                          <code class="cw-mcp__tool-code">{{ tool.name }}</code>
+                        </div>
+                      }
+                    </div>
+                  </details>
+                }
+
+                @if (
+                  server.actions.canAuth ||
+                  server.actions.canReauth ||
+                  server.actions.canToggle ||
+                  server.actions.canRecheck
+                ) {
+                  <div class="cw-mcp__card-actions">
+                    @if (server.actions.canAuth) {
+                      <button
+                        type="button"
+                        class="cw-mcp__btn cw-mcp__btn--auth"
+                        (click)="auth.emit(server)"
+                        [disabled]="busyServerName() === server.name"
+                      >
+                        <ng-icon name="lucideKeyRound" size="11" />
+                        Authenticate
+                      </button>
+                    }
+                    @if (server.actions.canReauth) {
+                      <button
+                        type="button"
+                        class="cw-mcp__btn cw-mcp__btn--ghost"
+                        (click)="auth.emit(server)"
+                        [disabled]="busyServerName() === server.name"
+                      >
+                        <ng-icon name="lucideKeyRound" size="11" />
+                        Re-authenticate
+                      </button>
+                    }
+                    @if (server.actions.canToggle) {
+                      <button
+                        type="button"
+                        class="cw-mcp__btn"
+                        [class.cw-mcp__btn--disable]="server.enabled"
+                        [class.cw-mcp__btn--enable]="!server.enabled"
+                        (click)="toggle.emit(server)"
+                        [disabled]="busyServerName() === server.name"
+                      >
+                        {{ server.enabled ? 'Disable' : 'Enable' }}
+                      </button>
+                    }
+                    @if (server.actions.canRecheck) {
+                      <button
+                        type="button"
+                        class="cw-mcp__btn cw-mcp__btn--ghost"
+                        (click)="recheck.emit(server)"
+                        [disabled]="busyServerName() === server.name"
+                      >
+                        <ng-icon name="lucideRefreshCcw" size="10" />
+                        Recheck
+                      </button>
+                    }
+                  </div>
+                }
+              </article>
+            }
+          </section>
+        }
+
+        @if (current.diagnostics.length) {
+          <section class="cw-mcp__section">
+            <div class="cw-mcp__section-head">
+              <span class="cw-mcp__section-label">Diagnostics</span>
+              <span class="cw-mcp__section-count cw-mcp__section-count--warn">{{
+                current.diagnostics.length
+              }}</span>
+            </div>
+            @for (
+              diagnostic of current.diagnostics;
+              track diagnostic.scope + diagnostic.configLocation
+            ) {
+              <article class="cw-mcp__diag">
+                <div class="cw-mcp__diag-head">
+                  <strong>{{ scopeLabel(diagnostic.scope) }}</strong>
+                  <span>{{ diagnostic.configLocation }}</span>
+                </div>
+                @for (error of diagnostic.errors; track diagnosticKey(error)) {
+                  <div class="cw-mcp__diag-msg cw-mcp__diag-msg--error">
+                    {{ diagnosticMessage(error) }}
+                  </div>
+                }
+                @for (warning of diagnostic.warnings; track diagnosticKey(warning)) {
+                  <div class="cw-mcp__diag-msg cw-mcp__diag-msg--warning">
+                    {{ diagnosticMessage(warning) }}
+                  </div>
+                }
+              </article>
+            }
+          </section>
+        }
+      } @else {
+        <div class="cw-mcp__empty">
+          <ng-icon name="lucidePlugZap" size="26" />
+          <span>No MCP servers configured</span>
+        </div>
+      }
+    </div>
+  </aside>
+}

@@ -1,11 +1,11 @@
+import { extractProposedPlan } from '@/shared/agent-chat/transcript/proposed-plan';
+import { AgentProviderId } from '@/shared/models/agent-runtime.model';
 import {
   AgentToolKind,
   ClaudePermissionRequest,
   ClaudeTranscriptItem,
 } from '@/shared/models/claude-runtime.model';
-import { AgentProviderId } from '@/shared/models/agent-runtime.model';
-import { extractProposedPlan } from '../session/claude-workspace/util/proposed-plan';
-import { PlanReviewProvider, PlanReviewRequest } from './plan-review.model';
+import { PlanReviewProvider, PlanReviewRequest } from '@/shared/models/plan-review.model';
 
 export function planReviewFromTranscriptItem(
   item: ClaudeTranscriptItem,

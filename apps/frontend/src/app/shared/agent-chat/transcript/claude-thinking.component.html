@@ -1,0 +1,33 @@
+<div class="cw-think">
+  <button
+    type="button"
+    class="cw-think__head"
+    [class.cw-think__head--pulse]="streaming()"
+    [class.cw-think__head--muted]="!hasBody() && !streaming()"
+    [disabled]="!hasBody()"
+    (click)="toggle()"
+  >
+    <ng-icon name="lucideBrain" size="13" />
+    <span>{{ headerLabel() }}</span>
+    @if (preview()) {
+      <span class="cw-think__preview">— {{ preview() }}</span>
+    }
+    @if (hasBody()) {
+      <ng-icon
+        name="lucideChevronRight"
+        size="13"
+        class="cw-think__chev"
+        [class.rotate-90]="open()"
+      />
+    }
+  </button>
+  @if (open() && hasBody()) {
+    <div class="cw-think__body" #bodyEl (scroll)="onBodyScroll($event)">
+      @if (streaming()) {
+        <div class="cw-think__streaming">{{ content() }}</div>
+      } @else {
+        <agent-markdown class="cw-think__md" [content]="content()" />
+      }
+    </div>
+  }
+</div>

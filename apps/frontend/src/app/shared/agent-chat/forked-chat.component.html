@@ -39,6 +39,7 @@
       </div>
     } @else {
       <cw-transcript
+        [canInspectAgents]="true"
         [items]="chat.renderItems()"
         [worktreePath]="worktreePath()"
         [streamingMessageId]="streamingMessageId()"
@@ -54,6 +55,8 @@
         (toggleTurnChanges)="toggleTurnChanges($event)"
         (closeTurnChanges)="closeTurnChanges($event)"
         (inspectTurn)="openAgentInspector($event)"
+        (messageCopy)="copyMessage($event.item, $event.text)"
+        (openLocalFile)="openLocalFile.emit($event)"
       />
     }
   </div>
@@ -85,6 +88,7 @@
       [blockedByPermission]="!!chat.pendingPermissionRequest()"
       [attachedPanelOpen]="!!chat.pendingPermissionRequest()"
       [pendingPrompts]="chat.pendingPrompts()"
+      [queuePaused]="chat.queuePaused()"
       [autocompleteItems]="autocompleteItems()"
       [placeholderText]="placeholder()"
       [allowImages]="false"
@@ -94,6 +98,10 @@
       (valueChange)="draft.set($event)"
       (send)="send($event)"
       (interrupt)="interrupt()"
+      (cancelPending)="cancelPending($event)"
+      (steerPending)="steerPending($event)"
+      (resumePending)="resumePending()"
+      (clearPending)="clearPending()"
     />
   </div>
 

@@ -1,0 +1,116 @@
+@if (review(); as activeReview) {
+  <section class="pc-panel" aria-label="Ask about plan">
+    <header class="pc-head">
+      <div class="pc-head__copy">
+        <span class="pc-eyebrow">Plan Q&A</span>
+        <h3>Ask about this plan</h3>
+      </div>
+      @if (currentChat()) {
+        <button
+          type="button"
+          class="pc-icon-btn"
+          title="Start fresh"
+          aria-label="Start fresh"
+          [disabled]="resetting() || sending()"
+          (click)="startFresh(activeReview)"
+        >
+          <ng-icon name="lucideRefreshCw" size="13" />
+        </button>
+      }
+    </header>
+
+    @if (!canAsk(activeReview)) {
+      <div class="pc-body">
+        <p class="pc-empty pc-empty--center">
+          Questions are available for transcript plans after the plan message is saved.
+        </p>
+      </div>
+    } @else {
+      <div
+        #messagesRef
+        class="pc-messages"
+        aria-live="polite"
+        aria-label="Plan questions"
+        (scroll)="onMessagesScroll()"
+      >
+        @if (loading()) {
+          <div class="pc-skeleton" aria-label="Loading plan questions">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        } @else if (!conversation.renderItems().length && !sending()) {
+          <div class="pc-empty pc-empty--center">
+            <span class="pc-empty__icon" aria-hidden="true">
+              <ng-icon name="lucideMessageSquare" size="16" />
+            </span>
+            <p>Ask a focused question about the reviewed plan.</p>
+          </div>
+        } @else {
+          <cw-transcript
+            [items]="conversation.renderItems()"
+            [worktreePath]="currentChat()?.childSession?.worktreePath ?? null"
+            [streamingMessageId]="conversation.streamingMessageId()"
+            [pendingReply]="
+              conversation.awaitingFirstToken() || (sending() && !conversation.lastLiveMessageId())
+            "
+            [childItemsByParentToolUseId]="conversation.childItemsByParentToolUseId()"
+            [liveToolUseIds]="conversation.liveToolUseIds()"
+            [toolProgressByToolUseId]="conversation.toolProgressByToolUseId()"
+            [expandedTurns]="expandedTurns()"
+            [expandedTurnChanges]="expandedTurnChanges()"
+            (toggleTurn)="toggleTurn($event)"
+            (toggleTurnChanges)="toggleTurnChanges($event)"
+            (closeTurnChanges)="closeTurnChanges($event)"
+            (approve)="approvePermission($event)"
+            (deny)="denyPermission($event)"
+            (messageCopy)="copyMessage($event.item, $event.text)"
+            (openLocalFile)="openLocalFile.emit($event)"
+          />
+        }
+      </div>
+
+      <div class="pc-footer">
+        @if (lastError(); as error) {
+          <p class="pc-error" role="alert">{{ error }}</p>
+        }
+
+        @if (conversation.pendingUserInputRequest(); as request) {
+          <cw-user-input [request]="request" (answer)="answerUserInput($event)" />
+        }
+        @if (conversation.pendingPermissionRequest(); as request) {
+          <cw-permission-inline
+            [request]="request"
+            appearance="dock"
+            (approve)="approvePermission($event)"
+            (deny)="denyPermission($event)"
+          />
+        }
+        <cw-composer
+          [value]="draft()"
+          [submitting]="sending()"
+          [running]="runPhase() === 'running'"
+          [canInterrupt]="canInterrupt()"
+          [allowImages]="false"
+          [disconnected]="loading() || resetting()"
+          [blockedByPermission]="
+            !!conversation.pendingPermissionRequest() || !!conversation.pendingUserInputRequest()
+          "
+          [attachedPanelOpen]="!!conversation.pendingPermissionRequest()"
+          [pendingPrompts]="conversation.pendingPrompts()"
+          [queuePaused]="conversation.queuePaused()"
+          [sessionId]="currentChat()?.childSessionId ?? null"
+          [worktreePath]="currentChat()?.childSession?.worktreePath ?? null"
+          placeholderText="Ask a question about the plan…"
+          (valueChange)="draft.set($event)"
+          (send)="submit($event, activeReview)"
+          (interrupt)="interrupt()"
+          (cancelPending)="cancelPending($event)"
+          (steerPending)="steerPending($event)"
+          (resumePending)="resumePending()"
+          (clearPending)="clearPending()"
+        />
+      </div>
+    }
+  </section>
+}

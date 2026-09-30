@@ -1,0 +1,238 @@
+<div class="cw-perm" [attr.data-kind]="kind()" [class.cw-perm--dock]="appearance() === 'dock'">
+  @switch (kind()) {
+    @case ('ask_user_question') {
+      <header class="cw-perm__head">
+        <span class="cw-perm__icon" aria-hidden="true">
+          <ng-icon name="lucideMessageCircleQuestion" size="13" />
+        </span>
+        <span class="cw-perm__eyebrow">Input needed</span>
+        @if (request().agentId) {
+          <span class="cw-perm__agent" title="Delegated subagent"
+            >Subagent · {{ request().agentId }}</span
+          >
+        }
+      </header>
+      <h3 class="cw-perm__title">{{ request().title || 'Claude needs your input' }}</h3>
+      @if (request().description) {
+        <p class="cw-perm__sub">{{ request().description }}</p>
+      }
+
+      @if (!denying()) {
+        <cw-ask-user-question-flow
+          [requestId]="request().requestId"
+          [questions]="questions()"
+          declineLabel="Decline"
+          submitLabel="Submit"
+          (decline)="startDeny()"
+          (submitted)="submitQuestionAnswers($event)"
+        />
+      }
+    }
+
+    @case ('enter_plan_mode') {
+      <header class="cw-perm__head">
+        <span class="cw-perm__icon" aria-hidden="true">
+          <ng-icon name="lucideClipboardList" size="13" />
+        </span>
+        <span class="cw-perm__eyebrow">Plan mode</span>
+      </header>
+      <h3 class="cw-perm__title">{{ request().title || 'Enter plan mode?' }}</h3>
+      <p class="cw-perm__sub">
+        Claude will stay read-only, explore the codebase, and prepare a plan before editing.
+      </p>
+      @if (!denying()) {
+        <footer class="cw-perm__actions">
+          <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+            <ng-icon name="lucideX" size="13" aria-hidden="true" />
+            Not now
+          </button>
+          <button
+            type="button"
+            class="cw-btn cw-btn--primary"
+            (click)="approve.emit({ remember: false })"
+          >
+            <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+            Start planning
+          </button>
+        </footer>
+      }
+    }
+
+    @case ('exit_plan_mode') {
+      <header class="cw-perm__head">
+        <span class="cw-perm__icon" aria-hidden="true">
+          <ng-icon name="lucideClipboardList" size="13" />
+        </span>
+        <span class="cw-perm__eyebrow">Plan ready</span>
+        @if (planPath(); as path) {
+          <span class="cw-perm__path" [title]="path">{{ path }}</span>
+        }
+      </header>
+      <h3 class="cw-perm__title">{{ request().title || 'Approve plan?' }}</h3>
+
+      <div class="cw-perm__plan-launcher">
+        <span class="cw-perm__plan-copy">
+          Review the plan in the annotator before approving or requesting changes.
+        </span>
+        @if (planReviewAvailable()) {
+          <button type="button" class="cw-btn cw-btn--secondary" (click)="openPlanReview.emit()">
+            <ng-icon name="lucideClipboardList" size="13" aria-hidden="true" />
+            Open review
+          </button>
+        }
+      </div>
+
+      @if (!denying()) {
+        <footer class="cw-perm__actions">
+          <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+            <ng-icon name="lucideX" size="13" aria-hidden="true" />
+            Keep planning
+          </button>
+          <button
+            type="button"
+            class="cw-btn cw-btn--primary"
+            (click)="approve.emit({ remember: false })"
+          >
+            <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+            Approve plan
+          </button>
+        </footer>
+      }
+    }
+
+    @default {
+      <header class="cw-perm__head">
+        <span class="cw-perm__icon" aria-hidden="true">
+          <ng-icon name="lucideShield" size="13" />
+        </span>
+        <span class="cw-perm__eyebrow">Approval required</span>
+        <span class="cw-perm__tool">{{ requestToolLabel() }}</span>
+        @if (request().agentId) {
+          <span class="cw-perm__agent" title="Delegated subagent"
+            >Subagent · {{ request().agentId }}</span
+          >
+        }
+      </header>
+
+      <h3 class="cw-perm__title">{{ requestTitle() }}</h3>
+      @if (requestSubline(); as line) {
+        <p class="cw-perm__path" [title]="line">{{ line }}</p>
+      }
+      @if (requestSubtitle(); as sub) {
+        <p class="cw-perm__sub">{{ sub }}</p>
+      }
+
+      @if (request().batch; as batch) {
+        <div class="cw-perm__batch" role="list" aria-label="Actions in this approval">
+          @for (item of batch; track item.toolUseId) {
+            <div class="cw-perm__batch-item" role="listitem">
+              <span>{{ batchItemLabel(item) }}</span>
+              @if (batchItemTarget(item); as target) {
+                <code [title]="target">{{ target }}</code>
+              }
+            </div>
+          }
+        </div>
+      }
+
+      @if (permDiffHtml(); as diff) {
+        <pre class="cw-perm__preview cw-perm__preview--code" [innerHTML]="diff"></pre>
+      } @else if (permWriteContent()) {
+        <pre class="cw-perm__preview cw-perm__preview--code">{{ permWriteContent() }}</pre>
+      } @else if (permBashCommand()) {
+        <pre class="cw-perm__preview cw-perm__preview--cmd">$ {{ permBashCommand() }}</pre>
+      }
+
+      @if (!denying()) {
+        <section
+          class="cw-perm__always"
+          [attr.data-has-patterns]="alwaysAllowPatterns().length > 0"
+        >
+          <div class="cw-perm__always-head">
+            <span class="cw-perm__always-kicker">
+              {{
+                alwaysAllowPatterns().length
+                  ? 'Always allow saves this pattern'
+                  : 'No always-allow pattern available'
+              }}
+            </span>
+            @if (!alwaysAllowPatterns().length) {
+              <span class="cw-perm__always-empty">No reusable pattern supplied</span>
+            }
+          </div>
+          @if (alwaysAllowPatterns().length) {
+            <div class="cw-perm__patterns">
+              @for (entry of alwaysAllowPatterns(); track entry.pattern + entry.detail) {
+                <div class="cw-perm__pattern">
+                  <span class="cw-perm__pattern-label">{{ entry.label }}</span>
+                  <code class="cw-perm__pattern-code">{{ entry.pattern }}</code>
+                  <span class="cw-perm__pattern-detail">{{ entry.detail }}</span>
+                </div>
+              }
+            </div>
+          } @else {
+            <p class="cw-perm__always-note">
+              Claude did not provide a reusable rule for this tool call, so this request can only be
+              approved once.
+            </p>
+          }
+        </section>
+
+        <footer class="cw-perm__actions">
+          <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+            <ng-icon name="lucideX" size="13" aria-hidden="true" />
+            Deny
+          </button>
+          <span class="cw-perm__spacer"></span>
+          <button
+            type="button"
+            class="cw-btn cw-btn--secondary"
+            [title]="allowOnceCopy()"
+            (click)="approve.emit({ remember: false })"
+          >
+            <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+            {{ allowOnceLabel() }}
+          </button>
+          @if (alwaysAllowPatterns().length) {
+            <button
+              type="button"
+              class="cw-btn cw-btn--primary"
+              [title]="allowAlwaysCopy()"
+              (click)="approve.emit({ remember: true })"
+            >
+              <ng-icon name="lucideCheckCheck" size="13" aria-hidden="true" />
+              Always allow
+            </button>
+          }
+        </footer>
+      }
+    }
+  }
+
+  @if (denying()) {
+    <div class="cw-perm__deny" role="group" aria-label="Decline with feedback">
+      <label class="cw-perm__deny-label" for="cw-perm-deny-msg">
+        Tell Claude what to do instead
+        <span class="cw-perm__deny-optional">(optional)</span>
+      </label>
+      <textarea
+        #denyTa
+        id="cw-perm-deny-msg"
+        class="cw-perm__deny-input"
+        rows="2"
+        [ngModel]="denyMessage()"
+        (ngModelChange)="denyMessage.set($event)"
+        (keydown)="onDenyKeydown($event)"
+        placeholder="e.g. don't run shell commands; ask me first…"
+      ></textarea>
+      <div class="cw-perm__deny-actions">
+        <span class="cw-perm__deny-hint">⌘↵ to send · Esc to cancel</span>
+        <button type="button" class="cw-btn cw-btn--ghost" (click)="cancelDeny()">Cancel</button>
+        <button type="button" class="cw-btn cw-btn--deny-confirm" (click)="confirmDeny()">
+          <ng-icon name="lucideX" size="13" aria-hidden="true" />
+          {{ denyMessage().trim() ? 'Send & deny' : 'Deny' }}
+        </button>
+      </div>
+    </div>
+  }
+</div>

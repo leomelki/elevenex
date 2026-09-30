@@ -1,0 +1,196 @@
+@if (open()) {
+  @if (turn(); as currentTurn) {
+    <div class="cw-agent-dive__backdrop" (click)="close.emit()"></div>
+    <aside class="cw-agent-dive">
+      <header class="cw-agent-dive__head">
+        <div>
+          <div class="cw-agent-dive__eyebrow">Agent Deep Dive</div>
+          <h3>
+            Worked for {{ currentTurn.durationLabel }} · {{ currentTurn.stepCount }} steps ·
+            {{ currentTurn.agents.length }} agent{{ currentTurn.agents.length === 1 ? '' : 's' }}
+          </h3>
+        </div>
+        <button type="button" class="cw-agent-dive__close" (click)="close.emit()">
+          <ng-icon name="lucideX" size="15" />
+        </button>
+      </header>
+
+      <div class="cw-agent-dive__body">
+        <nav class="cw-agent-dive__rail" aria-label="Agents">
+          @for (agent of currentTurn.agents; track agent.agentId) {
+            <button
+              type="button"
+              class="cw-agent-dive__agent"
+              [class.cw-agent-dive__agent--active]="agent.agentId === selectedAgentId()"
+              (click)="selectAgent.emit(agent.agentId)"
+            >
+              <div class="cw-agent-dive__agent-top">
+                <span class="cw-agent-dive__agent-name">{{
+                  humanizeAgentType(agent.agentType)
+                }}</span>
+                <span class="cw-agent-dive__agent-state" [attr.data-state]="agent.status">
+                  {{ agent.status }}
+                </span>
+              </div>
+              @if (agent.summary) {
+                <div class="cw-agent-dive__agent-summary">{{ agent.summary }}</div>
+              } @else {
+                <div class="cw-agent-dive__agent-summary cw-agent-dive__agent-summary--muted">
+                  No assistant summary yet
+                </div>
+              }
+              <div class="cw-agent-dive__agent-time">
+                {{ formatTimestamp(agent.startedAt || agent.lastEventAt) }}
+              </div>
+            </button>
+          }
+        </nav>
+
+        <section class="cw-agent-dive__main">
+          @if (selectedAgent(); as agent) {
+            <div class="cw-agent-dive__hero">
+              <div class="cw-agent-dive__hero-copy">
+                <div class="cw-agent-dive__hero-title">
+                  {{ humanizeAgentType(agent.agentType) }}
+                </div>
+                <div class="cw-agent-dive__hero-meta">
+                  <span>{{ agent.status === 'stopped' ? 'Completed' : 'Running' }}</span>
+                  <span>{{ formatTimestamp(agent.lastEventAt) }}</span>
+                  @if (agent.stopHookActive) {
+                    <span>Stop hook active</span>
+                  }
+                </div>
+              </div>
+              <div class="cw-agent-dive__tabs">
+                <button
+                  type="button"
+                  [class.is-active]="tab() === 'timeline'"
+                  (click)="tab.set('timeline')"
+                >
+                  <ng-icon name="lucideActivity" size="13" />
+                  Timeline
+                </button>
+                <button
+                  type="button"
+                  [class.is-active]="tab() === 'transcript'"
+                  (click)="tab.set('transcript')"
+                >
+                  <ng-icon name="lucideScrollText" size="13" />
+                  Transcript
+                </button>
+                <button
+                  type="button"
+                  [class.is-active]="tab() === 'hooks'"
+                  (click)="tab.set('hooks')"
+                >
+                  <ng-icon name="lucideFileSearch" size="13" />
+                  Hooks
+                </button>
+              </div>
+            </div>
+
+            @if (selectedHistoryState()?.loading) {
+              <div class="cw-agent-dive__empty">Loading agent transcript…</div>
+            } @else if (tab() === 'timeline') {
+              <div class="cw-agent-dive__timeline">
+                @for (entry of timelineEntries(); track entry.id) {
+                  @switch (entry.kind) {
+                    @case ('event') {
+                      <article class="cw-agent-dive__event" [attr.data-tone]="entry.tone">
+                        <div class="cw-agent-dive__event-label">{{ entry.label }}</div>
+                        <div class="cw-agent-dive__event-detail">{{ entry.detail }}</div>
+                      </article>
+                    }
+                    @case ('message') {
+                      <article class="cw-agent-dive__note" [attr.data-tone]="entry.tone">
+                        <div class="cw-agent-dive__note-label">{{ entry.label }}</div>
+                        <div class="cw-agent-dive__note-copy">{{ entry.content }}</div>
+                      </article>
+                    }
+                    @case ('tool') {
+                      <cw-tool-call [call]="entry.call" [result]="entry.result" />
+                    }
+                    @case ('cluster') {
+                      <details class="cw-agent-dive__cluster">
+                        <summary>{{ entry.label }}</summary>
+                        <div class="cw-agent-dive__cluster-items">
+                          @for (item of entry.items; track item.id) {
+                            <article class="cw-agent-dive__cluster-item">
+                              <div class="cw-agent-dive__cluster-kind">
+                                {{ clusterItemLabel(item) }}
+                              </div>
+                              <div class="cw-agent-dive__cluster-copy">{{ item.content }}</div>
+                            </article>
+                          }
+                        </div>
+                      </details>
+                    }
+                  }
+                }
+
+                @if (!timelineEntries().length) {
+                  <div class="cw-agent-dive__empty">No timeline details yet.</div>
+                }
+              </div>
+            } @else if (tab() === 'transcript') {
+              @if (selectedHistoryState()?.data?.transcriptAvailable === false) {
+                <div class="cw-agent-dive__empty">
+                  {{
+                    selectedHistoryState()?.data?.transcriptError ||
+                      selectedHistoryState()?.error ||
+                      'Transcript unavailable.'
+                  }}
+                </div>
+              } @else {
+                <div class="cw-agent-dive__timeline">
+                  @for (unit of transcriptUnits(); track unit.id) {
+                    @switch (unit.kind) {
+                      @case ('message') {
+                        <cw-message [item]="unit.item" />
+                      }
+                      @case ('thinking') {
+                        <article class="cw-agent-dive__note">
+                          <div class="cw-agent-dive__note-label">Thinking</div>
+                          <div class="cw-agent-dive__note-copy">{{ unit.item.content }}</div>
+                        </article>
+                      }
+                      @case ('tool') {
+                        <cw-tool-call [call]="unit.call" [result]="unit.result" />
+                      }
+                      @case ('system') {
+                        <article class="cw-agent-dive__note">
+                          <div class="cw-agent-dive__note-label">System</div>
+                          <div class="cw-agent-dive__note-copy">{{ unit.item.content }}</div>
+                        </article>
+                      }
+                    }
+                  }
+                  @if (!transcriptUnits().length) {
+                    <div class="cw-agent-dive__empty">No transcript events available.</div>
+                  }
+                </div>
+              }
+            } @else {
+              <div class="cw-agent-dive__timeline">
+                @for (
+                  event of hookEventsForSelectedAgent();
+                  track event.eventName + ':' + event.timestamp
+                ) {
+                  <article class="cw-agent-dive__event">
+                    <div class="cw-agent-dive__event-label">{{ event.eventName }}</div>
+                    <div class="cw-agent-dive__event-detail">
+                      {{ formatTimestamp(event.timestamp) }}
+                    </div>
+                  </article>
+                }
+                @if (!hookEventsForSelectedAgent().length) {
+                  <div class="cw-agent-dive__empty">No hook events captured for this agent.</div>
+                }
+              </div>
+            }
+          }
+        </section>
+      </div>
+    </aside>
+  }
+}

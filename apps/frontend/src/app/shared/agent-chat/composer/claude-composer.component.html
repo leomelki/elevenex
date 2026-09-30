@@ -1,0 +1,309 @@
+<div class="cw-comp">
+  @if (autocompleteOpen() && filtered().length) {
+    <div class="cw-comp__ac" role="listbox">
+      @for (item of filtered(); track autocompleteOptionId(item); let i = $index) {
+        <button
+          type="button"
+          class="cw-comp__ac-item"
+          [class.cw-comp__ac-item--active]="i === selectedIndex()"
+          (mouseenter)="selectedIndex.set(i)"
+          (mousedown)="$event.preventDefault(); apply(item)"
+        >
+          @if (item.type === 'session') {
+            <span class="cw-comp__ac-label">&#64;{{ item.item.title }}</span>
+            <span class="cw-comp__ac-kind">session #{{ item.item.sessionId }}</span>
+            <span class="cw-comp__ac-desc">{{ item.item.branch }} · {{ item.item.status }}</span>
+          } @else {
+            <span class="cw-comp__ac-label">{{ item.item.label }}</span>
+            <span class="cw-comp__ac-kind">{{ item.item.kind }}</span>
+            <span class="cw-comp__ac-desc">{{ item.item.description }}</span>
+          }
+        </button>
+      }
+    </div>
+  }
+
+  <div
+    class="cw-comp__box"
+    [class.cw-comp__box--attached]="attachedPanelOpen()"
+    [class.cw-comp__box--dropping]="isDropTarget()"
+    [class.cw-comp__box--disconnected]="disconnected()"
+    (dragenter)="onDragEnter($event)"
+    (dragover)="onDragOver($event)"
+    (dragleave)="onDragLeave($event)"
+    (drop)="onDrop($event)"
+  >
+    @if (isDropTarget()) {
+      <div class="cw-comp__drop-hint" role="status">
+        <ng-icon name="lucideMessageSquare" size="14" />
+        Drop to attach context
+      </div>
+    }
+    @if (attachedImages().length) {
+      <div class="cw-comp__images" role="list" aria-label="Attached images">
+        @for (img of attachedImages(); track img.id) {
+          <div class="cw-comp__image" role="listitem">
+            <img [src]="img.dataUrl" [alt]="img.name" />
+            <button
+              type="button"
+              class="cw-comp__image-remove"
+              title="Remove attachment"
+              aria-label="Remove attachment"
+              (click)="removeImage(img.id)"
+            >
+              <ng-icon name="lucideX" size="12" />
+            </button>
+          </div>
+        }
+      </div>
+    }
+    @if (sessionMentions().length || loadingSessionMention()) {
+      <div class="cw-comp__mentions" role="list" aria-label="Mentioned sessions">
+        @for (mention of sessionMentions(); track mention.sessionId) {
+          <article class="cw-comp__mention" role="listitem">
+            <span class="cw-comp__mention-icon" aria-hidden="true">
+              <ng-icon name="lucideMessageSquare" size="14" />
+            </span>
+            <div class="cw-comp__mention-body">
+              <div class="cw-comp__mention-head">
+                <strong class="cw-comp__mention-name">{{ mention.title }}</strong>
+                <span class="cw-comp__mention-lines">#{{ mention.sessionId }}</span>
+              </div>
+              <p class="cw-comp__mention-preview">{{ mention.provider }} · {{ mention.branch }}</p>
+              <span class="cw-comp__mention-meta"
+                >Compact transcript snapshot · full export available to the agent</span
+              >
+            </div>
+            <button
+              type="button"
+              class="cw-comp__mention-remove"
+              title="Remove session mention"
+              [attr.aria-label]="'Remove ' + mention.title"
+              (click)="removeSessionMention.emit(mention.sessionId)"
+            >
+              <ng-icon name="lucideX" size="12" />
+            </button>
+          </article>
+        }
+        @if (loadingSessionMention()) {
+          <div class="cw-comp__pending-item" role="status">
+            <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" />
+            Preparing session context…
+          </div>
+        }
+      </div>
+    }
+    @if (diffMentions().length) {
+      <div class="cw-comp__mentions" role="list" aria-label="Mentioned diff selections">
+        @for (mention of diffMentions(); track mention.id) {
+          <article class="cw-comp__mention" role="listitem">
+            <span class="cw-comp__mention-icon" aria-hidden="true">
+              <ng-icon name="lucideFileCode" size="14" />
+            </span>
+            <div class="cw-comp__mention-body">
+              <div class="cw-comp__mention-head">
+                <span class="cw-comp__mention-path" [title]="mention.filePath">
+                  @if (mentionDirname(mention); as dirname) {
+                    <span class="cw-comp__mention-dir">{{ dirname }}</span>
+                    <span class="cw-comp__mention-slash" aria-hidden="true">/</span>
+                  }
+                  <strong class="cw-comp__mention-name">{{ mentionBasename(mention) }}</strong>
+                </span>
+                <span class="cw-comp__mention-lines">{{ mentionLineLabel(mention) }}</span>
+              </div>
+              <p class="cw-comp__mention-preview">{{ mentionPreview(mention) }}</p>
+              <span class="cw-comp__mention-meta">
+                {{ mention.status }} ·
+                {{ mention.context.before.length + mention.context.after.length }} context lines{{
+                  mention.truncated ? ' · truncated' : ''
+                }}
+              </span>
+            </div>
+            <button
+              type="button"
+              class="cw-comp__mention-remove"
+              title="Remove diff mention"
+              aria-label="Remove diff mention"
+              (click)="removeDiffMention.emit(mention.id)"
+            >
+              <ng-icon name="lucideX" size="12" />
+            </button>
+          </article>
+        }
+      </div>
+    }
+    <!-- What is running is shown by cw-background-activity above the
+         composer; this only explains the consequence for sending. -->
+    @if (backgroundAgentCount() > 0) {
+      <div class="cw-comp__bg-agent" role="status">
+        Background work in progress — new messages will be queued until it finishes.
+      </div>
+    }
+    @if (pendingPrompts().length) {
+      <div class="cw-comp__pending" role="list" aria-label="Queued messages">
+        @if (queuePaused()) {
+          <div class="cw-comp__pending-header" role="status">
+            <span>
+              @if (running()) {
+                <strong>Stopping current response…</strong>
+                <small>
+                  {{ pendingPrompts().length }} queued
+                  {{ pendingPrompts().length === 1 ? 'message will' : 'messages will' }} pause.
+                </small>
+              } @else {
+                <strong
+                  >{{ pendingPrompts().length }}
+                  {{ pendingPrompts().length === 1 ? 'message' : 'messages' }} paused</strong
+                >
+                <small>Nothing will run until you resume.</small>
+              }
+            </span>
+            @if (!running()) {
+              <span class="cw-comp__pending-actions">
+                <button
+                  type="button"
+                  class="cw-comp__pending-action cw-comp__pending-action--primary"
+                  (click)="resumePending.emit()"
+                >
+                  <ng-icon name="lucidePlay" size="12" /> Resume queue
+                </button>
+                <button
+                  type="button"
+                  class="cw-comp__pending-action"
+                  [class.cw-comp__pending-action--confirm]="clearPendingArmed()"
+                  (click)="requestClearPending()"
+                  title="Remove all queued messages"
+                >
+                  <ng-icon name="lucideTrash2" size="12" />
+                  {{ clearPendingArmed() ? 'Confirm clear' : 'Clear all' }}
+                </button>
+              </span>
+            }
+          </div>
+        }
+        @for (p of pendingPrompts(); track p.id; let i = $index) {
+          <div class="cw-comp__pending-item" role="listitem">
+            <span class="cw-comp__pending-index" aria-hidden="true">{{ i + 1 }}</span>
+            <span class="cw-comp__pending-text">{{ pendingPromptPreview(p.prompt) }}</span>
+            <button
+              type="button"
+              class="cw-comp__pending-steer"
+              title="Stop the current response and send this message next"
+              aria-label="Stop the current response and send this queued message next"
+              (click)="steerPending.emit(p.id)"
+            >
+              <ng-icon name="lucideSend" size="11" /> Steer
+            </button>
+            <button
+              type="button"
+              class="cw-comp__pending-remove"
+              title="Cancel queued message"
+              aria-label="Cancel queued message"
+              (click)="cancelPending.emit(p.id)"
+            >
+              <ng-icon name="lucideX" size="12" />
+            </button>
+          </div>
+        }
+      </div>
+    }
+    <textarea
+      #input
+      appDictateTarget
+      #dictate="dictateTarget"
+      [sessionId]="sessionId()"
+      [worktreePath]="worktreePath()"
+      (dictationSubmit)="submit()"
+      class="cw-comp__ta"
+      [placeholder]="placeholder()"
+      [ngModel]="value()"
+      [disabled]="disconnected()"
+      (input)="onInput($event)"
+      (click)="refreshAc($any($event.target))"
+      (keydown)="onKeydown($event)"
+      (paste)="onPaste($event)"
+      rows="1"
+    ></textarea>
+    <input
+      #fileInput
+      type="file"
+      class="cw-comp__file"
+      accept="image/png,image/jpeg,image/gif,image/webp"
+      multiple
+      (change)="onFileInputChange($event)"
+    />
+
+    <div class="cw-comp__bar">
+      <span class="cw-comp__hint">
+        @if (disconnected()) {
+          <ng-icon name="lucideLoaderCircle" size="12" class="animate-spin cw-comp__hint-icon" />
+          Reconnecting…
+        } @else if (autocompleteOpen() && filtered().length) {
+          ↑↓ navigate · ↵ insert
+        } @else if (blockedByPermission()) {
+          {{
+            sendDisabledReason() ||
+              'Respond to the approval request before sending another message.'
+          }}
+        } @else {
+          &#64; sessions · / commands · $ skills · ↵ send · ⇧↵ line break
+        }
+      </span>
+
+      <div class="cw-comp__btns">
+        <app-dictation-button [target]="dictate" [disabled]="disconnected()" />
+        @if (allowImages()) {
+          <button
+            type="button"
+            class="cw-comp__btn cw-comp__btn--ghost"
+            title="Attach image"
+            aria-label="Attach image"
+            [disabled]="disconnected()"
+            (click)="openFilePicker()"
+          >
+            <ng-icon name="lucidePaperclip" size="14" />
+          </button>
+        }
+        @if (running()) {
+          <button
+            type="button"
+            class="cw-comp__btn cw-comp__btn--stop"
+            [disabled]="!canInterrupt() || disconnected()"
+            (click)="interrupt.emit()"
+            [title]="
+              pendingPrompts().length
+                ? 'Stop current response and pause queued messages'
+                : 'Stop current response'
+            "
+          >
+            <ng-icon name="lucideSquare" size="14" />
+            Stop
+          </button>
+        }
+        <button
+          type="button"
+          class="cw-comp__btn cw-comp__btn--send"
+          [disabled]="
+            (!value().trim() &&
+              !attachedImages().length &&
+              !diffMentions().length &&
+              !sessionMentions().length) ||
+            loadingSessionMention() ||
+            (submitting() && !queueing()) ||
+            blockedByPermission() ||
+            disconnected()
+          "
+          (click)="submit()"
+          [title]="queueing() ? 'Queue message' : 'Send'"
+        >
+          @if (submitting() && !queueing()) {
+            <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
+          } @else {
+            <ng-icon name="lucideSend" size="14" />
+          }
+          {{ queueing() ? 'Queue' : 'Send' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,8 +1,8 @@
+import { MarkdownPipe } from '@/shared/agent-chat/markdown/markdown.pipe';
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCheckCircle2, lucideCircle } from '@ng-icons/lucide';
-import { MarkdownPipe } from '../session/claude-workspace/pipes/markdown.pipe';
 import {
   PlanMarkdownBlock,
   groupPlanMarkdownBlocks,
