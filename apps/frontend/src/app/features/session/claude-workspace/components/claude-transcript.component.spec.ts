@@ -1,6 +1,6 @@
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import { ClaudeTranscriptComponent } from './claude-transcript.component';
 import { buildTranscriptRenderItems } from '../util/transcript-render-items';
@@ -44,6 +44,36 @@ async function render(items: ClaudeTranscriptItem[], settled = true) {
   fixture.detectChanges();
   return fixture;
 }
+
+describe('ClaudeTranscriptComponent final outputs', () => {
+  afterEach(() => document.documentElement.classList.remove('dark'));
+
+  it.each(['light', 'dark'])('renders consecutive final replies outside collapsed work in %s mode', async (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    const fixture = await render([
+      { id: 'user', kind: 'user', content: 'Check the changes', timestamp },
+      { id: 'commentary', kind: 'assistant', content: 'Checking the files.', timestamp },
+      { ...call, interaction: undefined },
+      { id: 'first-reply', kind: 'assistant', content: 'The changes are ready.', timestamp },
+      { id: 'second-reply', kind: 'assistant', content: 'All checks passed.', timestamp },
+    ]);
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('cw-turn-summary')).not.toBeNull();
+    expect(element.querySelector('cw-tool-call')).toBeNull();
+    expect(element.textContent).not.toContain('Checking the files.');
+    expect(element.textContent).toContain('The changes are ready.');
+    expect(element.textContent).toContain('All checks passed.');
+    expect(element.textContent!.indexOf('The changes are ready.')).toBeLessThan(
+      element.textContent!.indexOf('All checks passed.'),
+    );
+
+    fixture.componentRef.setInput('expandedTurns', { user: true });
+    fixture.detectChanges();
+    expect(element.querySelector('cw-tool-call')).not.toBeNull();
+    expect(element.textContent).toContain('Checking the files.');
+    expect(element.querySelectorAll('.cw-msg--assistant')).toHaveLength(3);
+  });
+});
 
 describe('ClaudeTranscriptComponent denial feedback', () => {
   it('keeps feedback visible in a settled turn and renders it only once when expanded', async () => {

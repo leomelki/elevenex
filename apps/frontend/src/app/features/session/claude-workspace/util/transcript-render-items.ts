@@ -34,7 +34,7 @@ export interface TranscriptRenderOptions {
 /**
  * Groups a paired transcript into what the UI actually renders: the user
  * prompt, a "Worked for X" pill standing in for the tool work of that turn, and
- * the final assistant reply.
+ * the final assistant replies.
  *
  * Shared by the session workspace and the embedded review/fork chats so both
  * read identically — a pure function rather than a base component because the
@@ -71,30 +71,35 @@ export function buildTranscriptRenderItems(
       PairedTranscriptUnit,
       { kind: 'message' }
     >;
+    const firstFinalAssistantIndex = findFinalAssistantStartIndex(turnUnits, lastAssistantIndex);
+    const firstFinalAssistantUnit = turnUnits[firstFinalAssistantIndex] as Extract<
+      PairedTranscriptUnit,
+      { kind: 'message' }
+    >;
     // Split intermediate units two ways, preserving original chronological order
     // within each bucket:
-    //   - sibling thinking shares the final assistant message's sourceMessageId, so
+    //   - sibling thinking shares the first final reply's sourceMessageId, so
     //     it belongs right before that message as a content block of the same reply.
     //   - everything else (intermediate thinking, intermediate assistant text, tool
     //     calls, system messages) is the work that happened during the turn. When
     //     the turn settles it collapses into the "Worked for X" pill in natural
     //     order; expanding the pill replays the work as it actually happened.
-    const lastAssistantSourceId = lastAssistantUnit.item.sourceMessageId;
-    const intermediateUnits = turnUnits.slice(1, lastAssistantIndex);
+    const firstFinalAssistantSourceId = firstFinalAssistantUnit.item.sourceMessageId;
+    const intermediateUnits = turnUnits.slice(1, firstFinalAssistantIndex);
     const siblingThinkingUnits: PairedTranscriptUnit[] = [];
     const collapsibleUnits: PairedTranscriptUnit[] = [];
     for (const intermediate of intermediateUnits) {
       if (
         intermediate.kind === 'thinking' &&
-        lastAssistantSourceId &&
-        intermediate.item.sourceMessageId === lastAssistantSourceId
+        firstFinalAssistantSourceId &&
+        intermediate.item.sourceMessageId === firstFinalAssistantSourceId
       ) {
         siblingThinkingUnits.push(intermediate);
         continue;
       }
       collapsibleUnits.push(intermediate);
     }
-    const tailUnits = turnUnits.slice(lastAssistantIndex + 1);
+    const finalUnits = turnUnits.slice(firstFinalAssistantIndex);
     const isCurrentTurn = nextUserIndex === units.length;
     const hasToolCalls = collapsibleUnits.some((u) => u.kind === 'tool');
     const canCollapse = hasToolCalls && (!isCurrentTurn || settled);
@@ -135,9 +140,8 @@ export function buildTranscriptRenderItems(
     for (const siblingThinkingUnit of siblingThinkingUnits) {
       out.push({ kind: 'unit', id: siblingThinkingUnit.id, unit: siblingThinkingUnit });
     }
-    out.push({ kind: 'unit', id: lastAssistantUnit.id, unit: lastAssistantUnit });
-    for (const tailUnit of tailUnits) {
-      out.push({ kind: 'unit', id: tailUnit.id, unit: tailUnit });
+    for (const finalUnit of finalUnits) {
+      out.push({ kind: 'unit', id: finalUnit.id, unit: finalUnit });
     }
 
     i = nextUserIndex;
@@ -206,6 +210,19 @@ function findLastAssistantIndex(units: PairedTranscriptUnit[]): number {
     if (isAssistantMessageUnit(units[i])) return i;
   }
   return -1;
+}
+
+/** All assistant messages after the last tool call belong to the final output. */
+function findFinalAssistantStartIndex(
+  units: PairedTranscriptUnit[],
+  lastAssistantIndex: number,
+): number {
+  let firstIndex = lastAssistantIndex;
+  for (let i = lastAssistantIndex - 1; i > 0; i--) {
+    if (units[i].kind === 'tool') break;
+    if (isAssistantMessageUnit(units[i])) firstIndex = i;
+  }
+  return firstIndex;
 }
 
 function formatTurnDuration(startedAt: string, completedAt: string): string {
