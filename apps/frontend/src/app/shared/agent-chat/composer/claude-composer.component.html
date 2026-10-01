@@ -291,15 +291,15 @@
         }
       </span>
 
-      <div class="cw-comp__btns inline-flex items-center gap-1.5">
+      <div class="cw-comp__btns inline-flex shrink-0 items-center gap-1.5">
         <app-dictation-button [target]="dictate" [disabled]="disconnected()" />
         @if (allowImages()) {
           <button
             type="button"
             z-button
             zType="ghost"
-            zSize="icon-xs"
-            class="cw-comp__btn text-xs cw-comp__btn--ghost text-muted-foreground"
+            zSize="icon-sm"
+            class="cw-comp__btn rounded-lg text-xs cw-comp__btn--ghost text-muted-foreground"
             title="Attach image"
             aria-label="Attach image"
             [zDisabled]="disconnected()"
@@ -313,8 +313,7 @@
             type="button"
             z-button
             zType="destructive"
-            zSize="xs"
-            class="cw-comp__btn text-xs cw-comp__btn--stop border-destructive/40"
+            class="cw-comp__btn rounded-lg px-3 text-xs cw-comp__btn--stop border-destructive/40"
             [zDisabled]="!canInterrupt() || disconnected()"
             (click)="interrupt.emit()"
             [title]="
@@ -323,7 +322,7 @@
                 : 'Stop current response'
             "
           >
-            <ng-icon name="lucideSquare" size="14" />
+            <ng-icon name="lucideSquare" size="16" />
             Stop
           </button>
         }
@@ -331,8 +330,7 @@
           type="button"
           z-button
           zType="default"
-          zSize="xs"
-          class="cw-comp__btn text-xs cw-comp__btn--send"
+          class="cw-comp__btn rounded-lg px-3 text-xs cw-comp__btn--send"
           [zDisabled]="
             (!value().trim() &&
               !attachedImages().length &&
@@ -347,9 +345,9 @@
           [title]="queueing() ? 'Queue message' : 'Send'"
         >
           @if (submitting() && !queueing()) {
-            <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
+            <ng-icon name="lucideLoaderCircle" size="16" class="animate-spin" />
           } @else {
-            <ng-icon name="lucideSend" size="14" />
+            <ng-icon name="lucideSend" size="16" />
           }
           {{ queueing() ? 'Queue' : 'Send' }}
         </button>
