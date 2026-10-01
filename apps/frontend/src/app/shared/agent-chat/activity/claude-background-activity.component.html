@@ -1,8 +1,14 @@
 @if (items().length) {
-  <section class="cw-bga" role="status" aria-live="polite">
+  <section
+    class="cw-bga overflow-hidden rounded-lg border border-primary/30 bg-card"
+    role="status"
+    aria-live="polite"
+  >
     <button
+      z-button
+      zType="ghost"
       type="button"
-      class="cw-bga__head"
+      class="cw-bga__head h-auto w-full justify-start gap-2 rounded-none px-2.5 py-1.5 text-left text-xs font-normal text-foreground focus-visible:ring-inset"
       [attr.aria-expanded]="expanded()"
       (click)="expanded.set(!expanded())"
     >
@@ -11,36 +17,42 @@
         <span class="cw-bga__orb-core"></span>
       </span>
 
-      <span class="cw-bga__title">
+      <span class="cw-bga__title min-w-0 flex-1 truncate font-medium">
         {{ summaryLabel() }}
       </span>
 
-      <span class="cw-bga__elapsed">{{ elapsedLabel() }}</span>
+      <span class="cw-bga__elapsed shrink-0 text-muted-foreground tabular-nums">{{
+        elapsedLabel()
+      }}</span>
 
       <ng-icon
         name="lucideChevronDown"
         size="14"
-        class="cw-bga__caret"
-        [class.cw-bga__caret--open]="expanded()"
+        class="cw-bga__caret shrink-0 text-muted-foreground transition-transform duration-150"
+        [class.rotate-180]="expanded()"
       />
     </button>
 
     @if (expanded()) {
-      <ul class="cw-bga__list">
+      <ul class="cw-bga__list m-0 list-none border-t border-border px-2.5 pt-0.5 pb-2">
         @for (item of items(); track item.id) {
-          <li class="cw-bga__item">
+          <li class="cw-bga__item flex items-start gap-2 py-1 text-xs">
             <ng-icon
               [name]="item.kind === 'subagent' ? 'lucideBot' : 'lucideLayers'"
               size="13"
-              class="cw-bga__item-icon"
+              class="cw-bga__item-icon mt-0.5 shrink-0 text-primary"
             />
-            <span class="cw-bga__item-body">
-              <span class="cw-bga__item-label">{{ item.label }}</span>
+            <span class="cw-bga__item-body flex min-w-0 flex-1 flex-col gap-0.5">
+              <span class="cw-bga__item-label truncate">{{ item.label }}</span>
               @if (item.detail) {
-                <span class="cw-bga__item-detail">{{ item.detail }}</span>
+                <span class="cw-bga__item-detail truncate text-muted-foreground">{{
+                  item.detail
+                }}</span>
               }
             </span>
-            <span class="cw-bga__item-elapsed">{{ elapsedFor(item) }}</span>
+            <span class="cw-bga__item-elapsed shrink-0 text-muted-foreground tabular-nums">{{
+              elapsedFor(item)
+            }}</span>
           </li>
         }
       </ul>

@@ -1,22 +1,36 @@
-<div class="cw-comp">
+<div class="cw-comp relative">
   @if (autocompleteOpen() && filtered().length) {
-    <div class="cw-comp__ac" role="listbox">
+    <div
+      class="cw-comp__ac absolute inset-x-0 bottom-[calc(100%+0.375rem)] z-20 max-h-72 overflow-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
+      role="listbox"
+    >
       @for (item of filtered(); track autocompleteOptionId(item); let i = $index) {
         <button
           type="button"
-          class="cw-comp__ac-item"
-          [class.cw-comp__ac-item--active]="i === selectedIndex()"
+          class="cw-comp__ac-item grid w-full grid-cols-[auto_auto_1fr] items-baseline gap-2 border-0 bg-transparent px-3 py-2 text-left text-[13px] hover:bg-accent data-[active=true]:bg-accent"
+          [attr.data-active]="i === selectedIndex()"
           (mouseenter)="selectedIndex.set(i)"
           (mousedown)="$event.preventDefault(); apply(item)"
         >
           @if (item.type === 'session') {
-            <span class="cw-comp__ac-label">&#64;{{ item.item.title }}</span>
-            <span class="cw-comp__ac-kind">session #{{ item.item.sessionId }}</span>
-            <span class="cw-comp__ac-desc">{{ item.item.branch }} · {{ item.item.status }}</span>
+            <span class="cw-comp__ac-label font-mono font-semibold"
+              >&#64;{{ item.item.title }}</span
+            >
+            <span class="cw-comp__ac-kind text-[11px] uppercase tracking-wide text-muted-foreground"
+              >session #{{ item.item.sessionId }}</span
+            >
+            <span class="cw-comp__ac-desc truncate text-xs text-muted-foreground"
+              >{{ item.item.branch }} · {{ item.item.status }}</span
+            >
           } @else {
-            <span class="cw-comp__ac-label">{{ item.item.label }}</span>
-            <span class="cw-comp__ac-kind">{{ item.item.kind }}</span>
-            <span class="cw-comp__ac-desc">{{ item.item.description }}</span>
+            <span class="cw-comp__ac-label font-mono font-semibold">{{ item.item.label }}</span>
+            <span
+              class="cw-comp__ac-kind text-[11px] uppercase tracking-wide text-muted-foreground"
+              >{{ item.item.kind }}</span
+            >
+            <span class="cw-comp__ac-desc truncate text-xs text-muted-foreground">{{
+              item.item.description
+            }}</span>
           }
         </button>
       }
@@ -24,29 +38,42 @@
   }
 
   <div
-    class="cw-comp__box"
-    [class.cw-comp__box--attached]="attachedPanelOpen()"
-    [class.cw-comp__box--dropping]="isDropTarget()"
-    [class.cw-comp__box--disconnected]="disconnected()"
+    class="cw-comp__box flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xs focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20 data-[attached=true]:rounded-t-none data-[dropping=true]:border-primary/60 data-[dropping=true]:bg-primary/5 data-[disconnected=true]:pointer-events-none data-[disconnected=true]:opacity-60"
+    [attr.data-attached]="attachedPanelOpen()"
+    [attr.data-dropping]="isDropTarget()"
+    [attr.data-disconnected]="disconnected()"
     (dragenter)="onDragEnter($event)"
     (dragover)="onDragOver($event)"
     (dragleave)="onDragLeave($event)"
     (drop)="onDrop($event)"
   >
     @if (isDropTarget()) {
-      <div class="cw-comp__drop-hint" role="status">
+      <div
+        class="cw-comp__drop-hint flex items-center justify-center gap-1.5 border-b border-dashed border-primary/35 bg-primary/10 px-3.5 py-2 text-xs font-semibold text-primary"
+        role="status"
+      >
         <ng-icon name="lucideMessageSquare" size="14" />
         Drop to attach context
       </div>
     }
     @if (attachedImages().length) {
-      <div class="cw-comp__images" role="list" aria-label="Attached images">
+      <div
+        class="cw-comp__images flex flex-wrap gap-1.5 border-b border-dashed border-border pt-2 pr-2.5 pb-1 pl-3.5"
+        role="list"
+        aria-label="Attached images"
+      >
         @for (img of attachedImages(); track img.id) {
-          <div class="cw-comp__image" role="listitem">
-            <img [src]="img.dataUrl" [alt]="img.name" />
+          <div
+            class="cw-comp__image relative size-16 overflow-hidden rounded-lg border border-border bg-muted"
+            role="listitem"
+          >
+            <img class="block size-full object-cover" [src]="img.dataUrl" [alt]="img.name" />
             <button
               type="button"
-              class="cw-comp__image-remove"
+              z-button
+              zType="ghost"
+              zSize="icon-xs"
+              class="cw-comp__image-remove absolute top-0.5 right-0.5 size-5 rounded-full bg-background/85 p-0 text-foreground hover:bg-accent"
               title="Remove attachment"
               aria-label="Remove attachment"
               (click)="removeImage(img.id)"
@@ -58,35 +85,27 @@
       </div>
     }
     @if (sessionMentions().length || loadingSessionMention()) {
-      <div class="cw-comp__mentions" role="list" aria-label="Mentioned sessions">
+      <div
+        class="cw-comp__mentions grid gap-1.5 border-b border-dashed border-border pt-2 pr-2.5 pb-1 pl-3.5"
+        role="list"
+        aria-label="Mentioned sessions"
+      >
         @for (mention of sessionMentions(); track mention.sessionId) {
-          <article class="cw-comp__mention" role="listitem">
-            <span class="cw-comp__mention-icon" aria-hidden="true">
-              <ng-icon name="lucideMessageSquare" size="14" />
-            </span>
-            <div class="cw-comp__mention-body">
-              <div class="cw-comp__mention-head">
-                <strong class="cw-comp__mention-name">{{ mention.title }}</strong>
-                <span class="cw-comp__mention-lines">#{{ mention.sessionId }}</span>
-              </div>
-              <p class="cw-comp__mention-preview">{{ mention.provider }} · {{ mention.branch }}</p>
-              <span class="cw-comp__mention-meta"
-                >Compact transcript snapshot · full export available to the agent</span
-              >
-            </div>
-            <button
-              type="button"
-              class="cw-comp__mention-remove"
-              title="Remove session mention"
-              [attr.aria-label]="'Remove ' + mention.title"
-              (click)="removeSessionMention.emit(mention.sessionId)"
-            >
-              <ng-icon name="lucideX" size="12" />
-            </button>
-          </article>
+          <cw-composer-mention
+            icon="lucideMessageSquare"
+            [title]="mention.title"
+            [lineLabel]="'#' + mention.sessionId"
+            [preview]="mention.provider + ' · ' + mention.branch"
+            detail="Compact transcript snapshot · full export available to the agent"
+            [removeLabel]="'Remove ' + mention.title"
+            (remove)="removeSessionMention.emit(mention.sessionId)"
+          />
         }
         @if (loadingSessionMention()) {
-          <div class="cw-comp__pending-item" role="status">
+          <div
+            class="cw-comp__pending-item flex items-center gap-2 rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground"
+            role="status"
+          >
             <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" />
             Preparing session context…
           </div>
@@ -94,56 +113,54 @@
       </div>
     }
     @if (diffMentions().length) {
-      <div class="cw-comp__mentions" role="list" aria-label="Mentioned diff selections">
+      <div
+        class="cw-comp__mentions grid gap-1.5 border-b border-dashed border-border pt-2 pr-2.5 pb-1 pl-3.5"
+        role="list"
+        aria-label="Mentioned diff selections"
+      >
         @for (mention of diffMentions(); track mention.id) {
-          <article class="cw-comp__mention" role="listitem">
-            <span class="cw-comp__mention-icon" aria-hidden="true">
-              <ng-icon name="lucideFileCode" size="14" />
-            </span>
-            <div class="cw-comp__mention-body">
-              <div class="cw-comp__mention-head">
-                <span class="cw-comp__mention-path" [title]="mention.filePath">
-                  @if (mentionDirname(mention); as dirname) {
-                    <span class="cw-comp__mention-dir">{{ dirname }}</span>
-                    <span class="cw-comp__mention-slash" aria-hidden="true">/</span>
-                  }
-                  <strong class="cw-comp__mention-name">{{ mentionBasename(mention) }}</strong>
-                </span>
-                <span class="cw-comp__mention-lines">{{ mentionLineLabel(mention) }}</span>
-              </div>
-              <p class="cw-comp__mention-preview">{{ mentionPreview(mention) }}</p>
-              <span class="cw-comp__mention-meta">
-                {{ mention.status }} ·
-                {{ mention.context.before.length + mention.context.after.length }} context lines{{
-                  mention.truncated ? ' · truncated' : ''
-                }}
-              </span>
-            </div>
-            <button
-              type="button"
-              class="cw-comp__mention-remove"
-              title="Remove diff mention"
-              aria-label="Remove diff mention"
-              (click)="removeDiffMention.emit(mention.id)"
-            >
-              <ng-icon name="lucideX" size="12" />
-            </button>
-          </article>
+          <cw-composer-mention
+            [title]="mentionBasename(mention)"
+            [dirname]="mentionDirname(mention)"
+            [lineLabel]="mentionLineLabel(mention)"
+            [preview]="mentionPreview(mention)"
+            [detail]="
+              mention.status +
+              ' · ' +
+              (mention.context.before.length + mention.context.after.length) +
+              ' context lines' +
+              (mention.truncated ? ' · truncated' : '')
+            "
+            removeLabel="Remove diff mention"
+            (remove)="removeDiffMention.emit(mention.id)"
+          />
         }
       </div>
     }
     <!-- What is running is shown by cw-background-activity above the
          composer; this only explains the consequence for sending. -->
     @if (backgroundAgentCount() > 0) {
-      <div class="cw-comp__bg-agent" role="status">
+      <div
+        class="cw-comp__bg-agent border-b border-warning/20 bg-warning/10 px-3.5 py-1.5 text-xs text-warning"
+        role="status"
+      >
         Background work in progress — new messages will be queued until it finishes.
       </div>
     }
     @if (pendingPrompts().length) {
-      <div class="cw-comp__pending" role="list" aria-label="Queued messages">
+      <div
+        class="cw-comp__pending flex flex-col gap-1 border-b border-dashed border-border pt-2 pr-2.5 pb-1 pl-3.5"
+        role="list"
+        aria-label="Queued messages"
+      >
         @if (queuePaused()) {
-          <div class="cw-comp__pending-header" role="status">
-            <span>
+          <div
+            class="cw-comp__pending-header flex items-center justify-between gap-3 pt-1 pb-1.5 text-foreground max-[36rem]:flex-col max-[36rem]:items-start"
+            role="status"
+          >
+            <span
+              class="flex min-w-0 flex-col gap-0.5 [&_strong]:text-xs [&_small]:text-[11px] [&_small]:text-muted-foreground"
+            >
               @if (running()) {
                 <strong>Stopping current response…</strong>
                 <small>
@@ -159,18 +176,23 @@
               }
             </span>
             @if (!running()) {
-              <span class="cw-comp__pending-actions">
+              <span class="cw-comp__pending-actions inline-flex shrink-0 items-center gap-1.5">
                 <button
                   type="button"
-                  class="cw-comp__pending-action cw-comp__pending-action--primary"
+                  z-button
+                  zType="default"
+                  zSize="xs"
+                  class="cw-comp__pending-action text-[11px] font-semibold cw-comp__pending-action--primary"
                   (click)="resumePending.emit()"
                 >
                   <ng-icon name="lucidePlay" size="12" /> Resume queue
                 </button>
                 <button
                   type="button"
-                  class="cw-comp__pending-action"
-                  [class.cw-comp__pending-action--confirm]="clearPendingArmed()"
+                  z-button
+                  zSize="xs"
+                  class="cw-comp__pending-action text-[11px] font-semibold"
+                  [zType]="clearPendingArmed() ? 'destructive' : 'outline'"
                   (click)="requestClearPending()"
                   title="Remove all queued messages"
                 >
@@ -182,12 +204,24 @@
           </div>
         }
         @for (p of pendingPrompts(); track p.id; let i = $index) {
-          <div class="cw-comp__pending-item" role="listitem">
-            <span class="cw-comp__pending-index" aria-hidden="true">{{ i + 1 }}</span>
-            <span class="cw-comp__pending-text">{{ pendingPromptPreview(p.prompt) }}</span>
+          <div
+            class="cw-comp__pending-item flex items-center gap-2 rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground"
+            role="listitem"
+          >
+            <span
+              class="cw-comp__pending-index inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-accent text-[10px] font-bold"
+              aria-hidden="true"
+              >{{ i + 1 }}</span
+            >
+            <span class="cw-comp__pending-text flex-1 truncate">{{
+              pendingPromptPreview(p.prompt)
+            }}</span>
             <button
               type="button"
-              class="cw-comp__pending-steer"
+              z-button
+              zType="outline"
+              zSize="xs"
+              class="cw-comp__pending-steer shrink-0 text-[10px] text-primary"
               title="Stop the current response and send this message next"
               aria-label="Stop the current response and send this queued message next"
               (click)="steerPending.emit(p.id)"
@@ -196,7 +230,10 @@
             </button>
             <button
               type="button"
-              class="cw-comp__pending-remove"
+              z-button
+              zType="ghost"
+              zSize="icon-xs"
+              class="cw-comp__pending-remove size-5 text-muted-foreground"
               title="Cancel queued message"
               aria-label="Cancel queued message"
               (click)="cancelPending.emit(p.id)"
@@ -214,7 +251,7 @@
       [sessionId]="sessionId()"
       [worktreePath]="worktreePath()"
       (dictationSubmit)="submit()"
-      class="cw-comp__ta"
+      class="cw-comp__ta w-full min-h-11 max-h-64 resize-none border-0 bg-transparent px-3.5 pt-2.5 pb-1 text-sm leading-normal outline-none placeholder:text-muted-foreground"
       [placeholder]="placeholder()"
       [ngModel]="value()"
       [disabled]="disconnected()"
@@ -227,16 +264,20 @@
     <input
       #fileInput
       type="file"
-      class="cw-comp__file"
+      class="cw-comp__file hidden"
       accept="image/png,image/jpeg,image/gif,image/webp"
       multiple
       (change)="onFileInputChange($event)"
     />
 
-    <div class="cw-comp__bar">
-      <span class="cw-comp__hint">
+    <div class="cw-comp__bar flex items-center justify-between gap-2 py-1.5 pr-2.5 pl-3.5">
+      <span class="cw-comp__hint text-[11px] text-muted-foreground">
         @if (disconnected()) {
-          <ng-icon name="lucideLoaderCircle" size="12" class="animate-spin cw-comp__hint-icon" />
+          <ng-icon
+            name="lucideLoaderCircle"
+            size="12"
+            class="animate-spin cw-comp__hint-icon mr-1 inline-block align-middle"
+          />
           Reconnecting…
         } @else if (autocompleteOpen() && filtered().length) {
           ↑↓ navigate · ↵ insert
@@ -250,15 +291,18 @@
         }
       </span>
 
-      <div class="cw-comp__btns">
+      <div class="cw-comp__btns inline-flex items-center gap-1.5">
         <app-dictation-button [target]="dictate" [disabled]="disconnected()" />
         @if (allowImages()) {
           <button
             type="button"
-            class="cw-comp__btn cw-comp__btn--ghost"
+            z-button
+            zType="ghost"
+            zSize="icon-xs"
+            class="cw-comp__btn text-xs cw-comp__btn--ghost text-muted-foreground"
             title="Attach image"
             aria-label="Attach image"
-            [disabled]="disconnected()"
+            [zDisabled]="disconnected()"
             (click)="openFilePicker()"
           >
             <ng-icon name="lucidePaperclip" size="14" />
@@ -267,8 +311,11 @@
         @if (running()) {
           <button
             type="button"
-            class="cw-comp__btn cw-comp__btn--stop"
-            [disabled]="!canInterrupt() || disconnected()"
+            z-button
+            zType="destructive"
+            zSize="xs"
+            class="cw-comp__btn text-xs cw-comp__btn--stop border-destructive/40"
+            [zDisabled]="!canInterrupt() || disconnected()"
             (click)="interrupt.emit()"
             [title]="
               pendingPrompts().length
@@ -282,8 +329,11 @@
         }
         <button
           type="button"
-          class="cw-comp__btn cw-comp__btn--send"
-          [disabled]="
+          z-button
+          zType="default"
+          zSize="xs"
+          class="cw-comp__btn text-xs cw-comp__btn--send"
+          [zDisabled]="
             (!value().trim() &&
               !attachedImages().length &&
               !diffMentions().length &&

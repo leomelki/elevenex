@@ -1,20 +1,36 @@
-<div class="cw-perm" [attr.data-kind]="kind()" [class.cw-perm--dock]="appearance() === 'dock'">
+<div
+  class="cw-perm flex flex-col gap-2 rounded-lg border border-border bg-card px-3.5 py-3 text-[13px] leading-normal text-card-foreground data-[appearance=dock]:rounded-b-none data-[appearance=dock]:border-b-0 max-[540px]:px-3"
+  [attr.data-kind]="kind()"
+  [attr.data-appearance]="appearance()"
+>
   @switch (kind()) {
     @case ('ask_user_question') {
-      <header class="cw-perm__head">
-        <span class="cw-perm__icon" aria-hidden="true">
+      <header class="cw-perm__head flex min-w-0 flex-wrap items-center gap-2">
+        <span
+          class="cw-perm__icon inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-foreground"
+          aria-hidden="true"
+        >
           <ng-icon name="lucideMessageCircleQuestion" size="13" />
         </span>
-        <span class="cw-perm__eyebrow">Input needed</span>
+        <span
+          class="cw-perm__eyebrow text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+          >Input needed</span
+        >
         @if (request().agentId) {
-          <span class="cw-perm__agent" title="Delegated subagent"
+          <span
+            class="cw-perm__agent max-w-full truncate rounded-md border border-dashed border-border px-1.5 text-[11px] text-muted-foreground"
+            title="Delegated subagent"
             >Subagent · {{ request().agentId }}</span
           >
         }
       </header>
-      <h3 class="cw-perm__title">{{ request().title || 'Claude needs your input' }}</h3>
+      <h3 class="cw-perm__title mt-0.5 mb-0 text-sm font-semibold leading-snug text-foreground">
+        {{ request().title || 'Claude needs your input' }}
+      </h3>
       @if (request().description) {
-        <p class="cw-perm__sub">{{ request().description }}</p>
+        <p class="cw-perm__sub m-0 text-[13px] leading-normal text-muted-foreground">
+          {{ request().description }}
+        </p>
       }
 
       @if (!denying()) {
@@ -30,25 +46,43 @@
     }
 
     @case ('enter_plan_mode') {
-      <header class="cw-perm__head">
-        <span class="cw-perm__icon" aria-hidden="true">
+      <header class="cw-perm__head flex min-w-0 flex-wrap items-center gap-2">
+        <span
+          class="cw-perm__icon inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-foreground"
+          aria-hidden="true"
+        >
           <ng-icon name="lucideClipboardList" size="13" />
         </span>
-        <span class="cw-perm__eyebrow">Plan mode</span>
+        <span
+          class="cw-perm__eyebrow text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+          >Plan mode</span
+        >
       </header>
-      <h3 class="cw-perm__title">{{ request().title || 'Enter plan mode?' }}</h3>
-      <p class="cw-perm__sub">
+      <h3 class="cw-perm__title mt-0.5 mb-0 text-sm font-semibold leading-snug text-foreground">
+        {{ request().title || 'Enter plan mode?' }}
+      </h3>
+      <p class="cw-perm__sub m-0 text-[13px] leading-normal text-muted-foreground">
         Claude will stay read-only, explore the codebase, and prepare a plan before editing.
       </p>
       @if (!denying()) {
-        <footer class="cw-perm__actions">
-          <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+        <footer class="cw-perm__actions mt-1.5 flex flex-wrap items-center gap-1.5">
+          <button
+            z-button
+            zType="ghost"
+            zSize="sm"
+            type="button"
+            class="cw-btn max-[540px]:flex-1 cw-btn--deny text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            (click)="startDeny()"
+          >
             <ng-icon name="lucideX" size="13" aria-hidden="true" />
             Not now
           </button>
           <button
+            z-button
+            zType="default"
+            zSize="sm"
             type="button"
-            class="cw-btn cw-btn--primary"
+            class="cw-btn max-[540px]:flex-1 cw-btn--primary"
             (click)="approve.emit({ remember: false })"
           >
             <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
@@ -59,23 +93,44 @@
     }
 
     @case ('exit_plan_mode') {
-      <header class="cw-perm__head">
-        <span class="cw-perm__icon" aria-hidden="true">
+      <header class="cw-perm__head flex min-w-0 flex-wrap items-center gap-2">
+        <span
+          class="cw-perm__icon inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-foreground"
+          aria-hidden="true"
+        >
           <ng-icon name="lucideClipboardList" size="13" />
         </span>
-        <span class="cw-perm__eyebrow">Plan ready</span>
+        <span
+          class="cw-perm__eyebrow text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+          >Plan ready</span
+        >
         @if (planPath(); as path) {
-          <span class="cw-perm__path" [title]="path">{{ path }}</span>
+          <span
+            class="cw-perm__path m-0 max-w-full truncate font-mono text-xs text-muted-foreground"
+            [title]="path"
+            >{{ path }}</span
+          >
         }
       </header>
-      <h3 class="cw-perm__title">{{ request().title || 'Approve plan?' }}</h3>
+      <h3 class="cw-perm__title mt-0.5 mb-0 text-sm font-semibold leading-snug text-foreground">
+        {{ request().title || 'Approve plan?' }}
+      </h3>
 
-      <div class="cw-perm__plan-launcher">
-        <span class="cw-perm__plan-copy">
+      <div
+        class="cw-perm__plan-launcher mt-0.5 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2.5"
+      >
+        <span class="cw-perm__plan-copy min-w-0 text-[13px] text-muted-foreground">
           Review the plan in the annotator before approving or requesting changes.
         </span>
         @if (planReviewAvailable()) {
-          <button type="button" class="cw-btn cw-btn--secondary" (click)="openPlanReview.emit()">
+          <button
+            z-button
+            zType="secondary"
+            zSize="sm"
+            type="button"
+            class="cw-btn max-[540px]:flex-1 cw-btn--secondary"
+            (click)="openPlanReview.emit()"
+          >
             <ng-icon name="lucideClipboardList" size="13" aria-hidden="true" />
             Open review
           </button>
@@ -83,14 +138,24 @@
       </div>
 
       @if (!denying()) {
-        <footer class="cw-perm__actions">
-          <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+        <footer class="cw-perm__actions mt-1.5 flex flex-wrap items-center gap-1.5">
+          <button
+            z-button
+            zType="ghost"
+            zSize="sm"
+            type="button"
+            class="cw-btn max-[540px]:flex-1 cw-btn--deny text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            (click)="startDeny()"
+          >
             <ng-icon name="lucideX" size="13" aria-hidden="true" />
             Keep planning
           </button>
           <button
+            z-button
+            zType="default"
+            zSize="sm"
             type="button"
-            class="cw-btn cw-btn--primary"
+            class="cw-btn max-[540px]:flex-1 cw-btn--primary"
             (click)="approve.emit({ remember: false })"
           >
             <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
@@ -101,31 +166,56 @@
     }
 
     @default {
-      <header class="cw-perm__head">
-        <span class="cw-perm__icon" aria-hidden="true">
+      <header class="cw-perm__head flex min-w-0 flex-wrap items-center gap-2">
+        <span
+          class="cw-perm__icon inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-foreground"
+          aria-hidden="true"
+        >
           <ng-icon name="lucideShield" size="13" />
         </span>
-        <span class="cw-perm__eyebrow">Approval required</span>
-        <span class="cw-perm__tool">{{ requestToolLabel() }}</span>
+        <span
+          class="cw-perm__eyebrow text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+          >Approval required</span
+        >
+        <span
+          class="cw-perm__tool rounded-md bg-muted px-2 py-0.5 font-mono text-xs font-semibold text-foreground"
+          >{{ requestToolLabel() }}</span
+        >
         @if (request().agentId) {
-          <span class="cw-perm__agent" title="Delegated subagent"
+          <span
+            class="cw-perm__agent max-w-full truncate rounded-md border border-dashed border-border px-1.5 text-[11px] text-muted-foreground"
+            title="Delegated subagent"
             >Subagent · {{ request().agentId }}</span
           >
         }
       </header>
 
-      <h3 class="cw-perm__title">{{ requestTitle() }}</h3>
+      <h3 class="cw-perm__title mt-0.5 mb-0 text-sm font-semibold leading-snug text-foreground">
+        {{ requestTitle() }}
+      </h3>
       @if (requestSubline(); as line) {
-        <p class="cw-perm__path" [title]="line">{{ line }}</p>
+        <p
+          class="cw-perm__path m-0 max-w-full truncate font-mono text-xs text-muted-foreground"
+          [title]="line"
+        >
+          {{ line }}
+        </p>
       }
       @if (requestSubtitle(); as sub) {
-        <p class="cw-perm__sub">{{ sub }}</p>
+        <p class="cw-perm__sub m-0 text-[13px] leading-normal text-muted-foreground">{{ sub }}</p>
       }
 
       @if (request().batch; as batch) {
-        <div class="cw-perm__batch" role="list" aria-label="Actions in this approval">
+        <div
+          class="cw-perm__batch grid gap-1.5 rounded-lg border border-border bg-muted/55 p-2"
+          role="list"
+          aria-label="Actions in this approval"
+        >
           @for (item of batch; track item.toolUseId) {
-            <div class="cw-perm__batch-item" role="listitem">
+            <div
+              class="cw-perm__batch-item grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] items-baseline gap-2 [&_code]:truncate [&_code]:text-xs [&_code]:text-muted-foreground"
+              role="listitem"
+            >
               <span>{{ batchItemLabel(item) }}</span>
               @if (batchItemTarget(item); as target) {
                 <code [title]="target">{{ target }}</code>
@@ -136,20 +226,32 @@
       }
 
       @if (permDiffHtml(); as diff) {
-        <pre class="cw-perm__preview cw-perm__preview--code" [innerHTML]="diff"></pre>
+        <pre
+          class="cw-perm__preview mt-1 mb-0 max-h-48 overflow-auto rounded-lg border border-border bg-muted/40 px-3 py-2 cw-perm__preview--code overflow-x-auto font-mono text-[11px] leading-relaxed whitespace-pre text-foreground"
+          [innerHTML]="diff"
+        ></pre>
       } @else if (permWriteContent()) {
-        <pre class="cw-perm__preview cw-perm__preview--code">{{ permWriteContent() }}</pre>
+        <pre
+          class="cw-perm__preview mt-1 mb-0 max-h-48 overflow-auto rounded-lg border border-border bg-muted/40 px-3 py-2 cw-perm__preview--code overflow-x-auto font-mono text-[11px] leading-relaxed whitespace-pre text-foreground"
+          >{{ permWriteContent() }}</pre
+        >
       } @else if (permBashCommand()) {
-        <pre class="cw-perm__preview cw-perm__preview--cmd">$ {{ permBashCommand() }}</pre>
+        <pre
+          class="cw-perm__preview mt-1 mb-0 max-h-48 overflow-auto rounded-lg border border-border bg-muted/40 px-3 py-2 cw-perm__preview--cmd overflow-x-auto font-mono text-[11px] leading-relaxed whitespace-pre text-foreground"
+        >
+$ {{ permBashCommand() }}</pre
+        >
       }
 
       @if (!denying()) {
         <section
-          class="cw-perm__always"
+          class="cw-perm__always mt-1 flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2 data-[has-patterns=false]:border-dashed data-[has-patterns=false]:bg-transparent"
           [attr.data-has-patterns]="alwaysAllowPatterns().length > 0"
         >
-          <div class="cw-perm__always-head">
-            <span class="cw-perm__always-kicker">
+          <div class="cw-perm__always-head flex flex-wrap items-center gap-2">
+            <span
+              class="cw-perm__always-kicker text-[11px] font-bold uppercase tracking-wide text-muted-foreground"
+            >
               {{
                 alwaysAllowPatterns().length
                   ? 'Always allow saves this pattern'
@@ -157,36 +259,59 @@
               }}
             </span>
             @if (!alwaysAllowPatterns().length) {
-              <span class="cw-perm__always-empty">No reusable pattern supplied</span>
+              <span class="cw-perm__always-empty text-[11px] text-muted-foreground"
+                >No reusable pattern supplied</span
+              >
             }
           </div>
           @if (alwaysAllowPatterns().length) {
-            <div class="cw-perm__patterns">
+            <div class="cw-perm__patterns flex flex-col gap-1.5">
               @for (entry of alwaysAllowPatterns(); track entry.pattern + entry.detail) {
-                <div class="cw-perm__pattern">
-                  <span class="cw-perm__pattern-label">{{ entry.label }}</span>
-                  <code class="cw-perm__pattern-code">{{ entry.pattern }}</code>
-                  <span class="cw-perm__pattern-detail">{{ entry.detail }}</span>
+                <div
+                  class="cw-perm__pattern grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 max-[540px]:grid-cols-1 max-[540px]:gap-1"
+                >
+                  <span
+                    class="cw-perm__pattern-label text-[11px] whitespace-nowrap text-muted-foreground"
+                    >{{ entry.label }}</span
+                  >
+                  <code
+                    class="cw-perm__pattern-code min-w-0 truncate rounded-md border border-border bg-background px-1.5 py-0.5 font-mono text-xs text-foreground"
+                    >{{ entry.pattern }}</code
+                  >
+                  <span
+                    class="cw-perm__pattern-detail text-[11px] whitespace-nowrap text-muted-foreground max-[540px]:whitespace-normal"
+                    >{{ entry.detail }}</span
+                  >
                 </div>
               }
             </div>
           } @else {
-            <p class="cw-perm__always-note">
+            <p class="cw-perm__always-note m-0 text-xs leading-normal text-muted-foreground">
               Claude did not provide a reusable rule for this tool call, so this request can only be
               approved once.
             </p>
           }
         </section>
 
-        <footer class="cw-perm__actions">
-          <button type="button" class="cw-btn cw-btn--deny" (click)="startDeny()">
+        <footer class="cw-perm__actions mt-1.5 flex flex-wrap items-center gap-1.5">
+          <button
+            z-button
+            zType="ghost"
+            zSize="sm"
+            type="button"
+            class="cw-btn max-[540px]:flex-1 cw-btn--deny text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            (click)="startDeny()"
+          >
             <ng-icon name="lucideX" size="13" aria-hidden="true" />
             Deny
           </button>
-          <span class="cw-perm__spacer"></span>
+          <span class="cw-perm__spacer flex-1 max-[540px]:hidden"></span>
           <button
+            z-button
+            zType="secondary"
+            zSize="sm"
             type="button"
-            class="cw-btn cw-btn--secondary"
+            class="cw-btn max-[540px]:flex-1 cw-btn--secondary"
             [title]="allowOnceCopy()"
             (click)="approve.emit({ remember: false })"
           >
@@ -195,8 +320,11 @@
           </button>
           @if (alwaysAllowPatterns().length) {
             <button
+              z-button
+              zType="default"
+              zSize="sm"
               type="button"
-              class="cw-btn cw-btn--primary"
+              class="cw-btn max-[540px]:flex-1 cw-btn--primary"
               [title]="allowAlwaysCopy()"
               (click)="approve.emit({ remember: true })"
             >
@@ -210,25 +338,53 @@
   }
 
   @if (denying()) {
-    <div class="cw-perm__deny" role="group" aria-label="Decline with feedback">
-      <label class="cw-perm__deny-label" for="cw-perm-deny-msg">
+    <div
+      class="cw-perm__deny mt-0.5 flex flex-col gap-1.5 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2.5"
+      role="group"
+      aria-label="Decline with feedback"
+    >
+      <label
+        class="cw-perm__deny-label text-xs font-semibold text-foreground"
+        for="cw-perm-deny-msg"
+      >
         Tell Claude what to do instead
-        <span class="cw-perm__deny-optional">(optional)</span>
+        <span class="cw-perm__deny-optional ml-1 font-normal text-muted-foreground"
+          >(optional)</span
+        >
       </label>
       <textarea
+        z-input
         #denyTa
         id="cw-perm-deny-msg"
-        class="cw-perm__deny-input"
+        class="cw-perm__deny-input min-h-10 resize-y text-[13px] leading-normal"
         rows="2"
         [ngModel]="denyMessage()"
         (ngModelChange)="denyMessage.set($event)"
         (keydown)="onDenyKeydown($event)"
         placeholder="e.g. don't run shell commands; ask me first…"
       ></textarea>
-      <div class="cw-perm__deny-actions">
-        <span class="cw-perm__deny-hint">⌘↵ to send · Esc to cancel</span>
-        <button type="button" class="cw-btn cw-btn--ghost" (click)="cancelDeny()">Cancel</button>
-        <button type="button" class="cw-btn cw-btn--deny-confirm" (click)="confirmDeny()">
+      <div class="cw-perm__deny-actions flex items-center gap-1.5">
+        <span class="cw-perm__deny-hint flex-1 text-[11px] text-muted-foreground"
+          >⌘↵ to send · Esc to cancel</span
+        >
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          type="button"
+          class="cw-btn max-[540px]:flex-1 cw-btn--ghost text-muted-foreground"
+          (click)="cancelDeny()"
+        >
+          Cancel
+        </button>
+        <button
+          z-button
+          zType="destructive"
+          zSize="sm"
+          type="button"
+          class="cw-btn max-[540px]:flex-1 cw-btn--deny-confirm"
+          (click)="confirmDeny()"
+        >
           <ng-icon name="lucideX" size="13" aria-hidden="true" />
           {{ denyMessage().trim() ? 'Send & deny' : 'Deny' }}
         </button>

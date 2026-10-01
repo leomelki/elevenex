@@ -1,3 +1,4 @@
+import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
 import { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
@@ -46,7 +47,7 @@ import {
 @Component({
   selector: 'cw-message',
   standalone: true,
-  imports: [CommonModule, AgentMarkdownComponent, NgIcon],
+  imports: [ZardButtonComponent, CommonModule, AgentMarkdownComponent, NgIcon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({

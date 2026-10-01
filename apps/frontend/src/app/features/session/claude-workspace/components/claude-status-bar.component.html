@@ -1,5 +1,8 @@
-<div class="cw-sb">
-  <span class="cw-sb__phase" [attr.data-phase]="phase()">
+<div class="cw-sb flex flex-wrap items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground">
+  <span
+    class="cw-sb__phase inline-flex items-center gap-1 lowercase data-[phase=running]:text-success data-[phase=initializing]:text-warning data-[phase=error]:text-destructive data-[phase=waiting]:text-warning"
+    [attr.data-phase]="phase()"
+  >
     @if (phase() === 'running' || phase() === 'initializing') {
       <ng-icon name="lucideLoaderCircle" size="11" class="animate-spin" />
     } @else if (phase() === 'waiting') {
@@ -7,81 +10,93 @@
     } @else if (phase() === 'error') {
       <ng-icon name="lucideTriangleAlert" size="11" />
     } @else {
-      <span class="cw-sb__dot"></span>
+      <span class="cw-sb__dot size-1.5 rounded-full bg-current opacity-50"></span>
     }
     <span>{{ phaseLabel() }}</span>
   </span>
 
-  <span class="cw-sb__sep">·</span>
+  <span class="cw-sb__sep opacity-40">·</span>
 
-  <div class="cw-sb__model">
+  <div class="cw-sb__model contents">
     <button
+      z-button
+      zType="ghost"
+      zSize="xs"
       type="button"
-      class="cw-sb__link"
-      [class.cw-sb__link--disabled]="providerLocked()"
-      [disabled]="providerLocked()"
+      class="cw-sb__link text-[11px] text-muted-foreground"
       [title]="providerLocked() ? 'Provider is locked after a session starts' : 'Change provider'"
-      (click)="toggleMenu('provider')"
+      z-dropdown
+      [zDropdownMenu]="providerMenu"
+      [zDisabled]="providerLocked()"
     >
       {{ activeProviderLabel() }}
       @if (!providerLocked()) {
         <ng-icon name="lucideChevronDown" size="11" />
       }
     </button>
-    @if (providerOpen() && !providerLocked()) {
-      <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-        @for (provider of providers(); track provider.id) {
-          <button
-            type="button"
-            class="cw-sb__menu-item"
-            [class.cw-sb__menu-item--selected]="currentProvider() === provider.id"
-            (click)="pickProvider(provider.id)"
-          >
-            <strong>{{ provider.displayName }}</strong>
-            <span>{{ providerCapabilityHint(provider) }}</span>
-          </button>
-        }
-      </div>
-    }
+    <z-dropdown-menu-content
+      #providerMenu="zDropdownMenuContent"
+      zSide="top"
+      zAlign="start"
+      class="w-56"
+      aria-label="Choose provider"
+    >
+      @for (provider of providers(); track provider.id) {
+        <cw-setting-option
+          [label]="provider.displayName"
+          [description]="providerCapabilityHint(provider)"
+          [selected]="currentProvider() === provider.id"
+          (picked)="pickProvider(provider.id)"
+        />
+      }
+    </z-dropdown-menu-content>
   </div>
 
   @if (currentProviderCapabilities()?.permissions) {
-    <span class="cw-sb__sep">·</span>
+    <span class="cw-sb__sep opacity-40">·</span>
 
-    <div class="cw-sb__model">
+    <div class="cw-sb__model contents">
       <button
+        z-button
+        zType="ghost"
+        zSize="xs"
         type="button"
-        class="cw-sb__link cw-sb__mode"
-        (click)="toggleMenu('permission')"
+        class="cw-sb__link text-[11px] text-muted-foreground cw-sb__mode"
+        z-dropdown
+        [zDropdownMenu]="permissionMenu"
         [title]="'Permission mode'"
       >
         <ng-icon name="lucideShield" size="11" />
         {{ activePermissionLabel() }}
         <ng-icon name="lucideChevronDown" size="11" />
       </button>
-      @if (permissionOpen()) {
-        <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-          @for (opt of permissionOptions(); track opt.id) {
-            <button
-              type="button"
-              class="cw-sb__menu-item"
-              [class.cw-sb__menu-item--selected]="permissionMode() === opt.id"
-              (click)="pickPermissionMode(opt.id)"
-            >
-              <strong>{{ opt.label }}</strong>
-              <span>{{ opt.hint }}</span>
-            </button>
-          }
-        </div>
-      }
+      <z-dropdown-menu-content
+        #permissionMenu="zDropdownMenuContent"
+        zSide="top"
+        zAlign="start"
+        class="w-56"
+        aria-label="Choose permission"
+      >
+        @for (opt of permissionOptions(); track opt.id) {
+          <cw-setting-option
+            [label]="opt.label"
+            [description]="opt.hint"
+            [selected]="permissionMode() === opt.id"
+            (picked)="pickPermissionMode(opt.id)"
+          />
+        }
+      </z-dropdown-menu-content>
     </div>
 
-    <span class="cw-sb__sep">·</span>
+    <span class="cw-sb__sep opacity-40">·</span>
 
     <button
+      z-button
+      zType="ghost"
+      zSize="xs"
       type="button"
-      class="cw-sb__link cw-sb__plan"
-      [class.cw-sb__link--active]="planMode()"
+      class="cw-sb__link text-[11px] text-muted-foreground data-[active=true]:bg-success/15 data-[active=true]:text-success cw-sb__plan"
+      [attr.data-active]="planMode()"
       (click)="togglePlanMode()"
       title="Toggle plan mode (Shift+Tab)"
     >
@@ -90,75 +105,86 @@
     </button>
   }
 
-  <span class="cw-sb__sep">·</span>
+  <span class="cw-sb__sep opacity-40">·</span>
 
-  <div class="cw-sb__model">
-    <button type="button" class="cw-sb__link" (click)="toggleMenu('model')">
+  <div class="cw-sb__model contents">
+    <button
+      z-button
+      zType="ghost"
+      zSize="xs"
+      type="button"
+      class="cw-sb__link text-[11px] text-muted-foreground"
+      z-dropdown
+      [zDropdownMenu]="modelMenu"
+      aria-label="Change model"
+    >
       {{ selectedModelLabel() }}
       <ng-icon name="lucideChevronDown" size="11" />
     </button>
-    @if (modelOpen()) {
-      <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-        <button
-          type="button"
-          class="cw-sb__menu-item"
-          [class.cw-sb__menu-item--selected]="!selectedModel()"
-          (click)="pickModel('')"
-        >
-          Default
-        </button>
-        @for (m of availableModels(); track m.id) {
-          <button
-            type="button"
-            class="cw-sb__menu-item"
-            [class.cw-sb__menu-item--selected]="selectedModel() === m.id"
-            (click)="pickModel(m.id)"
-          >
-            <strong>{{ m.displayName }}</strong>
-            <span>{{ m.description }}</span>
-          </button>
-        }
-      </div>
-    }
+    <z-dropdown-menu-content
+      #modelMenu="zDropdownMenuContent"
+      zSide="top"
+      zAlign="start"
+      class="w-56"
+      aria-label="Choose model"
+    >
+      <cw-setting-option label="Default" [selected]="!selectedModel()" (picked)="pickModel('')" />
+      @for (m of availableModels(); track m.id) {
+        <cw-setting-option
+          [label]="m.displayName"
+          [description]="m.description"
+          [selected]="selectedModel() === m.id"
+          (picked)="pickModel(m.id)"
+        />
+      }
+    </z-dropdown-menu-content>
   </div>
 
   @if (selectedModelSupportsEffort()) {
-    <span class="cw-sb__sep">·</span>
-    <div class="cw-sb__model">
+    <span class="cw-sb__sep opacity-40">·</span>
+    <div class="cw-sb__model contents">
       <button
+        z-button
+        zType="ghost"
+        zSize="xs"
         type="button"
-        class="cw-sb__link"
-        (click)="toggleMenu('effort')"
+        class="cw-sb__link text-[11px] text-muted-foreground"
+        z-dropdown
+        [zDropdownMenu]="effortMenu"
         title="Reasoning effort"
       >
         <ng-icon name="lucideBrain" size="11" />
         {{ reasoningEffortLabel() }}
         <ng-icon name="lucideChevronDown" size="11" />
       </button>
-      @if (effortOpen()) {
-        <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-          @for (effort of reasoningEffortOptions(); track effort.id) {
-            <button
-              type="button"
-              class="cw-sb__menu-item"
-              [class.cw-sb__menu-item--selected]="(reasoningEffort() ?? '') === effort.id"
-              (click)="pickReasoningEffort(effort.id)"
-            >
-              <strong>{{ effort.label }}</strong>
-              <span>{{ effort.hint }}</span>
-            </button>
-          }
-        </div>
-      }
+      <z-dropdown-menu-content
+        #effortMenu="zDropdownMenuContent"
+        zSide="top"
+        zAlign="start"
+        class="w-56"
+        aria-label="Choose effort"
+      >
+        @for (effort of reasoningEffortOptions(); track effort.id) {
+          <cw-setting-option
+            [label]="effort.label"
+            [description]="effort.hint"
+            [selected]="(reasoningEffort() ?? '') === effort.id"
+            (picked)="pickReasoningEffort(effort.id)"
+          />
+        }
+      </z-dropdown-menu-content>
     </div>
   }
 
   @if (selectedModelSupportsFastMode()) {
-    <span class="cw-sb__sep">·</span>
+    <span class="cw-sb__sep opacity-40">·</span>
     <button
+      z-button
+      zType="ghost"
+      zSize="xs"
       type="button"
-      class="cw-sb__link"
-      [class.cw-sb__link--active]="fastMode()"
+      class="cw-sb__link text-[11px] text-muted-foreground data-[active=true]:bg-success/15 data-[active=true]:text-success"
+      [attr.data-active]="fastMode()"
       (click)="toggleFastMode()"
       title="Fast mode"
     >
@@ -168,23 +194,31 @@
   }
 
   @if (contextUsage(); as u) {
-    <span class="cw-sb__sep">·</span>
-    <span class="cw-sb__ctx" [class.cw-sb__ctx--warn]="u.percentage >= 80">
+    <span class="cw-sb__sep opacity-40">·</span>
+    <span
+      class="cw-sb__ctx inline-flex items-center gap-1 data-[warning=true]:text-warning"
+      [attr.data-warning]="u.percentage >= 80"
+    >
       <ng-icon name="lucideGauge" size="11" />
       {{ u.percentage }}% ctx
     </span>
   }
 
   @if (visiblePlanUsage(); as usage) {
-    <span class="cw-sb__sep">·</span>
-    <div class="cw-sb__model">
+    <span class="cw-sb__sep opacity-40">·</span>
+    <div class="cw-sb__model contents">
       <button
+        z-button
+        zType="ghost"
+        zSize="xs"
         type="button"
-        class="cw-sb__link cw-sb__usage-trigger"
+        class="cw-sb__link text-[11px] text-muted-foreground cw-sb__usage-trigger data-[status=warning]:text-warning data-[status=exhausted]:text-destructive"
         [attr.data-status]="usage.status"
-        [attr.aria-expanded]="usageOpen()"
+        zPopover
+        [zContent]="usageContent"
+        zPlacement="top"
+        zAlign="start"
         aria-haspopup="dialog"
-        (click)="toggleMenu('usage')"
         [title]="usageTriggerTitle()"
       >
         <span
@@ -194,27 +228,38 @@
         ></span>
         {{ lowestRemainingPercentage() }}% left
       </button>
-      @if (usageOpen()) {
+      <ng-template #usageContent>
         <div
-          class="cw-sb__menu cw-sb__usage-menu"
+          z-popover
+          cdkTrapFocus
+          [cdkTrapFocusAutoCapture]="true"
+          tabindex="-1"
+          cdkFocusInitial
+          class="cw-sb__usage-menu w-[min(19rem,calc(100vw-1rem))] gap-0 p-3"
           role="dialog"
           aria-label="Plan usage"
-          (mousedown)="$event.stopPropagation()"
         >
-          <div class="cw-sb__usage-header">
+          <div
+            class="cw-sb__usage-header flex items-center justify-between gap-3 [&>div]:flex [&>div]:min-w-0 [&>div]:flex-col [&>div]:gap-0.5 [&_strong]:text-[13px] [&_strong]:font-semibold [&_strong]:text-foreground [&_span]:text-[11px] [&_span]:text-muted-foreground"
+          >
             <div>
               <strong>{{ usage.provider === 'codex' ? 'Codex' : 'Claude' }} usage</strong>
               <span>Included plan allowance</span>
             </div>
             @if (usage.planName) {
-              <span class="cw-sb__plan-badge">{{ usage.planName }}</span>
+              <span
+                class="cw-sb__plan-badge shrink-0 rounded-full border border-border bg-muted px-2 py-0.5 font-semibold"
+                >{{ usage.planName }}</span
+              >
             }
           </div>
 
-          <div class="cw-sb__usage-windows">
+          <div class="cw-sb__usage-windows mt-3.5 grid gap-3.5">
             @for (window of usage.windows; track window.id) {
-              <div class="cw-sb__usage-window">
-                <div class="cw-sb__usage-row">
+              <div class="cw-sb__usage-window grid gap-1.5">
+                <div
+                  class="cw-sb__usage-row flex items-center justify-between gap-3 text-xs text-foreground [&_strong]:font-semibold"
+                >
                   <span>{{ window.label }}</span>
                   <strong>{{ window.remainingPercentage }}% left</strong>
                 </div>
@@ -225,7 +270,10 @@
                   [zLabel]="window.label + ': ' + window.remainingPercentage + '% remaining'"
                 />
                 @if (window.resetsAt) {
-                  <span class="cw-sb__usage-reset" [title]="formatResetTitle(window.resetsAt)">
+                  <span
+                    class="cw-sb__usage-reset text-[11px] leading-none text-muted-foreground"
+                    [title]="formatResetTitle(window.resetsAt)"
+                  >
                     {{ formatResetTime(window.resetsAt) }}
                   </span>
                 }
@@ -234,82 +282,120 @@
           </div>
 
           @if (usage.credits; as credits) {
-            <div class="cw-sb__credits">
+            <div
+              class="cw-sb__credits mt-3.5 flex items-center justify-between gap-3 border-t border-border pt-2.5 text-xs text-foreground"
+            >
               <span>Extra credits</span>
               <strong>{{
                 credits.unlimited ? 'Unlimited' : (credits.balance ?? 'Available')
               }}</strong>
             </div>
           }
-          <p class="cw-sb__usage-note">
+          <p class="cw-sb__usage-note mt-2.5 mb-0 text-[11px] leading-snug text-muted-foreground">
             Based on provider-reported usage. Complex tasks may consume more allowance.
           </p>
         </div>
-      }
+      </ng-template>
     </div>
   }
 
   @if (backgroundWorkCount() > 0) {
-    <span class="cw-sb__sep">·</span>
+    <span class="cw-sb__sep opacity-40">·</span>
     <span
-      class="cw-sb__bg"
+      class="cw-sb__bg inline-flex items-center gap-1 text-success"
       [title]="
         backgroundWorkCount() +
         ' background job(s) still running — new messages are queued behind them'
       "
     >
-      <span class="cw-sb__bg-dot" aria-hidden="true"></span>
+      <span
+        class="cw-sb__bg-dot size-1.5 rounded-full bg-current motion-safe:animate-pulse"
+        aria-hidden="true"
+      ></span>
       {{ backgroundWorkCount() }} in background
     </span>
   }
 
   @if (taskCount() > 0) {
-    <span class="cw-sb__sep">·</span>
-    <button type="button" class="cw-sb__link" (click)="openTasks.emit()">
+    <span class="cw-sb__sep opacity-40">·</span>
+    <button
+      z-button
+      zType="ghost"
+      zSize="xs"
+      type="button"
+      class="cw-sb__link text-[11px] text-muted-foreground"
+      (click)="openTasks.emit()"
+    >
       <ng-icon name="lucideListTodo" size="11" />
       {{ taskCount() }} task{{ taskCount() === 1 ? '' : 's' }}
     </button>
   }
 
   @if (currentProviderCapabilities()?.mcp) {
-    <span class="cw-sb__sep">·</span>
+    <span class="cw-sb__sep opacity-40">·</span>
     <button
+      z-button
+      zType="ghost"
+      zSize="xs"
       type="button"
-      class="cw-sb__link"
-      [class.cw-sb__link--mcp-warn]="mcpIssueCount() > 0"
+      class="cw-sb__link text-[11px] text-muted-foreground data-[warning=true]:text-warning"
+      [attr.data-warning]="mcpIssueCount() > 0"
       (click)="openMcp.emit()"
     >
       <ng-icon name="lucidePlugZap" size="11" />
       MCP{{ mcpSummary() ? ' ' + mcpSummary()!.total : '' }}
       @if (mcpIssueCount() > 0) {
-        <span class="cw-sb__pill">{{ mcpIssueCount() }}</span>
+        <span
+          class="cw-sb__pill inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning/20 px-1 text-[10px] font-bold text-warning"
+          >{{ mcpIssueCount() }}</span
+        >
       }
     </button>
   }
 
-  <div class="cw-sb__spacer"></div>
+  <div class="cw-sb__spacer flex-1"></div>
 
-  <div class="cw-sb__overflow">
-    <button type="button" class="cw-sb__icon-btn" (click)="toggleMenu('overflow')" title="More">
+  <div class="cw-sb__overflow contents">
+    <button
+      z-button
+      zType="ghost"
+      zSize="xs"
+      type="button"
+      class="cw-sb__icon-btn size-6 text-muted-foreground"
+      z-dropdown
+      [zDropdownMenu]="overflowMenu"
+      title="More"
+      aria-label="Conversation actions"
+    >
       <ng-icon name="lucideEllipsis" size="14" />
     </button>
-    @if (menuOpen()) {
-      <div class="cw-sb__menu cw-sb__menu--right" (mousedown)="$event.stopPropagation()">
-        @if (currentProviderCapabilities()?.terminalFallback) {
-          <button
-            type="button"
-            class="cw-sb__menu-item"
-            (click)="closeAllMenus(); openTerminal.emit()"
-          >
-            <ng-icon name="lucideTerminal" size="12" />
-            Raw terminal
-          </button>
-        }
-        <button type="button" class="cw-sb__menu-item" (click)="closeAllMenus(); export.emit()">
-          <ng-icon name="lucideDownload" size="12" />
-          Export conversation…
+    <z-dropdown-menu-content
+      #overflowMenu="zDropdownMenuContent"
+      zSide="top"
+      zAlign="end"
+      class="w-56"
+      aria-label="Conversation actions"
+    >
+      @if (currentProviderCapabilities()?.terminalFallback) {
+        <button
+          type="button"
+          z-dropdown-menu-item
+          class="cw-sb__menu-item text-xs data-[selected=true]:bg-primary/10 [&_strong]:font-semibold [&_span]:text-[11px] [&_span]:text-muted-foreground"
+          (click)="openTerminal.emit()"
+        >
+          <ng-icon name="lucideTerminal" size="12" />
+          Raw terminal
         </button>
-      </div>
-    }
+      }
+      <button
+        type="button"
+        z-dropdown-menu-item
+        class="cw-sb__menu-item text-xs data-[selected=true]:bg-primary/10 [&_strong]:font-semibold [&_span]:text-[11px] [&_span]:text-muted-foreground"
+        (click)="export.emit()"
+      >
+        <ng-icon name="lucideDownload" size="12" />
+        Export conversation…
+      </button>
+    </z-dropdown-menu-content>
   </div>
 </div>

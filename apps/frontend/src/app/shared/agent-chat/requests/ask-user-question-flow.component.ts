@@ -1,4 +1,6 @@
-import { MarkdownPipe } from '@/shared/agent-chat/markdown/markdown.pipe';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
+import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
 import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
@@ -32,11 +34,18 @@ export interface AskUserQuestion {
 @Component({
   selector: 'cw-ask-user-question-flow',
   standalone: true,
-  imports: [CommonModule, FormsModule, NgIcon, MarkdownPipe],
+  imports: [
+    ZardButtonComponent,
+    ZardInputDirective,
+    CommonModule,
+    FormsModule,
+    NgIcon,
+    AgentMarkdownComponent,
+  ],
   viewProviders: [provideIcons({ lucideCheck, lucideChevronLeft, lucideX })],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'block' },
   templateUrl: './ask-user-question-flow.component.html',
-  styleUrl: './ask-user-question-flow.component.scss',
 })
 export class AskUserQuestionFlowComponent {
   @ViewChild('otherTa') private otherTa?: ElementRef<HTMLTextAreaElement>;

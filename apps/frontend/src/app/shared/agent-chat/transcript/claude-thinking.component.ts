@@ -1,3 +1,4 @@
+import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
 import { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
 import { CommonModule } from '@angular/common';
@@ -17,11 +18,11 @@ import { lucideBrain, lucideChevronRight } from '@ng-icons/lucide';
 @Component({
   selector: 'cw-thinking',
   standalone: true,
-  imports: [CommonModule, NgIcon, AgentMarkdownComponent],
+  imports: [ZardButtonComponent, CommonModule, NgIcon, AgentMarkdownComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'contents' },
   viewProviders: [provideIcons({ lucideBrain, lucideChevronRight })],
   templateUrl: './claude-thinking.component.html',
-  styleUrl: './claude-thinking.component.scss',
 })
 export class ClaudeThinkingComponent {
   readonly item = input.required<AgentTranscriptItem>();

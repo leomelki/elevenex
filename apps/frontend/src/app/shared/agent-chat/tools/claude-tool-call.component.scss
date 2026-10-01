@@ -1,13 +1,7 @@
 :host {
   display: block;
 }
-.cw-tool {
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: color-mix(in oklab, var(--card) 96%, transparent);
-  overflow: hidden;
-  font-size: 0.8125rem;
-}
+
 .cw-tool[data-state='waiting'] {
   border-color: color-mix(in oklab, var(--warning) 45%, var(--border));
 }
@@ -124,36 +118,12 @@
   color: var(--muted-foreground);
   font-weight: 500;
 }
-.cw-tool__head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  padding: 0.4375rem 0.625rem;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  text-align: left;
-  color: inherit;
-  font: inherit;
-  min-width: 0;
-}
+
 .cw-tool__head--static {
   cursor: default;
   padding-bottom: 0.25rem;
 }
-.cw-tool__head:not(.cw-tool__head--static):hover {
-  background: color-mix(in oklab, var(--foreground) 4%, transparent);
-}
-.cw-tool__state-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1rem;
-  height: 1rem;
-  flex-shrink: 0;
-  color: var(--muted-foreground);
-}
+
 .cw-tool[data-state='running'] .cw-tool__state-icon {
   color: var(--primary);
 }
@@ -169,33 +139,7 @@
 .cw-tool[data-state='denied'] .cw-tool__state-icon {
   color: var(--warning);
 }
-.cw-tool__glyph {
-  color: var(--muted-foreground);
-  flex-shrink: 0;
-}
-.cw-tool__verb {
-  font-weight: 600;
-  flex-shrink: 0;
-  color: var(--foreground);
-}
-.cw-tool__target {
-  color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  flex: 1;
-}
-.cw-tool__result {
-  font-size: 0.6875rem;
-  color: var(--muted-foreground);
-  flex-shrink: 0;
-  padding: 0.0625rem 0.375rem;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--foreground) 5%, transparent);
-}
+
 .cw-tool__result[data-tone='ok'] {
   color: color-mix(in oklab, var(--success) 85%, var(--foreground));
 }
@@ -206,33 +150,8 @@
   color: var(--destructive);
   background: color-mix(in oklab, var(--destructive) 10%, transparent);
 }
-.cw-tool__count {
-  font-size: 0.6875rem;
-  color: var(--muted-foreground);
-  padding: 0.0625rem 0.375rem;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--foreground) 5%, transparent);
-}
-.cw-tool__chevron {
-  color: var(--muted-foreground);
-  transition: transform 120ms ease;
-  flex-shrink: 0;
-  margin-left: 0.125rem;
-}
-.cw-tool__chevron.rotate-90 {
-  transform: rotate(90deg);
-}
-.cw-tool__body {
-  padding: 0 0.625rem 0.5rem;
-  border-top: 1px dashed var(--border);
-  padding-top: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.cw-tool__cmd,
-.cw-tool__output,
-.cw-tool__file {
+
+.cw-tool__output {
   margin: 0;
   padding: 0.5rem 0.625rem;
   background: color-mix(in oklab, var(--foreground) 5%, transparent);
@@ -288,63 +207,20 @@
 :host ::ng-deep .cw-write__line {
   display: grid;
   grid-template-columns: 1.75rem 1fr;
-  background: color-mix(in oklab, oklch(0.52 0.18 240) 8%, transparent);
-}
-:host-context(.dark) ::ng-deep .cw-write__line {
-  background: color-mix(in oklab, oklch(0.68 0.16 240) 13%, transparent);
+  background: color-mix(in oklab, var(--success) 10%, transparent);
 }
 :host ::ng-deep .cw-write__sign {
   user-select: none;
   text-align: center;
-  color: oklch(0.45 0.2 240);
-  background: color-mix(in oklab, oklch(0.52 0.18 240) 16%, transparent);
-}
-:host-context(.dark) ::ng-deep .cw-write__sign {
-  color: oklch(0.72 0.16 240);
-  background: color-mix(in oklab, oklch(0.68 0.16 240) 22%, transparent);
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 16%, transparent);
 }
 :host ::ng-deep .cw-write__code {
   padding: 0 0.5rem;
   white-space: pre-wrap;
   word-break: break-word;
 }
-.cw-tool__write-expand {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.2rem 0.55rem;
-  background: transparent;
-  border: 1px dashed var(--border);
-  border-radius: 0.375rem;
-  cursor: pointer;
-  color: var(--muted-foreground);
-  font-size: 0.6875rem;
-  font-family: inherit;
-}
-.cw-tool__write-expand:hover {
-  color: var(--foreground);
-  border-color: color-mix(in oklab, var(--foreground) 25%, var(--border));
-}
-.cw-tool__kv {
-  display: grid;
-  gap: 0.125rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
-}
-.cw-tool__kv-row {
-  display: grid;
-  grid-template-columns: 8rem 1fr;
-  gap: 0.5rem;
-  padding: 0.125rem 0.25rem;
-}
-.cw-tool__kv-key {
-  color: var(--muted-foreground);
-}
-.cw-tool__kv-val {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
+
 .cw-agent {
   display: flex;
   flex-direction: column;
@@ -357,19 +233,7 @@
   color: var(--muted-foreground);
   font-weight: 600;
 }
-.cw-agent__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-  align-self: flex-start;
-  max-width: 100%;
-}
+
 .cw-agent__toggle-chevron {
   color: var(--muted-foreground);
   transition: transform 120ms ease;
@@ -433,50 +297,14 @@
 .cw-tool__decision-pill[data-tone='neutral'] {
   color: var(--muted-foreground);
 }
-.cw-agent__deepdive {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.35rem 0.75rem;
-  border-radius: 999px;
-  border: 1px solid color-mix(in oklab, var(--primary) 35%, var(--border));
-  background: color-mix(in oklab, var(--primary) 7%, var(--card));
-  color: color-mix(in oklab, var(--primary) 80%, var(--foreground));
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background 120ms ease,
-    border-color 120ms ease;
-}
-.cw-agent__deepdive:hover {
-  background: color-mix(in oklab, var(--primary) 13%, var(--card));
-  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
-}
+
 .cw-subagent-stream {
   border: 1px solid color-mix(in oklab, var(--primary) 22%, var(--border));
   border-radius: 0.5rem;
   background: color-mix(in oklab, var(--primary) 3%, var(--card));
   overflow: hidden;
 }
-.cw-subagent-stream__header {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.3rem 0.625rem;
-  background: color-mix(in oklab, var(--primary) 8%, var(--card));
-  border-bottom: 1px solid color-mix(in oklab, var(--primary) 18%, var(--border));
-  width: 100%;
-  cursor: pointer;
-  border: none;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  &:not([aria-expanded='true']) {
-    border-bottom: none;
-  }
-}
+
 .cw-subagent-stream__chevron {
   color: var(--muted-foreground);
   transition: transform 120ms ease;

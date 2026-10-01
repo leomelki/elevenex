@@ -1,3 +1,4 @@
+import { ZardButtonComponent } from '@/shared/components/button';
 import {
   highlightedPatchHtml,
   highlightedUnifiedDiffHtml,
@@ -38,7 +39,7 @@ interface RenderedFile extends TurnChangedFile {
 @Component({
   selector: 'cw-turn-changes',
   standalone: true,
-  imports: [CommonModule, NgIcon, InlineDiffComponent],
+  imports: [ZardButtonComponent, CommonModule, NgIcon, InlineDiffComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({

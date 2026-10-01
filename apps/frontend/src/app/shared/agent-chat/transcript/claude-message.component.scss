@@ -354,35 +354,6 @@
   gap: 0.25rem;
 }
 
-.cw-msg__action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.65rem;
-  height: 1.65rem;
-  border: 0;
-  background: transparent;
-  color: color-mix(in oklab, var(--muted-foreground) 88%, transparent);
-  padding: 0;
-  border-radius: 999px;
-  cursor: pointer;
-  transition:
-    background-color 140ms ease,
-    color 140ms ease;
-
-  &:hover,
-  &:focus-visible {
-    outline: none;
-    background: color-mix(in oklab, var(--foreground) 6%, transparent);
-    color: var(--foreground);
-  }
-
-  &:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-}
-
 .cw-msg__spinner {
   width: 0.75rem;
   height: 0.75rem;
@@ -390,35 +361,6 @@
   border-top-color: var(--primary);
   border-radius: 999px;
   animation: cw-spin 650ms linear infinite;
-}
-
-.cw-msg__fork-marker {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  height: 1.55rem;
-  border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--background) 78%, transparent);
-  color: color-mix(in oklab, var(--muted-foreground) 92%, transparent);
-  padding: 0 0.5rem;
-  font: inherit;
-  font-size: 0.68rem;
-  font-weight: 650;
-  cursor: pointer;
-  transition:
-    border-color 140ms ease,
-    background-color 140ms ease,
-    color 140ms ease;
-
-  &:hover,
-  &:focus-visible,
-  &[aria-expanded='true'] {
-    outline: none;
-    border-color: color-mix(in oklab, var(--primary) 32%, var(--border));
-    background: color-mix(in oklab, var(--primary) 7%, var(--background));
-    color: var(--foreground);
-  }
 }
 
 .cw-msg__fork-chevron {
@@ -476,41 +418,6 @@
   color: var(--muted-foreground);
   font-size: 0.66rem;
   line-height: 1.25;
-}
-
-.cw-msg__fork-open,
-.cw-msg__fork-again {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.3rem;
-  height: 1.55rem;
-  border: 1px solid var(--border);
-  border-radius: 0.45rem;
-  background: var(--background);
-  color: var(--foreground);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 0 0.5rem;
-  white-space: nowrap;
-
-  &:hover:not(:disabled),
-  &:focus-visible {
-    outline: none;
-    border-color: color-mix(in oklab, var(--primary) 38%, var(--border));
-    background: color-mix(in oklab, var(--primary) 8%, var(--background));
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-}
-
-.cw-msg__fork-again {
-  justify-self: end;
 }
 
 .cw-msg__confirm {
@@ -614,46 +521,6 @@
   align-items: center;
   gap: 0.4rem;
   flex-shrink: 0;
-}
-
-.cw-plan-launcher__button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  min-height: 2rem;
-  border: 1px solid var(--primary);
-  border-radius: 0.45rem;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 700;
-  padding: 0 0.75rem;
-  white-space: nowrap;
-
-  &--secondary {
-    border-color: color-mix(in oklab, var(--primary) 34%, var(--border));
-    background: var(--background);
-    color: var(--foreground);
-  }
-
-  &:hover:not(:disabled),
-  &:focus-visible {
-    outline: none;
-    background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
-  }
-
-  &--secondary:hover:not(:disabled),
-  &--secondary:focus-visible {
-    background: color-mix(in oklab, var(--primary) 8%, var(--background));
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
 }
 
 .cw-msg--diagnostic {

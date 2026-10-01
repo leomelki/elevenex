@@ -135,8 +135,11 @@
                 <div class="cw-msg__actions">
                   @if (showCopy()) {
                     <button
+                      z-button
+                      zType="ghost"
+                      zSize="icon-xs"
                       type="button"
-                      class="cw-msg__action"
+                      class="cw-msg__action size-6 rounded-full text-muted-foreground"
                       data-cw-edit-action
                       title="Copy message"
                       aria-label="Copy message"
@@ -148,12 +151,15 @@
                   }
                   @if (showFork()) {
                     <button
+                      z-button
+                      zType="ghost"
+                      zSize="icon-xs"
                       type="button"
-                      class="cw-msg__action"
+                      class="cw-msg__action size-6 rounded-full text-muted-foreground"
                       data-cw-edit-action
                       [title]="forkDisabled() ? forkDisabledReason() : 'Fork from here'"
                       aria-label="Fork from here"
-                      [disabled]="forkDisabled()"
+                      [zDisabled]="forkDisabled()"
                       (click)="fork.emit()"
                     >
                       @if (forking()) {
@@ -166,35 +172,44 @@
                   @if (showEdit()) {
                     @if (editArmed()) {
                       <button
+                        z-button
+                        zType="ghost"
+                        zSize="icon-xs"
                         type="button"
-                        class="cw-msg__action"
+                        class="cw-msg__action size-6 rounded-full text-muted-foreground"
                         data-cw-edit-action
                         title="Confirm edit"
                         aria-label="Confirm edit"
-                        [disabled]="actionsDisabled()"
+                        [zDisabled]="actionsDisabled()"
                         (click)="confirmEdit.emit()"
                       >
                         <ng-icon name="lucideCheck" size="12" />
                       </button>
                       <button
+                        z-button
+                        zType="ghost"
+                        zSize="icon-xs"
                         type="button"
-                        class="cw-msg__action"
+                        class="cw-msg__action size-6 rounded-full text-muted-foreground"
                         data-cw-edit-action
                         title="Cancel edit"
                         aria-label="Cancel edit"
-                        [disabled]="actionsDisabled()"
+                        [zDisabled]="actionsDisabled()"
                         (click)="cancelEdit.emit()"
                       >
                         <ng-icon name="lucideX" size="12" />
                       </button>
                     } @else {
                       <button
+                        z-button
+                        zType="ghost"
+                        zSize="icon-xs"
                         type="button"
-                        class="cw-msg__action"
+                        class="cw-msg__action size-6 rounded-full text-muted-foreground"
                         data-cw-edit-action
                         title="Edit message"
                         aria-label="Edit message"
-                        [disabled]="actionsDisabled()"
+                        [zDisabled]="actionsDisabled()"
                         (click)="armEdit.emit()"
                       >
                         <ng-icon name="lucidePencil" size="12" />
@@ -205,8 +220,11 @@
               }
               @if (forks().length) {
                 <button
+                  z-button
+                  zType="outline"
+                  zSize="xs"
                   type="button"
-                  class="cw-msg__fork-marker"
+                  class="cw-msg__fork-marker rounded-full text-[11px] text-muted-foreground"
                   [attr.aria-expanded]="forksExpanded()"
                   (click)="toggleForks.emit()"
                 >
@@ -239,9 +257,12 @@
                   >
                 </div>
                 <button
+                  z-button
+                  zType="outline"
+                  zSize="xs"
                   type="button"
                   class="cw-msg__fork-open"
-                  [disabled]="!fork.childSession"
+                  [zDisabled]="!fork.childSession"
                   (click)="openFork.emit(fork)"
                 >
                   <ng-icon name="lucideExternalLink" size="12" />
@@ -251,9 +272,12 @@
             }
             @if (showFork()) {
               <button
+                z-button
+                zType="outline"
+                zSize="xs"
                 type="button"
-                class="cw-msg__fork-again"
-                [disabled]="forkDisabled()"
+                class="cw-msg__fork-again justify-self-end"
+                [zDisabled]="forkDisabled()"
                 (click)="forkAgain.emit()"
               >
                 <ng-icon name="lucidePlus" size="12" />
@@ -297,9 +321,12 @@
               </div>
               <div class="cw-plan-launcher__actions">
                 <button
+                  z-button
+                  zType="outline"
+                  zSize="sm"
                   type="button"
                   class="cw-plan-launcher__button cw-plan-launcher__button--secondary"
-                  [disabled]="!planReviewEnabled() || !review.anchorMessageId"
+                  [zDisabled]="!planReviewEnabled() || !review.anchorMessageId"
                   title="Ask about this plan"
                   (click)="openPlanChat.emit(review)"
                 >
@@ -307,9 +334,12 @@
                   Ask
                 </button>
                 <button
+                  z-button
+                  zType="default"
+                  zSize="sm"
                   type="button"
                   class="cw-plan-launcher__button"
-                  [disabled]="!planReviewEnabled()"
+                  [zDisabled]="!planReviewEnabled()"
                   (click)="openPlanReview.emit(review)"
                 >
                   <ng-icon name="lucideFileText" size="13" />
@@ -342,8 +372,11 @@
               <div class="cw-msg__actions">
                 @if (showCopy()) {
                   <button
+                    z-button
+                    zType="ghost"
+                    zSize="icon-xs"
                     type="button"
-                    class="cw-msg__action"
+                    class="cw-msg__action size-6 rounded-full text-muted-foreground"
                     title="Copy message"
                     aria-label="Copy message"
                     (mousedown)="preserveSelection($event)"
@@ -354,11 +387,14 @@
                 }
                 @if (showFork()) {
                   <button
+                    z-button
+                    zType="ghost"
+                    zSize="icon-xs"
                     type="button"
-                    class="cw-msg__action"
+                    class="cw-msg__action size-6 rounded-full text-muted-foreground"
                     [title]="forkDisabled() ? forkDisabledReason() : 'Fork from here'"
                     aria-label="Fork from here"
-                    [disabled]="forkDisabled()"
+                    [zDisabled]="forkDisabled()"
                     (click)="fork.emit()"
                   >
                     @if (forking()) {
@@ -372,8 +408,11 @@
             }
             @if (forks().length) {
               <button
+                z-button
+                zType="outline"
+                zSize="xs"
                 type="button"
-                class="cw-msg__fork-marker"
+                class="cw-msg__fork-marker rounded-full text-[11px] text-muted-foreground"
                 [attr.aria-expanded]="forksExpanded()"
                 (click)="toggleForks.emit()"
               >
@@ -405,9 +444,12 @@
                   >
                 </div>
                 <button
+                  z-button
+                  zType="outline"
+                  zSize="xs"
                   type="button"
                   class="cw-msg__fork-open"
-                  [disabled]="!fork.childSession"
+                  [zDisabled]="!fork.childSession"
                   (click)="openFork.emit(fork)"
                 >
                   <ng-icon name="lucideExternalLink" size="12" />
@@ -417,9 +459,12 @@
             }
             @if (showFork()) {
               <button
+                z-button
+                zType="outline"
+                zSize="xs"
                 type="button"
-                class="cw-msg__fork-again"
-                [disabled]="forkDisabled()"
+                class="cw-msg__fork-again justify-self-end"
+                [zDisabled]="forkDisabled()"
                 (click)="forkAgain.emit()"
               >
                 <ng-icon name="lucidePlus" size="12" />

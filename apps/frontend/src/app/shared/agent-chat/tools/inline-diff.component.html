@@ -1,0 +1,30 @@
+<section class="cw-inline-diff overflow-hidden rounded-lg border border-border bg-background/80">
+  @if (label() || hasStats()) {
+    <header
+      class="cw-inline-diff__head flex min-w-0 items-center justify-between gap-3 border-b border-border px-2 py-1.5 text-[11px] font-semibold text-muted-foreground"
+    >
+      @if (label()) {
+        <span class="cw-inline-diff__label min-w-0 truncate font-mono" [title]="label()">{{
+          label()
+        }}</span>
+      }
+      @if (hasStats()) {
+        <span class="cw-inline-diff__stats inline-flex shrink-0 items-center gap-1.5 font-mono">
+          <span class="cw-inline-diff__add text-success">+{{ additions() ?? 0 }}</span>
+          <span class="cw-inline-diff__del text-destructive">-{{ deletions() ?? 0 }}</span>
+        </span>
+      }
+    </header>
+  }
+
+  @if (html()) {
+    <pre
+      class="cw-inline-diff__body m-0 max-h-112 overflow-auto bg-muted/40 font-mono text-xs leading-relaxed whitespace-pre text-foreground"
+      [innerHTML]="html()"
+    ></pre>
+  } @else {
+    <div class="cw-inline-diff__empty bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
+      {{ emptyText() }}
+    </div>
+  }
+</section>

@@ -30,6 +30,14 @@ Hosts wire actions explicitly. Enable transcript inspection/review capabilities
 only when the host handles their outputs. Keep async results scoped to the
 attachment or conversation version that initiated them.
 
+Use Tailwind utilities and semantic theme tokens for template-owned layout and
+colors. Use the installed Zard buttons and inputs for controls; bind `zDisabled`
+on Zard buttons so their native disabled state and appearance agree. The session
+status bar uses Zard dropdowns for choices and a popover for usage, with a scoped
+dropdown service so an open menu is disposed with its host. Keep custom SCSS for
+generated highlighted HTML, animations, container rules, and complex gradients.
+Shared attachment cards and setting options own their repeated markup and styles.
+
 Reconcile messages by provider identity and content block, preserving repeated
 prompts and distinct replies. The narrow legacy recording fallback must stay
 within the same user turn; global text deduplication loses legitimate messages.

@@ -1,3 +1,4 @@
+import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
 import {
   detectHljsLang,
@@ -111,6 +112,7 @@ type Todo = ToolTodoItem;
   selector: 'cw-tool-call',
   standalone: true,
   imports: [
+    ZardButtonComponent,
     CommonModule,
     NgIcon,
     AgentMarkdownComponent,

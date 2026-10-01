@@ -1,3 +1,5 @@
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
 import {
   AskUserQuestion,
   AskUserQuestionFlowComponent,
@@ -45,7 +47,14 @@ interface AlwaysAllowPattern {
 @Component({
   selector: 'cw-permission-inline',
   standalone: true,
-  imports: [CommonModule, FormsModule, NgIcon, AskUserQuestionFlowComponent],
+  imports: [
+    ZardButtonComponent,
+    ZardInputDirective,
+    CommonModule,
+    FormsModule,
+    NgIcon,
+    AskUserQuestionFlowComponent,
+  ],
   viewProviders: [
     provideIcons({
       lucideShield,
@@ -57,6 +66,7 @@ interface AlwaysAllowPattern {
     }),
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'block' },
   templateUrl: './claude-permission-inline.component.html',
   styleUrl: './claude-permission-inline.component.scss',
 })

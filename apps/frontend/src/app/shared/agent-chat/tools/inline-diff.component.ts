@@ -7,29 +7,7 @@ import { SafeHtml } from '@angular/platform-browser';
   standalone: true,
   imports: [CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `
-    <section class="cw-inline-diff">
-      @if (label() || hasStats()) {
-        <header class="cw-inline-diff__head">
-          @if (label()) {
-            <span class="cw-inline-diff__label" [title]="label()">{{ label() }}</span>
-          }
-          @if (hasStats()) {
-            <span class="cw-inline-diff__stats">
-              <span class="cw-inline-diff__add">+{{ additions() ?? 0 }}</span>
-              <span class="cw-inline-diff__del">-{{ deletions() ?? 0 }}</span>
-            </span>
-          }
-        </header>
-      }
-
-      @if (html()) {
-        <pre class="cw-inline-diff__body" [innerHTML]="html()"></pre>
-      } @else {
-        <div class="cw-inline-diff__empty">{{ emptyText() }}</div>
-      }
-    </section>
-  `,
+  templateUrl: './inline-diff.component.html',
   styleUrl: './inline-diff.component.scss',
 })
 export class InlineDiffComponent {

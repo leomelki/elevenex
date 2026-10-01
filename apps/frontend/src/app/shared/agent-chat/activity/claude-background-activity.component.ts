@@ -1,3 +1,4 @@
+import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentBackgroundWorkItem } from '@/shared/models/agent-runtime.model';
 import { CommonModule } from '@angular/common';
 import {
@@ -23,8 +24,9 @@ import { lucideBot, lucideChevronDown, lucideLayers } from '@ng-icons/lucide';
 @Component({
   selector: 'cw-background-activity',
   standalone: true,
-  imports: [CommonModule, NgIcon],
+  imports: [ZardButtonComponent, CommonModule, NgIcon],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'block' },
   viewProviders: [provideIcons({ lucideBot, lucideChevronDown, lucideLayers })],
   templateUrl: './claude-background-activity.component.html',
   styleUrl: './claude-background-activity.component.scss',

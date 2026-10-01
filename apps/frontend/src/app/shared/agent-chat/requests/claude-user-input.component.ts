@@ -1,3 +1,5 @@
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
 import { AskUserQuestionFlowComponent } from '@/shared/agent-chat/requests/ask-user-question-flow.component';
 import { AgentJsonSchema, AgentUserInputRequest } from '@/shared/models/agent-runtime.model';
 import { CommonModule } from '@angular/common';
@@ -26,11 +28,18 @@ interface Field {
 @Component({
   selector: 'cw-user-input',
   standalone: true,
-  imports: [CommonModule, FormsModule, NgIcon, AskUserQuestionFlowComponent],
+  imports: [
+    ZardButtonComponent,
+    ZardInputDirective,
+    CommonModule,
+    FormsModule,
+    NgIcon,
+    AskUserQuestionFlowComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'block' },
   viewProviders: [provideIcons({ lucideExternalLink, lucideBraces, lucideMessageCircleQuestion })],
   templateUrl: './claude-user-input.component.html',
-  styleUrl: './claude-user-input.component.scss',
 })
 export class ClaudeUserInputComponent {
   readonly request = input.required<AgentUserInputRequest>();

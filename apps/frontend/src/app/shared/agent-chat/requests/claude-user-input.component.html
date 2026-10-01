@@ -1,12 +1,16 @@
-<div class="cw-ui">
-  <div class="cw-ui__head">
+<div
+  class="cw-ui flex flex-col gap-2 rounded-lg border border-border bg-card p-3 text-[13px] text-card-foreground"
+>
+  <div class="cw-ui__head flex flex-wrap items-center gap-1.5 [&_strong]:font-semibold">
     <ng-icon
       [name]="askQuestions().length ? 'lucideMessageCircleQuestion' : 'lucideBraces'"
       size="14"
     />
     <strong>{{ request().title || request().displayName || request().serverName }}</strong>
     @if (request().description || request().message) {
-      <span class="cw-ui__desc">{{ request().description || request().message }}</span>
+      <span class="cw-ui__desc font-normal text-muted-foreground">{{
+        request().description || request().message
+      }}</span>
     }
   </div>
 
@@ -20,15 +24,20 @@
       (submitted)="submitQuestionAnswers($event)"
     />
   } @else if (request().mode === 'url' && request().url) {
-    <a class="cw-ui__link" [href]="request().url" target="_blank" rel="noreferrer">
+    <a
+      class="cw-ui__link inline-flex items-center gap-1.5 text-[13px] text-primary underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      [href]="request().url"
+      target="_blank"
+      rel="noreferrer"
+    >
       <ng-icon name="lucideExternalLink" size="14" />
       Open requested URL
     </a>
   } @else if (fields().length) {
-    <div class="cw-ui__grid">
+    <div class="cw-ui__grid grid gap-2">
       @for (field of fields(); track field.key) {
-        <label class="cw-ui__field">
-          <span class="cw-ui__label">
+        <label class="cw-ui__field flex flex-col gap-1 text-xs">
+          <span class="cw-ui__label font-semibold [&_em]:not-italic [&_em]:text-destructive">
             {{ field.label }}
             @if (field.required) {
               <em>*</em>
@@ -37,6 +46,7 @@
           @switch (field.type) {
             @case ('boolean') {
               <input
+                class="accent-primary"
                 type="checkbox"
                 [ngModel]="!!values()[field.key]"
                 (ngModelChange)="set(field.key, $event)"
@@ -44,6 +54,7 @@
             }
             @case ('enum') {
               <select
+                class="h-8 rounded-md border border-input bg-background px-2 text-[13px] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 [ngModel]="values()[field.key] ?? ''"
                 (ngModelChange)="set(field.key, $event)"
               >
@@ -55,6 +66,8 @@
             }
             @case ('number') {
               <input
+                z-input
+                zSize="sm"
                 type="number"
                 [ngModel]="values()[field.key] ?? ''"
                 (ngModelChange)="set(field.key, $event === '' ? '' : Number($event))"
@@ -62,12 +75,15 @@
             }
             @case ('textarea') {
               <textarea
+                z-input
                 [ngModel]="values()[field.key] ?? ''"
                 (ngModelChange)="set(field.key, $event)"
               ></textarea>
             }
             @default {
               <input
+                z-input
+                zSize="sm"
                 type="text"
                 [ngModel]="values()[field.key] ?? ''"
                 (ngModelChange)="set(field.key, $event)"
@@ -75,32 +91,57 @@
             }
           }
           @if (field.description) {
-            <span class="cw-ui__help">{{ field.description }}</span>
+            <span class="cw-ui__help text-muted-foreground">{{ field.description }}</span>
           }
         </label>
       }
     </div>
   } @else {
     <textarea
-      class="cw-ui__json"
+      z-input
+      class="cw-ui__json min-h-20 font-mono text-[13px]"
       [ngModel]="jsonText()"
       (ngModelChange)="onJsonInput($event)"
       placeholder="{}"
+      aria-label="Response JSON"
+      [zStatus]="jsonError() ? 'error' : undefined"
+      [attr.aria-invalid]="!!jsonError()"
     ></textarea>
     @if (jsonError()) {
-      <div class="cw-ui__error">{{ jsonError() }}</div>
+      <div class="cw-ui__error text-xs text-destructive">{{ jsonError() }}</div>
     }
   }
 
   @if (!askQuestions().length) {
-    <div class="cw-ui__actions">
-      <button type="button" class="cw-ui__btn" (click)="answer.emit({ action: 'cancel' })">
+    <div class="cw-ui__actions flex justify-end gap-1.5">
+      <button
+        z-button
+        zType="outline"
+        zSize="sm"
+        type="button"
+        class="cw-ui__btn"
+        (click)="answer.emit({ action: 'cancel' })"
+      >
         Cancel
       </button>
-      <button type="button" class="cw-ui__btn" (click)="answer.emit({ action: 'decline' })">
+      <button
+        z-button
+        zType="outline"
+        zSize="sm"
+        type="button"
+        class="cw-ui__btn"
+        (click)="answer.emit({ action: 'decline' })"
+      >
         Decline
       </button>
-      <button type="button" class="cw-ui__btn cw-ui__btn--primary" (click)="submit()">
+      <button
+        z-button
+        zType="default"
+        zSize="sm"
+        type="button"
+        class="cw-ui__btn cw-ui__btn--primary"
+        (click)="submit()"
+      >
         Accept
       </button>
     </div>

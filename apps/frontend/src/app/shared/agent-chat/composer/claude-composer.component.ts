@@ -1,3 +1,4 @@
+import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentAutocompleteItem, AgentPendingPrompt } from '@/shared/models/agent-runtime.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type {
@@ -31,7 +32,6 @@ import {
 import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  lucideFileCode,
   lucideLoaderCircle,
   lucideMessageSquare,
   lucidePaperclip,
@@ -42,6 +42,7 @@ import {
   lucideX,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
+import { ComposerMentionComponent } from './composer-mention.component';
 
 interface Range {
   start: number;
@@ -81,14 +82,22 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 @Component({
   selector: 'cw-composer',
   standalone: true,
-  imports: [CommonModule, FormsModule, NgIcon, DictateTargetDirective, DictationButtonComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    NgIcon,
+    DictateTargetDirective,
+    DictationButtonComponent,
+    ZardButtonComponent,
+    ComposerMentionComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
+    class: 'block relative',
     '(document:mousedown)': 'onDocumentMousedown($event)',
   },
   viewProviders: [
     provideIcons({
-      lucideFileCode,
       lucideLoaderCircle,
       lucideMessageSquare,
       lucidePaperclip,
@@ -100,7 +109,6 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
     }),
   ],
   templateUrl: './claude-composer.component.html',
-  styleUrl: './claude-composer.component.scss',
 })
 export class ClaudeComposerComponent {
   @ViewChild('input', { static: true }) private ta!: ElementRef<HTMLTextAreaElement>;

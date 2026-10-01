@@ -1,3 +1,11 @@
+import { ZardButtonComponent } from '@/shared/components/button';
+import {
+  ZardDropdownDirective,
+  ZardDropdownMenuContentComponent,
+  ZardDropdownMenuItemComponent,
+  ZardDropdownService,
+} from '@/shared/components/dropdown';
+import { ZardPopoverComponent, ZardPopoverDirective } from '@/shared/components/popover';
 import { ZardProgressBarComponent } from '@/shared/components/progress-bar';
 import {
   AgentPlanUsage,
@@ -14,21 +22,12 @@ import {
   ClaudeStatusBarPhase,
   ClaudeTaskState,
 } from '@/shared/models/claude-runtime.model';
+import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { CommonModule } from '@angular/common';
-import {
-  ChangeDetectionStrategy,
-  Component,
-  ElementRef,
-  computed,
-  inject,
-  input,
-  output,
-  signal,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideBrain,
-  lucideCheck,
   lucideChevronDown,
   lucideDownload,
   lucideEllipsis,
@@ -42,6 +41,7 @@ import {
   lucideTriangleAlert,
   lucideZap,
 } from '@ng-icons/lucide';
+import { AgentSettingOptionComponent } from './agent-setting-option.component';
 
 interface PermissionModeOption {
   id: ClaudePermissionMode;
@@ -72,17 +72,28 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
 
 @Component({
   selector: 'cw-status-bar',
+  providers: [ZardDropdownService],
   standalone: true,
-  imports: [CommonModule, NgIcon, ZardProgressBarComponent],
+  imports: [
+    CommonModule,
+    NgIcon,
+    ZardProgressBarComponent,
+    ZardButtonComponent,
+    ZardDropdownDirective,
+    ZardDropdownMenuContentComponent,
+    ZardDropdownMenuItemComponent,
+    ZardPopoverComponent,
+    ZardPopoverDirective,
+    CdkTrapFocus,
+    AgentSettingOptionComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    '(document:mousedown)': 'onDocumentMousedown($event)',
-    '(document:keydown.escape)': 'closeAllMenus()',
+    class: 'block',
     '(document:keydown.shift.tab)': 'togglePlanModeFromShortcut($event)',
   },
   viewProviders: [
     provideIcons({
-      lucideCheck,
       lucideChevronDown,
       lucideDownload,
       lucideEllipsis,
@@ -132,16 +143,6 @@ export class ClaudeStatusBarComponent {
   readonly openMcp = output<void>();
   readonly export = output<void>();
 
-  private readonly openMenu = signal<
-    'model' | 'effort' | 'provider' | 'permission' | 'usage' | 'overflow' | null
-  >(null);
-  readonly modelOpen = computed(() => this.openMenu() === 'model');
-  readonly effortOpen = computed(() => this.openMenu() === 'effort');
-  readonly providerOpen = computed(() => this.openMenu() === 'provider');
-  readonly permissionOpen = computed(() => this.openMenu() === 'permission');
-  readonly usageOpen = computed(() => this.openMenu() === 'usage');
-  readonly menuOpen = computed(() => this.openMenu() === 'overflow');
-
   readonly visiblePlanUsage = computed(() => {
     const usage = this.planUsage();
     const provider = this.currentProvider();
@@ -152,24 +153,6 @@ export class ClaudeStatusBarComponent {
       ? usage
       : null;
   });
-
-  private readonly host = inject(ElementRef<HTMLElement>);
-
-  onDocumentMousedown(event: MouseEvent): void {
-    if (!this.openMenu()) return;
-    const target = event.target as Node | null;
-    if (target && this.host.nativeElement.contains(target)) return;
-    this.closeAllMenus();
-  }
-
-  closeAllMenus(): void {
-    this.openMenu.set(null);
-  }
-
-  toggleMenu(which: 'model' | 'effort' | 'provider' | 'permission' | 'usage' | 'overflow'): void {
-    if (which === 'provider' && this.providerLocked()) return;
-    this.openMenu.update((current) => (current === which ? null : which));
-  }
 
   readonly lowestRemainingPercentage = computed(() => {
     const windows = this.visiblePlanUsage()?.windows ?? [];
@@ -304,12 +287,10 @@ export class ClaudeStatusBarComponent {
   );
 
   pickModel(id: string): void {
-    this.closeAllMenus();
     this.modelChange.emit(id);
   }
 
   pickReasoningEffort(effort: ClaudeReasoningEffort | ''): void {
-    this.closeAllMenus();
     this.reasoningEffortChange.emit(effort || null);
   }
 
@@ -318,7 +299,6 @@ export class ClaudeStatusBarComponent {
   }
 
   pickProvider(id: AgentProviderId): void {
-    this.closeAllMenus();
     if (this.providerLocked()) return;
     if (id !== this.currentProvider()) {
       this.providerChange.emit(id);
@@ -335,7 +315,6 @@ export class ClaudeStatusBarComponent {
   }
 
   pickPermissionMode(mode: ClaudePermissionMode): void {
-    this.closeAllMenus();
     this.permissionModeChange.emit(mode);
   }
 
@@ -345,7 +324,9 @@ export class ClaudeStatusBarComponent {
   }
 
   togglePlanModeFromShortcut(event: Event): void {
-    if (!this.currentProviderCapabilities()?.permissions) return;
+    if (event.defaultPrevented || !this.currentProviderCapabilities()?.permissions) return;
+    if (event.target instanceof Element && event.target.closest('[role="menu"], [role="dialog"]'))
+      return;
     event.preventDefault();
     this.togglePlanMode();
   }

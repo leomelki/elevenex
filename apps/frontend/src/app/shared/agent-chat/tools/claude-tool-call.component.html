@@ -1,5 +1,5 @@
 <div
-  class="cw-tool"
+  class="cw-tool overflow-hidden rounded-lg border border-border bg-card/95 text-[13px]"
   [class.cw-tool--answer-receipt]="isQuestionResponse()"
   [attr.data-state]="state()"
 >
@@ -35,15 +35,33 @@
       </div>
     </section>
   } @else if (display().kind === 'todo_write') {
-    <div class="cw-tool__head cw-tool__head--static">
-      <span class="cw-tool__state-icon"><ng-icon name="lucideListTodo" size="13" /></span>
-      <span class="cw-tool__verb">Todos</span>
-      <span class="cw-tool__count">{{ todos().length }}</span>
+    <div
+      class="cw-tool__head flex h-auto min-w-0 w-full items-center justify-start gap-2 rounded-none px-2.5 py-2 text-left text-[13px] font-normal focus-visible:ring-inset cw-tool__head--static"
+    >
+      <span
+        class="cw-tool__state-icon inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground"
+        ><ng-icon name="lucideListTodo" size="13"
+      /></span>
+      <span class="cw-tool__verb shrink-0 font-semibold text-foreground">Todos</span>
+      <span
+        class="cw-tool__count rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+        >{{ todos().length }}</span
+      >
     </div>
     <cw-tool-todos [todos]="todos()" />
   } @else {
-    <button type="button" class="cw-tool__head" (click)="toggle()">
-      <span class="cw-tool__state-icon">
+    <button
+      z-button
+      zType="ghost"
+      zSize="xs"
+      type="button"
+      class="cw-tool__head flex h-auto min-w-0 w-full items-center justify-start gap-2 rounded-none px-2.5 py-2 text-left text-[13px] font-normal focus-visible:ring-inset"
+      (click)="toggle()"
+      [attr.aria-expanded]="canExpand() ? open() : null"
+    >
+      <span
+        class="cw-tool__state-icon inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground"
+      >
         @if (state() === 'running') {
           <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" />
         } @else if (state() === 'waiting') {
@@ -57,29 +75,43 @@
         }
       </span>
 
-      <ng-icon [name]="display().icon" size="13" class="cw-tool__glyph" />
-      <span class="cw-tool__verb">{{ display().verb }}</span>
+      <ng-icon
+        [name]="display().icon"
+        size="13"
+        class="cw-tool__glyph shrink-0 text-muted-foreground"
+      />
+      <span class="cw-tool__verb shrink-0 font-semibold text-foreground">{{ display().verb }}</span>
 
       @if (display().target) {
-        <span class="cw-tool__target" [title]="targetTitle()">{{ display().target }}</span>
+        <span
+          class="cw-tool__target min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
+          [title]="targetTitle()"
+          >{{ display().target }}</span
+        >
       }
 
       @if (summary(); as s) {
-        <span class="cw-tool__result" [attr.data-tone]="s.tone">{{ s.text }}</span>
+        <span
+          class="cw-tool__result shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+          [attr.data-tone]="s.tone"
+          >{{ s.text }}</span
+        >
       }
 
       @if (canExpand()) {
         <ng-icon
           name="lucideChevronRight"
           size="12"
-          class="cw-tool__chevron"
+          class="cw-tool__chevron ml-0.5 shrink-0 text-muted-foreground transition-transform duration-150"
           [class.rotate-90]="open()"
         />
       }
     </button>
 
     @if (open() && canExpand()) {
-      <div class="cw-tool__body">
+      <div
+        class="cw-tool__body flex flex-col gap-2 border-t border-dashed border-border px-2.5 py-2"
+      >
         @if (interaction(); as interaction) {
           <div class="cw-agent">
             <div class="cw-agent__label">Your choice</div>
@@ -130,7 +162,14 @@
             @if (writeContent()) {
               <pre class="cw-tool__write" [innerHTML]="writeContentHtml()"></pre>
               @if (writeHiddenLines() > 0) {
-                <button type="button" class="cw-tool__write-expand" (click)="toggleWriteExpand()">
+                <button
+                  z-button
+                  zType="outline"
+                  zSize="xs"
+                  type="button"
+                  class="cw-tool__write-expand self-start border-dashed text-[11px] text-muted-foreground"
+                  (click)="toggleWriteExpand()"
+                >
                   @if (writeExpanded()) {
                     Show less
                   } @else {
@@ -162,8 +201,11 @@
             @if (agentPrompt()) {
               <div class="cw-agent">
                 <button
+                  z-button
+                  zType="ghost"
+                  zSize="xs"
                   type="button"
-                  class="cw-agent__toggle"
+                  class="cw-agent__toggle h-auto max-w-full justify-start self-start gap-1.5 px-1 py-0.5 text-left"
                   (click)="togglePrompt()"
                   [attr.aria-expanded]="promptOpen()"
                 >
@@ -195,8 +237,11 @@
             @if (childUnits().length) {
               <div class="cw-subagent-stream">
                 <button
+                  z-button
+                  zType="ghost"
+                  zSize="xs"
                   type="button"
-                  class="cw-subagent-stream__header"
+                  class="cw-subagent-stream__header h-auto w-full justify-start gap-2 rounded-none border-0 bg-primary/10 px-2.5 py-1.5 text-left aria-expanded:border-b aria-expanded:border-border focus-visible:ring-inset"
                   (click)="toggleStream()"
                   [attr.aria-expanded]="streamOpen()"
                 >
@@ -252,7 +297,14 @@
               </div>
             }
             @if (turnId() && hasAgentHistory() && state() === 'done') {
-              <button type="button" class="cw-agent__deepdive" (click)="onDeepDiveClick()">
+              <button
+                z-button
+                zType="outline"
+                zSize="xs"
+                type="button"
+                class="cw-agent__deepdive self-start rounded-full text-primary"
+                (click)="onDeepDiveClick()"
+              >
                 View full agent history →
               </button>
             }
