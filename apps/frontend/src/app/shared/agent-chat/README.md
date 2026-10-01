@@ -8,9 +8,12 @@ features own their workflows and compose these pieces.
   sharing a singleton would mix independent conversations.
 - `agent-chat-connection.ts`: embedded chat subscription, borrowed socket
   lifetime, and coalesced history refreshes. Detached connections ignore late
-  responses. The main session workspace owns its reconnect and bootstrap flow.
+  responses. The main session's scoped `SessionRuntime` service owns its
+  reconnect and bootstrap flow.
 - `transcript/`: stateless transcript, messages, thinking, turn summaries,
   change panels, and identity/grouping helpers.
+  `TranscriptViewportDirective` owns scrolling and contextual prompt selection
+  for the session, review, and plan chats; DOM updates use `afterRenderEffect`.
 - `tools/`: tool presentation, shared file-change parsing, and highlighted diffs.
   Highlighting happens when the relevant content is expanded.
 - `composer/`: prompt editing, attachments, queue controls, and draft storage.
@@ -29,6 +32,13 @@ unwraps prompts when an embedded workflow needs it.
 Hosts wire actions explicitly. Enable transcript inspection/review capabilities
 only when the host handles their outputs. Keep async results scoped to the
 attachment or conversation version that initiated them.
+
+Pass readonly values to transcript inputs. Group related tool state, turn
+expansion, and review state with the types in `transcript-view-state.ts`; derive
+these groups in host `computed` signals instead of allocating objects in HTML.
+Keep actions as explicit outputs rather than passing a mutable conversation or
+an untyped options object. The composer uses `model()` for its text value;
+hosts that persist drafts can handle `valueChange` explicitly.
 
 Use Tailwind utilities and semantic theme tokens for template-owned layout and
 colors. Use the installed Zard buttons and inputs for controls; bind `zDisabled`

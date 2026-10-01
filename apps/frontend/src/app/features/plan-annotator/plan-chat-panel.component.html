@@ -27,11 +27,14 @@
       </div>
     } @else {
       <div
-        #messagesRef
+        cwTranscriptViewport
+        [items]="conversation.items()"
+        [runPhase]="conversation.runPhase()"
+        [pendingReply]="sending() || conversation.awaitingFirstToken()"
+        [sessionKey]="currentChat()?.childSessionId ?? null"
         class="pc-messages"
         aria-live="polite"
         aria-label="Plan questions"
-        (scroll)="onMessagesScroll()"
       >
         @if (loading()) {
           <div class="pc-skeleton" aria-label="Loading plan questions">
@@ -54,11 +57,8 @@
             [pendingReply]="
               conversation.awaitingFirstToken() || (sending() && !conversation.lastLiveMessageId())
             "
-            [childItemsByParentToolUseId]="conversation.childItemsByParentToolUseId()"
-            [liveToolUseIds]="conversation.liveToolUseIds()"
-            [toolProgressByToolUseId]="conversation.toolProgressByToolUseId()"
-            [expandedTurns]="expandedTurns()"
-            [expandedTurnChanges]="expandedTurnChanges()"
+            [toolState]="toolState()"
+            [turnExpansion]="turnExpansion()"
             (toggleTurn)="toggleTurn($event)"
             (toggleTurnChanges)="toggleTurnChanges($event)"
             (closeTurnChanges)="closeTurnChanges($event)"
@@ -87,7 +87,7 @@
           />
         }
         <cw-composer
-          [value]="draft()"
+          [(value)]="draft"
           [submitting]="sending()"
           [running]="runPhase() === 'running'"
           [canInterrupt]="canInterrupt()"
@@ -102,7 +102,6 @@
           [sessionId]="currentChat()?.childSessionId ?? null"
           [worktreePath]="currentChat()?.childSession?.worktreePath ?? null"
           placeholderText="Ask a question about the plan…"
-          (valueChange)="draft.set($event)"
           (send)="submit($event, activeReview)"
           (interrupt)="interrupt()"
           (cancelPending)="cancelPending($event)"

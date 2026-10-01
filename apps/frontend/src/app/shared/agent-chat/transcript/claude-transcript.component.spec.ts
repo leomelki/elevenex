@@ -57,7 +57,7 @@ describe('ClaudeTranscriptComponent final outputs', () => {
       },
       { id: 'answer', kind: 'assistant', content: 'Done', timestamp },
     ]);
-    fixture.componentRef.setInput('expandedTurnChanges', { user: true });
+    fixture.componentRef.setInput('turnExpansion', { turns: {}, changes: { user: true } });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('cw-turn-changes')).not.toBeNull();
     expect(fixture.nativeElement.querySelector('.cw-turn-changes__review')).toBeNull();
@@ -89,7 +89,7 @@ describe('ClaudeTranscriptComponent final outputs', () => {
         element.textContent!.indexOf('All checks passed.'),
       );
 
-      fixture.componentRef.setInput('expandedTurns', { user: true });
+      fixture.componentRef.setInput('turnExpansion', { turns: { user: true }, changes: {} });
       fixture.detectChanges();
       expect(element.querySelector('cw-tool-call')).not.toBeNull();
       expect(element.textContent).toContain('Checking the files.');
@@ -117,7 +117,7 @@ describe('ClaudeTranscriptComponent denial feedback', () => {
       element.textContent!.indexOf('I will use another folder.'),
     );
 
-    fixture.componentRef.setInput('expandedTurns', { user: true });
+    fixture.componentRef.setInput('turnExpansion', { turns: { user: true }, changes: {} });
     fixture.detectChanges();
     expect(element.querySelector('cw-tool-call')).not.toBeNull();
     expect(element.querySelectorAll('[data-tool-denial]')).toHaveLength(1);

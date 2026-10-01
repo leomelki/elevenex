@@ -1,5 +1,5 @@
-import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
+import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
@@ -88,7 +88,7 @@ export class ClaudeMessageComponent {
   readonly forkDisabled = input<boolean>(false);
   readonly forkDisabledReason = input<string>('');
   readonly forking = input<boolean>(false);
-  readonly forks = input<SessionFork[]>([]);
+  readonly forks = input<readonly SessionFork[]>([]);
   readonly forksExpanded = input<boolean>(false);
   readonly planReviewEnabled = input<boolean>(false);
   readonly planReview = input<PlanReviewRequest | null>(null);

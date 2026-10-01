@@ -144,6 +144,7 @@ describe('ClaudeStatusBarComponent', () => {
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
     const menu = overlay.querySelector('[role="menu"]') as HTMLElement;
     expect(menu).not.toBeNull();
+    expect(menu.getAttribute('aria-label')).toBe('Choose model');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
 
     menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));

@@ -27,6 +27,8 @@ import { mergeClasses } from '@/shared/utils/merge-classes';
       <div
         [class]="contentClasses()"
         role="menu"
+        [attr.aria-label]="ariaLabel()"
+        [attr.aria-labelledby]="ariaLabelledby()"
         data-slot="dropdown-menu-content"
         data-state="open"
         tabindex="-1"
@@ -53,6 +55,8 @@ export class ZardDropdownMenuContentComponent {
   readonly contentTemplate = viewChild.required<TemplateRef<unknown>>('contentTemplate');
 
   readonly class = input<ClassValue>('');
+  readonly ariaLabel = input<string | null>(null, { alias: 'aria-label' });
+  readonly ariaLabelledby = input<string | null>(null, { alias: 'aria-labelledby' });
 
   /** Edge of the trigger the menu opens from. Same meaning as Radix's `side`. */
   readonly zSide = input<ZardDropdownSide>('bottom');

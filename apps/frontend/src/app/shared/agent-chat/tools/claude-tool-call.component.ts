@@ -1,4 +1,3 @@
-import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
 import {
   detectHljsLang,
@@ -28,6 +27,7 @@ import {
   resultSummary,
   ToolDisplay,
 } from '@/shared/agent-tools/agent-tool-format';
+import { ZardButtonComponent } from '@/shared/components/button';
 import {
   AgentPermissionApproval,
   AgentToolInteractionSummary,
@@ -183,7 +183,7 @@ type Todo = ToolTodoItem;
 export class ClaudeToolCallComponent {
   readonly call = input.required<AgentTranscriptItem>();
   readonly result = input<AgentTranscriptItem | null>(null);
-  readonly childItems = input<AgentTranscriptItem[]>([]);
+  readonly childItems = input<readonly AgentTranscriptItem[]>([]);
   readonly isLive = input<boolean>(false);
   readonly progress = input<AgentToolProgress | null>(null);
   readonly turnId = input<string | null>(null);

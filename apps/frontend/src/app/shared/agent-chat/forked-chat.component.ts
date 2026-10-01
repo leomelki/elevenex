@@ -12,6 +12,8 @@ import { ClaudeUserInputComponent } from '@/shared/agent-chat/requests/claude-us
 import { ClaudeContextNoteComponent } from '@/shared/agent-chat/transcript/claude-context-note.component';
 import { ClaudeTranscriptComponent } from '@/shared/agent-chat/transcript/claude-transcript.component';
 import type { TranscriptRenderItem } from '@/shared/agent-chat/transcript/transcript-render-items';
+import { transcriptToolState } from '@/shared/agent-chat/transcript/transcript-view-state';
+import { TranscriptViewportDirective } from '@/shared/agent-chat/transcript/transcript-viewport.directive';
 import type {
   AgentAutocompleteItem,
   AgentPermissionApproval,
@@ -27,7 +29,6 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
-  ElementRef,
   computed,
   effect,
   inject,
@@ -82,6 +83,7 @@ export interface ForkedChatContextNote {
   standalone: true,
   imports: [
     CommonModule,
+    TranscriptViewportDirective,
     NgIcon,
     ClaudeTranscriptComponent,
     ClaudeContextNoteComponent,
@@ -126,7 +128,7 @@ export class ForkedChatComponent {
   readonly openLocalFile = output<LocalFileTarget>();
   readonly copyMessage = copyChatMessage;
 
-  private readonly messagesRef = viewChild<ElementRef<HTMLElement>>('messagesRef');
+  private readonly viewport = viewChild(TranscriptViewportDirective);
   private readonly composer = viewChild(ClaudeComposerComponent);
 
   private readonly ws = inject(AgentRuntimeWebsocketService);
@@ -139,8 +141,13 @@ export class ForkedChatComponent {
   /** Slash commands and skills for the composer, fetched per connection. */
   readonly autocompleteItems = signal<AgentAutocompleteItem[]>([]);
 
+  readonly toolState = computed(() => transcriptToolState(this.transcript()));
   readonly expandedTurns = signal<Record<string, boolean>>({});
   readonly expandedTurnChanges = signal<Record<string, boolean>>({});
+  readonly turnExpansion = computed(() => ({
+    turns: this.expandedTurns(),
+    changes: this.expandedTurnChanges(),
+  }));
   readonly agentInspectorTurnId = signal<string | null>(null);
   readonly agentInspectorSelectedAgentId = signal<string | null>(null);
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
@@ -175,7 +182,6 @@ export class ForkedChatComponent {
 
   private connection: ForkedChatTarget | null = null;
   private connectionLens: ForkedChatLens | null = null;
-  private stickToBottom = true;
   private appliedSeed: string | null = null;
 
   constructor() {
@@ -191,20 +197,6 @@ export class ForkedChatComponent {
       if (desired) {
         this.attach(desired, lens);
       }
-    });
-
-    // Follow the newest message while streaming, unless the user has scrolled
-    // up to read something.
-    effect(() => {
-      const transcript = this.transcript();
-      transcript?.renderItems();
-      transcript?.runPhase();
-      if (!this.stickToBottom) return;
-      const element = this.messagesRef()?.nativeElement;
-      if (!element) return;
-      requestAnimationFrame(() => {
-        element.scrollTop = element.scrollHeight;
-      });
     });
 
     effect(() => {
@@ -263,18 +255,11 @@ export class ForkedChatComponent {
     void this.ensureAgentHistory(agentId);
   }
 
-  onMessagesScroll(): void {
-    const element = this.messagesRef()?.nativeElement;
-    if (!element) return;
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    this.stickToBottom = distanceFromBottom < 48;
-  }
-
   send(payload: ComposerSendPayload): void {
     const text = payload.text.trim();
     if (!text || this.disabled() || this.sending()) return;
 
-    this.stickToBottom = true;
+    this.viewport()?.pinToBottom();
     this.transcript()?.addOptimisticPrompt(text);
     this.draft.set('');
     this.submitPrompt.emit(text);
@@ -400,7 +385,7 @@ export class ForkedChatComponent {
     this.transcript.set(transcript);
     this.connection = { ...target };
     this.connectionLens = lens;
-    this.stickToBottom = true;
+    this.viewport()?.pinToBottom();
 
     this.runtime.attach(target, transcript);
     void this.refreshAutocomplete(this.connection);

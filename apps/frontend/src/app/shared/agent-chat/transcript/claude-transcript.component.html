@@ -3,9 +3,7 @@
   Rendered both at the top level and inside an expanded turn, so it lives in a
   template rather than being written out twice.
 -->
-<ng-template #unitTpl let-rawUnit="unit" let-rawTurn="turn">
-  @let unit = asUnit(rawUnit);
-  @let turn = asTurn(rawTurn);
+<ng-template #unitTpl cwTranscriptUnit let-unit="unit" let-turn="turn">
   @let affordances = messageAffordances();
 
   @switch (unit.kind) {
@@ -67,7 +65,7 @@
   }
 </ng-template>
 
-@for (item of items(); track trackItem($index, item)) {
+@for (item of items(); track item.id) {
   @switch (item.kind) {
     @case ('tool-denial') {
       <cw-tool-denial [call]="item.call" />
@@ -113,7 +111,7 @@
           @if (threads.length) {
             <cw-review-threads-card
               [threads]="threads"
-              [unreadIds]="unreadReviewThreadIds()"
+              [unreadIds]="turnReviews().unreadIds"
               (open)="openReview.emit({ thread: $event })"
             />
           }

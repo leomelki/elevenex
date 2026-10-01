@@ -1,0 +1,654 @@
+:host {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.browser-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  --browser-devtools-grid-template: minmax(0, 1fr) 0 minmax(0, 0);
+  background: var(--background);
+}
+
+.browser-tabs-bar,
+.browser-toolbar {
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.browser-tabs-bar {
+  display: flex;
+  align-items: flex-end;
+  min-height: 2rem;
+  min-width: 0;
+  background: color-mix(in oklch, var(--muted) 45%, var(--background));
+}
+
+.browser-tabs-list {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding-top: 0.3rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.browser-tab-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 0 1 13rem;
+  max-width: 13rem;
+  min-height: 1.8rem;
+  padding: 0 0.25rem 0 0.55rem;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 0.7rem 0.7rem 0 0;
+  background: color-mix(in oklch, var(--muted) 18%, transparent);
+  transition:
+    background-color 0.14s ease,
+    border-color 0.14s ease,
+    box-shadow 0.14s ease;
+  box-shadow: inset 1px 0 0 color-mix(in oklch, var(--border) 72%, transparent);
+  margin-left: -1px;
+}
+
+.browser-tab-pill:hover {
+  background: color-mix(in oklch, var(--muted) 52%, var(--background));
+}
+
+.browser-tab-pill--active {
+  position: relative;
+  z-index: 1;
+  background: var(--background);
+  border-color: var(--border);
+  box-shadow:
+    inset 0 2px 0 color-mix(in oklch, var(--foreground) 18%, transparent),
+    0 1px 0 var(--background);
+}
+
+.browser-tab-pill--active + .browser-tab-pill {
+  box-shadow: none;
+}
+
+.browser-tab-pill-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.browser-tab-pill-title,
+.browser-tab-pill-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-tab-pill-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: color-mix(in oklch, var(--foreground) 84%, var(--muted-foreground));
+}
+
+.browser-tab-pill-meta {
+  flex-shrink: 0;
+  max-width: 4.5rem;
+  font-size: 0.68rem;
+  color: color-mix(in oklch, var(--muted-foreground) 88%, transparent);
+}
+
+.browser-tab-pill--active .browser-tab-pill-title {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.browser-tab-pill--active .browser-tab-pill-meta {
+  color: var(--muted-foreground);
+}
+
+.browser-tab-pill-icon,
+.browser-add-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition:
+    background-color 0.14s ease,
+    color 0.14s ease;
+}
+
+.browser-tab-pill-icon:hover,
+.browser-add-tab:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--muted) 80%, var(--background));
+}
+
+.browser-add-tab {
+  width: 1.7rem;
+  height: 1.7rem;
+  margin-left: 0.25rem;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in oklch, var(--border) 84%, transparent);
+}
+
+.browser-tab-pill-input {
+  flex: 1;
+  min-width: 0;
+  height: 1.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--ring);
+  background: var(--background);
+  color: var(--foreground);
+  padding: 0 0.5rem;
+  font-size: 0.74rem;
+  outline: none;
+}
+
+.browser-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  min-height: 2.2rem;
+  background: var(--background);
+}
+
+.browser-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.browser-toolbar-group--meta {
+  justify-content: flex-end;
+}
+
+.browser-tool-button,
+.browser-dock-button,
+.browser-devtools-toggle,
+.browser-empty-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 1.7rem;
+  border-radius: 0.4rem;
+  border: 1px solid transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background-color 0.14s ease,
+    color 0.14s ease,
+    border-color 0.14s ease;
+}
+
+.browser-tool-button {
+  width: 1.7rem;
+  flex-shrink: 0;
+}
+
+.browser-tool-button:hover:not(:disabled),
+.browser-dock-button:hover:not(:disabled),
+.browser-devtools-toggle:hover:not(:disabled),
+.browser-empty-action:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--muted) 80%, var(--background));
+}
+
+.browser-tool-button:disabled,
+.browser-dock-button:disabled,
+.browser-devtools-toggle:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.browser-tool-button--active {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--muted) 80%, var(--background));
+}
+
+.browser-address-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.browser-address-icon {
+  position: absolute;
+  left: 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+.browser-address-input {
+  width: 100%;
+  min-width: 0;
+  height: 1.75rem;
+  padding: 0 0.75rem 0 1.9rem;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: color-mix(in oklch, var(--muted) 38%, var(--background));
+  color: var(--foreground);
+  font-size: 0.78rem;
+  outline: none;
+  transition:
+    border-color 0.14s ease,
+    box-shadow 0.14s ease,
+    background-color 0.14s ease;
+}
+
+.browser-address-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.browser-address-input:focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 18%, transparent);
+  background: var(--background);
+}
+
+.browser-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 7rem;
+  height: 1.55rem;
+  padding: 0 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+}
+
+.browser-chip--context {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.browser-chip--shared {
+  color: color-mix(in oklch, oklch(0.55 0.14 220) 60%, var(--foreground));
+  background: color-mix(in oklch, oklch(0.6 0.14 220) 14%, var(--background));
+  border-color: color-mix(in oklch, oklch(0.6 0.14 220) 28%, var(--border));
+}
+
+.browser-chip--isolated {
+  color: color-mix(in oklch, oklch(0.58 0.14 160) 60%, var(--foreground));
+  background: color-mix(in oklch, oklch(0.62 0.14 160) 14%, var(--background));
+  border-color: color-mix(in oklch, oklch(0.62 0.14 160) 28%, var(--border));
+}
+
+.browser-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-dock-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--background);
+}
+
+.browser-dock-button {
+  width: 1.5rem;
+  height: 1.45rem;
+  border-radius: 9999px;
+}
+
+.browser-dock-button--active {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--muted) 70%, var(--background));
+}
+
+.browser-devtools-toggle {
+  padding: 0 0.55rem;
+  min-width: 5.6rem;
+  font-size: 0.73rem;
+  font-weight: 500;
+  border-color: var(--border);
+  background: var(--background);
+}
+
+.browser-devtools-toggle--active,
+.browser-empty-action {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--muted) 80%, var(--background));
+  border-color: var(--border);
+}
+
+.browser-settings-popover {
+  position: absolute;
+  z-index: 50;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--background);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+.browser-settings-popover {
+  top: 4rem;
+  right: 0.6rem;
+  width: 20rem;
+  padding: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.browser-settings-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.browser-settings-popover-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.browser-settings-popover-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.browser-settings-popover-close:hover {
+  background: color-mix(in oklch, var(--muted) 80%, transparent);
+  color: var(--foreground);
+}
+
+.browser-settings-mode-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+
+.browser-settings-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.browser-settings-mode-btn--active {
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  color: var(--foreground);
+}
+
+.browser-settings-globs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.browser-settings-globs-copy {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.browser-settings-globs-label {
+  font-size: 0.71rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.browser-settings-glob-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.browser-settings-glob-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.18rem 0.45rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 36%, var(--background));
+  font-size: 0.71rem;
+  color: var(--foreground);
+}
+
+.browser-settings-glob-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.browser-settings-glob-chip button:hover {
+  color: var(--destructive);
+}
+
+.browser-settings-glob-input {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.browser-settings-glob-input input {
+  flex: 1;
+  min-width: 0;
+  height: 1.7rem;
+  font-size: 0.78rem;
+}
+
+.browser-settings-glob-input button {
+  flex-shrink: 0;
+  height: 1.7rem;
+  font-size: 0.72rem;
+  padding: 0 0.55rem;
+}
+
+.browser-surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--background);
+}
+
+.browser-stage-grid {
+  display: grid;
+  grid-template: var(--browser-devtools-grid-template);
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.browser-native-host {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.browser-native-host--devtools {
+  background: color-mix(in oklch, var(--muted) 24%, var(--background));
+}
+
+.browser-native-host--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.browser-splitter {
+  position: relative;
+  height: 0.35rem;
+  border: 0;
+  padding: 0;
+  background: var(--border);
+  cursor: row-resize;
+}
+
+.browser-splitter--vertical {
+  width: 0.35rem;
+  height: auto;
+  cursor: col-resize;
+}
+
+.browser-splitter-grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1.2rem;
+  height: 0.12rem;
+  border-radius: 9999px;
+  transform: translate(-50%, -50%);
+  background: color-mix(in oklch, var(--muted-foreground) 48%, transparent);
+}
+
+.browser-splitter--vertical .browser-splitter-grip {
+  width: 0.12rem;
+  height: 1.2rem;
+}
+
+.browser-panel--dragging .browser-splitter-grip,
+.browser-splitter:hover .browser-splitter-grip {
+  background: color-mix(in oklch, var(--foreground) 42%, var(--muted-foreground));
+}
+
+.browser-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.7rem;
+  pointer-events: none;
+}
+
+.browser-overlay--bottom {
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+
+.browser-empty-state {
+  max-width: 28rem;
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.9rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--background);
+  pointer-events: auto;
+}
+
+.browser-empty-state--compact {
+  max-width: 24rem;
+}
+
+.browser-message,
+.browser-error,
+.browser-caption {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.browser-message {
+  color: var(--foreground);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.browser-caption {
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+}
+
+.browser-empty-action {
+  pointer-events: auto;
+  width: fit-content;
+  padding: 0 0.7rem;
+}
+
+.browser-error {
+  max-width: 30rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 0.6rem;
+  border: 1px solid color-mix(in oklch, var(--destructive) 42%, var(--border));
+  background: var(--background);
+  color: color-mix(in oklch, var(--destructive) 82%, var(--foreground));
+  pointer-events: auto;
+}
+
+.browser-spinner {
+  animation: browser-spin 0.8s linear infinite;
+}
+
+@keyframes browser-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -4,7 +4,6 @@ import { ClaudeMessageComponent } from '@/shared/agent-chat/transcript/claude-me
 import { ClaudeThinkingComponent } from '@/shared/agent-chat/transcript/claude-thinking.component';
 import { ClaudeTurnChangesComponent } from '@/shared/agent-chat/transcript/claude-turn-changes.component';
 import { ClaudeTurnSummaryComponent } from '@/shared/agent-chat/transcript/claude-turn-summary.component';
-import type { PairedTranscriptUnit } from '@/shared/agent-chat/transcript/paired-transcript';
 import { ReviewThreadsCardComponent } from '@/shared/agent-chat/transcript/review-threads-card.component';
 import type { TranscriptRenderItem } from '@/shared/agent-chat/transcript/transcript-render-items';
 import type {
@@ -19,8 +18,19 @@ import type { SessionFork } from '@/shared/models/session.model';
 import { parseTaskNotifications } from '@/shared/utils/task-notification';
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { TranscriptUnitTemplateDirective } from './transcript-unit-template.directive';
+import {
+  EMPTY_TRANSCRIPT_TOOLS,
+  EMPTY_TURN_EXPANSION,
+  EMPTY_TURN_REVIEWS,
+  type TranscriptToolState,
+  type TranscriptTurnExpansion,
+  type TranscriptTurnReviews,
+} from './transcript-view-state';
 
-type CollapsedTurnRenderItem = Extract<TranscriptRenderItem, { kind: 'collapsed-turn' }>;
+const EMPTY_FORKS: readonly SessionFork[] = [];
+const EMPTY_CHILD_ITEMS: readonly AgentTranscriptItem[] = [];
+const EMPTY_REVIEW_THREADS: readonly ReviewChat[] = [];
 
 /**
  * Per-message affordances, resolved by the host.
@@ -36,7 +46,7 @@ export interface TranscriptMessageAffordances {
   canFork(item: AgentTranscriptItem): boolean;
   isForking(item: AgentTranscriptItem): boolean;
   isEditArmed(item: AgentTranscriptItem): boolean;
-  forks(item: AgentTranscriptItem): SessionFork[];
+  forks(item: AgentTranscriptItem): readonly SessionFork[];
   forksExpanded(item: AgentTranscriptItem): boolean;
   canReviewPlan(item: AgentTranscriptItem): boolean;
   planReview(item: AgentTranscriptItem): PlanReviewRequest | null;
@@ -53,7 +63,7 @@ export const READ_ONLY_MESSAGE_AFFORDANCES: TranscriptMessageAffordances = {
   canFork: () => false,
   isForking: () => false,
   isEditArmed: () => false,
-  forks: () => [],
+  forks: () => EMPTY_FORKS,
   forksExpanded: () => false,
   canReviewPlan: () => false,
   planReview: () => null,
@@ -78,6 +88,7 @@ export const READ_ONLY_MESSAGE_AFFORDANCES: TranscriptMessageAffordances = {
   standalone: true,
   imports: [
     CommonModule,
+    TranscriptUnitTemplateDirective,
     ClaudeMessageComponent,
     ClaudeThinkingComponent,
     ClaudeToolCallComponent,
@@ -102,27 +113,22 @@ export const READ_ONLY_MESSAGE_AFFORDANCES: TranscriptMessageAffordances = {
   ],
 })
 export class ClaudeTranscriptComponent {
-  readonly items = input.required<TranscriptRenderItem[]>();
+  readonly items = input.required<readonly TranscriptRenderItem[]>();
   readonly worktreePath = input<string | null>(null);
   /** The one item currently receiving deltas, if any. */
   readonly streamingMessageId = input<string | null>(null);
   /** Renders the empty pulsing reply bubble while the first token is awaited. */
   readonly pendingReply = input(false);
 
-  readonly childItemsByParentToolUseId = input<Record<string, AgentTranscriptItem[]>>({});
-  readonly liveToolUseIds = input<ReadonlySet<string>>(new Set<string>());
-  readonly toolProgressByToolUseId = input<Record<string, AgentToolProgress>>({});
-
-  readonly expandedTurns = input<Record<string, boolean>>({});
-  readonly expandedTurnChanges = input<Record<string, boolean>>({});
+  readonly toolState = input<TranscriptToolState>(EMPTY_TRANSCRIPT_TOOLS);
+  readonly turnExpansion = input<TranscriptTurnExpansion>(EMPTY_TURN_EXPANSION);
   readonly canInspectAgents = input(false);
   readonly canReviewChanges = input(false);
 
   readonly messageAffordances = input<TranscriptMessageAffordances>(READ_ONLY_MESSAGE_AFFORDANCES);
 
   /** Review discussions anchored to a turn, keyed by turn id. Empty when unused. */
-  readonly reviewThreadsByTurnId = input<Record<string, readonly ReviewChat[]>>({});
-  readonly unreadReviewThreadIds = input<ReadonlySet<number>>(new Set<number>());
+  readonly turnReviews = input<TranscriptTurnReviews>(EMPTY_TURN_REVIEWS);
 
   readonly approve = output<AgentPermissionApproval>();
   readonly deny = output<string | undefined>();
@@ -146,22 +152,6 @@ export class ClaudeTranscriptComponent {
   /** Emitted for the turn-changes panel and the anchored discussion cards. */
   readonly openReview = output<{ path?: string; thread?: number }>();
 
-  trackItem(_index: number, item: TranscriptRenderItem): string {
-    return item.id;
-  }
-
-  /**
-   * `ng-template` context values reach the template untyped. Casting once
-   * through `@let` restores full type-checking inside the unit template.
-   */
-  asUnit(value: unknown): PairedTranscriptUnit {
-    return value as PairedTranscriptUnit;
-  }
-
-  asTurn(value: unknown): CollapsedTurnRenderItem | null {
-    return (value as CollapsedTurnRenderItem | null) ?? null;
-  }
-
   isStreaming(itemId: string): boolean {
     return this.streamingMessageId() === itemId;
   }
@@ -172,26 +162,26 @@ export class ClaudeTranscriptComponent {
   }
 
   isTurnExpanded(turnId: string): boolean {
-    return !!this.expandedTurns()[turnId];
+    return !!this.turnExpansion().turns[turnId];
   }
 
   isTurnChangesExpanded(turnId: string): boolean {
-    return !!this.expandedTurnChanges()[turnId];
+    return !!this.turnExpansion().changes[turnId];
   }
 
-  childItemsFor(toolUseId: string): AgentTranscriptItem[] {
-    return this.childItemsByParentToolUseId()[toolUseId] ?? [];
+  childItemsFor(toolUseId: string): readonly AgentTranscriptItem[] {
+    return this.toolState().children[toolUseId] ?? EMPTY_CHILD_ITEMS;
   }
 
   isLiveToolUse(toolUseId: string): boolean {
-    return this.liveToolUseIds().has(toolUseId);
+    return this.toolState().liveIds.has(toolUseId);
   }
 
   progressFor(toolUseId: string): AgentToolProgress | null {
-    return this.toolProgressByToolUseId()[toolUseId] ?? null;
+    return this.toolState().progress[toolUseId] ?? null;
   }
 
   reviewThreadsFor(turnId: string): readonly ReviewChat[] {
-    return this.reviewThreadsByTurnId()[turnId] ?? [];
+    return this.turnReviews().threads[turnId] ?? EMPTY_REVIEW_THREADS;
   }
 }

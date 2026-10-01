@@ -8,6 +8,8 @@ import { ClaudePermissionInlineComponent } from '@/shared/agent-chat/requests/cl
 import { ClaudeUserInputComponent } from '@/shared/agent-chat/requests/claude-user-input.component';
 import { ClaudeTranscriptComponent } from '@/shared/agent-chat/transcript/claude-transcript.component';
 import { copyChatMessage } from '@/shared/agent-chat/transcript/message-clipboard';
+import { transcriptToolState } from '@/shared/agent-chat/transcript/transcript-view-state';
+import { TranscriptViewportDirective } from '@/shared/agent-chat/transcript/transcript-viewport.directive';
 import type { AgentPermissionApproval, AgentProviderId } from '@/shared/models/agent-runtime.model';
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import { PlanReviewRequest } from '@/shared/models/plan-review.model';
@@ -19,7 +21,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
-  ElementRef,
+  computed,
   effect,
   inject,
   input,
@@ -46,6 +48,7 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
   standalone: true,
   imports: [
     CommonModule,
+    TranscriptViewportDirective,
     ClaudeTranscriptComponent,
     ClaudeComposerComponent,
     ClaudePermissionInlineComponent,
@@ -66,10 +69,15 @@ export class PlanChatPanelComponent {
   readonly review = input<PlanReviewRequest | null>(null);
   readonly openLocalFile = output<LocalFileTarget>();
   readonly copyMessage = copyChatMessage;
+  readonly toolState = computed(() => transcriptToolState(this.conversation));
   readonly expandedTurns = signal<Record<string, boolean>>({});
   readonly expandedTurnChanges = signal<Record<string, boolean>>({});
+  readonly turnExpansion = computed(() => ({
+    turns: this.expandedTurns(),
+    changes: this.expandedTurnChanges(),
+  }));
 
-  private readonly messagesRef = viewChild<ElementRef<HTMLElement>>('messagesRef');
+  private readonly viewport = viewChild(TranscriptViewportDirective);
 
   private readonly planChats = inject(PlanChatService);
   private readonly ws = inject(AgentRuntimeWebsocketService);
@@ -108,31 +116,7 @@ export class PlanChatPanelComponent {
       }
     });
 
-    // Keep the conversation pinned to the latest message as content streams in,
-    // but only when the user is already at the bottom so reading history is not
-    // interrupted.
-    effect(() => {
-      this.conversation.renderItems();
-      this.runPhase();
-      this.sending();
-      if (!this.stickToBottom) return;
-      const el = this.messagesRef()?.nativeElement;
-      if (!el) return;
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-    });
-
     this.destroyRef.onDestroy(() => this.disconnectCurrent());
-  }
-
-  private stickToBottom = true;
-
-  onMessagesScroll(): void {
-    const el = this.messagesRef()?.nativeElement;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    this.stickToBottom = distanceFromBottom < 48;
   }
 
   canAsk(review: PlanReviewRequest): boolean {
@@ -149,7 +133,7 @@ export class PlanChatPanelComponent {
     }
 
     const optimistic = this.conversation.addOptimisticPrompt(question);
-    this.stickToBottom = true;
+    this.viewport()?.pinToBottom();
     const version = this.reviewVersion;
     this.draft.set('');
     this.sending.set(true);

@@ -17,17 +17,18 @@ import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
 import { parseSessionMentions } from '@/shared/utils/session-mention';
 import { CommonModule } from '@angular/common';
 import {
+  afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
-  ElementRef,
-  ViewChild,
   computed,
   effect,
+  ElementRef,
   inject,
   input,
   model,
   output,
   signal,
+  viewChild,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -111,12 +112,11 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
   templateUrl: './claude-composer.component.html',
 })
 export class ClaudeComposerComponent {
-  @ViewChild('input', { static: true }) private ta!: ElementRef<HTMLTextAreaElement>;
-  @ViewChild('fileInput', { static: true })
-  private fileInput!: ElementRef<HTMLInputElement>;
+  private readonly ta = viewChild<ElementRef<HTMLTextAreaElement>>('input');
+  private readonly fileInput = viewChild<ElementRef<HTMLInputElement>>('fileInput');
   private readonly host = inject(ElementRef<HTMLElement>);
 
-  readonly value = input<string>('');
+  readonly value = model<string>('');
   readonly submitting = input<boolean>(false);
   readonly running = input<boolean>(false);
   readonly canInterrupt = input<boolean>(false);
@@ -147,7 +147,6 @@ export class ClaudeComposerComponent {
   );
 
   readonly send = output<ComposerSendPayload>();
-  readonly valueChange = output<string>();
   readonly interrupt = output<void>();
   readonly cancelPending = output<string>();
   readonly steerPending = output<string>();
@@ -203,14 +202,12 @@ export class ClaudeComposerComponent {
   readonly placeholder = computed(() => this.placeholderText());
 
   constructor() {
-    effect(() => {
+    afterRenderEffect(() => {
       const nextValue = this.value();
-      queueMicrotask(() => {
-        const ta = this.ta?.nativeElement;
-        if (!ta) return;
-        if (ta.value !== nextValue) ta.value = nextValue;
-        this.autoGrow(ta);
-      });
+      const ta = this.ta()?.nativeElement;
+      if (!ta) return;
+      if (ta.value !== nextValue) ta.value = nextValue;
+      this.autoGrow(ta);
     });
     effect(() => {
       if (!this.allowImages() && (this.attachedImages().length || this.imageAttachments().length)) {
@@ -221,7 +218,7 @@ export class ClaudeComposerComponent {
 
   onInput(e: Event): void {
     const ta = e.target as HTMLTextAreaElement;
-    this.valueChange.emit(ta.value);
+    this.value.set(ta.value);
     this.autoGrow(ta);
     this.refreshAc(ta);
   }
@@ -286,13 +283,14 @@ export class ClaudeComposerComponent {
   }
 
   apply(option: ComposerAutocompleteOption | undefined): void {
-    const ta = this.ta.nativeElement;
+    const ta = this.ta()?.nativeElement;
+    if (!ta) return;
     if (!ta || !option || !this.range) return;
     const { start, end } = this.range;
     const insertText = option.type === 'provider' ? option.item.insertText : '';
     const next = `${ta.value.slice(0, start)}${insertText}${ta.value.slice(end)}`;
     const caret = start + insertText.length;
-    this.valueChange.emit(next);
+    this.value.set(next);
     if (option.type === 'session') this.requestSessionMention.emit(option.item.sessionId);
     this.close();
     queueMicrotask(() => {
@@ -366,7 +364,7 @@ export class ClaudeComposerComponent {
 
   openFilePicker(): void {
     if (!this.allowImages()) return;
-    this.fileInput?.nativeElement?.click();
+    this.fileInput()?.nativeElement.click();
   }
 
   onFileInputChange(event: Event): void {
@@ -509,12 +507,13 @@ export class ClaudeComposerComponent {
   }
 
   focus(): void {
-    this.ta.nativeElement?.focus();
+    this.ta()?.nativeElement.focus();
   }
 
   focusAtEnd(): void {
     queueMicrotask(() => {
-      const textarea = this.ta.nativeElement;
+      const textarea = this.ta()?.nativeElement;
+      if (!textarea) return;
       textarea.focus();
       const end = textarea.value.length;
       textarea.setSelectionRange(end, end);

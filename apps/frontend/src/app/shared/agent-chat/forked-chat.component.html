@@ -1,10 +1,13 @@
 @if (transcript(); as chat) {
   <div
-    #messagesRef
+    cwTranscriptViewport
+    [items]="chat.items()"
+    [runPhase]="chat.runPhase()"
+    [pendingReply]="showPendingReply()"
+    [sessionKey]="target()?.sessionId ?? null"
     class="fc-messages"
     aria-live="polite"
     aria-label="Discussion messages"
-    (scroll)="onMessagesScroll()"
   >
     @if (contextNote(); as note) {
       <cw-context-note
@@ -44,11 +47,8 @@
         [worktreePath]="worktreePath()"
         [streamingMessageId]="streamingMessageId()"
         [pendingReply]="showPendingReply()"
-        [childItemsByParentToolUseId]="chat.childItemsByParentToolUseId()"
-        [liveToolUseIds]="chat.liveToolUseIds()"
-        [toolProgressByToolUseId]="chat.toolProgressByToolUseId()"
-        [expandedTurns]="expandedTurns()"
-        [expandedTurnChanges]="expandedTurnChanges()"
+        [toolState]="toolState()"
+        [turnExpansion]="turnExpansion()"
         (approve)="approvePermission($event)"
         (deny)="denyPermission($event)"
         (toggleTurn)="toggleTurn($event)"
@@ -80,7 +80,7 @@
     }
 
     <cw-composer
-      [value]="draft()"
+      [(value)]="draft"
       [submitting]="sending()"
       [running]="chat.runPhase() === 'running'"
       [canInterrupt]="chat.canInterrupt()"
@@ -95,7 +95,6 @@
       [disconnected]="disabled()"
       [sessionId]="target()?.sessionId ?? null"
       [worktreePath]="worktreePath()"
-      (valueChange)="draft.set($event)"
       (send)="send($event)"
       (interrupt)="interrupt()"
       (cancelPending)="cancelPending($event)"

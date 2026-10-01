@@ -15,7 +15,7 @@ export type PairedTranscriptUnit =
       toolUseId: string;
     };
 
-export function pairTranscript(items: AgentTranscriptItem[]): PairedTranscriptUnit[] {
+export function pairTranscript(items: readonly AgentTranscriptItem[]): PairedTranscriptUnit[] {
   const normalizedItems = dedupeTranscriptItems(items);
   const resultsByToolUseId = new Map<string, AgentTranscriptItem>();
   const hiddenToolUseIds = new Set<string>();
@@ -136,7 +136,7 @@ export function pairTranscript(items: AgentTranscriptItem[]): PairedTranscriptUn
   return out;
 }
 
-function dedupeTranscriptItems(items: AgentTranscriptItem[]): AgentTranscriptItem[] {
+function dedupeTranscriptItems(items: readonly AgentTranscriptItem[]): AgentTranscriptItem[] {
   const toolUseGroups = new Map<string, AgentTranscriptItem[]>();
   const toolResultGroups = new Map<string, AgentTranscriptItem[]>();
 
