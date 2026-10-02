@@ -1,6 +1,7 @@
 node_modules/
 dist/
 apps/electron/.stage/
+apps/backend/agent/
 .angular/
 .env
 *.local
