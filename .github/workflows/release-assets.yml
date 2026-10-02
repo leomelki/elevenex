@@ -161,14 +161,6 @@ jobs:
             local desktop runtime tarballs downloaded by packaged desktop apps,
             plus macOS, Linux, and Windows desktop artifacts.
 
-            Download the installer for your platform below. Install and launch Elevenex,
-            then add your server under Settings → SSH. The app installs the matching
-            runtime from this release automatically; remote system Node is not required.
-            macOS builds are Developer ID signed and notarized. Windows installers
-            use Authenticode signing when Windows credentials are configured.
-            Linux packages include SHA-256 checksums.
-            PR previews are excluded from the normal desktop update channel.
-
       - name: Link release in workflow summary
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
