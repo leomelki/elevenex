@@ -2195,6 +2195,85 @@ describe('ClaudeWorkspaceComponent', () => {
     });
   });
 
+  it('coalesces repeated context refreshes while a cached read is pending', async () => {
+    const response = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    worktreeContextServiceMock.get.mockReturnValue(response);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const { runtime, draft } = fixture.componentInstance;
+
+    runtime.notify({ type: 'load-context' });
+    runtime.notify({ type: 'load-context' });
+    expect(worktreeContextServiceMock.get).toHaveBeenCalledTimes(1);
+    expect(draft.worktreeContextLoading()).toBe(true);
+
+    response.next(readyWorktreeContext());
+    await flushPromises();
+    expect(draft.worktreeContext()).toEqual(readyWorktreeContext());
+    expect(draft.worktreeContextLoading()).toBe(false);
+  });
+
+  it('ignores an older cached response while recomputing context', async () => {
+    const cached = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    const generated = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    worktreeContextServiceMock.get.mockReturnValue(cached);
+    worktreeContextServiceMock.generate.mockReturnValue(generated);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const { runtime, draft } = fixture.componentInstance;
+    const recompute = draft.recomputeWorktreeContext();
+
+    cached.next(readyWorktreeContext());
+    await flushPromises();
+    expect(draft.worktreeContext()).toBeNull();
+    expect(draft.worktreeContextBusy()).toBe(true);
+    runtime.notify({ type: 'load-context' });
+    expect(worktreeContextServiceMock.get).toHaveBeenCalledTimes(1);
+
+    const latest = { ...readyWorktreeContext(), contextSentence: 'Recomputed context' };
+    generated.next(latest);
+    await recompute;
+    expect(draft.worktreeContext()).toEqual(latest);
+    expect(draft.worktreeContextBusy()).toBe(false);
+  });
+
+  it('preserves the edited root and busy state when a superseded refresh fails', async () => {
+    const cached = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    const generated = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    worktreeContextServiceMock.get.mockReturnValue(cached);
+    worktreeContextServiceMock.generate.mockReturnValue(generated);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const { draft } = fixture.componentInstance;
+    draft.openRootRefEditor();
+    draft.onRootRefInput('new-root');
+    const save = draft.saveRootRef();
+    await flushPromises();
+
+    cached.error(new Error('Old refresh failed'));
+    await flushPromises();
+    expect(draft.draftRootRef()).toBe('new-root');
+    expect(draft.worktreeContextBusy()).toBe(true);
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+    generated.next({ ...readyWorktreeContext(), rootRef: 'new-root' });
+    await save;
+    expect(draft.worktreeContext()?.rootRef).toBe('new-root');
+    expect(draft.worktreeContextBusy()).toBe(false);
+  });
+
+  it('does not overwrite an unsaved comparison root when refreshing context', async () => {
+    const cached = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    worktreeContextServiceMock.get.mockReturnValue(cached);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const { draft } = fixture.componentInstance;
+    draft.openRootRefEditor();
+    draft.onRootRefInput('my-unsaved-root');
+    cached.next(readyWorktreeContext());
+    await flushPromises();
+    expect(draft.draftRootRef()).toBe('my-unsaved-root');
+  });
+
   it('uses cached-only worktree context loading before a new Codex session starts', async () => {
     const fixture = createWorkspace();
     fixture.componentRef.setInput('repoId', 1);

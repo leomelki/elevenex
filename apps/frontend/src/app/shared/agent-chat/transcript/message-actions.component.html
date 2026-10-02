@@ -1,0 +1,125 @@
+@let actions = state();
+<div
+  class="cw-msg__meta-row inline-flex -translate-y-0.5 items-center justify-end gap-2 opacity-0 transition-[opacity,transform] duration-150 group-hover/message:translate-y-0 group-hover/message:opacity-100 group-focus-within/message:translate-y-0 group-focus-within/message:opacity-100 motion-reduce:transition-none"
+  [class.opacity-100]="actions.editArmed"
+  [class.translate-y-0]="actions.editArmed"
+>
+  @if (actions.copy || actions.edit || actions.fork) {
+    <div class="inline-flex items-center gap-1">
+      @if (actions.copy) {
+        <button
+          z-button
+          zType="ghost"
+          zSize="icon-xs"
+          type="button"
+          class="cw-msg__action size-6 rounded-full text-muted-foreground"
+          data-cw-edit-action
+          title="Copy message"
+          aria-label="Copy message"
+          (mousedown)="preserveSelection($event)"
+          (click)="copy.emit()"
+        >
+          <ng-icon name="lucideCopy" size="12" />
+        </button>
+      }
+      @if (actions.fork) {
+        <button
+          z-button
+          zType="ghost"
+          zSize="icon-xs"
+          type="button"
+          class="cw-msg__action size-6 rounded-full text-muted-foreground"
+          data-cw-edit-action
+          [title]="actions.forkDisabled ? actions.forkDisabledReason : 'Fork from here'"
+          aria-label="Fork from here"
+          [zDisabled]="actions.forkDisabled"
+          (click)="fork.emit()"
+        >
+          @if (actions.forking) {
+            <ng-icon
+              name="lucideLoaderCircle"
+              size="12"
+              class="animate-spin motion-reduce:animate-none"
+            />
+          } @else {
+            <ng-icon name="lucideGitFork" size="12" />
+          }
+        </button>
+      }
+      @if (actions.edit) {
+        @if (actions.editArmed) {
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-xs"
+            type="button"
+            class="cw-msg__action size-6 rounded-full text-muted-foreground"
+            data-cw-edit-action
+            title="Confirm edit"
+            aria-label="Confirm edit"
+            [zDisabled]="actions.disabled"
+            (click)="confirmEdit.emit()"
+          >
+            <ng-icon name="lucideCheck" size="12" />
+          </button>
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-xs"
+            type="button"
+            class="cw-msg__action size-6 rounded-full text-muted-foreground"
+            data-cw-edit-action
+            title="Cancel edit"
+            aria-label="Cancel edit"
+            [zDisabled]="actions.disabled"
+            (click)="cancelEdit.emit()"
+          >
+            <ng-icon name="lucideX" size="12" />
+          </button>
+        } @else {
+          <button
+            z-button
+            zType="ghost"
+            zSize="icon-xs"
+            type="button"
+            class="cw-msg__action size-6 rounded-full text-muted-foreground"
+            data-cw-edit-action
+            title="Edit message"
+            aria-label="Edit message"
+            [zDisabled]="actions.disabled"
+            (click)="armEdit.emit()"
+          >
+            <ng-icon name="lucidePencil" size="12" />
+          </button>
+        }
+      }
+    </div>
+  }
+  @if (forkCount()) {
+    <button
+      z-button
+      zType="outline"
+      zSize="xs"
+      type="button"
+      class="cw-msg__fork-marker rounded-full text-[11px] text-muted-foreground"
+      [attr.aria-expanded]="forksExpanded()"
+      (click)="toggleForks.emit()"
+    >
+      <ng-icon name="lucideGitFork" size="11" />
+      <span>{{ forkCountLabel() }}</span>
+      <ng-icon
+        class="transition-transform duration-150 motion-reduce:transition-none"
+        [class.rotate-180]="forksExpanded()"
+        name="lucideChevronDown"
+        size="11"
+      />
+    </button>
+  }
+  @if (timestamp(); as label) {
+    <span
+      class="cw-msg__meta pointer-events-none text-[11px] leading-snug text-muted-foreground select-none"
+      aria-hidden="true"
+      >{{ label }}</span
+    >
+  }
+</div>

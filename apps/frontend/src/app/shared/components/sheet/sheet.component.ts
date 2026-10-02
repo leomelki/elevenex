@@ -1,3 +1,4 @@
+import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { OverlayModule } from '@angular/cdk/overlay';
 import {
   BasePortalOutlet,
@@ -34,6 +35,8 @@ import { sheetVariants, type ZardSheetVariants } from './sheet.variants';
 
 export type OnClickCallback<T> = (instance: T) => false | void | object;
 export class ZardSheetOptions<T, U> {
+  zAriaLabel?: string;
+  zCloseLabel?: string;
   zCancelIcon?: string;
   zCancelText?: string | null;
   zClosable?: boolean;
@@ -60,88 +63,15 @@ export class ZardSheetOptions<T, U> {
 @Component({
   selector: 'z-sheet',
   imports: [OverlayModule, PortalModule, ZardButtonComponent, NgIcon],
-  template: `
-    @if (config.zClosable || config.zClosable === undefined) {
-      <button
-        type="button"
-        data-testid="z-close-header-button"
-        z-button
-        zType="ghost"
-        zSize="sm"
-        class="absolute top-1 right-1 cursor-pointer"
-        (click)="onCloseClick()"
-      >
-        <ng-icon name="lucideX" />
-      </button>
-    }
-
-    @if (config.zTitle || config.zDescription) {
-      <header data-slot="sheet-header" class="flex flex-col gap-1.5 p-4">
-        @if (config.zTitle) {
-          <h4 data-testid="z-title" data-slot="sheet-title" class="text-lg leading-none font-semibold tracking-tight">
-            {{ config.zTitle }}
-          </h4>
-
-          @if (config.zDescription) {
-            <p data-testid="z-description" data-slot="sheet-description" class="text-muted-foreground text-sm">
-              {{ config.zDescription }}
-            </p>
-          }
-        }
-      </header>
-    }
-
-    <main class="flex w-full flex-col space-y-4">
-      <ng-template cdkPortalOutlet />
-
-      @if (isStringContent) {
-        <div data-testid="z-content" data-slot="sheet-content" [innerHTML]="config.zContent"></div>
-      }
-    </main>
-
-    @if (!config.zHideFooter) {
-      <footer data-slot="sheet-footer" class="mt-auto flex flex-col gap-2 p-4">
-        @if (config.zOkText !== null) {
-          <button
-            type="button"
-            data-testid="z-ok-button"
-            class="cursor-pointer"
-            z-button
-            [zType]="config.zOkDestructive ? 'destructive' : 'default'"
-            [disabled]="config.zOkDisabled"
-            (click)="onOkClick()"
-          >
-            @if (config.zOkIcon) {
-              <ng-icon [svg]="config.zOkIcon" />
-            }
-
-            {{ config.zOkText ?? 'OK' }}
-          </button>
-        }
-
-        @if (config.zCancelText !== null) {
-          <button
-            type="button"
-            data-testid="z-cancel-button"
-            class="cursor-pointer"
-            z-button
-            zType="outline"
-            (click)="onCloseClick()"
-          >
-            @if (config.zCancelIcon) {
-              <ng-icon [svg]="config.zCancelIcon" />
-            }
-
-            {{ config.zCancelText ?? 'Cancel' }}
-          </button>
-        }
-      </footer>
-    }
-  `,
+  hostDirectives: [CdkTrapFocus],
+  templateUrl: './sheet.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [provideIcons({ lucideX })],
   host: {
     'data-slot': 'sheet',
+    role: 'dialog',
+    'aria-modal': 'true',
+    '[attr.aria-label]': 'ariaLabel',
     '[class]': 'classes()',
     '[attr.data-state]': 'state()',
     '[style.width]': 'config.zWidth ? config.zWidth + " !important" : null',
@@ -152,6 +82,8 @@ export class ZardSheetOptions<T, U> {
 export class ZardSheetComponent<T, U> extends BasePortalOutlet {
   private readonly host = inject(ElementRef<HTMLElement>);
   protected readonly config = inject(ZardSheetOptions<T, U>);
+  protected readonly ariaLabel =
+    this.config.zAriaLabel ?? (typeof this.config.zTitle === 'string' ? this.config.zTitle : null);
 
   protected readonly classes = computed(() => {
     const zSize = this.config.zWidth || this.config.zHeight ? 'custom' : this.config.zSize;
@@ -177,6 +109,7 @@ export class ZardSheetComponent<T, U> extends BasePortalOutlet {
 
   constructor() {
     super();
+    inject(CdkTrapFocus).autoCapture = true;
   }
 
   getNativeElement(): HTMLElement {

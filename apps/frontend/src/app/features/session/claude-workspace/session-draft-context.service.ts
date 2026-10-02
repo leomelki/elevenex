@@ -25,6 +25,14 @@ import { Subject, firstValueFrom } from 'rxjs';
 import { SessionRuntime } from './session-runtime.service';
 import { getHttpErrorMessage } from './workspace-error';
 
+interface ContextRequest {
+  id: number;
+  conversationVersion: number;
+  repoId: number;
+  worktreePath: string;
+  provider: ReturnType<SessionRuntime['currentProvider']>;
+}
+
 @Injectable()
 export class SessionDraftContext {
   private readonly agentApi = inject(AgentRuntimeApiService);
@@ -66,6 +74,12 @@ export class SessionDraftContext {
 
   private composerDraftRevision = 0;
   private mentionRequestVersion = 0;
+  private contextRequestVersion = 0;
+  private contextLoad: {
+    request: ContextRequest;
+    triggerGenerate: boolean;
+    promise: Promise<void>;
+  } | null = null;
 
   private composerDraftRestoreVersion = 0;
 
@@ -214,6 +228,8 @@ export class SessionDraftContext {
       }
     });
     this.destroyRef.onDestroy(() => {
+      this.contextRequestVersion++;
+      this.contextLoad = null;
       this.composerDraftRestoreVersion++;
       if (this.deferredContextGenerationTimer !== null)
         window.clearTimeout(this.deferredContextGenerationTimer);
@@ -221,6 +237,8 @@ export class SessionDraftContext {
     });
   }
   reset(): void {
+    this.contextRequestVersion++;
+    this.contextLoad = null;
     this.mentionRequestVersion++;
     this.prompt.set('');
 
@@ -502,61 +520,106 @@ export class SessionDraftContext {
   }
 
   async saveRootRef(): Promise<void> {
-    const version = this.runtime.bootstrapVersion;
+    if (this.worktreeContextBusy()) return;
+    const request = this.beginContextRequest();
     const rootRef = this.draftRootRef().trim() || null;
     this.worktreeContextBusy.set(true);
     try {
       await firstValueFrom(
-        this.worktreeContextService.updateRootRef(
-          this.runtime.repoId,
-          this.runtime.worktreePath,
-          rootRef,
-        ),
+        this.worktreeContextService
+          .updateRootRef(request.repoId, request.worktreePath, rootRef)
+          .pipe(takeUntilDestroyed(this.destroyRef)),
       );
-      if (!this.runtime.isCurrentConversation(version)) return;
+      if (!this.isCurrentContextRequest(request)) return;
       const snapshot = await firstValueFrom(
-        this.worktreeContextService.generate(this.runtime.repoId, this.runtime.worktreePath, {
-          force: true,
-          rootRef,
-          provider: this.runtime.currentProvider(),
-        }),
+        this.worktreeContextService
+          .generate(request.repoId, request.worktreePath, {
+            force: true,
+            rootRef,
+            provider: request.provider,
+          })
+          .pipe(takeUntilDestroyed(this.destroyRef)),
       );
-      if (!this.runtime.isCurrentConversation(version)) return;
+      if (!this.isCurrentContextRequest(request)) return;
       this.worktreeContext.set(snapshot);
       this.worktreeRootEditorOpen.set(false);
     } catch (error) {
-      if (this.runtime.isCurrentConversation(version))
+      if (this.isCurrentContextRequest(request))
         toast.error(getHttpErrorMessage(error, 'Could not update the comparison root.'));
     } finally {
-      if (this.runtime.isCurrentConversation(version)) this.worktreeContextBusy.set(false);
+      if (this.isCurrentContextRequest(request)) this.worktreeContextBusy.set(false);
     }
   }
 
   async recomputeWorktreeContext(): Promise<void> {
-    const version = this.runtime.bootstrapVersion;
     if (this.worktreeContextBusy()) return;
+    const request = this.beginContextRequest();
     this.worktreeContextBusy.set(true);
     try {
       const snapshot = await firstValueFrom(
-        this.worktreeContextService.generate(this.runtime.repoId, this.runtime.worktreePath, {
-          force: true,
-          provider: this.runtime.currentProvider(),
-        }),
+        this.worktreeContextService
+          .generate(request.repoId, request.worktreePath, {
+            force: true,
+            provider: request.provider,
+          })
+          .pipe(takeUntilDestroyed(this.destroyRef)),
       );
-      if (version !== this.runtime.bootstrapVersion || this.destroyRef.destroyed) return;
-      this.worktreeContext.set(snapshot);
+      if (this.isCurrentContextRequest(request)) this.worktreeContext.set(snapshot);
     } catch (error) {
-      if (version !== this.runtime.bootstrapVersion || this.destroyRef.destroyed) return;
-      toast.error(getHttpErrorMessage(error, 'Could not recompute worktree context.'));
+      if (this.isCurrentContextRequest(request))
+        toast.error(getHttpErrorMessage(error, 'Could not recompute worktree context.'));
     } finally {
-      if (version !== this.runtime.bootstrapVersion || this.destroyRef.destroyed) return;
-      this.worktreeContextBusy.set(false);
+      if (this.isCurrentContextRequest(request)) this.worktreeContextBusy.set(false);
     }
   }
 
-  private async loadWorktreeContext(triggerGenerate = true): Promise<void> {
-    const version = this.runtime.bootstrapVersion;
+  /** A refresh cannot replace an explicit mutation or launch duplicate reads. */
+  private loadWorktreeContext(triggerGenerate = true): Promise<void> {
+    if (this.worktreeContextBusy()) return Promise.resolve();
+    const active = this.contextLoad;
+    if (
+      active &&
+      this.isCurrentContextRequest(active.request) &&
+      (active.triggerGenerate || !triggerGenerate)
+    )
+      return active.promise;
+
+    const request = this.beginContextRequest();
     this.worktreeContextLoading.set(true);
+    const promise = this.fetchWorktreeContext(request, triggerGenerate);
+    this.contextLoad = { request, triggerGenerate, promise };
+    void promise.finally(() => {
+      if (this.contextLoad?.request === request) this.contextLoad = null;
+    });
+    return promise;
+  }
+
+  private beginContextRequest(): ContextRequest {
+    this.contextLoad = null;
+    this.worktreeContextLoading.set(false);
+    return {
+      id: ++this.contextRequestVersion,
+      conversationVersion: this.runtime.bootstrapVersion,
+      repoId: this.runtime.repoId,
+      worktreePath: this.runtime.worktreePath,
+      provider: this.runtime.currentProvider(),
+    };
+  }
+
+  private isCurrentContextRequest(request: ContextRequest): boolean {
+    return (
+      request.id === this.contextRequestVersion &&
+      this.runtime.isCurrentConversation(request.conversationVersion) &&
+      request.repoId === this.runtime.repoId &&
+      request.worktreePath === this.runtime.worktreePath &&
+      request.provider === this.runtime.currentProvider()
+    );
+  }
+
+  private async fetchWorktreeContext(
+    request: ContextRequest,
+    triggerGenerate: boolean,
+  ): Promise<void> {
     const deferGeneration =
       triggerGenerate &&
       (!this.runtime.runtimeStarted() ||
@@ -564,13 +627,16 @@ export class SessionDraftContext {
         this.runtime.submitting());
     try {
       const snapshot = await firstValueFrom(
-        this.worktreeContextService.get(this.runtime.repoId, this.runtime.worktreePath, {
-          cachedOnly: !triggerGenerate || deferGeneration,
-        }),
+        this.worktreeContextService
+          .get(request.repoId, request.worktreePath, {
+            cachedOnly: !triggerGenerate || deferGeneration,
+          })
+          .pipe(takeUntilDestroyed(this.destroyRef)),
       );
-      if (version !== this.runtime.bootstrapVersion || this.destroyRef.destroyed) return;
+      if (!this.isCurrentContextRequest(request)) return;
       this.worktreeContext.set(snapshot);
-      this.draftRootRef.set(snapshot.rootRef ?? '');
+      // Refreshes must not overwrite an in-progress edit of the comparison root.
+      if (!this.worktreeRootEditorOpen()) this.draftRootRef.set(snapshot.rootRef ?? '');
       if (!this.hasInjectedContext()) {
         this.firstPromptContextEnabled.set(snapshot.contextEnabled ?? true);
       }
@@ -580,39 +646,28 @@ export class SessionDraftContext {
         !deferGeneration &&
         !snapshot.hasRecord &&
         snapshot.canGenerate &&
-        snapshot.generationStatus !== 'generating' &&
-        !this.worktreeContextBusy();
-
+        snapshot.generationStatus !== 'generating';
       if (shouldAutoGenerate) {
-        console.info(
-          `[worktree-context] no prior record for ${this.runtime.worktreePath}; requesting first-time generation`,
-        );
         this.worktreeContextBusy.set(true);
         const generated = await firstValueFrom(
-          this.worktreeContextService.generate(this.runtime.repoId, this.runtime.worktreePath, {
-            provider: this.runtime.currentProvider(),
-          }),
+          this.worktreeContextService
+            .generate(request.repoId, request.worktreePath, {
+              provider: request.provider,
+            })
+            .pipe(takeUntilDestroyed(this.destroyRef)),
         );
-        if (version !== this.runtime.bootstrapVersion || this.destroyRef.destroyed) return;
-        this.worktreeContext.set(generated);
-        console.info(
-          `[worktree-context] first-time generation settled for ${this.runtime.worktreePath} (status=${generated.generationStatus})`,
-        );
-      } else if (triggerGenerate) {
-        console.info(
-          `[worktree-context] skipping auto-generate for ${this.runtime.worktreePath} (hasRecord=${snapshot.hasRecord}, canGenerate=${snapshot.canGenerate}, status=${snapshot.generationStatus})`,
-        );
-        if (deferGeneration) {
-          this.scheduleDeferredContextGeneration();
-        }
+        if (this.isCurrentContextRequest(request)) this.worktreeContext.set(generated);
+      } else if (deferGeneration) {
+        this.scheduleDeferredContextGeneration();
       }
     } catch (error) {
-      if (version !== this.runtime.bootstrapVersion || this.destroyRef.destroyed) return;
-      toast.error(getHttpErrorMessage(error, 'Could not load worktree context.'));
+      if (this.isCurrentContextRequest(request))
+        toast.error(getHttpErrorMessage(error, 'Could not load worktree context.'));
     } finally {
-      if (version !== this.runtime.bootstrapVersion || this.destroyRef.destroyed) return;
-      this.worktreeContextLoading.set(false);
-      this.worktreeContextBusy.set(false);
+      if (this.isCurrentContextRequest(request)) {
+        this.worktreeContextLoading.set(false);
+        this.worktreeContextBusy.set(false);
+      }
     }
   }
 

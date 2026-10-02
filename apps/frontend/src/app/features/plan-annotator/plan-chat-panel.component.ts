@@ -16,6 +16,8 @@ import { PlanReviewRequest } from '@/shared/models/plan-review.model';
 import type { PlanChatFork } from '@/shared/models/session.model';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardSkeletonComponent } from '@/shared/components/skeleton';
 import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
@@ -48,6 +50,8 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
   standalone: true,
   imports: [
     CommonModule,
+    ZardButtonComponent,
+    ZardSkeletonComponent,
     TranscriptViewportDirective,
     ClaudeTranscriptComponent,
     ClaudeComposerComponent,
@@ -63,7 +67,7 @@ export function sanitizePlanChatUserContent(content: string | null | undefined):
     }),
   ],
   templateUrl: './plan-chat-panel.component.html',
-  styleUrl: './plan-chat-panel.component.scss',
+  host: { class: 'flex min-h-0 flex-col' },
 })
 export class PlanChatPanelComponent {
   readonly review = input<PlanReviewRequest | null>(null);

@@ -1,19 +1,11 @@
 import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
-import { ZardButtonComponent } from '@/shared/components/button';
-import { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
-import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import type { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import type { PlanReviewRequest } from '@/shared/models/plan-review.model';
 import type { SessionFork } from '@/shared/models/session.model';
-import {
-  diffSelectionMentionLineLabel,
-  diffSelectionMentionPreview,
-  parseDiffSelectionMentions,
-} from '@/shared/utils/diff-selection-mention';
-import { splitFilePathForDisplay } from '@/shared/utils/file-path-display';
+import { parseDiffSelectionMentions } from '@/shared/utils/diff-selection-mention';
 import { parseSessionMentions } from '@/shared/utils/session-mention';
 import { parseTaskNotifications } from '@/shared/utils/task-notification';
-import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -24,52 +16,31 @@ import {
   output,
 } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import {
-  lucideBan,
-  lucideCheck,
-  lucideCheckCircle,
-  lucideChevronDown,
-  lucideCopy,
-  lucideExternalLink,
-  lucideFileCode,
-  lucideFileText,
-  lucideGitFork,
-  lucideInfo,
-  lucideMessageSquarePlus,
-  lucidePencil,
-  lucidePlus,
-  lucideSquare,
-  lucideTriangleAlert,
-  lucideX,
-  lucideXCircle,
-} from '@ng-icons/lucide';
+import { lucideBan, lucideSquare } from '@ng-icons/lucide';
+import { MessageActionsComponent, type MessageActionState } from './message-actions.component';
+import { MessageDiagnosticComponent } from './message-diagnostic.component';
+import { MessageForksComponent } from './message-forks.component';
+import { MessageMentionsComponent } from './message-mentions.component';
+import { MessageNotificationsComponent } from './message-notifications.component';
+import { MessagePlanLauncherComponent } from './message-plan-launcher.component';
+import { formatMessageTimestamp } from './message-timestamp';
 
+/** Message composition and selection; each presentation block owns its UI. */
 @Component({
   selector: 'cw-message',
-  standalone: true,
-  imports: [ZardButtonComponent, CommonModule, AgentMarkdownComponent, NgIcon],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [
-    provideIcons({
-      lucideBan,
-      lucideCheckCircle,
-      lucideChevronDown,
-      lucideCheck,
-      lucideCopy,
-      lucideExternalLink,
-      lucideFileCode,
-      lucideFileText,
-      lucideGitFork,
-      lucideInfo,
-      lucideMessageSquarePlus,
-      lucidePencil,
-      lucidePlus,
-      lucideSquare,
-      lucideTriangleAlert,
-      lucideX,
-      lucideXCircle,
-    }),
+  imports: [
+    AgentMarkdownComponent,
+    NgIcon,
+    MessageActionsComponent,
+    MessageDiagnosticComponent,
+    MessageForksComponent,
+    MessageMentionsComponent,
+    MessageNotificationsComponent,
+    MessagePlanLauncherComponent,
   ],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'block' },
+  viewProviders: [provideIcons({ lucideBan, lucideSquare })],
   templateUrl: './claude-message.component.html',
   styleUrl: './claude-message.component.scss',
 })
@@ -106,30 +77,27 @@ export class ClaudeMessageComponent {
   readonly openPlanChat = output<PlanReviewRequest>();
   readonly openLocalFile = output<LocalFileTarget>();
 
-  readonly isEmpty = computed(() => !this.item().content);
+  readonly isUser = computed(() => this.item().kind === 'user');
   readonly syntheticMessageInfo = computed(() => getSyntheticMessageInfo(this.item()));
   readonly hasInlineAffordances = computed(
     () => this.showCopy() || this.showEdit() || this.showFork() || this.forks().length > 0,
   );
-  readonly forkCountLabel = computed(() => {
-    const count = this.forks().length;
-    return `${count} fork${count === 1 ? '' : 's'}`;
-  });
-  readonly timestampLabel = computed(() => buildTimestampLabel(this.item(), this.streaming()));
-  readonly timestampTitle = computed(() => this.timestampLabel());
-
-  readonly diagnosticTitle = computed(() => {
+  readonly timestampLabel = computed(() => {
     const item = this.item();
-    if (item.kind === 'error') {
-      return isWarningText(item.content) ? 'Warning' : 'Error';
-    }
-    return isWarningText(item.content) ? 'Warning' : 'System';
+    const value = item.receivedAt || item.authoredAt || item.timestamp;
+    return value ? formatMessageTimestamp(value) : null;
   });
-  readonly diagnosticPreview = computed(() => {
-    const content = this.item().content?.trim().replace(/\s+/g, ' ') ?? '';
-    if (!content) return 'No details';
-    return content.length > 180 ? `${content.slice(0, 180)}...` : content;
-  });
+  readonly timestampTitle = this.timestampLabel;
+  readonly actionState = computed<MessageActionState>(() => ({
+    copy: this.showCopy(),
+    edit: this.isUser() && this.showEdit(),
+    fork: this.showFork(),
+    disabled: this.actionsDisabled(),
+    editArmed: this.editArmed(),
+    forkDisabled: this.forkDisabled(),
+    forkDisabledReason: this.forkDisabledReason(),
+    forking: this.forking(),
+  }));
   readonly userTaskNotificationDisplay = computed(() =>
     parseTaskNotifications(this.item().content),
   );
@@ -148,30 +116,6 @@ export class ClaudeMessageComponent {
   readonly userDiffMentions = computed(() => this.userMessageDisplay().mentions);
   readonly userSessionMentions = computed(() => this.userSessionMentionDisplay().mentions);
 
-  mentionLineLabel(mention: DiffSelectionMention): string {
-    return diffSelectionMentionLineLabel(mention);
-  }
-
-  mentionDirname(mention: DiffSelectionMention): string {
-    return splitFilePathForDisplay(mention.filePath).dirname;
-  }
-
-  mentionBasename(mention: DiffSelectionMention): string {
-    return splitFilePathForDisplay(mention.filePath).basename;
-  }
-
-  mentionPreview(mention: DiffSelectionMention): string {
-    return diffSelectionMentionPreview(mention);
-  }
-
-  forkTimeLabel(fork: SessionFork): string {
-    return formatTimestamp(fork.createdAt);
-  }
-
-  preserveSelection(event: MouseEvent): void {
-    event.preventDefault();
-  }
-
   getSelectedText(): string | null {
     const selection = document.getSelection();
     if (!selection || selection.isCollapsed) return null;
@@ -187,48 +131,6 @@ export class ClaudeMessageComponent {
 
     return selectedText;
   }
-}
-
-function buildTimestampLabel(item: AgentTranscriptItem, streaming: boolean): string | null {
-  const timestamp = getDisplayTimestamp(item);
-  if (!timestamp) return null;
-  return formatTimestamp(timestamp);
-}
-
-function getDisplayTimestamp(item: AgentTranscriptItem): string | null {
-  return item.receivedAt || item.authoredAt || item.timestamp || null;
-}
-
-function formatTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  const now = new Date();
-  const isSameDay =
-    now.getFullYear() === date.getFullYear() &&
-    now.getMonth() === date.getMonth() &&
-    now.getDate() === date.getDate();
-
-  const timeLabel = new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  }).format(date);
-
-  if (isSameDay) {
-    return timeLabel;
-  }
-
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const sameYear = now.getFullYear() === date.getFullYear();
-  const dateLabel = sameYear ? `${day}/${month}` : `${day}/${month}/${date.getFullYear()}`;
-
-  return `${dateLabel} ${timeLabel}`;
-}
-
-function isWarningText(value: string | undefined): boolean {
-  return /\b(warn(?:ing)?|deprecated|ignoring|malformed|invalid config)\b/i.test(value ?? '');
 }
 
 interface SyntheticMessageInfo {

@@ -301,11 +301,11 @@ describe('ClaudeMessageComponent', () => {
 
     const element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).toContain('Please review this');
-    expect(element.querySelector('.cw-msg__mention-dir')?.textContent).toBe(
+    expect(element.querySelector('.agent-mention__dir')?.textContent).toBe(
       'src/main/java/package/folder',
     );
-    expect(element.querySelector('.cw-msg__mention-name')?.textContent).toBe('Test.java');
-    expect(element.querySelector('.cw-msg__mention-name')?.tagName.toLowerCase()).toBe('strong');
+    expect(element.querySelector('.agent-mention__name')?.textContent).toBe('Test.java');
+    expect(element.querySelector('.agent-mention__name')?.tagName.toLowerCase()).toBe('strong');
     expect(element.textContent).toContain('return next;');
     expect(element.textContent).not.toContain(DIFF_SELECTION_MENTION_TAG);
     expect(element.querySelector('.cw-msg__mention')).not.toBeNull();

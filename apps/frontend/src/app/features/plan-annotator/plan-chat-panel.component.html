@@ -1,17 +1,25 @@
 @if (review(); as activeReview) {
-  <section class="pc-panel" aria-label="Ask about plan">
-    <header class="pc-head">
-      <div class="pc-head__copy">
-        <span class="pc-eyebrow">Plan Q&A</span>
-        <h3>Ask about this plan</h3>
+  <section class="pc-panel flex min-h-0 flex-1 flex-col" aria-label="Ask about plan">
+    <header
+      class="pc-head flex shrink-0 items-center justify-between gap-2.5 border-b border-border/60 px-3 py-2.5"
+    >
+      <div class="pc-head__copy min-w-0">
+        <span
+          class="pc-eyebrow block text-[10px] leading-tight font-bold tracking-wide text-muted-foreground uppercase"
+          >Plan Q&A</span
+        >
+        <h3 class="m-0 text-sm leading-tight font-bold text-foreground">Ask about this plan</h3>
       </div>
       @if (currentChat()) {
         <button
+          z-button
+          zType="ghost"
+          zSize="icon-sm"
           type="button"
-          class="pc-icon-btn"
+          class="pc-icon-btn shrink-0 text-muted-foreground"
           title="Start fresh"
           aria-label="Start fresh"
-          [disabled]="resetting() || sending()"
+          [zDisabled]="resetting() || sending()"
           (click)="startFresh(activeReview)"
         >
           <ng-icon name="lucideRefreshCw" size="13" />
@@ -20,8 +28,10 @@
     </header>
 
     @if (!canAsk(activeReview)) {
-      <div class="pc-body">
-        <p class="pc-empty pc-empty--center">
+      <div class="pc-body flex min-h-0 flex-1 flex-col p-3">
+        <p
+          class="pc-empty pc-empty--center my-auto flex min-h-32 flex-1 flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground"
+        >
           Questions are available for transcript plans after the plan message is saved.
         </p>
       </div>
@@ -32,22 +42,30 @@
         [runPhase]="conversation.runPhase()"
         [pendingReply]="sending() || conversation.awaitingFirstToken()"
         [sessionKey]="currentChat()?.childSessionId ?? null"
-        class="pc-messages"
+        class="pc-messages flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain scroll-smooth p-3 motion-reduce:scroll-auto"
         aria-live="polite"
         aria-label="Plan questions"
       >
         @if (loading()) {
-          <div class="pc-skeleton" aria-label="Loading plan questions">
-            <span></span>
-            <span></span>
-            <span></span>
+          <div
+            class="pc-skeleton flex shrink-0 flex-col gap-1 py-1.5"
+            aria-label="Loading plan questions"
+          >
+            <z-skeleton class="h-2.5 w-[88%] rounded-full" />
+            <z-skeleton class="h-2.5 w-[70%] rounded-full" />
+            <z-skeleton class="h-2.5 w-[48%] rounded-full" />
           </div>
         } @else if (!conversation.renderItems().length && !sending()) {
-          <div class="pc-empty pc-empty--center">
-            <span class="pc-empty__icon" aria-hidden="true">
+          <div
+            class="pc-empty pc-empty--center my-auto flex min-h-32 flex-1 flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground"
+          >
+            <span
+              class="pc-empty__icon inline-flex size-9 items-center justify-center rounded-full bg-muted/60 text-primary"
+              aria-hidden="true"
+            >
               <ng-icon name="lucideMessageSquare" size="16" />
             </span>
-            <p>Ask a focused question about the reviewed plan.</p>
+            <p class="m-0 max-w-60">Ask a focused question about the reviewed plan.</p>
           </div>
         } @else {
           <cw-transcript
@@ -70,9 +88,16 @@
         }
       </div>
 
-      <div class="pc-footer">
+      <div
+        class="pc-footer flex shrink-0 flex-col gap-2 border-t border-border/60 bg-card/40 px-3 pt-2.5 pb-3"
+      >
         @if (lastError(); as error) {
-          <p class="pc-error" role="alert">{{ error }}</p>
+          <p
+            class="pc-error rounded-lg border border-destructive/35 bg-destructive/10 px-2.5 py-2 text-xs leading-normal text-destructive"
+            role="alert"
+          >
+            {{ error }}
+          </p>
         }
 
         @if (conversation.pendingUserInputRequest(); as request) {

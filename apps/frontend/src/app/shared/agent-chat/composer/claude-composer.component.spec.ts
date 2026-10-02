@@ -132,11 +132,11 @@ describe('ClaudeComposerComponent', () => {
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
-    expect(element.querySelector('.cw-comp__mention-dir')?.textContent).toBe(
+    expect(element.querySelector('.agent-mention__dir')?.textContent).toBe(
       'src/main/java/package/folder',
     );
-    expect(element.querySelector('.cw-comp__mention-name')?.textContent).toBe('Test.java');
-    expect(element.querySelector('.cw-comp__mention-name')?.tagName.toLowerCase()).toBe('strong');
+    expect(element.querySelector('.agent-mention__name')?.textContent).toBe('Test.java');
+    expect(element.querySelector('.agent-mention__name')?.tagName.toLowerCase()).toBe('strong');
     expect(element.textContent).toContain('const value = true;');
 
     fixture.componentInstance.submit();

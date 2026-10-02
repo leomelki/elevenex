@@ -1,32 +1,63 @@
-<section class="cw-threads" aria-label="Review discussions from this turn">
-  <header class="cw-threads__head">
-    <span class="cw-threads__icon" aria-hidden="true">
+<section
+  class="cw-threads overflow-hidden rounded-xl border border-primary/20 bg-primary/5"
+  aria-label="Review discussions from this turn"
+>
+  <header class="cw-threads__head flex items-center gap-1.5 border-b border-border/60 px-3 py-2">
+    <span
+      class="cw-threads__icon inline-flex size-5 items-center justify-center rounded-md bg-primary/15 text-primary"
+      aria-hidden="true"
+    >
       <ng-icon name="lucideMessagesSquare" size="13" />
     </span>
-    <span class="cw-threads__title">
+    <span class="cw-threads__title text-xs font-bold text-foreground">
       {{ threads().length }}
       {{ threads().length === 1 ? 'review discussion' : 'review discussions' }}
     </span>
     @if (unreadCount() > 0) {
-      <span class="cw-threads__unread">{{ unreadCount() }} new</span>
+      <span
+        class="cw-threads__unread ml-auto rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground"
+        >{{ unreadCount() }} new</span
+      >
     }
   </header>
 
-  <ul class="cw-threads__list">
+  <ul class="cw-threads__list m-0 flex list-none flex-col p-1">
     @for (thread of threads(); track thread.id) {
       <li>
-        <button type="button" class="cw-threads__item" (click)="open.emit(thread.id)">
+        <button
+          z-button
+          zType="ghost"
+          type="button"
+          class="cw-threads__item h-auto w-full justify-start gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-normal text-foreground"
+          (click)="open.emit(thread.id)"
+        >
           @if (unreadIds().has(thread.id)) {
-            <span class="cw-threads__dot" aria-label="New reply"></span>
+            <span
+              class="cw-threads__dot size-1.5 shrink-0 rounded-full bg-primary"
+              aria-label="New reply"
+            ></span>
           }
-          <span class="cw-threads__label">{{ thread.title }}</span>
+          <span class="cw-threads__label min-w-0 truncate font-mono text-xs">{{
+            thread.title
+          }}</span>
           @if (thread.mode === 'write') {
-            <ng-icon name="lucideLockOpen" size="11" class="cw-threads__write" />
+            <ng-icon
+              name="lucideLockOpen"
+              size="11"
+              class="cw-threads__write shrink-0 text-warning"
+            />
           }
           @if (thread.status === 'promoted') {
-            <span class="cw-threads__badge">session</span>
+            <span
+              class="cw-threads__badge rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground"
+              >session</span
+            >
           }
-          <ng-icon name="lucideChevronRight" size="13" class="cw-threads__chevron" />
+          <ng-icon
+            name="lucideChevronRight"
+            size="13"
+            class="cw-threads__chevron ml-auto shrink-0 text-muted-foreground"
+          />
         </button>
       </li>
     }

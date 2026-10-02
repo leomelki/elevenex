@@ -1,16 +1,17 @@
-import { ZardButtonComponent } from '@/shared/components/button';
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideFileCode, lucideMessageSquare, lucideX } from '@ng-icons/lucide';
+import { AgentMentionCardComponent } from '../attachments/agent-mention-card.component';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 
 /** The same removable context card for session snapshots and selected diff lines. */
 @Component({
   selector: 'cw-composer-mention',
-  imports: [NgIcon, ZardButtonComponent],
+  imports: [AgentMentionCardComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block', role: 'listitem' },
-  viewProviders: [provideIcons({ lucideFileCode, lucideMessageSquare, lucideX })],
-  templateUrl: './composer-mention.component.html',
+  template: `<cw-agent-mention
+    [mention]="presentation()"
+    [removeLabel]="removeLabel()"
+    (remove)="remove.emit()"
+  />`,
 })
 export class ComposerMentionComponent {
   readonly icon = input<'lucideFileCode' | 'lucideMessageSquare'>('lucideFileCode');
@@ -21,4 +22,12 @@ export class ComposerMentionComponent {
   readonly detail = input.required<string>();
   readonly removeLabel = input.required<string>();
   readonly remove = output<void>();
+  readonly presentation = computed(() => ({
+    icon: this.icon(),
+    title: this.title(),
+    dirname: this.dirname(),
+    lineLabel: this.lineLabel(),
+    preview: this.preview(),
+    detail: this.detail(),
+  }));
 }

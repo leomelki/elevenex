@@ -1,8 +1,19 @@
 import { ClaudeTaskState } from '@/shared/models/claude-runtime.model';
-import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideListTodo, lucideX } from '@ng-icons/lucide';
+import { ZardSheetService, ZardSheetRef } from '@/shared/components/sheet';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  TemplateRef,
+  ViewContainerRef,
+  computed,
+  effect,
+  inject,
+  input,
+  output,
+  viewChild,
+} from '@angular/core';
 
 interface Section {
   title: string;
@@ -12,16 +23,56 @@ interface Section {
 @Component({
   selector: 'cw-tasks-drawer',
   standalone: true,
-  imports: [CommonModule, NgIcon],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [provideIcons({ lucideX, lucideListTodo })],
   templateUrl: './claude-tasks-drawer.component.html',
-  styleUrl: './claude-tasks-drawer.component.scss',
+  host: { class: 'contents' },
 })
 export class ClaudeTasksDrawerComponent {
   readonly open = input<boolean>(false);
-  readonly tasks = input<ClaudeTaskState[]>([]);
+  readonly tasks = input<readonly ClaudeTaskState[]>([]);
   readonly close = output<void>();
+
+  private readonly sheets = inject(ZardSheetService);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly viewContainer = inject(ViewContainerRef);
+  private readonly content = viewChild<TemplateRef<unknown>>('content');
+  private sheet: ZardSheetRef<unknown> | null = null;
+
+  constructor() {
+    effect(() => {
+      const content = this.content();
+      if (this.open() && content && !this.sheet) {
+        const sheet = this.sheets.create<unknown, undefined>({
+          zContent: content,
+          zViewContainerRef: this.viewContainer,
+          zTitle: 'Tasks',
+          zAriaLabel: 'Tasks',
+          zCloseLabel: 'Close tasks',
+          zSide: 'right',
+          zSize: 'custom',
+          zHideFooter: true,
+          zCustomClasses:
+            'cw-drawer h-dvh w-[min(26rem,92vw)] gap-0 overflow-hidden text-foreground [&>header]:border-b [&>header]:border-border [&>main]:min-h-0 [&>main]:flex-1 [&>main]:overflow-auto',
+        });
+        this.sheet = sheet;
+        sheet
+          .afterClosed()
+          .pipe(takeUntilDestroyed(this.destroyRef))
+          .subscribe(() => {
+            if (this.sheet !== sheet) return;
+            this.sheet = null;
+            this.close.emit();
+          });
+      } else if (!this.open()) this.dismissSheet();
+    });
+    this.destroyRef.onDestroy(() => this.dismissSheet());
+  }
+
+  private dismissSheet(): void {
+    const sheet = this.sheet;
+    this.sheet = null;
+    sheet?.close();
+  }
 
   readonly sections = computed<Section[]>(() => {
     const tasks = [...this.tasks()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));

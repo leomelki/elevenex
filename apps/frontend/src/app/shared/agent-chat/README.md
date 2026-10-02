@@ -12,11 +12,14 @@ features own their workflows and compose these pieces.
   reconnect and bootstrap flow.
 - `transcript/`: stateless transcript, messages, thinking, turn summaries,
   change panels, and identity/grouping helpers.
+  Messages compose focused components for actions, notifications, mentions,
+  forks, plan launchers, and diagnostics with typed inputs and explicit outputs.
   `TranscriptViewportDirective` owns scrolling and contextual prompt selection
   for the session, review, and plan chats; DOM updates use `afterRenderEffect`.
 - `tools/`: tool presentation, shared file-change parsing, and highlighted diffs.
   Highlighting happens when the relevant content is expanded.
 - `composer/`: prompt editing, attachments, queue controls, and draft storage.
+- `attachments/`: the shared mention card used by the composer and transcript.
 - `requests/`: permission and user-input interactions.
 - `activity/`: background activity and subagent inspection.
 - `markdown/`: sanitized Markdown and local-file link handling. Use
