@@ -19,7 +19,7 @@ const sourceMapAssetsRoot = path.join(sourceMapsRoot, 'assets');
 const sourceMapManifestPath = path.join(sourceMapsRoot, 'manifest.json');
 
 function getCommitSha() {
-  return (process.env.GITHUB_SHA || execSync('git rev-parse HEAD', { cwd: repoRoot }).toString()).trim();
+  return (process.env.GIT_SHA || process.env.GITHUB_SHA || execSync('git rev-parse HEAD', { cwd: repoRoot }).toString()).trim();
 }
 
 function walkFiles(rootDir) {

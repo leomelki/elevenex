@@ -2,6 +2,21 @@ name: Reusable Windows desktop build
 
 on:
   workflow_call:
+    inputs:
+      source-sha:
+        description: 'Exact commit to build'
+        type: string
+        required: true
+      release-tag:
+        description: 'Release containing the matching runtimes'
+        type: string
+        required: true
+
+# GITHUB_SHA describes the caller; generated build info must describe the checkout.
+env:
+  GIT_SHA: ${{ inputs.source-sha }}
+  ELEVENEX_RELEASE_TAG: ${{ inputs.release-tag }}
+  SOURCE_MAP_RELEASE_TAG: ${{ inputs.release-tag }}
 
 jobs:
   build-windows-desktop:
@@ -11,6 +26,9 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source-sha }}
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v4
         with:
@@ -29,7 +47,39 @@ jobs:
         run: pnpm backend:bundle && pnpm electron:backend:prepare
 
       - name: Build Windows desktop installer
-        run: pnpm electron:package:win
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pnpm frontend:build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm source-maps:collect
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm electron:stage-version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:CSC_LINK) {
+            pnpm --dir apps/electron package:win --config.win.signAndEditExecutable=true --config.win.forceCodeSigning=true
+          } else {
+            pnpm --dir apps/electron package:win
+            'Windows installer is unsigned: WINDOWS_CERT_BASE64 is not configured.' >> $env:GITHUB_STEP_SUMMARY
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify Windows signature when configured
+        env:
+          SIGNING_CONFIGURED: ${{ secrets.WINDOWS_CERT_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          if ($env:SIGNING_CONFIGURED -ne 'true') { exit 0 }
+          $ErrorActionPreference = 'Stop'
+          $executables = @(Get-ChildItem apps/electron/dist -File -Filter '*.exe') + @(Get-Item apps/electron/dist/win-unpacked/Elevenex.exe)
+          if ($executables.Count -lt 2) { throw 'Installer or app executable missing' }
+          foreach ($executable in $executables) {
+            $signature = Get-AuthenticodeSignature $executable.FullName
+            if ($signature.Status -ne 'Valid') { throw "Invalid signature for $($executable.Name): $($signature.Status)" }
+          }
 
       - name: Rename Windows desktop installer for release
         shell: pwsh

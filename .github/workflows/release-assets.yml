@@ -1,4 +1,5 @@
 name: Build and release assets
+run-name: "${{ inputs.pull_request && format('PR #{0} preview', inputs.pull_request) || 'Release assets' }} — @${{ github.actor }}"
 
 on:
   push:
@@ -16,6 +17,10 @@ on:
       - 'scripts/bundle-electron-backend.js'
       - 'scripts/rebuild-electron-backend-natives.js'
       - 'scripts/archive-electron-backend.js'
+      - 'scripts/stage-version.js'
+      - 'scripts/collect-source-maps.js'
+      - 'package.json'
+      - '.github/scripts/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/release-assets.yml'
       - '.github/workflows/reusable-build-runtime.yml'
@@ -23,32 +28,97 @@ on:
       - '.github/workflows/reusable-build-linux-desktop.yml'
       - '.github/workflows/reusable-build-windows-desktop.yml'
   workflow_dispatch:
+    inputs:
+      pull_request:
+        description: 'PR number to release (blank builds the selected branch)'
+        type: string
+        default: ''
+      head_sha:
+        description: 'Expected PR head SHA (set automatically by the preview label)'
+        type: string
+        default: ''
+      requested_by:
+        description: 'Label requester (set automatically)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
 
 concurrency:
-  group: release-assets-${{ github.sha }}
+  group: release-assets-${{ inputs.pull_request || github.ref }}-${{ inputs.head_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Resolve release commit
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      tag: ${{ steps.plan.outputs.tag }}
+      pr: ${{ steps.plan.outputs.pr }}
+    steps:
+      # Use the workflow's trusted revision for orchestration, never PR scripts.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test release orchestration and runtime selection
+        run: node --test .github/scripts/*.test.cjs apps/electron/test/runtime-release.test.cjs apps/electron/test/app-updater-channel.test.cjs apps/electron/test/app-updater.test.cjs apps/electron/test/package-files.test.cjs
+      - id: plan
+        uses: actions/github-script@v7
+        env:
+          RELEASE_PR: ${{ inputs.pull_request }}
+          RELEASE_HEAD_SHA: ${{ inputs.head_sha }}
+          RELEASE_REQUESTER: ${{ inputs.requested_by }}
+        with:
+          script: |
+            await require('./.github/scripts/resolve-release.cjs')({ github, context, core });
+
   build-runtime:
+    needs: prepare
     name: Build runtime assets
     uses: ./.github/workflows/reusable-build-runtime.yml
+    with:
+      source-sha: ${{ needs.prepare.outputs.sha }}
+      release-tag: ${{ needs.prepare.outputs.tag }}
 
   build-macos-dmg:
+    needs: prepare
     name: Build macOS desktop asset
     uses: ./.github/workflows/reusable-build-macos-desktop.yml
+    with:
+      source-sha: ${{ needs.prepare.outputs.sha }}
+      release-tag: ${{ needs.prepare.outputs.tag }}
     secrets: inherit
 
   build-linux-desktop:
+    needs: prepare
     name: Build Linux desktop assets
     uses: ./.github/workflows/reusable-build-linux-desktop.yml
+    with:
+      source-sha: ${{ needs.prepare.outputs.sha }}
+      release-tag: ${{ needs.prepare.outputs.tag }}
 
   build-windows-desktop:
+    needs: prepare
     name: Build Windows desktop asset
     uses: ./.github/workflows/reusable-build-windows-desktop.yml
+    with:
+      source-sha: ${{ needs.prepare.outputs.sha }}
+      release-tag: ${{ needs.prepare.outputs.tag }}
+    secrets: inherit
 
   release:
     name: Publish release assets
     needs:
+      - prepare
       - build-runtime
       - build-macos-dmg
       - build-linux-desktop
@@ -57,6 +127,10 @@ jobs:
       contents: write
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -65,50 +139,37 @@ jobs:
       - name: List artifacts
         run: ls -lhR artifacts/
 
-      - name: Write manifest
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const artifactsDir = 'artifacts';
-            const sourceMapsManifestPath = path.join(artifactsDir, 'source-maps-manifest.json');
-            const sourceMaps = fs.existsSync(sourceMapsManifestPath)
-              ? JSON.parse(fs.readFileSync(sourceMapsManifestPath, 'utf8'))
-              : null;
-            const manifest = {
-              version: '${{ github.sha }}',
-              ref: '${{ github.ref }}',
-              targets: [
-                { key: 'linux-x64', archive: 'elevenex-remote-runtime-linux-x64.tar.gz' },
-                { key: 'linux-arm64', archive: 'elevenex-remote-runtime-linux-arm64.tar.gz' },
-                { key: 'darwin-arm64', archive: 'elevenex-remote-runtime-darwin-arm64.tar.gz' },
-                { key: 'win32-x64', archive: 'elevenex-remote-runtime-win32-x64.zip' },
-              ],
-              desktopRuntime: [
-                { key: 'macos-arm64', archive: 'elevenex-runtime-macos-arm64.tar.gz' },
-                { key: 'linux-x64', archive: 'elevenex-runtime-linux-x64.tar.gz' },
-                { key: 'windows-x64', archive: 'elevenex-runtime-windows-x64.tar.gz' },
-              ],
-              desktop: [
-                { key: 'macos-arm64', archive: 'elevenex-desktop-macos-arm64.dmg' },
-                { key: 'linux-x64', archive: 'elevenex-desktop-linux-x64.AppImage' },
-                { key: 'linux-x64', archive: 'elevenex-desktop-linux-x64.deb' },
-                { key: 'windows-x64', archive: 'elevenex-desktop-windows-x64.exe' },
-              ],
-              sourceMaps,
-            };
-            fs.writeFileSync(path.join(artifactsDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+      - name: Validate assets and write manifest
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_PR: ${{ needs.prepare.outputs.pr }}
+        run: node .github/scripts/write-release-manifest.cjs artifacts
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: runtime-${{ github.sha }}
-          name: Release assets ${{ github.sha }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ needs.prepare.outputs.sha }}
+          make_latest: false
+          name: "${{ needs.prepare.outputs.pr && format('PR #{0} preview', needs.prepare.outputs.pr) || 'Release assets' }} ${{ needs.prepare.outputs.sha }}"
           prerelease: true
           files: artifacts/*
           fail_on_unmatched_files: true
           body: |
-            Auto-built release assets for commit `${{ github.sha }}`.
+            Auto-built release assets for commit `${{ needs.prepare.outputs.sha }}`.
             Includes remote runtime tarballs downloaded during SSH setup,
             local desktop runtime tarballs downloaded by packaged desktop apps,
             plus macOS, Linux, and Windows desktop artifacts.
+
+            Download the installer for your platform below. Install and launch Elevenex,
+            then add your server under Settings → SSH. The app installs the matching
+            runtime from this release automatically; remote system Node is not required.
+            macOS builds are Developer ID signed and notarized. Windows installers
+            use Authenticode signing when Windows credentials are configured.
+            Linux packages include SHA-256 checksums.
+            PR previews are excluded from the normal desktop update channel.
+
+      - name: Link release in workflow summary
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: echo "Release downloads — https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
