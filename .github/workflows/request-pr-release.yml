@@ -1,0 +1,43 @@
+name: Request PR preview release
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    if: github.event.label.name == 'release-preview'
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      # Metadata only: never check out or execute PR code in this workflow.
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+              ...context.repo, username: context.actor,
+            });
+            if (!['admin', 'maintain', 'write'].includes(permission.permission)) {
+              core.setFailed('Only collaborators with write access can request signed previews.');
+              return;
+            }
+            const pull = context.payload.pull_request;
+            if (pull.state !== 'open' || pull.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              core.setFailed('Use an open PR from a branch in this repository for signed previews.');
+              return;
+            }
+            const { data: repo } = await github.rest.repos.get(context.repo);
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'release-assets.yml',
+              ref: repo.default_branch,
+              inputs: { pull_request: String(pull.number), head_sha: pull.head.sha, requested_by: context.actor },
+            });
+            await core.summary.addHeading(`Requested PR #${pull.number} preview`)
+              .addRaw(`Commit: ${pull.head.sha}\n\n[Build runs](https://github.com/${repo.full_name}/actions/workflows/release-assets.yml)\n`)
+              .write();

@@ -74,6 +74,10 @@
       {
         "from": ".stage/version",
         "to": "version"
+      },
+      {
+        "from": ".stage/release-tag",
+        "to": "release-tag"
       }
     ],
     "mac": {
@@ -96,7 +100,8 @@
         "NSMicrophoneUsageDescription": "Elevenex uses your microphone to dictate prompts to coding agents."
       },
       "entitlements": "entitlements.mac.plist",
-      "entitlementsInherit": "entitlements.mac.inherit.plist"
+      "entitlementsInherit": "entitlements.mac.inherit.plist",
+      "notarize": true
     },
     "linux": {
       "icon": "assets/macos-runtime-icon.png",
@@ -124,7 +129,7 @@
       "allowToChangeInstallationDirectory": true
     },
     "dmg": {
-      "sign": false
+      "sign": true
     }
   },
   "devDependencies": {

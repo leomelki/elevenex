@@ -55,7 +55,7 @@ const execFileAsync = promisify(execFile);
 const UPDATE_REPO = process.env.ELEVENEX_UPDATE_REPO || 'leomelki/elevenex';
 const GITHUB_API_BASE = process.env.ELEVENEX_UPDATE_API_BASE || 'https://api.github.com';
 const RELEASE_TAG_PATTERN = /^runtime-([0-9a-f]{7,40})$/i;
-const RELEASE_PAGE_SIZE = 30;
+const RELEASE_PAGE_SIZE = 100;
 // A manual check should feel live; the cache only exists so opening Settings
 // repeatedly doesn't burn the 60/hour unauthenticated GitHub rate limit.
 const CHECK_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -332,29 +332,36 @@ function createAppUpdater({ app, shell, getCurrentVersion, onStateChanged, reque
   }
 
   async function listReleases() {
-    const url = `${GITHUB_API_BASE}/repos/${UPDATE_REPO}/releases?per_page=${RELEASE_PAGE_SIZE}`;
-    let releases;
+    // A page can contain only PR previews. Keep looking so frequent preview
+    // requests cannot hide regular updates from installed desktop apps.
+    for (let page = 1; ; page += 1) {
+      const url = `${GITHUB_API_BASE}/repos/${UPDATE_REPO}/releases?per_page=${RELEASE_PAGE_SIZE}&page=${page}`;
+      let releases;
 
-    try {
-      releases = await fetchJson(url, { headers: githubHeaders() });
-    } catch (error) {
-      // Unauthenticated GitHub API calls are capped at 60/hour per IP, which is
-      // easy to hit behind shared egress. Say so instead of "HTTP 403".
-      if (error?.statusCode === 403 || error?.statusCode === 429) {
-        throw new Error('GitHub is rate limiting update checks. Try again in a few minutes.');
+      try {
+        releases = await fetchJson(url, { headers: githubHeaders() });
+      } catch (error) {
+        // Unauthenticated GitHub API calls are capped at 60/hour per IP, which is
+        // easy to hit behind shared egress. Say so instead of "HTTP 403".
+        if (error?.statusCode === 403 || error?.statusCode === 429) {
+          throw new Error('GitHub is rate limiting update checks. Try again in a few minutes.');
+        }
+        throw error;
       }
-      throw error;
-    }
 
-    if (!Array.isArray(releases)) {
-      throw new Error('Unexpected response from the GitHub releases API.');
-    }
+      if (!Array.isArray(releases)) {
+        throw new Error('Unexpected response from the GitHub releases API.');
+      }
 
-    return releases
-      .filter((release) => release && !release.draft)
-      .map(toReleaseSummary)
-      .filter(Boolean)
-      .sort((a, b) => Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0));
+      const summaries = releases
+        .filter((release) => release && !release.draft)
+        .map(toReleaseSummary)
+        .filter(Boolean)
+        .sort((a, b) => Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0));
+      if (summaries.some((release) => findAsset(release, target.assetName)) || releases.length < RELEASE_PAGE_SIZE) {
+        return summaries;
+      }
+    }
   }
 
   async function performCheck() {
