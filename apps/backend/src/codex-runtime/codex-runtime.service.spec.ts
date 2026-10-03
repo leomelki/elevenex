@@ -403,11 +403,11 @@ describe('CodexRuntimeService', () => {
   async function startAppServerTurn(
     service: CodexRuntimeService,
     selectedPermissionMode: string,
-    planMode = false,
+    planMode?: boolean,
   ) {
     const state = (service as any).ensureRuntimeState(7);
     state.selectedPermissionMode = selectedPermissionMode;
-    state.planMode = planMode;
+    if (planMode !== undefined) state.planMode = planMode;
     state.selectedModel = 'gpt-test';
     const iterator = (service as any).runTurnOnAppServer(
       7,
@@ -838,6 +838,10 @@ describe('CodexRuntimeService', () => {
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'Plan this change' }],
+      cwd: '/tmp/project',
+      sandboxPolicy: { type: 'readOnly' },
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user',
       collaborationMode: {
         mode: 'plan',
         settings: {
@@ -859,7 +863,7 @@ describe('CodexRuntimeService', () => {
     await iterator.next();
   });
 
-  it('selects native Codex default mode after plan mode is disabled', async () => {
+  it('selects native Codex default mode for implementation turns', async () => {
     const { service, appServer, mcpAgentTokens } = createService();
     const wire = wireAppServerTurn(appServer);
 
@@ -887,6 +891,13 @@ describe('CodexRuntimeService', () => {
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'Plan this change' }],
+      cwd: '/tmp/project',
+      sandboxPolicy: {
+        type: 'workspaceWrite',
+        writableRoots: ['/tmp/project'],
+      },
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'user',
       collaborationMode: {
         mode: 'default',
         settings: {
@@ -922,6 +933,13 @@ describe('CodexRuntimeService', () => {
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'Plan this change' }],
+      cwd: '/tmp/project',
+      sandboxPolicy: {
+        type: 'workspaceWrite',
+        writableRoots: ['/tmp/project'],
+      },
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'auto_review',
       collaborationMode: {
         mode: 'default',
         settings: {
@@ -939,6 +957,71 @@ describe('CodexRuntimeService', () => {
     await iterator.next();
     await iterator.next();
   });
+
+  it.each([
+    ['default', 'workspaceWrite', 'on-request', 'user'],
+    ['auto', 'workspaceWrite', 'on-request', 'auto_review'],
+    ['acceptEdits', 'workspaceWrite', 'never', 'user'],
+    ['bypassPermissions', 'dangerFullAccess', 'never', 'user'],
+  ])(
+    'restores %s permissions on the same loaded thread after leaving plan mode',
+    async (mode, sandboxType, approvalPolicy, approvalsReviewer) => {
+      const { service, appServer } = createService();
+      const wire = wireAppServerTurn(appServer);
+      const planIterator = await startAppServerTurn(service, mode, true);
+      const completeTurn = async (iterator: AsyncGenerator<unknown>) => {
+        wire.notificationHandler({
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { status: 'completed' } },
+        });
+        await iterator.next();
+        await expect(iterator.next()).resolves.toMatchObject({ done: true });
+      };
+      await completeTurn(planIterator);
+      // The runtime stores the thread id when consuming thread.started.
+      (service as any).ensureRuntimeState(7, 'thread-1');
+
+      await service.setPlanMode(7, false);
+      const implementationIterator = await startAppServerTurn(service, mode);
+
+      expect(appServer.request).toHaveBeenCalledWith(
+        'thread/resume',
+        expect.objectContaining({ threadId: 'thread-1' }),
+      );
+      // A resume of an already-loaded thread can ignore configuration
+      // overrides. The permissions must therefore be set on turn/start too.
+      expect(wire.turnStartParams).toMatchObject({
+        threadId: 'thread-1',
+        cwd: '/tmp/project',
+        sandboxPolicy: {
+          type: sandboxType,
+          ...(sandboxType === 'workspaceWrite'
+            ? { writableRoots: ['/tmp/project'] }
+            : {}),
+        },
+        approvalPolicy,
+        approvalsReviewer,
+        collaborationMode: { mode: 'default' },
+      });
+      await completeTurn(implementationIterator);
+
+      await service.setPlanMode(7, true);
+      const nextPlanIterator = await startAppServerTurn(service, mode);
+      expect(wire.turnStartParams).toMatchObject({
+        threadId: 'thread-1',
+        sandboxPolicy: { type: 'readOnly' },
+        approvalPolicy: 'never',
+        approvalsReviewer: 'user',
+        collaborationMode: { mode: 'plan' },
+      });
+      await completeTurn(nextPlanIterator);
+      expect(
+        appServer.request.mock.calls.filter(
+          ([method]) => method === 'thread/start',
+        ),
+      ).toHaveLength(1);
+    },
+  );
 
   it('normalizes legacy Codex plan permission mode into separate plan mode', async () => {
     const { service, sessionsService } = createService();

@@ -46,6 +46,15 @@ mode on the first implementation turn replaces the earlier planning
 instructions while preserving the thread, matching Codex's native mode switch
 behavior.
 
+Every `turn/start` also sets `cwd`, `sandboxPolicy`, `approvalPolicy`, and
+`approvalsReviewer` explicitly. Resuming an already-loaded thread can ignore
+thread configuration overrides, so setting permissions only on `thread/resume`
+can leave implementation turns stuck with the plan's read-only sandbox and
+`never` approval policy. Turn overrides restore the selected permission style
+on the same thread, including its worktree as a writable root, and reapply
+read-only permissions when Plan Mode is enabled again. The reviewer is also
+reset to `user` outside automatic review mode.
+
 When Codex app-server emits server-to-client JSON-RPC requests for command
 execution, file changes, permission-profile grants, `request_user_input`, or
 MCP elicitations, Elevenex now bridges them into the existing permission and

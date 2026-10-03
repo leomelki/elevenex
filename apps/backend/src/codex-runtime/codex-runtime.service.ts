@@ -2390,10 +2390,13 @@ export class CodexRuntimeService
             approvalPolicy: 'never' as const,
           }
         : this.mapPermissionMode(state.selectedPermissionMode);
-      const sandboxMap: Record<SandboxMode, string> = {
-        'read-only': 'read-only',
-        'workspace-write': 'workspace-write',
-        'danger-full-access': 'danger-full-access',
+      const sandboxPolicies = {
+        'read-only': { type: 'readOnly' },
+        'workspace-write': {
+          type: 'workspaceWrite',
+          writableRoots: [worktreePath],
+        },
+        'danger-full-access': { type: 'dangerFullAccess' },
       };
       const approvalMap: Record<ApprovalMode, string> = {
         untrusted: 'untrusted',
@@ -2401,11 +2404,12 @@ export class CodexRuntimeService
         'on-request': 'on-request',
         never: 'never',
       };
+      const approvalsReviewer = permissionOptions.approvalsReviewer ?? 'user';
       const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
 
       // Load or create the thread before dispatching the turn. Calling
-      // thread/resume on an already-loaded thread is idempotent — the server
-      // will just confirm it stays subscribed and emit a fresh thread/started.
+      // thread/resume on an already-loaded thread can ignore configuration
+      // overrides. Set the current permissions on turn/start as well.
       const commonThreadParams = {
         cwd: worktreePath,
         model: state.selectedModel ?? this.codexDefaultModel,
@@ -2413,11 +2417,9 @@ export class CodexRuntimeService
           ? { modelReasoningEffort: state.reasoningEffort }
           : {}),
         ...(state.fastMode ? { serviceTier: 'flex', speedTier: 'fast' } : {}),
-        sandbox: sandboxMap[permissionOptions.sandboxMode],
+        sandbox: permissionOptions.sandboxMode,
         approvalPolicy: approvalMap[permissionOptions.approvalPolicy],
-        ...(permissionOptions.approvalsReviewer
-          ? { approvalsReviewer: permissionOptions.approvalsReviewer }
-          : {}),
+        approvalsReviewer,
         // Elevenex's local-computer bridge is hosted by the backend MCP server.
         // Keep this override thread-scoped so we do not modify the user's
         // global Codex config, and allow-list only this capability so ordinary
@@ -2494,6 +2496,12 @@ export class CodexRuntimeService
         {
           threadId: threadIdFilter,
           input,
+          cwd: worktreePath,
+          sandboxPolicy: sandboxPolicies[permissionOptions.sandboxMode],
+          approvalPolicy: approvalMap[permissionOptions.approvalPolicy],
+          // Reviewer selection is sticky too; explicitly reset it when
+          // leaving auto mode instead of retaining the earlier reviewer.
+          approvalsReviewer,
           ...this.buildCollaborationModeParams(state),
         },
       );
