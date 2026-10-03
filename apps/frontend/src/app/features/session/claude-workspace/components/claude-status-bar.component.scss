@@ -1,0 +1,17 @@
+.cw-sb__usage-ring {
+  --usage-percent: 0%;
+  position: relative;
+  width: 0.625rem;
+  height: 0.625rem;
+  flex: none;
+  border-radius: 999px;
+  background: conic-gradient(currentColor var(--usage-percent), var(--muted) 0);
+}
+
+.cw-sb__usage-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0.125rem;
+  border-radius: inherit;
+  background: var(--background);
+}

@@ -1,0 +1,140 @@
+<section
+  class="cw-turn-changes overflow-hidden rounded-xl border border-border bg-card shadow-sm"
+  aria-label="Changes made in this turn"
+>
+  <header
+    class="cw-turn-changes__head flex items-center justify-between gap-3 border-b border-border bg-background/50 px-3 py-2.5"
+  >
+    <div class="cw-turn-changes__title flex min-w-0 items-center gap-2">
+      <span
+        class="cw-turn-changes__icon inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
+        aria-hidden="true"
+      >
+        <ng-icon name="lucideFilePen" size="14" />
+      </span>
+      <div class="cw-turn-changes__copy flex min-w-0 items-baseline gap-2">
+        <span class="cw-turn-changes__label text-[13px] font-semibold text-foreground"
+          >Changes in this turn</span
+        >
+        <span class="cw-turn-changes__summary text-xs whitespace-nowrap text-muted-foreground">
+          {{ details().files }} file{{ details().files === 1 ? '' : 's' }}
+          <span class="cw-turn-changes__add font-semibold text-success"
+            >+{{ details().additions }}</span
+          >
+          <span class="cw-turn-changes__del font-semibold text-destructive"
+            >-{{ details().deletions }}</span
+          >
+        </span>
+      </div>
+    </div>
+    <div class="cw-turn-changes__actions inline-flex items-center gap-1.5">
+      @if (canReview()) {
+        <button
+          z-button
+          zType="outline"
+          zSize="sm"
+          type="button"
+          class="cw-turn-changes__review text-xs text-muted-foreground"
+          aria-label="Open these changes in the review workspace"
+          title="Review whole files and discuss them"
+          (click)="review.emit({})"
+        >
+          <ng-icon name="lucideMessagesSquare" size="13" />
+          <span>Review</span>
+          @if (threadCount() > 0) {
+            <span
+              class="cw-turn-changes__badge inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1 py-0.5 text-[10px] leading-none text-primary-foreground"
+              >{{ threadCount() }}</span
+            >
+          }
+        </button>
+      }
+      <button
+        z-button
+        zType="ghost"
+        zSize="icon-sm"
+        type="button"
+        class="cw-turn-changes__close text-muted-foreground"
+        aria-label="Close changes"
+        title="Close changes"
+        (click)="close.emit()"
+      >
+        <ng-icon name="lucideX" size="14" />
+      </button>
+    </div>
+  </header>
+
+  <div class="cw-turn-changes__files flex flex-col divide-y divide-border">
+    @for (file of renderedFiles(); track file.path; let i = $index) {
+      <article class="cw-turn-changes__file" [attr.data-status]="file.status">
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          type="button"
+          class="cw-turn-changes__file-head grid h-auto min-h-10 w-full grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-none px-3 py-2 text-left font-normal text-foreground focus-visible:ring-inset"
+          [attr.aria-expanded]="isFileOpen(file.path, i)"
+          [title]="file.path"
+          (click)="toggleFile(file.path, i)"
+        >
+          <ng-icon
+            class="cw-turn-changes__chevron inline-flex text-muted-foreground transition-transform duration-150"
+            name="lucideChevronRight"
+            size="14"
+            [class.cw-turn-changes__chevron--open]="isFileOpen(file.path, i)"
+            aria-hidden="true"
+          />
+          <span
+            class="cw-turn-changes__status inline-flex size-5 items-center justify-center rounded-md bg-muted text-[11px] font-bold text-muted-foreground"
+            >{{ file.statusGlyph }}</span
+          >
+          <span class="cw-turn-changes__path flex min-w-0 items-baseline overflow-hidden">
+            @if (file.folder) {
+              <span
+                class="cw-turn-changes__folder min-w-0 flex-1 truncate text-left font-mono text-[11px] text-muted-foreground [direction:rtl] [unicode-bidi:isolate]"
+                >{{ file.folder }}</span
+              >
+              <span
+                class="cw-turn-changes__path-separator shrink-0 px-0.5 font-mono text-[11px] text-muted-foreground"
+                aria-hidden="true"
+                >/</span
+              >
+            }
+            <span
+              class="cw-turn-changes__base max-w-full shrink-0 truncate text-[13px] font-semibold"
+              >{{ file.basename }}</span
+            >
+          </span>
+          <span
+            class="cw-turn-changes__file-meta text-xs whitespace-nowrap text-muted-foreground"
+            >{{ file.statusLabel }}</span
+          >
+          <span
+            class="cw-turn-changes__file-stats inline-flex items-baseline gap-1.5 text-xs font-semibold whitespace-nowrap"
+          >
+            <span class="cw-turn-changes__add font-semibold text-success"
+              >+{{ file.additions }}</span
+            >
+            <span class="cw-turn-changes__del font-semibold text-destructive"
+              >-{{ file.deletions }}</span
+            >
+          </span>
+        </button>
+
+        @if (isFileOpen(file.path, i)) {
+          <div class="cw-turn-changes__file-body flex flex-col gap-2 pr-3 pb-3 pl-10">
+            @for (hunk of file.hunks; track hunk.id) {
+              <cw-inline-diff
+                [html]="hunk.html"
+                [label]="hunk.label"
+                [additions]="hunk.additions"
+                [deletions]="hunk.deletions"
+                emptyText="Inline diff was not captured for this file."
+              />
+            }
+          </div>
+        }
+      </article>
+    }
+  </div>
+</section>

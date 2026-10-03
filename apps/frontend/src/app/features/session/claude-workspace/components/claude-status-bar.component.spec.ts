@@ -1,5 +1,7 @@
 import '@angular/compiler';
+import { OverlayContainer } from '@angular/cdk/overlay';
 import { TestBed } from '@angular/core/testing';
+import { provideZard } from '@/shared/core/provider/providezard';
 import { describe, expect, it } from 'vitest';
 import { ClaudeStatusBarComponent } from './claude-status-bar.component';
 
@@ -7,6 +9,7 @@ describe('ClaudeStatusBarComponent', () => {
   async function render() {
     await TestBed.configureTestingModule({
       imports: [ClaudeStatusBarComponent],
+      providers: [provideZard()],
     }).compileComponents();
 
     const fixture = TestBed.createComponent(ClaudeStatusBarComponent);
@@ -61,9 +64,7 @@ describe('ClaudeStatusBarComponent', () => {
     fixture.componentInstance.permissionModeChange.subscribe((value) =>
       permissionChanges.push(value),
     );
-    fixture.componentInstance.planModeChange.subscribe((value) =>
-      planChanges.push(value),
-    );
+    fixture.componentInstance.planModeChange.subscribe((value) => planChanges.push(value));
     fixture.detectChanges();
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
@@ -113,10 +114,111 @@ describe('ClaudeStatusBarComponent', () => {
     trigger.click();
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.textContent).toContain('Codex usage');
-    expect(fixture.nativeElement.textContent).toContain('5-hour limit');
-    expect(fixture.nativeElement.textContent).toContain('Weekly limit');
-    expect(fixture.nativeElement.textContent).toContain('Plus');
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    expect(overlay.textContent).toContain('Codex usage');
+    expect(overlay.textContent).toContain('5-hour limit');
+    expect(overlay.textContent).toContain('Weekly limit');
+    expect(overlay.textContent).toContain('Plus');
+  });
+
+  it('navigates model choices with the keyboard, selects once and restores trigger focus', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('availableModels', [
+      { id: 'model-a', displayName: 'Model A', description: 'A model' },
+    ]);
+    const selected: string[] = [];
+    fixture.componentInstance.modelChange.subscribe((model) => selected.push(model));
+    fixture.detectChanges();
+
+    const trigger = fixture.nativeElement.querySelector(
+      '[aria-label="Change model"]',
+    ) as HTMLButtonElement;
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    fixture.detectChanges();
+    expect(
+      TestBed.inject(OverlayContainer).getContainerElement().querySelector('[role="menu"]'),
+    ).toBeNull();
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    const menu = overlay.querySelector('[role="menu"]') as HTMLElement;
+    expect(menu).not.toBeNull();
+    expect(menu.getAttribute('aria-label')).toBe('Choose model');
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(document.activeElement?.textContent).toContain('Default');
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(document.activeElement?.textContent).toContain('Model A');
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fixture.detectChanges();
+
+    expect(selected).toEqual(['model-a']);
+    expect(overlay.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('closes menus on Escape and disposes an open menu when the status bar is destroyed', async () => {
+    const fixture = await render();
+    fixture.detectChanges();
+    const trigger = fixture.nativeElement.querySelector(
+      '[aria-label="Change model"]',
+    ) as HTMLButtonElement;
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    trigger.click();
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const menu = overlay.querySelector('[role="menu"]') as HTMLElement;
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    expect(overlay.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+
+    trigger.click();
+    fixture.detectChanges();
+    expect(overlay.querySelector('[role="menu"]')).not.toBeNull();
+    fixture.destroy();
+    expect(overlay.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it('does not open the provider picker when the provider is locked', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('providerLocked', true);
+    fixture.detectChanges();
+    const trigger = fixture.nativeElement.querySelector(
+      '[title="Provider is locked after a session starts"]',
+    ) as HTMLButtonElement;
+    expect(trigger.disabled).toBe(true);
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    fixture.detectChanges();
+    expect(
+      TestBed.inject(OverlayContainer).getContainerElement().querySelector('[role="menu"]'),
+    ).toBeNull();
+  });
+
+  it('leaves a menu with Shift+Tab without toggling plan mode', async () => {
+    const fixture = await render();
+    const planChanges: boolean[] = [];
+    fixture.componentInstance.planModeChange.subscribe((value) => planChanges.push(value));
+    fixture.detectChanges();
+    const trigger = fixture.nativeElement.querySelector(
+      '[aria-label="Change model"]',
+    ) as HTMLButtonElement;
+    trigger.click();
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    const menu = overlay.querySelector('[role="menu"]') as HTMLElement;
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
+    fixture.detectChanges();
+
+    expect(overlay.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(planChanges).toEqual([]);
   });
 
   it('does not reserve status-bar space when plan usage is unavailable', async () => {

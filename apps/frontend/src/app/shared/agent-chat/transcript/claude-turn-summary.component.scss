@@ -1,0 +1,50 @@
+/* Sized against the pill's own width so the band reads the same in the
+   session workspace and in the narrower review dock. */
+:host {
+  display: block;
+  container-type: inline-size;
+  container-name: cw-turn-summary;
+}
+
+/* Multi-stop gradients — not expressible as single Tailwind utilities. */
+.cw-turn-line {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--border) 95%, transparent) 18%,
+    color-mix(in oklab, var(--border) 95%, transparent) 82%,
+    transparent
+  );
+}
+
+.cw-pill-bg {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--card) 96%, var(--surface-tint) 4%),
+    color-mix(in oklab, var(--card) 92%, var(--background))
+  );
+}
+
+/* Top highlight plus a soft drop shadow. Both endpoints come from the
+   surface tokens so the pill does not glow white in dark mode. */
+.cw-pill-shadow {
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--surface-tint) 55%, transparent),
+    0 10px 24px -18px color-mix(in oklab, var(--foreground) 22%, transparent);
+}
+
+.cw-agents-bg {
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in oklab, var(--primary) 6%, transparent),
+      transparent 55%
+    ),
+    color-mix(in oklab, var(--card) 95%, transparent);
+}
+
+@container cw-turn-summary (max-width: 44rem) {
+  .cw-pill-meta {
+    display: none;
+  }
+}

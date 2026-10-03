@@ -1,0 +1,38 @@
+@if (item().kind === 'system') {
+  <details
+    class="cw-msg cw-msg--diagnostic cw-msg--system rounded-md border border-border bg-muted/30 text-xs text-muted-foreground"
+    [attr.title]="timestamp()"
+  >
+    <summary
+      class="grid min-h-7 cursor-pointer list-none grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-1.5 px-2 py-1 focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"
+    >
+      <ng-icon name="lucideInfo" size="13" />
+      <span class="font-semibold text-foreground">{{ title() }}</span>
+      <span class="min-w-0 truncate">{{ preview() }}</span>
+      @if (timestamp(); as label) {
+        <span class="text-[11px]" aria-hidden="true">{{ label }}</span>
+      }
+    </summary>
+    <pre
+      class="m-0 max-h-56 overflow-auto border-t border-border px-2.5 pt-2 pb-2.5 font-mono text-xs leading-normal whitespace-pre-wrap text-foreground wrap-break-word"
+      >{{ item().content }}</pre
+    >
+  </details>
+} @else {
+  <div
+    class="cw-msg cw-msg--diagnostic cw-msg--error rounded-md border border-destructive/35 bg-destructive/10 text-xs text-destructive"
+    [attr.title]="timestamp()"
+  >
+    <div class="flex min-h-7 items-center gap-1.5 px-2 py-1">
+      <ng-icon name="lucideTriangleAlert" size="13" />
+      <span class="font-semibold">{{ title() }}</span>
+      @if (timestamp(); as label) {
+        <span class="ml-auto text-[11px]" aria-hidden="true">{{ label }}</span>
+      }
+    </div>
+    <pre
+      class="m-0 max-h-56 overflow-auto border-t border-border px-2.5 pt-2 pb-2.5 font-mono text-xs leading-normal whitespace-pre-wrap text-foreground wrap-break-word"
+      >{{ item().content }}</pre
+    >
+  </div>
+}

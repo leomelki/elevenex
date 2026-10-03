@@ -1,0 +1,14 @@
+@if (sessionCards().length) {
+  <div class="grid gap-1.5" aria-label="Mentioned sessions">
+    @for (entry of sessionCards(); track entry.id) {
+      <cw-agent-mention class="cw-msg__mention" [mention]="entry.card" />
+    }
+  </div>
+}
+@if (diffCards().length) {
+  <div class="grid gap-1.5" aria-label="Mentioned diff selections">
+    @for (entry of diffCards(); track entry.id) {
+      <cw-agent-mention class="cw-msg__mention" [mention]="entry.card" />
+    }
+  </div>
+}

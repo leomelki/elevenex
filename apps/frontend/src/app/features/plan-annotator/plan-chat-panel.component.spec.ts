@@ -1,13 +1,13 @@
+import type { PlanReviewRequest } from '@/shared/models/plan-review.model';
+import type { PlanChatFork, Session } from '@/shared/models/session.model';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
 import { of, Subject } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
-import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
-import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
-import type { PlanChatFork, Session } from '@/shared/models/session.model';
 import { PlanChatPanelComponent, sanitizePlanChatUserContent } from './plan-chat-panel.component';
 import { PlanChatService } from './plan-chat.service';
-import type { PlanReviewRequest } from './plan-review.model';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -67,6 +67,77 @@ function makeReview(overrides: Partial<PlanReviewRequest> = {}): PlanReviewReque
 }
 
 describe('PlanChatPanelComponent', () => {
+  it('keeps HTTP submission locked when hydration reports an idle runtime', async () => {
+    const events = new Subject<any>();
+    const submitted = new Subject<any>();
+    const chat = makePlanChat();
+    const planChats = {
+      getByReview: vi.fn(() => of([chat])),
+      submitQuestion: vi.fn(() => submitted),
+    };
+    await TestBed.configureTestingModule({
+      imports: [PlanChatPanelComponent],
+      providers: [
+        { provide: PlanChatService, useValue: planChats },
+        {
+          provide: AgentRuntimeWebsocketService,
+          useValue: { borrow: () => events, send: vi.fn(), releaseBorrow: vi.fn() },
+        },
+        { provide: AgentRuntimeApiService, useValue: {} },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(PlanChatPanelComponent);
+    const review = makeReview();
+    fixture.componentRef.setInput('review', review);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const component = fixture.componentInstance;
+    component.draft.set('First question');
+    const send = component.sendQuestion(review);
+    await Promise.resolve();
+    events.next({ type: 'run_state', payload: { runPhase: 'idle' } });
+    expect(component.sending()).toBe(true);
+    component.draft.set('Second question');
+    await component.sendQuestion(review);
+    expect(planChats.submitQuestion).toHaveBeenCalledTimes(1);
+    submitted.next({});
+    await send;
+    expect(component.sending()).toBe(false);
+    expect(component.draft()).toBe('Second question');
+  });
+
+  it('does not attach a fork returned after the reviewed plan changes', async () => {
+    const ensured = new Subject<any>();
+    const planChats = {
+      getByReview: vi.fn(() => of([])),
+      ensure: vi.fn(() => ensured),
+      submitQuestion: vi.fn(),
+    };
+    const ws = { borrow: vi.fn(), send: vi.fn(), releaseBorrow: vi.fn() };
+    await TestBed.configureTestingModule({
+      imports: [PlanChatPanelComponent],
+      providers: [
+        { provide: PlanChatService, useValue: planChats },
+        { provide: AgentRuntimeWebsocketService, useValue: ws },
+        { provide: AgentRuntimeApiService, useValue: {} },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(PlanChatPanelComponent);
+    const review = makeReview();
+    fixture.componentRef.setInput('review', review);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.componentInstance.draft.set('Old question');
+    const send = fixture.componentInstance.sendQuestion(review);
+    fixture.componentRef.setInput('review', makeReview({ reviewId: 'new-plan' }));
+    fixture.detectChanges();
+    ensured.next({ planChat: makePlanChat() });
+    await send;
+    expect(ws.borrow).not.toHaveBeenCalled();
+    expect(planChats.submitQuestion).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.currentChat()).toBeNull();
+  });
+
   it('strips server guard text from displayed user questions', () => {
     expect(
       sanitizePlanChatUserContent(
@@ -87,9 +158,9 @@ describe('PlanChatPanelComponent', () => {
       delete: vi.fn(),
     };
     const websocketMock = {
-      connect: vi.fn(() => events$.asObservable()),
+      borrow: vi.fn(() => events$.asObservable()),
       send: vi.fn(),
-      disconnect: vi.fn(),
+      releaseBorrow: vi.fn(),
     };
     const agentApiMock = {
       getHistory: vi.fn(() => of([])),
@@ -125,7 +196,7 @@ describe('PlanChatPanelComponent', () => {
     expect(planChatsMock.submitQuestion).toHaveBeenCalledWith(11, 5, {
       question: 'What changes?',
     });
-    expect(websocketMock.connect).toHaveBeenCalledWith(22, 'codex');
+    expect(websocketMock.borrow).toHaveBeenCalledWith(22, 'codex');
     expect(websocketMock.send).toHaveBeenCalledWith(22, { type: 'hydrate' }, 'codex');
   });
 
@@ -165,9 +236,9 @@ describe('PlanChatPanelComponent', () => {
       delete: vi.fn(),
     };
     const websocketMock = {
-      connect: vi.fn(() => events$.asObservable()),
+      borrow: vi.fn(() => events$.asObservable()),
       send: vi.fn(),
-      disconnect: vi.fn(),
+      releaseBorrow: vi.fn(),
     };
     // The first run's refresh only sees the first answer — the second is unpersisted.
     const agentApiMock = {
@@ -190,17 +261,17 @@ describe('PlanChatPanelComponent', () => {
 
     const component = fixture.componentInstance;
     // Both answers are present live when the first run's stale refresh fires.
-    component.historyItems.set([q1, a1History] as never);
-    component.liveItems.set([a1Live, a2Live] as never);
+    component.conversation.history.set([q1, a1History] as never);
+    component.conversation.live.set([a1Live, a2Live] as never);
 
     events$.next({ type: 'complete', payload: { sessionId: 22 } });
     await fixture.whenStable();
     fixture.detectChanges();
 
     // The persisted first answer is dropped from live; the in-flight second answer survives.
-    expect(component.liveItems().map((item) => item.id)).toEqual(['m2:0']);
+    expect(component.conversation.live().map((item) => item.id)).toEqual(['m2:0']);
 
-    const assistants = component.visibleItems().filter((item) => item.kind === 'assistant');
+    const assistants = component.conversation.items().filter((item) => item.kind === 'assistant');
     expect(assistants.filter((item) => item.sourceMessageId === 'm1')).toHaveLength(1);
     expect(assistants.some((item) => item.content === 'Second answer')).toBe(true);
   });
@@ -220,9 +291,9 @@ describe('PlanChatPanelComponent', () => {
       delete: vi.fn(),
     };
     const websocketMock = {
-      connect: vi.fn(() => events$.asObservable()),
+      borrow: vi.fn(() => events$.asObservable()),
       send: vi.fn(),
-      disconnect: vi.fn(),
+      releaseBorrow: vi.fn(),
     };
     const agentApiMock = {
       getHistory: vi.fn(() => of([])),

@@ -1,0 +1,319 @@
+<div
+  class="browser-panel"
+  [class.browser-panel--devtools-open]="isDevtoolsOpen()"
+  [class.browser-panel--dragging]="isDraggingDevtools()"
+  [style.--browser-devtools-size]="devtoolsPaneSize()"
+  [style.--browser-devtools-grid-template]="devtoolsGridTemplate()"
+>
+  <div class="browser-tabs-bar">
+    <div class="browser-tabs-list" role="tablist" aria-label="Browser tabs">
+      @for (tab of browserTabs(); track tab.tabId) {
+        <div
+          class="browser-tab-pill"
+          [class.browser-tab-pill--active]="tab.tabId === activeTabId()"
+          [class.browser-tab-pill--editing]="editingTabId() === tab.tabId"
+          role="tab"
+          [attr.aria-selected]="tab.tabId === activeTabId()"
+          (click)="selectBrowserTab(tab.tabId)"
+          (dblclick)="beginRename(tab.tabId)"
+        >
+          @if (editingTabId() === tab.tabId) {
+            <input
+              class="browser-tab-pill-input"
+              type="text"
+              [value]="renameDraft()"
+              maxlength="80"
+              autofocus
+              (click)="$event.stopPropagation()"
+              (input)="renameDraft.set($any($event.target).value)"
+              (blur)="commitRename()"
+              (keydown.enter)="commitRename()"
+              (keydown.escape)="cancelRename()"
+            />
+          } @else {
+            <button
+              type="button"
+              class="browser-tab-pill-main"
+              [title]="tab.label"
+              (click)="selectBrowserTab(tab.tabId)"
+            >
+              <span class="browser-tab-pill-title">{{ tab.label }}</span>
+              <span class="browser-tab-pill-meta">{{ tab.secondaryLabel }}</span>
+            </button>
+          }
+
+          <button
+            type="button"
+            class="browser-tab-pill-icon"
+            [attr.aria-label]="'Close browser tab ' + tab.label"
+            title="Close tab"
+            (click)="closeBrowserTab($event, tab.tabId)"
+          >
+            <ng-icon name="lucideX" size="14" />
+          </button>
+        </div>
+      }
+
+      @if (canAddTab()) {
+        <button
+          type="button"
+          class="browser-add-tab"
+          aria-label="Open a new browser tab"
+          title="New browser tab"
+          (click)="addBrowserTab()"
+        >
+          <ng-icon name="lucidePlus" size="15" />
+        </button>
+      }
+    </div>
+  </div>
+
+  <div class="browser-toolbar">
+    <div class="browser-toolbar-group">
+      <button
+        type="button"
+        class="browser-tool-button"
+        [disabled]="!currentState()?.canGoBack"
+        aria-label="Go back"
+        title="Back"
+        (click)="goBack()"
+      >
+        <ng-icon name="lucideArrowLeft" size="16" />
+      </button>
+      <button
+        type="button"
+        class="browser-tool-button"
+        [disabled]="!currentState()?.canGoForward"
+        aria-label="Go forward"
+        title="Forward"
+        (click)="goForward()"
+      >
+        <ng-icon name="lucideArrowRight" size="16" />
+      </button>
+      <button
+        type="button"
+        class="browser-tool-button"
+        [disabled]="!activeTab()"
+        aria-label="Reload"
+        title="Reload"
+        (click)="reload()"
+      >
+        @if (currentState()?.isLoading) {
+          <ng-icon name="lucideLoaderCircle" size="16" class="browser-spinner" />
+        } @else {
+          <ng-icon name="lucideRefreshCw" size="16" />
+        }
+      </button>
+    </div>
+
+    <form class="browser-address-bar" (submit)="submitUrl($event)">
+      <span class="browser-address-icon" aria-hidden="true">
+        <ng-icon name="lucideGlobe" size="14" />
+      </span>
+      <input
+        class="browser-address-input"
+        type="text"
+        [value]="urlInput()"
+        [placeholder]="hasTabs() ? 'Enter a URL' : 'Create a tab to start browsing'"
+        spellcheck="false"
+        autocapitalize="off"
+        autocomplete="off"
+        [disabled]="!activeTab()"
+        (focus)="isEditing.set(true)"
+        (blur)="handleInputBlur($event)"
+        (input)="handleInput($event)"
+      />
+    </form>
+
+    <div class="browser-toolbar-group browser-toolbar-group--meta">
+      <div
+        class="browser-chip browser-chip--context"
+        [class.browser-chip--shared]="activeRuntimeContext() === 'shared'"
+        [class.browser-chip--isolated]="activeRuntimeContext() === 'isolated'"
+        [title]="
+          activeRuntimeContext() === 'shared'
+            ? 'This page is using the shared browser profile.'
+            : 'This page is using the project-isolated browser profile.'
+        "
+      >
+        <span class="browser-chip-text">{{ activeRuntimeContextLabel() }}</span>
+      </div>
+
+      @if (isDevtoolsOpen()) {
+        <div class="browser-dock-toggle">
+          <button
+            type="button"
+            class="browser-dock-button"
+            [class.browser-dock-button--active]="dockPosition() === 'right'"
+            aria-label="Dock DevTools to the right"
+            title="Show DevTools side by side"
+            (click)="setDockPosition('right')"
+          >
+            <ng-icon name="lucideColumns2" size="14" />
+          </button>
+          <button
+            type="button"
+            class="browser-dock-button"
+            [class.browser-dock-button--active]="dockPosition() === 'bottom'"
+            aria-label="Dock DevTools at the bottom"
+            title="Show DevTools stacked"
+            (click)="setDockPosition('bottom')"
+          >
+            <ng-icon name="lucideRows2" size="14" />
+          </button>
+        </div>
+      }
+
+      <button
+        type="button"
+        class="browser-devtools-toggle"
+        [class.browser-devtools-toggle--active]="isDevtoolsOpen()"
+        [disabled]="!hasLivePage()"
+        [attr.aria-pressed]="isDevtoolsOpen()"
+        [title]="isDevtoolsOpen() ? 'Hide embedded DevTools' : 'Show embedded DevTools'"
+        (click)="toggleDevTools()"
+      >
+        <ng-icon name="lucideSquareTerminal" size="15" />
+        <span>{{ isDevtoolsOpen() ? 'Hide tools' : 'Inspect' }}</span>
+      </button>
+
+      <button
+        type="button"
+        class="browser-tool-button"
+        [class.browser-tool-button--active]="showSettingsPopover()"
+        aria-label="Browser settings"
+        title="Browser routing settings"
+        (click)="toggleSettingsPopover($event)"
+      >
+        <ng-icon name="lucideSettings" size="15" />
+      </button>
+    </div>
+  </div>
+
+  @if (showSettingsPopover()) {
+    <div class="browser-settings-popover" (click)="$event.stopPropagation()">
+      <div class="browser-settings-popover-header">
+        <span class="browser-settings-popover-title">Browser Routing</span>
+        <button
+          type="button"
+          class="browser-settings-popover-close"
+          (click)="showSettingsPopover.set(false)"
+        >
+          <ng-icon name="lucideX" size="14" />
+        </button>
+      </div>
+      <div class="browser-settings-mode-row">
+        <button
+          type="button"
+          class="browser-settings-mode-btn"
+          [class.browser-settings-mode-btn--active]="effectiveIsolationMode() === 'shared'"
+          (click)="setIsolationMode('shared')"
+        >
+          <ng-icon name="lucideGlobe" size="14" />
+          Shared
+        </button>
+        <button
+          type="button"
+          class="browser-settings-mode-btn"
+          [class.browser-settings-mode-btn--active]="effectiveIsolationMode() === 'isolated'"
+          (click)="setIsolationMode('isolated')"
+        >
+          <ng-icon name="lucideShield" size="14" />
+          Isolated
+        </button>
+      </div>
+      @if (effectiveIsolationMode() === 'isolated') {
+        <div class="browser-settings-globs">
+          <span class="browser-settings-globs-label">Shared browser URL patterns</span>
+          <p class="browser-settings-globs-copy">
+            Matching top-level URLs open in the shared browser profile. Non-matching URLs fall back
+            to this project's isolated browser.
+          </p>
+          @if (effectiveSharedGlobs().length > 0) {
+            <div class="browser-settings-glob-chips">
+              @for (glob of effectiveSharedGlobs(); track glob; let i = $index) {
+                <span class="browser-settings-glob-chip">
+                  {{ glob }}
+                  <button type="button" (click)="removeGlob(i)">
+                    <ng-icon name="lucideX" size="10" />
+                  </button>
+                </span>
+              }
+            </div>
+          }
+          <div class="browser-settings-glob-input">
+            <input
+              z-input
+              type="text"
+              placeholder="https://accounts.google.com/*"
+              [value]="settingsGlobInput()"
+              (input)="settingsGlobInput.set($any($event.target).value)"
+              (keydown.enter)="addGlob()"
+            />
+            <button z-button [zDisabled]="!settingsGlobInput().trim()" (click)="addGlob()">
+              <ng-icon name="lucidePlus" size="14" class="mr-1" />
+              Add
+            </button>
+          </div>
+        </div>
+      }
+    </div>
+  }
+
+  <div #surface class="browser-surface">
+    <div class="browser-stage-grid">
+      <div #browserViewport class="browser-native-host browser-native-host--page"></div>
+
+      <button
+        type="button"
+        class="browser-splitter"
+        [class.browser-splitter--vertical]="isSideBySide()"
+        [hidden]="!isDevtoolsOpen()"
+        aria-label="Resize DevTools panel"
+        title="Drag to resize DevTools"
+        (pointerdown)="startDevtoolsResize($event)"
+      >
+        <span class="browser-splitter-grip"></span>
+      </button>
+
+      <div
+        #devtoolsViewport
+        class="browser-native-host browser-native-host--devtools"
+        [class.browser-native-host--hidden]="!isDevtoolsOpen()"
+      ></div>
+    </div>
+
+    @if (!isSupported()) {
+      <div class="browser-overlay">
+        <p class="browser-message">The browser panel is only available in the Electron app.</p>
+      </div>
+    } @else if (!hasTabs()) {
+      <div class="browser-overlay">
+        <div class="browser-empty-state">
+          <p class="browser-message">Keep up to three live tabs attached to this project.</p>
+          <p class="browser-caption">
+            Tabs restore their URLs and custom names when you come back. DevTools stays available
+            whenever a live page is open.
+          </p>
+          <button type="button" class="browser-empty-action" (click)="addBrowserTab()">
+            <ng-icon name="lucidePlus" size="14" />
+            Create first tab
+          </button>
+        </div>
+      </div>
+    } @else if (currentState()?.lastError) {
+      <div class="browser-overlay browser-overlay--bottom">
+        <p class="browser-error">{{ currentState()!.lastError }}</p>
+      </div>
+    } @else if (!currentState() || currentState()?.url === 'about:blank') {
+      <div class="browser-overlay">
+        <div class="browser-empty-state browser-empty-state--compact">
+          <p class="browser-message">This tab is ready.</p>
+          <p class="browser-caption">
+            Enter a URL above to load a page, then rename the tab if you want a custom label.
+          </p>
+        </div>
+      </div>
+    }
+  </div>
+</div>

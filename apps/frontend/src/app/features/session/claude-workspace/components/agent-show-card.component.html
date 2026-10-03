@@ -1,0 +1,40 @@
+<div class="show-card">
+  <div class="show-card__header">
+    <span class="show-card__icon" aria-hidden="true">
+      <ng-icon name="lucidePresentation" size="13" />
+    </span>
+    <strong class="show-card__title">{{ show().title }}</strong>
+    <div class="show-card__header-actions">
+      @if (show().deepLink) {
+        <button type="button" class="show-card__open" (click)="onOpen()">
+          <ng-icon name="lucideArrowUpRight" size="13" />
+          Open
+        </button>
+      }
+      <button
+        type="button"
+        class="show-card__dismiss"
+        aria-label="Dismiss"
+        (click)="dismiss.emit(show().id)"
+      >
+        <ng-icon name="lucideX" size="12" />
+      </button>
+    </div>
+  </div>
+
+  @if (show().body) {
+    <div class="show-card__body" [class.show-card__body--expanded]="expanded()">
+      <p class="show-card__body-text">{{ show().body }}</p>
+    </div>
+    @if (isBodyTruncated()) {
+      <button type="button" class="show-card__expand" (click)="toggleExpand()">
+        <ng-icon
+          name="lucideChevronDown"
+          size="11"
+          [style.transform]="expanded() ? 'rotate(180deg)' : ''"
+        />
+        {{ expanded() ? 'Show less' : 'Show more' }}
+      </button>
+    }
+  }
+</div>

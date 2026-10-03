@@ -1,3 +1,4 @@
+import { PlanAnnotatorComment, PlanReviewRequest } from '@/shared/models/plan-review.model';
 import { describe, expect, it } from 'vitest';
 import {
   fingerprintPlan,
@@ -5,7 +6,6 @@ import {
   formatPlanRejectionMessage,
   planDraftStorageKey,
 } from './plan-feedback';
-import { PlanAnnotatorComment, PlanReviewRequest } from './plan-review.model';
 
 describe('plan-feedback', () => {
   const review: PlanReviewRequest = {

@@ -1,4 +1,17 @@
 import {
+  ForkedChatComponent,
+  type ForkedChatContextNote,
+  type ForkedChatLens,
+  type ForkedChatTarget,
+} from '@/shared/agent-chat';
+import { ZardDialogService } from '@/shared/components/dialog';
+import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
+import type { ReviewChat } from '@/shared/models/review-chat.model';
+import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
+import { type ConnectedPosition, OverlayModule } from '@angular/cdk/overlay';
+import { CommonModule } from '@angular/common';
+import {
   ChangeDetectionStrategy,
   Component,
   computed,
@@ -8,8 +21,6 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { type ConnectedPosition, OverlayModule } from '@angular/cdk/overlay';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
@@ -23,21 +34,8 @@ import {
   lucideTriangleAlert,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
-import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
-import type { ReviewChat } from '@/shared/models/review-chat.model';
-import {
-  ForkedChatComponent,
-  type ForkedChatContextNote,
-  type ForkedChatLens,
-  type ForkedChatTarget,
-} from '@/shared/agent-chat';
-import { ZardDialogService } from '@/shared/components/dialog';
-import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
 import { anchorLabel } from './review-anchors';
-import {
-  ReviewWorkspaceStateService,
-  SESSION_TAB_ID,
-} from './review-workspace-state.service';
+import { ReviewWorkspaceStateService, SESSION_TAB_ID } from './review-workspace-state.service';
 
 const REVIEW_QUESTION_RE =
   /<elevenex_review_question>\s*([\s\S]*?)\s*<\/elevenex_review_question>/i;
@@ -79,6 +77,7 @@ const SESSION_LENS: ForkedChatLens = {
   styleUrl: './review-thread-dock.component.scss',
 })
 export class ReviewThreadDockComponent {
+  readonly openLocalFile = output<LocalFileTarget>();
   readonly sessionId = input.required<number>();
   readonly provider = input.required<AgentProviderId>();
   /** Lets tool cards and messages shorten paths against the session worktree. */
@@ -111,9 +110,7 @@ export class ReviewThreadDockComponent {
     { originX: 'start', originY: 'top', overlayX: 'start', overlayY: 'bottom', offsetY: -2 },
   ];
 
-  readonly isSessionTab = computed(
-    () => this.state.activeThreadId() === SESSION_TAB_ID,
-  );
+  readonly isSessionTab = computed(() => this.state.activeThreadId() === SESSION_TAB_ID);
 
   /**
    * Only the focused thread holds a socket: attaching one prewarms an agent

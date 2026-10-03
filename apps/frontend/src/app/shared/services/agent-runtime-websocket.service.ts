@@ -10,8 +10,8 @@ interface Connection {
   ws: WebSocket;
   subject: Subject<AgentRuntimeEvent>;
   /**
-   * True once an owner called `connect()`. Owners control the socket lifetime;
-   * borrowers must never close a socket an owner is relying on.
+   * True while the main workspace owns the socket. Embedded surfaces keep
+   * their own borrow references so either surface can close independently.
    */
   owned: boolean;
   /** Number of outstanding `borrow()` calls that have not been released. */
@@ -44,9 +44,8 @@ export class AgentRuntimeWebsocketService {
    * Attach to a session's socket *without* owning its lifetime.
    *
    * Secondary surfaces (the review workspace thread dock, for example) need to
-   * observe a session another component already owns. They must not call
-   * `disconnect()`, which force-closes the socket out from under that owner —
-   * they pair `borrow()` with `releaseBorrow()` instead.
+   * observe a session another component already owns. They pair `borrow()`
+   * with `releaseBorrow()` so the owner and other borrowers can keep using it.
    */
   borrow(
     sessionId: number,
@@ -66,7 +65,7 @@ export class AgentRuntimeWebsocketService {
 
   /**
    * Drop one `borrow()` reference. The socket is closed only when no borrowers
-   * remain *and* no owner ever claimed it via `connect()`.
+   * remain and the owner has released it via `disconnect()`.
    */
   releaseBorrow(
     sessionId: number,
@@ -83,8 +82,7 @@ export class AgentRuntimeWebsocketService {
       return;
     }
 
-    this.connections.delete(key);
-    connection.ws.close();
+    this.closeConnection(key, connection);
   }
 
   private open(
@@ -169,14 +167,13 @@ export class AgentRuntimeWebsocketService {
   ): boolean {
     const connection = this.connections.get(this.connectionKey(sessionId, provider));
     return (
-      connection?.ws.readyState === WebSocket.OPEN
-      || connection?.ws.readyState === WebSocket.CONNECTING
+      connection?.ws.readyState === WebSocket.OPEN ||
+      connection?.ws.readyState === WebSocket.CONNECTING
     );
   }
 
   /**
-   * Owner-side close. Force-closes the socket regardless of borrowers, which is
-   * what the owning surface wants on teardown. Borrowers use `releaseBorrow()`.
+   * Release the main workspace's ownership, retaining any embedded borrowers.
    */
   disconnect(
     sessionId: number,
@@ -188,8 +185,8 @@ export class AgentRuntimeWebsocketService {
       return;
     }
 
-    this.connections.delete(key);
-    connection.ws.close();
+    connection.owned = false;
+    if (connection.borrowers === 0) this.closeConnection(key, connection);
   }
 
   disconnectSession(sessionId: number): void {
@@ -198,9 +195,14 @@ export class AgentRuntimeWebsocketService {
       if (!key.endsWith(suffix)) {
         continue;
       }
-      this.connections.delete(key);
-      connection.ws.close();
+      this.closeConnection(key, connection);
     }
+  }
+
+  private closeConnection(key: string, connection: Connection): void {
+    this.connections.delete(key);
+    this.getOrCreateStateSubject(key).next('disconnected');
+    connection.ws.close();
   }
 
   connectionState$(

@@ -1,0 +1,160 @@
+<div class="cw-ask mt-0.5 flex flex-col gap-2">
+  <div class="cw-ask__nav flex min-h-4 items-center gap-2">
+    <span
+      class="cw-ask__progress text-[11px] font-bold uppercase tracking-wide text-muted-foreground"
+      >{{ progressLabel() }}</span
+    >
+  </div>
+
+  @if (isReviewing()) {
+    <section
+      class="cw-ask__recap flex max-h-48 flex-col gap-1.5 overflow-auto"
+      aria-label="Review answers"
+    >
+      @for (question of questions(); track questionKey(question)) {
+        <div
+          class="cw-ask__recap-item grid grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] items-start gap-2 rounded-lg border border-border bg-muted/40 px-2 py-2 max-[540px]:grid-cols-1 max-[540px]:gap-1"
+        >
+          <span class="cw-ask__recap-question min-w-0 text-xs leading-snug text-muted-foreground">{{
+            question.question
+          }}</span>
+          <span
+            class="cw-ask__recap-answer min-w-0 text-[13px] font-medium leading-snug text-foreground wrap-anywhere"
+            >{{ serializeAnswer(question) }}</span
+          >
+        </div>
+      }
+    </section>
+  } @else if (activeQuestion(); as question) {
+    <section class="cw-ask__q flex flex-col gap-2">
+      <div class="cw-ask__qhead flex flex-wrap items-center gap-2">
+        @if (question.header) {
+          <span
+            class="cw-ask__chip rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+            >{{ question.header }}</span
+          >
+        }
+        <span class="cw-ask__qtext text-sm font-semibold leading-snug text-foreground">{{
+          question.question
+        }}</span>
+      </div>
+
+      <div class="cw-ask__options flex flex-col gap-1.5">
+        @for (option of question.options; track option.label) {
+          <label
+            class="cw-ask__opt flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-background px-2.5 py-2 transition-colors hover:border-primary/25 focus-within:ring-2 focus-within:ring-ring/50 data-[selected=true]:border-primary data-[selected=true]:bg-primary/5"
+            [attr.data-selected]="isSelected(question, option.label)"
+          >
+            <input
+              class="mt-0.5 accent-primary"
+              [type]="question.multiSelect ? 'checkbox' : 'radio'"
+              [name]="questionKey(question)"
+              [checked]="isSelected(question, option.label)"
+              (change)="toggleOption(question, option.label, $any($event.target).checked)"
+            />
+            <span class="cw-ask__opt-body flex min-w-0 flex-col gap-0.5">
+              <span class="cw-ask__opt-label text-[13px] font-medium text-foreground">{{
+                option.label
+              }}</span>
+              @if (option.description) {
+                <span class="cw-ask__opt-desc text-xs leading-normal text-muted-foreground">{{
+                  option.description
+                }}</span>
+              }
+            </span>
+          </label>
+        }
+
+        <label
+          class="cw-ask__opt flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-background px-2.5 py-2 transition-colors hover:border-primary/25 focus-within:ring-2 focus-within:ring-ring/50 data-[selected=true]:border-primary data-[selected=true]:bg-primary/5"
+          [attr.data-selected]="isOtherSelected(question)"
+        >
+          <input
+            class="mt-0.5 accent-primary"
+            [type]="question.multiSelect ? 'checkbox' : 'radio'"
+            [name]="questionKey(question)"
+            [checked]="isOtherSelected(question)"
+            (change)="toggleOther(question, $any($event.target).checked)"
+          />
+          <span class="cw-ask__opt-body flex min-w-0 flex-col gap-0.5">
+            <span class="cw-ask__opt-label text-[13px] font-medium text-foreground">Other...</span>
+          </span>
+        </label>
+
+        @if (isOtherSelected(question)) {
+          <textarea
+            z-input
+            #otherTa
+            class="cw-ask__other min-h-14 resize-y text-[13px]"
+            [ngModel]="otherAnswers()[questionKey(question)] || ''"
+            (ngModelChange)="setOtherAnswer(questionKey(question), $event)"
+            placeholder="Type your answer"
+          ></textarea>
+        }
+      </div>
+
+      @if (selectedPreview(question); as preview) {
+        <agent-markdown
+          class="cw-ask__preview mt-1 max-h-48 overflow-auto rounded-lg border border-border bg-muted/40 px-3 py-2 text-[13px] leading-relaxed"
+          [content]="preview"
+        />
+      }
+    </section>
+  }
+
+  <footer class="cw-ask__actions mt-1.5 flex flex-wrap items-center gap-1.5">
+    <button
+      z-button
+      zType="ghost"
+      zSize="sm"
+      type="button"
+      class="cw-btn max-[540px]:flex-1 cw-btn--deny text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      (click)="decline.emit()"
+    >
+      <ng-icon name="lucideX" size="13" aria-hidden="true" />
+      {{ declineLabel() }}
+    </button>
+    <span class="cw-ask__spacer flex-1 max-[540px]:hidden"></span>
+    @if (canGoBack()) {
+      <button
+        z-button
+        zType="secondary"
+        zSize="sm"
+        type="button"
+        class="cw-btn max-[540px]:flex-1 cw-btn--secondary"
+        (click)="goBack()"
+      >
+        <ng-icon name="lucideChevronLeft" size="13" aria-hidden="true" />
+        Back
+      </button>
+    }
+    @if (showNextButton()) {
+      <button
+        z-button
+        zType="default"
+        zSize="sm"
+        type="button"
+        class="cw-btn max-[540px]:flex-1 cw-btn--primary"
+        [zDisabled]="!canAdvanceActiveQuestion()"
+        (click)="advance()"
+      >
+        <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+        Next
+      </button>
+    }
+    @if (isReviewing()) {
+      <button
+        z-button
+        zType="default"
+        zSize="sm"
+        type="button"
+        class="cw-btn max-[540px]:flex-1 cw-btn--primary"
+        [zDisabled]="!canSubmit()"
+        (click)="submit()"
+      >
+        <ng-icon name="lucideCheck" size="13" aria-hidden="true" />
+        {{ submitLabel() }}
+      </button>
+    }
+  </footer>
+</div>

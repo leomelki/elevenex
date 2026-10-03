@@ -1,0 +1,86 @@
+@if (config.zClosable || config.zClosable === undefined) {
+  <button
+    type="button"
+    data-testid="z-close-header-button"
+    z-button
+    zType="ghost"
+    zSize="sm"
+    class="absolute top-1 right-1 cursor-pointer"
+    cdkFocusInitial
+    [attr.aria-label]="config.zCloseLabel ?? 'Close panel'"
+    (click)="onCloseClick()"
+  >
+    <ng-icon name="lucideX" />
+  </button>
+}
+
+@if (config.zTitle || config.zDescription) {
+  <header data-slot="sheet-header" class="flex flex-col gap-1.5 p-4">
+    @if (config.zTitle) {
+      <h4
+        data-testid="z-title"
+        data-slot="sheet-title"
+        class="text-lg leading-none font-semibold tracking-tight"
+      >
+        {{ config.zTitle }}
+      </h4>
+
+      @if (config.zDescription) {
+        <p
+          data-testid="z-description"
+          data-slot="sheet-description"
+          class="text-muted-foreground text-sm"
+        >
+          {{ config.zDescription }}
+        </p>
+      }
+    }
+  </header>
+}
+
+<main class="flex w-full flex-col space-y-4">
+  <ng-template cdkPortalOutlet />
+
+  @if (isStringContent) {
+    <div data-testid="z-content" data-slot="sheet-content" [innerHTML]="config.zContent"></div>
+  }
+</main>
+
+@if (!config.zHideFooter) {
+  <footer data-slot="sheet-footer" class="mt-auto flex flex-col gap-2 p-4">
+    @if (config.zOkText !== null) {
+      <button
+        type="button"
+        data-testid="z-ok-button"
+        class="cursor-pointer"
+        z-button
+        [zType]="config.zOkDestructive ? 'destructive' : 'default'"
+        [zDisabled]="config.zOkDisabled ?? false"
+        (click)="onOkClick()"
+      >
+        @if (config.zOkIcon) {
+          <ng-icon [svg]="config.zOkIcon" />
+        }
+
+        {{ config.zOkText ?? 'OK' }}
+      </button>
+    }
+
+    @if (config.zCancelText !== null) {
+      <button
+        type="button"
+        data-testid="z-cancel-button"
+        class="cursor-pointer"
+        z-button
+        zType="outline"
+        (click)="onCloseClick()"
+      >
+        @if (config.zCancelIcon) {
+          <ng-icon [svg]="config.zCancelIcon" />
+        }
+
+        {{ config.zCancelText ?? 'Cancel' }}
+      </button>
+    }
+  </footer>
+}

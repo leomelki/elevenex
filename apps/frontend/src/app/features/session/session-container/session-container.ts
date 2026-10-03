@@ -214,8 +214,8 @@ export class SessionContainer implements OnInit, OnDestroy {
     if (!sessionId) return [];
     return (
       this.claudeWorkspaces()
-        .find((workspace) => workspace.sessionId === sessionId)
-        ?.pendingDiffMentions() ?? []
+        .find((workspace) => workspace.sessionId() === sessionId)
+        ?.draft.pendingDiffMentions() ?? []
     );
   });
 
@@ -686,7 +686,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   private workspaceForSession(sessionId: number): ClaudeWorkspaceComponent | null {
-    return this.claudeWorkspaces().find((workspace) => workspace.sessionId === sessionId) ?? null;
+    return this.claudeWorkspaces().find((workspace) => workspace.sessionId() === sessionId) ?? null;
   }
 
   private setClaudeSurfaceMode(sessionId: number, mode: ClaudeSurfaceMode, userExplicit = false): void {

@@ -57,231 +57,236 @@
         [class.pointer-events-none]="reviewRouteActive()"
         [attr.aria-hidden]="reviewRouteActive() ? 'true' : null"
       >
-      <z-resizable zLayout="vertical" class="h-full" (zResizeEnd)="onVerticalResizeEnd($event)">
-        <!-- Top: Main panels -->
-        <z-resizable-panel [zDefaultSize]="bottomPanelVisible() ? 70 : 100" [zMin]="30">
-          <z-resizable zLayout="horizontal" class="h-full" (zResizeEnd)="onResizeEnd($event)">
-            <!-- Claude Terminal Panel (Primary) - Always visible -->
-            <z-resizable-panel
-              [zDefaultSize]="sidePanelVisible() ? 55 : 100"
-              [zMin]="30"
-              [zMax]="sidePanelVisible() ? 70 : 100"
-            >
-              <div class="claude-terminal-area relative h-full">
-                @for (tab of tabs(); track tab.sessionId) {
-                  <div
-                    class="claude-terminal-wrapper absolute inset-0 h-full"
-                    [class.invisible]="tab.sessionId !== activeSessionId()"
-                    [class.pointer-events-none]="tab.sessionId !== activeSessionId()"
-                    [attr.aria-hidden]="tab.sessionId !== activeSessionId() ? 'true' : null"
-                  >
-                    @if (tab.status !== 'archived' && usesClaudeTerminalFallback(tab.sessionId)) {
-                      <z-resizable zLayout="vertical" class="h-full">
-                        @if (usesClaudeTerminalTranscriptMirror(tab.sessionId)) {
-                          <z-resizable-panel [zDefaultSize]="67" [zMin]="30" [zMax]="85">
-                            <app-claude-workspace
+        <z-resizable zLayout="vertical" class="h-full" (zResizeEnd)="onVerticalResizeEnd($event)">
+          <!-- Top: Main panels -->
+          <z-resizable-panel [zDefaultSize]="bottomPanelVisible() ? 70 : 100" [zMin]="30">
+            <z-resizable zLayout="horizontal" class="h-full" (zResizeEnd)="onResizeEnd($event)">
+              <!-- Claude Terminal Panel (Primary) - Always visible -->
+              <z-resizable-panel
+                [zDefaultSize]="sidePanelVisible() ? 55 : 100"
+                [zMin]="30"
+                [zMax]="sidePanelVisible() ? 70 : 100"
+              >
+                <div class="claude-terminal-area relative h-full">
+                  @for (tab of tabs(); track tab.sessionId) {
+                    <div
+                      class="claude-terminal-wrapper absolute inset-0 h-full"
+                      [class.invisible]="tab.sessionId !== activeSessionId()"
+                      [class.pointer-events-none]="tab.sessionId !== activeSessionId()"
+                      [attr.aria-hidden]="tab.sessionId !== activeSessionId() ? 'true' : null"
+                    >
+                      @if (tab.status !== 'archived' && usesClaudeTerminalFallback(tab.sessionId)) {
+                        <z-resizable zLayout="vertical" class="h-full">
+                          @if (usesClaudeTerminalTranscriptMirror(tab.sessionId)) {
+                            <z-resizable-panel [zDefaultSize]="67" [zMin]="30" [zMax]="85">
+                              <app-claude-workspace
+                                [sessionId]="tab.sessionId"
+                                [repoId]="tab.repoId"
+                                [worktreePath]="tab.worktreePath"
+                                [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
+                                [activeAgentProvider]="tab.activeAgentProvider"
+                                [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
+                                [isVisible]="tab.sessionId === activeSessionId()"
+                                [readOnlyTranscript]="true"
+                                [terminalTranscriptMirror]="true"
+                                [sessionName]="tab.sessionName"
+                                (openInBrowser)="onOpenInBrowser($event)"
+                                (planReviewRequested)="openPlanAnnotator($event)"
+                                (planQuestionRequested)="openPlanAnnotator($event, 'ask')"
+                                (planReviewClosed)="onPlanReviewClosed($event)"
+                                class="h-full block border-b border-border/60"
+                              />
+                            </z-resizable-panel>
+                            <z-resizable-handle />
+                          }
+                          <z-resizable-panel
+                            [zDefaultSize]="
+                              usesClaudeTerminalTranscriptMirror(tab.sessionId) ? 33 : 100
+                            "
+                            [zMin]="15"
+                            [zMax]="usesClaudeTerminalTranscriptMirror(tab.sessionId) ? 70 : 100"
+                          >
+                            <app-claude-terminal
                               [sessionId]="tab.sessionId"
-                              [repoId]="tab.repoId"
-                              [worktreePath]="tab.worktreePath"
-                              [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
-                              [activeAgentProvider]="tab.activeAgentProvider"
-                              [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
                               [isVisible]="tab.sessionId === activeSessionId()"
-                              [readOnlyTranscript]="true"
-                              [terminalTranscriptMirror]="true"
-                              [sessionName]="tab.sessionName"
-                              (openInBrowser)="onOpenInBrowser($event)"
-                              (planReviewRequested)="openPlanAnnotator($event)"
-                              (planQuestionRequested)="openPlanAnnotator($event, 'ask')"
-                              (planReviewClosed)="onPlanReviewClosed($event)"
-                              class="h-full block border-b border-border/60"
+                              class="h-full block"
                             />
                           </z-resizable-panel>
-                          <z-resizable-handle />
-                        }
-                        <z-resizable-panel
-                          [zDefaultSize]="usesClaudeTerminalTranscriptMirror(tab.sessionId) ? 33 : 100"
-                          [zMin]="15"
-                          [zMax]="usesClaudeTerminalTranscriptMirror(tab.sessionId) ? 70 : 100"
-                        >
-                          <app-claude-terminal
-                            [sessionId]="tab.sessionId"
-                            [isVisible]="tab.sessionId === activeSessionId()"
-                            class="h-full block"
-                          />
-                        </z-resizable-panel>
-                      </z-resizable>
-                    } @else {
-                      <app-claude-workspace
-                        [sessionId]="tab.sessionId"
-                        [repoId]="tab.repoId"
-                        [worktreePath]="tab.worktreePath"
-                        [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
-                        [activeAgentProvider]="tab.activeAgentProvider"
-                        [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
-                        [isVisible]="tab.sessionId === activeSessionId()"
-                        [archived]="tab.status === 'archived'"
-                        [sessionName]="tab.sessionName"
-                        [unarchiveBusy]="unarchivingSessionId() === tab.sessionId"
-                        (openTerminalFallback)="showClaudeTerminal()"
-                        (openInBrowser)="onOpenInBrowser($event)"
-                        (planReviewRequested)="openPlanAnnotator($event)"
-                        (planQuestionRequested)="openPlanAnnotator($event, 'ask')"
-                        (planReviewClosed)="onPlanReviewClosed($event)"
-                        (activeAgentProviderChange)="onSessionProviderChange(tab.sessionId, $event)"
-                        (agentRuntimeStarted)="onSessionRuntimeStarted(tab.sessionId)"
-                        (openReviewWorkspace)="openReviewWorkspace($event)"
-                        (openLocalFile)="openFileInEditor($event)"
-                        (conversationForkCreated)="onConversationForkCreated($event)"
-                        (conversationForkOpened)="onConversationForkOpened($event)"
-                        (unarchive)="onTabUnarchiveRequest(tab.sessionId)"
-                        class="h-full block"
-                      />
-                    }
-                  </div>
-                }
-              </div>
-            </z-resizable-panel>
+                        </z-resizable>
+                      } @else {
+                        <app-claude-workspace
+                          [sessionId]="tab.sessionId"
+                          [repoId]="tab.repoId"
+                          [worktreePath]="tab.worktreePath"
+                          [hasInjectedWorktreeContext]="tab.hasInjectedWorktreeContext"
+                          [activeAgentProvider]="tab.activeAgentProvider"
+                          [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
+                          [isVisible]="tab.sessionId === activeSessionId()"
+                          [archived]="tab.status === 'archived'"
+                          [sessionName]="tab.sessionName"
+                          [unarchiveBusy]="unarchivingSessionId() === tab.sessionId"
+                          (openTerminalFallback)="showClaudeTerminal()"
+                          (openInBrowser)="onOpenInBrowser($event)"
+                          (planReviewRequested)="openPlanAnnotator($event)"
+                          (planQuestionRequested)="openPlanAnnotator($event, 'ask')"
+                          (planReviewClosed)="onPlanReviewClosed($event)"
+                          (activeAgentProviderChange)="
+                            onSessionProviderChange(tab.sessionId, $event)
+                          "
+                          (agentRuntimeStarted)="onSessionRuntimeStarted(tab.sessionId)"
+                          (openReviewWorkspace)="openReviewWorkspace($event)"
+                          (openLocalFile)="openFileInEditor($event)"
+                          (conversationForkCreated)="onConversationForkCreated($event)"
+                          (conversationForkOpened)="onConversationForkOpened($event)"
+                          (unarchive)="onTabUnarchiveRequest(tab.sessionId)"
+                          class="h-full block"
+                        />
+                      }
+                    </div>
+                  }
+                </div>
+              </z-resizable-panel>
 
-            <!-- Secondary Panel (Files or Browser) -->
-            @if (worktreePath() && sidePanelVisible()) {
-              <z-resizable-handle />
+              <!-- Secondary Panel (Files or Browser) -->
+              @if (worktreePath() && sidePanelVisible()) {
+                <z-resizable-handle />
 
-              <z-resizable-panel [zDefaultSize]="45" [zMin]="25" [zMax]="70">
-                @if (showFilesPanel()) {
-                  <app-vscode-web-panel
-                    [sessionId]="activeSessionId()!"
-                    [projectId]="projectId()!"
-                    [worktreePath]="worktreePath()!"
-                    class="h-full"
-                  />
-                } @else if (showChangesPanel()) {
-                  <app-change-review-panel
-                    [worktreePath]="worktreePath()!"
-                    [highlightedMentions]="activePendingDiffMentions()"
-                    [reviewThreadCount]="reviewWorkspaceState.openChats().length"
-                    (mentionSelection)="mentionDiffSelection($event)"
-                    (openFileInEditor)="openDiffFileInEditor($event)"
-                    (openReviewWorkspace)="openReviewWorkspace()"
-                    class="h-full"
-                  />
-                } @else if (showPlanAnnotatorPanel() && activePlanReview()) {
-                  <app-plan-annotator-panel
-                    [review]="activePlanReview()!"
-                    [railMode]="activePlanReviewMode()"
-                    (railModeChange)="setPlanReviewRailMode($event)"
-                    (close)="closePlanAnnotator($event)"
-                    (approve)="approvePlanReview($event)"
-                    (sendFeedback)="sendPlanReviewFeedback($event)"
-                    (reject)="rejectPlanReview($event)"
-                    class="h-full"
-                  />
-                } @else if (showPlannotatorPanel() && activePlannotatorPanel()) {
-                  <app-plannotator-panel
-                    [sessionId]="activePlannotatorPanel()!.sessionId"
-                    [proxyUrl]="activePlannotatorPanel()!.proxyUrl"
-                    [mode]="activePlannotatorPanel()!.mode"
-                    [minimized]="activePlannotatorPanel()!.minimized"
-                    (close)="closePlannotatorPanel()"
-                    (softClose)="softClosePlannotatorPanel()"
-                    (minimize)="hidePlannotatorPanel()"
-                    (restore)="showPlannotatorSidePanel()"
-                    class="h-full"
-                  />
-                } @else if (shouldRenderBrowserPanel()) {
-                  <app-browser-panel
-                    [projectId]="projectId()!"
-                    [isolationConfig]="browserIsolationConfig()"
-                    (isolationConfigChanged)="onIsolationConfigChanged($event)"
-                    class="h-full"
-                  />
-                } @else if (shouldShowBrowserPlaceholder()) {
-                  <div class="relative h-full overflow-hidden bg-background">
-                    <div
-                      class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,color-mix(in_oklch,var(--primary)_16%,transparent),transparent_40%),linear-gradient(180deg,color-mix(in_oklch,var(--background)_92%,var(--surface-tint)),var(--background))]"
-                    ></div>
-                    <div
-                      class="absolute -right-20 top-12 h-56 w-56 rounded-full bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] blur-3xl"
-                    ></div>
-                    <div
-                      class="absolute bottom-0 left-0 h-40 w-40 rounded-full bg-[color-mix(in_oklch,var(--foreground)_6%,transparent)] blur-3xl"
-                    ></div>
-
-                    <div class="relative flex h-full items-center justify-center p-8">
+                <z-resizable-panel [zDefaultSize]="45" [zMin]="25" [zMax]="70">
+                  @if (showFilesPanel()) {
+                    <app-vscode-web-panel
+                      [sessionId]="activeSessionId()!"
+                      [projectId]="projectId()!"
+                      [worktreePath]="worktreePath()!"
+                      class="h-full"
+                    />
+                  } @else if (showChangesPanel()) {
+                    <app-change-review-panel
+                      [worktreePath]="worktreePath()!"
+                      [highlightedMentions]="activePendingDiffMentions()"
+                      [reviewThreadCount]="reviewWorkspaceState.openChats().length"
+                      (mentionSelection)="mentionDiffSelection($event)"
+                      (openFileInEditor)="openDiffFileInEditor($event)"
+                      (openReviewWorkspace)="openReviewWorkspace()"
+                      class="h-full"
+                    />
+                  } @else if (showPlanAnnotatorPanel() && activePlanReview()) {
+                    <app-plan-annotator-panel
+                      [review]="activePlanReview()!"
+                      [railMode]="activePlanReviewMode()"
+                      (railModeChange)="setPlanReviewRailMode($event)"
+                      (openLocalFile)="openFileInEditor($event)"
+                      (close)="closePlanAnnotator($event)"
+                      (approve)="approvePlanReview($event)"
+                      (sendFeedback)="sendPlanReviewFeedback($event)"
+                      (reject)="rejectPlanReview($event)"
+                      class="h-full"
+                    />
+                  } @else if (showPlannotatorPanel() && activePlannotatorPanel()) {
+                    <app-plannotator-panel
+                      [sessionId]="activePlannotatorPanel()!.sessionId"
+                      [proxyUrl]="activePlannotatorPanel()!.proxyUrl"
+                      [mode]="activePlannotatorPanel()!.mode"
+                      [minimized]="activePlannotatorPanel()!.minimized"
+                      (close)="closePlannotatorPanel()"
+                      (softClose)="softClosePlannotatorPanel()"
+                      (minimize)="hidePlannotatorPanel()"
+                      (restore)="showPlannotatorSidePanel()"
+                      class="h-full"
+                    />
+                  } @else if (shouldRenderBrowserPanel()) {
+                    <app-browser-panel
+                      [projectId]="projectId()!"
+                      [isolationConfig]="browserIsolationConfig()"
+                      (isolationConfigChanged)="onIsolationConfigChanged($event)"
+                      class="h-full"
+                    />
+                  } @else if (shouldShowBrowserPlaceholder()) {
+                    <div class="relative h-full overflow-hidden bg-background">
                       <div
-                        class="w-full max-w-lg rounded-[28px] border border-[color-mix(in_oklch,var(--border)_86%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_78%,var(--surface-tint))] px-8 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.14)] backdrop-blur-xl"
-                      >
+                        class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,color-mix(in_oklch,var(--primary)_16%,transparent),transparent_40%),linear-gradient(180deg,color-mix(in_oklch,var(--background)_92%,var(--surface-tint)),var(--background))]"
+                      ></div>
+                      <div
+                        class="absolute -right-20 top-12 h-56 w-56 rounded-full bg-[color-mix(in_oklch,var(--primary)_12%,transparent)] blur-3xl"
+                      ></div>
+                      <div
+                        class="absolute bottom-0 left-0 h-40 w-40 rounded-full bg-[color-mix(in_oklch,var(--foreground)_6%,transparent)] blur-3xl"
+                      ></div>
+
+                      <div class="relative flex h-full items-center justify-center p-8">
                         <div
-                          class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[color-mix(in_oklch,var(--border)_60%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_58%,var(--surface-tint))] shadow-[0_10px_30px_color-mix(in_oklch,var(--surface-tint)_20%,transparent)]"
+                          class="w-full max-w-lg rounded-[28px] border border-[color-mix(in_oklch,var(--border)_86%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_78%,var(--surface-tint))] px-8 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.14)] backdrop-blur-xl"
                         >
                           <div
-                            class="h-6 w-6 rounded-full bg-[linear-gradient(135deg,color-mix(in_oklch,var(--primary)_72%,var(--surface-tint)),color-mix(in_oklch,var(--foreground)_16%,var(--surface-tint)))]"
-                          ></div>
-                        </div>
-
-                        <div class="space-y-3">
-                          <p
-                            class="text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground/80"
+                            class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[color-mix(in_oklch,var(--border)_60%,var(--surface-tint))] bg-[color-mix(in_oklch,var(--background)_58%,var(--surface-tint))] shadow-[0_10px_30px_color-mix(in_oklch,var(--surface-tint)_20%,transparent)]"
                           >
-                            Focus Mode
-                          </p>
-                          <h3 class="text-2xl font-semibold tracking-tight text-foreground">
-                            A quieter view for what’s open now
-                          </h3>
-                          <p class="mx-auto max-w-md text-sm leading-6 text-muted-foreground">
-                            This area steps back while your side panel is open, then returns
-                            smoothly as soon as you close it.
-                          </p>
-                        </div>
+                            <div
+                              class="h-6 w-6 rounded-full bg-[linear-gradient(135deg,color-mix(in_oklch,var(--primary)_72%,var(--surface-tint)),color-mix(in_oklch,var(--foreground)_16%,var(--surface-tint)))]"
+                            ></div>
+                          </div>
 
-                        <div class="mt-8 flex items-center justify-center gap-2">
-                          <span
-                            class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--primary)_70%,var(--surface-tint))]"
-                          ></span>
-                          <span
-                            class="h-2 w-10 rounded-full bg-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint))]"
-                          ></span>
-                          <span
-                            class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--foreground)_18%,var(--surface-tint))]"
-                          ></span>
+                          <div class="space-y-3">
+                            <p
+                              class="text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground/80"
+                            >
+                              Focus Mode
+                            </p>
+                            <h3 class="text-2xl font-semibold tracking-tight text-foreground">
+                              A quieter view for what’s open now
+                            </h3>
+                            <p class="mx-auto max-w-md text-sm leading-6 text-muted-foreground">
+                              This area steps back while your side panel is open, then returns
+                              smoothly as soon as you close it.
+                            </p>
+                          </div>
+
+                          <div class="mt-8 flex items-center justify-center gap-2">
+                            <span
+                              class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--primary)_70%,var(--surface-tint))]"
+                            ></span>
+                            <span
+                              class="h-2 w-10 rounded-full bg-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint))]"
+                            ></span>
+                            <span
+                              class="h-2 w-2 rounded-full bg-[color-mix(in_oklch,var(--foreground)_18%,var(--surface-tint))]"
+                            ></span>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                }
-              </z-resizable-panel>
-            }
-          </z-resizable>
-        </z-resizable-panel>
-
-        <!-- Bottom: User Terminal Panel -->
-        @if (bottomPanelVisible() && worktreePath()) {
-          <z-resizable-handle />
-
-          <z-resizable-panel [zDefaultSize]="30" [zMin]="15" [zMax]="70">
-            @if (terminalPanelVisible()) {
-              <app-user-terminal-panel
-                [worktreePath]="worktreePath()!"
-                (close)="closeTerminalPanel()"
-              />
-            } @else if (actionPanelVisible()) {
-              <app-actions-panel [worktreePath]="worktreePath()!" (close)="closeActionsPanel()" />
-            }
+                  }
+                </z-resizable-panel>
+              }
+            </z-resizable>
           </z-resizable-panel>
-        }
-      </z-resizable>
 
-      <!-- Productivity Panels (overlay, outside resizable) -->
-      @if (showScratchpad() && projectId()) {
-        <app-scratchpad-panel
-          [projectId]="projectId()!"
-          [isOpen]="true"
-          (close)="toggleScratchpad()"
-        />
-      }
-      @if (showTodos() && projectId()) {
-        <app-todo-panel [projectId]="projectId()!" [isOpen]="true" (close)="toggleTodos()" />
-      }
+          <!-- Bottom: User Terminal Panel -->
+          @if (bottomPanelVisible() && worktreePath()) {
+            <z-resizable-handle />
+
+            <z-resizable-panel [zDefaultSize]="30" [zMin]="15" [zMax]="70">
+              @if (terminalPanelVisible()) {
+                <app-user-terminal-panel
+                  [worktreePath]="worktreePath()!"
+                  (close)="closeTerminalPanel()"
+                />
+              } @else if (actionPanelVisible()) {
+                <app-actions-panel [worktreePath]="worktreePath()!" (close)="closeActionsPanel()" />
+              }
+            </z-resizable-panel>
+          }
+        </z-resizable>
+
+        <!-- Productivity Panels (overlay, outside resizable) -->
+        @if (showScratchpad() && projectId()) {
+          <app-scratchpad-panel
+            [projectId]="projectId()!"
+            [isOpen]="true"
+            (close)="toggleScratchpad()"
+          />
+        }
+        @if (showTodos() && projectId()) {
+          <app-todo-panel [projectId]="projectId()!" [isOpen]="true" (close)="toggleTodos()" />
+        }
       </div>
 
       @if (reviewRouteActive() && activeReviewTarget(); as review) {

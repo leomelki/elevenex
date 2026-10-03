@@ -1,31 +1,18 @@
+import { ZardButtonComponent } from '@/shared/components/button';
 import {
-  ChangeDetectionStrategy,
-  Component,
-  ElementRef,
-  computed,
-  inject,
-  input,
-  output,
-  signal,
-} from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { NgIcon, provideIcons } from '@ng-icons/core';
+  ZardDropdownDirective,
+  ZardDropdownMenuContentComponent,
+  ZardDropdownMenuItemComponent,
+  ZardDropdownService,
+} from '@/shared/components/dropdown';
+import { ZardPopoverComponent, ZardPopoverDirective } from '@/shared/components/popover';
+import { ZardProgressBarComponent } from '@/shared/components/progress-bar';
 import {
-  lucideCheck,
-  lucideChevronDown,
-  lucideDownload,
-  lucideEllipsis,
-  lucideGauge,
-  lucideListTodo,
-  lucideLoaderCircle,
-  lucideMap,
-  lucidePlugZap,
-  lucideBrain,
-  lucideZap,
-  lucideShield,
-  lucideTerminal,
-  lucideTriangleAlert,
-} from '@ng-icons/lucide';
+  AgentPlanUsage,
+  AgentPlanUsageWindow,
+  AgentProviderId,
+  AgentRuntimeProviderInfo,
+} from '@/shared/models/agent-runtime.model';
 import {
   ClaudeContextUsage,
   ClaudeMcpSnapshot,
@@ -35,13 +22,26 @@ import {
   ClaudeStatusBarPhase,
   ClaudeTaskState,
 } from '@/shared/models/claude-runtime.model';
+import { CdkTrapFocus } from '@angular/cdk/a11y';
+import { CommonModule } from '@angular/common';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  AgentPlanUsage,
-  AgentPlanUsageWindow,
-  AgentProviderId,
-  AgentRuntimeProviderInfo,
-} from '@/shared/models/agent-runtime.model';
-import { ZardProgressBarComponent } from '@/shared/components/progress-bar';
+  lucideBrain,
+  lucideChevronDown,
+  lucideDownload,
+  lucideEllipsis,
+  lucideGauge,
+  lucideListTodo,
+  lucideLoaderCircle,
+  lucideMap,
+  lucidePlugZap,
+  lucideShield,
+  lucideTerminal,
+  lucideTriangleAlert,
+  lucideZap,
+} from '@ng-icons/lucide';
+import { AgentSettingOptionComponent } from './agent-setting-option.component';
 
 interface PermissionModeOption {
   id: ClaudePermissionMode;
@@ -72,17 +72,28 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
 
 @Component({
   selector: 'cw-status-bar',
+  providers: [ZardDropdownService],
   standalone: true,
-  imports: [CommonModule, NgIcon, ZardProgressBarComponent],
+  imports: [
+    CommonModule,
+    NgIcon,
+    ZardProgressBarComponent,
+    ZardButtonComponent,
+    ZardDropdownDirective,
+    ZardDropdownMenuContentComponent,
+    ZardDropdownMenuItemComponent,
+    ZardPopoverComponent,
+    ZardPopoverDirective,
+    CdkTrapFocus,
+    AgentSettingOptionComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    '(document:mousedown)': 'onDocumentMousedown($event)',
-    '(document:keydown.escape)': 'closeAllMenus()',
+    class: 'block',
     '(document:keydown.shift.tab)': 'togglePlanModeFromShortcut($event)',
   },
   viewProviders: [
     provideIcons({
-      lucideCheck,
       lucideChevronDown,
       lucideDownload,
       lucideEllipsis,
@@ -98,596 +109,8 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
       lucideTriangleAlert,
     }),
   ],
-  template: `
-    <div class="cw-sb">
-      <span class="cw-sb__phase" [attr.data-phase]="phase()">
-        @if (phase() === 'running' || phase() === 'initializing') {
-          <ng-icon name="lucideLoaderCircle" size="11" class="animate-spin" />
-        } @else if (phase() === 'waiting') {
-          <ng-icon name="lucideTriangleAlert" size="11" />
-        } @else if (phase() === 'error') {
-          <ng-icon name="lucideTriangleAlert" size="11" />
-        } @else {
-          <span class="cw-sb__dot"></span>
-        }
-        <span>{{ phaseLabel() }}</span>
-      </span>
-
-      <span class="cw-sb__sep">·</span>
-
-      <div class="cw-sb__model">
-        <button
-          type="button"
-          class="cw-sb__link"
-          [class.cw-sb__link--disabled]="providerLocked()"
-          [disabled]="providerLocked()"
-          [title]="
-            providerLocked() ? 'Provider is locked after a session starts' : 'Change provider'
-          "
-          (click)="toggleMenu('provider')"
-        >
-          {{ activeProviderLabel() }}
-          @if (!providerLocked()) {
-            <ng-icon name="lucideChevronDown" size="11" />
-          }
-        </button>
-        @if (providerOpen() && !providerLocked()) {
-          <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-            @for (provider of providers(); track provider.id) {
-              <button
-                type="button"
-                class="cw-sb__menu-item"
-                [class.cw-sb__menu-item--selected]="currentProvider() === provider.id"
-                (click)="pickProvider(provider.id)"
-              >
-                <strong>{{ provider.displayName }}</strong>
-                <span>{{ providerCapabilityHint(provider) }}</span>
-              </button>
-            }
-          </div>
-        }
-      </div>
-
-      @if (currentProviderCapabilities()?.permissions) {
-        <span class="cw-sb__sep">·</span>
-
-        <div class="cw-sb__model">
-          <button
-            type="button"
-            class="cw-sb__link cw-sb__mode"
-            (click)="toggleMenu('permission')"
-            [title]="'Permission mode'"
-          >
-            <ng-icon name="lucideShield" size="11" />
-            {{ activePermissionLabel() }}
-            <ng-icon name="lucideChevronDown" size="11" />
-          </button>
-          @if (permissionOpen()) {
-            <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-              @for (opt of permissionOptions(); track opt.id) {
-                <button
-                  type="button"
-                  class="cw-sb__menu-item"
-                  [class.cw-sb__menu-item--selected]="permissionMode() === opt.id"
-                  (click)="pickPermissionMode(opt.id)"
-                >
-                  <strong>{{ opt.label }}</strong>
-                  <span>{{ opt.hint }}</span>
-                </button>
-              }
-            </div>
-          }
-        </div>
-
-        <span class="cw-sb__sep">·</span>
-
-        <button
-          type="button"
-          class="cw-sb__link cw-sb__plan"
-          [class.cw-sb__link--active]="planMode()"
-          (click)="togglePlanMode()"
-          title="Toggle plan mode (Shift+Tab)"
-        >
-          <ng-icon name="lucideMap" size="11" />
-          Plan {{ planMode() ? 'on' : 'off' }}
-        </button>
-      }
-
-      <span class="cw-sb__sep">·</span>
-
-      <div class="cw-sb__model">
-        <button type="button" class="cw-sb__link" (click)="toggleMenu('model')">
-          {{ selectedModelLabel() }}
-          <ng-icon name="lucideChevronDown" size="11" />
-        </button>
-        @if (modelOpen()) {
-          <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-            <button
-              type="button"
-              class="cw-sb__menu-item"
-              [class.cw-sb__menu-item--selected]="!selectedModel()"
-              (click)="pickModel('')"
-            >
-              Default
-            </button>
-            @for (m of availableModels(); track m.id) {
-              <button
-                type="button"
-                class="cw-sb__menu-item"
-                [class.cw-sb__menu-item--selected]="selectedModel() === m.id"
-                (click)="pickModel(m.id)"
-              >
-                <strong>{{ m.displayName }}</strong>
-                <span>{{ m.description }}</span>
-              </button>
-            }
-          </div>
-        }
-      </div>
-
-      @if (selectedModelSupportsEffort()) {
-        <span class="cw-sb__sep">·</span>
-        <div class="cw-sb__model">
-          <button
-            type="button"
-            class="cw-sb__link"
-            (click)="toggleMenu('effort')"
-            title="Reasoning effort"
-          >
-            <ng-icon name="lucideBrain" size="11" />
-            {{ reasoningEffortLabel() }}
-            <ng-icon name="lucideChevronDown" size="11" />
-          </button>
-          @if (effortOpen()) {
-            <div class="cw-sb__menu" (mousedown)="$event.stopPropagation()">
-              @for (effort of reasoningEffortOptions(); track effort.id) {
-                <button
-                  type="button"
-                  class="cw-sb__menu-item"
-                  [class.cw-sb__menu-item--selected]="(reasoningEffort() ?? '') === effort.id"
-                  (click)="pickReasoningEffort(effort.id)"
-                >
-                  <strong>{{ effort.label }}</strong>
-                  <span>{{ effort.hint }}</span>
-                </button>
-              }
-            </div>
-          }
-        </div>
-      }
-
-      @if (selectedModelSupportsFastMode()) {
-        <span class="cw-sb__sep">·</span>
-        <button
-          type="button"
-          class="cw-sb__link"
-          [class.cw-sb__link--active]="fastMode()"
-          (click)="toggleFastMode()"
-          title="Fast mode"
-        >
-          <ng-icon name="lucideZap" size="11" />
-          Fast {{ fastMode() ? 'on' : 'off' }}
-        </button>
-      }
-
-      @if (contextUsage(); as u) {
-        <span class="cw-sb__sep">·</span>
-        <span class="cw-sb__ctx" [class.cw-sb__ctx--warn]="u.percentage >= 80">
-          <ng-icon name="lucideGauge" size="11" />
-          {{ u.percentage }}% ctx
-        </span>
-      }
-
-      @if (visiblePlanUsage(); as usage) {
-        <span class="cw-sb__sep">·</span>
-        <div class="cw-sb__model">
-          <button
-            type="button"
-            class="cw-sb__link cw-sb__usage-trigger"
-            [attr.data-status]="usage.status"
-            [attr.aria-expanded]="usageOpen()"
-            aria-haspopup="dialog"
-            (click)="toggleMenu('usage')"
-            [title]="usageTriggerTitle()"
-          >
-            <span
-              class="cw-sb__usage-ring"
-              [style.--usage-percent]="lowestRemainingPercentage() + '%'"
-              aria-hidden="true"
-            ></span>
-            {{ lowestRemainingPercentage() }}% left
-          </button>
-          @if (usageOpen()) {
-            <div
-              class="cw-sb__menu cw-sb__usage-menu"
-              role="dialog"
-              aria-label="Plan usage"
-              (mousedown)="$event.stopPropagation()"
-            >
-              <div class="cw-sb__usage-header">
-                <div>
-                  <strong>{{ usage.provider === 'codex' ? 'Codex' : 'Claude' }} usage</strong>
-                  <span>Included plan allowance</span>
-                </div>
-                @if (usage.planName) {
-                  <span class="cw-sb__plan-badge">{{ usage.planName }}</span>
-                }
-              </div>
-
-              <div class="cw-sb__usage-windows">
-                @for (window of usage.windows; track window.id) {
-                  <div class="cw-sb__usage-window">
-                    <div class="cw-sb__usage-row">
-                      <span>{{ window.label }}</span>
-                      <strong>{{ window.remainingPercentage }}% left</strong>
-                    </div>
-                    <z-progress-bar
-                      zSize="sm"
-                      [zValue]="window.remainingPercentage / 100"
-                      [zType]="usageProgressType(window)"
-                      [zLabel]="window.label + ': ' + window.remainingPercentage + '% remaining'"
-                    />
-                    @if (window.resetsAt) {
-                      <span class="cw-sb__usage-reset" [title]="formatResetTitle(window.resetsAt)">
-                        {{ formatResetTime(window.resetsAt) }}
-                      </span>
-                    }
-                  </div>
-                }
-              </div>
-
-              @if (usage.credits; as credits) {
-                <div class="cw-sb__credits">
-                  <span>Extra credits</span>
-                  <strong>{{
-                    credits.unlimited ? 'Unlimited' : (credits.balance ?? 'Available')
-                  }}</strong>
-                </div>
-              }
-              <p class="cw-sb__usage-note">
-                Based on provider-reported usage. Complex tasks may consume more allowance.
-              </p>
-            </div>
-          }
-        </div>
-      }
-
-      @if (backgroundWorkCount() > 0) {
-        <span class="cw-sb__sep">·</span>
-        <span
-          class="cw-sb__bg"
-          [title]="
-            backgroundWorkCount() +
-            ' background job(s) still running — new messages are queued behind them'
-          "
-        >
-          <span class="cw-sb__bg-dot" aria-hidden="true"></span>
-          {{ backgroundWorkCount() }} in background
-        </span>
-      }
-
-      @if (taskCount() > 0) {
-        <span class="cw-sb__sep">·</span>
-        <button type="button" class="cw-sb__link" (click)="openTasks.emit()">
-          <ng-icon name="lucideListTodo" size="11" />
-          {{ taskCount() }} task{{ taskCount() === 1 ? '' : 's' }}
-        </button>
-      }
-
-      @if (currentProviderCapabilities()?.mcp) {
-        <span class="cw-sb__sep">·</span>
-        <button
-          type="button"
-          class="cw-sb__link"
-          [class.cw-sb__link--mcp-warn]="mcpIssueCount() > 0"
-          (click)="openMcp.emit()"
-        >
-          <ng-icon name="lucidePlugZap" size="11" />
-          MCP{{ mcpSummary() ? ' ' + mcpSummary()!.total : '' }}
-          @if (mcpIssueCount() > 0) {
-            <span class="cw-sb__pill">{{ mcpIssueCount() }}</span>
-          }
-        </button>
-      }
-
-      <div class="cw-sb__spacer"></div>
-
-      <div class="cw-sb__overflow">
-        <button type="button" class="cw-sb__icon-btn" (click)="toggleMenu('overflow')" title="More">
-          <ng-icon name="lucideEllipsis" size="14" />
-        </button>
-        @if (menuOpen()) {
-          <div class="cw-sb__menu cw-sb__menu--right" (mousedown)="$event.stopPropagation()">
-            @if (currentProviderCapabilities()?.terminalFallback) {
-              <button
-                type="button"
-                class="cw-sb__menu-item"
-                (click)="menuOpen.set(false); openTerminal.emit()"
-              >
-                <ng-icon name="lucideTerminal" size="12" />
-                Raw terminal
-              </button>
-            }
-            <button
-              type="button"
-              class="cw-sb__menu-item"
-              (click)="menuOpen.set(false); export.emit()"
-            >
-              <ng-icon name="lucideDownload" size="12" />
-              Export conversation…
-            </button>
-          </div>
-        }
-      </div>
-    </div>
-  `,
-  styles: [
-    `
-      :host {
-        display: block;
-      }
-      .cw-sb {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.375rem 0.5rem;
-        font-size: 0.6875rem;
-        color: var(--muted-foreground);
-        flex-wrap: wrap;
-      }
-      .cw-sb__spacer {
-        flex: 1;
-      }
-      .cw-sb__sep {
-        opacity: 0.4;
-      }
-      .cw-sb__phase {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-        text-transform: lowercase;
-      }
-      .cw-sb__phase[data-phase='running'],
-      .cw-sb__phase[data-phase='initializing'] {
-        color: var(--primary);
-      }
-      .cw-sb__phase[data-phase='error'],
-      .cw-sb__phase[data-phase='waiting'] {
-        color: var(--destructive);
-      }
-      .cw-sb__dot {
-        width: 0.375rem;
-        height: 0.375rem;
-        border-radius: 999px;
-        background: currentColor;
-        opacity: 0.5;
-      }
-      .cw-sb__bg {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        color: var(--primary);
-        cursor: default;
-      }
-      .cw-sb__bg-dot {
-        width: 0.375rem;
-        height: 0.375rem;
-        border-radius: 999px;
-        background: currentColor;
-        animation: cw-sb-bg-pulse 1.6s ease-in-out infinite;
-      }
-      @keyframes cw-sb-bg-pulse {
-        0%,
-        100% {
-          opacity: 1;
-        }
-        50% {
-          opacity: 0.3;
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .cw-sb__bg-dot {
-          animation: none;
-        }
-      }
-      .cw-sb__ctx {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-      }
-      .cw-sb__ctx--warn {
-        color: var(--destructive);
-      }
-      .cw-sb__usage-trigger[data-status='warning'] {
-        color: var(--warning);
-      }
-      .cw-sb__usage-trigger[data-status='exhausted'] {
-        color: var(--destructive);
-      }
-      .cw-sb__usage-ring {
-        --usage-percent: 0%;
-        position: relative;
-        width: 0.625rem;
-        height: 0.625rem;
-        flex: none;
-        border-radius: 999px;
-        background: conic-gradient(currentColor var(--usage-percent), var(--muted) 0);
-      }
-      .cw-sb__usage-ring::after {
-        content: '';
-        position: absolute;
-        inset: 0.125rem;
-        border-radius: inherit;
-        background: var(--background);
-      }
-      .cw-sb__usage-menu {
-        width: min(19rem, calc(100vw - 1rem));
-        padding: 0.75rem;
-        cursor: default;
-      }
-      .cw-sb__usage-header,
-      .cw-sb__usage-row,
-      .cw-sb__credits {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
-      }
-      .cw-sb__usage-header > div {
-        display: flex;
-        min-width: 0;
-        flex-direction: column;
-        gap: 0.125rem;
-      }
-      .cw-sb__usage-header strong {
-        color: var(--foreground);
-        font-size: 0.8125rem;
-        font-weight: 650;
-      }
-      .cw-sb__usage-header span,
-      .cw-sb__usage-reset,
-      .cw-sb__usage-note {
-        color: var(--muted-foreground);
-        font-size: 0.6875rem;
-      }
-      .cw-sb__plan-badge {
-        flex: none;
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        background: var(--muted);
-        padding: 0.125rem 0.4375rem;
-        color: var(--foreground) !important;
-        font-weight: 600;
-      }
-      .cw-sb__usage-windows {
-        display: grid;
-        gap: 0.875rem;
-        margin-top: 0.875rem;
-      }
-      .cw-sb__usage-window {
-        display: grid;
-        gap: 0.375rem;
-      }
-      .cw-sb__usage-row {
-        color: var(--foreground);
-        font-size: 0.75rem;
-      }
-      .cw-sb__usage-row strong {
-        font-weight: 650;
-      }
-      .cw-sb__usage-reset {
-        line-height: 1;
-      }
-      .cw-sb__credits {
-        margin-top: 0.875rem;
-        border-top: 1px solid var(--border);
-        padding-top: 0.625rem;
-        color: var(--foreground);
-        font-size: 0.75rem;
-      }
-      .cw-sb__usage-note {
-        margin: 0.625rem 0 0;
-        line-height: 1.35;
-      }
-      .cw-sb__link,
-      .cw-sb__icon-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-        border: 0;
-        background: transparent;
-        color: inherit;
-        font: inherit;
-        font-size: 0.6875rem;
-        padding: 0.125rem 0.25rem;
-        border-radius: 0.25rem;
-        cursor: pointer;
-      }
-      .cw-sb__link:hover,
-      .cw-sb__icon-btn:hover {
-        background: color-mix(in oklab, var(--foreground) 6%, transparent);
-        color: var(--foreground);
-      }
-      .cw-sb__link--active {
-        background: color-mix(in oklab, var(--success) 14%, transparent);
-        color: color-mix(in oklab, var(--success) 85%, var(--foreground));
-      }
-      .cw-sb__link--disabled,
-      .cw-sb__link--disabled:hover {
-        cursor: default;
-        background: transparent;
-        color: var(--muted-foreground);
-      }
-      .cw-sb__model,
-      .cw-sb__overflow {
-        position: relative;
-      }
-      .cw-sb__menu {
-        position: absolute;
-        bottom: calc(100% + 0.375rem);
-        left: 0;
-        min-width: 14rem;
-        background: var(--popover);
-        color: var(--popover-foreground);
-        border: 1px solid var(--border);
-        border-radius: 0.5rem;
-        box-shadow: 0 10px 30px -10px color-mix(in oklab, #000 20%, transparent);
-        padding: 0.25rem;
-        z-index: 30;
-      }
-      .cw-sb__menu--right {
-        left: auto;
-        right: 0;
-      }
-      .cw-sb__menu-item {
-        display: flex;
-        flex-direction: column;
-        gap: 0.0625rem;
-        width: 100%;
-        padding: 0.375rem 0.5rem;
-        border: 0;
-        background: transparent;
-        text-align: left;
-        border-radius: 0.375rem;
-        cursor: pointer;
-        color: inherit;
-        font: inherit;
-        font-size: 0.75rem;
-      }
-      .cw-sb__menu-item strong {
-        font-weight: 600;
-      }
-      .cw-sb__menu-item span {
-        color: var(--muted-foreground);
-        font-size: 0.6875rem;
-      }
-      .cw-sb__menu-item:hover {
-        background: color-mix(in oklab, var(--foreground) 6%, transparent);
-      }
-      .cw-sb__menu-item--selected {
-        background: color-mix(in oklab, var(--primary) 14%, transparent);
-      }
-      .cw-sb__link--mcp-warn {
-        color: oklch(0.62 0.16 65);
-      }
-      .cw-sb__link--mcp-warn:hover {
-        color: oklch(0.55 0.16 65);
-      }
-      .cw-sb__pill {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 0.9rem;
-        height: 0.9rem;
-        padding: 0 0.25rem;
-        border-radius: 999px;
-        background: color-mix(in oklab, var(--destructive) 22%, transparent);
-        color: var(--destructive);
-        font-size: 0.625rem;
-        font-weight: 700;
-      }
-    `,
-  ],
+  templateUrl: './claude-status-bar.component.html',
+  styleUrl: './claude-status-bar.component.scss',
 })
 export class ClaudeStatusBarComponent {
   readonly phase = input<ClaudeStatusBarPhase>('ready');
@@ -720,13 +143,6 @@ export class ClaudeStatusBarComponent {
   readonly openMcp = output<void>();
   readonly export = output<void>();
 
-  readonly modelOpen = signal(false);
-  readonly effortOpen = signal(false);
-  readonly providerOpen = signal(false);
-  readonly permissionOpen = signal(false);
-  readonly usageOpen = signal(false);
-  readonly menuOpen = signal(false);
-
   readonly visiblePlanUsage = computed(() => {
     const usage = this.planUsage();
     const provider = this.currentProvider();
@@ -737,54 +153,6 @@ export class ClaudeStatusBarComponent {
       ? usage
       : null;
   });
-
-  private readonly host = inject(ElementRef<HTMLElement>);
-
-  onDocumentMousedown(event: MouseEvent): void {
-    if (
-      !this.modelOpen() &&
-      !this.effortOpen() &&
-      !this.providerOpen() &&
-      !this.permissionOpen() &&
-      !this.usageOpen() &&
-      !this.menuOpen()
-    )
-      return;
-    const target = event.target as Node | null;
-    if (target && this.host.nativeElement.contains(target)) return;
-    this.closeAllMenus();
-  }
-
-  closeAllMenus(): void {
-    this.modelOpen.set(false);
-    this.effortOpen.set(false);
-    this.providerOpen.set(false);
-    this.permissionOpen.set(false);
-    this.usageOpen.set(false);
-    this.menuOpen.set(false);
-  }
-
-  toggleMenu(which: 'model' | 'effort' | 'provider' | 'permission' | 'usage' | 'overflow'): void {
-    if (which === 'provider' && this.providerLocked()) {
-      this.providerOpen.set(false);
-      return;
-    }
-
-    const next = {
-      model: which === 'model' ? !this.modelOpen() : false,
-      effort: which === 'effort' ? !this.effortOpen() : false,
-      provider: which === 'provider' ? !this.providerOpen() : false,
-      permission: which === 'permission' ? !this.permissionOpen() : false,
-      usage: which === 'usage' ? !this.usageOpen() : false,
-      overflow: which === 'overflow' ? !this.menuOpen() : false,
-    };
-    this.modelOpen.set(next.model);
-    this.effortOpen.set(next.effort);
-    this.providerOpen.set(next.provider);
-    this.permissionOpen.set(next.permission);
-    this.usageOpen.set(next.usage);
-    this.menuOpen.set(next.overflow);
-  }
 
   readonly lowestRemainingPercentage = computed(() => {
     const windows = this.visiblePlanUsage()?.windows ?? [];
@@ -919,12 +287,10 @@ export class ClaudeStatusBarComponent {
   );
 
   pickModel(id: string): void {
-    this.modelOpen.set(false);
     this.modelChange.emit(id);
   }
 
   pickReasoningEffort(effort: ClaudeReasoningEffort | ''): void {
-    this.effortOpen.set(false);
     this.reasoningEffortChange.emit(effort || null);
   }
 
@@ -933,7 +299,6 @@ export class ClaudeStatusBarComponent {
   }
 
   pickProvider(id: AgentProviderId): void {
-    this.providerOpen.set(false);
     if (this.providerLocked()) return;
     if (id !== this.currentProvider()) {
       this.providerChange.emit(id);
@@ -950,7 +315,6 @@ export class ClaudeStatusBarComponent {
   }
 
   pickPermissionMode(mode: ClaudePermissionMode): void {
-    this.permissionOpen.set(false);
     this.permissionModeChange.emit(mode);
   }
 
@@ -960,7 +324,9 @@ export class ClaudeStatusBarComponent {
   }
 
   togglePlanModeFromShortcut(event: Event): void {
-    if (!this.currentProviderCapabilities()?.permissions) return;
+    if (event.defaultPrevented || !this.currentProviderCapabilities()?.permissions) return;
+    if (event.target instanceof Element && event.target.closest('[role="menu"], [role="dialog"]'))
+      return;
     event.preventDefault();
     this.togglePlanMode();
   }
