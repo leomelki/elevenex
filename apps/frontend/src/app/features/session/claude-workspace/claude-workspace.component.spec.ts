@@ -1328,6 +1328,76 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(fixture.componentInstance.armedEditMessageId()).toBeNull();
   });
 
+  it.each(['light', 'dark'])('reads runtime state after the rewind and ignores its completion refresh in %s mode', async (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    const rewind = new Subject<any[]>();
+    apiMock.rewindConversation.mockReturnValueOnce(rewind);
+    apiMock.getRuntimeState.mockClear();
+    apiMock.getHistory.mockClear();
+    const editing = fixture.componentInstance.confirmEditMessage({
+      id: 'user-2', kind: 'user', content: 'Edit second', sourceMessageId: 'source-user-2',
+      timestamp: '2026-04-24T08:00:01.000Z',
+    });
+    expect(apiMock.getRuntimeState).not.toHaveBeenCalled();
+    (fixture.componentInstance as any).handleRuntimeEvent({ type: 'complete', payload: { sessionId: 7 } });
+    expect(apiMock.getHistory).not.toHaveBeenCalled();
+    rewind.next([{ id: 'user-1', kind: 'user', content: 'Keep first', timestamp: '2026-04-24T08:00:00.000Z' }]);
+    rewind.complete();
+    await editing;
+    expect(apiMock.getRuntimeState).toHaveBeenCalledWith(7);
+    expect(fixture.componentInstance.historyItems().map(item => item.content)).toEqual(['Keep first']);
+    expect(fixture.componentInstance.prompt()).toBe('Edit second');
+    document.documentElement.classList.remove('dark');
+  });
+
+  it('discards an old completion history response after an edit', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    const staleHistory = new Subject<any[]>();
+    apiMock.getHistory.mockReturnValueOnce(staleHistory);
+    const syncing = (fixture.componentInstance as any).syncHistoryAfterCompletion();
+    await fixture.componentInstance.confirmEditMessage({
+      id: 'user-2', kind: 'user', content: 'Edit second', sourceMessageId: 'source-user-2',
+      timestamp: '2026-04-24T08:00:01.000Z',
+    });
+    const retained = fixture.componentInstance.historyItems();
+    staleHistory.next([]);
+    staleHistory.complete();
+    await syncing;
+    expect(fixture.componentInstance.historyItems()).toEqual(retained);
+    expect(retained.length).toBeGreaterThan(0);
+  });
+
+  it('preserves the displayed history when a rewind fails', async () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentInstance.sessionId = 7;
+    fixture.detectChanges();
+    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.hydrated.set(true);
+    const history = [{ id: 'user-1', kind: 'user' as const, content: 'Keep first', timestamp: '2026-04-24T08:00:00.000Z' }];
+    fixture.componentInstance.historyItems.set(history);
+    const rewind = new Subject<any[]>();
+    apiMock.rewindConversation.mockReturnValueOnce(rewind);
+    const editing = fixture.componentInstance.confirmEditMessage({
+      id: 'user-2', kind: 'user', content: 'Edit second', sourceMessageId: 'source-user-2',
+      timestamp: '2026-04-24T08:00:01.000Z',
+    });
+    rewind.error(new Error('History not ready'));
+    await editing;
+    expect(fixture.componentInstance.historyItems()).toEqual(history);
+    expect(fixture.componentInstance.rewindingMessageId()).toBeNull();
+    expect(toast.error).toHaveBeenCalledWith('History not ready');
+    vi.mocked(toast.error).mockClear();
+  });
+
   it('leaves the stopped prompt in history when an interrupted run only produced thinking', async () => {
     const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
     fixture.componentInstance.sessionId = 7;

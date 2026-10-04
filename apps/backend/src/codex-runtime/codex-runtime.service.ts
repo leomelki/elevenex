@@ -145,6 +145,14 @@ interface CodexThreadStartResult {
   };
 }
 
+interface CodexThreadHistoryResult {
+  thread?: {
+    id: string;
+    path?: string | null;
+    turns: { id: string; status: string; items: { type: string }[] }[];
+  };
+}
+
 interface CodexTurnStartResult {
   turn?: {
     id?: unknown;
@@ -183,6 +191,7 @@ export class CodexRuntimeService
 {
   private readonly logger = new Logger('CodexRuntimeService');
   private readonly activeRuns = new Map<number, CodexActiveRunState>();
+  private readonly rewindingSessions = new Set<number>();
   private readonly runtimeStates = new Map<number, CodexRuntimeState>();
   private readonly invalidatedSessions = new Set<number>();
   private codexModels: ClaudeModelOption[] = [...CODEX_MODELS];
@@ -407,25 +416,7 @@ export class CodexRuntimeService
       session.codexSessionId,
       request,
     );
-    // Let app-server create the fork so its in-memory thread store, durable
-    // rollout, and the first turn submitted by the child all agree. A copied
-    // JSONL file can be discovered as history while still failing to start
-    // inference until a later follow-up wakes the thread.
-    const fork = await this.appServer.request<CodexThreadStartResult>(
-      'thread/fork',
-      {
-        threadId: target.threadId,
-        ...(target.lastTurnId
-          ? { lastTurnId: target.lastTurnId }
-          : { beforeTurnId: target.beforeTurnId }),
-        excludeTurns: true,
-      },
-    );
-    const forkedSessionId =
-      typeof fork.thread?.id === 'string' ? fork.thread.id : null;
-    if (!forkedSessionId) {
-      throw new Error('codex app-server thread/fork did not return an id');
-    }
+    const { threadId: forkedSessionId } = await this.forkAtTurn(target);
     return {
       providerSessionId: forkedSessionId,
       draft: target.draft,
@@ -437,33 +428,40 @@ export class CodexRuntimeService
     sessionId: number,
     messageId: string,
   ): Promise<ClaudeTranscriptItem[]> {
+    this.assertNotRewinding(sessionId);
     if (this.activeRuns.has(sessionId)) {
       throw new ConflictException(
         'Cannot edit a message while Codex is actively running.',
       );
     }
 
+    this.rewindingSessions.add(sessionId);
+    try {
+      return await this.rewindIdleConversation(sessionId, messageId);
+    } finally {
+      this.rewindingSessions.delete(sessionId);
+    }
+  }
+
+  private assertNotRewinding(sessionId: number): void {
+    if (this.rewindingSessions.has(sessionId)) {
+      throw new ConflictException(
+        'A Codex message edit is already in progress.',
+      );
+    }
+  }
+
+  private async rewindIdleConversation(
+    sessionId: number,
+    messageId: string,
+  ): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
     const rewindTarget = await this.historyService.rewindHistory(
       session.codexSessionId,
       messageId,
     );
-    // Codex must create the fork so its durable history store and rollout file
-    // agree. A copied JSONL prefix can be resumed in memory but later reopen as
-    // only the newly submitted turn.
-    const fork = await this.appServer.request<CodexThreadStartResult>(
-      'thread/fork',
-      {
-        threadId: rewindTarget.threadId,
-        beforeTurnId: rewindTarget.beforeTurnId,
-        excludeTurns: true,
-      },
-    );
-    const rewoundSessionId =
-      typeof fork.thread?.id === 'string' ? fork.thread.id : null;
-    if (!rewoundSessionId) {
-      throw new Error('codex app-server thread/fork did not return an id');
-    }
+    const { threadId: rewoundSessionId, history } =
+      await this.forkAtTurn(rewindTarget);
     await this.sessionsService.updateCodexSessionId(
       sessionId,
       rewoundSessionId,
@@ -484,7 +482,64 @@ export class CodexRuntimeService
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
 
-    return this.historyService.getHistory(rewoundSessionId);
+    return history;
+  }
+
+  private async forkAtTurn(target: {
+    threadId: string;
+    beforeTurnId?: string;
+    lastTurnId?: string;
+  }): Promise<{ threadId: string; history: ClaudeTranscriptItem[] }> {
+    // Older installed CLIs silently ignore lastTurnId/beforeTurnId. Fork the
+    // complete thread, then trim the child using the supported rollback RPC.
+    // Request turns so the boundary is validated against what was copied.
+    const fork = await this.appServer.request<CodexThreadHistoryResult>(
+      'thread/fork',
+      { threadId: target.threadId },
+    );
+    const thread = fork.thread;
+    if (!thread?.id || !Array.isArray(thread.turns)) {
+      throw new Error('Codex did not return the forked thread history.');
+    }
+    const index = thread.turns.findIndex(
+      (turn) => turn.id === (target.beforeTurnId ?? target.lastTurnId),
+    );
+    if (index < 0)
+      throw new Error('The selected Codex turn was not copied into the fork.');
+    if (target.lastTurnId && thread.turns[index].status === 'inProgress') {
+      throw new ConflictException(
+        'Cannot fork through a Codex turn that is still running.',
+      );
+    }
+    const retained = thread.turns.slice(
+      0,
+      index + (target.beforeTurnId ? 0 : 1),
+    );
+    const numTurns = thread.turns.length - retained.length;
+    if (numTurns > 0) {
+      const rollback = await this.appServer.request<CodexThreadHistoryResult>(
+        'thread/rollback',
+        { threadId: thread.id, numTurns },
+      );
+      if (
+        rollback.thread?.id !== thread.id ||
+        rollback.thread.turns?.length !== retained.length ||
+        rollback.thread.turns.some((turn, i) => turn.id !== retained[i].id)
+      ) {
+        throw new Error('Codex did not retain the requested fork history.');
+      }
+    }
+    const expectedUserMessages = retained.reduce(
+      (count, turn) =>
+        count + turn.items.filter((item) => item.type === 'userMessage').length,
+      0,
+    );
+    const history = await this.historyService.waitForHistory(
+      thread.id,
+      expectedUserMessages,
+      thread.path ?? undefined,
+    );
+    return { threadId: thread.id, history };
   }
 
   async prewarmSession(sessionId: number): Promise<void> {
@@ -633,6 +688,7 @@ export class CodexRuntimeService
     titlePrompt?: string,
     images?: AgentImageInput[],
   ): Promise<void> {
+    this.assertNotRewinding(sessionId);
     const trimmedPrompt = prompt.trim();
     const validatedImages = this.validateImageInputs(images);
     if (!trimmedPrompt && !validatedImages.length) {
@@ -690,6 +746,7 @@ export class CodexRuntimeService
       );
     }
     const resolvedWorktreePath = worktreePath;
+    this.assertNotRewinding(sessionId);
     const state = cachedState ?? this.ensureRuntimeState(sessionId);
     state.runPhase = 'running';
     state.sessionState = 'running';

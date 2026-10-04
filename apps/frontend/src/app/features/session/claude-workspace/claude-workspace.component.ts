@@ -340,6 +340,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly expandedTurnChanges = signal<Record<string, boolean>>({});
   readonly armedEditMessageId = signal<string | null>(null);
   readonly rewindingMessageId = signal<string | null>(null);
+  private transcriptRevision = 0;
   readonly forks = signal<SessionFork[]>([]);
   readonly expandedForkAnchors = signal<Record<string, boolean>>({});
   readonly forkingAnchorId = signal<string | null>(null);
@@ -1706,12 +1707,15 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     const restored = parseDiffSelectionMentions(restoredSessions.text);
     if (!messageId) return;
 
+    const version = this.bootstrapVersion;
+    const sessionId = this.sessionId;
+    this.transcriptRevision += 1;
     this.rewindingMessageId.set(messageId);
     try {
-      const [history, runtimeState] = await Promise.all([
-        firstValueFrom(this.api.rewindConversation(this.sessionId, messageId)),
-        firstValueFrom(this.api.getRuntimeState(this.sessionId)),
-      ]);
+      const history = await firstValueFrom(this.api.rewindConversation(sessionId, messageId));
+      if (version !== this.bootstrapVersion) return;
+      const runtimeState = await firstValueFrom(this.api.getRuntimeState(sessionId));
+      if (version !== this.bootstrapVersion) return;
 
       this.historyItems.set([...history].sort((l, r) => l.timestamp.localeCompare(r.timestamp)));
       this.applyRuntimeState(runtimeState);
@@ -1731,7 +1735,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       this.closeAgentInspector();
       queueMicrotask(() => this.composer?.focusAtEnd());
     } finally {
-      this.rewindingMessageId.set(null);
+      if (version === this.bootstrapVersion) this.rewindingMessageId.set(null);
     }
   }
 
@@ -2271,6 +2275,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private async handleCompletion(version: number = this.bootstrapVersion): Promise<void> {
+    // The rewind response owns the new transcript; a completion refresh must
+    // not merge messages from the conversation being replaced into it.
+    if (this.rewindingMessageId() !== null) return;
     await this.syncHistoryAfterCompletion();
     if (version !== this.bootstrapVersion) return;
 
@@ -2285,6 +2292,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   private async syncHistoryAfterCompletion(): Promise<void> {
+    const version = this.bootstrapVersion;
+    const revision = this.transcriptRevision;
     // Flush pending deltas synchronously before snapshotting liveItems. The RAF-based
     // flush hasn't run yet when 'complete' fires, so without this the last streamed
     // assistant message would have empty content in the snapshot and be dropped by
@@ -2297,6 +2306,8 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     const preSyncLiveItems = this.liveItems();
     const preSyncOptimisticUserItems = this.optimisticUserItems();
     const history = await firstValueFrom(this.api.getHistory(this.sessionId));
+    if (version !== this.bootstrapVersion || revision !== this.transcriptRevision ||
+      this.rewindingMessageId() !== null) return;
 
     // Streaming items and history items use different ID formats:
     //   Streaming text:    msg_abc:0              History text:    msg_abc:assistant:0
