@@ -462,6 +462,12 @@ type Todo = ToolTodoItem;
                 }
               }
               @case ('web_search') {
+                @if (webSearchQuery()) {
+                  <div class="cw-agent">
+                    <div class="cw-agent__label">Query</div>
+                    <div class="cw-tool__web whitespace-pre-wrap">{{ webSearchQuery() }}</div>
+                  </div>
+                }
                 @if (resultText()) {
                   <div class="cw-tool__web">{{ resultText() }}</div>
                 }
@@ -1399,6 +1405,7 @@ export class ClaudeToolCallComponent {
       this.isEditDiff() ||
       this.fileChangeDiffs().length > 0 ||
       !!this.bashCommand() ||
+      !!this.webSearchQuery() ||
       this.childUnits().length > 0
     );
   });
@@ -1419,6 +1426,12 @@ export class ClaudeToolCallComponent {
     if (this.display().kind !== 'bash') return '';
     const input = this.call().toolInput as { command?: string } | undefined;
     return input?.command ?? '';
+  });
+
+  readonly webSearchQuery = computed(() => {
+    if (this.display().kind !== 'web_search') return '';
+    const input = this.call().toolInput as { query?: string } | undefined;
+    return input?.query ?? '';
   });
 
   // Bash shows a human-readable description as the target text; hovering reveals the

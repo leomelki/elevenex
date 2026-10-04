@@ -7,6 +7,71 @@ jest.mock('../session-title/session-title.service.js', () => ({
 import { CodexRuntimeService } from './codex-runtime.service.js';
 
 describe('CodexRuntimeService', () => {
+  it.each([
+    { query: 'legacy query' },
+    { query: '', action: { type: 'search', query: 'structured query' } },
+    {
+      query: 'first',
+      action: { type: 'search', queries: ['first', 'second'] },
+    },
+  ])(
+    'publishes web search input and completion while the turn is still running: %j',
+    (raw) => {
+      const { service } = createService();
+      const runtime = service as any;
+      const state = runtime.ensureRuntimeState(7);
+      state.runPhase = 'running';
+      const emit = jest.spyOn(runtime, 'emitEvent');
+      const translate = (input: unknown) =>
+        runtime.translateAppServerItem(input, new Map(), new Map(), new Map());
+      runtime.handleCodexEvent(
+        7,
+        state,
+        {
+          type: 'item.started',
+          item: translate({ id: 'search-1', type: 'webSearch', query: '' }),
+        },
+        '/tmp/project',
+      );
+      expect(state.liveItems).toHaveLength(1);
+      runtime.handleCodexEvent(
+        7,
+        state,
+        {
+          type: 'item.completed',
+          item: translate({ id: 'search-1', type: 'webSearch', ...raw }),
+        },
+        '/tmp/project',
+      );
+      expect(state.runPhase).toBe('running');
+      expect(state.liveItems).toHaveLength(2);
+      expect(state.liveItems[0].toolInput.query).toBe(
+        'action' in raw
+          ? 'queries' in raw.action
+            ? 'first\nsecond'
+            : 'structured query'
+          : 'legacy query',
+      );
+      expect(emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'tool_use',
+          payload: expect.objectContaining({ item: state.liveItems[0] }),
+        }),
+      );
+      expect(emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'tool_result',
+          payload: expect.objectContaining({
+            item: expect.objectContaining({
+              toolUseId: 'search-1',
+              content: '',
+            }),
+          }),
+        }),
+      );
+    },
+  );
+
   const session = {
     id: 7,
     repoId: 1,

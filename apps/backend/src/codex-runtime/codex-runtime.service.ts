@@ -15,6 +15,7 @@ import type {
   Usage,
 } from '@openai/codex-sdk';
 import { EventEmitter } from 'events';
+import { codexWebSearchInput } from './codex-web-search.js';
 import { randomUUID } from 'crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
@@ -1386,7 +1387,7 @@ export class CodexRuntimeService
       };
     }
     if (item.type === 'web_search') {
-      const providerToolInput = { query: item.query };
+      const providerToolInput = codexWebSearchInput(item);
       const canonicalTool = canonicalizeAgentTool(
         'WebSearch',
         providerToolInput,
@@ -1439,6 +1440,17 @@ export class CodexRuntimeService
     item: ThreadItem,
     timestamp: string,
   ): ClaudeTranscriptItem | null {
+    if (item.type === 'web_search') {
+      // Codex reports completion without exposing search result content.
+      return {
+        id: `${item.id}:tool_result`,
+        kind: 'tool_result',
+        toolUseId: item.id,
+        content: '',
+        timestamp,
+        authoredAt: timestamp,
+      };
+    }
     if (item.type === 'command_execution') {
       return {
         id: `${item.id}:tool_result`,
@@ -1741,6 +1753,10 @@ export class CodexRuntimeService
     state.liveItems = state.liveItems.map((live) =>
       live.id === item.id ? { ...live, ...item } : live,
     );
+    if (eventType === 'tool_use' && item.toolKind === 'web_search') {
+      // Search queries/actions can arrive only with the completed item.
+      this.emitEvent({ type: 'tool_use', payload: { sessionId, item } });
+    }
     if (
       (eventType === 'message_start' || eventType === 'thinking_start') &&
       item.content
@@ -3084,6 +3100,7 @@ export class CodexRuntimeService
           id,
           type: 'web_search',
           query: typeof raw.query === 'string' ? raw.query : '',
+          ...(raw.action ? { action: raw.action } : {}),
         };
       case 'todoList':
         return {

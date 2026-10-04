@@ -7,6 +7,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { codexWebSearchInput } from './codex-web-search.js';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { basename, join } from 'path';
@@ -279,6 +280,46 @@ export class CodexHistoryService {
         asRecord(record.item);
       const payloadItem = asRecord(item);
       if (!payloadItem) {
+        continue;
+      }
+      if (payloadItem.type === 'web_search_call') {
+        const id =
+          stringValue(payloadItem.id) ??
+          `codex-history:${index}:web_search_call`;
+        const providerToolInput = codexWebSearchInput(payloadItem);
+        const canonicalTool = canonicalizeAgentTool(
+          'WebSearch',
+          providerToolInput,
+        );
+        items.push({
+          id: `${id}:tool_use`,
+          kind: 'tool_use',
+          toolUseId: id,
+          toolName: 'WebSearch',
+          providerToolName: 'WebSearch',
+          ...canonicalTool,
+          providerToolInput,
+          sourceMessageId: id,
+          transcriptMessageId: this.recordAnchorId(index),
+          timestamp,
+          receivedAt: timestamp,
+        });
+        if (payloadItem.status !== 'in_progress') {
+          items.push({
+            id: `${id}:tool_result`,
+            kind: 'tool_result',
+            toolUseId: id,
+            content:
+              payloadItem.status === 'failed'
+                ? '<tool_use_error>Web search failed</tool_use_error>'
+                : '',
+            isError: payloadItem.status === 'failed',
+            sourceMessageId: id,
+            transcriptMessageId: this.recordAnchorId(index),
+            timestamp,
+            authoredAt: timestamp,
+          });
+        }
         continue;
       }
       const normalized = this.normalizeResponseItem(

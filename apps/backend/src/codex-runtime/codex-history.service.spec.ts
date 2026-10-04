@@ -4,6 +4,49 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 describe('CodexHistoryService', () => {
+  it('restores native web searches with all queries and a completion receipt', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      await writeFile(
+        join(root, 'thread-search.jsonl'),
+        jsonl([
+          { type: 'session_meta', payload: { id: 'search' } },
+          {
+            type: 'response_item',
+            payload: {
+              id: 'search-1',
+              type: 'web_search_call',
+              status: 'completed',
+              action: {
+                type: 'search',
+                queries: ['first question', 'second question'],
+              },
+            },
+          },
+        ]),
+      );
+      const history = await new CodexHistoryService(root).getHistory('search');
+      expect(history).toEqual([
+        expect.objectContaining({
+          kind: 'tool_use',
+          toolUseId: 'search-1',
+          toolKind: 'web_search',
+          toolInput: expect.objectContaining({
+            query: 'first question\nsecond question',
+          }),
+        }),
+        expect.objectContaining({
+          kind: 'tool_result',
+          toolUseId: 'search-1',
+          content: '',
+          isError: false,
+        }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   function turnRecords(id: string, prompt: string) {
     return [
       { type: 'event_msg', payload: { type: 'task_started', turn_id: id } },
