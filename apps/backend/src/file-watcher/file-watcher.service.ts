@@ -193,11 +193,40 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const watcher = this.useNativeRecursiveWatch
-      ? this.createNativeWatcher(worktreePath, onEvent)
-      : this.createChokidarWatcher(worktreePath, onEvent, false);
+    try {
+      const watcher = this.useNativeRecursiveWatch
+        ? this.createNativeWatcherWithFallback(worktreePath, onEvent)
+        : this.createChokidarWatcher(worktreePath, onEvent, false);
 
-    this.watchers.set(worktreePath, watcher);
+      this.watchers.set(worktreePath, watcher);
+    } catch (error) {
+      // fs.watch and chokidar.watch can both fail synchronously before an
+      // 'error' listener can be attached (for example, native recursive watch
+      // throws EISDIR for WSL UNC directories on Windows). A failed file watcher
+      // must not take down the API and every other active session.
+      this.logWatcherError(worktreePath, error);
+    }
+  }
+
+  /**
+   * Prefer the efficient native recursive watcher, but recover from synchronous
+   * construction failures by using chokidar polling. Polling avoids the native
+   * directory-watch API that rejects some network and WSL-backed paths.
+   */
+  private createNativeWatcherWithFallback(
+    worktreePath: string,
+    onEvent: (event: FileChangeEvent) => void,
+  ): WorktreeWatcher {
+    try {
+      return this.createNativeWatcher(worktreePath, onEvent);
+    } catch (error) {
+      this.logger.warn(
+        `Native recursive file watcher unavailable for ${worktreePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }; falling back to polling.`,
+      );
+      return this.createChokidarWatcher(worktreePath, onEvent, true);
+    }
   }
 
   /**
@@ -318,7 +347,9 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
       ...DEFAULT_WATCHER_OPTIONS,
       // Only add polling options when polling, so the non-polling configuration
       // stays byte-for-byte identical to the original behaviour.
-      ...(usePolling ? { usePolling: true, interval: POLLING_INTERVAL_MS } : {}),
+      ...(usePolling
+        ? { usePolling: true, interval: POLLING_INTERVAL_MS }
+        : {}),
     });
 
     // Handle all file system events

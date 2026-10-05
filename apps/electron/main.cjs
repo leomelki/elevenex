@@ -30,6 +30,7 @@ const {
 } = require('./wsl-utils.cjs');
 const { downloadToFile, formatBytes } = require('./download-utils.cjs');
 const { createAppUpdater } = require('./app-updater.cjs');
+const { resolveRuntimeReleaseTag } = require('./runtime-release.cjs');
 const {
   LOCAL_ENVIRONMENT_REF,
   environmentRefKey,
@@ -711,11 +712,10 @@ function buildLocalRuntimeDownloadUrl(version) {
   if (!version) {
     return null;
   }
-  if (!/^[a-f0-9]{7,64}$/i.test(version) && !/^v?\d+\.\d+\.\d+/.test(version)) {
-    return null;
-  }
+  const releaseTag = resolveRuntimeReleaseTag(version, path.dirname(getBundledVersionPath()));
+  if (!releaseTag) return null;
   const targetKey = getLocalRuntimeTarget();
-  return `${RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-runtime-${targetKey}.tar.gz`;
+  return `${RUNTIME_RELEASE_BASE}/${releaseTag}/elevenex-runtime-${targetKey}.tar.gz`;
 }
 
 function getEmbeddedBackendRoot() {
@@ -2341,11 +2341,10 @@ function buildRemoteRuntimeDownloadUrl(version, targetKey) {
   if (!version || !targetKey) {
     return null;
   }
-  if (!/^[a-f0-9]{7,64}$/i.test(version) && !/^v?\d+\.\d+\.\d+/.test(version)) {
-    return null;
-  }
+  const releaseTag = resolveRuntimeReleaseTag(version, path.dirname(getBundledVersionPath()));
+  if (!releaseTag) return null;
   const archiveExtension = REMOTE_RUNTIME_TARGETS[targetKey]?.archiveExtension || 'tar.gz';
-  return `${RUNTIME_RELEASE_BASE}/runtime-${version}/elevenex-remote-runtime-${targetKey}.${archiveExtension}`;
+  return `${RUNTIME_RELEASE_BASE}/${releaseTag}/elevenex-remote-runtime-${targetKey}.${archiveExtension}`;
 }
 
 function buildDownloadScript(url, remoteDestination) {

@@ -539,12 +539,13 @@ export class SessionMessageActions {
     if (!messageId) return;
 
     const version = this.runtime.bootstrapVersion;
+    const sessionId = this.runtime.sessionId;
+    this.runtime.beginConversationRewind();
     this.rewindingMessageId.set(messageId);
     try {
-      const [history, runtimeState] = await Promise.all([
-        firstValueFrom(this.api.rewindConversation(this.runtime.sessionId, messageId)),
-        firstValueFrom(this.api.getRuntimeState(this.runtime.sessionId)),
-      ]);
+      const history = await firstValueFrom(this.api.rewindConversation(sessionId, messageId));
+      if (!this.runtime.isCurrentConversation(version)) return;
+      const runtimeState = await firstValueFrom(this.api.getRuntimeState(sessionId));
 
       if (!this.runtime.isCurrentConversation(version)) return;
       this.runtime.restoreRewoundConversation(history, runtimeState);
@@ -555,6 +556,7 @@ export class SessionMessageActions {
       this.closeAgentInspector();
       queueMicrotask(() => this.focusRequested.next());
     } finally {
+      this.runtime.endConversationRewind(version);
       if (this.runtime.isCurrentConversation(version)) this.rewindingMessageId.set(null);
     }
   }

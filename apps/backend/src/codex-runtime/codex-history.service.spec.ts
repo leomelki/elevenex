@@ -1,9 +1,204 @@
 import { CodexHistoryService } from './codex-history.service.js';
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { appendFile, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 describe('CodexHistoryService', () => {
+  it('restores native web searches with all queries and a completion receipt', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      await writeFile(
+        join(root, 'thread-search.jsonl'),
+        jsonl([
+          { type: 'session_meta', payload: { id: 'search' } },
+          {
+            type: 'response_item',
+            payload: {
+              id: 'search-1',
+              type: 'web_search_call',
+              status: 'completed',
+              action: {
+                type: 'search',
+                queries: ['first question', 'second question'],
+              },
+            },
+          },
+        ]),
+      );
+      const history = await new CodexHistoryService(root).getHistory('search');
+      expect(history).toEqual([
+        expect.objectContaining({
+          kind: 'tool_use',
+          toolUseId: 'search-1',
+          toolKind: 'web_search',
+          toolInput: expect.objectContaining({
+            query: 'first question\nsecond question',
+          }),
+        }),
+        expect.objectContaining({
+          kind: 'tool_result',
+          toolUseId: 'search-1',
+          content: '',
+          isError: false,
+        }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  function turnRecords(id: string, prompt: string) {
+    return [
+      { type: 'event_msg', payload: { type: 'task_started', turn_id: id } },
+      { type: 'event_msg', payload: { type: 'user_message', message: prompt } },
+      { type: 'turn_context', payload: { turn_id: id } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ text: `answer: ${prompt}` }],
+        },
+      },
+    ];
+  }
+
+  function jsonl(records: unknown[]) {
+    return records.map((record) => JSON.stringify(record)).join('\n') + '\n';
+  }
+
+  it('replays rollbacks without renumbering surviving edit and fork anchors', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      const service = new CodexHistoryService(root);
+      await writeFile(
+        join(root, 'thread-rewound.jsonl'),
+        jsonl([
+          { type: 'session_meta', payload: { id: 'rewound' } },
+          ...turnRecords('turn-1', 'first'),
+          ...turnRecords('turn-2', 'obsolete'),
+          ...turnRecords('turn-3', 'also obsolete'),
+          {
+            type: 'event_msg',
+            payload: { type: 'thread_rolled_back', num_turns: 2 },
+          },
+          ...turnRecords('turn-4', 'replacement'),
+        ]),
+      );
+      const history = await service.getHistory('rewound');
+      expect(history.map((item) => item.content)).toEqual([
+        'first',
+        'answer: first',
+        'replacement',
+        'answer: replacement',
+      ]);
+      expect(
+        history
+          .filter((item) => item.kind === 'user')
+          .map((item) => item.sourceMessageId),
+      ).toEqual(['codex-record:2', 'codex-record:15']);
+      await expect(
+        service.rewindHistory('rewound', 'codex-record:15'),
+      ).resolves.toEqual({ threadId: 'rewound', beforeTurnId: 'turn-4' });
+      await expect(
+        service.rewindHistory('rewound', 'codex-record:6'),
+      ).rejects.toThrow('Only user messages');
+      await expect(service.listSessions()).resolves.toEqual([
+        expect.objectContaining({ messageCount: 2, summary: 'replacement' }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('handles repeated rollbacks and an empty first-turn rewind', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      const service = new CodexHistoryService(root);
+      const path = join(root, 'thread-rewound.jsonl');
+      await writeFile(
+        path,
+        jsonl([
+          { type: 'session_meta', payload: { id: 'rewound' } },
+          ...turnRecords('turn-1', 'first'),
+          ...turnRecords('turn-2', 'second'),
+          {
+            type: 'event_msg',
+            payload: { type: 'thread_rolled_back', num_turns: 1 },
+          },
+          ...turnRecords('turn-3', 'third'),
+          {
+            type: 'event_msg',
+            payload: { type: 'thread_rolled_back', num_turns: 2 },
+          },
+        ]),
+      );
+      await expect(service.getHistory('rewound')).resolves.toEqual([]);
+      await expect(service.waitForHistory('rewound', 0, path)).resolves.toEqual(
+        [],
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('waits for delayed rollout creation and rollback persistence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      const service = new CodexHistoryService(root);
+      const path = join(root, 'thread-fork.jsonl');
+      const waiting = service.waitForHistory('fork', 1, path);
+      await writeFile(
+        path,
+        jsonl([
+          { type: 'session_meta', payload: { id: 'fork' } },
+          ...turnRecords('turn-1', 'first'),
+          ...turnRecords('turn-2', 'second'),
+        ]),
+      );
+      const writeRollback = new Promise<void>((resolve, reject) => {
+        setTimeout(() => {
+          appendFile(
+            path,
+            jsonl([
+              {
+                type: 'event_msg',
+                payload: { type: 'thread_rolled_back', num_turns: 1 },
+              },
+            ]),
+          ).then(() => resolve(), reject);
+        }, 75);
+      });
+      const [history] = await Promise.all([waiting, writeRollback]);
+      expect(history.map((item) => item.content)).toEqual([
+        'first',
+        'answer: first',
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('lists a fork under its own metadata id when it contains parent metadata', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
+    try {
+      const service = new CodexHistoryService(root);
+      await writeFile(
+        join(root, 'thread-fork.jsonl'),
+        jsonl([
+          { type: 'session_meta', payload: { id: 'fork', cwd: '/repo' } },
+          { type: 'session_meta', payload: { id: 'parent', cwd: '/repo' } },
+          ...turnRecords('turn-1', 'first'),
+        ]),
+      );
+      await expect(service.listSessions()).resolves.toEqual([
+        expect.objectContaining({ id: 'fork', messageCount: 1 }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('marks Codex history plan items with plan content metadata', () => {
     const service = new CodexHistoryService();
     const item = (

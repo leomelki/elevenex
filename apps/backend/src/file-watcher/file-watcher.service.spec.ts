@@ -28,8 +28,9 @@ describe('FileWatcherService', () => {
 
     // Force the chokidar backend for the shared suite so behaviour is identical
     // across platforms. The native recursive backend is covered separately.
-    (service as unknown as { useNativeRecursiveWatch: boolean }).useNativeRecursiveWatch =
-      false;
+    (
+      service as unknown as { useNativeRecursiveWatch: boolean }
+    ).useNativeRecursiveWatch = false;
   });
 
   afterEach(() => {
@@ -82,7 +83,7 @@ describe('FileWatcherService', () => {
 
       expect(onEvent).toHaveBeenCalledWith({
         event: 'change',
-        path: 'src/file.ts',
+        path: path.join('src', 'file.ts'),
         worktreePath,
       });
     });
@@ -225,6 +226,63 @@ describe('FileWatcherService', () => {
   });
 
   describe('native recursive watch (macOS/Windows)', () => {
+    it('should fall back to polling when native watcher creation throws', () => {
+      const worktreePath = '\\\\wsl.localhost\\Debian\\home\\user\\repo\\';
+      const nativeFailure = Object.assign(
+        new Error('EISDIR: illegal operation on a directory'),
+        { code: 'EISDIR' },
+      );
+      const nativeWatcherSpy = jest
+        .spyOn(
+          service as unknown as {
+            createNativeWatcher: () => never;
+          },
+          'createNativeWatcher',
+        )
+        .mockImplementation(() => {
+          throw nativeFailure;
+        });
+      (
+        service as unknown as { useNativeRecursiveWatch: boolean }
+      ).useNativeRecursiveWatch = true;
+
+      expect(() =>
+        service.watchWorktree(worktreePath, jest.fn()),
+      ).not.toThrow();
+
+      expect(nativeWatcherSpy).toHaveBeenCalled();
+      expect(chokidar.watch).toHaveBeenCalledWith(
+        worktreePath,
+        expect.objectContaining({ usePolling: true }),
+      );
+      expect(service.isWatching(worktreePath)).toBe(true);
+    });
+
+    it('should keep the backend alive when native and fallback watchers both fail', () => {
+      const worktreePath = '\\\\wsl.localhost\\Debian\\home\\user\\repo\\';
+      jest
+        .spyOn(
+          service as unknown as {
+            createNativeWatcher: () => never;
+          },
+          'createNativeWatcher',
+        )
+        .mockImplementation(() => {
+          throw new Error('native watcher failed');
+        });
+      (chokidar.watch as jest.Mock).mockImplementation(() => {
+        throw new Error('fallback watcher failed');
+      });
+      (
+        service as unknown as { useNativeRecursiveWatch: boolean }
+      ).useNativeRecursiveWatch = true;
+
+      expect(() =>
+        service.watchWorktree(worktreePath, jest.fn()),
+      ).not.toThrow();
+      expect(service.isWatching(worktreePath)).toBe(false);
+    });
+
     it('should classify an existing file as a change event', async () => {
       const onEvent = jest.fn();
       const worktreePath = '/test/worktree';

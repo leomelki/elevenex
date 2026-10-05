@@ -7,9 +7,11 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { codexWebSearchInput } from './codex-web-search.js';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { basename, join } from 'path';
+import { setTimeout as delay } from 'timers/promises';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import type { CodexHistorySessionSummary } from './codex-runtime.types.js';
@@ -59,6 +61,33 @@ export class CodexHistoryService {
     }
     const records = await this.readJsonl(path);
     return this.normalizeRecords(records);
+  }
+
+  /** Do not publish a fork until its rollout contains the retained turns. */
+  async waitForHistory(
+    threadId: string,
+    expectedUserMessages: number,
+    rolloutPath?: string,
+  ): Promise<ClaudeTranscriptItem[]> {
+    const deadline = Date.now() + 5_000;
+    do {
+      const path = rolloutPath ?? (await this.findSessionFile(threadId));
+      if (path) {
+        try {
+          const history = this.normalizeRecords(await this.readJsonl(path));
+          if (
+            history.filter((item) => item.kind === 'user').length ===
+            expectedUserMessages
+          ) {
+            return history;
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+      }
+      await delay(50);
+    } while (Date.now() < deadline);
+    throw new Error('Codex fork history is not ready. Please try again.');
   }
 
   async forkHistory(
@@ -191,7 +220,8 @@ export class CodexHistoryService {
       }
       if (record.type === 'session_meta') {
         const payload = asRecord(record.payload);
-        id = stringValue(payload?.id) ?? id;
+        // Fork rollouts can also contain the parent's session_meta record.
+        id ??= stringValue(payload?.id) ?? null;
         cwd = stringValue(payload?.cwd) ?? cwd;
         model =
           stringValue(payload?.model) ??
@@ -250,6 +280,46 @@ export class CodexHistoryService {
         asRecord(record.item);
       const payloadItem = asRecord(item);
       if (!payloadItem) {
+        continue;
+      }
+      if (payloadItem.type === 'web_search_call') {
+        const id =
+          stringValue(payloadItem.id) ??
+          `codex-history:${index}:web_search_call`;
+        const providerToolInput = codexWebSearchInput(payloadItem);
+        const canonicalTool = canonicalizeAgentTool(
+          'WebSearch',
+          providerToolInput,
+        );
+        items.push({
+          id: `${id}:tool_use`,
+          kind: 'tool_use',
+          toolUseId: id,
+          toolName: 'WebSearch',
+          providerToolName: 'WebSearch',
+          ...canonicalTool,
+          providerToolInput,
+          sourceMessageId: id,
+          transcriptMessageId: this.recordAnchorId(index),
+          timestamp,
+          receivedAt: timestamp,
+        });
+        if (payloadItem.status !== 'in_progress') {
+          items.push({
+            id: `${id}:tool_result`,
+            kind: 'tool_result',
+            toolUseId: id,
+            content:
+              payloadItem.status === 'failed'
+                ? '<tool_use_error>Web search failed</tool_use_error>'
+                : '',
+            isError: payloadItem.status === 'failed',
+            sourceMessageId: id,
+            transcriptMessageId: this.recordAnchorId(index),
+            timestamp,
+            authoredAt: timestamp,
+          });
+        }
         continue;
       }
       const normalized = this.normalizeResponseItem(
@@ -606,7 +676,7 @@ export class CodexHistoryService {
 
   private async readJsonl(path: string): Promise<JsonRecord[]> {
     const content = await fs.readFile(path, 'utf-8');
-    return content
+    const records = content
       .split(/\r?\n/)
       .filter((line) => line.trim())
       .map((line) => {
@@ -616,6 +686,45 @@ export class CodexHistoryService {
           return { type: 'parse_error', id: randomUUID() };
         }
       });
+    return this.applyRollbacks(records);
+  }
+
+  private applyRollbacks(records: JsonRecord[]): JsonRecord[] {
+    const turns: { index: number; id: string | null }[] = [];
+    for (const [index, record] of records.entries()) {
+      const payload = asRecord(record.payload);
+      if (
+        record.type === 'event_msg' &&
+        payload?.type === 'thread_rolled_back'
+      ) {
+        const count = payload.num_turns;
+        if (typeof count === 'number' && Number.isInteger(count) && count > 0) {
+          const removed = turns.splice(Math.max(0, turns.length - count));
+          if (removed.length) {
+            // Keep physical record positions stable: UI edit/fork anchors use them.
+            for (let cursor = removed[0].index; cursor <= index; cursor += 1) {
+              records[cursor] = { type: 'rolled_back' };
+            }
+          }
+        }
+        continue;
+      }
+      const turnId = stringValue(payload?.turn_id ?? payload?.turnId);
+      if (
+        turnId &&
+        (record.type === 'turn_context' ||
+          (record.type === 'event_msg' && payload?.type === 'task_started'))
+      ) {
+        if (turns.at(-1)?.id !== turnId) turns.push({ index, id: turnId });
+      } else if (
+        this.isVisibleUserMessage(record) &&
+        (!turns.length || turns.at(-1)?.id === null)
+      ) {
+        // Older rollouts can lack turn boundary events entirely.
+        turns.push({ index, id: null });
+      }
+    }
+    return records;
   }
 }
 

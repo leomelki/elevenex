@@ -4,6 +4,37 @@ import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 describe('ClaudeToolCallComponent', () => {
+  it.each(['light', 'dark'])('shows full web queries and completes the tool during a live turn in %s mode', async (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try {
+      await TestBed.configureTestingModule({ imports: [ClaudeToolCallComponent] }).compileComponents();
+      const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+      const query = 'A long question '.repeat(15) + '\nA second question';
+      fixture.componentRef.setInput('call', {
+        id: 'search-1:tool_use', kind: 'tool_use', toolUseId: 'search-1',
+        toolName: 'WebSearch', toolKind: 'web_search', toolInput: { query },
+        timestamp: '2026-04-24T08:00:00.000Z',
+      });
+      fixture.componentRef.setInput('isLive', true);
+      fixture.detectChanges();
+      expect(fixture.componentInstance.state()).toBe('running');
+      expect(fixture.componentInstance.canExpand()).toBe(true);
+      fixture.componentInstance.toggle();
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('.cw-tool__body').textContent).toContain(query);
+      fixture.componentRef.setInput('result', {
+        id: 'search-1:tool_result', kind: 'tool_result', toolUseId: 'search-1', content: '',
+        timestamp: '2026-04-24T08:00:05.000Z',
+      });
+      fixture.detectChanges();
+      expect(fixture.componentInstance.state()).toBe('done');
+      expect(fixture.componentInstance.summary()?.text).toBe('Done');
+      fixture.destroy();
+    } finally {
+      document.documentElement.classList.remove('dark');
+    }
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });

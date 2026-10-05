@@ -339,6 +339,7 @@ export class ClaudeToolCallComponent {
       this.isEditDiff() ||
       this.fileChanges().length > 0 ||
       !!this.bashCommand() ||
+      !!this.webSearchQuery() ||
       this.childUnits().length > 0
     );
   });
@@ -359,6 +360,12 @@ export class ClaudeToolCallComponent {
     if (this.display().kind !== 'bash') return '';
     const input = this.call().toolInput as { command?: string } | undefined;
     return input?.command ?? '';
+  });
+
+  readonly webSearchQuery = computed(() => {
+    if (this.display().kind !== 'web_search') return '';
+    const input = this.call().toolInput as { query?: string } | undefined;
+    return input?.query ?? '';
   });
 
   // Bash shows a human-readable description as the target text; hovering reveals the

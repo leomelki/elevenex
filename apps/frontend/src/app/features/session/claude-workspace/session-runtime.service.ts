@@ -68,6 +68,19 @@ const LOGIN_CARD_PROVIDERS = new Set(['claude', 'codex', 'pi']);
 @Injectable()
 export class SessionRuntime {
   private inputs?: SessionWorkspaceInputs;
+  private transcriptRevision = 0;
+  private rewindingVersion: number | null = null;
+
+  beginConversationRewind(): void {
+    this.transcriptRevision += 1;
+    this.rewindingVersion = this.bootstrapVersion;
+    this.historyRefresh = null;
+  }
+
+  endConversationRewind(version: number): void {
+    if (this.rewindingVersion === version) this.rewindingVersion = null;
+  }
+
   private readonly lifecycle = new Subject<SessionWorkspaceEvent>();
   readonly events = this.lifecycle.asObservable();
 
@@ -1063,6 +1076,9 @@ export class SessionRuntime {
   }
 
   private async handleCompletion(version: number = this.bootstrapVersion): Promise<void> {
+    // The rewind response owns the replacement transcript. Completion refreshes
+    // from the old conversation must not restore messages removed by the edit.
+    if (this.rewindingVersion === version) return;
     await this.syncHistoryAfterCompletion();
     if (version !== this.bootstrapVersion) return;
 
@@ -1071,16 +1087,20 @@ export class SessionRuntime {
 
   private async syncHistoryAfterCompletion(): Promise<void> {
     const version = this.bootstrapVersion;
+    const revision = this.transcriptRevision;
+    if (this.rewindingVersion === version) return;
     if (this.historyRefresh?.version === version) return this.historyRefresh.promise;
     this.flushDeltas();
     const promise = (async () => {
       try {
         const history = await firstValueFrom(this.api.getHistory(this.sessionId));
-        if (version !== this.bootstrapVersion || this.destroyRef.destroyed) return;
+        if (version !== this.bootstrapVersion || revision !== this.transcriptRevision ||
+          this.rewindingVersion === version || this.destroyRef.destroyed) return;
         this.flushDeltas();
         this.conversation.applyHistoryRefresh(history);
       } catch (error) {
-        if (version === this.bootstrapVersion && !this.destroyRef.destroyed) {
+        if (version === this.bootstrapVersion && revision === this.transcriptRevision &&
+          this.rewindingVersion !== version && !this.destroyRef.destroyed) {
           this.conversation.lastError.set(
             getHttpErrorMessage(error, 'Could not refresh conversation history.'),
           );

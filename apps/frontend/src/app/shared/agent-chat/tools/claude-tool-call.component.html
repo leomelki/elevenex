@@ -337,6 +337,12 @@
             }
           }
           @case ('web_search') {
+            @if (webSearchQuery()) {
+              <div class="cw-agent">
+                <div class="cw-agent__label">Query</div>
+                <div class="cw-tool__web whitespace-pre-wrap">{{ webSearchQuery() }}</div>
+              </div>
+            }
             @if (resultText()) {
               <div class="cw-tool__web">{{ resultText() }}</div>
             }

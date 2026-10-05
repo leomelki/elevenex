@@ -2,6 +2,21 @@ name: Reusable runtime build
 
 on:
   workflow_call:
+    inputs:
+      source-sha:
+        description: 'Exact commit to build'
+        type: string
+        required: true
+      release-tag:
+        description: 'Release containing the matching runtimes'
+        type: string
+        required: true
+
+# GITHUB_SHA describes the caller; generated build info must describe the checkout.
+env:
+  GIT_SHA: ${{ inputs.source-sha }}
+  ELEVENEX_RELEASE_TAG: ${{ inputs.release-tag }}
+  SOURCE_MAP_RELEASE_TAG: ${{ inputs.release-tag }}
 
 jobs:
   build-runtime:
@@ -31,6 +46,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source-sha }}
+          persist-credentials: false
 
       - name: Install native build toolchain
         if: runner.os == 'Linux'

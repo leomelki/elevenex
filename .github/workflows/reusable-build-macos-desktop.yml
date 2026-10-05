@@ -2,6 +2,21 @@ name: Reusable macOS desktop build
 
 on:
   workflow_call:
+    inputs:
+      source-sha:
+        description: 'Exact commit to build'
+        type: string
+        required: true
+      release-tag:
+        description: 'Release containing the matching runtimes'
+        type: string
+        required: true
+
+# GITHUB_SHA describes the caller; generated build info must describe the checkout.
+env:
+  GIT_SHA: ${{ inputs.source-sha }}
+  ELEVENEX_RELEASE_TAG: ${{ inputs.release-tag }}
+  SOURCE_MAP_RELEASE_TAG: ${{ inputs.release-tag }}
 
 jobs:
   build-macos-dmg:
@@ -11,6 +26,9 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source-sha }}
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v4
         with:
@@ -39,7 +57,24 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID_EMAIL }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm electron:package:mac
+        run: |
+          set -eu
+          for key in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            test -n "$(printenv "$key")" || { echo "Missing required signing credential: $key"; exit 1; }
+          done
+          pnpm electron:package:mac
+
+      - name: Verify Developer ID signature and notarization
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -eu
+          APP_PATH="$(find apps/electron/dist -maxdepth 2 -type d -name '*.app' | head -n 1)"
+          test -n "$APP_PATH" || { echo "No app bundle produced"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -Fx "TeamIdentifier=$APPLE_TEAM_ID"
+          xcrun stapler validate "$APP_PATH"
+          spctl --assess --type execute --verbose=2 "$APP_PATH"
 
       - name: Rename DMG for release
         run: |
@@ -47,9 +82,9 @@ jobs:
           mkdir -p dist-desktop
           DMG_PATH="$(find apps/electron/dist -maxdepth 1 -type f -name '*.dmg' | head -n 1)"
           test -n "$DMG_PATH" || { echo "No DMG artifact produced"; exit 1; }
+          codesign --verify --strict "$DMG_PATH"
           cp "$DMG_PATH" "dist-desktop/elevenex-desktop-macos-arm64.dmg"
-          shasum -a 256 "dist-desktop/elevenex-desktop-macos-arm64.dmg" \
-            > "dist-desktop/elevenex-desktop-macos-arm64.dmg.sha256"
+          (cd dist-desktop && shasum -a 256 elevenex-desktop-macos-arm64.dmg > elevenex-desktop-macos-arm64.dmg.sha256)
           ls -lh dist-desktop/
 
       - uses: actions/upload-artifact@v4
@@ -65,8 +100,7 @@ jobs:
           mkdir -p dist-runtime
           cp apps/electron/.stage/backend.tar.gz \
              dist-runtime/elevenex-runtime-macos-arm64.tar.gz
-          shasum -a 256 dist-runtime/elevenex-runtime-macos-arm64.tar.gz \
-            > dist-runtime/elevenex-runtime-macos-arm64.tar.gz.sha256
+          (cd dist-runtime && shasum -a 256 elevenex-runtime-macos-arm64.tar.gz > elevenex-runtime-macos-arm64.tar.gz.sha256)
           ls -lh dist-runtime/
 
       - uses: actions/upload-artifact@v4

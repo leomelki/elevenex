@@ -656,6 +656,7 @@ export function resultSummary(
     case 'web_fetch':
       return { text: soft ? 'Fetch warning' : 'Fetched', tone: softTone('ok') };
     case 'web_search': {
+      if (!text) return { text: soft ? 'Search warning' : 'Done', tone: softTone('ok') };
       const lineCount = countNonEmptyLines(text);
       return {
         text: `${lineCount || 'some'} result${lineCount === 1 ? '' : 's'}`,
