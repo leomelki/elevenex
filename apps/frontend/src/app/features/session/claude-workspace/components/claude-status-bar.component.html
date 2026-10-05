@@ -10,12 +10,16 @@
       class="cw-sb__model-trigger h-8 min-w-0 max-w-full justify-start gap-1.5 rounded-lg px-1.5 text-left text-xs"
       z-dropdown
       [zDropdownMenu]="modelMenu"
-      aria-label="Configure agent, model and thinking"
+      [attr.aria-label]="
+        'Configure agent, model and thinking' +
+        (selectedModelSupportsFastMode() && fastMode() ? ' · Fast mode enabled' : '')
+      "
       [title]="
         activeProviderLabel() +
         ' · ' +
         selectedModelLabel() +
-        (selectedModelSupportsEffort() ? ' · ' + reasoningEffortLabel() + ' thinking' : '')
+        (selectedModelSupportsEffort() ? ' · ' + reasoningEffortLabel() + ' thinking' : '') +
+        (selectedModelSupportsFastMode() && fastMode() ? ' · Fast mode enabled' : '')
       "
     >
       <span class="truncate font-medium text-foreground">{{ selectedModelLabel() }}</span>
@@ -23,6 +27,14 @@
         <span class="cw-sb__thinking shrink-0 font-normal text-muted-foreground">
           <span class="mr-1.5 text-border" aria-hidden="true">/</span>{{ reasoningEffortLabel() }}
         </span>
+      }
+      @if (selectedModelSupportsFastMode() && fastMode()) {
+        <ng-icon
+          name="lucideZap"
+          size="12"
+          class="cw-sb__fast-mode shrink-0 text-success"
+          aria-hidden="true"
+        />
       }
       <ng-icon name="lucideChevronDown" size="12" class="shrink-0 text-muted-foreground" />
     </button>
@@ -238,177 +250,191 @@
   </div>
 
   <div
-    class="cw-sb__activity mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 px-2 text-[11px] leading-5 text-muted-foreground"
-    aria-label="Agent activity"
+    class="cw-sb__activity mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-2 text-[11px] leading-5 text-muted-foreground"
   >
-    <span
-      class="cw-sb__phase inline-flex items-center gap-1.5 capitalize data-[phase=running]:text-success data-[phase=initializing]:text-warning data-[phase=error]:text-destructive data-[phase=waiting]:text-warning"
-      [attr.data-phase]="phase()"
-      role="status"
+    <div
+      class="cw-sb__live flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
+      role="group"
+      aria-label="Agent activity"
     >
-      @if (phase() === 'running' || phase() === 'initializing') {
-        <ng-icon name="lucideLoaderCircle" size="11" class="animate-spin" />
-      } @else if (phase() === 'waiting' || phase() === 'error') {
-        <ng-icon name="lucideTriangleAlert" size="11" />
-      } @else {
-        <span class="size-1.5 rounded-full bg-current opacity-60" aria-hidden="true"></span>
-      }
-      {{ phaseLabel() }}
-    </span>
-    @if (contextUsage(); as u) {
       <span
-        class="cw-sb__ctx inline-flex items-center gap-1.5 data-[warning=true]:text-warning"
-        [attr.data-warning]="u.percentage >= 80"
-        [title]="'Conversation context: ' + u.percentage + '% used'"
+        class="cw-sb__phase inline-flex items-center gap-1.5 whitespace-nowrap capitalize data-[phase=running]:text-success data-[phase=initializing]:text-warning data-[phase=error]:text-destructive data-[phase=waiting]:text-warning"
+        [attr.data-phase]="phase()"
+        role="status"
       >
-        <span class="h-1 w-8 overflow-hidden rounded-full bg-border" aria-hidden="true">
-          <span class="block h-full rounded-full bg-current" [style.width.%]="u.percentage"></span>
-        </span>
-        {{ u.percentage }}% context
+        @if (phase() === 'running' || phase() === 'initializing') {
+          <ng-icon name="lucideLoaderCircle" size="11" class="animate-spin" />
+        } @else if (phase() === 'waiting' || phase() === 'error') {
+          <ng-icon name="lucideTriangleAlert" size="11" />
+        } @else {
+          <span class="size-1.5 rounded-full bg-current opacity-60" aria-hidden="true"></span>
+        }
+        {{ phaseLabel() }}
       </span>
-    }
-    @if (backgroundWorkCount() > 0) {
-      <span
-        class="cw-sb__bg inline-flex items-center gap-1.5 text-success"
-        [title]="
-          backgroundWorkCount() +
-          ' background job(s) still running — new messages are queued behind them'
-        "
-      >
+      @if (backgroundWorkCount() > 0) {
         <span
-          class="size-1.5 rounded-full bg-current motion-safe:animate-pulse"
-          aria-hidden="true"
-        ></span>
-        {{ backgroundWorkCount() }} in background
-      </span>
-    }
-    @if (taskCount() > 0) {
-      <button
-        z-button
-        zType="ghost"
-        zSize="xs"
-        type="button"
-        class="h-5 gap-1.5 px-0.5 text-[11px] text-muted-foreground"
-        (click)="openTasks.emit()"
-      >
-        <ng-icon name="lucideListTodo" size="11" /> {{ taskCount() }} task{{
-          taskCount() === 1 ? '' : 's'
-        }}
-      </button>
-    }
-    @if (currentProviderCapabilities()?.mcp && mcpIssueCount() > 0) {
-      <button
-        z-button
-        zType="ghost"
-        zSize="xs"
-        type="button"
-        class="h-5 gap-1.5 px-0.5 text-[11px] text-warning"
-        (click)="openMcp.emit()"
-      >
-        <ng-icon name="lucideTriangleAlert" size="11" /> {{ mcpIssueCount() }} tool issue{{
-          mcpIssueCount() === 1 ? '' : 's'
-        }}
-      </button>
-    }
-    @if (currentProviderCapabilities()?.permissions && permissionMode() === 'bypassPermissions') {
-      <span class="text-destructive">Unrestricted</span>
-    }
-    @if (selectedModelSupportsFastMode() && fastMode()) {
-      <span class="inline-flex items-center gap-1 text-success">
-        <ng-icon name="lucideZap" size="11" aria-hidden="true" /> Fast mode
-      </span>
-    }
-    @if (visiblePlanUsage(); as usage) {
-      <div class="cw-sb__model ml-auto">
+          class="cw-sb__bg inline-flex items-center gap-1.5 whitespace-nowrap text-success"
+          [title]="
+            backgroundWorkCount() +
+            ' background job(s) still running — new messages are queued behind them'
+          "
+        >
+          <span
+            class="size-1.5 rounded-full bg-current motion-safe:animate-pulse"
+            aria-hidden="true"
+          ></span>
+          {{ backgroundWorkCount() }} in background
+        </span>
+      }
+      @if (taskCount() > 0) {
         <button
           z-button
           zType="ghost"
           zSize="xs"
           type="button"
-          class="cw-sb__link h-5 gap-1.5 px-0.5 text-[11px] font-normal text-muted-foreground cw-sb__usage-trigger data-[status=warning]:text-warning data-[status=exhausted]:text-destructive"
-          [attr.data-status]="usage.status"
-          zPopover
-          [zContent]="usageContent"
-          zPlacement="top"
-          zAlign="end"
-          aria-haspopup="dialog"
-          [title]="usageTriggerTitle()"
+          class="h-5 gap-1.5 px-0.5 text-[11px] text-muted-foreground"
+          (click)="openTasks.emit()"
         >
-          <span
-            class="cw-sb__usage-ring"
-            [style.--usage-percent]="lowestRemainingPercentage() + '%'"
-            aria-hidden="true"
-          ></span>
-          {{ lowestRemainingPercentage() }}% plan left
+          <ng-icon name="lucideListTodo" size="11" /> {{ taskCount() }} task{{
+            taskCount() === 1 ? '' : 's'
+          }}
         </button>
-        <ng-template #usageContent>
-          <div
-            z-popover
-            cdkTrapFocus
-            [cdkTrapFocusAutoCapture]="true"
-            tabindex="-1"
-            cdkFocusInitial
-            class="cw-sb__usage-menu w-[min(19rem,calc(100vw-1rem))] gap-0 p-3"
-            role="dialog"
-            aria-label="Plan usage"
+      }
+      @if (currentProviderCapabilities()?.mcp && mcpIssueCount() > 0) {
+        <button
+          z-button
+          zType="ghost"
+          zSize="xs"
+          type="button"
+          class="h-5 gap-1.5 px-0.5 text-[11px] text-warning"
+          (click)="openMcp.emit()"
+        >
+          <ng-icon name="lucideTriangleAlert" size="11" /> {{ mcpIssueCount() }} tool issue{{
+            mcpIssueCount() === 1 ? '' : 's'
+          }}
+        </button>
+      }
+      @if (currentProviderCapabilities()?.permissions && permissionMode() === 'bypassPermissions') {
+        <span class="text-destructive">Unrestricted</span>
+      }
+    </div>
+    @if (contextUsage() || visiblePlanUsage()) {
+      <div
+        class="cw-sb__resources ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1"
+        role="group"
+        aria-label="Context and plan usage"
+      >
+        @if (contextUsage(); as u) {
+          <span
+            class="cw-sb__ctx inline-flex items-center gap-1.5 whitespace-nowrap data-[warning=true]:text-warning"
+            [attr.data-warning]="u.percentage >= 80"
+            [attr.aria-label]="'Conversation context: ' + u.percentage + '% used'"
+            [title]="'Conversation context: ' + u.percentage + '% used'"
           >
-            <div
-              class="cw-sb__usage-header flex items-center justify-between gap-3 [&>div]:flex [&>div]:min-w-0 [&>div]:flex-col [&>div]:gap-0.5 [&_strong]:text-[13px] [&_strong]:font-semibold [&_strong]:text-foreground [&_span]:text-[11px] [&_span]:text-muted-foreground"
+            <span class="h-1 w-6 overflow-hidden rounded-full bg-border" aria-hidden="true">
+              <span
+                class="block h-full rounded-full bg-current"
+                [style.width.%]="u.percentage"
+              ></span>
+            </span>
+            Context {{ u.percentage }}%
+          </span>
+        }
+        @if (visiblePlanUsage(); as usage) {
+          <div class="cw-sb__model shrink-0">
+            <button
+              z-button
+              zType="ghost"
+              zSize="xs"
+              type="button"
+              class="cw-sb__link h-5 gap-1.5 px-0.5 text-[11px] font-normal text-muted-foreground cw-sb__usage-trigger data-[status=warning]:text-warning data-[status=exhausted]:text-destructive"
+              [attr.data-status]="usage.status"
+              zPopover
+              [zContent]="usageContent"
+              zPlacement="top"
+              zAlign="end"
+              aria-haspopup="dialog"
+              [title]="usageTriggerTitle()"
             >
-              <div>
-                <strong>{{ usage.provider === 'codex' ? 'Codex' : 'Claude' }} usage</strong>
-                <span>Included plan allowance</span>
-              </div>
-              @if (usage.planName) {
-                <span
-                  class="cw-sb__plan-badge shrink-0 rounded-full border border-border bg-muted px-2 py-0.5 font-semibold"
-                  >{{ usage.planName }}</span
+              <span
+                class="cw-sb__usage-ring"
+                [style.--usage-percent]="lowestRemainingPercentage() + '%'"
+                aria-hidden="true"
+              ></span>
+              {{ lowestRemainingPercentage() }}% plan left
+            </button>
+            <ng-template #usageContent>
+              <div
+                z-popover
+                cdkTrapFocus
+                [cdkTrapFocusAutoCapture]="true"
+                tabindex="-1"
+                cdkFocusInitial
+                class="cw-sb__usage-menu w-[min(19rem,calc(100vw-1rem))] gap-0 p-3"
+                role="dialog"
+                aria-label="Plan usage"
+              >
+                <div
+                  class="cw-sb__usage-header flex items-center justify-between gap-3 [&>div]:flex [&>div]:min-w-0 [&>div]:flex-col [&>div]:gap-0.5 [&_strong]:text-[13px] [&_strong]:font-semibold [&_strong]:text-foreground [&_span]:text-[11px] [&_span]:text-muted-foreground"
                 >
-              }
-            </div>
-
-            <div class="cw-sb__usage-windows mt-3.5 grid gap-3.5">
-              @for (window of usage.windows; track window.id) {
-                <div class="cw-sb__usage-window grid gap-1.5">
-                  <div
-                    class="cw-sb__usage-row flex items-center justify-between gap-3 text-xs text-foreground [&_strong]:font-semibold"
-                  >
-                    <span>{{ window.label }}</span>
-                    <strong>{{ window.remainingPercentage }}% left</strong>
+                  <div>
+                    <strong>{{ usage.provider === 'codex' ? 'Codex' : 'Claude' }} usage</strong>
+                    <span>Included plan allowance</span>
                   </div>
-                  <z-progress-bar
-                    zSize="sm"
-                    [zValue]="window.remainingPercentage / 100"
-                    [zType]="usageProgressType(window)"
-                    [zLabel]="window.label + ': ' + window.remainingPercentage + '% remaining'"
-                  />
-                  @if (window.resetsAt) {
+                  @if (usage.planName) {
                     <span
-                      class="cw-sb__usage-reset text-[11px] leading-none text-muted-foreground"
-                      [title]="formatResetTitle(window.resetsAt)"
+                      class="cw-sb__plan-badge shrink-0 rounded-full border border-border bg-muted px-2 py-0.5 font-semibold"
+                      >{{ usage.planName }}</span
                     >
-                      {{ formatResetTime(window.resetsAt) }}
-                    </span>
                   }
                 </div>
-              }
-            </div>
 
-            @if (usage.credits; as credits) {
-              <div
-                class="cw-sb__credits mt-3.5 flex items-center justify-between gap-3 border-t border-border pt-2.5 text-xs text-foreground"
-              >
-                <span>Extra credits</span>
-                <strong>{{
-                  credits.unlimited ? 'Unlimited' : (credits.balance ?? 'Available')
-                }}</strong>
+                <div class="cw-sb__usage-windows mt-3.5 grid gap-3.5">
+                  @for (window of usage.windows; track window.id) {
+                    <div class="cw-sb__usage-window grid gap-1.5">
+                      <div
+                        class="cw-sb__usage-row flex items-center justify-between gap-3 text-xs text-foreground [&_strong]:font-semibold"
+                      >
+                        <span>{{ window.label }}</span>
+                        <strong>{{ window.remainingPercentage }}% left</strong>
+                      </div>
+                      <z-progress-bar
+                        zSize="sm"
+                        [zValue]="window.remainingPercentage / 100"
+                        [zType]="usageProgressType(window)"
+                        [zLabel]="window.label + ': ' + window.remainingPercentage + '% remaining'"
+                      />
+                      @if (window.resetsAt) {
+                        <span
+                          class="cw-sb__usage-reset text-[11px] leading-none text-muted-foreground"
+                          [title]="formatResetTitle(window.resetsAt)"
+                        >
+                          {{ formatResetTime(window.resetsAt) }}
+                        </span>
+                      }
+                    </div>
+                  }
+                </div>
+
+                @if (usage.credits; as credits) {
+                  <div
+                    class="cw-sb__credits mt-3.5 flex items-center justify-between gap-3 border-t border-border pt-2.5 text-xs text-foreground"
+                  >
+                    <span>Extra credits</span>
+                    <strong>{{
+                      credits.unlimited ? 'Unlimited' : (credits.balance ?? 'Available')
+                    }}</strong>
+                  </div>
+                }
+                <p
+                  class="cw-sb__usage-note mt-2.5 mb-0 text-[11px] leading-snug text-muted-foreground"
+                >
+                  Based on provider-reported usage. Complex tasks may consume more allowance.
+                </p>
               </div>
-            }
-            <p class="cw-sb__usage-note mt-2.5 mb-0 text-[11px] leading-snug text-muted-foreground">
-              Based on provider-reported usage. Complex tasks may consume more allowance.
-            </p>
+            </ng-template>
           </div>
-        </ng-template>
+        }
       </div>
     }
   </div>
