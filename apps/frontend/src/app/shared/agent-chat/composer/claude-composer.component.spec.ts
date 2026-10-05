@@ -5,7 +5,7 @@ import {
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mention = (overrides: Partial<DiffSelectionMention> = {}): DiffSelectionMention => ({
   id: 'mention-1',
@@ -38,6 +38,122 @@ const image = (overrides: Partial<ComposerImageAttachment> = {}): ComposerImageA
 });
 
 describe('ClaudeComposerComponent', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('resizes wrapped drafts when the pane width changes and stops observing on destroy', async () => {
+    let notifyResize!: ResizeObserverCallback;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          notifyResize = callback;
+        }
+        observe = observe;
+        disconnect = disconnect;
+      },
+    );
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('value', 'A draft that wraps in a narrow pane');
+    fixture.detectChanges();
+    const textarea = fixture.nativeElement.querySelector('.cw-comp__ta') as HTMLTextAreaElement;
+    let scrollHeight = 52;
+    const readHeight = vi.fn(() => scrollHeight);
+    Object.defineProperty(textarea, 'scrollHeight', { get: readHeight });
+    const editor = fixture.nativeElement.querySelector('.cw-comp__editor') as HTMLElement;
+    const resize = (width: number) =>
+      notifyResize(
+        [{ target: editor, contentRect: { width } } as unknown as ResizeObserverEntry],
+        {} as ResizeObserver,
+      );
+
+    expect(observe).toHaveBeenCalledWith(editor);
+    resize(600);
+    expect(textarea.style.height).toBe('52px');
+    readHeight.mockClear();
+    resize(600);
+    expect(readHeight).not.toHaveBeenCalled();
+    scrollHeight = 112;
+    resize(300);
+    expect(textarea.style.height).toBe('112px');
+    scrollHeight = 32;
+    resize(800);
+    expect(textarea.style.height).toBe('32px');
+    scrollHeight = 600;
+    resize(200);
+    expect(textarea.style.height).toBe('256px');
+    fixture.destroy();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('measures at the compact width without oscillating or replacing the focused textarea', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('value', 'A message near the wrapping threshold');
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+    const editor = element.querySelector('.cw-comp__editor') as HTMLElement;
+    const textarea = element.querySelector('.cw-comp__ta') as HTMLTextAreaElement;
+    const measure = element.querySelector('.cw-comp__measure') as HTMLTextAreaElement;
+    const tools = element.querySelector('.cw-comp__bar > div') as HTMLElement;
+    const actions = element.querySelector('.cw-comp__btns') as HTMLElement;
+    let editorWidth = 600;
+    let measuredHeight = 52;
+    editor.style.padding = '8px';
+    editor.style.columnGap = '6px';
+    measure.style.lineHeight = '20px';
+    measure.style.padding = '6px';
+    Object.defineProperty(editor, 'clientWidth', { get: () => editorWidth });
+    Object.defineProperty(tools, 'offsetWidth', { value: 58 });
+    Object.defineProperty(actions, 'offsetWidth', { value: 28 });
+    Object.defineProperty(measure, 'scrollHeight', { get: () => measuredHeight });
+    // The wider visible textarea fits a line after expanding, while the
+    // compact measurement still wraps. This must not collapse the composer.
+    Object.defineProperty(textarea, 'scrollHeight', { value: 32 });
+    textarea.focus();
+    textarea.setSelectionRange(2, 8);
+    fixture.componentInstance.onInput({ target: textarea } as unknown as Event);
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.expanded()).toBe(true);
+    expect(measure.style.width).toBe('486px');
+    expect(editor.dataset['expanded']).toBe('true');
+    fixture.componentInstance.onInput({ target: textarea } as unknown as Event);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.expanded()).toBe(true);
+    expect(element.querySelector('.cw-comp__ta')).toBe(textarea);
+    expect(document.activeElement).toBe(textarea);
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([2, 8]);
+
+    // A wider panel or a shorter draft can fit the compact layout again.
+    editorWidth = 800;
+    measuredHeight = 32;
+    fixture.componentInstance.onInput({ target: textarea } as unknown as Event);
+    fixture.detectChanges();
+    expect(measure.style.width).toBe('686px');
+    expect(fixture.componentInstance.expanded()).toBe(false);
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it('expands for explicit line breaks and returns to compact when a restored draft is cleared', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('value', 'First line\n');
+    fixture.detectChanges();
+    expect(fixture.componentInstance.expanded()).toBe(true);
+    fixture.componentRef.setInput('value', '');
+    fixture.detectChanges();
+    expect(fixture.componentInstance.expanded()).toBe(false);
+  });
+
   it('shrinks the textarea when the value is cleared programmatically', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeComposerComponent],

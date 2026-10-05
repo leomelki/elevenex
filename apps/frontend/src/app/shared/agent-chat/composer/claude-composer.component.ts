@@ -115,6 +115,10 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 })
 export class ClaudeComposerComponent {
   private readonly ta = viewChild<ElementRef<HTMLTextAreaElement>>('input');
+  private readonly measure = viewChild<ElementRef<HTMLTextAreaElement>>('measure');
+  private readonly editor = viewChild<ElementRef<HTMLElement>>('editor');
+  private readonly tools = viewChild<ElementRef<HTMLElement>>('tools');
+  private readonly actions = viewChild<ElementRef<HTMLElement>>('actions');
   private readonly fileInput = viewChild<ElementRef<HTMLInputElement>>('fileInput');
   private readonly host = inject(ElementRef<HTMLElement>);
 
@@ -160,6 +164,7 @@ export class ClaudeComposerComponent {
 
   readonly attachedImages = this.imageAttachments;
   readonly isDropTarget = signal(false);
+  readonly expanded = signal(false);
   readonly clearPendingArmed = signal(false);
   private dragDepth = 0;
 
@@ -206,10 +211,31 @@ export class ClaudeComposerComponent {
   constructor() {
     afterRenderEffect(() => {
       const nextValue = this.value();
+      this.expanded();
       const ta = this.ta()?.nativeElement;
       if (!ta) return;
       if (ta.value !== nextValue) ta.value = nextValue;
       this.autoGrow(ta);
+    });
+    afterRenderEffect((onCleanup) => {
+      const ta = this.ta()?.nativeElement;
+      if (!ta || typeof ResizeObserver === 'undefined') return;
+      const widths = new WeakMap<Element, number>();
+      const observer = new ResizeObserver((entries) => {
+        let changed = false;
+        for (const entry of entries) {
+          const width = entry.contentRect.width;
+          // Ignore height changes caused by growing or rearranging the editor.
+          if (width <= 0 || width === widths.get(entry.target)) continue;
+          widths.set(entry.target, width);
+          changed = true;
+        }
+        if (changed) this.autoGrow(ta);
+      });
+      for (const element of [this.editor(), this.tools(), this.actions()]) {
+        if (element) observer.observe(element.nativeElement);
+      }
+      onCleanup(() => observer.disconnect());
     });
     effect(() => {
       if (!this.allowImages() && (this.attachedImages().length || this.imageAttachments().length)) {
@@ -524,8 +550,43 @@ export class ClaudeComposerComponent {
   }
 
   private autoGrow(ta: HTMLTextAreaElement): void {
+    this.updateLayout(ta.value);
     ta.style.height = 'auto';
     ta.style.height = Math.min(ta.scrollHeight, 256) + 'px';
+  }
+
+  private updateLayout(value: string): void {
+    if (!value || value.includes('\n')) {
+      this.expanded.set(value.includes('\n'));
+      return;
+    }
+    const editor = this.editor()?.nativeElement;
+    const measure = this.measure()?.nativeElement;
+    const tools = this.tools()?.nativeElement;
+    const actions = this.actions()?.nativeElement;
+    if (!editor || !measure || !tools || !actions || !editor.clientWidth) return;
+    const style = getComputedStyle(editor);
+    const compactWidth =
+      editor.clientWidth -
+      tools.offsetWidth -
+      actions.offsetWidth -
+      parseFloat(style.paddingLeft) -
+      parseFloat(style.paddingRight) -
+      2 * parseFloat(style.columnGap);
+    if (compactWidth <= 0) {
+      this.expanded.set(true);
+      return;
+    }
+    // Always measure at the compact width, even while expanded. Measuring the
+    // wider editor would collapse it again and make the layout oscillate.
+    measure.style.width = `${compactWidth}px`;
+    measure.value = value;
+    const textStyle = getComputedStyle(measure);
+    const singleLineHeight =
+      parseFloat(textStyle.lineHeight) +
+      parseFloat(textStyle.paddingTop) +
+      parseFloat(textStyle.paddingBottom);
+    this.expanded.set(measure.scrollHeight > Math.ceil(singleLineHeight) + 1);
   }
 
   private close(): void {
