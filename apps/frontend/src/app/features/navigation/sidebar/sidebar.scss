@@ -1139,20 +1139,32 @@
   background: color-mix(in oklch, var(--sidebar-accent) 64%, transparent);
 }
 
-.sidebar-branch-action--soft {
-  color: color-mix(in oklch, var(--muted-foreground) 92%, oklch(0.62 0.06 210));
-  background: linear-gradient(180deg, color-mix(in oklch, var(--background) 92%, transparent), color-mix(in oklch, var(--muted) 48%, transparent));
-  border-color: color-mix(in oklch, var(--sidebar-border) 70%, oklch(0.84 0.02 220));
+.workspace-actions {
+  pointer-events: none;
+
+  .group:hover > &,
+  .group:focus-within > &,
+  &:has([data-state='open']) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar-branch-action:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+  }
+
+  .sidebar-branch-action[data-state='open'] {
+    color: var(--foreground);
+    background: var(--sidebar-accent);
+  }
 }
 
-.sidebar-branch-action--soft:hover {
-  color: oklch(0.42 0.08 225);
-  border-color: color-mix(in oklch, oklch(0.72 0.05 225) 35%, var(--sidebar-border));
-}
-
-.sidebar-branch-action--danger:hover {
-  color: var(--destructive);
-  border-color: color-mix(in oklch, var(--destructive) 32%, var(--sidebar-border));
+@media (hover: none) {
+  .workspace-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .worktree-dialog {

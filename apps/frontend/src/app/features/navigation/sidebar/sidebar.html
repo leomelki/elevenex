@@ -102,7 +102,7 @@
         @if (isExpanded('project-' + project.id)) {
           @for (repo of project.repos; track repo.id) {
             <!-- Repo node -->
-            <div class="sidebar-tree-row w-full group" [style.padding-left]="'32px'">
+            <div class="sidebar-tree-row w-full group" [attr.data-repo-row-id]="repo.id" [style.padding-left]="'32px'">
               <button class="flex items-center gap-1 flex-1 min-w-0" (click)="onRepoClick(repo)">
                 <ng-icon [name]="isExpanded('repo-' + repo.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
                 @if (repo.error) {
@@ -147,39 +147,90 @@
             @if (isExpanded('repo-' + repo.id) && !repo.error) {
               @for (workspace of filterWorkspaces(repo); track workspace.id) {
                 <!-- Workspace node -->
-                <button
+                <div
                   class="sidebar-tree-row w-full text-left group"
-                  [class.sidebar-tree-row--busy]="isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)"
+                  [class.sidebar-tree-row--busy]="
+                    isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)
+                  "
                   [class.opacity-60]="isWorkspaceUnlinked(workspace)"
-                  [disabled]="openingWorkspaceRepoId() !== null || isSwitchingWorkspace(repo, workspace)"
                   [attr.data-workspace-row]="workspace.path"
                   [attr.title]="getWorkspaceTooltip(workspace)"
                   [style.padding-left]="'48px'"
-                  (click)="onWorkspaceClick(repo, workspace)"
+                  (contextmenu)="openWorkspaceContextMenu($event, repo, workspace, workspaceMenu)"
                 >
-                  @if (
-                    (!workspace.isMissing && !isWorkspaceUnlinked(workspace)) ||
-                    (workspace.sessions && workspace.sessions.length > 0) ||
-                    (workspace.temporarySessions?.length ?? 0) > 0 ||
-                    (workspace.archivedSessions?.length ?? 0) > 0 ||
-                    (workspace.sessionFolders?.length ?? 0) > 0 ||
-                    (workspace.archivedSessionFolders?.length ?? 0) > 0
-                  ) {
-                    <ng-icon [name]="isExpanded('workspace-' + repo.id + '-' + workspace.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!w-4 !h-4 text-muted-foreground shrink-0" />
-                  } @else {
-                    <span class="w-4 shrink-0"></span>
-                  }
-                  @if (isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)) {
-                    <span class="inline-block w-4 h-4 shrink-0 rounded-full border-2 border-muted-foreground/50 border-t-transparent animate-spin"></span>
-                  } @else if (workspace.isMissing || isWorkspaceUnlinked(workspace)) {
-                    <ng-icon name="lucideAlertCircle" class="!w-4 !h-4 text-destructive shrink-0" />
-                  } @else {
-                    <ng-icon name="lucideFolderOpen" class="!w-4 !h-4 text-foreground shrink-0" />
-                  }
+                  <button
+                    type="button"
+                    class="flex h-full min-w-0 items-center gap-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-wait"
+                    [class.flex-1]="editingWorkspaceId() !== workspace.id"
+                    [class.pr-14]="editingWorkspaceId() !== workspace.id"
+                    [class.shrink-0]="editingWorkspaceId() === workspace.id"
+                    [disabled]="
+                      openingWorkspaceRepoId() !== null || isSwitchingWorkspace(repo, workspace)
+                    "
+                    [attr.aria-expanded]="isExpanded('workspace-' + repo.id + '-' + workspace.id)"
+                    [attr.aria-label]="workspace.name"
+                    (click)="onWorkspaceClick(repo, workspace)"
+                  >
+                    @if (
+                      (!workspace.isMissing && !isWorkspaceUnlinked(workspace)) ||
+                      (workspace.sessions && workspace.sessions.length > 0) ||
+                      (workspace.temporarySessions?.length ?? 0) > 0 ||
+                      (workspace.archivedSessions?.length ?? 0) > 0 ||
+                      (workspace.sessionFolders?.length ?? 0) > 0 ||
+                      (workspace.archivedSessionFolders?.length ?? 0) > 0
+                    ) {
+                      <ng-icon
+                        [name]="
+                          isExpanded('workspace-' + repo.id + '-' + workspace.id)
+                            ? 'lucideChevronDown'
+                            : 'lucideChevronRight'
+                        "
+                        class="!w-4 !h-4 text-muted-foreground shrink-0"
+                      />
+                    } @else {
+                      <span class="w-4 shrink-0"></span>
+                    }
+                    @if (isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)) {
+                      <span
+                        class="inline-block w-4 h-4 shrink-0 rounded-full border-2 border-muted-foreground/50 border-t-transparent animate-spin"
+                      ></span>
+                    } @else if (workspace.isMissing || isWorkspaceUnlinked(workspace)) {
+                      <ng-icon
+                        name="lucideAlertCircle"
+                        class="!w-4 !h-4 text-destructive shrink-0"
+                      />
+                    } @else {
+                      <ng-icon name="lucideFolderOpen" class="!w-4 !h-4 text-foreground shrink-0" />
+                    }
+                    @if (editingWorkspaceId() !== workspace.id) {
+                      <span
+                        class="text-sm truncate flex-1 sidebar-label--branch"
+                        [title]="getWorkspaceTooltip(workspace)"
+                        (dblclick)="startEditWorkspace(workspace, $event)"
+                      >
+                        {{ workspace.name }}
+                        @if (workspace.currentBranch !== workspace.name) {
+                          <span class="text-xs text-muted-foreground">{{
+                            workspace.currentBranch || 'detached'
+                          }}</span>
+                        }
+                        @if (isWorkspaceUnlinked(workspace)) {
+                          <span class="text-xs text-warning">Unlinked</span>
+                        }
+                        @if (workspace.hasConflicts) {
+                          <span class="text-xs text-destructive">Conflicts</span>
+                        }
+                        @if (workspace.pendingStashStatus === 'pending') {
+                          <span class="text-xs text-warning">Stash</span>
+                        }
+                      </span>
+                    }
+                  </button>
                   @if (editingWorkspaceId() === workspace.id) {
                     <input
                       z-input
                       class="h-7 min-w-0 flex-1 text-sm"
+                      [attr.data-workspace-name-input]="workspace.id"
                       [value]="workspace.name"
                       maxlength="80"
                       aria-label="Worktree name"
@@ -191,107 +242,179 @@
                       (keydown.escape)="cancelEditWorkspace($event)"
                       autofocus
                     />
-                  } @else {
-                    <span
-                      class="text-sm truncate flex-1 sidebar-label--branch"
-                      [title]="getWorkspaceTooltip(workspace)"
-                      (dblclick)="startEditWorkspace(workspace, $event)"
-                    >
-                      {{ workspace.name }}
-                      @if (workspace.currentBranch !== workspace.name) {
-                        <span class="text-xs text-muted-foreground">{{ workspace.currentBranch || 'detached' }}</span>
-                      }
-                      @if (isWorkspaceUnlinked(workspace)) {
-                        <span class="text-xs text-warning">Unlinked</span>
-                      }
-                      @if (workspace.hasConflicts) {
-                        <span class="text-xs text-destructive">Conflicts</span>
-                      }
-                      @if (workspace.pendingStashStatus === 'pending') {
-                        <span class="text-xs text-warning">Stash</span>
-                      }
-                    </span>
                   }
-                  <!-- Action buttons (visible on hover) -->
-                  <span class="sidebar-actions">
+                  <span class="sidebar-actions workspace-actions">
                     @if (isOpeningWorkspace(repo)) {
                       <span class="text-xs text-muted-foreground">Opening…</span>
                     } @else if (isSwitchingWorkspace(repo, workspace)) {
                       <span class="text-xs text-muted-foreground">Switching…</span>
                     } @else if (isWorkspaceUnlinked(workspace)) {
-                      <button class="sidebar-branch-action" title="Link back" aria-label="Link back" (click)="$event.stopPropagation(); openLinkWorkspaceBack(repo, workspace)">
+                      <button
+                        type="button"
+                        class="sidebar-branch-action"
+                        title="Link back"
+                        aria-label="Link back"
+                        (click)="openLinkWorkspaceBack(repo, workspace)"
+                      >
                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                       </button>
-                    } @else {
+                    } @else if (editingWorkspaceId() !== workspace.id) {
                       <button
+                        type="button"
                         class="sidebar-branch-action"
-                        title="Rename worktree"
-                        aria-label="Rename worktree"
-                        [disabled]="workspace.isMissing || workspace.id <= 0 || workspaceRenameBusyId() !== null"
-                        (click)="startEditWorkspace(workspace, $event)"
-                      >
-                        <ng-icon name="lucidePencil" class="!w-3.5 !h-3.5" />
-                      </button>
-                      <button
-                        class="sidebar-branch-action"
-                        title="New session folder"
-                        aria-label="New session folder"
-                        [disabled]="creatingFolder() || workspace.isMissing || workspace.id <= 0"
-                        (click)="startCreateFolder(repo, workspace, $event)"
-                      >
-                        <ng-icon name="lucideFolderPlus" class="!w-3.5 !h-3.5" />
-                      </button>
-                      <button
-                        class="sidebar-branch-action"
-                        title="Branches"
-                        aria-label="Branches"
-                        [disabled]="workspace.isMissing || isWorkspaceUnlinked(workspace)"
-                        [attr.data-workspace-branch-trigger]="workspace.path"
-                        (click)="$event.stopPropagation(); switchWorkspaceBranch(repo, workspace)"
-                      >
-                        <ng-icon name="lucideGitBranch" class="!w-3.5 !h-3.5" />
-                      </button>
-                      <button
-                        class="sidebar-branch-action sidebar-branch-action--soft"
-                        title="Remove from project"
-                        aria-label="Remove from project"
-                        [disabled]="workspace.isDefault"
-                        [attr.data-workspace-remove-trigger]="workspace.path"
-                        (click)="$event.stopPropagation(); openRemoveWorkspaceFromProject(repo, workspace)"
-                      >
-                        <ng-icon name="lucideCircleMinus" class="!w-3.5 !h-3.5" />
-                      </button>
-                      <button
-                        class="sidebar-branch-action sidebar-branch-action--danger"
-                        title="Delete Workspace"
-                        aria-label="Delete Workspace"
-                        [disabled]="workspace.isDefault"
-                        [attr.data-workspace-delete-trigger]="workspace.path"
-                        (click)="$event.stopPropagation(); openDeleteWorkspace(repo, workspace)"
-                      >
-                        <ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" />
-                      </button>
-                      <button
-                        class="sidebar-branch-action"
-                        title="Open in Cursor"
-                        aria-label="Open in Cursor"
-                        [disabled]="workspace.isMissing || isWorkspaceUnlinked(workspace)"
-                        (click)="$event.stopPropagation(); openWorkspaceInCursor(repo, workspace)"
-                      >
-                        <ng-icon name="lucideSquareArrowOutUpRight" class="!w-3.5 !h-3.5" />
-                      </button>
-                      <button
-                        class="sidebar-branch-action"
-                        title="New Session"
-                        aria-label="New Session"
-                        [disabled]="workspace.isMissing || isWorkspaceUnlinked(workspace)"
-                        (click)="$event.stopPropagation(); createSessionOnWorkspace(repo, workspace)"
+                        title="New session"
+                        aria-label="New session"
+                        [disabled]="workspace.isMissing || openingWorkspaceRepoId() !== null"
+                        (click)="createSessionOnWorkspace(repo, workspace)"
                       >
                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        z-dropdown
+                        [zDropdownMenu]="workspaceMenu"
+                        [zDisabled]="openingWorkspaceRepoId() !== null"
+                        class="sidebar-branch-action"
+                        title="Workspace actions"
+                        [attr.aria-label]="'Actions for ' + workspace.name"
+                        [attr.data-workspace-actions-trigger]="workspace.path"
+                      >
+                        <ng-icon name="lucideEllipsis" class="!w-3.5 !h-3.5" />
                       </button>
                     }
                   </span>
-                </button>
+                  <z-dropdown-menu-content
+                    #workspaceMenu="zDropdownMenuContent"
+                    zAlign="end"
+                    class="w-64 max-w-[calc(100vw-2rem)]"
+                    [aria-label]="'Actions for ' + workspace.name"
+                  >
+                    <z-dropdown-menu-label class="truncate">{{
+                      workspace.name
+                    }}</z-dropdown-menu-label>
+                    <z-dropdown-menu-group aria-label="Work">
+                      <button
+                        type="button"
+                        z-dropdown-menu-item
+                        class="w-full text-left"
+                        [disabled]="workspace.isMissing || isWorkspaceUnlinked(workspace)"
+                        [attr.disabled]="
+                          workspace.isMissing || isWorkspaceUnlinked(workspace) ? '' : null
+                        "
+                        [attr.data-workspace-branch-trigger]="workspace.path"
+                        (click)="switchWorkspaceBranch(repo, workspace)"
+                      >
+                        <ng-icon name="lucideGitBranch" class="!w-4 !h-4" />
+                        Switch branch…
+                      </button>
+                      <button
+                        type="button"
+                        z-dropdown-menu-item
+                        class="w-full text-left"
+                        [disabled]="workspace.isMissing || isWorkspaceUnlinked(workspace)"
+                        [attr.disabled]="
+                          workspace.isMissing || isWorkspaceUnlinked(workspace) ? '' : null
+                        "
+                        (click)="openWorkspaceInCursor(repo, workspace)"
+                      >
+                        <ng-icon name="lucideSquareArrowOutUpRight" class="!w-4 !h-4" />
+                        Open in Cursor
+                      </button>
+                    </z-dropdown-menu-group>
+                    <z-dropdown-menu-separator />
+                    <z-dropdown-menu-group aria-label="Organize">
+                      <button
+                        type="button"
+                        z-dropdown-menu-item
+                        class="w-full text-left"
+                        [disabled]="
+                          creatingFolder() ||
+                          workspace.isMissing ||
+                          workspace.id <= 0 ||
+                          isWorkspaceUnlinked(workspace)
+                        "
+                        [attr.disabled]="
+                          creatingFolder() ||
+                          workspace.isMissing ||
+                          workspace.id <= 0 ||
+                          isWorkspaceUnlinked(workspace)
+                            ? ''
+                            : null
+                        "
+                        aria-label="New session folder"
+                        (click)="startCreateFolder(repo, workspace, $event)"
+                      >
+                        <ng-icon name="lucideFolderPlus" class="!w-4 !h-4" />
+                        New session folder…
+                      </button>
+                      <button
+                        type="button"
+                        z-dropdown-menu-item
+                        class="w-full text-left"
+                        [disabled]="
+                          workspace.isMissing ||
+                          workspace.id <= 0 ||
+                          workspaceRenameBusyId() !== null ||
+                          isWorkspaceUnlinked(workspace)
+                        "
+                        [attr.disabled]="
+                          workspace.isMissing ||
+                          workspace.id <= 0 ||
+                          workspaceRenameBusyId() !== null ||
+                          isWorkspaceUnlinked(workspace)
+                            ? ''
+                            : null
+                        "
+                        (click)="startEditWorkspace(workspace, $event)"
+                      >
+                        <ng-icon name="lucidePencil" class="!w-4 !h-4" />
+                        Rename worktree…
+                      </button>
+                    </z-dropdown-menu-group>
+                    <z-dropdown-menu-separator />
+                    <z-dropdown-menu-group aria-label="Remove">
+                      <button
+                        type="button"
+                        z-dropdown-menu-item
+                        class="w-full items-start text-left"
+                        [disabled]="workspace.isDefault || isWorkspaceUnlinked(workspace)"
+                        [attr.disabled]="
+                          workspace.isDefault || isWorkspaceUnlinked(workspace) ? '' : null
+                        "
+                        [attr.data-workspace-remove-trigger]="workspace.path"
+                        (click)="openRemoveWorkspaceFromProject(repo, workspace)"
+                      >
+                        <ng-icon name="lucideCircleMinus" class="mt-0.5 !w-4 !h-4" />
+                        <span>
+                          <span class="block">Remove from project…</span>
+                          <span class="block text-xs text-muted-foreground"
+                            >Keep files on disk</span
+                          >
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        z-dropdown-menu-item
+                        zType="destructive"
+                        class="w-full items-start text-left"
+                        [disabled]="workspace.isDefault || isWorkspaceUnlinked(workspace)"
+                        [attr.disabled]="
+                          workspace.isDefault || isWorkspaceUnlinked(workspace) ? '' : null
+                        "
+                        [attr.data-workspace-delete-trigger]="workspace.path"
+                        (click)="openDeleteWorkspace(repo, workspace)"
+                      >
+                        <ng-icon name="lucideTrash2" class="mt-0.5 !w-4 !h-4" />
+                        <span>
+                          <span class="block">Delete worktree…</span>
+                          <span class="block text-xs text-muted-foreground"
+                            >Delete files from disk</span
+                          >
+                        </span>
+                      </button>
+                    </z-dropdown-menu-group>
+                  </z-dropdown-menu-content>
+                </div>
 
                 @if (isExpanded('workspace-' + repo.id + '-' + workspace.id)) {
                   @for (folder of workspace.sessionFolders ?? []; track folder.id) {

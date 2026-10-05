@@ -7,6 +7,15 @@ import {
   buildVSCodeIframeKey,
 } from '@/features/vscode-web/vscode-web-state.service';
 import { ComposerDraftService } from '@/shared/agent-chat/composer/composer-draft.service';
+import {
+  ZardDropdownDirective,
+  ZardDropdownMenuContentComponent,
+  ZardDropdownMenuGroupComponent,
+  ZardDropdownMenuItemComponent,
+  ZardDropdownMenuLabelComponent,
+  ZardDropdownMenuSeparatorComponent,
+  ZardDropdownService,
+} from '@/shared/components/dropdown';
 import { ZardInputDirective } from '@/shared/components/input';
 import { PathAutocompleteInputComponent } from '@/shared/components/path-autocomplete-input/path-autocomplete-input.component';
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
@@ -55,6 +64,7 @@ import {
   lucideChevronUp,
   lucideCircleDashed,
   lucideCircleMinus,
+  lucideEllipsis,
   lucideFolder,
   lucideFolderOpen,
   lucideFolderPlus,
@@ -100,15 +110,23 @@ import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
     WorktreeSheet,
     BranchSearch,
     ZardInputDirective,
+    ZardDropdownDirective,
+    ZardDropdownMenuContentComponent,
+    ZardDropdownMenuGroupComponent,
+    ZardDropdownMenuItemComponent,
+    ZardDropdownMenuLabelComponent,
+    ZardDropdownMenuSeparatorComponent,
     ProjectOnboardingWizard,
     PathAutocompleteInputComponent,
     TrackNativeModalDirective,
     EnvironmentSwitcherComponent,
   ],
+  providers: [ZardDropdownService],
   templateUrl: './sidebar.html',
   styleUrl: './sidebar.scss',
   viewProviders: [
     provideIcons({
+      lucideEllipsis,
       lucideFolder,
       lucideGitBranch,
       lucideFolderOpen,
@@ -171,7 +189,8 @@ export class Sidebar implements OnInit, OnDestroy {
   private agentControl = inject(AgentControlStateService);
   readonly theme = inject(ThemeService);
   private windowControls = getElectronWindowControlsApi();
-  private host = inject(ElementRef<HTMLElement>);
+  private host: ElementRef<HTMLElement> = inject(ElementRef);
+  private readonly workspaceDropdown = inject(ZardDropdownService);
   readonly timeTick = signal(Date.now());
 
   activeSessionId = this.tabService.activeSessionId;
@@ -466,6 +485,38 @@ export class Sidebar implements OnInit, OnDestroy {
   onWorkspaceClick(repo: NavigationRepo, workspace: NavigationWorkspace) {
     this.navService.toggleExpand(`workspace-${repo.id}-${workspace.id}`);
     this.clearDeleteSessionConfirmationIfHidden();
+  }
+
+  openWorkspaceContextMenu(
+    event: MouseEvent,
+    repo: NavigationRepo,
+    workspace: NavigationWorkspace,
+    menu: ZardDropdownMenuContentComponent,
+  ) {
+    if (
+      this.openingWorkspaceRepoId() !== null ||
+      this.isSwitchingWorkspace(repo, workspace) ||
+      this.isWorkspaceUnlinked(workspace) ||
+      this.editingWorkspaceId() === workspace.id
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const row = event.currentTarget as HTMLElement;
+    const focusOrigin = row.querySelector<HTMLButtonElement>('button');
+    const bounds = row.getBoundingClientRect();
+    const origin =
+      event.clientX === 0 && event.clientY === 0
+        ? { x: bounds.left, y: bounds.bottom }
+        : { x: event.clientX, y: event.clientY };
+    this.workspaceDropdown.openAt(
+      origin,
+      menu.contentTemplate(),
+      menu.viewContainerRef,
+      focusOrigin ? new ElementRef(focusOrigin) : undefined,
+    );
   }
 
   getWorkspaceTooltip(workspace: NavigationWorkspace): string {
@@ -1077,7 +1128,16 @@ export class Sidebar implements OnInit, OnDestroy {
     ) {
       return;
     }
+    this.workspaceDropdown.close();
     this.editingWorkspaceId.set(workspace.id);
+    setTimeout(() => {
+      if (this.editingWorkspaceId() !== workspace.id) return;
+      const input = this.host.nativeElement.querySelector<HTMLInputElement>(
+        `[data-workspace-name-input="${workspace.id}"]`,
+      );
+      input?.focus();
+      input?.select();
+    }, 0);
   }
 
   saveWorkspaceName(repo: NavigationRepo, workspace: NavigationWorkspace, event: Event) {

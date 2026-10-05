@@ -22,6 +22,8 @@ import { PlannotatorStateService } from '@/features/plannotator';
 import { TodosService } from '@/features/productivity/todos.service';
 import { VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
 import { ComposerDraftService } from '@/shared/agent-chat/composer/composer-draft.service';
+import { ZardDropdownImports, ZardDropdownService } from '@/shared/components/dropdown';
+import { provideZard } from '@/shared/core/provider/providezard';
 import { Project } from '@/shared/models/project.model';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
@@ -436,7 +438,7 @@ describe('Sidebar', () => {
     TestBed.resetTestingModule();
     TestBed.overrideComponent(Sidebar, {
       set: {
-        imports: [NgIcon, MockTrackNativeModalDirective],
+        imports: [NgIcon, MockTrackNativeModalDirective, ...ZardDropdownImports],
         schemas: [NO_ERRORS_SCHEMA],
       },
     });
@@ -445,6 +447,7 @@ describe('Sidebar', () => {
       imports: [Sidebar],
       schemas: [NO_ERRORS_SCHEMA],
       providers: [
+        provideZard(),
         { provide: Router, useValue: routerMock },
         { provide: NavigationService, useValue: navigationServiceMock },
         { provide: SessionsService, useValue: sessionsServiceMock },
@@ -517,8 +520,18 @@ describe('Sidebar', () => {
     return container.querySelector(`[data-workspace-branch-trigger="${worktreePath}"]`);
   }
 
-  function getWorkspaceRow(container: HTMLElement, worktreePath: string): HTMLButtonElement | null {
+  function getWorkspaceRow(container: HTMLElement, worktreePath: string): HTMLElement | null {
     return container.querySelector(`[data-workspace-row="${worktreePath}"]`);
+  }
+
+  function openWorkspaceMenu(
+    fixture: ReturnType<typeof createSidebar>,
+    path = '/tmp/repo-one-main',
+  ) {
+    fixture.nativeElement.querySelector(`[data-workspace-actions-trigger="${path}"]`)?.click();
+    fixture.detectChanges();
+    vi.advanceTimersByTime(0);
+    return document.querySelector<HTMLElement>('[data-slot="dropdown-menu-content"]')!;
   }
 
   function showPersistedWorkspace(linkStatus: 'linked' | 'unlinked' = 'linked') {
@@ -543,7 +556,10 @@ describe('Sidebar', () => {
   it('offers folder creation on linked workspaces and not on unlinked workspaces', () => {
     showPersistedWorkspace('linked');
     const fixture = createSidebar();
-    expect(fixture.nativeElement.querySelector('[aria-label="New session folder"]')).toBeTruthy();
+    expect(
+      openWorkspaceMenu(fixture).querySelector('[aria-label="New session folder"]'),
+    ).toBeTruthy();
+    fixture.debugElement.injector.get(ZardDropdownService).close();
 
     showPersistedWorkspace('unlinked');
     fixture.detectChanges();
@@ -702,7 +718,7 @@ describe('Sidebar', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();
 
-    (fixture.nativeElement as HTMLElement)
+    openWorkspaceMenu(fixture)
       .querySelector<HTMLButtonElement>('[aria-label="New session folder"]')
       ?.click();
     fixture.detectChanges();
@@ -947,7 +963,9 @@ describe('Sidebar', () => {
 
     const row = getWorkspaceRow(el, '/tmp/repo-one-main');
 
-    expect(row?.getAttribute('title')).toBe('main\nBranch: main\nPath: /tmp/repo-one-main');
+    expect(row?.getAttribute('title')).toBe(
+      'main\nBranch: main\nStatus: linked\nPath: /tmp/repo-one-main',
+    );
   });
 
   it('shows a visible new-workspace action for a repo with no workspaces even when the repo is collapsed', () => {
@@ -1120,10 +1138,184 @@ describe('Sidebar', () => {
 
   it('renders distinct remove-from-project and delete-worktree actions for worktree branches', () => {
     const fixture = createSidebar();
-    const el = fixture.nativeElement as HTMLElement;
+    const el = openWorkspaceMenu(fixture);
 
     expect(getWorktreeRemoveTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
     expect(getWorktreeDeleteTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
+  });
+
+  it('keeps session creation direct and opens branch actions without collapsing the workspace', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const row = getWorkspaceRow(fixture.nativeElement, '/tmp/repo-one-main')!;
+    expect(row.querySelector('.workspace-actions')?.querySelectorAll('button')).toHaveLength(2);
+    expect(row.querySelector('button button')).toBeNull();
+    row.querySelector<HTMLButtonElement>('[aria-label="New session"]')!.click();
+    expect(sessionsServiceMock.create).toHaveBeenCalledWith({ repoId: 1, workspaceId: 2 });
+    expect(navigationServiceMock.toggleExpand).not.toHaveBeenCalled();
+
+    const branchSearch = { open: vi.fn() };
+    fixture.componentInstance.branchSearch = branchSearch;
+    const menu = openWorkspaceMenu(fixture);
+    getWorkspaceBranchTrigger(menu, '/tmp/repo-one-main')!.click();
+    vi.advanceTimersByTime(0);
+    fixture.detectChanges();
+    expect(branchSearch.open).toHaveBeenCalledWith([tree()[0].repos[0]]);
+    expect(navigationServiceMock.toggleExpand).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
+  });
+
+  it('opens the actions with the keyboard and restores focus on Escape', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const trigger = fixture.nativeElement.querySelector(
+      '[data-workspace-actions-trigger]',
+    ) as HTMLButtonElement;
+    const focus = vi.spyOn(trigger, 'focus');
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    fixture.detectChanges();
+    vi.advanceTimersByTime(0);
+    const menu = document.querySelector<HTMLElement>('[data-slot="dropdown-menu-content"]')!;
+    expect(menu).toBeTruthy();
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(document.activeElement?.textContent).toContain('Switch branch');
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
+    expect(focus).toHaveBeenCalled();
+    expect(navigationServiceMock.toggleExpand).not.toHaveBeenCalled();
+  });
+
+  it('opens the same workspace actions at the right-click position without collapsing it', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const dropdown = fixture.debugElement.injector.get(ZardDropdownService);
+    const openAt = vi.spyOn(dropdown, 'openAt');
+    const labels = openWorkspaceMenu(fixture).textContent;
+    dropdown.close();
+    const row = getWorkspaceRow(fixture.nativeElement, '/tmp/repo-one-main')!;
+    const event = new MouseEvent('contextmenu', {
+      button: 2,
+      clientX: 120,
+      clientY: 90,
+      bubbles: true,
+      cancelable: true,
+    });
+    row.querySelector('button')!.dispatchEvent(event);
+    fixture.detectChanges();
+    vi.advanceTimersByTime(0);
+    const menu = document.querySelector<HTMLElement>('[data-slot="dropdown-menu-content"]')!;
+    expect(event.defaultPrevented).toBe(true);
+    expect(openAt.mock.calls[0][0]).toEqual({ x: 120, y: 90 });
+    expect(menu.textContent).toBe(labels);
+    expect(navigationServiceMock.toggleExpand).not.toHaveBeenCalled();
+
+    document.body.dispatchEvent(new MouseEvent('auxclick', { button: 2, bubbles: true }));
+    expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeTruthy();
+    const branchSearch = { open: vi.fn() };
+    fixture.componentInstance.branchSearch = branchSearch;
+    getWorkspaceBranchTrigger(menu, '/tmp/repo-one-main')!.click();
+    vi.advanceTimersByTime(0);
+    expect(branchSearch.open).toHaveBeenCalledWith([tree()[0].repos[0]]);
+    expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
+  });
+
+  it('repositions the context menu on a second right click and restores row focus on Escape', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const row = getWorkspaceRow(fixture.nativeElement, '/tmp/repo-one-main')!;
+    const focus = vi.spyOn(row.querySelector('button')!, 'focus');
+    for (const clientX of [120, 180]) {
+      row.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          button: 2,
+          clientX,
+          clientY: 90,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      fixture.detectChanges();
+      vi.advanceTimersByTime(0);
+      expect(document.querySelectorAll('[data-slot="dropdown-menu-content"]')).toHaveLength(1);
+    }
+    document
+      .querySelector('[data-slot="dropdown-menu-content"]')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
+    expect(focus).toHaveBeenCalled();
+    expect(navigationServiceMock.toggleExpand).not.toHaveBeenCalled();
+  });
+
+  it.each(['opening', 'switching', 'renaming', 'unlinked'] as const)(
+    'keeps the native context menu when the workspace is %s',
+    (state) => {
+      showPersistedWorkspace(state === 'unlinked' ? 'unlinked' : 'linked');
+      const fixture = createSidebar();
+      const component = fixture.componentInstance;
+      if (state === 'opening') component.openingWorkspaceRepoId.set(1);
+      if (state === 'switching')
+        component.switchingWorkspace.set({ repoId: 1, workspaceId: 2, branchName: 'feature' });
+      if (state === 'renaming') component.editingWorkspaceId.set(2);
+      fixture.detectChanges();
+      const row = getWorkspaceRow(fixture.nativeElement, '/tmp/repo-one-main')!;
+      const event = new MouseEvent('contextmenu', {
+        button: 2,
+        clientX: 120,
+        clientY: 90,
+        bubbles: true,
+        cancelable: true,
+      });
+      (row.querySelector('input') ?? row).dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
+    },
+  );
+
+  it('disables unavailable actions and protects the default workspace in the menu', () => {
+    showPersistedWorkspace();
+    tree.update((projects) =>
+      projects.map((project) => ({
+        ...project,
+        repos: project.repos.map((repo) => ({
+          ...repo,
+          workspaces: repo.workspaces?.map((workspace) => ({
+            ...workspace,
+            isDefault: true,
+            isMissing: true,
+          })),
+        })),
+      })),
+    );
+    const fixture = createSidebar();
+    const menu = openWorkspaceMenu(fixture);
+    for (const item of menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')) {
+      expect(item.disabled).toBe(true);
+      expect(item.getAttribute('aria-disabled')).toBe('true');
+      item.click();
+    }
+    expect(workspacesServiceMock.remove).not.toHaveBeenCalled();
+    expect(workspacesServiceMock.removeFromProject).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.editingWorkspaceId()).toBeNull();
+  });
+
+  it('focuses the inline name input when renaming through the menu', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    const menu = openWorkspaceMenu(fixture);
+    [...menu.querySelectorAll<HTMLButtonElement>('button')]
+      .find((item) => item.textContent?.includes('Rename worktree'))!
+      .click();
+    fixture.detectChanges();
+    const input = fixture.nativeElement.querySelector(
+      '[data-workspace-name-input="2"]',
+    ) as HTMLInputElement;
+    const focus = vi.spyOn(input, 'focus');
+    vi.advanceTimersByTime(0);
+    expect(focus).toHaveBeenCalled();
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(input.value.length);
+    expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
   });
 
   it('renames a worktree from the sidebar and refreshes navigation', () => {
@@ -1187,7 +1379,7 @@ describe('Sidebar', () => {
     });
 
     const row = getWorkspaceRow(el, '/tmp/repo-one-main');
-    expect(row?.disabled).toBe(true);
+    expect(row?.querySelector('button')?.disabled).toBe(true);
     expect(row?.textContent).toContain('Switching…');
     expect(getWorkspaceBranchTrigger(el, '/tmp/repo-one-main')).toBeNull();
 
@@ -1200,7 +1392,9 @@ describe('Sidebar', () => {
 
     expect(component.switchingWorkspace()).toBeNull();
     expect(getWorkspaceRow(el, '/tmp/repo-one-main')?.textContent).not.toContain('Switching…');
-    expect(getWorkspaceBranchTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
+    expect(
+      getWorkspaceBranchTrigger(openWorkspaceMenu(fixture), '/tmp/repo-one-main'),
+    ).toBeTruthy();
     expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
   });
 
@@ -1439,7 +1633,7 @@ describe('Sidebar', () => {
     expect(component.openingWorktreeBranchKey()).toBeNull();
   });
 
-  it('attaches an existing git worktree and creates a session when selected manually', () => {
+  it('opens the worktree chooser for a branch that already has a worktree', () => {
     const fixture = createSidebar();
     const component = fixture.componentInstance;
     const repo = tree()[0].repos[0];
@@ -1457,16 +1651,15 @@ describe('Sidebar', () => {
     component.openCreateWorktree(repo, branch);
     vi.advanceTimersByTime(0);
 
-    expect(worktreeSheet.open).not.toHaveBeenCalled();
-    expect(workspacesServiceMock.attach).toHaveBeenCalledWith(1, {
-      path: '/tmp/repo-one/.worktrees/feature',
-      name: 'feature',
-    });
-    expect(sessionsServiceMock.create).toHaveBeenCalledWith({
-      repoId: 1,
-      workspaceId: 2,
-    });
-    expect(navigationServiceMock.openSession).toHaveBeenCalledWith(21);
+    expect(worktreeSheet.open).toHaveBeenCalledWith(
+      1,
+      'feature',
+      '/tmp/repo-one',
+      'Repo One',
+      true,
+    );
+    expect(workspacesServiceMock.attach).not.toHaveBeenCalled();
+    expect(sessionsServiceMock.create).not.toHaveBeenCalled();
   });
 
   it('removes a worktree from the project without calling destructive worktree deletion', () => {
