@@ -83,7 +83,10 @@
           </article>
 
           @if (activeReview.after) {
-            <section class="pa-preface cw-md" [innerHTML]="activeReview.after | cwMarkdown"></section>
+            <section
+              class="pa-preface cw-md"
+              [innerHTML]="activeReview.after | cwMarkdown"
+            ></section>
           }
         </div>
       </main>
@@ -138,7 +141,11 @@
         </div>
 
         @if (activeRailMode() === 'ask') {
-          <app-plan-chat-panel class="pa-chat-panel" [review]="activeReview" />
+          <app-plan-chat-panel
+            class="pa-chat-panel"
+            [review]="activeReview"
+            (openLocalFile)="openLocalFile.emit($event)"
+          />
         } @else {
           <div class="pa-comments">
             @if (draftOpen()) {
@@ -161,12 +168,7 @@
                   <button z-button zType="ghost" zSize="sm" type="button" (click)="cancelDraft()">
                     Cancel
                   </button>
-                  <button
-                    z-button
-                    zSize="sm"
-                    type="submit"
-                    [zDisabled]="!draftNote().trim()"
-                  >
+                  <button z-button zSize="sm" type="submit" [zDisabled]="!draftNote().trim()">
                     Save
                   </button>
                 </div>

@@ -1,0 +1,121 @@
+import {
+  booleanAttribute,
+  computed,
+  Directive,
+  ElementRef,
+  inject,
+  input,
+  type OnInit,
+  ViewContainerRef,
+} from '@angular/core';
+
+import type { ZardDropdownMenuContentComponent } from './dropdown-menu-content.component';
+import { ZardDropdownService, type ZardDropdownPlacement } from './dropdown.service';
+
+@Directive({
+  selector: '[z-dropdown], [zDropdown]',
+  host: {
+    'data-slot': 'dropdown-menu-trigger',
+    '[attr.tabindex]': '0',
+    '[attr.role]': '"button"',
+    '[attr.aria-haspopup]': '"menu"',
+    '[attr.aria-expanded]': 'isThisDropdownOpen()',
+    '[attr.aria-disabled]': 'zDisabled()',
+    '[attr.data-state]': 'isThisDropdownOpen() ? "open" : "closed"',
+    '[attr.data-disabled]': 'zDisabled() || null',
+    '(click.prevent-with-stop)': 'onClick()',
+    '(mouseenter)': 'onHoverToggle($event)',
+    '(mouseleave)': 'onHoverToggle($event)',
+    '(keydown.{enter,space}.prevent-with-stop)': 'toggleDropdown()',
+    '(keydown.arrowdown.prevent)': 'openDropdown()',
+  },
+  exportAs: 'zDropdown',
+})
+export class ZardDropdownDirective implements OnInit {
+  private readonly elementRef = inject(ElementRef);
+  private readonly viewContainerRef = inject(ViewContainerRef);
+  protected readonly dropdownService = inject(ZardDropdownService);
+
+  protected readonly isThisDropdownOpen = computed(
+    () =>
+      this.dropdownService.isOpen() && this.dropdownService.getTriggerElement() === this.elementRef,
+  );
+
+  readonly zDropdownMenu = input<ZardDropdownMenuContentComponent>();
+  readonly zTrigger = input<'click' | 'hover'>('click');
+  readonly zDisabled = input(false, { transform: booleanAttribute });
+
+  ngOnInit() {
+    // Ensure button has proper accessibility attributes
+    const element = this.elementRef.nativeElement;
+    if (!element.hasAttribute('aria-label') && !element.hasAttribute('aria-labelledby')) {
+      const label = element.textContent?.trim();
+      element.setAttribute('aria-label', label?.length ? label : 'Open menu');
+    }
+  }
+
+  protected onClick() {
+    if (this.zTrigger() !== 'click') {
+      return;
+    }
+
+    this.toggleDropdown();
+  }
+
+  protected onHoverToggle(event: MouseEvent) {
+    if (this.zTrigger() !== 'hover' || this.zDisabled()) {
+      return;
+    }
+
+    if (event.type === 'mouseenter') {
+      this.openDropdown();
+    } else if (event.type === 'mouseleave') {
+      this.closeDropdown();
+    }
+  }
+
+  protected toggleDropdown() {
+    if (this.zDisabled()) {
+      return;
+    }
+
+    const menuContent = this.zDropdownMenu();
+    if (menuContent) {
+      this.dropdownService.toggle(
+        this.elementRef,
+        menuContent.contentTemplate(),
+        this.viewContainerRef,
+        this.placementOf(menuContent),
+      );
+    }
+  }
+
+  protected openDropdown() {
+    if (this.zDisabled()) {
+      return;
+    }
+
+    const menuContent = this.zDropdownMenu();
+    if (menuContent && !this.dropdownService.isOpen()) {
+      this.dropdownService.toggle(
+        this.elementRef,
+        menuContent.contentTemplate(),
+        this.viewContainerRef,
+        this.placementOf(menuContent),
+      );
+    }
+  }
+
+  /** The content owns `zSide`/`zAlign`/`zSideOffset`, exactly as `DropdownMenuContent` does in shadcn. */
+  private placementOf(menuContent: ZardDropdownMenuContentComponent): ZardDropdownPlacement {
+    return {
+      side: menuContent.zSide(),
+      align: menuContent.zAlign(),
+      sideOffset: menuContent.zSideOffset(),
+    };
+  }
+
+  protected closeDropdown() {
+    this.dropdownService.close();
+  }
+}

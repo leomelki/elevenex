@@ -47,8 +47,8 @@
 
 @if (!canFork()) {
   <p class="rw-notice" role="status">
-    Discussions need an agent that can fork a conversation. You can still review the
-    diff and send selections to your session.
+    Discussions need an agent that can fork a conversation. You can still review the diff and send
+    selections to your session.
   </p>
 }
 
@@ -143,6 +143,7 @@
       [staleThreadIds]="staleThreadIds()"
       [draftSeed]="draftSeed()"
       (promoted)="onPromoted($event)"
+      (openLocalFile)="openWorktreeFile($event.path)"
     />
   </z-resizable-panel>
 </z-resizable>

@@ -1,0 +1,40 @@
+<div class="cw-think text-xs text-muted-foreground">
+  <button
+    z-button
+    zType="ghost"
+    zSize="xs"
+    type="button"
+    class="cw-think__head -ml-1 h-auto max-w-full gap-1.5 rounded-sm px-1 py-0.5 text-xs text-muted-foreground data-[streaming=true]:motion-safe:animate-pulse"
+    [attr.data-streaming]="streaming()"
+    [zDisabled]="!hasBody()"
+    [attr.aria-expanded]="hasBody() ? open() : null"
+    (click)="toggle()"
+  >
+    <ng-icon name="lucideBrain" size="13" />
+    <span>{{ headerLabel() }}</span>
+    @if (preview()) {
+      <span class="cw-think__preview max-w-96 truncate opacity-80">— {{ preview() }}</span>
+    }
+    @if (hasBody()) {
+      <ng-icon
+        name="lucideChevronRight"
+        size="13"
+        class="cw-think__chev shrink-0 transition-transform duration-150"
+        [class.rotate-90]="open()"
+      />
+    }
+  </button>
+  @if (open() && hasBody()) {
+    <div
+      class="cw-think__body mt-1.5 max-h-96 overflow-auto rounded-r border-l-2 border-border bg-muted/60 px-3 py-2 text-[13px] leading-relaxed"
+      #bodyEl
+      (scroll)="onBodyScroll($event)"
+    >
+      @if (streaming()) {
+        <div class="cw-think__streaming whitespace-pre-wrap break-words">{{ content() }}</div>
+      } @else {
+        <agent-markdown class="cw-think__md" [content]="content()" />
+      }
+    </div>
+  }
+</div>

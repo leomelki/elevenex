@@ -92,12 +92,7 @@
             <ng-icon name="lucideCheck" size="13" />
             Resolve
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            class="rd-menu__danger"
-            (click)="remove(chat)"
-          >
+          <button type="button" role="menuitem" class="rd-menu__danger" (click)="remove(chat)">
             <ng-icon name="lucideTrash2" size="13" />
             Delete
           </button>
@@ -131,8 +126,8 @@
   @if (isStale(chat)) {
     <p class="rd-stale" role="status">
       <ng-icon name="lucideTriangleAlert" size="13" />
-      The code has changed since this discussion started, so its anchor may no longer
-      point at the same lines.
+      The code has changed since this discussion started, so its anchor may no longer point at the
+      same lines.
     </p>
   }
 } @else {
@@ -148,8 +143,8 @@
 
 @if (state.crowded()) {
   <p class="rd-warning" role="status">
-    Several discussions are open. Each one runs its own agent — resolve the ones you
-    are done with to keep things responsive.
+    Several discussions are open. Each one runs its own agent — resolve the ones you are done with
+    to keep things responsive.
   </p>
 }
 
@@ -160,13 +155,12 @@
   [draftSeed]="draftSeed()"
   [worktreePath]="worktreePath()"
   [contextNote]="contextNote()"
-  [placeholder]="
-    state.activeChat() ? 'Ask about this code…' : 'Message your session…'
-  "
+  [placeholder]="state.activeChat() ? 'Ask about this code…' : 'Message your session…'"
   [emptyState]="
     state.activeChat()
       ? 'Ask a focused question about the selected code.'
       : 'Talk to your session without leaving the review.'
   "
   (submitPrompt)="onSubmit($event)"
+  (openLocalFile)="openLocalFile.emit($event)"
 />

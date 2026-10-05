@@ -1,0 +1,43 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.cw-turn-changes__chevron--open {
+  transform: rotate(90deg);
+}
+
+.cw-turn-changes__file[data-status='created'] .cw-turn-changes__status {
+  background: color-mix(in oklab, var(--success) 15%, transparent);
+  color: color-mix(in oklab, var(--success) 82%, var(--foreground));
+}
+
+.cw-turn-changes__file[data-status='deleted'] .cw-turn-changes__status {
+  background: color-mix(in oklab, var(--destructive) 13%, transparent);
+  color: var(--destructive);
+}
+
+@container cw-workspace (max-width: 42rem) {
+  .cw-turn-changes__copy {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.12rem;
+  }
+
+  .cw-turn-changes__file-head {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+  }
+
+  .cw-turn-changes__file-meta {
+    display: none;
+  }
+
+  .cw-turn-changes__folder,
+  .cw-turn-changes__path-separator {
+    display: none;
+  }
+
+  .cw-turn-changes__file-body {
+    padding-left: 0.75rem;
+  }
+}

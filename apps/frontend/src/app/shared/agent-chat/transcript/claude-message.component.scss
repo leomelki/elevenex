@@ -1,0 +1,15 @@
+.cw-caret {
+  animation: cw-caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes cw-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-caret {
+    animation: none;
+  }
+}

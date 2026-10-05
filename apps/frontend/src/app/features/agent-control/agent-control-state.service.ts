@@ -1,12 +1,11 @@
 import { Injectable, Injector, computed, inject, signal } from '@angular/core';
 import { Subscription, firstValueFrom } from 'rxjs';
 
-import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
-import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
-import { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
-import { AgentMissionsApiService } from './agent-missions-api.service';
-import { NavigationService } from '@/shared/services/navigation.service';
 import { TabService } from '@/features/session/tab-service';
+import { AgentRuntimeEvent, AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
+import { NavigationService } from '@/shared/services/navigation.service';
 import {
   AgentAutonomyMode,
   AgentMissionStep,
@@ -14,6 +13,7 @@ import {
   DEFAULT_AGENT_AUTONOMY_MODE,
   MissionSummary,
 } from './agent-control.model';
+import { AgentMissionsApiService } from './agent-missions-api.service';
 
 /** Raw TodoWrite todo shape as it arrives in a tool_use item's input. */
 interface RawTodo {
@@ -71,9 +71,7 @@ export class AgentControlStateService {
   private readonly loadingSignal = signal(false);
   private readonly errorSignal = signal<string | null>(null);
   /** Default autonomy for the NEW-mission composer. */
-  private readonly draftAutonomySignal = signal<AgentAutonomyMode>(
-    DEFAULT_AGENT_AUTONOMY_MODE,
-  );
+  private readonly draftAutonomySignal = signal<AgentAutonomyMode>(DEFAULT_AGENT_AUTONOMY_MODE);
   /** Step tree for the selected mission, derived from its latest TodoWrite. */
   private readonly selectedStepsSignal = signal<AgentMissionStep[]>([]);
 
@@ -96,9 +94,7 @@ export class AgentControlStateService {
 
   readonly activeMissionsCount = computed(
     () =>
-      this.missionsSignal().filter(
-        (m) => m.status !== 'archived' && m.runPhase !== 'error',
-      ).length,
+      this.missionsSignal().filter((m) => m.status !== 'archived' && m.runPhase !== 'error').length,
   );
 
   /**
@@ -191,7 +187,10 @@ export class AgentControlStateService {
       // Optimistically add the new mission so the selection is immediate without
       // waiting for a round-trip refresh. A background refresh follows to sync
       // any server-side changes (e.g. runPhase updates).
-      this.missionsSignal.update((ms) => [mission, ...ms.filter((m) => m.sessionId !== mission.sessionId)]);
+      this.missionsSignal.update((ms) => [
+        mission,
+        ...ms.filter((m) => m.sessionId !== mission.sessionId),
+      ]);
       this.select(mission.sessionId);
       void this.refresh();
       return mission.sessionId;
@@ -210,13 +209,8 @@ export class AgentControlStateService {
   }
 
   /** Change a mission's autonomy mandate (persisted + applied to the runtime). */
-  async setMissionAutonomy(
-    sessionId: number,
-    mode: AgentAutonomyMode,
-  ): Promise<void> {
-    const updated = await firstValueFrom(
-      this.missionsApi.setAutonomy(sessionId, mode),
-    );
+  async setMissionAutonomy(sessionId: number, mode: AgentAutonomyMode): Promise<void> {
+    const updated = await firstValueFrom(this.missionsApi.setAutonomy(sessionId, mode));
     this.patchMission(updated);
   }
 
@@ -275,21 +269,17 @@ export class AgentControlStateService {
     this.liveSessionId = null;
   }
 
-  private handleRuntimeEvent(
-    sessionId: number,
-    event: { type: string; payload?: Record<string, unknown> },
-  ): void {
-    const payload = event.payload ?? {};
+  private handleRuntimeEvent(sessionId: number, event: AgentRuntimeEvent): void {
     if (event.type === 'run_state') {
-      const runPhase = (payload['runPhase'] as string | undefined) ?? null;
+      const payload = event.payload;
+      const runPhase = payload.runPhase;
       const awaitingApproval =
-        Boolean(payload['pendingPermissionRequest']) ||
-        Boolean(payload['pendingUserInputRequest']);
+        Boolean(payload.pendingPermissionRequest) || Boolean(payload.pendingUserInputRequest);
       this.updateMissionLiveStatus(sessionId, runPhase, awaitingApproval);
       return;
     }
     if (event.type === 'tool_use' || event.type === 'tool_result') {
-      const item = payload['item'] as AgentTranscriptItem | undefined;
+      const item = event.payload.item;
       if (item && this.isTodoWrite(item)) {
         this.deriveSteps(this.readTodos(item));
       }
@@ -308,9 +298,7 @@ export class AgentControlStateService {
     awaitingApproval: boolean,
   ): void {
     this.missionsSignal.update((missions) =>
-      missions.map((m) =>
-        m.sessionId === sessionId ? { ...m, runPhase, awaitingApproval } : m,
-      ),
+      missions.map((m) => (m.sessionId === sessionId ? { ...m, runPhase, awaitingApproval } : m)),
     );
   }
 
@@ -336,9 +324,7 @@ export class AgentControlStateService {
   }
 
   private readTodos(item: AgentTranscriptItem): RawTodo[] {
-    const input = (item.toolInput ?? item.providerToolInput) as
-      | { todos?: RawTodo[] }
-      | undefined;
+    const input = (item.toolInput ?? item.providerToolInput) as { todos?: RawTodo[] } | undefined;
     return Array.isArray(input?.todos) ? input.todos : [];
   }
 
@@ -347,9 +333,8 @@ export class AgentControlStateService {
       id: `step-${index}`,
       kind: 'action',
       label:
-        (todo.status === 'in_progress' && todo.activeForm
-          ? todo.activeForm
-          : todo.content) ?? 'Step',
+        (todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content) ??
+        'Step',
       status: this.todoStatus(todo.status),
       targetSummary: '',
     }));

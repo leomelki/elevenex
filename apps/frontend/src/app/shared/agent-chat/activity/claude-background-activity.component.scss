@@ -1,0 +1,45 @@
+/* Pulsing orb — reads as "something is alive over here" without the
+   visual weight of a full spinner, which is reserved for the active turn. */
+.cw-bga__orb {
+  position: relative;
+  display: inline-flex;
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.cw-bga__orb-core {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--primary);
+}
+
+.cw-bga__orb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px solid var(--primary);
+  animation: cw-bga-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes cw-bga-ping {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  80%,
+  100% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-bga__orb-ring {
+    animation: none;
+    opacity: 0.5;
+  }
+}

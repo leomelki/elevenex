@@ -1,21 +1,23 @@
-import '@angular/compiler';
-import { TestBed } from '@angular/core/testing';
-import { of, Subject } from 'rxjs';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { toast } from 'ngx-sonner';
-import { ClaudeWorkspaceComponent } from './claude-workspace.component';
-import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
+import type { ComposerImageAttachment } from '@/shared/agent-chat/composer/claude-composer.component';
+import { ComposerDraftService } from '@/shared/agent-chat/composer/composer-draft.service';
+import type { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
+import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
+import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import type { SessionMention } from '@/shared/models/session-mention.model';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { AppSettingsService } from '@/shared/services/app-settings.service';
+import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.service';
 import { ClaudeRuntimeWebsocketService } from '@/shared/services/claude-runtime-websocket.service';
 import { ClaudeTerminalTranscriptWebsocketService } from '@/shared/services/claude-terminal-transcript-websocket.service';
-import { ClaudeRuntimeEvent, ClaudeRuntimeState } from '@/shared/models/claude-runtime.model';
-import { WorktreeContextService } from '@/shared/services/worktree-context.service';
-import { SessionsService } from '@/shared/services/sessions.service';
 import { ConversationForkDraftService } from '@/shared/services/conversation-fork-draft.service';
-import { ComposerDraftService } from './composer-draft.service';
-import type { ComposerImageAttachment } from './components/claude-composer.component';
-import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
-import { AppSettingsService } from '@/shared/services/app-settings.service';
+import { SessionsService } from '@/shared/services/sessions.service';
+import { WorktreeContextService } from '@/shared/services/worktree-context.service';
+import '@angular/compiler';
+import { TestBed } from '@angular/core/testing';
+import { toast } from 'ngx-sonner';
+import { of, Subject } from 'rxjs';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ClaudeWorkspaceComponent } from './claude-workspace.component';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -25,6 +27,13 @@ vi.mock('ngx-sonner', () => ({
 }));
 
 describe('ClaudeWorkspaceComponent', () => {
+  const createWorkspace = () => {
+    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
+    fixture.componentRef.setInput('sessionId', 7);
+    fixture.componentRef.setInput('repoId', 1);
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
+    return fixture;
+  };
   const stubClipboard = (writeText: ReturnType<typeof vi.fn>) => {
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -258,6 +267,7 @@ describe('ClaudeWorkspaceComponent', () => {
   };
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     apiMock = {
       getAutocompleteItems: vi.fn(() => of([])),
       getSubagentHistory: vi.fn(() =>
@@ -376,10 +386,167 @@ describe('ClaudeWorkspaceComponent', () => {
     }).compileComponents();
   });
 
+  it('keeps independent workspace services and drafts for mounted session tabs', () => {
+    const first = createWorkspace();
+    const second = createWorkspace();
+    second.componentRef.setInput('sessionId', 8);
+    first.componentInstance.draft.onPromptChange('First tab');
+    second.componentInstance.draft.onPromptChange('Second tab');
+
+    expect(first.componentInstance.runtime).not.toBe(second.componentInstance.runtime);
+    expect(first.componentInstance.actions).not.toBe(second.componentInstance.actions);
+    expect(first.componentInstance.draft.prompt()).toBe('First tab');
+    expect(second.componentInstance.draft.prompt()).toBe('Second tab');
+  });
+
+  it('ignores a late mention and keeps the new session mention request intact', async () => {
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const agentApi = TestBed.inject(AgentRuntimeApiService);
+    const oldResponse = new Subject<SessionMention>();
+    const newResponse = new Subject<SessionMention>();
+    vi.spyOn(agentApi, 'getConversationMention')
+      .mockReturnValueOnce(oldResponse)
+      .mockReturnValueOnce(newResponse);
+    const draft = fixture.componentInstance.draft;
+    const oldRequest = draft.addSessionMention(12);
+    fixture.componentRef.setInput('sessionId', 8);
+    fixture.detectChanges();
+    const newRequest = draft.addSessionMention(12);
+    const mention: SessionMention = {
+      sessionId: 12,
+      title: 'Mentioned session',
+      provider: 'codex',
+      providerSessionId: null,
+      branch: 'main',
+      status: 'idle',
+      transcriptExportPath: '/tmp/context.md',
+      contextMarkdown: 'Context',
+      omittedTurns: 0,
+      generatedAt: '2026-10-01T12:00:00Z',
+    };
+    oldResponse.next(mention);
+    await oldRequest;
+    expect(draft.pendingSessionMentions()).toEqual([]);
+    expect(draft.loadingSessionMentionId()).toBe(12);
+    newResponse.next(mention);
+    await newRequest;
+    expect(draft.pendingSessionMentions()).toEqual([mention]);
+    expect(composerDraftsMock.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId: 8, sessionMentions: [mention] }),
+    );
+  });
+
+  it('does not attach a pending mention to the next draft after submission', async () => {
+    const fixture = createWorkspace();
+    const response = new Subject<SessionMention>();
+    vi.spyOn(TestBed.inject(AgentRuntimeApiService), 'getConversationMention').mockReturnValue(
+      response,
+    );
+    const draft = fixture.componentInstance.draft;
+    const pending = draft.addSessionMention(12);
+    await draft.submitPrompt('Send the current draft');
+    response.next({ sessionId: 12 } as SessionMention);
+    await pending;
+    expect(draft.pendingSessionMentions()).toEqual([]);
+    expect(draft.loadingSessionMentionId()).toBeNull();
+  });
+
+  it('keeps settled plan and empty fork lookup identities stable', () => {
+    const fixture = createWorkspace();
+    const component = fixture.componentInstance;
+    component.runtime.currentProvider.set('codex');
+    const item: ClaudeTranscriptItem = {
+      id: 'plan-message',
+      sourceMessageId: 'plan-source',
+      kind: 'assistant',
+      content: '<proposed_plan>Implement the feature.</proposed_plan>',
+      timestamp: '2026-10-01T12:00:00Z',
+    };
+    component.runtime.conversation.history.set([item]);
+    const firstPlan = component.actions.planReviewForMessage(item);
+    expect(firstPlan).not.toBeNull();
+    expect(component.actions.planReviewForMessage(item)).toBe(firstPlan);
+    expect(component.actions.forksForItem(item)).toBe(component.actions.forksForItem(item));
+  });
+
+  it('clears review discussions when switching to a read-only conversation', () => {
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const actions = fixture.componentInstance.actions;
+    actions.reviewThreads.set([
+      {
+        id: 7,
+        parentSessionId: 42,
+        childSessionId: 43,
+        provider: 'claude',
+        title: 'Review this change',
+        mode: 'readonly',
+        status: 'open',
+        scope: 'worktree',
+        filePath: null,
+        anchors: [],
+        changeHash: null,
+        fingerprint: null,
+        anchorMessageId: 'assistant-1',
+        anchorMessageKind: 'assistant',
+        turnKey: 'turn-1',
+        promotedForkId: null,
+        lastReadAt: null,
+        createdAt: '2026-04-24T08:00:00.000Z',
+        updatedAt: '2026-04-24T08:00:00.000Z',
+      },
+    ]);
+    actions.unreadReviewThreadIds.set(new Set([7]));
+    expect(actions.turnReviews().threads['turn-1']).toHaveLength(1);
+
+    fixture.componentRef.setInput('sessionId', 44);
+    fixture.componentRef.setInput('readOnlyTranscript', true);
+    fixture.detectChanges();
+
+    expect(actions.turnReviews().threads).toEqual({});
+    expect(actions.turnReviews().unreadIds.size).toBe(0);
+  });
+
+  it('keeps reconnect monitoring attached after consecutive reconnects', () => {
+    const connection = new Subject<'connected' | 'disconnected' | 'connecting'>();
+    wsMock.connectionState$.mockReturnValue(connection);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    fixture.componentInstance.runtime.hydrated.set(true);
+    connection.next('disconnected');
+    expect(wsMock.connect).toHaveBeenCalledTimes(2);
+    connection.next('connected');
+    connection.next('disconnected');
+    expect(wsMock.connect).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignores a settings response from a previous conversation', async () => {
+    const response = new Subject<ClaudeRuntimeState>();
+    apiMock.setSelectedModel.mockReturnValue(response);
+    const fixture = createWorkspace();
+    const component = fixture.componentInstance;
+    fixture.componentRef.setInput('sessionId', 7);
+    const update = component.runtime.onModelChange('old-model');
+    component.runtime.reset();
+    response.next({ ...runtimeState(), selectedModel: 'old-model' });
+    await update;
+    expect(component.runtime.selectedModel()).toBeNull();
+  });
+
+  it('reports settings failures without an unhandled rejection', async () => {
+    const response = new Subject<ClaudeRuntimeState>();
+    apiMock.setSelectedModel.mockReturnValue(response);
+    const fixture = createWorkspace();
+    const update = fixture.componentInstance.runtime.onModelChange('model');
+    response.error(new Error('Unavailable model'));
+    await update;
+    expect(toast.error).toHaveBeenCalledWith('Unavailable model');
+  });
+
   it('shows model presets as one-click choices in a new empty session', () => {
     const settings = TestBed.inject(AppSettingsService);
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     (settings as unknown as { settingsState: { set(value: unknown): void } }).settingsState.set({
       ...settings.settings(),
       agentModelPresets: [
@@ -392,8 +559,8 @@ describe('ClaudeWorkspaceComponent', () => {
         },
       ],
     });
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
     fixture.detectChanges();
 
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
@@ -405,9 +572,8 @@ describe('ClaudeWorkspaceComponent', () => {
   it('keeps the transcript skeleton visible until asynchronously loaded history arrives', () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.activeAgentProvider = 'codex';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('activeAgentProvider', 'codex');
     fixture.detectChanges();
 
     events$.next({ type: 'runtime_snapshot', payload: runtimeState() });
@@ -458,8 +624,7 @@ describe('ClaudeWorkspaceComponent', () => {
         ]),
       );
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     await Promise.resolve();
 
@@ -487,7 +652,7 @@ describe('ClaudeWorkspaceComponent', () => {
     await Promise.resolve();
 
     expect(apiMock.getAutocompleteItems).toHaveBeenCalledTimes(2);
-    expect(fixture.componentInstance.autocompleteItems()).toEqual([
+    expect(fixture.componentInstance.runtime.autocompleteItems()).toEqual([
       expect.objectContaining({ label: '/myskill', source: 'runtime' }),
     ]);
   });
@@ -495,10 +660,9 @@ describe('ClaudeWorkspaceComponent', () => {
   it('renders terminal mirror transcripts without input or mutating actions', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     terminalTranscriptWsMock.connect.mockReturnValue(events$.asObservable());
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.readOnlyTranscript = true;
-    fixture.componentInstance.terminalTranscriptMirror = true;
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('readOnlyTranscript', true);
+    fixture.componentRef.setInput('terminalTranscriptMirror', true);
     fixture.detectChanges();
 
     events$.next({ type: 'runtime_snapshot', payload: runtimeState() });
@@ -535,20 +699,23 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(el.querySelector('cw-composer')).toBeNull();
     expect(el.querySelector('cw-status-bar')).toBeNull();
     expect(
-      fixture.componentInstance.canEditMessage(fixture.componentInstance.historyItems()[0]),
+      fixture.componentInstance.actions.canEditMessage(
+        fixture.componentInstance.runtime.historyItems()[0],
+      ),
     ).toBe(false);
     expect(
-      fixture.componentInstance.canForkMessage(fixture.componentInstance.historyItems()[1]),
+      fixture.componentInstance.actions.canForkMessage(
+        fixture.componentInstance.runtime.historyItems()[1],
+      ),
     ).toBe(false);
 
-    await fixture.componentInstance.submitPrompt('should not send');
+    await fixture.componentInstance.draft.submitPrompt('should not send');
     expect(terminalTranscriptWsMock.send).toHaveBeenCalledTimes(1);
   });
 
   it('hydrates and stays connected while its tab is in the background', () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.isVisible = false;
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('isVisible', false);
     fixture.detectChanges();
 
     expect(wsMock.connect).toHaveBeenCalledWith(7);
@@ -585,29 +752,27 @@ describe('ClaudeWorkspaceComponent', () => {
       updatedAt: '2026-04-24T08:00:00.000Z',
     });
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     await flushPromises();
 
     expect(composerDraftsMock.load).toHaveBeenCalledWith(7);
-    expect(fixture.componentInstance.prompt()).toBe('Saved prompt');
-    expect(fixture.componentInstance.pendingDiffMentions()).toEqual([diffMention]);
-    expect(fixture.componentInstance.composerImages()).toEqual([attachedImage]);
+    expect(fixture.componentInstance.draft.prompt()).toBe('Saved prompt');
+    expect(fixture.componentInstance.draft.pendingDiffMentions()).toEqual([diffMention]);
+    expect(fixture.componentInstance.draft.composerImages()).toEqual([attachedImage]);
   });
 
   it('clears the saved composer draft after accepting a prompt', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     await flushPromises();
 
-    fixture.componentInstance.prompt.set('Ship this change');
-    fixture.componentInstance.composerImages.set([image()]);
-    await fixture.componentInstance.submitPrompt('Ship this change');
+    fixture.componentInstance.draft.prompt.set('Ship this change');
+    fixture.componentInstance.draft.composerImages.set([image()]);
+    await fixture.componentInstance.draft.submitPrompt('Ship this change');
 
-    expect(fixture.componentInstance.prompt()).toBe('');
-    expect(fixture.componentInstance.composerImages()).toEqual([]);
+    expect(fixture.componentInstance.draft.prompt()).toBe('');
+    expect(fixture.componentInstance.draft.composerImages()).toEqual([]);
     expect(composerDraftsMock.delete).toHaveBeenCalledWith(7);
   });
 
@@ -623,14 +788,13 @@ describe('ClaudeWorkspaceComponent', () => {
       updatedAt: '2026-04-24T08:00:00.000Z',
     });
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     await flushPromises();
 
     expect(composerDraftsMock.load).not.toHaveBeenCalled();
-    expect(fixture.componentInstance.prompt()).toBe('Fork draft');
-    expect(fixture.componentInstance.composerImages()).toEqual([]);
+    expect(fixture.componentInstance.draft.prompt()).toBe('Fork draft');
+    expect(fixture.componentInstance.draft.composerImages()).toEqual([]);
     expect(composerDraftsMock.save).toHaveBeenCalledWith({
       sessionId: 7,
       text: 'Fork draft',
@@ -655,10 +819,9 @@ describe('ClaudeWorkspaceComponent', () => {
       }),
     );
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.onPromptChange('Fresh input');
+    fixture.componentInstance.draft.onPromptChange('Fresh input');
 
     resolveDraft({
       version: 1,
@@ -670,7 +833,7 @@ describe('ClaudeWorkspaceComponent', () => {
     });
     await flushPromises();
 
-    expect(fixture.componentInstance.prompt()).toBe('Fresh input');
+    expect(fixture.componentInstance.draft.prompt()).toBe('Fresh input');
     expect(composerDraftsMock.save).toHaveBeenCalledWith({
       sessionId: 7,
       text: 'Fresh input',
@@ -691,23 +854,22 @@ describe('ClaudeWorkspaceComponent', () => {
       updatedAt: '2026-04-24T08:00:00.000Z',
     });
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.hasStartedAgentRuntime = false;
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('hasStartedAgentRuntime', false);
     fixture.detectChanges();
     await flushPromises();
 
-    fixture.componentInstance.onPromptChange(savedPrompt);
+    fixture.componentInstance.draft.onPromptChange(savedPrompt);
     await flushPromises();
 
-    fixture.componentInstance.onProviderChange('codex');
+    fixture.componentInstance.runtime.onProviderChange('codex');
     await flushPromises();
 
-    expect(fixture.componentInstance.activeAgentProvider).toBe('codex');
-    expect(fixture.componentInstance.prompt()).toBe(savedPrompt);
+    expect(fixture.componentInstance.runtime.currentProvider()).toBe('codex');
+    expect(fixture.componentInstance.draft.prompt()).toBe(savedPrompt);
     expect(composerDraftsMock.load).toHaveBeenCalledTimes(2);
     expect(composerDraftsMock.load).toHaveBeenLastCalledWith(7);
-    expect(fixture.componentInstance.runtimeStarted()).toBe(false);
+    expect(fixture.componentInstance.runtime.runtimeStarted()).toBe(false);
   });
 
   it('preserves composer input when applying a preset for another provider', async () => {
@@ -724,14 +886,13 @@ describe('ClaudeWorkspaceComponent', () => {
     vi.spyOn(agentApi, 'setSelectedModel').mockReturnValue(of(runtimeState()));
     vi.spyOn(agentApi, 'setReasoningEffort').mockReturnValue(of(runtimeState()));
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.hasStartedAgentRuntime = false;
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('hasStartedAgentRuntime', false);
     fixture.detectChanges();
     await flushPromises();
 
-    fixture.componentInstance.onPromptChange(savedPrompt);
-    await fixture.componentInstance.applyModelPreset({
+    fixture.componentInstance.draft.onPromptChange(savedPrompt);
+    await fixture.componentInstance.runtime.applyModelPreset({
       id: 'fast-fixes',
       name: 'Fast fixes',
       provider: 'codex',
@@ -740,22 +901,21 @@ describe('ClaudeWorkspaceComponent', () => {
     });
     await flushPromises();
 
-    expect(fixture.componentInstance.activeAgentProvider).toBe('codex');
-    expect(fixture.componentInstance.prompt()).toBe(savedPrompt);
+    expect(fixture.componentInstance.runtime.currentProvider()).toBe('codex');
+    expect(fixture.componentInstance.draft.prompt()).toBe(savedPrompt);
     expect(composerDraftsMock.load).toHaveBeenCalledTimes(2);
     expect(composerDraftsMock.load).toHaveBeenLastCalledWith(7);
   });
 
   it('copies message content to the clipboard', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.runtime.loading.set(false);
 
     const writeText = vi.fn().mockResolvedValue(undefined);
     stubClipboard(writeText);
 
-    await fixture.componentInstance.copyMessage({
+    await fixture.componentInstance.actions.copyMessage({
       id: 'user-1',
       kind: 'user',
       content: 'Copy this',
@@ -767,15 +927,14 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('copies selected message text when provided', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.runtime.loading.set(false);
 
     const writeText = vi.fn().mockResolvedValue(undefined);
     stubClipboard(writeText);
 
-    await fixture.componentInstance.copyMessage(
+    await fixture.componentInstance.actions.copyMessage(
       {
         id: 'user-1',
         kind: 'user',
@@ -790,15 +949,14 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('falls back to full message content when selected text is empty', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.runtime.loading.set(false);
 
     const writeText = vi.fn().mockResolvedValue(undefined);
     stubClipboard(writeText);
 
-    await fixture.componentInstance.copyMessage(
+    await fixture.componentInstance.actions.copyMessage(
       {
         id: 'user-1',
         kind: 'user',
@@ -816,11 +974,10 @@ describe('ClaudeWorkspaceComponent', () => {
     const sessions = TestBed.inject(SessionsService) as unknown as {
       createFork: ReturnType<typeof vi.fn>;
     };
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
     sessions.createFork.mockReturnValueOnce(
       of({
         fork: {
@@ -880,7 +1037,7 @@ describe('ClaudeWorkspaceComponent', () => {
     const emitted: unknown[] = [];
     fixture.componentInstance.conversationForkCreated.subscribe((event) => emitted.push(event));
 
-    await fixture.componentInstance.forkMessage({
+    await fixture.componentInstance.actions.forkMessage({
       id: 'assistant-1',
       kind: 'assistant',
       content: 'Done',
@@ -894,7 +1051,7 @@ describe('ClaudeWorkspaceComponent', () => {
       anchorExcerpt: 'Done',
     });
     expect(
-      fixture.componentInstance.forksForItem({
+      fixture.componentInstance.actions.forksForItem({
         id: 'assistant-1',
         kind: 'assistant',
         content: 'Done',
@@ -941,14 +1098,13 @@ describe('ClaudeWorkspaceComponent', () => {
         draft: null,
       }),
     );
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.runPhase.set('running');
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.runtime.conversation.runPhase.set('running');
 
-    await fixture.componentInstance.forkMessage({
+    await fixture.componentInstance.actions.forkMessage({
       id: 'assistant-1',
       kind: 'assistant',
       content: 'Done',
@@ -964,14 +1120,13 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('shows the waiting caret while Claude is still thinking', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
 
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.runPhase.set('running');
-    fixture.componentInstance.liveItems.set([
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.runtime.conversation.runPhase.set('running');
+    fixture.componentInstance.runtime.conversation.live.set([
       {
         id: 'thinking-1',
         kind: 'thinking',
@@ -986,14 +1141,13 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('keeps the waiting caret visible after thinking finishes until assistant output arrives', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
 
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.runPhase.set('waiting');
-    fixture.componentInstance.historyItems.set([
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.runtime.conversation.runPhase.set('waiting');
+    fixture.componentInstance.runtime.conversation.history.set([
       {
         id: 'thinking-1',
         kind: 'thinking',
@@ -1002,18 +1156,17 @@ describe('ClaudeWorkspaceComponent', () => {
         receivedAt: '2026-04-24T08:00:01.000Z',
       },
     ]);
-    fixture.componentInstance.liveItems.set([]);
+    fixture.componentInstance.runtime.conversation.live.set([]);
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('.cw-caret--waiting')).not.toBeNull();
   });
 
   it('keeps transcript auto-scroll pinned while the user is at the bottom', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
     fixture.detectChanges();
     await flushPromises();
 
@@ -1022,7 +1175,7 @@ describe('ClaudeWorkspaceComponent', () => {
     transcript.dispatchEvent(new Event('scroll'));
 
     setScrollMetrics(transcript, { scrollTop: 800, scrollHeight: 1200, clientHeight: 200 });
-    fixture.componentInstance.historyItems.set([
+    fixture.componentInstance.runtime.conversation.history.set([
       {
         id: 'user-1',
         kind: 'user',
@@ -1038,12 +1191,11 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('does not force transcript auto-scroll while the user is reading older messages', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.historyItems.set([
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.runtime.conversation.history.set([
       {
         id: 'user-1',
         kind: 'user',
@@ -1060,8 +1212,8 @@ describe('ClaudeWorkspaceComponent', () => {
     transcript.dispatchEvent(new Event('scroll'));
 
     setScrollMetrics(transcript, { scrollTop: 500, scrollHeight: 1200, clientHeight: 200 });
-    fixture.componentInstance.historyItems.set([
-      ...fixture.componentInstance.historyItems(),
+    fixture.componentInstance.runtime.conversation.history.set([
+      ...fixture.componentInstance.runtime.historyItems(),
       {
         id: 'assistant-1',
         kind: 'assistant',
@@ -1077,12 +1229,11 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('resumes transcript auto-scroll after the user scrolls back to the bottom', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.historyItems.set([
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.runtime.conversation.history.set([
       {
         id: 'user-1',
         kind: 'user',
@@ -1101,8 +1252,8 @@ describe('ClaudeWorkspaceComponent', () => {
     transcript.dispatchEvent(new Event('scroll'));
 
     setScrollMetrics(transcript, { scrollTop: 1000, scrollHeight: 1400, clientHeight: 200 });
-    fixture.componentInstance.historyItems.set([
-      ...fixture.componentInstance.historyItems(),
+    fixture.componentInstance.runtime.conversation.history.set([
+      ...fixture.componentInstance.runtime.historyItems(),
       {
         id: 'assistant-1',
         kind: 'assistant',
@@ -1118,12 +1269,11 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('pins the prompt that belongs to the response currently in view', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.historyItems.set([
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.runtime.conversation.history.set([
       {
         id: 'user-1',
         kind: 'user',
@@ -1201,12 +1351,11 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('clamps very long contextual prompts without taking over the transcript', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.historyItems.set([
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.runtime.conversation.history.set([
       {
         id: 'user-long',
         kind: 'user',
@@ -1234,12 +1383,11 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('collapses prompt context to a recoverable tab for the rest of the session', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.historyItems.set([
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.runtime.conversation.history.set([
       {
         id: 'user-1',
         kind: 'user',
@@ -1302,13 +1450,12 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('rewinds conversation and restores the prompt into the composer state', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
 
-    await fixture.componentInstance.confirmEditMessage({
+    await fixture.componentInstance.actions.confirmEditMessage({
       id: 'user-1',
       kind: 'user',
       content: 'Edited prompt source',
@@ -1318,92 +1465,88 @@ describe('ClaudeWorkspaceComponent', () => {
     });
 
     expect(apiMock.rewindConversation).toHaveBeenCalledWith(7, 'source-user-1');
-    expect(fixture.componentInstance.prompt()).toBe('Edited prompt source');
-    expect(fixture.componentInstance.historyItems()).toEqual([
+    expect(fixture.componentInstance.draft.prompt()).toBe('Edited prompt source');
+    expect(fixture.componentInstance.runtime.historyItems()).toEqual([
       expect.objectContaining({
         content: 'Edited prompt source',
         sourceMessageId: 'source-user-1',
       }),
     ]);
-    expect(fixture.componentInstance.armedEditMessageId()).toBeNull();
+    expect(fixture.componentInstance.actions.armedEditMessageId()).toBeNull();
   });
 
   it.each(['light', 'dark'])('reads runtime state after the rewind and ignores its completion refresh in %s mode', async (theme) => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
     const rewind = new Subject<any[]>();
     apiMock.rewindConversation.mockReturnValueOnce(rewind);
     apiMock.getRuntimeState.mockClear();
     apiMock.getHistory.mockClear();
-    const editing = fixture.componentInstance.confirmEditMessage({
+    const editing = fixture.componentInstance.actions.confirmEditMessage({
       id: 'user-2', kind: 'user', content: 'Edit second', sourceMessageId: 'source-user-2',
       timestamp: '2026-04-24T08:00:01.000Z',
     });
     expect(apiMock.getRuntimeState).not.toHaveBeenCalled();
-    (fixture.componentInstance as any).handleRuntimeEvent({ type: 'complete', payload: { sessionId: 7 } });
+    (fixture.componentInstance.runtime as any).handleRuntimeEvent({ type: 'complete', payload: { sessionId: 7 } });
     expect(apiMock.getHistory).not.toHaveBeenCalled();
     rewind.next([{ id: 'user-1', kind: 'user', content: 'Keep first', timestamp: '2026-04-24T08:00:00.000Z' }]);
     rewind.complete();
     await editing;
     expect(apiMock.getRuntimeState).toHaveBeenCalledWith(7);
-    expect(fixture.componentInstance.historyItems().map(item => item.content)).toEqual(['Keep first']);
-    expect(fixture.componentInstance.prompt()).toBe('Edit second');
+    expect(fixture.componentInstance.runtime.conversation.history().map(item => item.content)).toEqual(['Keep first']);
+    expect(fixture.componentInstance.draft.prompt()).toBe('Edit second');
     document.documentElement.classList.remove('dark');
   });
 
   it('discards an old completion history response after an edit', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
     const staleHistory = new Subject<any[]>();
     apiMock.getHistory.mockReturnValueOnce(staleHistory);
-    const syncing = (fixture.componentInstance as any).syncHistoryAfterCompletion();
-    await fixture.componentInstance.confirmEditMessage({
+    const syncing = (fixture.componentInstance.runtime as any).syncHistoryAfterCompletion();
+    await fixture.componentInstance.actions.confirmEditMessage({
       id: 'user-2', kind: 'user', content: 'Edit second', sourceMessageId: 'source-user-2',
       timestamp: '2026-04-24T08:00:01.000Z',
     });
-    const retained = fixture.componentInstance.historyItems();
+    const retained = fixture.componentInstance.runtime.conversation.history();
     staleHistory.next([]);
     staleHistory.complete();
     await syncing;
-    expect(fixture.componentInstance.historyItems()).toEqual(retained);
+    expect(fixture.componentInstance.runtime.conversation.history()).toEqual(retained);
     expect(retained.length).toBeGreaterThan(0);
   });
 
   it('preserves the displayed history when a rewind fails', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
     const history = [{ id: 'user-1', kind: 'user' as const, content: 'Keep first', timestamp: '2026-04-24T08:00:00.000Z' }];
-    fixture.componentInstance.historyItems.set(history);
+    fixture.componentInstance.runtime.conversation.history.set(history);
     const rewind = new Subject<any[]>();
     apiMock.rewindConversation.mockReturnValueOnce(rewind);
-    const editing = fixture.componentInstance.confirmEditMessage({
+    const editing = fixture.componentInstance.actions.confirmEditMessage({
       id: 'user-2', kind: 'user', content: 'Edit second', sourceMessageId: 'source-user-2',
       timestamp: '2026-04-24T08:00:01.000Z',
     });
     rewind.error(new Error('History not ready'));
     await editing;
-    expect(fixture.componentInstance.historyItems()).toEqual(history);
-    expect(fixture.componentInstance.rewindingMessageId()).toBeNull();
+    expect(fixture.componentInstance.runtime.conversation.history()).toEqual(history);
+    expect(fixture.componentInstance.actions.rewindingMessageId()).toBeNull();
     expect(toast.error).toHaveBeenCalledWith('History not ready');
     vi.mocked(toast.error).mockClear();
   });
 
   it('leaves the stopped prompt in history when an interrupted run only produced thinking', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
     const stoppedHistory = [
       {
         id: 'user-1',
@@ -1423,24 +1566,23 @@ describe('ClaudeWorkspaceComponent', () => {
     ];
     apiMock.getHistory.mockReturnValueOnce(of(stoppedHistory));
 
-    fixture.componentInstance.interrupt();
-    (fixture.componentInstance as any).handleRuntimeEvent({
+    fixture.componentInstance.runtime.interrupt();
+    (fixture.componentInstance as any).runtime.handleRuntimeEvent({
       type: 'complete',
       payload: { sessionId: 7 },
     });
     await flushPromises();
 
     expect(apiMock.rewindConversation).not.toHaveBeenCalled();
-    expect(fixture.componentInstance.prompt()).toBe('');
-    expect(fixture.componentInstance.historyItems()).toEqual(stoppedHistory);
+    expect(fixture.componentInstance.draft.prompt()).toBe('');
+    expect(fixture.componentInstance.runtime.historyItems()).toEqual(stoppedHistory);
   });
 
   it('keeps the stopped prompt editable when Claude already responded', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
     const userItem = {
       id: 'user-1',
       kind: 'user' as const,
@@ -1462,24 +1604,23 @@ describe('ClaudeWorkspaceComponent', () => {
       ]),
     );
 
-    fixture.componentInstance.interrupt();
-    (fixture.componentInstance as any).handleRuntimeEvent({
+    fixture.componentInstance.runtime.interrupt();
+    (fixture.componentInstance as any).runtime.handleRuntimeEvent({
       type: 'complete',
       payload: { sessionId: 7 },
     });
     await flushPromises();
 
     expect(apiMock.rewindConversation).not.toHaveBeenCalled();
-    expect(fixture.componentInstance.canShowMessageActions(userItem)).toBe(true);
-    expect(fixture.componentInstance.messageActionsDisabled()).toBe(false);
+    expect(fixture.componentInstance.actions.canShowMessageActions(userItem)).toBe(true);
+    expect(fixture.componentInstance.actions.messageActionsDisabled()).toBe(false);
   });
 
   it('opens agent inspector from a collapsed turn and lazy-loads subagent history once', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
 
     events$.next({
@@ -1547,7 +1688,7 @@ describe('ClaudeWorkspaceComponent', () => {
         ],
       },
     });
-    fixture.componentInstance.loading.set(false);
+    fixture.componentInstance.runtime.loading.set(false);
     fixture.detectChanges();
 
     const inspect = Array.from(
@@ -1559,9 +1700,9 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.detectChanges();
 
     expect(apiMock.getSubagentHistory).toHaveBeenCalledWith(7, 'agent-1');
-    expect(fixture.componentInstance.selectedAgentInspectorTurn()?.agents).toHaveLength(1);
+    expect(fixture.componentInstance.actions.selectedAgentInspectorTurn()?.agents).toHaveLength(1);
 
-    fixture.componentInstance.selectAgentInspectorAgent('agent-1');
+    fixture.componentInstance.actions.selectAgentInspectorAgent('agent-1');
     await Promise.resolve();
     expect(apiMock.getSubagentHistory).toHaveBeenCalledTimes(1);
   });
@@ -1572,19 +1713,28 @@ describe('ClaudeWorkspaceComponent', () => {
     apiMock.getHistory.mockReturnValue(
       of(
         editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(4), newString: linesOf(14) },
-          { tool: 'Edit', file: 'b.ts', oldString: linesOf(4), newString: linesOf(14) },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(4).replace(/line/g, 'old'),
+            newString: linesOf(14),
+          },
+          {
+            tool: 'Edit',
+            file: 'b.ts',
+            oldString: linesOf(4).replace(/line/g, 'old'),
+            newString: linesOf(14),
+          },
           { tool: 'Write', file: 'c.ts', content: linesOf(14) },
         ]),
       ),
     );
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.worktreePath = '/tmp/project';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
 
     events$.next({ type: 'complete', payload: { sessionId: 7 } });
     await flushPromises();
@@ -1623,12 +1773,11 @@ describe('ClaudeWorkspaceComponent', () => {
       ),
     );
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.worktreePath = '/tmp/project';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
 
     events$.next({ type: 'complete', payload: { sessionId: 7 } });
     await flushPromises();
@@ -1653,9 +1802,8 @@ describe('ClaudeWorkspaceComponent', () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.worktreePath = '/tmp/project';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
     fixture.detectChanges();
     await Promise.resolve();
 
@@ -1693,9 +1841,8 @@ describe('ClaudeWorkspaceComponent', () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.worktreePath = '/tmp/project';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
     fixture.detectChanges();
     await Promise.resolve();
 
@@ -1782,19 +1929,33 @@ describe('ClaudeWorkspaceComponent', () => {
     apiMock.getHistory.mockReturnValue(
       of(
         editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(5) },
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(5) },
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(1), newString: linesOf(3) },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(2).replace(/line/g, 'old'),
+            newString: linesOf(5),
+          },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(2).replace(/line/g, 'old'),
+            newString: linesOf(5),
+          },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(1).replace(/line/g, 'old'),
+            newString: linesOf(3),
+          },
         ]),
       ),
     );
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.worktreePath = '/tmp/project';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
 
     events$.next({ type: 'complete', payload: { sessionId: 7 } });
     await flushPromises();
@@ -1813,12 +1974,11 @@ describe('ClaudeWorkspaceComponent', () => {
     wsMock.connect.mockReturnValue(events$.asObservable());
     apiMock.getHistory.mockReturnValue(of(collapsibleTurnHistory()));
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.worktreePath = '/tmp/project';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
 
     events$.next({ type: 'complete', payload: { sessionId: 7 } });
     await flushPromises();
@@ -1836,7 +1996,7 @@ describe('ClaudeWorkspaceComponent', () => {
           {
             tool: 'Edit',
             file: 'a.ts',
-            oldString: linesOf(3),
+            oldString: linesOf(3).replace(/line/g, 'old'),
             newString: linesOf(5),
             isError: true,
           },
@@ -1844,12 +2004,11 @@ describe('ClaudeWorkspaceComponent', () => {
       ),
     );
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.worktreePath = '/tmp/project';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
 
     events$.next({ type: 'complete', payload: { sessionId: 7 } });
     await flushPromises();
@@ -1865,21 +2024,30 @@ describe('ClaudeWorkspaceComponent', () => {
     apiMock.getHistory.mockReturnValue(
       of([
         ...editTurnHistory('1', '2026-04-24T08:00:00.000Z', [
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(2), newString: linesOf(2) },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(2).replace(/line/g, 'old'),
+            newString: linesOf(2),
+          },
         ]),
         ...editTurnHistory('2', '2026-04-24T08:01:00.000Z', [
-          { tool: 'Edit', file: 'a.ts', oldString: linesOf(1), newString: linesOf(5) },
+          {
+            tool: 'Edit',
+            file: 'a.ts',
+            oldString: linesOf(1).replace(/line/g, 'old'),
+            newString: linesOf(5),
+          },
           { tool: 'Write', file: 'b.ts', content: linesOf(4) },
         ]),
       ]),
     );
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.worktreePath = '/tmp/project';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
     fixture.detectChanges();
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
 
     events$.next({ type: 'complete', payload: { sessionId: 7 } });
     await flushPromises();
@@ -1898,14 +2066,13 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('injects the already-fetched ready context into the first prompt', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.repoId = 1;
-    fixture.componentInstance.worktreePath = '/tmp/project';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('repoId', 1);
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
     fixture.detectChanges();
     await Promise.resolve();
 
-    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
+    fixture.componentInstance.draft.worktreeContext.set(readyWorktreeContext());
     worktreeContextServiceMock.consume.mockReturnValue(
       of({
         shouldInject: true,
@@ -1913,7 +2080,7 @@ describe('ClaudeWorkspaceComponent', () => {
       }),
     );
 
-    await fixture.componentInstance.submitPrompt('Ship this change');
+    await fixture.componentInstance.draft.submitPrompt('Ship this change');
 
     expect(worktreeContextServiceMock.consume).toHaveBeenCalledWith(
       7,
@@ -1931,22 +2098,21 @@ describe('ClaudeWorkspaceComponent', () => {
       ].join('\n'),
       titlePrompt: 'Ship this change',
     });
-    expect(fixture.componentInstance.hasInjectedContext()).toBe(true);
+    expect(fixture.componentInstance.draft.hasInjectedContext()).toBe(true);
   });
 
   it('does not offer first-prompt context after TUI already consumed it', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.hasInjectedWorktreeContext = true;
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('hasInjectedWorktreeContext', true);
     fixture.detectChanges();
     await Promise.resolve();
 
-    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
-    fixture.componentInstance.prompt.set('Ship this change');
+    fixture.componentInstance.draft.worktreeContext.set(readyWorktreeContext());
+    fixture.componentInstance.draft.prompt.set('Ship this change');
 
-    expect(fixture.componentInstance.hasInjectedContext()).toBe(true);
-    expect(fixture.componentInstance.canAppendContext()).toBe(false);
-    await fixture.componentInstance.submitPrompt('Ship this change');
+    expect(fixture.componentInstance.draft.hasInjectedContext()).toBe(true);
+    expect(fixture.componentInstance.draft.canAppendContext()).toBe(false);
+    await fixture.componentInstance.draft.submitPrompt('Ship this change');
 
     expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
@@ -1957,18 +2123,17 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('does not call consume when local context is not ready', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     await Promise.resolve();
 
-    fixture.componentInstance.worktreeContext.set({
+    fixture.componentInstance.draft.worktreeContext.set({
       ...readyWorktreeContext(),
       contextSentence: null,
       generationStatus: 'generating',
     });
 
-    await fixture.componentInstance.submitPrompt('Ship this change');
+    await fixture.componentInstance.draft.submitPrompt('Ship this change');
 
     expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
@@ -1979,15 +2144,14 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('does not call consume when first-message context is disabled', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     await Promise.resolve();
 
-    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
-    fixture.componentInstance.firstPromptContextEnabled.set(false);
+    fixture.componentInstance.draft.worktreeContext.set(readyWorktreeContext());
+    fixture.componentInstance.draft.firstPromptContextEnabled.set(false);
 
-    await fixture.componentInstance.submitPrompt('Ship this change');
+    await fixture.componentInstance.draft.submitPrompt('Ship this change');
 
     expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
@@ -1998,14 +2162,13 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('does not call consume for slash commands', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     await Promise.resolve();
 
-    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
+    fixture.componentInstance.draft.worktreeContext.set(readyWorktreeContext());
 
-    await fixture.componentInstance.submitPrompt('/status');
+    await fixture.componentInstance.draft.submitPrompt('/status');
 
     expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
@@ -2019,14 +2182,13 @@ describe('ClaudeWorkspaceComponent', () => {
     const consume$ = new Subject<{ shouldInject: boolean; contextSentence: string | null }>();
     worktreeContextServiceMock.consume.mockReturnValue(consume$.asObservable());
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     await Promise.resolve();
 
-    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
+    fixture.componentInstance.draft.worktreeContext.set(readyWorktreeContext());
 
-    const submitPromise = fixture.componentInstance.submitPrompt('Ship this change');
+    const submitPromise = fixture.componentInstance.draft.submitPrompt('Ship this change');
     await submitPromise;
 
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
@@ -2045,7 +2207,7 @@ describe('ClaudeWorkspaceComponent', () => {
       true,
       'This branch updates first-message context handling.',
     );
-    expect(fixture.componentInstance.hasInjectedContext()).toBe(true);
+    expect(fixture.componentInstance.draft.hasInjectedContext()).toBe(true);
 
     consume$.next({ shouldInject: false, contextSentence: null });
     consume$.complete();
@@ -2055,18 +2217,17 @@ describe('ClaudeWorkspaceComponent', () => {
     const consume$ = new Subject<{ shouldInject: boolean; contextSentence: string | null }>();
     worktreeContextServiceMock.consume.mockReturnValue(consume$.asObservable());
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     await Promise.resolve();
 
-    fixture.componentInstance.worktreeContext.set(readyWorktreeContext());
-    fixture.componentInstance.prompt.set('Ship this change');
-    const submitPromise = fixture.componentInstance.submitPrompt('Ship this change');
+    fixture.componentInstance.draft.worktreeContext.set(readyWorktreeContext());
+    fixture.componentInstance.draft.prompt.set('Ship this change');
+    const submitPromise = fixture.componentInstance.draft.submitPrompt('Ship this change');
 
-    expect(fixture.componentInstance.prompt()).toBe('');
-    expect(fixture.componentInstance.submitting()).toBe(true);
-    expect(fixture.componentInstance.optimisticUserItems()).toEqual([
+    expect(fixture.componentInstance.draft.prompt()).toBe('');
+    expect(fixture.componentInstance.runtime.submitting()).toBe(true);
+    expect(fixture.componentInstance.runtime.optimisticUserItems()).toEqual([
       expect.objectContaining({ content: 'Ship this change' }),
     ]);
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
@@ -2101,13 +2262,91 @@ describe('ClaudeWorkspaceComponent', () => {
     });
   });
 
+  it('coalesces repeated context refreshes while a cached read is pending', async () => {
+    const response = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    worktreeContextServiceMock.get.mockReturnValue(response);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const { runtime, draft } = fixture.componentInstance;
+
+    runtime.notify({ type: 'load-context' });
+    runtime.notify({ type: 'load-context' });
+    expect(worktreeContextServiceMock.get).toHaveBeenCalledTimes(1);
+    expect(draft.worktreeContextLoading()).toBe(true);
+
+    response.next(readyWorktreeContext());
+    await flushPromises();
+    expect(draft.worktreeContext()).toEqual(readyWorktreeContext());
+    expect(draft.worktreeContextLoading()).toBe(false);
+  });
+
+  it('ignores an older cached response while recomputing context', async () => {
+    const cached = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    const generated = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    worktreeContextServiceMock.get.mockReturnValue(cached);
+    worktreeContextServiceMock.generate.mockReturnValue(generated);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const { runtime, draft } = fixture.componentInstance;
+    const recompute = draft.recomputeWorktreeContext();
+
+    cached.next(readyWorktreeContext());
+    await flushPromises();
+    expect(draft.worktreeContext()).toBeNull();
+    expect(draft.worktreeContextBusy()).toBe(true);
+    runtime.notify({ type: 'load-context' });
+    expect(worktreeContextServiceMock.get).toHaveBeenCalledTimes(1);
+
+    const latest = { ...readyWorktreeContext(), contextSentence: 'Recomputed context' };
+    generated.next(latest);
+    await recompute;
+    expect(draft.worktreeContext()).toEqual(latest);
+    expect(draft.worktreeContextBusy()).toBe(false);
+  });
+
+  it('preserves the edited root and busy state when a superseded refresh fails', async () => {
+    const cached = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    const generated = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    worktreeContextServiceMock.get.mockReturnValue(cached);
+    worktreeContextServiceMock.generate.mockReturnValue(generated);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const { draft } = fixture.componentInstance;
+    draft.openRootRefEditor();
+    draft.onRootRefInput('new-root');
+    const save = draft.saveRootRef();
+    await flushPromises();
+
+    cached.error(new Error('Old refresh failed'));
+    await flushPromises();
+    expect(draft.draftRootRef()).toBe('new-root');
+    expect(draft.worktreeContextBusy()).toBe(true);
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+    generated.next({ ...readyWorktreeContext(), rootRef: 'new-root' });
+    await save;
+    expect(draft.worktreeContext()?.rootRef).toBe('new-root');
+    expect(draft.worktreeContextBusy()).toBe(false);
+  });
+
+  it('does not overwrite an unsaved comparison root when refreshing context', async () => {
+    const cached = new Subject<ReturnType<typeof readyWorktreeContext>>();
+    worktreeContextServiceMock.get.mockReturnValue(cached);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    const { draft } = fixture.componentInstance;
+    draft.openRootRefEditor();
+    draft.onRootRefInput('my-unsaved-root');
+    cached.next(readyWorktreeContext());
+    await flushPromises();
+    expect(draft.draftRootRef()).toBe('my-unsaved-root');
+  });
+
   it('uses cached-only worktree context loading before a new Codex session starts', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.repoId = 1;
-    fixture.componentInstance.worktreePath = '/tmp/project';
-    fixture.componentInstance.activeAgentProvider = 'codex';
-    fixture.componentInstance.hasStartedAgentRuntime = false;
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('repoId', 1);
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
+    fixture.componentRef.setInput('activeAgentProvider', 'codex');
+    fixture.componentRef.setInput('hasStartedAgentRuntime', false);
 
     fixture.detectChanges();
     await Promise.resolve();
@@ -2119,16 +2358,15 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('approves a Codex plan by disabling plan mode while preserving permission style', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
-    fixture.componentInstance.repoId = 1;
-    fixture.componentInstance.worktreePath = '/tmp/project';
-    fixture.componentInstance.activeAgentProvider = 'codex';
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('repoId', 1);
+    fixture.componentRef.setInput('worktreePath', '/tmp/project');
+    fixture.componentRef.setInput('activeAgentProvider', 'codex');
     fixture.detectChanges();
     await Promise.resolve();
 
-    fixture.componentInstance._planMode.set(true);
-    fixture.componentInstance._permissionMode.set('bypassPermissions');
+    fixture.componentInstance.runtime._planMode.set(true);
+    fixture.componentInstance.runtime._permissionMode.set('bypassPermissions');
     apiMock.setPlanMode.mockReturnValueOnce(
       of({
         ...runtimeState(),
@@ -2148,8 +2386,8 @@ describe('ClaudeWorkspaceComponent', () => {
 
     expect(apiMock.setPermissionMode).toHaveBeenCalledWith(7, 'bypassPermissions');
     expect(apiMock.setPlanMode).toHaveBeenCalledWith(7, false);
-    expect(fixture.componentInstance.permissionMode()).toBe('bypassPermissions');
-    expect(fixture.componentInstance.planMode()).toBe(false);
+    expect(fixture.componentInstance.runtime.permissionMode()).toBe('bypassPermissions');
+    expect(fixture.componentInstance.runtime.planMode()).toBe(false);
     expect(wsMock.send).toHaveBeenCalledWith(7, {
       type: 'submit_prompt',
       prompt: 'implement plan',
@@ -2161,8 +2399,7 @@ describe('ClaudeWorkspaceComponent', () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
 
     events$.next({
@@ -2202,7 +2439,7 @@ describe('ClaudeWorkspaceComponent', () => {
 
     fixture.detectChanges();
 
-    expect(fixture.componentInstance.liveItems()).toEqual([
+    expect(fixture.componentInstance.runtime.liveItems()).toEqual([
       expect.objectContaining({
         toolUseId: 'tool-1',
         interaction: expect.objectContaining({
@@ -2217,22 +2454,21 @@ describe('ClaudeWorkspaceComponent', () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
     wsMock.send.mockClear();
     wsMock.disconnect.mockClear();
     wsMock.connect.mockClear();
     wsMock.isConnected.mockReturnValue(false);
 
-    fixture.componentInstance.pendingUserInputRequest.set({
+    fixture.componentInstance.runtime.conversation.pendingUserInputRequest.set({
       requestId: 'input-1',
       serverName: 'github',
       message: 'Authorize GitHub?',
       createdAt: '2026-04-24T08:00:00.000Z',
     });
 
-    fixture.componentInstance.answerUserInput({
+    fixture.componentInstance.runtime.answerUserInput({
       action: 'accept',
       content: { token: 'abc' },
     });
@@ -2252,11 +2488,10 @@ describe('ClaudeWorkspaceComponent', () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
 
-    fixture.componentInstance.pendingPermissionRequest.set({
+    fixture.componentInstance.runtime.conversation.pendingPermissionRequest.set({
       requestId: 'perm-1',
       toolUseId: 'tool-1',
       toolName: 'ExitPlanMode',
@@ -2286,15 +2521,14 @@ describe('ClaudeWorkspaceComponent', () => {
       },
     });
 
-    expect(fixture.componentInstance.pendingPermissionRequest()).toBeNull();
+    expect(fixture.componentInstance.runtime.pendingPermissionRequest()).toBeNull();
   });
 
   it('deduplicates matching history and live tool items after hydrate snapshot reload', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
 
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
 
     events$.next({
@@ -2352,7 +2586,7 @@ describe('ClaudeWorkspaceComponent', () => {
     });
     fixture.detectChanges();
 
-    const toolUnits = fixture.componentInstance
+    const toolUnits = fixture.componentInstance.runtime
       .pairedTranscript()
       .filter((unit) => unit.kind === 'tool');
     expect(toolUnits).toHaveLength(1);
@@ -2370,14 +2604,13 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('renders pending permissions in the composer dock and disables send', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
 
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.prompt.set('Can you continue?');
-    fixture.componentInstance.pendingPermissionRequest.set({
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.draft.prompt.set('Can you continue?');
+    fixture.componentInstance.runtime.conversation.pendingPermissionRequest.set({
       requestId: 'perm-1',
       toolUseId: 'tool-1',
       toolName: 'Bash',
@@ -2410,13 +2643,12 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('shows subagent permissions in the composer dock instead of nested tool cards', async () => {
-    const fixture = TestBed.createComponent(ClaudeWorkspaceComponent);
-    fixture.componentInstance.sessionId = 7;
+    const fixture = createWorkspace();
     fixture.detectChanges();
 
-    fixture.componentInstance.loading.set(false);
-    fixture.componentInstance.hydrated.set(true);
-    fixture.componentInstance.historyItems.set([
+    fixture.componentInstance.runtime.loading.set(false);
+    fixture.componentInstance.runtime.hydrated.set(true);
+    fixture.componentInstance.runtime.conversation.history.set([
       {
         id: 'user-1',
         kind: 'user',
@@ -2441,7 +2673,7 @@ describe('ClaudeWorkspaceComponent', () => {
         timestamp: '2026-04-24T08:00:02.000Z',
       },
     ]);
-    fixture.componentInstance.pendingPermissionRequest.set({
+    fixture.componentInstance.runtime.conversation.pendingPermissionRequest.set({
       requestId: 'perm-subagent-1',
       toolUseId: 'child-bash-1',
       toolName: 'Bash',

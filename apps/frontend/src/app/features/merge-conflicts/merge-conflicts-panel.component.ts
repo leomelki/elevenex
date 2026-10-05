@@ -1,9 +1,24 @@
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
+import { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
+import { FileStatus, GitStatusSummary } from '@/shared/models/git.model';
+import { FilesService } from '@/shared/services/files.service';
+import { GitService } from '@/shared/services/git.service';
+import { MonacoSelection } from '@/shared/services/monaco-editor-loader.service';
+import {
+  ConflictBlock,
+  ConflictResolutionStrategy,
+  applyConflictResolution,
+  parseConflictBlocks,
+} from '@/shared/utils/merge-conflicts';
 import { CommonModule } from '@angular/common';
 import {
+  ChangeDetectionStrategy,
   Component,
   ElementRef,
   HostListener,
   OnDestroy,
+  afterRenderEffect,
   computed,
   effect,
   inject,
@@ -12,7 +27,6 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCheck,
@@ -30,26 +44,8 @@ import {
   lucideTriangleAlert,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
-
-import { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
-import { FileStatus, GitStatusSummary } from '@/shared/models/git.model';
-import { FilesService } from '@/shared/services/files.service';
-import { GitService } from '@/shared/services/git.service';
-import {
-  MonacoApi,
-  MonacoEditorInstance,
-  MonacoEditorLoaderService,
-  MonacoEditorModel,
-  MonacoSelection,
-} from '@/shared/services/monaco-editor-loader.service';
-import { ZardButtonComponent } from '@/shared/components/button';
-import { ZardInputDirective } from '@/shared/components/input';
-import {
-  ConflictBlock,
-  ConflictResolutionStrategy,
-  applyConflictResolution,
-  parseConflictBlocks,
-} from '@/shared/utils/merge-conflicts';
+import { firstValueFrom } from 'rxjs';
+import { MergeConflictEditor } from './merge-conflict-editor.service';
 
 interface ConflictFileState {
   file: FileStatus;
@@ -72,10 +68,12 @@ interface PendingMention {
 @Component({
   selector: 'app-merge-conflicts-panel',
   standalone: true,
+  changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [CommonModule, NgIcon, ZardButtonComponent, ZardInputDirective],
   templateUrl: './merge-conflicts-panel.component.html',
   styleUrl: './merge-conflicts-panel.component.scss',
   host: { class: 'block h-full min-h-0 bg-background text-foreground' },
+  providers: [MergeConflictEditor],
   viewProviders: [
     provideIcons({
       lucideCheck,
@@ -99,20 +97,11 @@ export class MergeConflictsPanelComponent implements OnDestroy {
   readonly mentionSelection = output<DiffSelectionMention[]>();
   readonly summaryChange = output<GitStatusSummary>();
 
+  private readonly conflictEditor = inject(MergeConflictEditor);
   private readonly gitService = inject(GitService);
   private readonly filesService = inject(FilesService);
-  private readonly monacoLoader = inject(MonacoEditorLoaderService);
   private readonly editorHost = viewChild<ElementRef<HTMLElement>>('editorHost');
-  private readonly disposables: Array<{ dispose(): void }> = [];
-  private readonly themeObserver = new MutationObserver(() => this.syncEditorTheme());
-
-  private monaco: MonacoApi | null = null;
-  private editor: MonacoEditorInstance | null = null;
-  private model: MonacoEditorModel | null = null;
-  private editorPath: string | null = null;
-  private decorations: string[] = [];
   private requestGeneration = 0;
-  private suppressEditorChange = false;
 
   readonly summary = signal<GitStatusSummary | null>(null);
   readonly loadingSummary = signal(false);
@@ -148,9 +137,27 @@ export class MergeConflictsPanelComponent implements OnDestroy {
   );
 
   constructor() {
-    this.themeObserver.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class'],
+    afterRenderEffect(() => {
+      const host = this.editorHost();
+      const state = this.activeState();
+      if (
+        !host ||
+        !state ||
+        state.content === null ||
+        state.unsupported ||
+        state.loading ||
+        state.error
+      )
+        return;
+      const generation = this.requestGeneration;
+      void this.ensureEditorForActive().catch((error) => {
+        if (generation !== this.requestGeneration || this.activeFilePath() !== state.file.path)
+          return;
+        this.updateFileState(state.file.path, (value) => ({
+          ...value,
+          error: error instanceof Error ? error.message : 'Could not initialize editor.',
+        }));
+      });
     });
 
     effect(() => {
@@ -170,8 +177,6 @@ export class MergeConflictsPanelComponent implements OnDestroy {
 
   ngOnDestroy(): void {
     this.requestGeneration += 1;
-    this.themeObserver.disconnect();
-    this.disposeEditor();
   }
 
   setSearch(value: string): void {
@@ -190,11 +195,12 @@ export class MergeConflictsPanelComponent implements OnDestroy {
   selectFile(path: string | null): void {
     this.pendingMention.set(null);
     this.activeConflictIndex.set(0);
+    this.conflictEditor.cancelPending();
     this.activeFilePath.set(path);
     if (path) {
       void this.loadFile(path, false);
     } else {
-      this.disposeActiveModel();
+      this.conflictEditor.clearModel();
     }
   }
 
@@ -249,7 +255,7 @@ export class MergeConflictsPanelComponent implements OnDestroy {
   accept(strategy: ConflictResolutionStrategy): void {
     const state = this.activeState();
     const block = this.activeConflict();
-    const editor = this.editor;
+    const editor = this.conflictEditor.instance;
     if (!state || !block || !editor) return;
 
     const next = applyConflictResolution(editor.getValue(), block, strategy);
@@ -345,8 +351,8 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     } catch (error: any) {
       if (generation !== this.requestGeneration) return;
       const message = fileLoaded
-        ? (error?.message || 'Could not initialize editor.')
-        : (error?.error?.message || 'Could not load file.');
+        ? error?.message || 'Could not initialize editor.'
+        : error?.error?.message || 'Could not load file.';
       this.updateFileState(path, (current) => ({
         ...current,
         loading: false,
@@ -362,7 +368,7 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     this.error.set(null);
     this.pendingMention.set(null);
     if (clearDrafts) {
-      this.disposeActiveModel();
+      this.conflictEditor.clearModel();
       this.fileStates.set(new Map());
     }
 
@@ -460,111 +466,36 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     const host = this.editorHost()?.nativeElement;
     const state = this.activeState();
     if (!state || state.content === null || state.unsupported) {
-      this.disposeActiveModel();
+      this.conflictEditor.clearModel();
       return;
     }
-    if (!host) {
-      window.setTimeout(() => void this.ensureEditorForActive(), 0);
+    if (!host || this.conflictEditor.isOpen(this.worktreePath(), state.file.path, state.content))
       return;
-    }
-    const activePath = state.file.path;
-
-    const monaco = await this.monacoLoader.load();
-    if (this.activeFilePath() !== activePath) return;
-    this.monaco = monaco;
-    this.syncEditorTheme();
-
-    const uri = monaco.Uri.parse(
-      `inmemory://merge-conflicts/${encodeURIComponent(this.worktreePath())}/${encodeURIComponent(state.file.path)}`,
+    const generation = this.requestGeneration;
+    const opened = await this.conflictEditor.open(
+      host,
+      this.worktreePath(),
+      { path: state.file.path, content: state.content, language: state.language },
+      (content) => this.updateContentFromEditor(state.file.path, content),
+      () => this.updatePendingMention(),
     );
-    const language = this.resolveEditorLanguage(monaco, state.file.path, state.language);
-    const model =
-      monaco.editor.getModel(uri) ?? monaco.editor.createModel(state.content, language, uri);
-    if (model.getValue() !== state.content) {
-      model.setValue(state.content);
-    }
-    monaco.editor.setModelLanguage(model, language);
-
-    if (!this.editor) {
-      this.editor = monaco.editor.create(host, {
-        model,
-        automaticLayout: true,
-        fontSize: 12,
-        lineHeight: 20,
-        minimap: { enabled: true },
-        scrollBeyondLastLine: false,
-        renderWhitespace: 'selection',
-        lineNumbers: 'on',
-        glyphMargin: true,
-        readOnly: false,
-        wordWrap: 'off',
-      });
-      this.disposables.push(
-        this.editor.onDidChangeModelContent(() => {
-          if (this.suppressEditorChange) return;
-          const activePath = this.activeFilePath();
-          if (activePath) {
-            this.updateContentFromEditor(activePath, this.editor?.getValue() ?? '');
-          }
-        }),
-        this.editor.onDidChangeCursorSelection(() => this.updatePendingMention()),
-      );
-    } else {
-      this.editor.setModel(model);
-    }
-
-    if (this.model && this.model !== model) {
-      this.model.dispose();
-    }
-    this.model = model;
-    this.editorPath = state.file.path;
+    if (
+      !opened ||
+      generation !== this.requestGeneration ||
+      this.activeFilePath() !== state.file.path
+    )
+      return;
     this.redecorate();
     this.revealActiveConflict();
-    window.setTimeout(() => this.editor?.layout(), 0);
-  }
-
-  private resolveEditorLanguage(monaco: MonacoApi, filePath: string, language: string): string {
-    const registeredLanguages = monaco.languages.getLanguages();
-    const requestedLanguage = language.trim() || 'plaintext';
-    const requestedLanguageIsRegistered = registeredLanguages.some(
-      (registered) => registered.id === requestedLanguage,
-    );
-    if (requestedLanguage !== 'plaintext' && requestedLanguageIsRegistered) {
-      return requestedLanguage;
-    }
-
-    const basename = filePath.split(/[\\/]/).pop()?.toLowerCase() ?? '';
-    const extensionStart = basename.lastIndexOf('.');
-    const extension = extensionStart >= 0 ? basename.slice(extensionStart) : '';
-    const matchedLanguage =
-      registeredLanguages.find((registered) =>
-        registered.filenames?.some((filename) => filename.toLowerCase() === basename),
-      ) ??
-      registeredLanguages.find((registered) =>
-        extension
-          ? registered.extensions?.some(
-              (registeredExtension) => registeredExtension.toLowerCase() === extension,
-            )
-          : false,
-      );
-
-    return matchedLanguage?.id ?? (requestedLanguageIsRegistered ? requestedLanguage : 'plaintext');
   }
 
   private setEditorValue(value: string | null): void {
-    if (!this.editor || value === null) return;
-    this.suppressEditorChange = true;
-    try {
-      this.editor.setValue(value);
-    } finally {
-      this.suppressEditorChange = false;
-    }
-    this.updatePendingMention();
+    this.conflictEditor.setValue(value);
   }
 
   private currentEditorContent(state: ConflictFileState): string {
-    return this.activeFilePath() === state.file.path && this.editor
-      ? this.editor.getValue()
+    return this.activeFilePath() === state.file.path && this.conflictEditor.instance
+      ? this.conflictEditor.instance.getValue()
       : (state.content ?? '');
   }
 
@@ -588,7 +519,7 @@ export class MergeConflictsPanelComponent implements OnDestroy {
 
   private updatePendingMention(): void {
     const state = this.activeState();
-    const editor = this.editor;
+    const editor = this.conflictEditor.instance;
     const model = editor?.getModel();
     const selection = editor?.getSelection();
     if (!state || !editor || !model || !selection || isSelectionEmpty(selection)) {
@@ -648,56 +579,14 @@ export class MergeConflictsPanelComponent implements OnDestroy {
   }
 
   private redecorate(): void {
-    if (!this.editor || !this.monaco) return;
-    const active = this.activeConflict();
-    const decorations = this.activeBlocks().flatMap((block) => {
-      const isActive = active?.id === block.id;
-      const className = isActive ? 'mc-editor-line--active-conflict' : 'mc-editor-line--conflict';
-      const items: unknown[] = [
-        {
-          range: new this.monaco!.Range(block.startLine, 1, block.endLine, 1),
-          options: {
-            isWholeLine: true,
-            className,
-            glyphMarginClassName: 'mc-editor-glyph--conflict',
-          },
-        },
-      ];
-      if (block.ours.content.length) {
-        items.push({
-          range: new this.monaco!.Range(block.ours.startLine, 1, block.ours.endLine, 1),
-          options: { isWholeLine: true, className: 'mc-editor-line--ours' },
-        });
-      }
-      if (block.base?.content.length) {
-        items.push({
-          range: new this.monaco!.Range(block.base.startLine, 1, block.base.endLine, 1),
-          options: { isWholeLine: true, className: 'mc-editor-line--base' },
-        });
-      }
-      if (block.theirs.content.length) {
-        items.push({
-          range: new this.monaco!.Range(block.theirs.startLine, 1, block.theirs.endLine, 1),
-          options: { isWholeLine: true, className: 'mc-editor-line--theirs' },
-        });
-      }
-      return items;
-    });
-    this.decorations = this.editor.deltaDecorations(this.decorations, decorations);
+    this.conflictEditor.decorate(this.activeBlocks(), this.activeConflict());
   }
 
   private revealActiveConflict(): void {
     const block = this.activeConflict();
-    if (!block || !this.editor) return;
-    this.editor.revealLineInCenter(block.startLine);
+    if (!block || !this.conflictEditor.instance) return;
+    this.conflictEditor.instance.revealLineInCenter(block.startLine);
     this.redecorate();
-  }
-
-  private syncEditorTheme(): void {
-    if (!this.monaco) return;
-    this.monaco.editor.setTheme(
-      document.documentElement.classList.contains('dark') ? 'vs-dark' : 'vs',
-    );
   }
 
   private updateFileState(
@@ -714,23 +603,9 @@ export class MergeConflictsPanelComponent implements OnDestroy {
     });
   }
 
-  private disposeEditor(): void {
-    this.disposables.splice(0).forEach((disposable) => disposable.dispose());
-    this.disposeActiveModel();
-    this.editor?.dispose();
-    this.editor = null;
-  }
-
-  private disposeActiveModel(): void {
-    this.decorations = [];
-    this.editorPath = null;
-    this.model?.dispose();
-    this.model = null;
-  }
-
   @HostListener('window:resize')
   onWindowResize(): void {
-    this.editor?.layout();
+    this.conflictEditor.instance?.layout();
   }
 }
 

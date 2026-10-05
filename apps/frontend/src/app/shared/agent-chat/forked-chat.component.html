@@ -1,10 +1,13 @@
 @if (transcript(); as chat) {
   <div
-    #messagesRef
+    cwTranscriptViewport
+    [items]="chat.items()"
+    [runPhase]="chat.runPhase()"
+    [pendingReply]="showPendingReply()"
+    [sessionKey]="target()?.sessionId ?? null"
     class="fc-messages"
     aria-live="polite"
     aria-label="Discussion messages"
-    (scroll)="onMessagesScroll()"
   >
     @if (contextNote(); as note) {
       <cw-context-note
@@ -39,21 +42,21 @@
       </div>
     } @else {
       <cw-transcript
+        [canInspectAgents]="true"
         [items]="chat.renderItems()"
         [worktreePath]="worktreePath()"
         [streamingMessageId]="streamingMessageId()"
         [pendingReply]="showPendingReply()"
-        [childItemsByParentToolUseId]="chat.childItemsByParentToolUseId()"
-        [liveToolUseIds]="chat.liveToolUseIds()"
-        [toolProgressByToolUseId]="chat.toolProgressByToolUseId()"
-        [expandedTurns]="expandedTurns()"
-        [expandedTurnChanges]="expandedTurnChanges()"
+        [toolState]="toolState()"
+        [turnExpansion]="turnExpansion()"
         (approve)="approvePermission($event)"
         (deny)="denyPermission($event)"
         (toggleTurn)="toggleTurn($event)"
         (toggleTurnChanges)="toggleTurnChanges($event)"
         (closeTurnChanges)="closeTurnChanges($event)"
         (inspectTurn)="openAgentInspector($event)"
+        (messageCopy)="copyMessage($event.item, $event.text)"
+        (openLocalFile)="openLocalFile.emit($event)"
       />
     }
   </div>
@@ -77,7 +80,7 @@
     }
 
     <cw-composer
-      [value]="draft()"
+      [(value)]="draft"
       [submitting]="sending()"
       [running]="chat.runPhase() === 'running'"
       [canInterrupt]="chat.canInterrupt()"
@@ -85,15 +88,19 @@
       [blockedByPermission]="!!chat.pendingPermissionRequest()"
       [attachedPanelOpen]="!!chat.pendingPermissionRequest()"
       [pendingPrompts]="chat.pendingPrompts()"
+      [queuePaused]="chat.queuePaused()"
       [autocompleteItems]="autocompleteItems()"
       [placeholderText]="placeholder()"
       [allowImages]="false"
       [disconnected]="disabled()"
       [sessionId]="target()?.sessionId ?? null"
       [worktreePath]="worktreePath()"
-      (valueChange)="draft.set($event)"
       (send)="send($event)"
       (interrupt)="interrupt()"
+      (cancelPending)="cancelPending($event)"
+      (steerPending)="steerPending($event)"
+      (resumePending)="resumePending()"
+      (clearPending)="clearPending()"
     />
   </div>
 

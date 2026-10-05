@@ -1,8 +1,34 @@
 import {
+  ClaudeAgentInspectorComponent,
+  type ClaudeSubagentHistoryState,
+} from '@/shared/agent-chat/activity/claude-agent-inspector.component';
+import { ClaudeBackgroundActivityComponent } from '@/shared/agent-chat/activity/claude-background-activity.component';
+import {
+  ClaudeComposerComponent,
+  type ComposerSendPayload,
+} from '@/shared/agent-chat/composer/claude-composer.component';
+import { ClaudePermissionInlineComponent } from '@/shared/agent-chat/requests/claude-permission-inline.component';
+import { ClaudeUserInputComponent } from '@/shared/agent-chat/requests/claude-user-input.component';
+import { ClaudeContextNoteComponent } from '@/shared/agent-chat/transcript/claude-context-note.component';
+import { ClaudeTranscriptComponent } from '@/shared/agent-chat/transcript/claude-transcript.component';
+import type { TranscriptRenderItem } from '@/shared/agent-chat/transcript/transcript-render-items';
+import { transcriptToolState } from '@/shared/agent-chat/transcript/transcript-view-state';
+import { TranscriptViewportDirective } from '@/shared/agent-chat/transcript/transcript-viewport.directive';
+import type {
+  AgentAutocompleteItem,
+  AgentPermissionApproval,
+  AgentProviderId,
+  AgentRuntimeCommand,
+  AgentSubagentHistoryPayload,
+} from '@/shared/models/agent-runtime.model';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
+import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
+import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
+import { CommonModule } from '@angular/common';
+import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
-  ElementRef,
   computed,
   effect,
   inject,
@@ -11,40 +37,13 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { firstValueFrom } from 'rxjs';
-import { Subject, takeUntil } from 'rxjs';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideGitFork, lucideMessageSquare } from '@ng-icons/lucide';
-import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-websocket.service';
-import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
-import type { AgentProviderId } from '@/shared/models/agent-runtime.model';
-import type {
-  ClaudeAutocompleteItem,
-  ClaudePermissionApproval,
-  ClaudeRuntimeEvent,
-  ClaudeSubagentHistoryPayload,
-  ClaudeTranscriptItem,
-} from '@/shared/models/claude-runtime.model';
-import { ClaudeTranscriptComponent } from '@/features/session/claude-workspace/components/claude-transcript.component';
-import { ClaudeContextNoteComponent } from '@/features/session/claude-workspace/components/claude-context-note.component';
-import { ClaudeBackgroundActivityComponent } from '@/features/session/claude-workspace/components/claude-background-activity.component';
-import { ClaudePermissionInlineComponent } from '@/features/session/claude-workspace/components/claude-permission-inline.component';
-import { ClaudeUserInputComponent } from '@/features/session/claude-workspace/components/claude-user-input.component';
-import {
-  ClaudeAgentInspectorComponent,
-  type ClaudeSubagentHistoryState,
-} from '@/features/session/claude-workspace/components/claude-agent-inspector.component';
-import {
-  ClaudeComposerComponent,
-  type ComposerSendPayload,
-} from '@/features/session/claude-workspace/components/claude-composer.component';
-import type { TranscriptRenderItem } from '@/features/session/claude-workspace/util/transcript-render-items';
-import {
-  ForkedChatTranscript,
-  type ForkedChatLens,
-} from './forked-chat-transcript';
+import { firstValueFrom } from 'rxjs';
+import { AgentChatConnection } from './agent-chat-connection';
+import { ForkedChatTranscript, type ForkedChatLens } from './forked-chat-transcript';
 import { TranscriptLoadingSkeletonComponent } from './transcript-loading-skeleton.component';
+import { copyChatMessage } from './transcript/message-clipboard';
 
 export interface ForkedChatTarget {
   sessionId: number;
@@ -84,6 +83,7 @@ export interface ForkedChatContextNote {
   standalone: true,
   imports: [
     CommonModule,
+    TranscriptViewportDirective,
     NgIcon,
     ClaudeTranscriptComponent,
     ClaudeContextNoteComponent,
@@ -125,21 +125,29 @@ export class ForkedChatComponent {
   readonly draftSeed = input<string | null>(null);
 
   readonly submitPrompt = output<string>();
+  readonly openLocalFile = output<LocalFileTarget>();
+  readonly copyMessage = copyChatMessage;
 
-  private readonly messagesRef = viewChild<ElementRef<HTMLElement>>('messagesRef');
+  private readonly viewport = viewChild(TranscriptViewportDirective);
   private readonly composer = viewChild(ClaudeComposerComponent);
 
   private readonly ws = inject(AgentRuntimeWebsocketService);
   private readonly agentApi = inject(AgentRuntimeApiService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly runtime = new AgentChatConnection(this.ws, this.agentApi);
 
   readonly draft = signal('');
   readonly transcript = signal<ForkedChatTranscript | null>(null);
   /** Slash commands and skills for the composer, fetched per connection. */
-  readonly autocompleteItems = signal<ClaudeAutocompleteItem[]>([]);
+  readonly autocompleteItems = signal<AgentAutocompleteItem[]>([]);
 
+  readonly toolState = computed(() => transcriptToolState(this.transcript()));
   readonly expandedTurns = signal<Record<string, boolean>>({});
   readonly expandedTurnChanges = signal<Record<string, boolean>>({});
+  readonly turnExpansion = computed(() => ({
+    turns: this.expandedTurns(),
+    changes: this.expandedTurnChanges(),
+  }));
   readonly agentInspectorTurnId = signal<string | null>(null);
   readonly agentInspectorSelectedAgentId = signal<string | null>(null);
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
@@ -158,9 +166,7 @@ export class ForkedChatComponent {
     );
   });
 
-  readonly streamingMessageId = computed(
-    () => this.transcript()?.streamingMessageId() ?? null,
-  );
+  readonly streamingMessageId = computed(() => this.transcript()?.streamingMessageId() ?? null);
 
   readonly selectedAgentInspectorTurn = computed(() => {
     const turnId = this.agentInspectorTurnId();
@@ -175,12 +181,7 @@ export class ForkedChatComponent {
   });
 
   private connection: ForkedChatTarget | null = null;
-  /**
-   * Scoped to the *connection*, not the component: the dock swaps targets many
-   * times over one component lifetime, and each swap must drop its subscription.
-   */
-  private connectionClosed$ = new Subject<void>();
-  private stickToBottom = true;
+  private connectionLens: ForkedChatLens | null = null;
   private appliedSeed: string | null = null;
 
   constructor() {
@@ -190,7 +191,7 @@ export class ForkedChatComponent {
       const connected = this.connected();
 
       const desired = connected ? target : null;
-      if (this.isSameConnection(desired)) return;
+      if (this.isSameConnection(desired) && (!desired || lens === this.connectionLens)) return;
 
       this.detach();
       if (desired) {
@@ -198,27 +199,11 @@ export class ForkedChatComponent {
       }
     });
 
-    // Follow the newest message while streaming, unless the user has scrolled
-    // up to read something.
-    effect(() => {
-      const transcript = this.transcript();
-      transcript?.renderItems();
-      transcript?.runPhase();
-      if (!this.stickToBottom) return;
-      const element = this.messagesRef()?.nativeElement;
-      if (!element) return;
-      requestAnimationFrame(() => {
-        element.scrollTop = element.scrollHeight;
-      });
-    });
-
     effect(() => {
       const seed = this.draftSeed();
       if (!seed || seed === this.appliedSeed) return;
       this.appliedSeed = seed;
-      this.draft.update((current) =>
-        current.trim() ? `${current.trimEnd()}\n\n${seed}` : seed,
-      );
+      this.draft.update((current) => (current.trim() ? `${current.trimEnd()}\n\n${seed}` : seed));
       requestAnimationFrame(() => this.composer()?.focusAtEnd());
     });
 
@@ -270,19 +255,11 @@ export class ForkedChatComponent {
     void this.ensureAgentHistory(agentId);
   }
 
-  onMessagesScroll(): void {
-    const element = this.messagesRef()?.nativeElement;
-    if (!element) return;
-    const distanceFromBottom =
-      element.scrollHeight - element.scrollTop - element.clientHeight;
-    this.stickToBottom = distanceFromBottom < 48;
-  }
-
   send(payload: ComposerSendPayload): void {
     const text = payload.text.trim();
     if (!text || this.disabled() || this.sending()) return;
 
-    this.stickToBottom = true;
+    this.viewport()?.pinToBottom();
     this.transcript()?.addOptimisticPrompt(text);
     this.draft.set('');
     this.submitPrompt.emit(text);
@@ -292,16 +269,29 @@ export class ForkedChatComponent {
   revertPrompt(text: string): void {
     const transcript = this.transcript();
     if (!transcript) return;
-    const match = transcript.optimistic().find((item) => item.content === text);
+    const match = [...transcript.optimistic()].reverse().find((item) => item.content === text);
     if (match) transcript.removeOptimistic(match.id);
-    this.draft.set(text);
+    this.draft.update((draft) => (draft.trim() ? draft : text));
+  }
+
+  cancelPending(id: string): void {
+    this.sendRuntimeAction({ type: 'cancel_pending_prompt', id });
+  }
+  steerPending(id: string): void {
+    this.sendRuntimeAction({ type: 'steer_pending_prompt', id });
+  }
+  resumePending(): void {
+    this.sendRuntimeAction({ type: 'resume_pending_prompts' });
+  }
+  clearPending(): void {
+    this.sendRuntimeAction({ type: 'clear_pending_prompts' });
   }
 
   interrupt(): void {
     this.sendRuntimeAction({ type: 'interrupt' });
   }
 
-  approvePermission(approval: ClaudePermissionApproval): void {
+  approvePermission(approval: AgentPermissionApproval): void {
     const request = this.transcript()?.pendingPermissionRequest();
     if (!request) return;
     this.sendRuntimeAction({
@@ -337,21 +327,14 @@ export class ForkedChatComponent {
   }
 
   /** Pull the persisted history after a turn ends. */
-  async refreshHistory(): Promise<void> {
-    const target = this.connection;
-    const transcript = this.transcript();
-    if (!target || !transcript) return;
-    const history = (await firstValueFrom(
-      this.agentApi.getHistory(target.sessionId, target.provider),
-    )) as ClaudeTranscriptItem[];
-    if (this.connection?.sessionId !== target.sessionId) return;
-    transcript.applyHistoryRefresh(history);
+  refreshHistory(): Promise<void> {
+    return this.runtime.refreshHistory();
   }
 
-  private sendRuntimeAction(message: Record<string, unknown>): void {
+  private sendRuntimeAction(message: AgentRuntimeCommand): void {
     const target = this.connection;
     if (!target) return;
-    this.ws.send(target.sessionId, message, target.provider);
+    this.runtime.send(message);
   }
 
   private async ensureAgentHistory(agentId: string): Promise<void> {
@@ -368,7 +351,8 @@ export class ForkedChatComponent {
     try {
       const data = (await firstValueFrom(
         this.agentApi.getSubagentHistory(target.sessionId, agentId, target.provider),
-      )) as ClaudeSubagentHistoryPayload;
+      )) as AgentSubagentHistoryPayload;
+      if (this.connection !== target || this.destroyRef.destroyed) return;
       this.agentHistoryById.update((state) => ({
         ...state,
         [agentId]: {
@@ -378,6 +362,7 @@ export class ForkedChatComponent {
         },
       }));
     } catch (error) {
+      if (this.connection !== target || this.destroyRef.destroyed) return;
       const message =
         (error as { error?: { message?: string } })?.error?.message ||
         (error instanceof Error ? error.message : 'Could not load agent history.');
@@ -391,31 +376,19 @@ export class ForkedChatComponent {
   private isSameConnection(target: ForkedChatTarget | null): boolean {
     if (!target || !this.connection) return target === this.connection;
     return (
-      this.connection.sessionId === target.sessionId &&
-      this.connection.provider === target.provider
+      this.connection.sessionId === target.sessionId && this.connection.provider === target.provider
     );
   }
 
   private attach(target: ForkedChatTarget, lens: ForkedChatLens): void {
     const transcript = new ForkedChatTranscript(lens);
     this.transcript.set(transcript);
-    this.connection = target;
-    this.connectionClosed$ = new Subject<void>();
-    this.stickToBottom = true;
+    this.connection = { ...target };
+    this.connectionLens = lens;
+    this.viewport()?.pinToBottom();
 
-    this.ws
-      .borrow(target.sessionId, target.provider)
-      .pipe(takeUntil(this.connectionClosed$))
-      .subscribe((event) => {
-        const runtimeEvent = event as ClaudeRuntimeEvent;
-        transcript.apply(runtimeEvent);
-        if (runtimeEvent.type === 'complete') {
-          void this.refreshHistory();
-        }
-      });
-
-    this.ws.send(target.sessionId, { type: 'hydrate' }, target.provider);
-    void this.refreshAutocomplete(target);
+    this.runtime.attach(target, transcript);
+    void this.refreshAutocomplete(this.connection);
   }
 
   /** Commands and skills are per-session, so a stale response must not land. */
@@ -423,7 +396,7 @@ export class ForkedChatComponent {
     try {
       const items = (await firstValueFrom(
         this.agentApi.getAutocompleteItems(target.sessionId, target.provider),
-      )) as ClaudeAutocompleteItem[];
+      )) as AgentAutocompleteItem[];
       if (this.connection !== target) return;
       this.autocompleteItems.set(items);
     } catch {
@@ -432,12 +405,9 @@ export class ForkedChatComponent {
   }
 
   private detach(): void {
-    this.connectionClosed$.next();
-    this.connectionClosed$.complete();
-    if (this.connection) {
-      this.ws.releaseBorrow(this.connection.sessionId, this.connection.provider);
-    }
+    this.runtime.detach();
     this.connection = null;
+    this.connectionLens = null;
     this.transcript.set(null);
     this.expandedTurns.set({});
     this.expandedTurnChanges.set({});

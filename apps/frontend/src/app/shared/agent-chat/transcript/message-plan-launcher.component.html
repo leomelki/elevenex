@@ -1,0 +1,51 @@
+@let plan = review();
+<section
+  class="cw-plan-launcher flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/25 bg-primary/5 p-3 data-[disabled=true]:border-border data-[disabled=true]:bg-muted/30"
+  [attr.data-disabled]="!enabled() || null"
+>
+  <div class="flex min-w-0 items-center gap-2.5">
+    <span
+      class="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-primary"
+      aria-hidden="true"
+    >
+      <ng-icon name="lucideFileText" size="15" />
+    </span>
+    <div class="flex min-w-0 flex-col gap-0.5">
+      <span class="text-[11px] leading-tight font-bold text-muted-foreground uppercase"
+        >{{ plan.provider === 'codex' ? 'Codex' : 'Claude Code' }} plan</span
+      >
+      <strong class="text-sm leading-snug text-foreground">Plan ready for review</strong>
+      <span class="text-xs leading-normal text-muted-foreground">
+        {{
+          enabled()
+            ? 'Open the annotator to read, comment, approve, or request changes.'
+            : 'Review is available when the session is idle.'
+        }}
+      </span>
+    </div>
+  </div>
+  <div class="inline-flex shrink-0 items-center gap-1.5">
+    <button
+      z-button
+      zType="outline"
+      zSize="sm"
+      type="button"
+      class="cw-plan-launcher__button"
+      [zDisabled]="!enabled() || !plan.anchorMessageId"
+      title="Ask about this plan"
+      (click)="ask.emit(plan)"
+    >
+      <ng-icon name="lucideMessageSquarePlus" size="13" /> Ask
+    </button>
+    <button
+      z-button
+      zSize="sm"
+      type="button"
+      class="cw-plan-launcher__button"
+      [zDisabled]="!enabled()"
+      (click)="openReview.emit(plan)"
+    >
+      <ng-icon name="lucideFileText" size="13" /> Review
+    </button>
+  </div>
+</section>

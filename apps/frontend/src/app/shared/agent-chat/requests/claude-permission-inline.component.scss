@@ -1,0 +1,15 @@
+/* Highlighted HTML is generated outside Angular's template. */
+:host ::ng-deep .cw-diff-del {
+  display: block;
+  color: var(--destructive);
+  background: color-mix(in oklab, var(--destructive) 10%, transparent);
+}
+:host ::ng-deep .cw-diff-add {
+  display: block;
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+}
+:host ::ng-deep .cw-diff-context {
+  display: block;
+  color: var(--muted-foreground);
+}

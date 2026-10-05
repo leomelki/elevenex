@@ -1,0 +1,40 @@
+<div
+  class="cw-msg__fork-panel grid gap-1.5 rounded-xl border border-primary/20 bg-card p-2 shadow-sm"
+>
+  @for (row of rows(); track row.fork.id) {
+    <div
+      class="flex min-w-0 items-center justify-between gap-2.5 rounded-lg bg-muted/40 px-2 py-1.5"
+    >
+      <div class="flex min-w-0 flex-col">
+        <span class="cw-msg__fork-name truncate text-xs leading-tight font-bold text-foreground">{{
+          row.name
+        }}</span>
+        <span class="text-[11px] leading-tight text-muted-foreground">{{ row.detail }}</span>
+      </div>
+      <button
+        z-button
+        zType="outline"
+        zSize="xs"
+        type="button"
+        class="cw-msg__fork-open"
+        [zDisabled]="!row.fork.childSession"
+        (click)="open.emit(row.fork)"
+      >
+        <ng-icon name="lucideExternalLink" size="12" /> Open
+      </button>
+    </div>
+  }
+  @if (canFork()) {
+    <button
+      z-button
+      zType="outline"
+      zSize="xs"
+      type="button"
+      class="cw-msg__fork-again justify-self-end"
+      [zDisabled]="forkDisabled()"
+      (click)="forkAgain.emit()"
+    >
+      <ng-icon name="lucidePlus" size="12" /> Fork again
+    </button>
+  }
+</div>

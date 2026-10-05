@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentRuntimeWebsocketService } from './agent-runtime-websocket.service';
 import { AgentRuntimeProviderService } from './agent-runtime-provider.service';
+import { AgentRuntimeWebsocketService } from './agent-runtime-websocket.service';
 
 class FakeWebSocket {
   static readonly instances: FakeWebSocket[] = [];
@@ -104,13 +104,32 @@ describe('AgentRuntimeWebsocketService', () => {
     expect(FakeWebSocket.instances[0].closeCount).toBe(0);
   });
 
-  it('still force-closes on the owner-side disconnect', () => {
+  it('keeps borrowers connected after the owner disconnects', () => {
     service.connect(7, 'claude');
     service.borrow(7, 'claude');
 
     service.disconnect(7, 'claude');
 
+    expect(FakeWebSocket.instances[0].closeCount).toBe(0);
+    expect(service.isConnected(7, 'claude')).toBe(true);
+    service.releaseBorrow(7, 'claude');
     expect(FakeWebSocket.instances[0].closeCount).toBe(1);
+  });
+
+  it('publishes a disconnected state when the last surface releases the socket', () => {
+    service.connect(7, 'claude');
+    const states: string[] = [];
+    service.connectionState$(7, 'claude').subscribe((state) => states.push(state));
+    service.disconnect(7, 'claude');
+    expect(states.at(-1)).toBe('disconnected');
+  });
+
+  it('force-closes all provider sockets when the session is removed', () => {
+    service.connect(7, 'claude');
+    service.borrow(7, 'claude');
+    service.borrow(7, 'codex');
+    service.disconnectSession(7);
+    expect(FakeWebSocket.instances.map((socket) => socket.closeCount)).toEqual([1, 1]);
   });
 
   it('keys connections by provider as well as session', () => {

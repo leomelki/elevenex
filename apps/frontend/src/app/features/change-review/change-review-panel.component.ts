@@ -1,7 +1,38 @@
+import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
+import {
+  detectHljsLang,
+  escapeHtml,
+  inlineChangeHtml,
+} from '@/shared/agent-chat/tools/code-highlight';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
+import {
+  ChangeReviewFileStatus,
+  ChangeReviewFileSummary,
+  ChangeReviewFileWindow,
+  ChangeReviewLoadGuard,
+  ChangeReviewRow,
+  ChangeReviewScope,
+  ChangeReviewSummary,
+} from '@/shared/models/change-review.model';
+import {
+  DIFF_SELECTION_MENTION_MAX_FILES,
+  DIFF_SELECTION_MENTION_MAX_TEXT,
+  DiffSelectionMention,
+  DiffSelectionMentionContextRow,
+} from '@/shared/models/diff-selection-mention.model';
+import { GitStatusSummary } from '@/shared/models/git.model';
+import { ChangeReviewService } from '@/shared/services/change-review.service';
+import { GitService } from '@/shared/services/git.service';
+import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
+import { diffMentionRowKey } from '@/shared/utils/diff-row-key';
+import { captureSelectionWithin, clearSelection } from '@/shared/utils/dom-selection';
+import { placeSelectionMenu } from '@/shared/utils/selection-menu-position';
 import { CdkVirtualScrollViewport, ScrollingModule } from '@angular/cdk/scrolling';
 import { CommonModule } from '@angular/common';
 import {
   AfterViewInit,
+  ChangeDetectionStrategy,
   Component,
   computed,
   effect,
@@ -15,15 +46,16 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideBinary,
+  lucideCheck,
   lucideChevronDown,
   lucideChevronLeft,
   lucideChevronRight,
   lucideChevronUp,
-  lucideCheck,
   lucideExternalLink,
   lucideFileCode,
   lucideGitBranch,
@@ -41,54 +73,34 @@ import {
   lucideX,
 } from '@ng-icons/lucide';
 import hljs from 'highlight.js/lib/common';
-import { firstValueFrom, Subject, takeUntil } from 'rxjs';
 import { toast } from 'ngx-sonner';
-
+import { firstValueFrom, Subject, takeUntil } from 'rxjs';
 import {
-  ChangeReviewFileSummary,
-  ChangeReviewFileStatus,
-  ChangeReviewFileWindow,
-  ChangeReviewLoadGuard,
-  ChangeReviewRow,
-  ChangeReviewScope,
-  ChangeReviewSummary,
-} from '@/shared/models/change-review.model';
-import {
-  DIFF_SELECTION_MENTION_MAX_FILES,
-  DIFF_SELECTION_MENTION_MAX_TEXT,
-  DiffSelectionMention,
-  DiffSelectionMentionContextRow,
-} from '@/shared/models/diff-selection-mention.model';
-import { GitStatusSummary } from '@/shared/models/git.model';
-import { ChangeReviewService } from '@/shared/services/change-review.service';
-import { GitService } from '@/shared/services/git.service';
-import { ZardButtonComponent } from '@/shared/components/button';
-import { ZardInputDirective } from '@/shared/components/input';
-import {
-  detectHljsLang,
-  escapeHtml,
-  inlineChangeHtml,
-} from '@/features/session/claude-workspace/util/code-highlight';
-import { MergeConflictsPanelComponent } from '@/features/merge-conflicts';
-import {
-  DEFAULT_DIFF_SELECTION_ACTIONS,
-  DiffSelectionMenuComponent,
-  type DiffSelectionMenuAction,
-} from './diff-selection-menu.component';
-import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
-import { diffMentionRowKey } from '@/shared/utils/diff-row-key';
-import { captureSelectionWithin, clearSelection } from '@/shared/utils/dom-selection';
-import { placeSelectionMenu } from '@/shared/utils/selection-menu-position';
+  contextReplacementRows,
+  replaceDiffRow,
+  replacementDelta,
+  resolveDiffRow,
+  type ContextExpansionDirection,
+  type FileRenderState,
+} from './change-review-diff-state';
 import {
   CHANGE_REVIEW_HEADER_ROWS,
   ChangeReviewVirtualAnchor,
   ChangeReviewVirtualLayout,
   estimateChangeReviewDiffRows,
 } from './change-review-virtual-layout';
+import {
+  ChangeReviewWindowLoader,
+  type WindowRequest,
+} from './change-review-window-loader.service';
+import {
+  DEFAULT_DIFF_SELECTION_ACTIONS,
+  DiffSelectionMenuComponent,
+  type DiffSelectionMenuAction,
+} from './diff-selection-menu.component';
 
 type StatusFilter = 'all' | ChangeReviewFileStatus;
 type RenderRowKind = 'fileHeader' | 'fileMeta' | 'largeDiffGate' | 'diff';
-type ContextExpansionDirection = 'down' | 'up';
 
 interface ScopeOption {
   value: ChangeReviewScope;
@@ -98,30 +110,6 @@ interface ScopeOption {
 interface WindowLoadState {
   running: boolean;
   total: number;
-}
-
-interface DiffReplacement {
-  baseIndex: number;
-  rows: ChangeReviewRow[];
-}
-
-interface FileRenderState {
-  file: ChangeReviewFileSummary;
-  diffRowCount: number;
-  baseRowCount: number | null;
-  baseRows: ReadonlyMap<number, ChangeReviewRow>;
-  loadingOffsets: ReadonlySet<number>;
-  replacements: readonly DiffReplacement[];
-  message: string | null;
-  binary: boolean;
-  large: boolean;
-  truncated: boolean;
-  changeHash: string | null;
-}
-
-interface ResolvedDiffRow {
-  row: ChangeReviewRow | null;
-  baseIndex: number | null;
 }
 
 interface RenderRow {
@@ -149,13 +137,6 @@ interface DiffSelectionMentionAction {
   top: number;
   left: number;
   mentions: DiffSelectionMention[];
-}
-
-interface WindowRequest {
-  generation: number;
-  filePath: string;
-  offset: number;
-  key: string;
 }
 
 interface WindowCacheEntry {
@@ -196,7 +177,6 @@ const FILE_DIFF_AUTO_LOAD_CHANGE_LIMIT = 700;
 const WINDOW_LIMIT = 700;
 const CONTEXT_RANGE_LIMIT = 120;
 const VIEW_OVERSCAN_ROWS = 160;
-const WINDOW_LOAD_CONCURRENCY = 1;
 const MAX_WINDOW_CACHE_ROWS = 120_000;
 const MAX_WINDOW_CACHE_WINDOWS = 400;
 const MAX_ROW_HTML_CACHE = 8_000;
@@ -230,6 +210,7 @@ type SidebarPref = 'auto' | 'collapsed' | 'expanded';
 @Component({
   selector: 'app-change-review-panel',
   standalone: true,
+  changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     CommonModule,
     ScrollingModule,
@@ -242,6 +223,7 @@ type SidebarPref = 'auto' | 'collapsed' | 'expanded';
   templateUrl: './change-review-panel.component.html',
   styleUrl: './change-review-panel.component.scss',
   host: { class: 'block h-full min-h-0 bg-background text-foreground' },
+  providers: [ChangeReviewWindowLoader],
   viewProviders: [
     provideIcons({
       lucideBinary,
@@ -311,6 +293,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly activePath = input<string | null>(null);
 
   private readonly changeReview = inject(ChangeReviewService);
+  private readonly windowLoader = inject(ChangeReviewWindowLoader);
   private readonly gitService = inject(GitService);
   private readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly sanitizer = inject(DomSanitizer);
@@ -320,8 +303,6 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   private readonly fileSearchInput = viewChild<ElementRef<HTMLInputElement>>('fileSearchInput');
   private readonly diffSearchInput = viewChild<ElementRef<HTMLInputElement>>('diffSearchInput');
   private readonly rowHtmlCache = new Map<string, SafeHtml>();
-  private readonly windowQueue: WindowRequest[] = [];
-  private readonly pendingWindowKeys = new Set<string>();
   private readonly windowCache = new Map<string, WindowCacheEntry>();
   private readonly fingerprintCache = new Map<string, string>();
   private readonly scopeSnapshots = new Map<string, ScopeViewSnapshot>();
@@ -332,7 +313,6 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }, 30_000);
 
   private windowCacheRows = 0;
-  private inFlightWindowLoads = 0;
   private generation = 0;
   private activeScopeKey: string | null = null;
   private gitSummaryRefreshTimer: number | null = null;
@@ -363,11 +343,13 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly loadingContextRanges = signal<ReadonlySet<string>>(new Set());
   readonly fileChangeHashes = signal<ReadonlyMap<string, string>>(new Map());
   readonly fileFingerprints = signal<ReadonlyMap<string, string>>(new Map());
-  private readonly diffSnapshotFingerprints = signal<ReadonlyMap<string, DiffSnapshotEntry>>(new Map());
+  private readonly diffSnapshotFingerprints = signal<ReadonlyMap<string, DiffSnapshotEntry>>(
+    new Map(),
+  );
   readonly viewedFingerprints = signal<Record<string, string>>(this.readViewedFingerprints());
   readonly loadingFileFingerprints = signal<ReadonlySet<string>>(new Set());
   readonly collapsedPaths = signal<ReadonlySet<string>>(new Set());
-  readonly windowLoadState = signal<WindowLoadState>({ running: false, total: 0 });
+  readonly windowLoadState = this.windowLoader.state;
   readonly selectionMentionAction = signal<DiffSelectionMentionAction | null>(null);
   readonly showConflictResolver = signal(false);
   readonly conflictResolverSummary = signal<GitStatusSummary | null>(null);
@@ -419,9 +401,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       const fileMatches: SearchMatch[] = [];
       for (const [baseIndex, row] of state.baseRows) {
         if (row.type === 'hunk' || row.type === 'expand' || row.type === 'meta') continue;
-        const searchable = row.type === 'change'
-          ? `${row.content}\0${row.oldContent ?? ''}`.toLowerCase()
-          : row.content.toLowerCase();
+        const searchable =
+          row.type === 'change'
+            ? `${row.content}\0${row.oldContent ?? ''}`.toLowerCase()
+            : row.content.toLowerCase();
         if (searchable.includes(query)) {
           fileMatches.push({ filePath: file.path, baseIndex, diffIndex: 0 });
         }
@@ -566,6 +549,21 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   );
 
   constructor() {
+    this.windowLoader.events.pipe(takeUntilDestroyed()).subscribe((event) => {
+      const { request } = event;
+      if (request.generation !== this.generation) return;
+      if (event.type === 'loaded') {
+        this.applyFileWindow(event.window, request);
+        return;
+      }
+      this.setFileState(request.filePath, (state) => {
+        const loadingOffsets = new Set(state.loadingOffsets);
+        if (event.type === 'started') loadingOffsets.add(request.offset);
+        else loadingOffsets.delete(request.offset);
+        return { ...state, loadingOffsets };
+      });
+      if (event.type === 'finished') this.refreshRenderedRows();
+    });
     effect(() => {
       const worktreePath = this.worktreePath();
       const scope = this.scope();
@@ -941,11 +939,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    const placement = placeSelectionMenu(
-      captured.rect,
-      scrollEl.getBoundingClientRect(),
-      { top: scrollEl.scrollTop, left: scrollEl.scrollLeft },
-    );
+    const placement = placeSelectionMenu(captured.rect, scrollEl.getBoundingClientRect(), {
+      top: scrollEl.scrollTop,
+      left: scrollEl.scrollLeft,
+    });
     this.selectionMentionAction.set({ ...placement, mentions });
   }
 
@@ -966,10 +963,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
    * Route a selection-menu action. `mention` keeps its existing behaviour so
    * the Changes panel is unchanged; anything else is the host's to handle.
    */
-  onSelectionMenuAction(event: {
-    id: string;
-    mentions: DiffSelectionMention[];
-  }): void {
+  onSelectionMenuAction(event: { id: string; mentions: DiffSelectionMention[] }): void {
     if (event.id === 'mention') {
       this.mentionCurrentSelection();
       return;
@@ -993,9 +987,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     }
 
     const lang = detectHljsLang(row.path);
-    let html = row.type === 'change' && row.oldContent !== undefined
-      ? inlineChangeHtml(row.oldContent, row.content)
-      : escapeHtml(row.content || ' ');
+    let html =
+      row.type === 'change' && row.oldContent !== undefined
+        ? inlineChangeHtml(row.oldContent, row.content)
+        : escapeHtml(row.content || ' ');
     if (
       row.type !== 'hunk' &&
       row.type !== 'expand' &&
@@ -1058,10 +1053,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
 
       const loaded = contextWindow.rows.length;
       if (loaded <= 0) return;
-      const replacement = this.contextReplacementRows(row, contextWindow.rows, direction);
+      const replacement = contextReplacementRows(row, contextWindow.rows, direction);
 
       const anchor = this.captureAnchor();
-      this.setFileState(file.path, (state) => this.replaceDiffRow(state, row.id, replacement));
+      this.setFileState(file.path, (state) => replaceDiffRow(state, row.id, replacement));
       this.rebuildLayout();
       this.restoreAnchor(anchor);
       this.refreshRenderedRows();
@@ -1666,7 +1661,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       }
 
       const diffIndex = position.diffIndex ?? 0;
-      const resolved = this.resolveDiffRow(state, diffIndex);
+      const resolved = resolveDiffRow(state, diffIndex);
       if (resolved.baseIndex !== null && resolved.row) {
         this.touchWindow(state.file.path, resolved.baseIndex);
       }
@@ -1713,7 +1708,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       }
 
       for (let diffIndex = segment.diffStart; diffIndex < segment.diffEnd; diffIndex += 1) {
-        const resolved = this.resolveDiffRow(state, diffIndex);
+        const resolved = resolveDiffRow(state, diffIndex);
         if (resolved.baseIndex === null || resolved.row) continue;
         if (state.baseRowCount !== null && resolved.baseIndex >= state.baseRowCount) continue;
         const offset = Math.floor(resolved.baseIndex / WINDOW_LIMIT) * WINDOW_LIMIT;
@@ -1724,22 +1719,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   private pruneQueuedWindowsForRange(startIndex: number, endIndex: number): void {
-    if (this.windowQueue.length === 0) return;
-
-    const keep = this.windowKeysForRange(startIndex, endIndex);
-    const nextQueue: WindowRequest[] = [];
-    for (const request of this.windowQueue) {
-      if (request.generation === this.generation && keep.has(request.key)) {
-        nextQueue.push(request);
-        continue;
-      }
-      this.pendingWindowKeys.delete(request.key);
-    }
-
-    if (nextQueue.length !== this.windowQueue.length) {
-      this.windowQueue.splice(0, this.windowQueue.length, ...nextQueue);
-      this.updateWindowLoadState();
-    }
+    this.windowLoader.prune(this.windowKeysForRange(startIndex, endIndex), this.generation);
   }
 
   private windowKeysForRange(startIndex: number, endIndex: number): Set<string> {
@@ -1762,7 +1742,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       }
 
       for (let diffIndex = segment.diffStart; diffIndex < segment.diffEnd; diffIndex += 1) {
-        const resolved = this.resolveDiffRow(state, diffIndex);
+        const resolved = resolveDiffRow(state, diffIndex);
         if (resolved.baseIndex === null || resolved.row) continue;
         if (state.baseRowCount !== null && resolved.baseIndex >= state.baseRowCount) continue;
         const offset = Math.floor(resolved.baseIndex / WINDOW_LIMIT) * WINDOW_LIMIT;
@@ -1784,7 +1764,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     const key = this.windowKey(filePath, safeOffset);
     if (
       this.windowCache.has(key) ||
-      this.pendingWindowKeys.has(key) ||
+      this.windowLoader.has(key) ||
       state.loadingOffsets.has(safeOffset)
     ) {
       return;
@@ -1795,74 +1775,22 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
       filePath,
       offset: safeOffset,
       key,
+      args: [
+        this.worktreePath(),
+        this.scope(),
+        filePath,
+        {
+          offset: safeOffset,
+          limit: WINDOW_LIMIT,
+          context: this.contextForPath(filePath),
+          fullFile: this.isFullFilePath(filePath),
+          allowUnchanged: this.isExtraFilePath(filePath),
+          forceFileLoad: this.isFileDiffForceLoadedPath(filePath),
+        },
+        this.forceLoadLargeChangeSet(),
+      ],
     };
-    this.pendingWindowKeys.add(key);
-    if (priority) {
-      this.windowQueue.unshift(request);
-    } else {
-      this.windowQueue.push(request);
-    }
-    this.updateWindowLoadState();
-    this.pumpWindowQueue();
-  }
-
-  private pumpWindowQueue(): void {
-    while (this.inFlightWindowLoads < WINDOW_LOAD_CONCURRENCY && this.windowQueue.length > 0) {
-      const request = this.windowQueue.shift()!;
-      if (request.generation !== this.generation) {
-        this.pendingWindowKeys.delete(request.key);
-        continue;
-      }
-      this.startWindowLoad(request);
-    }
-    this.updateWindowLoadState();
-  }
-
-  private startWindowLoad(request: WindowRequest): void {
-    this.inFlightWindowLoads += 1;
-    this.setFileState(request.filePath, (state) => ({
-      ...state,
-      loadingOffsets: new Set(state.loadingOffsets).add(request.offset),
-    }));
-
-    void firstValueFrom(
-      this.changeReview
-        .getFileWindow(
-          this.worktreePath(),
-          this.scope(),
-          request.filePath,
-          {
-            offset: request.offset,
-            limit: WINDOW_LIMIT,
-            context: this.contextForPath(request.filePath),
-            fullFile: this.isFullFilePath(request.filePath),
-            allowUnchanged: this.isExtraFilePath(request.filePath),
-            forceFileLoad: this.isFileDiffForceLoadedPath(request.filePath),
-          },
-          this.forceLoadLargeChangeSet(),
-        )
-        .pipe(takeUntil(this.requestCancel$)),
-    )
-      .then((fileWindow) => this.applyFileWindow(fileWindow, request))
-      .catch((error: any) => {
-        if (request.generation === this.generation) {
-          const message = error?.error?.message || 'Could not load file diff.';
-          toast.error(message);
-        }
-      })
-      .finally(() => {
-        if (request.generation !== this.generation) return;
-        this.inFlightWindowLoads = Math.max(0, this.inFlightWindowLoads - 1);
-        this.pendingWindowKeys.delete(request.key);
-        this.setFileState(request.filePath, (state) => {
-          const loadingOffsets = new Set(state.loadingOffsets);
-          loadingOffsets.delete(request.offset);
-          return { ...state, loadingOffsets };
-        });
-        this.updateWindowLoadState();
-        this.refreshRenderedRows();
-        this.pumpWindowQueue();
-      });
+    this.windowLoader.enqueue(request, priority);
   }
 
   private applyFileWindow(fileWindow: ChangeReviewFileWindow, request: WindowRequest): void {
@@ -1870,7 +1798,11 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     const anchor = this.captureAnchor();
     this.rememberFileChangeHash(fileWindow.path, fileWindow.changeHash);
     if (fileWindow.offset === 0 && fileWindow.fingerprint !== null) {
-      this.storeDiffSnapshotFingerprint(fileWindow.path, fileWindow.fingerprint, fileWindow.changeHash);
+      this.storeDiffSnapshotFingerprint(
+        fileWindow.path,
+        fileWindow.fingerprint,
+        fileWindow.changeHash,
+      );
     }
     this.setFileState(fileWindow.path, (state) => {
       const baseRows = new Map(state.baseRows);
@@ -1878,7 +1810,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
         baseRows.set(request.offset + index, row);
       });
       const replacements = state.replacements;
-      const replacementDelta = this.replacementDelta(replacements);
+      const rowDelta = replacementDelta(replacements);
       const baseRowCount = fileWindow.totalRows;
       return {
         ...state,
@@ -1891,7 +1823,7 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
         },
         baseRows,
         baseRowCount,
-        diffRowCount: Math.max(1, baseRowCount + replacementDelta),
+        diffRowCount: Math.max(1, baseRowCount + rowDelta),
         message: fileWindow.message,
         binary: fileWindow.binary,
         large: fileWindow.large,
@@ -1904,138 +1836,6 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     this.restoreAnchor(anchor);
     this.refreshRenderedRows();
     this.pruneWindowCache();
-  }
-
-  private resolveDiffRow(state: FileRenderState, diffIndex: number): ResolvedDiffRow {
-    let shift = 0;
-    for (
-      let replacementIndex = 0;
-      replacementIndex < state.replacements.length;
-      replacementIndex += 1
-    ) {
-      const replacement = state.replacements[replacementIndex];
-      const virtualStart = replacement.baseIndex + shift;
-      const virtualEnd = virtualStart + replacement.rows.length;
-      if (diffIndex < virtualStart) {
-        const baseIndex = diffIndex - shift;
-        return {
-          row: state.baseRows.get(baseIndex) ?? null,
-          baseIndex,
-        };
-      }
-      if (diffIndex < virtualEnd) {
-        return {
-          row: replacement.rows[diffIndex - virtualStart] ?? null,
-          baseIndex: null,
-        };
-      }
-      shift += replacement.rows.length - 1;
-    }
-
-    const baseIndex = diffIndex - shift;
-    return {
-      row: state.baseRows.get(baseIndex) ?? null,
-      baseIndex,
-    };
-  }
-
-  private contextReplacementRows(
-    row: ChangeReviewRow,
-    loadedRows: ChangeReviewRow[],
-    direction: ContextExpansionDirection,
-  ): ChangeReviewRow[] {
-    const remaining = Math.max(0, (row.count ?? 0) - loadedRows.length);
-    if (remaining === 0) return loadedRows;
-
-    if (direction === 'up') {
-      return [
-        this.expandPlaceholderRow(row, row.oldStart ?? 1, row.newStart ?? 1, remaining),
-        ...loadedRows,
-      ];
-    }
-
-    return [
-      ...loadedRows,
-      this.expandPlaceholderRow(
-        row,
-        (row.oldStart ?? 1) + loadedRows.length,
-        (row.newStart ?? 1) + loadedRows.length,
-        remaining,
-      ),
-    ];
-  }
-
-  private expandPlaceholderRow(
-    source: ChangeReviewRow,
-    oldStart: number,
-    newStart: number,
-    count: number,
-  ): ChangeReviewRow {
-    return {
-      ...source,
-      id: `${source.path}:expand:${oldStart}:${newStart}:${count}`,
-      oldStart,
-      newStart,
-      count,
-      content: `${count} unchanged line${count === 1 ? '' : 's'}`,
-    };
-  }
-
-  private replaceDiffRow(
-    state: FileRenderState,
-    rowId: string,
-    replacementRows: ChangeReviewRow[],
-  ): FileRenderState {
-    for (
-      let replacementIndex = 0;
-      replacementIndex < state.replacements.length;
-      replacementIndex += 1
-    ) {
-      const replacement = state.replacements[replacementIndex];
-      const rowIndex = replacement.rows.findIndex((row) => row.id === rowId);
-      if (rowIndex === -1) continue;
-
-      const nextRows = [
-        ...replacement.rows.slice(0, rowIndex),
-        ...replacementRows,
-        ...replacement.rows.slice(rowIndex + 1),
-      ];
-      const replacements = state.replacements.map((candidate, index) =>
-        index === replacementIndex ? { ...candidate, rows: nextRows } : candidate,
-      );
-      return {
-        ...state,
-        replacements,
-        diffRowCount: this.diffRowCountFor(state.baseRowCount, state.diffRowCount, replacements),
-      };
-    }
-
-    for (const [baseIndex, row] of state.baseRows.entries()) {
-      if (row.id !== rowId) continue;
-      const replacements = [...state.replacements, { baseIndex, rows: replacementRows }].sort(
-        (left, right) => left.baseIndex - right.baseIndex,
-      );
-      return {
-        ...state,
-        replacements,
-        diffRowCount: this.diffRowCountFor(state.baseRowCount, state.diffRowCount, replacements),
-      };
-    }
-
-    return state;
-  }
-
-  private diffRowCountFor(
-    baseRowCount: number | null,
-    currentDiffRowCount: number,
-    replacements: readonly DiffReplacement[],
-  ): number {
-    const baseCount = baseRowCount ?? currentDiffRowCount;
-    return Math.max(1, baseCount + this.replacementDelta(replacements));
-  }
-
-  private replacementDelta(replacements: readonly DiffReplacement[]): number {
-    return replacements.reduce((sum, replacement) => sum + replacement.rows.length - 1, 0);
   }
 
   private captureAnchor(): ChangeReviewVirtualAnchor | null {
@@ -2234,26 +2034,19 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     return `${this.worktreePath()}\0${this.scope()}\0${filePath}\0${this.context()}\0${offset}`;
   }
 
-  private updateWindowLoadState(): void {
-    const total = this.windowQueue.length + this.inFlightWindowLoads;
-    this.windowLoadState.set({ running: total > 0, total });
-  }
-
   private cancelActiveRequests(): void {
     if (this.gitSummaryRefreshTimer !== null) {
       window.clearTimeout(this.gitSummaryRefreshTimer);
       this.gitSummaryRefreshTimer = null;
     }
     this.requestCancel$.next();
+    this.windowLoader.reset();
   }
 
   private resetQueues(): void {
-    this.windowQueue.length = 0;
-    this.pendingWindowKeys.clear();
+    this.windowLoader.reset();
     this.windowCache.clear();
     this.windowCacheRows = 0;
-    this.inFlightWindowLoads = 0;
-    this.windowLoadState.set({ running: false, total: 0 });
   }
 
   private validateSavedViewedFingerprints(
@@ -2405,7 +2198,11 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  private storeDiffSnapshotFingerprint(filePath: string, fingerprint: string, changeHash: string): void {
+  private storeDiffSnapshotFingerprint(
+    filePath: string,
+    fingerprint: string,
+    changeHash: string,
+  ): void {
     this.diffSnapshotFingerprints.update((current) => {
       const next = new Map(current);
       next.set(filePath, { fingerprint, changeHash });
@@ -2697,4 +2494,3 @@ function baseIndexToDiffIndex(state: FileRenderState, targetBaseIndex: number): 
   }
   return targetBaseIndex + shift;
 }
-

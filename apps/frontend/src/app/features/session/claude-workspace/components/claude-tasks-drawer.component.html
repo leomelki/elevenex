@@ -1,0 +1,42 @@
+<ng-template #content>
+  <div class="cw-drawer__body px-3.5 pt-2.5 pb-4">
+    @if (!tasks().length) {
+      <p class="cw-drawer__empty text-sm text-muted-foreground">
+        No tasks yet. They appear here as Claude runs tools or subagents.
+      </p>
+    }
+    @for (section of sections(); track section.title) {
+      <section class="cw-drawer__sec mt-3">
+        <h4 class="mb-1.5 text-[11px] tracking-wide text-muted-foreground uppercase">
+          {{ section.title }}
+          <span class="font-normal opacity-70">({{ section.items.length }})</span>
+        </h4>
+        @for (task of section.items; track task.taskId) {
+          <div
+            class="cw-drawer__task mb-1.5 rounded-lg border border-border px-2.5 py-2 text-sm data-[tone=running]:border-success/40 data-[tone=error]:border-destructive/40 data-[tone=waiting]:border-warning/40"
+            [attr.data-tone]="statusTone(task.status)"
+          >
+            <div class="cw-drawer__task-head flex items-center justify-between gap-2">
+              <strong>{{
+                task.subject || task.summary || task.description || task.taskType || task.taskId
+              }}</strong>
+              <span
+                class="cw-drawer__status text-[11px] tracking-wide text-muted-foreground uppercase"
+                >{{ task.status }}</span
+              >
+            </div>
+            @if (subtitle(task); as s) {
+              <p class="mt-1 text-xs text-muted-foreground">{{ s }}</p>
+            }
+            @if (task.error) {
+              <pre
+                class="cw-drawer__err mt-1.5 max-h-40 overflow-auto rounded bg-destructive/10 px-2 py-1.5 font-mono text-[11px] whitespace-pre-wrap text-destructive"
+                >{{ task.error }}</pre
+              >
+            }
+          </div>
+        }
+      </section>
+    }
+  </div>
+</ng-template>

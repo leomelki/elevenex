@@ -1,55 +1,46 @@
-import {
-  AfterViewInit,
-  Component,
-  ElementRef,
-  NgZone,
-  OnDestroy,
-  ViewChild,
-  computed,
-  effect,
-  inject,
-  input,
-  output,
-  signal,
-} from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import {
-  lucideArrowLeft,
-  lucideArrowRight,
-  lucideColumns2,
-  lucideGlobe,
-  lucideLoaderCircle,
-  lucidePlus,
-  lucideRefreshCw,
-  lucideRows2,
-  lucideSettings,
-  lucideShield,
-  lucideSquareTerminal,
-  lucideX,
-} from '@ng-icons/lucide';
-import { firstValueFrom } from 'rxjs';
-import { toast } from 'ngx-sonner';
-import {
-  BrowserViewBounds,
-  BrowserViewLayout,
-  BrowserViewState,
-  getElectronBrowserApi,
-} from '@/shared/runtime/electron-browser';
-import {
-  BrowserViewStateService,
-  buildBrowserViewKey,
-  buildBrowserViewProjectPrefix,
-} from './browser-view-state.service';
-import {
-  ProjectBrowserStateService,
-  ProjectBrowserTabState,
-} from '@/shared/services/project-browser-state.service';
-import { BrowserIsolationConfig } from '@/shared/models/browser-isolation.model';
-import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
-import { BrowserTabsStateService } from './browser-tabs-state.service';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
+import { BrowserIsolationConfig } from '@/shared/models/browser-isolation.model';
+import {
+BrowserViewBounds,
+BrowserViewLayout,
+getElectronBrowserApi
+} from '@/shared/runtime/electron-browser';
+import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
+import {
+ProjectBrowserStateService,
+ProjectBrowserTabState,
+} from '@/shared/services/project-browser-state.service';
+import { CommonModule } from '@angular/common';
+import {
+AfterViewInit,ChangeDetectionStrategy,Component,computed,DestroyRef,effect,ElementRef,inject,
+input,NgZone,
+OnDestroy,output,
+signal,viewChild
+} from '@angular/core';
+import { NgIcon,provideIcons } from '@ng-icons/core';
+import {
+lucideArrowLeft,
+lucideArrowRight,
+lucideColumns2,
+lucideGlobe,
+lucideLoaderCircle,
+lucidePlus,
+lucideRefreshCw,
+lucideRows2,
+lucideSettings,
+lucideShield,
+lucideSquareTerminal,
+lucideX,
+} from '@ng-icons/lucide';
+import { toast } from 'ngx-sonner';
+import { firstValueFrom } from 'rxjs';
+import { BrowserTabsStateService } from './browser-tabs-state.service';
+import {
+BrowserViewStateService,
+buildBrowserViewKey,
+buildBrowserViewProjectPrefix,
+} from './browser-view-state.service';
 
 const defaultDevtoolsRatio = 0.42;
 const defaultDockPosition = 'right';
@@ -62,957 +53,10 @@ type DevtoolsDockPosition = 'right' | 'bottom';
 @Component({
   selector: 'app-browser-panel',
   standalone: true,
+  changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [CommonModule, NgIcon, ZardButtonComponent, ZardInputDirective],
-  template: `
-    <div
-      class="browser-panel"
-      [class.browser-panel--devtools-open]="isDevtoolsOpen()"
-      [class.browser-panel--dragging]="isDraggingDevtools()"
-      [style.--browser-devtools-size]="devtoolsPaneSize()"
-      [style.--browser-devtools-grid-template]="devtoolsGridTemplate()"
-    >
-      <div class="browser-tabs-bar">
-        <div class="browser-tabs-list" role="tablist" aria-label="Browser tabs">
-          @for (tab of browserTabs(); track tab.tabId) {
-            <div
-              class="browser-tab-pill"
-              [class.browser-tab-pill--active]="tab.tabId === activeTabId()"
-              [class.browser-tab-pill--editing]="editingTabId() === tab.tabId"
-              role="tab"
-              [attr.aria-selected]="tab.tabId === activeTabId()"
-              (click)="selectBrowserTab(tab.tabId)"
-              (dblclick)="beginRename(tab.tabId)"
-            >
-              @if (editingTabId() === tab.tabId) {
-                <input
-                  class="browser-tab-pill-input"
-                  type="text"
-                  [value]="renameDraft()"
-                  maxlength="80"
-                  autofocus
-                  (click)="$event.stopPropagation()"
-                  (input)="renameDraft.set($any($event.target).value)"
-                  (blur)="commitRename()"
-                  (keydown.enter)="commitRename()"
-                  (keydown.escape)="cancelRename()"
-                />
-              } @else {
-                <button
-                  type="button"
-                  class="browser-tab-pill-main"
-                  [title]="tab.label"
-                  (click)="selectBrowserTab(tab.tabId)"
-                >
-                  <span class="browser-tab-pill-title">{{ tab.label }}</span>
-                  <span class="browser-tab-pill-meta">{{ tab.secondaryLabel }}</span>
-                </button>
-              }
-
-              <button
-                type="button"
-                class="browser-tab-pill-icon"
-                [attr.aria-label]="'Close browser tab ' + tab.label"
-                title="Close tab"
-                (click)="closeBrowserTab($event, tab.tabId)"
-              >
-                <ng-icon name="lucideX" size="14" />
-              </button>
-            </div>
-          }
-
-          @if (canAddTab()) {
-            <button
-              type="button"
-              class="browser-add-tab"
-              aria-label="Open a new browser tab"
-              title="New browser tab"
-              (click)="addBrowserTab()"
-            >
-              <ng-icon name="lucidePlus" size="15" />
-            </button>
-          }
-        </div>
-      </div>
-
-      <div class="browser-toolbar">
-        <div class="browser-toolbar-group">
-          <button
-            type="button"
-            class="browser-tool-button"
-            [disabled]="!currentState()?.canGoBack"
-            aria-label="Go back"
-            title="Back"
-            (click)="goBack()"
-          >
-            <ng-icon name="lucideArrowLeft" size="16" />
-          </button>
-          <button
-            type="button"
-            class="browser-tool-button"
-            [disabled]="!currentState()?.canGoForward"
-            aria-label="Go forward"
-            title="Forward"
-            (click)="goForward()"
-          >
-            <ng-icon name="lucideArrowRight" size="16" />
-          </button>
-          <button
-            type="button"
-            class="browser-tool-button"
-            [disabled]="!activeTab()"
-            aria-label="Reload"
-            title="Reload"
-            (click)="reload()"
-          >
-            @if (currentState()?.isLoading) {
-              <ng-icon name="lucideLoaderCircle" size="16" class="browser-spinner" />
-            } @else {
-              <ng-icon name="lucideRefreshCw" size="16" />
-            }
-          </button>
-        </div>
-
-        <form class="browser-address-bar" (submit)="submitUrl($event)">
-          <span class="browser-address-icon" aria-hidden="true">
-            <ng-icon name="lucideGlobe" size="14" />
-          </span>
-          <input
-            class="browser-address-input"
-            type="text"
-            [value]="urlInput()"
-            [placeholder]="hasTabs() ? 'Enter a URL' : 'Create a tab to start browsing'"
-            spellcheck="false"
-            autocapitalize="off"
-            autocomplete="off"
-            [disabled]="!activeTab()"
-            (focus)="isEditing.set(true)"
-            (blur)="handleInputBlur($event)"
-            (input)="handleInput($event)"
-          />
-        </form>
-
-        <div class="browser-toolbar-group browser-toolbar-group--meta">
-          <div
-            class="browser-chip browser-chip--context"
-            [class.browser-chip--shared]="activeRuntimeContext() === 'shared'"
-            [class.browser-chip--isolated]="activeRuntimeContext() === 'isolated'"
-            [title]="activeRuntimeContext() === 'shared' ? 'This page is using the shared browser profile.' : 'This page is using the project-isolated browser profile.'"
-          >
-            <span class="browser-chip-text">{{ activeRuntimeContextLabel() }}</span>
-          </div>
-
-          @if (isDevtoolsOpen()) {
-            <div class="browser-dock-toggle">
-              <button
-                type="button"
-                class="browser-dock-button"
-                [class.browser-dock-button--active]="dockPosition() === 'right'"
-                aria-label="Dock DevTools to the right"
-                title="Show DevTools side by side"
-                (click)="setDockPosition('right')"
-              >
-                <ng-icon name="lucideColumns2" size="14" />
-              </button>
-              <button
-                type="button"
-                class="browser-dock-button"
-                [class.browser-dock-button--active]="dockPosition() === 'bottom'"
-                aria-label="Dock DevTools at the bottom"
-                title="Show DevTools stacked"
-                (click)="setDockPosition('bottom')"
-              >
-                <ng-icon name="lucideRows2" size="14" />
-              </button>
-            </div>
-          }
-
-          <button
-            type="button"
-            class="browser-devtools-toggle"
-            [class.browser-devtools-toggle--active]="isDevtoolsOpen()"
-            [disabled]="!hasLivePage()"
-            [attr.aria-pressed]="isDevtoolsOpen()"
-            [title]="isDevtoolsOpen() ? 'Hide embedded DevTools' : 'Show embedded DevTools'"
-            (click)="toggleDevTools()"
-          >
-            <ng-icon name="lucideSquareTerminal" size="15" />
-            <span>{{ isDevtoolsOpen() ? 'Hide tools' : 'Inspect' }}</span>
-          </button>
-
-          <button
-            type="button"
-            class="browser-tool-button"
-            [class.browser-tool-button--active]="showSettingsPopover()"
-            aria-label="Browser settings"
-            title="Browser routing settings"
-            (click)="toggleSettingsPopover($event)"
-          >
-            <ng-icon name="lucideSettings" size="15" />
-          </button>
-        </div>
-      </div>
-
-      @if (showSettingsPopover()) {
-        <div class="browser-settings-popover" (click)="$event.stopPropagation()">
-          <div class="browser-settings-popover-header">
-            <span class="browser-settings-popover-title">Browser Routing</span>
-            <button type="button" class="browser-settings-popover-close" (click)="showSettingsPopover.set(false)">
-              <ng-icon name="lucideX" size="14" />
-            </button>
-          </div>
-          <div class="browser-settings-mode-row">
-            <button
-              type="button"
-              class="browser-settings-mode-btn"
-              [class.browser-settings-mode-btn--active]="effectiveIsolationMode() === 'shared'"
-              (click)="setIsolationMode('shared')"
-            >
-              <ng-icon name="lucideGlobe" size="14" />
-              Shared
-            </button>
-            <button
-              type="button"
-              class="browser-settings-mode-btn"
-              [class.browser-settings-mode-btn--active]="effectiveIsolationMode() === 'isolated'"
-              (click)="setIsolationMode('isolated')"
-            >
-              <ng-icon name="lucideShield" size="14" />
-              Isolated
-            </button>
-          </div>
-          @if (effectiveIsolationMode() === 'isolated') {
-            <div class="browser-settings-globs">
-              <span class="browser-settings-globs-label">Shared browser URL patterns</span>
-              <p class="browser-settings-globs-copy">
-                Matching top-level URLs open in the shared browser profile. Non-matching URLs fall back to this project's isolated browser.
-              </p>
-              @if (effectiveSharedGlobs().length > 0) {
-                <div class="browser-settings-glob-chips">
-                  @for (glob of effectiveSharedGlobs(); track glob; let i = $index) {
-                    <span class="browser-settings-glob-chip">
-                      {{ glob }}
-                      <button type="button" (click)="removeGlob(i)"><ng-icon name="lucideX" size="10" /></button>
-                    </span>
-                  }
-                </div>
-              }
-              <div class="browser-settings-glob-input">
-                <input
-                  z-input
-                  type="text"
-                  placeholder="https://accounts.google.com/*"
-                  [value]="settingsGlobInput()"
-                  (input)="settingsGlobInput.set($any($event.target).value)"
-                  (keydown.enter)="addGlob()"
-                />
-                <button z-button [zDisabled]="!settingsGlobInput().trim()" (click)="addGlob()">
-                  <ng-icon name="lucidePlus" size="14" class="mr-1" />
-                  Add
-                </button>
-              </div>
-            </div>
-          }
-        </div>
-      }
-
-      <div #surface class="browser-surface">
-        <div class="browser-stage-grid">
-          <div #browserViewport class="browser-native-host browser-native-host--page"></div>
-
-          <button
-            type="button"
-            class="browser-splitter"
-            [class.browser-splitter--vertical]="isSideBySide()"
-            [hidden]="!isDevtoolsOpen()"
-            aria-label="Resize DevTools panel"
-            title="Drag to resize DevTools"
-            (pointerdown)="startDevtoolsResize($event)"
-          >
-            <span class="browser-splitter-grip"></span>
-          </button>
-
-          <div
-            #devtoolsViewport
-            class="browser-native-host browser-native-host--devtools"
-            [class.browser-native-host--hidden]="!isDevtoolsOpen()"
-          ></div>
-        </div>
-
-        @if (!isSupported()) {
-          <div class="browser-overlay">
-            <p class="browser-message">The browser panel is only available in the Electron app.</p>
-          </div>
-        } @else if (!hasTabs()) {
-          <div class="browser-overlay">
-            <div class="browser-empty-state">
-              <p class="browser-message">Keep up to three live tabs attached to this project.</p>
-              <p class="browser-caption">Tabs restore their URLs and custom names when you come back. DevTools stays available whenever a live page is open.</p>
-              <button type="button" class="browser-empty-action" (click)="addBrowserTab()">
-                <ng-icon name="lucidePlus" size="14" />
-                Create first tab
-              </button>
-            </div>
-          </div>
-        } @else if (currentState()?.lastError) {
-          <div class="browser-overlay browser-overlay--bottom">
-            <p class="browser-error">{{ currentState()!.lastError }}</p>
-          </div>
-        } @else if (!currentState() || currentState()?.url === 'about:blank') {
-          <div class="browser-overlay">
-            <div class="browser-empty-state browser-empty-state--compact">
-              <p class="browser-message">This tab is ready.</p>
-              <p class="browser-caption">Enter a URL above to load a page, then rename the tab if you want a custom label.</p>
-            </div>
-          </div>
-        }
-      </div>
-    </div>
-  `,
-  styles: [`
-    :host {
-      display: block;
-      height: 100%;
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-    }
-
-    .browser-panel {
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      min-height: 0;
-      min-width: 0;
-      overflow: hidden;
-      color: var(--foreground);
-      --browser-devtools-grid-template: minmax(0, 1fr) 0 minmax(0, 0);
-      background: var(--background);
-    }
-
-    .browser-tabs-bar,
-    .browser-toolbar {
-      padding: 0 0.5rem;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .browser-tabs-bar {
-      display: flex;
-      align-items: flex-end;
-      min-height: 2rem;
-      min-width: 0;
-      background: color-mix(in oklch, var(--muted) 45%, var(--background));
-    }
-
-    .browser-tabs-list {
-      display: flex;
-      align-items: center;
-      gap: 0;
-      flex: 1;
-      min-width: 0;
-      width: 100%;
-      padding-top: 0.3rem;
-      overflow-x: auto;
-      overflow-y: hidden;
-    }
-
-    .browser-tab-pill {
-      display: flex;
-      align-items: center;
-      gap: 0.15rem;
-      min-width: 0;
-      flex: 0 1 13rem;
-      max-width: 13rem;
-      min-height: 1.8rem;
-      padding: 0 0.25rem 0 0.55rem;
-      border: 1px solid transparent;
-      border-bottom: 0;
-      border-radius: 0.7rem 0.7rem 0 0;
-      background: color-mix(in oklch, var(--muted) 18%, transparent);
-      transition: background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
-      box-shadow: inset 1px 0 0 color-mix(in oklch, var(--border) 72%, transparent);
-      margin-left: -1px;
-    }
-
-    .browser-tab-pill:hover {
-      background: color-mix(in oklch, var(--muted) 52%, var(--background));
-    }
-
-    .browser-tab-pill--active {
-      position: relative;
-      z-index: 1;
-      background: var(--background);
-      border-color: var(--border);
-      box-shadow:
-        inset 0 2px 0 color-mix(in oklch, var(--foreground) 18%, transparent),
-        0 1px 0 var(--background);
-    }
-
-    .browser-tab-pill--active + .browser-tab-pill {
-      box-shadow: none;
-    }
-
-    .browser-tab-pill-main {
-      flex: 1;
-      min-width: 0;
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-      border: 0;
-      padding: 0;
-      background: transparent;
-      color: inherit;
-      cursor: pointer;
-      text-align: left;
-    }
-
-    .browser-tab-pill-title,
-    .browser-tab-pill-meta {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .browser-tab-pill-title {
-      flex: 1;
-      min-width: 0;
-      font-size: 0.74rem;
-      font-weight: 500;
-      color: color-mix(in oklch, var(--foreground) 84%, var(--muted-foreground));
-    }
-
-    .browser-tab-pill-meta {
-      flex-shrink: 0;
-      max-width: 4.5rem;
-      font-size: 0.68rem;
-      color: color-mix(in oklch, var(--muted-foreground) 88%, transparent);
-    }
-
-    .browser-tab-pill--active .browser-tab-pill-title {
-      color: var(--foreground);
-      font-weight: 600;
-    }
-
-    .browser-tab-pill--active .browser-tab-pill-meta {
-      color: var(--muted-foreground);
-    }
-
-    .browser-tab-pill-icon,
-    .browser-add-tab {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      width: 1.45rem;
-      height: 1.45rem;
-      border-radius: 0.35rem;
-      border: 0;
-      background: transparent;
-      color: var(--muted-foreground);
-      cursor: pointer;
-      transition: background-color 0.14s ease, color 0.14s ease;
-    }
-
-    .browser-tab-pill-icon:hover,
-    .browser-add-tab:hover {
-      color: var(--foreground);
-      background: color-mix(in oklch, var(--muted) 80%, var(--background));
-    }
-
-    .browser-add-tab {
-      width: 1.7rem;
-      height: 1.7rem;
-      margin-left: 0.25rem;
-      border-radius: 9999px;
-      border: 1px solid color-mix(in oklch, var(--border) 84%, transparent);
-    }
-
-    .browser-tab-pill-input {
-      flex: 1;
-      min-width: 0;
-      height: 1.5rem;
-      border-radius: 0.35rem;
-      border: 1px solid var(--ring);
-      background: var(--background);
-      color: var(--foreground);
-      padding: 0 0.5rem;
-      font-size: 0.74rem;
-      outline: none;
-    }
-
-    .browser-toolbar {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 0.4rem;
-      min-width: 0;
-      min-height: 2.2rem;
-      background: var(--background);
-    }
-
-    .browser-toolbar-group {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.15rem;
-      min-width: 0;
-    }
-
-    .browser-toolbar-group--meta {
-      justify-content: flex-end;
-    }
-
-    .browser-tool-button,
-    .browser-dock-button,
-    .browser-devtools-toggle,
-    .browser-empty-action {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.4rem;
-      height: 1.7rem;
-      border-radius: 0.4rem;
-      border: 1px solid transparent;
-      color: var(--muted-foreground);
-      background: transparent;
-      cursor: pointer;
-      transition: background-color 0.14s ease, color 0.14s ease, border-color 0.14s ease;
-    }
-
-    .browser-tool-button {
-      width: 1.7rem;
-      flex-shrink: 0;
-    }
-
-    .browser-tool-button:hover:not(:disabled),
-    .browser-dock-button:hover:not(:disabled),
-    .browser-devtools-toggle:hover:not(:disabled),
-    .browser-empty-action:hover {
-      color: var(--foreground);
-      background: color-mix(in oklch, var(--muted) 80%, var(--background));
-    }
-
-    .browser-tool-button:disabled,
-    .browser-dock-button:disabled,
-    .browser-devtools-toggle:disabled {
-      opacity: 0.42;
-      cursor: not-allowed;
-    }
-
-    .browser-tool-button--active {
-      color: var(--foreground);
-      background: color-mix(in oklch, var(--muted) 80%, var(--background));
-    }
-
-    .browser-address-bar {
-      position: relative;
-      display: flex;
-      align-items: center;
-      min-width: 0;
-      width: 100%;
-      overflow: hidden;
-    }
-
-    .browser-address-icon {
-      position: absolute;
-      left: 0.6rem;
-      display: inline-flex;
-      align-items: center;
-      color: var(--muted-foreground);
-      pointer-events: none;
-    }
-
-    .browser-address-input {
-      width: 100%;
-      min-width: 0;
-      height: 1.75rem;
-      padding: 0 0.75rem 0 1.9rem;
-      border: 1px solid var(--border);
-      border-radius: 9999px;
-      background: color-mix(in oklch, var(--muted) 38%, var(--background));
-      color: var(--foreground);
-      font-size: 0.78rem;
-      outline: none;
-      transition: border-color 0.14s ease, box-shadow 0.14s ease, background-color 0.14s ease;
-    }
-
-    .browser-address-input:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-
-    .browser-address-input:focus {
-      border-color: var(--ring);
-      box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 18%, transparent);
-      background: var(--background);
-    }
-
-    .browser-chip {
-      display: inline-flex;
-      align-items: center;
-      min-width: 0;
-      max-width: 7rem;
-      height: 1.55rem;
-      padding: 0 0.5rem;
-      border-radius: 9999px;
-      border: 1px solid var(--border);
-      background: var(--background);
-      color: var(--muted-foreground);
-      font-size: 0.68rem;
-    }
-
-    .browser-chip--context {
-      font-weight: 600;
-      letter-spacing: 0.01em;
-    }
-
-    .browser-chip--shared {
-      color: color-mix(in oklch, oklch(0.55 0.14 220) 60%, var(--foreground));
-      background: color-mix(in oklch, oklch(0.6 0.14 220) 14%, var(--background));
-      border-color: color-mix(in oklch, oklch(0.6 0.14 220) 28%, var(--border));
-    }
-
-    .browser-chip--isolated {
-      color: color-mix(in oklch, oklch(0.58 0.14 160) 60%, var(--foreground));
-      background: color-mix(in oklch, oklch(0.62 0.14 160) 14%, var(--background));
-      border-color: color-mix(in oklch, oklch(0.62 0.14 160) 28%, var(--border));
-    }
-
-    .browser-chip-text {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .browser-dock-toggle {
-      display: inline-flex;
-      align-items: center;
-      padding: 0.1rem;
-      border-radius: 9999px;
-      border: 1px solid var(--border);
-      background: var(--background);
-    }
-
-    .browser-dock-button {
-      width: 1.5rem;
-      height: 1.45rem;
-      border-radius: 9999px;
-    }
-
-    .browser-dock-button--active {
-      color: var(--foreground);
-      background: color-mix(in oklch, var(--muted) 70%, var(--background));
-    }
-
-    .browser-devtools-toggle {
-      padding: 0 0.55rem;
-      min-width: 5.6rem;
-      font-size: 0.73rem;
-      font-weight: 500;
-      border-color: var(--border);
-      background: var(--background);
-    }
-
-    .browser-devtools-toggle--active,
-    .browser-empty-action {
-      color: var(--foreground);
-      background: color-mix(in oklch, var(--muted) 80%, var(--background));
-      border-color: var(--border);
-    }
-
-    .browser-settings-popover {
-      position: absolute;
-      z-index: 50;
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      background: var(--background);
-      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
-    }
-
-    .browser-settings-popover {
-      top: 4rem;
-      right: 0.6rem;
-      width: 20rem;
-      padding: 0.7rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.6rem;
-    }
-
-    .browser-settings-popover-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .browser-settings-popover-title {
-      font-size: 0.78rem;
-      font-weight: 600;
-      color: var(--foreground);
-    }
-
-    .browser-settings-popover-close {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 1.4rem;
-      height: 1.4rem;
-      border: none;
-      border-radius: 9999px;
-      background: transparent;
-      color: var(--muted-foreground);
-      cursor: pointer;
-    }
-
-    .browser-settings-popover-close:hover {
-      background: color-mix(in oklch, var(--muted) 80%, transparent);
-      color: var(--foreground);
-    }
-
-    .browser-settings-mode-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.4rem;
-    }
-
-    .browser-settings-mode-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.35rem;
-      padding: 0.42rem 0.6rem;
-      border: 1px solid var(--border);
-      border-radius: 0.5rem;
-      background: transparent;
-      color: var(--muted-foreground);
-      font-size: 0.76rem;
-      font-weight: 500;
-      cursor: pointer;
-    }
-
-    .browser-settings-mode-btn--active {
-      border-color: var(--primary);
-      background: color-mix(in oklch, var(--primary) 10%, transparent);
-      color: var(--foreground);
-    }
-
-    .browser-settings-globs {
-      display: flex;
-      flex-direction: column;
-      gap: 0.4rem;
-    }
-
-    .browser-settings-globs-copy {
-      margin: 0;
-      color: var(--muted-foreground);
-      font-size: 0.75rem;
-      line-height: 1.45;
-    }
-
-    .browser-settings-globs-label {
-      font-size: 0.71rem;
-      font-weight: 600;
-      color: var(--muted-foreground);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .browser-settings-glob-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.3rem;
-    }
-
-    .browser-settings-glob-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.3rem;
-      padding: 0.18rem 0.45rem;
-      border-radius: 9999px;
-      border: 1px solid var(--border);
-      background: color-mix(in oklch, var(--muted) 36%, var(--background));
-      font-size: 0.71rem;
-      color: var(--foreground);
-    }
-
-    .browser-settings-glob-chip button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 0.9rem;
-      height: 0.9rem;
-      border: none;
-      border-radius: 9999px;
-      background: transparent;
-      color: var(--muted-foreground);
-      cursor: pointer;
-    }
-
-    .browser-settings-glob-chip button:hover {
-      color: var(--destructive);
-    }
-
-    .browser-settings-glob-input {
-      display: flex;
-      gap: 0.35rem;
-      align-items: center;
-    }
-
-    .browser-settings-glob-input input {
-      flex: 1;
-      min-width: 0;
-      height: 1.7rem;
-      font-size: 0.78rem;
-    }
-
-    .browser-settings-glob-input button {
-      flex-shrink: 0;
-      height: 1.7rem;
-      font-size: 0.72rem;
-      padding: 0 0.55rem;
-    }
-
-    .browser-surface {
-      position: relative;
-      flex: 1;
-      min-height: 0;
-      background: var(--background);
-    }
-
-    .browser-stage-grid {
-      display: grid;
-      grid-template: var(--browser-devtools-grid-template);
-      height: 100%;
-      min-height: 0;
-      gap: 0;
-      overflow: hidden;
-    }
-
-    .browser-native-host {
-      position: relative;
-      min-height: 0;
-      overflow: hidden;
-      background: var(--background);
-    }
-
-    .browser-native-host--devtools {
-      background: color-mix(in oklch, var(--muted) 24%, var(--background));
-    }
-
-    .browser-native-host--hidden {
-      visibility: hidden;
-      pointer-events: none;
-    }
-
-    .browser-splitter {
-      position: relative;
-      height: 0.35rem;
-      border: 0;
-      padding: 0;
-      background: var(--border);
-      cursor: row-resize;
-    }
-
-    .browser-splitter--vertical {
-      width: 0.35rem;
-      height: auto;
-      cursor: col-resize;
-    }
-
-    .browser-splitter-grip {
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 1.2rem;
-      height: 0.12rem;
-      border-radius: 9999px;
-      transform: translate(-50%, -50%);
-      background: color-mix(in oklch, var(--muted-foreground) 48%, transparent);
-    }
-
-    .browser-splitter--vertical .browser-splitter-grip {
-      width: 0.12rem;
-      height: 1.2rem;
-    }
-
-    .browser-panel--dragging .browser-splitter-grip,
-    .browser-splitter:hover .browser-splitter-grip {
-      background: color-mix(in oklch, var(--foreground) 42%, var(--muted-foreground));
-    }
-
-    .browser-overlay {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0.7rem;
-      pointer-events: none;
-    }
-
-    .browser-overlay--bottom {
-      align-items: flex-end;
-      justify-content: flex-start;
-    }
-
-    .browser-empty-state {
-      max-width: 28rem;
-      display: grid;
-      gap: 0.45rem;
-      padding: 0.9rem 1rem;
-      border-radius: 0.75rem;
-      border: 1px solid var(--border);
-      background: var(--background);
-      pointer-events: auto;
-    }
-
-    .browser-empty-state--compact {
-      max-width: 24rem;
-    }
-
-    .browser-message,
-    .browser-error,
-    .browser-caption {
-      margin: 0;
-      line-height: 1.55;
-    }
-
-    .browser-message {
-      color: var(--foreground);
-      font-size: 0.84rem;
-      font-weight: 600;
-    }
-
-    .browser-caption {
-      color: var(--muted-foreground);
-      font-size: 0.74rem;
-    }
-
-    .browser-empty-action {
-      pointer-events: auto;
-      width: fit-content;
-      padding: 0 0.7rem;
-    }
-
-    .browser-error {
-      max-width: 30rem;
-      padding: 0.55rem 0.75rem;
-      border-radius: 0.6rem;
-      border: 1px solid color-mix(in oklch, var(--destructive) 42%, var(--border));
-      background: var(--background);
-      color: color-mix(in oklch, var(--destructive) 82%, var(--foreground));
-      pointer-events: auto;
-    }
-
-    .browser-spinner {
-      animation: browser-spin 0.8s linear infinite;
-    }
-
-    @keyframes browser-spin {
-      to {
-        transform: rotate(360deg);
-      }
-    }
-  `],
+  templateUrl: './browser-panel.component.html',
+  styleUrl: './browser-panel.component.scss',
   viewProviders: [
     provideIcons({
       lucideArrowLeft,
@@ -1035,11 +79,13 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
   readonly isolationConfig = input<BrowserIsolationConfig | null>(null);
   readonly isolationConfigChanged = output<BrowserIsolationConfig>();
 
-  @ViewChild('surface', { static: true }) surface!: ElementRef<HTMLDivElement>;
-  @ViewChild('browserViewport', { static: true }) browserViewport!: ElementRef<HTMLDivElement>;
-  @ViewChild('devtoolsViewport', { static: true }) devtoolsViewport!: ElementRef<HTMLDivElement>;
+  private readonly surface = viewChild.required<ElementRef<HTMLDivElement>>('surface');
+  private readonly browserViewport = viewChild.required<ElementRef<HTMLDivElement>>('browserViewport');
+  private readonly devtoolsViewport = viewChild.required<ElementRef<HTMLDivElement>>('devtoolsViewport');
 
   private readonly api = getElectronBrowserApi();
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly hydrationRequests = new Map<number, Promise<void>>();
   private readonly browserState = inject(BrowserViewStateService);
   private readonly browserTabsState = inject(BrowserTabsStateService);
   private readonly persistedBrowserState = inject(ProjectBrowserStateService);
@@ -1194,7 +240,9 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    this.isSupported.set(await this.api.isSupported());
+    const supported = await this.api.isSupported();
+    if (this.destroyRef.destroyed) return;
+    this.isSupported.set(supported);
     if (!this.isSupported()) {
       return;
     }
@@ -1218,15 +266,17 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
       });
     });
 
-    this.resizeObserver.observe(this.surface.nativeElement);
-    this.resizeObserver.observe(this.browserViewport.nativeElement);
-    this.resizeObserver.observe(this.devtoolsViewport.nativeElement);
+    this.resizeObserver.observe(this.surface().nativeElement);
+    this.resizeObserver.observe(this.browserViewport().nativeElement);
+    this.resizeObserver.observe(this.devtoolsViewport().nativeElement);
     window.addEventListener('resize', this.handleWindowResize, { passive: true });
 
     await this.ensureHydrated(this.projectId());
+    if (this.destroyRef.destroyed) return;
     const currentKey = this.currentKey();
     this.currentVisibleKey = currentKey;
     await this.showCurrentBrowser(currentKey);
+    if (this.destroyRef.destroyed) return;
     this.startLayoutHeartbeat();
     this.scheduleDeferredBoundsSync();
   }
@@ -1503,7 +553,7 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
     this.isDraggingDevtools.set(true);
 
     const onPointerMove = (nextEvent: PointerEvent) => {
-      const surfaceRect = this.surface.nativeElement.getBoundingClientRect();
+      const surfaceRect = this.surface().nativeElement.getBoundingClientRect();
       const nextRatio = this.isSideBySide()
         ? (surfaceRect.right - nextEvent.clientX) / surfaceRect.width
         : (surfaceRect.bottom - nextEvent.clientY) / surfaceRect.height;
@@ -1531,12 +581,13 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
   };
 
   private async handleKeyChange(nextKey: string | null): Promise<void> {
-    if (!this.api || !this.isSupported() || !this.browserViewport) {
+    if (!this.api || !this.isSupported() || !this.browserViewport()) {
       return;
     }
 
     const projectId = this.projectId();
     await this.ensureHydrated(projectId);
+    if (this.destroyRef.destroyed || projectId !== this.projectId() || nextKey !== this.currentKey()) return;
 
     const previousKey = this.currentVisibleKey;
     this.currentVisibleKey = nextKey;
@@ -1547,35 +598,46 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
       await this.api.hide(previousKey);
     }
 
+    if (!this.isCurrentBrowser(nextKey)) return;
     await this.showCurrentBrowser(nextKey);
-    this.scheduleDeferredBoundsSync();
+    if (this.isCurrentBrowser(nextKey)) this.scheduleDeferredBoundsSync();
   }
 
   private async ensureHydrated(projectId: number): Promise<void> {
-    if (this.hydratedProjects.has(projectId)) {
-      return;
-    }
+    if (this.hydratedProjects.has(projectId)) return;
+    const pending = this.hydrationRequests.get(projectId);
+    if (pending) return pending;
+    const request = (async () => {
+      try {
+        const snapshot = await firstValueFrom(this.persistedBrowserState.get(projectId));
+        if (this.destroyRef.destroyed) return;
+        this.browserTabsState.hydrate(snapshot);
+        this.persistedSnapshots.set(projectId, JSON.stringify(snapshot));
+      } catch {
+        if (this.destroyRef.destroyed) return;
+        const snapshot = this.browserTabsState.createSnapshot(projectId);
+        this.browserTabsState.hydrate(snapshot);
+        this.persistedSnapshots.set(projectId, JSON.stringify(snapshot));
+      } finally {
+        if (!this.destroyRef.destroyed) this.hydratedProjects.add(projectId);
+      }
+    })();
+    this.hydrationRequests.set(projectId, request);
+    try { await request; } finally { this.hydrationRequests.delete(projectId); }
+  }
 
-    try {
-      const snapshot = await firstValueFrom(this.persistedBrowserState.get(projectId));
-      this.browserTabsState.hydrate(snapshot);
-      this.persistedSnapshots.set(projectId, JSON.stringify(snapshot));
-    } catch {
-      const emptySnapshot = this.browserTabsState.createSnapshot(projectId);
-      this.browserTabsState.hydrate(emptySnapshot);
-      this.persistedSnapshots.set(projectId, JSON.stringify(emptySnapshot));
-    } finally {
-      this.hydratedProjects.add(projectId);
-    }
+  private isCurrentBrowser(key: string | null): boolean {
+    return !this.destroyRef.destroyed && key === this.currentKey() && key === this.currentVisibleKey;
   }
 
   private async showCurrentBrowser(browserKey: string | null): Promise<void> {
-    if (!this.api || !this.isSupported() || !this.browserViewport || !browserKey) {
+    if (!this.api || !this.isSupported() || !this.browserViewport() || !browserKey) {
       this.syncUrlInput(undefined);
       return;
     }
 
     const currentState = await this.api.getState(browserKey);
+    if (!this.isCurrentBrowser(browserKey)) return;
     if (currentState) {
       this.browserState.upsertState(currentState);
       if (currentState.url !== 'about:blank') {
@@ -1593,7 +655,9 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
     }
 
     await this.hydratePersistedTab(browserKey);
+    if (!this.isCurrentBrowser(browserKey)) return;
     const hydratedState = await this.api.getState(browserKey);
+    if (!this.isCurrentBrowser(browserKey)) return;
     if (hydratedState?.url && hydratedState.url !== 'about:blank') {
       const shown = await this.api.show({
         key: browserKey,
@@ -1638,7 +702,7 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   private async syncBounds(): Promise<void> {
-    if (!this.api || !this.isSupported() || !this.currentVisibleKey || !this.browserViewport) {
+    if (!this.api || !this.isSupported() || !this.currentVisibleKey || !this.browserViewport()) {
       return;
     }
 
@@ -1658,8 +722,8 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
 
   private getLayout(): BrowserViewLayout {
     return {
-      browserBounds: this.getBounds(this.browserViewport.nativeElement),
-      devtoolsBounds: this.isDevtoolsOpen() ? this.getBounds(this.devtoolsViewport.nativeElement) : undefined,
+      browserBounds: this.getBounds(this.browserViewport().nativeElement),
+      devtoolsBounds: this.isDevtoolsOpen() ? this.getBounds(this.devtoolsViewport().nativeElement) : undefined,
       devtoolsVisible: this.isDevtoolsOpen(),
     };
   }
@@ -1675,7 +739,7 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
   }
 
   private getLayoutSignature(): string | null {
-    if (!this.currentVisibleKey || !this.browserViewport) {
+    if (!this.currentVisibleKey || !this.browserViewport()) {
       return null;
     }
 
@@ -1684,8 +748,8 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
       return null;
     }
 
-    const browserBounds = this.getBounds(this.browserViewport.nativeElement);
-    const devtoolsBounds = this.isDevtoolsOpen() ? this.getBounds(this.devtoolsViewport.nativeElement) : null;
+    const browserBounds = this.getBounds(this.browserViewport().nativeElement);
+    const devtoolsBounds = this.isDevtoolsOpen() ? this.getBounds(this.devtoolsViewport().nativeElement) : null;
     return JSON.stringify({
       key: this.currentVisibleKey,
       dockPosition: this.dockPosition(),
@@ -1719,10 +783,12 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
 
   private scheduleDeferredBoundsSync(): void {
     requestAnimationFrame(() => {
+      if (this.destroyRef.destroyed) return;
       void this.syncBounds();
       this.requestLayoutStabilization();
 
       requestAnimationFrame(() => {
+        if (this.destroyRef.destroyed) return;
         void this.syncBounds();
         this.requestLayoutStabilization();
       });
@@ -1884,8 +950,10 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
       return defaultDockPosition;
     }
 
-    const value = window.localStorage.getItem(this.getDockPreferenceKey(browserKey));
-    return value === 'bottom' ? 'bottom' : 'right';
+    try {
+      const value = window.localStorage?.getItem(this.getDockPreferenceKey(browserKey));
+      return value === 'bottom' ? 'bottom' : 'right';
+    } catch { return defaultDockPosition; }
   }
 
   private writeDockPositionPreference(browserKey: string, position: DevtoolsDockPosition): void {
@@ -1893,7 +961,8 @@ export class BrowserPanelComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    window.localStorage.setItem(this.getDockPreferenceKey(browserKey), position);
+    try { window.localStorage?.setItem(this.getDockPreferenceKey(browserKey), position); }
+    catch { /* Unavailable preference storage must not interrupt native view layout. */ }
   }
 
   private getDockPreferenceKey(browserKey: string): string {

@@ -2,7 +2,7 @@ import type { OverlayRef } from '@angular/cdk/overlay';
 import { isPlatformBrowser } from '@angular/common';
 import { EventEmitter, Inject, PLATFORM_ID } from '@angular/core';
 
-import { filter, fromEvent, Subject, takeUntil } from 'rxjs';
+import { filter, fromEvent, Observable, Subject, takeUntil } from 'rxjs';
 
 import type { ZardSheetComponent, ZardSheetOptions } from './sheet.component';
 
@@ -13,6 +13,7 @@ const enum eTriggerAction {
 
 export class ZardSheetRef<T = any, R = any, U = any> {
   private destroy$ = new Subject<void>();
+  private readonly closed$ = new Subject<R | undefined>();
   private isClosing = false;
   protected result?: R;
   componentInstance: T | null = null;
@@ -36,11 +37,15 @@ export class ZardSheetRef<T = any, R = any, U = any> {
     if (isPlatformBrowser(this.platformId)) {
       fromEvent<KeyboardEvent>(document, 'keydown')
         .pipe(
-          filter(event => event.key === 'Escape'),
+          filter((event) => event.key === 'Escape'),
           takeUntil(this.destroy$),
         )
         .subscribe(() => this.close());
     }
+  }
+
+  afterClosed(): Observable<R | undefined> {
+    return this.closed$.asObservable();
   }
 
   close(result?: R) {
@@ -103,6 +108,9 @@ export class ZardSheetRef<T = any, R = any, U = any> {
       }
       this.overlayRef.dispose();
     }
+
+    this.closed$.next(this.result);
+    this.closed$.complete();
 
     if (!this.destroy$.closed) {
       this.destroy$.next();

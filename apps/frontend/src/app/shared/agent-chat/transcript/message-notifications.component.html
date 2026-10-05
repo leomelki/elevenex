@@ -1,0 +1,40 @@
+@for (notification of notifications(); track notification.taskId) {
+  <div
+    class="group/notification grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 text-xs text-foreground"
+    [class]="
+      inline()
+        ? 'border-t border-border/60 py-1'
+        : 'rounded-lg border border-border border-l-[2.5px] px-2.5 py-1.5 data-[status=completed]:border-l-success data-[status=completed]:bg-success/5 data-[status=failed]:border-l-destructive data-[status=failed]:bg-destructive/5 data-[status=stopped]:border-l-muted-foreground'
+    "
+    [attr.data-status]="notification.status"
+    [attr.title]="timestamp()"
+  >
+    <span
+      class="inline-flex shrink-0 text-muted-foreground group-data-[status=completed]/notification:text-success group-data-[status=failed]/notification:text-destructive"
+      aria-hidden="true"
+    >
+      @switch (notification.status) {
+        @case ('completed') {
+          <ng-icon name="lucideCheckCircle" [size]="inline() ? '12' : '14'" />
+        }
+        @case ('failed') {
+          <ng-icon name="lucideXCircle" [size]="inline() ? '12' : '14'" />
+        }
+        @default {
+          <ng-icon name="lucideSquare" [size]="inline() ? '10' : '12'" />
+        }
+      }
+    </span>
+    <span class="min-w-0 truncate">{{ notification.summary }}</span>
+    @if (!inline()) {
+      <span class="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span class="max-w-[7ch] truncate" [title]="notification.taskId">{{
+          notification.taskId
+        }}</span>
+        @if (timestamp(); as label) {
+          <span class="whitespace-nowrap" aria-hidden="true">{{ label }}</span>
+        }
+      </span>
+    }
+  </div>
+}
