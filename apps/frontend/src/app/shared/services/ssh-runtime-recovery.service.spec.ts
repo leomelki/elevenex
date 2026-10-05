@@ -1,7 +1,8 @@
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
+import { signal } from '@angular/core';
 import { of, throwError } from 'rxjs';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SshRuntimeRecoveryService } from './ssh-runtime-recovery.service';
 
@@ -64,10 +65,14 @@ describe('SshRuntimeRecoveryService', () => {
   };
 
   const onboardingConnectionMock = {
+    cancelCurrentConnection: vi.fn(),
+    currentPhase: vi.fn(() => null),
     reconnect: vi.fn(),
   };
 
   const onboardingStartupMock = {
+    cancelStartupConnection: vi.fn(),
+    startupVerifying: vi.fn(() => false),
     prepareStartupPortForwardPrompt: vi.fn(),
     startupConnectingServer: vi.fn().mockReturnValue(null),
     clearStartupFailure: vi.fn(),
@@ -79,11 +84,15 @@ describe('SshRuntimeRecoveryService', () => {
   };
 
   const serverConnectionMock = {
+    recheck: vi.fn(),
+    waitUntilInteractive: vi.fn(() => Promise.resolve()),
     state: vi.fn().mockReturnValue({ phase: 'connected' }),
     isInteractive: vi.fn().mockReturnValue(true),
   };
 
-  const createService = () => TestBed.runInInjectionContext(() => new SshRuntimeRecoveryService(
+  const services: SshRuntimeRecoveryService[] = [];
+  const createService = () => {
+    const service = TestBed.runInInjectionContext(() => new SshRuntimeRecoveryService(
     sshForwardsServiceMock as never,
     projectsServiceMock as never,
     onboardingStateMock as never,
@@ -92,9 +101,13 @@ describe('SshRuntimeRecoveryService', () => {
     navigationServiceMock as never,
     serverConnectionMock as never,
   ));
+    services.push(service);
+    return service;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    serverConnectionMock.waitUntilInteractive.mockResolvedValue(undefined);
     serverConnectionMock.state.mockReturnValue({ phase: 'connected' });
     serverConnectionMock.isInteractive.mockReturnValue(true);
     projectsServiceMock.getAll.mockReturnValue(of([{ id: 5 }]));
@@ -117,8 +130,10 @@ describe('SshRuntimeRecoveryService', () => {
       localPort: 4400,
       installStatus: 'available',
     });
+    onboardingStartupMock.startupConnectingServer.mockReturnValue(null);
     onboardingStartupMock.prepareStartupPortForwardPrompt.mockResolvedValue(undefined);
 
+    TestBed.resetTestingModule();
     const windowMock = (globalThis as typeof globalThis & { window?: any }).window ?? {};
     (globalThis as typeof globalThis & { window?: any }).window = windowMock;
     windowMock.__ELEVENEX_ELECTRON__ = {
@@ -126,7 +141,7 @@ describe('SshRuntimeRecoveryService', () => {
         isSupported: vi.fn().mockResolvedValue(true),
         getState: vi.fn().mockResolvedValue({
           id: server.id,
-          status: 'inactive',
+          status: 'active',
           installStatus: 'available',
           pid: null,
           startedAt: null,
@@ -136,6 +151,12 @@ describe('SshRuntimeRecoveryService', () => {
         }),
       },
     };
+  });
+
+  afterEach(() => {
+    services.splice(0).forEach((service) => service.ngOnDestroy());
+    TestBed.resetTestingModule();
+    vi.useRealTimers();
   });
 
   it('does not show a saved-forward banner on the initial inactive snapshot', async () => {
@@ -276,7 +297,7 @@ describe('SshRuntimeRecoveryService', () => {
 
     expect(service.remoteDisconnect()).toBeNull();
     expect(onboardingStateMock.saveServer).toHaveBeenCalled();
-    expect(onboardingStartupMock.prepareStartupPortForwardPrompt).toHaveBeenCalled();
+    await vi.waitFor(() => expect(onboardingStartupMock.prepareStartupPortForwardPrompt).toHaveBeenCalled());
     expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
   });
 
@@ -337,4 +358,90 @@ describe('SshRuntimeRecoveryService', () => {
     (service as any).handleServerPhaseChange('restored');
     expect((service as any).serverDisconnectGraceTimer).toBeNull();
   });
+  it('cancels a startup reconnect and prevents polling and websocket events from reopening it', async () => {
+    vi.useFakeTimers();
+    const startupServer = signal<typeof server | null>(server);
+    onboardingStartupMock.startupConnectingServer.mockImplementation(() => startupServer());
+    onboardingStartupMock.cancelStartupConnection.mockImplementationOnce(() => startupServer.set(null));
+    const service = createService();
+    expect(service.remoteConnecting()?.server.id).toBe(server.id);
+    service.cancelRemoteConnection();
+    expect(service.remoteConnecting()).toBeNull();
+    expect(service.remoteDisconnect()?.message).toContain('paused');
+    serverConnectionMock.state.mockReturnValue({ phase: 'disconnected' });
+    await service.refreshNow();
+    await (service as any).handleBackendUnreachable();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(onboardingConnectionMock.reconnect).not.toHaveBeenCalled();
+    expect(onboardingConnectionMock.cancelCurrentConnection).toHaveBeenCalled();
+  });
+
+  it('ignores a retry result arriving after cancellation', async () => {
+    let finish!: (value: unknown) => void;
+    onboardingConnectionMock.reconnect.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const service = createService();
+    service.setRemoteDisconnect(server, 'Offline');
+    const pending = service.retryRemoteConnection();
+    service.cancelRemoteConnection();
+    finish({ kind: 'success', localPort: 4400, installStatus: 'available' });
+    await pending;
+    expect(service.remoteDisconnect()?.message).toContain('paused');
+    expect(onboardingStateMock.saveServer).not.toHaveBeenCalled();
+  });
+
+  it('uses increasing automatic retry delays and stops them when paused', async () => {
+    vi.useFakeTimers();
+    onboardingConnectionMock.reconnect.mockResolvedValue({ kind: 'error', message: 'Offline' });
+    const service = createService();
+    service.setRemoteDisconnect(server, 'Offline');
+    await service.retryRemoteConnection();
+    expect(service.retryInSeconds()).toBe(5);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(onboardingConnectionMock.reconnect).toHaveBeenCalledTimes(2);
+    expect(service.retryInSeconds()).toBe(10);
+    service.cancelRemoteConnection();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(onboardingConnectionMock.reconnect).toHaveBeenCalledTimes(2);
+    expect(service.retryInSeconds()).toBeNull();
+  });
+
+  it('never waits on backend HTTP requests before inspecting a dropped tunnel', async () => {
+    serverConnectionMock.isInteractive.mockReturnValue(false);
+    onboardingConnectionMock.reconnect.mockResolvedValue({ kind: 'error', message: 'Offline' });
+    sshForwardsServiceMock.getAllOnce.mockReturnValue(new Promise(() => {}));
+    (window.__ELEVENEX_ELECTRON__!.sshForwarding!.getState as any).mockResolvedValue({ status: 'inactive' });
+    const service = createService();
+    await service.refreshNow();
+    expect(onboardingConnectionMock.reconnect).toHaveBeenCalledOnce();
+    expect(sshForwardsServiceMock.getAllOnce).not.toHaveBeenCalled();
+    expect(service.remoteDisconnect()?.message).toBe('Offline');
+  });
+
+  it('keeps testing connection visible until the backend gate confirms readiness', async () => {
+    let ready!: () => void;
+    serverConnectionMock.waitUntilInteractive.mockReturnValue(new Promise<void>((resolve) => { ready = resolve; }));
+    const service = createService();
+    service.setRemoteDisconnect(server, 'Offline');
+    const pending = service.retryRemoteConnection();
+    await vi.waitFor(() => expect(serverConnectionMock.recheck).toHaveBeenCalled());
+    expect(service.remoteConnecting()?.phaseIndex).toBe(4);
+    expect(service.remoteConnecting()?.localPort).toBe(4400);
+    ready();
+    await pending;
+    expect(service.remoteConnecting()).toBeNull();
+    expect(service.remoteDisconnect()).toBeNull();
+  });
+
+  it('does not automatically retry an authentication error or canceled installer', async () => {
+    vi.useFakeTimers();
+    onboardingConnectionMock.reconnect.mockResolvedValue({ kind: 'error', message: 'Permission denied', retryable: false });
+    const service = createService();
+    service.setRemoteDisconnect(server, 'Offline');
+    await service.retryRemoteConnection();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(onboardingConnectionMock.reconnect).toHaveBeenCalledOnce();
+    expect(service.retryInSeconds()).toBeNull();
+    expect(service.automaticRetryPaused()).toBe(true);
+  });
+
 });

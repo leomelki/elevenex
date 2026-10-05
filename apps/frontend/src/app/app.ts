@@ -39,6 +39,7 @@ import { ThemeService } from './shared/services/theme.service';
 import { ServerConnectionService } from './shared/services/server-connection.service';
 import { AgentControlDrawerComponent } from './features/agent-control/agent-control-drawer.component';
 import { AgentCommandBarComponent } from './features/agent-control/agent-command-bar.component';
+import { ZardButtonComponent } from './shared/components/button';
 import { ZardInputDirective } from './shared/components/input';
 import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
 import { LocalComputerBashService } from '@/shared/services/local-computer-bash.service';
@@ -76,6 +77,7 @@ function readSidebarWidth(): number {
     AgentControlDrawerComponent,
     AgentCommandBarComponent,
     ZardInputDirective,
+    ZardButtonComponent,
     TmuxRequiredOverlayComponent,
   ],
   templateUrl: './app.html',
@@ -116,12 +118,15 @@ export class App implements OnInit, OnDestroy {
   isFullScreen = signal(false);
   isFocused = signal(false);
   remoteReconnectPassword = signal('');
+  remoteReconnectPassphrase = signal('');
   tmuxActionBusy = signal(false);
   windowEnvironmentReady = signal(false);
   isOnboardingRoute = signal(this.router.url.startsWith('/onboarding'));
   switchingEnvironment = this.connectionManager.switching;
   readonly startupPortForwardPrompt = this.startupService.startupPortForwardPrompt;
   readonly disconnectedForwardsBanner = this.sshRuntimeRecovery.disconnectedForwardsBanner;
+  readonly remoteRetryInSeconds = this.sshRuntimeRecovery.retryInSeconds;
+  readonly remoteAutomaticRetryPaused = this.sshRuntimeRecovery.automaticRetryPaused;
   readonly remoteDisconnect = this.sshRuntimeRecovery.remoteDisconnect;
   readonly remoteConnecting = this.sshRuntimeRecovery.remoteConnecting;
   readonly connectingPhases = CONNECTING_PHASES;
@@ -320,11 +325,13 @@ export class App implements OnInit, OnDestroy {
   async retryRemoteConnection() {
     const disconnect = this.remoteDisconnect();
     if (disconnect?.server.authMode !== 'password') {
-      await this.sshRuntimeRecovery.retryRemoteConnection();
+      await this.sshRuntimeRecovery.retryRemoteConnection(disconnect?.server.authMode === 'key'
+        ? { passphrase: this.remoteReconnectPassphrase() || undefined } : {});
+      if (!this.remoteDisconnect()) this.clearRemoteReconnectCredentials();
       return;
     }
 
-    const password = this.remoteReconnectPassword().trim();
+    const password = this.remoteReconnectPassword();
     if (!password) {
       toast.error('Enter the SSH password to reconnect.');
       return;
@@ -376,6 +383,7 @@ export class App implements OnInit, OnDestroy {
 
   private clearRemoteReconnectCredentials() {
     this.remoteReconnectPassword.set('');
+    this.remoteReconnectPassphrase.set('');
   }
 
   onResizeStart(event: MouseEvent) {

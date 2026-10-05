@@ -73,8 +73,7 @@ describe('RemoteInstallFlowService', () => {
       remotePort: 11111,
     });
 
-    await Promise.resolve();
-    expect(service.state()?.sessionId).toBe(77);
+    await vi.waitFor(() => expect(service.state()?.sessionId).toBe(77));
 
     listeners[0]?.({ sessionId: 77, type: 'data', data: 'sudo apt install -y tmux\r\n' });
     expect(service.state()?.terminalOutput.join('')).toContain('sudo apt install -y tmux');
@@ -129,8 +128,7 @@ describe('RemoteInstallFlowService', () => {
       remotePort: 11111,
     });
 
-    await Promise.resolve();
-    expect(service.state()?.sessionId).toBe(77);
+    await vi.waitFor(() => expect(service.state()?.sessionId).toBe(77));
 
     const result = await service.ensureReady({
       id: 19,
@@ -147,4 +145,41 @@ describe('RemoteInstallFlowService', () => {
     expect(service.state()).toBeNull();
     expect(remoteServerApi.closeSession).toHaveBeenCalledWith(77);
   });
+  it('does not open an installer from a result arriving after cancellation', async () => {
+    let finish!: (value: unknown) => void;
+    remoteServerApi.ensureReady.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const controller = new AbortController();
+    const service = TestBed.inject(RemoteInstallFlowService);
+    const pending = service.ensureReady({ id: 19, sshHost: 'example.com' } as any, controller.signal);
+    controller.abort(new Error('Canceled'));
+    await expect(pending).rejects.toThrow('Canceled');
+    finish({ status: 'waiting-for-user', sessionId: 77 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(service.state()).toBeNull();
+  });
+
+  it('clears installer UI immediately even if closing its SSH terminal hangs', async () => {
+    remoteServerApi.ensureReady.mockResolvedValue({ status: 'waiting-for-user', sessionId: 77 });
+    remoteServerApi.closeSession.mockReturnValueOnce(new Promise(() => {}));
+    const service = TestBed.inject(RemoteInstallFlowService);
+    const pending = service.ensureReady({ id: 19, sshHost: 'example.com' } as any);
+    await vi.waitFor(() => expect(service.state()?.sessionId).toBe(77));
+    void service.cancel();
+    expect(service.state()).toBeNull();
+    expect((await pending).status).toBe('error');
+  });
+
+  it('makes a failed recheck actionable rather than leaving checking enabled forever', async () => {
+    remoteServerApi.ensureReady.mockResolvedValue({ status: 'waiting-for-user', sessionId: 77 });
+    remoteServerApi.recheck.mockRejectedValue(new Error('Network lost'));
+    const service = TestBed.inject(RemoteInstallFlowService);
+    const pending = service.ensureReady({ id: 19, sshHost: 'example.com' } as any);
+    await vi.waitFor(() => expect(service.state()?.sessionId).toBe(77));
+    await service.recheck();
+    expect(service.state()?.checking).toBe(false);
+    expect(service.state()?.terminalError).toBe('Network lost');
+    await service.cancel();
+    await pending;
+  });
+
 });

@@ -29,6 +29,7 @@ describe('OnboardingStartupService', () => {
   };
 
   const onboardingConnectionMock = {
+    cancelCurrentConnection: vi.fn(),
     reconnect: vi.fn(),
   };
 
@@ -59,6 +60,7 @@ describe('OnboardingStartupService', () => {
     projectsServiceMock as never,
     navigationServiceMock as never,
     remoteLinkMock as never,
+    { recheck: vi.fn(), waitUntilInteractive: vi.fn(() => Promise.resolve()) } as never,
   );
 
   beforeEach(() => {
@@ -451,4 +453,17 @@ describe('OnboardingStartupService', () => {
 
     expect(service.startupPortForwardPrompt()).toBeNull();
   });
+  it('ignores a startup result after the user cancels or switches environments', async () => {
+    let finish!: (value: unknown) => void;
+    onboardingConnectionMock.reconnect.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const service = createService();
+    const pending = service.initialize();
+    service.cancelStartupConnection();
+    expect(service.startupConnectingServer()).toBeNull();
+    finish({ kind: 'success', localPort: 4400, installStatus: 'available' });
+    await pending;
+    expect(onboardingStateMock.saveServer).not.toHaveBeenCalled();
+    expect(navigationServiceMock.refreshTree).not.toHaveBeenCalled();
+  });
+
 });

@@ -1,10 +1,12 @@
 import { Injectable, signal } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, timeout } from 'rxjs';
 import { RemoteLinkService } from '@/features/remote-link/remote-link.service';
 import { PairedDeviceState, SavedServer } from '../models/onboarding.model';
 import { SshForward } from '../models/ssh-forward.model';
 import { OnboardingConnectionService } from './onboarding-connection.service';
 import { OnboardingStateService } from './onboarding-state.service';
+import { ServerConnectionService } from './server-connection.service';
+import { awaitConnectionOperation } from '../runtime/connection-operation';
 import { NavigationService } from './navigation.service';
 import { SshForwardsService } from './ssh-forwards.service';
 import { ProjectsService } from './projects.service';
@@ -12,6 +14,7 @@ import { ProjectsService } from './projects.service';
 export interface StartupConnectionFailure {
   server: SavedServer;
   message: string;
+  retryable?: boolean;
 }
 
 export interface StartupPortForwardPromptItem {
@@ -63,6 +66,11 @@ export class OnboardingStartupService {
   readonly startupPortForwardPrompt = this._startupPortForwardPrompt.asReadonly();
   readonly startupConnectingServer = this._startupConnectingServer.asReadonly();
 
+  private connectionGeneration = 0;
+  private controller: AbortController | null = null;
+  readonly startupVerifying = signal(false);
+  private initializePromise: Promise<void> | null = null;
+
   constructor(
     private readonly onboardingState: OnboardingStateService,
     private readonly onboardingConnection: OnboardingConnectionService,
@@ -70,9 +78,29 @@ export class OnboardingStartupService {
     private readonly projectsService: ProjectsService,
     private readonly navigationService: NavigationService,
     private readonly remoteLink: RemoteLinkService,
+    private readonly serverConnection: ServerConnectionService,
   ) {}
 
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
+    if (this.initializePromise) return this.initializePromise;
+    const promise = this.initializeConnection().finally(() => {
+      if (this.initializePromise === promise) this.initializePromise = null;
+    });
+    this.initializePromise = promise;
+    return promise;
+  }
+
+  cancelStartupConnection(): void {
+    ++this.connectionGeneration;
+    this.controller?.abort();
+    this.startupVerifying.set(false);
+    if (this._startupConnectingServer()) this.onboardingConnection.cancelCurrentConnection();
+    this._startupConnectingServer.set(null);
+    this.initializePromise = null;
+  }
+
+  private async initializeConnection(): Promise<void> {
+    const generation = ++this.connectionGeneration;
     const snapshot = this.onboardingState.readSnapshot();
     if (snapshot.mode === 'paired') {
       await this.restorePairedLink(snapshot.paired);
@@ -98,8 +126,11 @@ export class OnboardingStartupService {
     }
 
     this._startupConnectingServer.set(server);
+    const controller = new AbortController();
+    this.controller = controller;
     try {
       const result = await this.onboardingConnection.reconnect(server, { interactive: false });
+      if (generation !== this.connectionGeneration) return;
       if (result.kind === 'success') {
         const nextServer: SavedServer = {
           ...server,
@@ -108,23 +139,35 @@ export class OnboardingStartupService {
           lastConnectedAt: new Date().toISOString(),
         };
         this.onboardingState.saveServer(nextServer);
-        await this.prepareStartupPortForwardPrompt(nextServer);
+        this._startupConnectingServer.set(nextServer);
+        this.startupVerifying.set(true);
+        this.serverConnection.recheck();
+        await awaitConnectionOperation(this.serverConnection.waitUntilInteractive(controller.signal), controller.signal, 15000);
+        if (generation !== this.connectionGeneration) return;
         this._startupFailure.set(null);
         this.navigationService.refreshTree();
+        this._startupConnectingServer.set(null);
+        await this.prepareStartupPortForwardPrompt(nextServer);
         return;
       }
 
       this._startupFailure.set({
         server,
+        ...(result.kind !== 'error' || result.retryable === false ? { retryable: false } : {}),
         message: result.message || 'Could not connect to the SSH server.',
       });
-    } catch {
+    } catch (error) {
+      if (generation !== this.connectionGeneration) return;
       this._startupFailure.set({
-        server,
-        message: 'An unexpected error occurred while reconnecting.',
+        server: this._startupConnectingServer() ?? server,
+        message: error instanceof Error ? error.message : 'An unexpected error occurred while reconnecting.',
       });
     } finally {
-      this._startupConnectingServer.set(null);
+      if (generation === this.connectionGeneration) {
+        this._startupConnectingServer.set(null);
+        this.startupVerifying.set(false);
+        this.controller = null;
+      }
     }
   }
 
@@ -170,10 +213,12 @@ export class OnboardingStartupService {
   }
 
   async prepareStartupPortForwardPrompt(server: SavedServer): Promise<void> {
+    const generation = this.connectionGeneration;
     const [allForwards, activeProjects] = await Promise.all([
-      firstValueFrom(this.sshForwardsService.getAll()).catch(() => []),
-      firstValueFrom(this.projectsService.getAll('active')).catch(() => []),
+      firstValueFrom(this.sshForwardsService.getAll().pipe(timeout(8000))).catch(() => []),
+      firstValueFrom(this.projectsService.getAll('active').pipe(timeout(8000))).catch(() => []),
     ]);
+    if (generation !== this.connectionGeneration) return;
     const activeProjectIds = new Set(activeProjects.map(p => p.id));
     const pending = allForwards
       .filter(forward => matchesServer(forward, server))

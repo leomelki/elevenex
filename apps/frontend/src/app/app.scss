@@ -354,7 +354,7 @@
   background:
     radial-gradient(circle at top left, color-mix(in oklch, var(--destructive) 12%, transparent), transparent 34%),
     radial-gradient(circle at bottom right, color-mix(in oklch, var(--primary) 10%, transparent), transparent 40%),
-    color-mix(in oklch, var(--background) 72%, rgb(10 14 24 / 0.68));
+    color-mix(in oklch, var(--background) 72%, var(--surface-shade));
   backdrop-filter: blur(22px) saturate(0.92);
 }
 
@@ -368,9 +368,9 @@
   background:
     linear-gradient(180deg, color-mix(in oklch, var(--background) 88%, var(--surface-tint) 12%), color-mix(in oklch, var(--background) 94%, transparent));
   box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.04),
-    0 16px 40px rgba(15, 23, 42, 0.12),
-    0 40px 96px rgba(15, 23, 42, 0.22);
+    0 1px 2px color-mix(in srgb, var(--surface-shade) 4%, transparent),
+    0 16px 40px color-mix(in srgb, var(--surface-shade) 12%, transparent),
+    0 40px 96px color-mix(in srgb, var(--surface-shade) 22%, transparent);
   backdrop-filter: blur(28px);
   display: flex;
   flex-direction: column;
@@ -485,39 +485,6 @@
   width: 100%;
 }
 
-.runtime-remote-overlay__button {
-  margin-top: 24px;
-  min-width: 180px;
-  min-height: 2.9rem;
-  border: 0;
-  border-radius: 999px;
-  padding: 0 1.15rem;
-  background: linear-gradient(180deg, color-mix(in oklch, var(--primary) 90%, var(--surface-tint) 8%), color-mix(in oklch, var(--primary) 82%, var(--surface-shade) 6%));
-  color: var(--primary-foreground);
-  font-size: 0.92rem;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  box-shadow:
-    0 10px 28px color-mix(in srgb, var(--primary) 26%, transparent),
-    inset 0 1px 0 rgb(255 255 255 / 0.18);
-  transition: transform 0.16s ease, opacity 0.16s ease, box-shadow 0.16s ease;
-}
-
-.runtime-remote-overlay__button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow:
-    0 14px 34px color-mix(in srgb, var(--primary) 32%, transparent),
-    inset 0 1px 0 rgb(255 255 255 / 0.18);
-}
-
-.runtime-remote-overlay__button:disabled {
-  opacity: 0.72;
-  cursor: wait;
-}
-
 @keyframes runtime-remote-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -532,7 +499,7 @@
   background:
     radial-gradient(circle at top left, color-mix(in oklch, var(--primary) 10%, transparent), transparent 34%),
     radial-gradient(circle at bottom right, color-mix(in oklch, var(--primary) 8%, transparent), transparent 40%),
-    color-mix(in oklch, var(--background) 72%, rgb(10 14 24 / 0.68));
+    color-mix(in oklch, var(--background) 72%, var(--surface-shade));
 }
 
 .runtime-remote-overlay__icon-ring--connecting {
@@ -587,9 +554,9 @@
 }
 
 .runtime-remote-overlay__step--done .runtime-remote-overlay__step-dot {
-  background: color-mix(in oklch, var(--primary) 14%, var(--background));
-  border: 1px solid color-mix(in oklch, var(--primary) 28%, transparent);
-  color: var(--primary);
+  background: color-mix(in oklch, var(--success) 14%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--success) 28%, transparent);
+  color: var(--success);
 }
 
 .runtime-remote-overlay__step--done .runtime-remote-overlay__step-label {
@@ -679,32 +646,7 @@
   background: color-mix(in oklch, var(--background) 60%, var(--surface-tint) 28%);
 }
 
-.runtime-remote-overlay__button--cancel {
-  margin-top: 20px;
-  min-width: 120px;
-  min-height: 2.4rem;
-  border: 1px solid color-mix(in oklch, var(--border) 80%, var(--surface-tint) 10%);
-  border-radius: 999px;
-  padding: 0 1.1rem;
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: 0.88rem;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
-  box-shadow: none;
-}
 
-.runtime-remote-overlay__button--cancel:hover {
-  color: var(--foreground);
-  border-color: color-mix(in oklch, var(--border) 100%, var(--surface-tint) 10%);
-  background: color-mix(in oklch, var(--muted) 40%, transparent);
-  transform: none;
-  box-shadow: none;
-}
 
 .server-connection-overlay {
   position: fixed;
@@ -833,7 +775,4 @@
     gap: 6px;
   }
 
-  .runtime-remote-overlay__button {
-    width: 100%;
-  }
 }

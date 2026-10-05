@@ -166,14 +166,6 @@ export class EnvironmentConnectionManagerService {
   ): Promise<{ ok: boolean; error?: string }> {
     return this.runSwitch(server.name, async () => {
       const currentActive = this.activeServer();
-      const wasActive = this.snapshot().mode === 'ssh' && currentActive?.id === server.id && this.snapshot().remoteConnectionReady;
-      if (wasActive) {
-        this.sshRuntimeRecovery.clearRemoteDisconnect();
-        this.onboardingStartup.clearStartupFailure();
-        await this.finalizeWorkspaceHandoff();
-        return;
-      }
-
       const previousServer = currentActive;
       await this.stopActiveRemoteTunnel();
 
@@ -292,6 +284,9 @@ export class EnvironmentConnectionManagerService {
       return { ok: false, error: 'A connection switch is already in progress.' };
     }
 
+    this.onboardingStartup.cancelStartupConnection();
+    this.onboardingConnection.cancelCurrentConnection();
+    this.sshRuntimeRecovery.clearRemoteDisconnect(true);
     this.switching.set(true);
     this.switchError.set('');
     this.pendingTargetLabel.set(label);

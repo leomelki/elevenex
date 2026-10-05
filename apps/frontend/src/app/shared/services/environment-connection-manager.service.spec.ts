@@ -87,11 +87,14 @@ describe('EnvironmentConnectionManagerService', () => {
   };
 
   const onboardingConnectionMock = {
+    cancelCurrentConnection: vi.fn(),
     connect: vi.fn(),
     reconnect: vi.fn(),
   };
 
   const onboardingStartupMock = {
+    cancelStartupConnection: vi.fn(),
+    startupVerifying: vi.fn(() => false),
     prepareStartupPortForwardPrompt: vi.fn(),
     clearStartupFailure: vi.fn(),
   };

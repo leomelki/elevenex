@@ -52,6 +52,7 @@ export interface ElectronRemoteServerEnsureReadyResult {
 }
 
 export interface ElectronRemoteServerEnsureReadyPayload {
+  requestId?: string;
   id: number;
   sshHost: string;
   sshUser?: string | null;
@@ -82,6 +83,7 @@ export interface ElectronRemoteServerPhaseEvent {
 }
 
 export interface ElectronRemoteServerApi {
+  cancel?(payload: { id: number; requestId: string }): Promise<boolean>;
   ensureReady(payload: ElectronRemoteServerEnsureReadyPayload): Promise<ElectronRemoteServerEnsureReadyResult>;
   recheck(payload: ElectronRemoteServerEnsureReadyPayload): Promise<ElectronRemoteServerEnsureReadyResult>;
   sendInput(payload: { sessionId: number; data: string }): Promise<boolean>;

@@ -173,6 +173,7 @@ contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
     },
   },
   remoteServer: {
+    cancel: (payload) => ipcRenderer.invoke('elevenex-remote-server:cancel', payload),
     ensureReady: (payload) => ipcRenderer.invoke('elevenex-remote-server:ensure-ready', payload),
     recheck: (payload) => ipcRenderer.invoke('elevenex-remote-server:recheck', payload),
     sendInput: (payload) => ipcRenderer.invoke('elevenex-remote-server:send-input', payload),

@@ -1,6 +1,6 @@
 import { inject, untracked } from '@angular/core';
 import { HttpInterceptorFn, withInterceptors } from '@angular/common/http';
-import { from, switchMap } from 'rxjs';
+import { Observable, switchMap } from 'rxjs';
 import { getBackendOrigin } from './runtime-config';
 import { ServerConnectionService } from '../services/server-connection.service';
 
@@ -24,9 +24,18 @@ const apiBaseInterceptor: HttpInterceptorFn = (req, next) => untracked(() => {
     ? req.clone({ url: `${backendOrigin}${req.url}` })
     : req;
 
-  return from(serverConnection.waitUntilInteractive()).pipe(
-    switchMap(() => next(request)),
-  );
+  const ready = new Observable<void>((subscriber) => {
+    const controller = new AbortController();
+    untracked(() => serverConnection.waitUntilInteractive(controller.signal)).then(
+      () => { subscriber.next(); subscriber.complete(); },
+      (error) => subscriber.error(error),
+    );
+    return () => controller.abort();
+  });
+  return ready.pipe(switchMap(() => {
+    if (getBackendOrigin() !== backendOrigin) throw new Error('The backend changed before this request could be sent.');
+    return next(request);
+  }));
 });
 
 export function provideApiBaseInterceptor() {

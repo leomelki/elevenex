@@ -156,7 +156,7 @@
         <div class="runtime-remote-overlay__eyebrow runtime-remote-overlay__eyebrow--connecting">Establishing connection</div>
         <h1 class="runtime-remote-overlay__title">Connecting to {{ connecting.server.name }}&hellip;</h1>
         <p class="runtime-remote-overlay__subtitle">
-          Preparing the runtime environment on your remote server.
+          Checking SSH and the remote runtime. The workspace resumes once the backend responds.
         </p>
 
         <div class="runtime-remote-overlay__server-info">
@@ -195,11 +195,14 @@
         </ol>
 
         <button
-          class="runtime-remote-overlay__button runtime-remote-overlay__button--cancel"
+          z-button
+          zType="outline"
+          zSize="lg"
+          class="mt-6 w-full"
           type="button"
           (click)="cancelRemoteConnection()"
         >
-          Cancel
+          Cancel reconnection
         </button>
       </div>
     </section>
@@ -237,6 +240,15 @@
           <span>{{ disconnect.message }}</span>
         </div>
 
+        @if (remoteRetryInSeconds(); as seconds) {
+          <div class="mt-4 flex w-full items-center justify-between gap-3 text-sm text-muted-foreground" aria-live="polite">
+            <span>Automatic retry in {{ seconds }}s</span>
+            <button z-button zType="ghost" zSize="sm" type="button" (click)="cancelRemoteConnection()">Pause retries</button>
+          </div>
+        } @else if (remoteAutomaticRetryPaused()) {
+          <p class="mt-4 text-sm text-muted-foreground">Automatic reconnection is paused.</p>
+        }
+
         @if (disconnect.server.authMode === 'password') {
           <div class="runtime-remote-overlay__credentials" aria-label="SSH credentials">
             <label class="runtime-remote-overlay__field">
@@ -252,12 +264,27 @@
               />
             </label>
           </div>
+        } @else if (disconnect.server.authMode === 'key') {
+          <label class="mt-4 grid w-full gap-2 text-left text-sm text-muted-foreground">
+            <span>SSH key passphrase (optional)</span>
+            <input
+              z-input
+              type="password"
+              autocomplete="off"
+              placeholder="Passphrase for your SSH key"
+              [value]="remoteReconnectPassphrase()"
+              (input)="remoteReconnectPassphrase.set($any($event.target).value || '')"
+              (keydown.enter)="retryRemoteConnection()"
+            />
+          </label>
         }
 
         <button
-          class="runtime-remote-overlay__button"
+          z-button
+          zSize="lg"
+          class="mt-4 w-full"
           type="button"
-          [disabled]="switchingEnvironment() || (disconnect.server.authMode === 'password' && !remoteReconnectPassword().trim())"
+          [zDisabled]="switchingEnvironment() || (disconnect.server.authMode === 'password' && !remoteReconnectPassword())"
           (click)="retryRemoteConnection()"
         >
           <ng-icon name="lucideRefreshCw" size="16" />

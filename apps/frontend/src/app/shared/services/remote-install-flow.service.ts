@@ -1,4 +1,5 @@
 import { Injectable, signal } from '@angular/core';
+import { awaitConnectionOperation } from '../runtime/connection-operation';
 
 import {
   ElectronRemoteServerEnsureReadyPayload,
@@ -21,6 +22,7 @@ export class RemoteInstallFlowService {
   private readonly _state = signal<RemoteInstallFlowState | null>(null);
   readonly state = this._state.asReadonly();
 
+  private connectionSignal: AbortSignal | undefined;
   private pendingResolver: ((result: ElectronRemoteServerEnsureReadyResult) => void) | null = null;
   private removeInstallerListener: (() => void) | null = null;
 
@@ -61,6 +63,7 @@ export class RemoteInstallFlowService {
 
   async ensureReady(
     payload: ElectronRemoteServerEnsureReadyPayload,
+    signal?: AbortSignal,
   ): Promise<ElectronRemoteServerEnsureReadyResult> {
     const api = getElectronRemoteServerApi();
     if (!api) {
@@ -80,8 +83,16 @@ export class RemoteInstallFlowService {
       };
     }
 
-    const initialResult = await api.ensureReady(payload);
-    return this.handleEnsureReadyResult(payload, initialResult);
+    this.connectionSignal = signal;
+    const abort = () => { void this.cancel(); };
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      const initialResult = await awaitConnectionOperation(api.ensureReady(payload), signal, 190000);
+      signal?.throwIfAborted();
+      return await this.handleEnsureReadyResult(payload, initialResult);
+    } finally {
+      signal?.removeEventListener('abort', abort);
+    }
   }
 
   async recheck(): Promise<void> {
@@ -97,12 +108,22 @@ export class RemoteInstallFlowService {
       terminalError: null,
     });
 
-    const nextResult = await api.recheck({
-      ...current.payload,
-      sessionId: current.sessionId,
-    });
-    const pendingPayload = current.payload;
-    await this.handleEnsureReadyResult(pendingPayload, nextResult);
+    try {
+      const nextResult = await awaitConnectionOperation(api.recheck({
+        ...current.payload,
+        sessionId: current.sessionId,
+      }), this.connectionSignal, 190000);
+      this.connectionSignal?.throwIfAborted();
+      if (this._state()?.sessionId !== current.sessionId) return;
+      await this.handleEnsureReadyResult(current.payload, nextResult);
+    } catch (error) {
+      if (this._state()?.sessionId !== current.sessionId) return;
+      this._state.update((state) => state ? {
+        ...state, checking: false,
+        terminalError: error instanceof Error ? error.message : 'Could not check the remote runtime. Retry.',
+      } : null);
+      void api.cancel?.({ id: current.payload.id, requestId: current.payload.requestId || 'legacy' }).catch(() => undefined);
+    }
   }
 
   async sendInput(data: string): Promise<void> {
@@ -132,7 +153,6 @@ export class RemoteInstallFlowService {
       return;
     }
 
-    await api?.closeSession(current.sessionId).catch(() => undefined);
     const resolver = this.pendingResolver;
     this.pendingResolver = null;
     this._state.set(null);
@@ -141,6 +161,7 @@ export class RemoteInstallFlowService {
       status: 'error',
       message: 'Remote install was canceled.',
     });
+    await api?.closeSession(current.sessionId).catch(() => undefined);
   }
 
   private async handleEnsureReadyResult(

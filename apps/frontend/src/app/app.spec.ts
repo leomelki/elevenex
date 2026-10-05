@@ -15,6 +15,8 @@ describe('App', () => {
   const disconnectedBanner = signal<any>(null);
   const remoteDisconnect = signal<any>(null);
   const remoteConnecting = signal<any>(null);
+  const retryInSeconds = signal<number | null>(null);
+  const automaticRetryPaused = signal(false);
   const remoteInstallState = signal<any>(null);
   const switching = signal(false);
   const serverConnectionState = signal<ServerConnectionState>({
@@ -37,6 +39,8 @@ describe('App', () => {
     initialize: vi.fn(() => Promise.resolve()),
   };
   const runtimeRecoveryServiceMock = {
+    retryInSeconds: retryInSeconds.asReadonly(),
+    automaticRetryPaused: automaticRetryPaused.asReadonly(),
     disconnectedForwardsBanner: disconnectedBanner.asReadonly(),
     remoteDisconnect: remoteDisconnect.asReadonly(),
     remoteConnecting: remoteConnecting.asReadonly(),
@@ -130,6 +134,8 @@ describe('App', () => {
     remoteDisconnect.set(null);
     remoteConnecting.set(null);
     remoteInstallState.set(null);
+    retryInSeconds.set(null);
+    automaticRetryPaused.set(false);
     switching.set(false);
     serverConnectionState.set({
       phase: 'connected',
@@ -280,7 +286,7 @@ describe('App', () => {
 
     const compiled = fixture.nativeElement as HTMLElement;
     const body = compiled.querySelector('.app-shell__body') as HTMLElement | null;
-    const drawer = compiled.querySelector('.agent-control-drawer') as HTMLElement | null;
+    const drawer = compiled.querySelector('.agent-drawer') as HTMLElement | null;
 
     expect(body).toBeTruthy();
     expect(drawer).toBeTruthy();
@@ -506,8 +512,8 @@ describe('App', () => {
     fixture.detectChanges();
 
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('.remote-install-overlay')).toBeTruthy();
-    expect(compiled.textContent).toContain('Finish preparing the remote server');
+    expect(compiled.querySelector('[aria-label="Remote server setup"]')).toBeTruthy();
+    expect(compiled.textContent).toContain('Finish setting up the remote server');
     expect(compiled.textContent).toContain('sudo apt install -y tmux');
   });
 });

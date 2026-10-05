@@ -37,6 +37,8 @@ const {
   normalizeEnvironmentRef,
 } = require('./environment-ref.cjs');
 const { createConnectionRegistry } = require('./connection-registry.cjs');
+const { createRemoteConnectionAttempts } = require('./remote-connection-attempts.cjs');
+const remoteConnectionAttempts = createRemoteConnectionAttempts();
 const { createLinkManager } = require('./link-manager.cjs');
 const { createWebRtcPeerFactory } = require('./link-webrtc.cjs');
 const {
@@ -434,6 +436,7 @@ function removeRemoteServerInterest(serverId, windowId) {
 }
 
 function dropRemoteServerInterestForWindow(windowId) {
+  remoteConnectionAttempts.cancelWindow(windowId);
   for (const [serverId, windowIds] of remoteServerInterest) {
     windowIds.delete(windowId);
     if (windowIds.size === 0) {
@@ -823,7 +826,7 @@ function terminateChildProcess(childProcess, graceMs = CHILD_PROCESS_KILL_TIMEOU
   }
 
   const killTimer = setTimeout(() => {
-    if (childProcess.exitCode === null && !childProcess.killed) {
+    if (childProcess.exitCode === null && childProcess.signalCode === null) {
       try {
         childProcess.kill('SIGKILL');
       } catch {
@@ -1721,16 +1724,15 @@ function buildResolvedSshConfig(forward, resolvedSshOutput) {
   };
 }
 
-// Async `ssh -G`, resolved once per connection and reused by everything that
-// needs it — a config can contain `Match exec` blocks that run shell commands
-// on every resolve, so this must not be called more often than it used to be.
-// Returns '' on failure; buildResolvedSshConfig then falls back to resolving it
-// itself, which is also where a bad host surfaces as a proper error.
+// Async `ssh -G` for command and tunnel setup. The agent-forward plan keeps
+// its dump so starting the tunnel does not resolve that configuration twice.
+// Returns '' on failure; async callers report an error without blocking Electron.
 function resolveSshConfigOutput(forward) {
+  forward.signal?.throwIfAborted();
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn('ssh', buildSshResolveArgs(forward), { stdio: ['ignore', 'pipe', 'ignore'] });
+      child = spawn('ssh', buildSshResolveArgs(forward), { stdio: ['ignore', 'pipe', 'ignore'], signal: forward.signal, timeout: 10000, killSignal: 'SIGKILL' });
     } catch {
       resolve('');
       return;
@@ -1739,7 +1741,7 @@ function resolveSshConfigOutput(forward) {
     let stdout = '';
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.once('error', () => resolve(''));
-    child.once('exit', (code) => resolve(code === 0 ? stdout : ''));
+    child.once('close', (code) => resolve(code === 0 ? stdout : ''));
   });
 }
 
@@ -1895,10 +1897,13 @@ function buildSshTarget(forward) {
   return forward.sshHost;
 }
 
-function getSshBaseArgs(resolvedConfig, target) {
+function getSshBaseArgs(resolvedConfig, target, askPass = null) {
   return [
     '-F',
     resolvedConfig.configPath,
+    // Background recovery must not open an external credential prompt.
+    '-o',
+    `BatchMode=${askPass ? 'no' : 'yes'}`,
     // Fail fast when the host is unreachable so exec commands (install/start/probe
     // scripts) don't hang forever on a dead network.
     '-o',
@@ -2022,16 +2027,20 @@ function runWslCommand(forward, command, options = {}) {
 // renaming every call site) keeps the entire preflight/install/start/wait
 // orchestration below transport-agnostic. Only the actual process spawn
 // differs between an SSH target and a local WSL distro.
-function runSshCommandAsync(forward, command, options = {}) {
+async function runSshCommandAsync(forward, command, options = {}) {
   if (forward.transport === 'wsl') {
     return runWslCommandAsync(forward, command, options);
   }
 
+  forward.signal?.throwIfAborted();
+  const output = await resolveSshConfigOutput(forward);
+  forward.signal?.throwIfAborted();
+  if (!output) throw new Error('Could not resolve SSH configuration within 10 seconds.');
+  const resolvedConfig = buildResolvedSshConfig(forward, output);
   return new Promise((resolve, reject) => {
-    const resolvedConfig = buildResolvedSshConfig(forward);
     const askPass = createSshAskPassRuntime(forward);
     const target = buildSshTarget(forward);
-    const baseArgs = getSshBaseArgs(resolvedConfig, target);
+    const baseArgs = getSshBaseArgs(resolvedConfig, target, askPass);
     const sshArgs = [...baseArgs, ...getRemoteCommandArgs(command, options)];
 
     let child;
@@ -2039,6 +2048,9 @@ function runSshCommandAsync(forward, command, options = {}) {
       child = spawn('ssh', sshArgs, {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: askPass?.env ?? process.env,
+        signal: forward.signal,
+        timeout: options.timeoutMs ?? 120000,
+        killSignal: 'SIGKILL',
       });
     } catch (error) {
       cleanupSshArtifacts({ resolvedConfig, askPass });
@@ -2052,7 +2064,7 @@ function runSshCommandAsync(forward, command, options = {}) {
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
-    child.once('exit', (code) => {
+    child.once('close', (code) => {
       cleanupSshArtifacts({ resolvedConfig, askPass });
       if (code !== 0) {
         reject(new Error((stderr || stdout || `ssh exited with code ${code ?? 'unknown'}`).trim()));
@@ -2076,7 +2088,7 @@ function runSshCommand(forward, command, options = {}) {
   const resolvedConfig = buildResolvedSshConfig(forward);
   const askPass = createSshAskPassRuntime(forward);
   const target = buildSshTarget(forward);
-  const baseArgs = getSshBaseArgs(resolvedConfig, target);
+  const baseArgs = getSshBaseArgs(resolvedConfig, target, askPass);
   const sshArgs = [...baseArgs, ...getRemoteCommandArgs(command, options)];
 
   try {
@@ -2262,20 +2274,20 @@ function createRemoteInstallerSession(forward, preflight) {
 async function runRemotePreflight(forward) {
   const remotePort = forward.remotePort || 11111;
   try {
-    return await runSshCommandAsync(forward, buildRemotePreflightScript(remotePort));
+    return await runSshCommandAsync(forward, buildRemotePreflightScript(remotePort), { timeoutMs: 20000 });
   } catch (unixError) {
     // A WSL distro is always Linux — never probe it as a Windows target. Its
     // Win32 interop feature lets `powershell.exe` resolve and "succeed" by
     // transparently running the real Windows PowerShell outside the distro,
     // which would silently misreport the distro as a Windows remote.
-    if (forward.transport === 'wsl') {
+    if (forward.signal?.aborted || forward.transport === 'wsl') {
       throw unixError;
     }
     try {
       return await runSshCommandAsync(
         forward,
         buildWindowsRemotePreflightScript(remotePort),
-        { remotePlatform: 'win32' },
+        { remotePlatform: 'win32', timeoutMs: 20000 },
       );
     } catch {
       throw unixError;
@@ -2413,7 +2425,8 @@ async function tryRemoteDownloadAsync(forward, url, remoteDestination, remotePla
   }
 }
 
-function emitRemoteServerPhaseEvent(serverId, phase) {
+function emitRemoteServerPhaseEvent(serverId, phase, signal) {
+  signal?.throwIfAborted();
   console.info('[remote-runtime] phase', { serverId, phase });
   // Every window watching this server sees the same progress — two windows
   // waiting on one install must not have to guess what the other is doing.
@@ -2425,13 +2438,15 @@ function emitRemoteServerPhaseEvent(serverId, phase) {
 // install and probing over SSH — the tunnel is shared, so the answer is too.
 const readyRemoteServers = new Map();
 
-function reuseReadyRemoteServer(serverId) {
+async function reuseReadyRemoteServer(serverId, signal) {
   const cached = readyRemoteServers.get(serverId);
   const runtime = sshForwardRuntimes.get(serverId);
   if (!cached || runtime?.status !== 'active' || !runtime.localPort) {
     return null;
   }
 
+  if (!(await probeElevenexBackend(runtime.localPort))) return null;
+  signal?.throwIfAborted();
   return { ...cached, localPort: runtime.localPort, sessionId: null };
 }
 
@@ -2444,6 +2459,7 @@ function recordRemoteServerResult(serverId, result) {
 }
 
 async function ensureRemoteServerReady(forward) {
+  forward.signal?.throwIfAborted();
   const bundledVersion = getRemoteRuntimeVersion();
   if (!bundledVersion) {
     throw new Error('Remote runtime version is unavailable.');
@@ -2456,8 +2472,9 @@ async function ensureRemoteServerReady(forward) {
     remotePort: forward.remotePort,
     bundledVersion,
   });
-  emitRemoteServerPhaseEvent(forward.id, 'checking');
+  emitRemoteServerPhaseEvent(forward.id, 'checking', forward.signal);
   const preflightResult = await runRemotePreflight(forward);
+  forward.signal?.throwIfAborted();
   const preflight = parseRemotePreflight(preflightResult.stdout);
   console.info('[remote-runtime] preflight result', {
     serverId: forward.id,
@@ -2534,10 +2551,11 @@ async function ensureRemoteServerReady(forward) {
   const resolvedSshOutput = forward.transport === 'wsl'
     ? ''
     : await resolveSshConfigOutput(forward);
+  forward.signal?.throwIfAborted();
   const agentForward = resolveAgentForwardPlan(forward, preflight, resolvedSshOutput);
 
   if (installStatus === 'missing' || installStatus === 'needs-update') {
-    emitRemoteServerPhaseEvent(forward.id, 'uploading');
+    emitRemoteServerPhaseEvent(forward.id, 'uploading', forward.signal);
     await runSshCommandAsync(
       forward,
       preflight.remotePlatform === 'win32'
@@ -2558,7 +2576,7 @@ async function ensureRemoteServerReady(forward) {
       );
     }
 
-    emitRemoteServerPhaseEvent(forward.id, 'installing');
+    emitRemoteServerPhaseEvent(forward.id, 'installing', forward.signal);
     await runSshCommandAsync(
       forward,
       installCommand({
@@ -2571,7 +2589,7 @@ async function ensureRemoteServerReady(forward) {
   }
 
   if (needsRuntimeRestart) {
-    emitRemoteServerPhaseEvent(forward.id, 'starting');
+    emitRemoteServerPhaseEvent(forward.id, 'starting', forward.signal);
     await runSshCommandAsync(
       forward,
       startCommand({
@@ -2597,7 +2615,7 @@ async function ensureRemoteServerReady(forward) {
     remoteCommandOptions,
   );
 
-  emitRemoteServerPhaseEvent(forward.id, 'probing');
+  emitRemoteServerPhaseEvent(forward.id, 'probing', forward.signal);
 
   // WSL2 shares localhost with Windows automatically, so there is no tunnel to
   // start — the wait command above already blocked (from inside the distro)
@@ -2647,7 +2665,7 @@ async function ensureRemoteServerReady(forward) {
     await stopSshForwardRuntime(forward.id);
     forward.localPort = await getFreePort();
 
-    emitRemoteServerPhaseEvent(forward.id, 'starting');
+    emitRemoteServerPhaseEvent(forward.id, 'starting', forward.signal);
     await runSshCommandAsync(
       forward,
       startCommand({
@@ -2669,7 +2687,7 @@ async function ensureRemoteServerReady(forward) {
       remoteCommandOptions,
     );
 
-    emitRemoteServerPhaseEvent(forward.id, 'probing');
+    emitRemoteServerPhaseEvent(forward.id, 'probing', forward.signal);
     runtime = await startSshForwardRuntime({
       ...forward,
       agentForward,
@@ -2865,6 +2883,7 @@ function assertNoSshBindConflict(forward) {
 }
 
 async function startSshForwardRuntime(forward, resolvedSshOutput) {
+  forward.signal?.throwIfAborted();
   const existing = sshForwardRuntimes.get(forward.id);
   if (existing && (existing.status === 'connecting' || existing.status === 'active')) {
     return toSshRuntimeView(forward.id, existing);
@@ -2872,7 +2891,10 @@ async function startSshForwardRuntime(forward, resolvedSshOutput) {
 
   assertNoSshBindConflict(forward);
 
-  const resolvedConfig = buildResolvedSshConfig(forward, resolvedSshOutput);
+  const output = resolvedSshOutput || await resolveSshConfigOutput(forward);
+  forward.signal?.throwIfAborted();
+  if (!output) throw new Error('Could not resolve SSH configuration within 10 seconds.');
+  const resolvedConfig = buildResolvedSshConfig(forward, output);
   const askPass = createSshAskPassRuntime(forward);
   const target = forward.sshHost;
   const bindSpec = `${formatSshForwardHost(forward.bindAddress)}:${forward.localPort}`
@@ -3052,62 +3074,75 @@ async function startSshForwardRuntime(forward, resolvedSshOutput) {
     }, 500);
   });
 
-  const portBound = await waitForLocalPortBound(forward.bindAddress, forward.localPort, SSH_PORT_BOUND_TIMEOUT_MS);
-  {
+  const abortTunnel = () => {
+    runtime.status = 'stopping';
+    terminateChildProcess(childProcess);
+  };
+  forward.signal?.addEventListener('abort', abortTunnel, { once: true });
+  if (forward.signal?.aborted) abortTunnel();
+  try {
+    const portBound = await waitForLocalPortBound(forward.bindAddress, forward.localPort, SSH_PORT_BOUND_TIMEOUT_MS);
+    forward.signal?.throwIfAborted();
+    {
+      const current = sshForwardRuntimes.get(forward.id);
+      if (current === runtime && current.status === 'connecting') {
+        if (portBound) {
+          runtime.status = 'active';
+          runtime.error = null;
+          runtime.debugDetails.lastEvent = 'active';
+          console.info('[ssh-forward] active', {
+            id: forward.id,
+            pid: runtime.pid,
+            target,
+            bindSpec,
+          });
+        } else {
+          runtime.status = 'error';
+          runtime.error = runtime.error || 'SSH tunnel port was not bound within the timeout.';
+          runtime.debugDetails.lastEvent = 'activation-timeout';
+          console.error('[ssh-forward] port not bound within timeout', {
+            id: forward.id,
+            pid: runtime.pid,
+            target,
+            bindSpec,
+          });
+        }
+      }
+    }
+
     const current = sshForwardRuntimes.get(forward.id);
-    if (current === runtime && current.status === 'connecting') {
-      if (portBound) {
-        runtime.status = 'active';
-        runtime.error = null;
-        runtime.debugDetails.lastEvent = 'active';
-        console.info('[ssh-forward] active', {
-          id: forward.id,
-          pid: runtime.pid,
-          target,
-          bindSpec,
-        });
-      } else {
-        runtime.status = 'error';
-        runtime.error = runtime.error || 'SSH tunnel port was not bound within the timeout.';
-        runtime.debugDetails.lastEvent = 'activation-timeout';
-        console.error('[ssh-forward] port not bound within timeout', {
-          id: forward.id,
-          pid: runtime.pid,
-          target,
-          bindSpec,
-        });
+    if (
+      current
+      && current.status === 'active'
+      && forward.probeType === 'elevenex-backend'
+    ) {
+      // A bound local listener only means ssh accepted the -L socket, not that
+      // the first request through it will complete quickly: routing it forwards
+      // a brand-new SSH channel to the real remote host, which pays a full
+      // network round trip the single-shot 1.8s probe timeout can lose even
+      // though the backend (already confirmed ready via the wait command run
+      // over the same SSH connection) is perfectly healthy. Retry briefly
+      // instead of concluding the backend is missing and tearing it down.
+      const probeSucceeded = await probeElevenexBackendWithRetries(forward.localPort, 5, 500);
+      forward.signal?.throwIfAborted();
+      current.installStatus = probeSucceeded ? 'available' : 'missing';
+      if (!probeSucceeded) {
+        current.status = 'error';
+        // Preserve a specific stderr error if one was already captured (eg. a
+        // local -L bind failure such as "bind: Address already in use"); the
+        // generic unreachable message would mask the real reason.
+        if (!current.error) {
+          current.error = `Elevenex is not reachable on ${forward.sshHost}.`;
+        }
+        current.debugDetails.lastEvent = 'probe-missing';
       }
     }
-  }
 
-  const current = sshForwardRuntimes.get(forward.id);
-  if (
-    current
-    && current.status === 'active'
-    && forward.probeType === 'elevenex-backend'
-  ) {
-    // A bound local listener only means ssh accepted the -L socket, not that
-    // the first request through it will complete quickly: routing it forwards
-    // a brand-new SSH channel to the real remote host, which pays a full
-    // network round trip the single-shot 1.8s probe timeout can lose even
-    // though the backend (already confirmed ready via the wait command run
-    // over the same SSH connection) is perfectly healthy. Retry briefly
-    // instead of concluding the backend is missing and tearing it down.
-    const probeSucceeded = await probeElevenexBackendWithRetries(forward.localPort, 5, 500);
-    current.installStatus = probeSucceeded ? 'available' : 'missing';
-    if (!probeSucceeded) {
-      current.status = 'error';
-      // Preserve a specific stderr error if one was already captured (eg. a
-      // local -L bind failure such as "bind: Address already in use"); the
-      // generic unreachable message would mask the real reason.
-      if (!current.error) {
-        current.error = `Elevenex is not reachable on ${forward.sshHost}.`;
-      }
-      current.debugDetails.lastEvent = 'probe-missing';
-    }
+    return toSshRuntimeView(forward.id, sshForwardRuntimes.get(forward.id));
+  } finally {
+    forward.signal?.removeEventListener('abort', abortTunnel);
+    if (runtime.status !== 'active') terminateChildProcess(childProcess);
   }
-
-  return toSshRuntimeView(forward.id, sshForwardRuntimes.get(forward.id));
 }
 
 async function stopSshForwardRuntime(id) {
@@ -3130,7 +3165,7 @@ async function stopSshForwardRuntime(id) {
   await new Promise((resolve) => {
     const cleanup = () => {
       if (runtime.stopTimer) clearTimeout(runtime.stopTimer);
-      sshForwardRuntimes.delete(id);
+      if (sshForwardRuntimes.get(id) === runtime) sshForwardRuntimes.delete(id);
       resolve();
     };
 
@@ -4940,22 +4975,13 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (event, payload) => 
   // environment's lease yet.
   addRemoteServerInterest(serverId, requestingWindowId);
 
-  // A tunnel that is already up (another window is on this server) is reused
-  // as-is: no reinstall, no second `ssh -L`, and the window opens instantly.
-  const reused = reuseReadyRemoteServer(serverId);
-  if (reused) {
-    emitRemoteServerPhaseEvent(serverId, 'ready');
-    return reused;
-  }
-
-  const localPort = await allocateLocalPort(serverId);
   const forward = {
     id: serverId,
     sshHost,
     sshUser: `${payload?.sshUser || ''}`.trim(),
     sshPort: Number(payload?.sshPort || 22),
     bindAddress: `${payload?.bindAddress || '127.0.0.1'}`.trim(),
-    localPort,
+    localPort: 0,
     remoteHost: `${payload?.remoteHost || '127.0.0.1'}`.trim(),
     remotePort: Number(payload?.remotePort || 11111),
     authMode: payload?.authMode === 'password' || payload?.authMode === 'key' ? payload.authMode : 'agent',
@@ -4970,9 +4996,29 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (event, payload) => 
     // Two windows connecting to the same server share one run: a duplicated
     // preflight/install/probe over SSH would be slow, noisy on the remote, and
     // would race a second `ssh -L` onto the same port.
-    result = await connectionRegistry.run(
-      environmentRefForServerId(serverId),
-      () => ensureRemoteServerReady(forward),
+    result = await remoteConnectionAttempts.run(
+      serverId,
+      `${requestingWindowId}:${payload?.requestId || 'legacy'}`,
+      async (signal) => {
+        // Process liveness alone cannot validate a tunnel after sleep/network loss.
+        const reused = await reuseReadyRemoteServer(serverId, signal);
+        if (reused) {
+          signal.throwIfAborted();
+          emitRemoteServerPhaseEvent(serverId, 'ready');
+          return reused;
+        }
+        signal.throwIfAborted();
+        await stopSshForwardRuntime(serverId);
+        signal.throwIfAborted();
+        forward.localPort = await getFreePort();
+        forward.signal = signal;
+        signal.throwIfAborted();
+        const ready = await ensureRemoteServerReady(forward);
+        signal.throwIfAborted();
+        recordRemoteServerResult(serverId, ready);
+        if (ready.status !== 'waiting-for-user') destroyRemoteInstallerSessionForServer(serverId);
+        return ready;
+      },
     );
   } catch (error) {
     console.error('[remote-runtime] ensure-ready failed', {
@@ -4994,17 +5040,18 @@ ipcMain.handle('elevenex-remote-server:ensure-ready', async (event, payload) => 
       version: getRemoteRuntimeVersion(),
     };
   }
-  recordRemoteServerResult(serverId, result);
-  if (result.status === 'ready' || result.status === 'error' || result.status === 'unsupported') {
-    destroyRemoteInstallerSessionForServer(forward.id);
-  }
   if (result.status !== 'ready') {
     removeRemoteServerInterest(serverId, requestingWindowId);
   }
   return result;
 });
 
-ipcMain.handle('elevenex-remote-server:recheck', async (_event, payload) => {
+ipcMain.handle('elevenex-remote-server:cancel', (event, payload) => {
+  const windowId = senderWindowEntry(event)?.id ?? null;
+  return remoteConnectionAttempts.cancel(Number(payload?.id), `${windowId}:${payload?.requestId || 'legacy'}`);
+});
+
+ipcMain.handle('elevenex-remote-server:recheck', async (event, payload) => {
   const sessionId = Number(payload?.sessionId);
   const sessionState = remoteInstallerSessions.get(sessionId);
   if (!sessionState) {
@@ -5013,7 +5060,17 @@ ipcMain.handle('elevenex-remote-server:recheck', async (_event, payload) => {
 
   let result;
   try {
-    result = await ensureRemoteServerReady(sessionState.forward);
+    result = await remoteConnectionAttempts.run(
+      sessionState.forward.id,
+      `${senderWindowEntry(event)?.id ?? null}:${payload?.requestId || 'legacy'}`,
+      async (signal) => {
+        const ready = await ensureRemoteServerReady({ ...sessionState.forward, signal });
+        signal.throwIfAborted();
+        recordRemoteServerResult(sessionState.forward.id, ready);
+        if (ready.status !== 'waiting-for-user') destroyRemoteInstallerSession(sessionId);
+        return ready;
+      },
+    );
   } catch (error) {
     console.error('[remote-runtime] recheck failed', {
       sessionId,
@@ -5033,10 +5090,6 @@ ipcMain.handle('elevenex-remote-server:recheck', async (_event, payload) => {
       installGuidance: [],
       version: getRemoteRuntimeVersion(),
     };
-  }
-  recordRemoteServerResult(sessionState.forward.id, result);
-  if (result.status === 'ready' || result.status === 'error' || result.status === 'unsupported') {
-    destroyRemoteInstallerSession(sessionId);
   }
   return result;
 });

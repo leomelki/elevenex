@@ -192,4 +192,42 @@ describe('ServerConnectionService', () => {
     expect(service.state().phase).toBe('disconnected');
     expect(service.showOverlay()).toBe(true);
   });
+  it('times out a websocket that never finishes opening and exposes the initial failure', () => {
+    service.start();
+    vi.advanceTimersByTime(12000);
+    expect(service.state().phase).toBe('disconnected');
+    expect(service.showOverlay()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances.length).toBeGreaterThan(1);
+  });
+
+  it('starts retrying even if closing a stalled socket never emits close', () => {
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket.close = vi.fn();
+    vi.advanceTimersByTime(12000);
+    expect(service.state().phase).toBe('disconnected');
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances.length).toBeGreaterThan(1);
+    socket.emitMessage(JSON.stringify({ type: 'ready', serverTime: '2026-05-12T08:00:00.000Z' }));
+    expect(service.isInteractive()).toBe(false);
+  });
+
+  it('removes canceled request waiters without waiting for the network', async () => {
+    const controller = new AbortController();
+    const pending = service.waitUntilInteractive(controller.signal);
+    controller.abort(new Error('Request canceled'));
+    await expect(pending).rejects.toThrow('Request canceled');
+    expect((service as any).waiters).toHaveLength(0);
+  });
+
+  it('keeps the request gate closed during an explicit recheck', () => {
+    service.start();
+    MockWebSocket.instances[0].emitOpen();
+    MockWebSocket.instances[0].emitMessage(JSON.stringify({ type: 'ready', serverTime: '2026-05-12T08:00:00.000Z' }));
+    service.recheck();
+    expect(service.isInteractive()).toBe(false);
+    expect(service.state().phase).toBe('disconnected');
+  });
+
 });

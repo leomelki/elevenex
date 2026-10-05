@@ -19,7 +19,7 @@ export interface ServerConnectionState {
   reconnectAttempt: number;
 }
 
-type Waiter = () => void;
+type Waiter = { resolve: () => void; reject: (error: Error) => void; cleanup: () => void };
 
 @Injectable({ providedIn: 'root' })
 export class ServerConnectionService implements OnDestroy {
@@ -35,6 +35,10 @@ export class ServerConnectionService implements OnDestroy {
   private restoredTimer: ReturnType<typeof setTimeout> | null = null;
   private waiters: Waiter[] = [];
   /** Origin the live socket was opened against, so a backend switch is detectable. */
+  private readonly resumeListener = () => {
+    if (!this.started) return;
+    if (this._state().phase !== 'connected' || Date.now() - (this._state().lastConnectedAt ?? 0) >= ServerConnectionService.HEARTBEAT_TIMEOUT_MS) this.recheck();
+  };
   private connectedOrigin: string | null = null;
 
   private readonly _state = signal<ServerConnectionState>({
@@ -68,10 +72,13 @@ export class ServerConnectionService implements OnDestroy {
     }
 
     this.started = true;
+    globalThis.window?.addEventListener?.('online', this.resumeListener);
+    globalThis.window?.addEventListener?.('focus', this.resumeListener);
     this.openSocket();
   }
 
-  waitUntilInteractive(): Promise<void> {
+  waitUntilInteractive(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     this.start();
     this.repointIfBackendChanged();
 
@@ -79,8 +86,16 @@ export class ServerConnectionService implements OnDestroy {
       return Promise.resolve();
     }
 
-    return new Promise((resolve) => {
-      this.waiters.push(resolve);
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        this.waiters = this.waiters.filter((candidate) => candidate !== waiter);
+        waiter.cleanup();
+        reject(signal?.reason ?? new Error('Connection wait canceled.'));
+      };
+      const waiter: Waiter = { resolve, reject, cleanup: () => signal?.removeEventListener('abort', abort) };
+      if (signal?.aborted) { abort(); return; }
+      signal?.addEventListener('abort', abort, { once: true });
+      this.waiters.push(waiter);
     });
   }
 
@@ -119,11 +134,19 @@ export class ServerConnectionService implements OnDestroy {
   private openSocket(): void {
     this.clearReconnectTimer();
     this.clearHeartbeatTimer();
+    this.clearRestoredTimer();
 
     const origin = getBackendOrigin();
+    if (this.connectedOrigin && this.connectedOrigin !== origin) {
+      this.rejectWaiters(new Error('The backend changed while waiting for a connection.'));
+      this._capabilities.set(null);
+      this.hasConnected = false;
+      this._state.set({ phase: 'connecting', lastConnectedAt: null, lastDisconnectedAt: null, reconnectAttempt: 0 });
+    }
     this.connectedOrigin = origin;
     const ws = new WebSocket(getWebSocketUrl('/server-connection', undefined, origin));
     this.ws = ws;
+    this.armHeartbeatTimeout(ws);
 
     if (!this.hasConnected) {
       this._state.update((state) => ({ ...state, phase: 'connecting' }));
@@ -131,6 +154,7 @@ export class ServerConnectionService implements OnDestroy {
 
     ws.onopen = () => {
       this.ngZone.run(() => {
+        if (this.ws !== ws) return;
         this.armHeartbeatTimeout(ws);
       });
     };
@@ -161,13 +185,12 @@ export class ServerConnectionService implements OnDestroy {
           return;
         }
 
+        this.ws = null;
         this.handleDisconnect();
       });
     };
 
-    ws.onerror = () => {
-      ws.close();
-    };
+    ws.onerror = () => this.ngZone.run(() => this.retireSocket(ws));
   }
 
   private parseServerMessage(
@@ -232,7 +255,13 @@ export class ServerConnectionService implements OnDestroy {
       return;
     }
 
+    if (this.connectedOrigin !== getBackendOrigin()) {
+      this.repointIfBackendChanged();
+      return;
+    }
     this.clearReconnectTimer();
+    this.clearRestoredTimer();
+    this._state.update((state) => ({ ...state, phase: this.hasConnected ? 'disconnected' : 'connecting' }));
     const previous = this.ws;
     this.ws = null;
     if (previous) {
@@ -262,7 +291,7 @@ export class ServerConnectionService implements OnDestroy {
       return;
     }
 
-    if (this._state().phase === 'connected') {
+    if (this._state().phase === 'connected' || this._state().phase === 'restored') {
       this._state.update((state) => ({
         ...state,
         lastConnectedAt: now,
@@ -296,8 +325,8 @@ export class ServerConnectionService implements OnDestroy {
     const nextAttempt = this._state().reconnectAttempt + 1;
     this._state.update((state) => ({
       ...state,
-      phase: this.hasConnected ? 'disconnected' : 'connecting',
-      lastDisconnectedAt: this.hasConnected ? Date.now() : state.lastDisconnectedAt,
+      phase: 'disconnected',
+      lastDisconnectedAt: state.lastDisconnectedAt ?? Date.now(),
       reconnectAttempt: nextAttempt,
     }));
     this.scheduleReconnect(nextAttempt);
@@ -308,10 +337,18 @@ export class ServerConnectionService implements OnDestroy {
     this.heartbeatTimer = setTimeout(() => {
       this.ngZone.run(() => {
         if (this.ws === ws) {
-          ws.close();
+          this.retireSocket(ws);
         }
       });
     }, ServerConnectionService.HEARTBEAT_TIMEOUT_MS);
+  }
+
+  private retireSocket(ws: WebSocket): void {
+    if (this.ws !== ws) return;
+    this.ws = null;
+    ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+    this.handleDisconnect();
+    try { ws.close(); } catch { /* Socket may already be gone. */ }
   }
 
   private scheduleReconnect(attempt: number): void {
@@ -332,9 +369,16 @@ export class ServerConnectionService implements OnDestroy {
   private resolveWaiters(): void {
     const waiters = this.waiters;
     this.waiters = [];
-    for (const resolve of waiters) {
-      resolve();
+    for (const waiter of waiters) {
+      waiter.cleanup();
+      waiter.resolve();
     }
+  }
+
+  private rejectWaiters(error: Error): void {
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const waiter of waiters) { waiter.cleanup(); waiter.reject(error); }
   }
 
   private clearReconnectTimer(): void {
@@ -360,10 +404,14 @@ export class ServerConnectionService implements OnDestroy {
 
   ngOnDestroy(): void {
     this.started = false;
+    globalThis.window?.removeEventListener?.('online', this.resumeListener);
+    globalThis.window?.removeEventListener?.('focus', this.resumeListener);
+    this.rejectWaiters(new Error('Connection service destroyed.'));
     this.clearReconnectTimer();
     this.clearHeartbeatTimer();
     this.clearRestoredTimer();
-    this.ws?.close(1000, 'Service destroyed');
+    const previous = this.ws;
     this.ws = null;
+    previous?.close(1000, 'Service destroyed');
   }
 }

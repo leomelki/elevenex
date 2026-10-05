@@ -1,4 +1,5 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, OnDestroy, signal } from '@angular/core';
+import { awaitConnectionOperation } from '../runtime/connection-operation';
 import { ELEVENEX_REMOTE_PORT } from '../constants/elevenex';
 import { SavedServer, ServerAuthMode, ServerInstallStatus } from '../models/onboarding.model';
 import { getElectronSshForwardingApi } from '../runtime/electron-ssh-forwarding';
@@ -29,6 +30,11 @@ export interface OnboardingConnectionSuccess {
 export interface OnboardingConnectionFailure {
   kind: 'missing-install' | 'error' | 'unsupported';
   message: string;
+  retryable?: boolean;
+}
+
+export function isRetryableSshError(message: string): boolean {
+  return !/permission denied|authentication failed|host key verification failed|host identification has changed|cancell?ed|could not resolve SSH configuration/i.test(message);
 }
 
 export type OnboardingConnectionResult =
@@ -47,9 +53,12 @@ export type OnboardingWslConnectionResult =
   | OnboardingConnectionFailure;
 
 @Injectable({ providedIn: 'root' })
-export class OnboardingConnectionService {
+export class OnboardingConnectionService implements OnDestroy {
   private readonly _currentPhase = signal<RemoteInstallPhase | null>(null);
   readonly currentPhase = this._currentPhase.asReadonly();
+
+  private attempt: { serverId: number; requestId: string; controller: AbortController; promise: Promise<OnboardingConnectionResult> } | null = null;
+  private attemptSequence = 0;
 
   private activeServerId: number | null = null;
   private removePhaseListener: (() => void) | null = null;
@@ -175,9 +184,9 @@ export class OnboardingConnectionService {
       sshUser: payload.sshUser?.trim() || null,
       sshPort: payload.sshPort,
       authMode: payload.authMode,
-      password: payload.password?.trim() || null,
+      password: payload.password || null,
       identityFilePath: payload.identityFilePath?.trim() || null,
-      passphrase: payload.passphrase?.trim() || null,
+      passphrase: payload.passphrase || null,
     }, { interactive: true });
   }
 
@@ -185,7 +194,7 @@ export class OnboardingConnectionService {
     server: SavedServer,
     options: { interactive?: boolean; password?: string; passphrase?: string } = {},
   ): Promise<OnboardingConnectionResult> {
-    const password = options.password?.trim() || null;
+    const password = options.password || null;
     if (server.authMode === 'password' && !password) {
       return {
         kind: 'error',
@@ -201,11 +210,11 @@ export class OnboardingConnectionService {
       authMode: server.authMode,
       password,
       identityFilePath: server.identityFilePath,
-      passphrase: options.passphrase?.trim() || null,
+      passphrase: options.passphrase || null,
     }, { interactive: options.interactive ?? true });
   }
 
-  private async startTunnel(payload: {
+  private startTunnel(payload: {
     id: number;
     sshHost: string;
     sshUser: string | null;
@@ -215,18 +224,61 @@ export class OnboardingConnectionService {
     identityFilePath: string | null;
     passphrase: string | null;
   }, options: { interactive: boolean }): Promise<OnboardingConnectionResult> {
-    if (!(await this.isSupported())) {
+    if (this.attempt?.serverId === payload.id) return this.attempt.promise;
+    this.cancelCurrentConnection();
+    const controller = new AbortController();
+    const requestId = `${Date.now()}-${++this.attemptSequence}`;
+    const attempt = {
+      serverId: payload.id, requestId, controller,
+      promise: Promise.resolve(null as unknown as OnboardingConnectionResult),
+    };
+    this.attempt = attempt;
+    this.activeServerId = payload.id;
+    this._currentPhase.set(null);
+    attempt.promise = this.performTunnelConnection(payload, options, requestId, controller.signal)
+      .catch((error: unknown): OnboardingConnectionResult => {
+        controller.abort(error);
+        void getElectronRemoteServerApi()?.cancel?.({ id: payload.id, requestId }).catch(() => undefined);
+        const message = error instanceof Error ? error.message : 'Could not connect to the SSH server.';
+        return { kind: 'error', message, retryable: isRetryableSshError(message) };
+      })
+      .finally(() => {
+        if (this.attempt === attempt) {
+          this.attempt = null;
+          this.activeServerId = null;
+          this._currentPhase.set(null);
+        }
+      });
+    return attempt.promise;
+  }
+
+  cancelCurrentConnection(): void {
+    const attempt = this.attempt;
+    if (!attempt) return;
+    this.attempt = null;
+    this.activeServerId = null;
+    this._currentPhase.set(null);
+    attempt.controller.abort(new Error('SSH connection canceled. Automatic reconnection is paused.'));
+    void getElectronRemoteServerApi()?.cancel?.({ id: attempt.serverId, requestId: attempt.requestId }).catch(() => undefined);
+  }
+
+  private async performTunnelConnection(
+    payload: { id: number; sshHost: string; sshUser: string | null; sshPort: number; authMode: ServerAuthMode; password: string | null; identityFilePath: string | null; passphrase: string | null },
+    options: { interactive: boolean },
+    requestId: string,
+    signal: AbortSignal,
+  ): Promise<OnboardingConnectionResult> {
+    if (!(await awaitConnectionOperation(this.isSupported(), signal, 10000))) {
       return {
         kind: 'unsupported',
         message: 'SSH onboarding is only available in the Electron app.',
       };
     }
 
-    this.activeServerId = payload.id;
-    this._currentPhase.set(null);
-
+    signal.throwIfAborted();
     const runtimePayload: ElectronRemoteServerEnsureReadyPayload = {
       id: payload.id,
+      requestId,
       sshHost: payload.sshHost,
       sshUser: payload.sshUser,
       sshPort: payload.sshPort,
@@ -240,15 +292,11 @@ export class OnboardingConnectionService {
       sessionId: null,
     };
 
-    let runtime;
-    try {
-      runtime = options.interactive
-        ? await this.remoteInstallFlow.ensureReady(runtimePayload)
-        : await getElectronRemoteServerApi()?.ensureReady(runtimePayload);
-    } finally {
-      this.activeServerId = null;
-      this._currentPhase.set(null);
-    }
+    const api = getElectronRemoteServerApi();
+    const runtime = options.interactive
+      ? await awaitConnectionOperation(this.remoteInstallFlow.ensureReady(runtimePayload, signal), signal)
+      : await awaitConnectionOperation(Promise.resolve(api?.ensureReady(runtimePayload)), signal, 190000);
+    signal.throwIfAborted();
 
     if (!runtime) {
       return {
@@ -271,7 +319,7 @@ export class OnboardingConnectionService {
       };
     }
 
-    if (runtime.status === 'ready') {
+    if (runtime.status === 'ready' && runtime.localPort && runtime.localPort > 0) {
       return {
         kind: 'success',
         serverId: payload.id,
@@ -283,6 +331,13 @@ export class OnboardingConnectionService {
     return {
       kind: 'error',
       message: runtime.message || 'Could not connect to the SSH server.',
+      retryable: isRetryableSshError(runtime.message || ''),
     };
   }
+  ngOnDestroy(): void {
+    this.cancelCurrentConnection();
+    this.removePhaseListener?.();
+    this.removeWslPhaseListener?.();
+  }
+
 }
