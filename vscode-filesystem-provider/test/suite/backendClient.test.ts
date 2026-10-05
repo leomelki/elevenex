@@ -26,6 +26,7 @@ suite('BackendClient', () => {
     ok: boolean;
     status: number;
     json?: unknown;
+    bytes?: Uint8Array;
   }) {
     globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
       fetchCalls.push({ input, init });
@@ -33,6 +34,7 @@ suite('BackendClient', () => {
         ok: response.ok,
         status: response.status,
         json: async () => response.json,
+        arrayBuffer: async () => response.bytes?.slice().buffer ?? new ArrayBuffer(0),
       } as Response;
     }) as typeof fetch;
   }
@@ -64,18 +66,60 @@ suite('BackendClient', () => {
     );
   });
 
-  test('readFile returns Uint8Array from backend content', async () => {
+  test('readFile preserves UTF-8 text from the raw endpoint', async () => {
+    const text = 'const message = "Bonjour, été 👋";\r\n';
     stubFetch({
       ok: true,
       status: 200,
-      json: { content: 'test content' },
+      bytes: new TextEncoder().encode(text),
     });
     const client = new BackendClient(baseUrl);
 
     const content = await client.readFile(worktreePath, 'test.txt');
 
     assert.ok(content instanceof Uint8Array);
-    assert.strictEqual(new TextDecoder().decode(content), 'test content');
+    assert.strictEqual(new TextDecoder().decode(content), text);
+    assert.strictEqual(
+      String(getLastCall().input),
+      `${baseUrl}/${encodeURIComponent(worktreePath)}/raw/test.txt`,
+    );
+    assert.strictEqual(getLastCall().init?.cache, 'no-store');
+  });
+
+  test('readFile preserves PNG bytes and encodes nested image paths', async () => {
+    const png = Uint8Array.from(Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=',
+      'base64',
+    ));
+    stubFetch({ ok: true, status: 200, bytes: png });
+    const client = new BackendClient(baseUrl);
+
+    const content = await client.readFile(worktreePath, 'images/été #1%.png');
+
+    assert.deepStrictEqual(content, png);
+    assert.strictEqual(
+      String(getLastCall().input),
+      `${baseUrl}/${encodeURIComponent(worktreePath)}/raw/images/%C3%A9t%C3%A9%20%231%25.png`,
+    );
+  });
+
+  test('readFile returns empty bytes for an empty file', async () => {
+    stubFetch({ ok: true, status: 200, bytes: new Uint8Array() });
+
+    const content = await new BackendClient(baseUrl).readFile(worktreePath, 'empty.txt');
+
+    assert.deepStrictEqual(content, new Uint8Array());
+  });
+
+  test('readFile maps raw endpoint errors to filesystem errors', async () => {
+    for (const [status, code] of [[404, 'FileNotFound'], [403, 'NoPermissions'], [500, 'Unavailable']] as const) {
+      stubFetch({ ok: false, status });
+
+      await assert.rejects(
+        () => new BackendClient(baseUrl).readFile(worktreePath, 'image.png'),
+        (error: unknown) => (error as FileSystemError).code === code,
+      );
+    }
   });
 
   test('readDirectory maps backend entries to tuples', async () => {

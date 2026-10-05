@@ -36,7 +36,6 @@ function getBrowserLocation(): BrowserLocationLike | undefined {
  */
 export class BackendClient {
   private baseUrl: string;
-  private encoder = new TextEncoder();
   private decoder = new TextDecoder();
 
   /**
@@ -57,7 +56,7 @@ export class BackendClient {
    * @param endpoint - Endpoint name (stat, read, list, write)
    * @returns Full URL with encoded query params
    */
-  private buildUrl(worktreePath: string, path: string, endpoint: 'stat' | 'files'): string {
+  private buildUrl(worktreePath: string, path: string, endpoint: 'stat' | 'files' | 'raw'): string {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const encodedPath = path
       .split('/')
@@ -165,7 +164,7 @@ export class BackendClient {
   /**
    * Read file content as Uint8Array
    * 
-   * Backend endpoint: GET /api/files/:worktreeId/read?path=...
+   * Backend endpoint: GET /api/worktrees/:worktreePath/raw/:path
    * Response: ArrayBuffer (binary file content)
    * 
    * @param worktreeId - Worktree identifier
@@ -174,17 +173,19 @@ export class BackendClient {
    * @throws FileSystemError if backend returns error
    */
   async readFile(worktreePath: string, path: string): Promise<Uint8Array> {
-    const url = this.buildQueryUrl(worktreePath, 'file', path);
+    const url = this.buildUrl(worktreePath, path, 'raw');
     const uri = toWorkspaceVfsUri(worktreePath, path);
 
-    const response = await fetch(url);
+    // Read every file as bytes: decoding binary content as UTF-8 corrupts it.
+    // The raw endpoint is cacheable for image embeds, but editor reads must
+    // reflect current disk contents after saves and external changes.
+    const response = await fetch(url, { cache: 'no-store' });
 
     if (!response.ok) {
       throw this.mapHttpError(response.status, uri);
     }
 
-    const data = await response.json() as { content: string };
-    return this.encoder.encode(data.content);
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   /**
