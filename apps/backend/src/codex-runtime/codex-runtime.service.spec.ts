@@ -1003,6 +1003,68 @@ describe('CodexRuntimeService', () => {
     });
   });
 
+  it.each([true, false])(
+    'sets the Codex service tier when starting a thread with fast mode %s',
+    async (enabled) => {
+      const { service, appServer } = createService();
+      const wire = wireAppServerTurn(appServer);
+      await service.setFastMode(7, enabled);
+
+      const iterator = await startAppServerTurn(service, 'default');
+      const serviceTier = enabled ? 'fast' : null;
+
+      expect(appServer.request).toHaveBeenCalledWith(
+        'thread/start',
+        expect.objectContaining({ serviceTier }),
+      );
+      const threadParams = appServer.request.mock.calls.find(
+        ([method]) => method === 'thread/start',
+      )?.[1];
+      expect(threadParams).not.toHaveProperty('speedTier');
+      expect(wire.turnStartParams).toMatchObject({ serviceTier });
+
+      await iterator.return(undefined);
+    },
+  );
+
+  it('applies fast mode changes on each turn of an already-loaded thread', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+
+    for (const [enabled, threadMethod] of [
+      [false, 'thread/start'],
+      [true, 'thread/resume'],
+      [false, 'thread/resume'],
+    ] as const) {
+      await service.setFastMode(7, enabled);
+      const iterator = await startAppServerTurn(service, 'default');
+      const serviceTier = enabled ? 'fast' : null;
+
+      expect(appServer.request).toHaveBeenLastCalledWith(
+        'turn/start',
+        expect.objectContaining({ threadId: 'thread-1', serviceTier }),
+      );
+      expect(appServer.request).toHaveBeenCalledWith(
+        threadMethod,
+        expect.objectContaining({ serviceTier }),
+      );
+
+      wire.notificationHandler({
+        method: 'turn/completed',
+        params: { threadId: 'thread-1', turn: { status: 'completed' } },
+      });
+      await iterator.next();
+      await expect(iterator.next()).resolves.toMatchObject({ done: true });
+      (service as any).ensureRuntimeState(7, 'thread-1');
+    }
+
+    expect(
+      appServer.request.mock.calls.filter(
+        ([method]) => method === 'thread/start',
+      ),
+    ).toHaveLength(1);
+  });
+
   it('uses native Codex collaboration mode for plan turns without injecting a prompt', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);
@@ -1024,6 +1086,7 @@ describe('CodexRuntimeService', () => {
       sandboxPolicy: { type: 'readOnly' },
       approvalPolicy: 'never',
       approvalsReviewer: 'user',
+      serviceTier: null,
       collaborationMode: {
         mode: 'plan',
         settings: {
@@ -1080,6 +1143,7 @@ describe('CodexRuntimeService', () => {
       },
       approvalPolicy: 'on-request',
       approvalsReviewer: 'user',
+      serviceTier: null,
       collaborationMode: {
         mode: 'default',
         settings: {
@@ -1122,6 +1186,7 @@ describe('CodexRuntimeService', () => {
       },
       approvalPolicy: 'on-request',
       approvalsReviewer: 'auto_review',
+      serviceTier: null,
       collaborationMode: {
         mode: 'default',
         settings: {

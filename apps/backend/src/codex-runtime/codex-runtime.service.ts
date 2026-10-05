@@ -2478,6 +2478,7 @@ export class CodexRuntimeService
         never: 'never',
       };
       const approvalsReviewer = permissionOptions.approvalsReviewer ?? 'user';
+      const serviceTier = state.fastMode ? 'fast' : null;
       const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
 
       // Load or create the thread before dispatching the turn. Calling
@@ -2489,7 +2490,7 @@ export class CodexRuntimeService
         ...(state.reasoningEffort
           ? { modelReasoningEffort: state.reasoningEffort }
           : {}),
-        ...(state.fastMode ? { serviceTier: 'flex', speedTier: 'fast' } : {}),
+        serviceTier,
         sandbox: permissionOptions.sandboxMode,
         approvalPolicy: approvalMap[permissionOptions.approvalPolicy],
         approvalsReviewer,
@@ -2575,6 +2576,9 @@ export class CodexRuntimeService
           // Reviewer selection is sticky too; explicitly reset it when
           // leaving auto mode instead of retaining the earlier reviewer.
           approvalsReviewer,
+          // Loaded threads can ignore resume overrides. Apply the current tier
+          // on every turn; null clears a previous fast tier when Fast is off.
+          serviceTier,
           ...this.buildCollaborationModeParams(state),
         },
       );
