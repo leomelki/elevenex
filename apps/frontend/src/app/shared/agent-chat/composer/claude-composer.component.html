@@ -1,4 +1,7 @@
-<div class="cw-comp relative">
+<div
+  class="cw-comp relative data-[disconnected=true]:pointer-events-none data-[disconnected=true]:opacity-60"
+  [attr.data-disconnected]="disconnected()"
+>
   @if (autocompleteOpen() && filtered().length) {
     <div
       class="cw-comp__ac absolute inset-x-0 bottom-[calc(100%+0.375rem)] z-20 max-h-72 overflow-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
@@ -38,7 +41,7 @@
   }
 
   <div
-    class="cw-comp__box flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xs focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20 data-[attached=true]:rounded-t-none data-[dropping=true]:border-primary/60 data-[dropping=true]:bg-primary/5 data-[disconnected=true]:pointer-events-none data-[disconnected=true]:opacity-60"
+    class="cw-comp__box flex flex-col overflow-hidden rounded-xl border border-border bg-card transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15 data-[attached=true]:rounded-t-none data-[dropping=true]:border-primary/60 data-[dropping=true]:bg-primary/5"
     [attr.data-attached]="attachedPanelOpen()"
     [attr.data-dropping]="isDropTarget()"
     [attr.data-disconnected]="disconnected()"
@@ -244,34 +247,9 @@
         }
       </div>
     }
-    <textarea
-      #input
-      appDictateTarget
-      #dictate="dictateTarget"
-      [sessionId]="sessionId()"
-      [worktreePath]="worktreePath()"
-      (dictationSubmit)="submit()"
-      class="cw-comp__ta w-full min-h-11 max-h-64 resize-none border-0 bg-transparent px-3.5 pt-2.5 pb-1 text-sm leading-normal outline-none placeholder:text-muted-foreground"
-      [placeholder]="placeholder()"
-      [ngModel]="value()"
-      [disabled]="disconnected()"
-      (input)="onInput($event)"
-      (click)="refreshAc($any($event.target))"
-      (keydown)="onKeydown($event)"
-      (paste)="onPaste($event)"
-      rows="1"
-    ></textarea>
-    <input
-      #fileInput
-      type="file"
-      class="cw-comp__file hidden"
-      accept="image/png,image/jpeg,image/gif,image/webp"
-      multiple
-      (change)="onFileInputChange($event)"
-    />
 
-    <div class="cw-comp__bar flex items-center justify-between gap-2 py-1.5 pr-2.5 pl-3.5">
-      <span class="cw-comp__hint text-[11px] text-muted-foreground">
+    @if (disconnected() || blockedByPermission() || (autocompleteOpen() && filtered().length)) {
+      <span class="cw-comp__hint block px-3 pt-2 text-[11px] text-muted-foreground" role="status">
         @if (disconnected()) {
           <ng-icon
             name="lucideLoaderCircle"
@@ -286,34 +264,56 @@
             sendDisabledReason() ||
               'Respond to the approval request before sending another message.'
           }}
-        } @else {
-          &#64; sessions · / commands · $ skills · ↵ send · ⇧↵ line break
         }
       </span>
+    }
 
-      <div class="cw-comp__btns inline-flex shrink-0 items-center gap-1.5">
-        <app-dictation-button [target]="dictate" [disabled]="disconnected()" />
+    <div class="cw-comp__bar flex items-end gap-1.5 p-2">
+      <div class="flex shrink-0 items-center gap-0.5 text-muted-foreground">
         @if (allowImages()) {
           <button
             type="button"
             z-button
             zType="ghost"
-            zSize="icon-sm"
-            class="cw-comp__btn rounded-lg text-xs cw-comp__btn--ghost text-muted-foreground"
+            zSize="icon-xs"
+            class="cw-comp__btn rounded-lg cw-comp__btn--ghost"
             title="Attach image"
             aria-label="Attach image"
             [zDisabled]="disconnected()"
             (click)="openFilePicker()"
           >
-            <ng-icon name="lucidePaperclip" size="14" />
+            <ng-icon name="lucidePaperclip" size="15" />
           </button>
         }
+        <app-dictation-button [target]="dictate" [disabled]="disconnected()" />
+      </div>
+      <textarea
+        #input
+        appDictateTarget
+        #dictate="dictateTarget"
+        [sessionId]="sessionId()"
+        [worktreePath]="worktreePath()"
+        (dictationSubmit)="submit()"
+        class="cw-comp__ta min-w-0 flex-1 min-h-7 max-h-64 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-5 outline-none placeholder:text-muted-foreground"
+        aria-label="Message to agent"
+        [placeholder]="placeholder()"
+        [ngModel]="value()"
+        [disabled]="disconnected()"
+        (input)="onInput($event)"
+        (click)="refreshAc($any($event.target))"
+        (keydown)="onKeydown($event)"
+        (paste)="onPaste($event)"
+        rows="1"
+      ></textarea>
+      <div class="cw-comp__btns inline-flex shrink-0 items-center gap-1">
         @if (running()) {
           <button
             type="button"
             z-button
             zType="destructive"
-            class="cw-comp__btn rounded-lg px-3 text-xs cw-comp__btn--stop border-destructive/40"
+            zSize="icon-sm"
+            aria-label="Stop current response"
+            class="cw-comp__btn rounded-full cw-comp__btn--stop border-destructive/40"
             [zDisabled]="!canInterrupt() || disconnected()"
             (click)="interrupt.emit()"
             [title]="
@@ -322,15 +322,17 @@
                 : 'Stop current response'
             "
           >
-            <ng-icon name="lucideSquare" size="16" />
-            Stop
+            <ng-icon name="lucideSquare" size="13" />
+            <span class="sr-only">Stop</span>
           </button>
         }
         <button
           type="button"
           z-button
           zType="default"
-          class="cw-comp__btn rounded-lg px-3 text-xs cw-comp__btn--send"
+          zSize="icon-sm"
+          [attr.aria-label]="queueing() ? 'Queue message' : 'Send message'"
+          class="cw-comp__btn rounded-full cw-comp__btn--send"
           [zDisabled]="
             (!value().trim() &&
               !attachedImages().length &&
@@ -342,16 +344,25 @@
             disconnected()
           "
           (click)="submit()"
-          [title]="queueing() ? 'Queue message' : 'Send'"
+          [title]="queueing() ? 'Queue message (Enter)' : 'Send message (Enter)'"
         >
           @if (submitting() && !queueing()) {
             <ng-icon name="lucideLoaderCircle" size="16" class="animate-spin" />
           } @else {
-            <ng-icon name="lucideSend" size="16" />
+            <ng-icon name="lucideArrowUp" size="15" />
           }
-          {{ queueing() ? 'Queue' : 'Send' }}
+          <span class="sr-only">{{ queueing() ? 'Queue' : 'Send' }}</span>
         </button>
       </div>
     </div>
+    <input
+      #fileInput
+      type="file"
+      class="cw-comp__file hidden"
+      accept="image/png,image/jpeg,image/gif,image/webp"
+      multiple
+      (change)="onFileInputChange($event)"
+    />
   </div>
+  <ng-content select="cw-status-bar" />
 </div>

@@ -2,7 +2,6 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import {
   ZardDropdownDirective,
   ZardDropdownMenuContentComponent,
-  ZardDropdownMenuItemComponent,
   ZardDropdownService,
 } from '@/shared/components/dropdown';
 import { ZardPopoverComponent, ZardPopoverDirective } from '@/shared/components/popover';
@@ -27,21 +26,18 @@ import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  lucideBrain,
   lucideChevronDown,
   lucideDownload,
-  lucideEllipsis,
-  lucideGauge,
   lucideListTodo,
   lucideLoaderCircle,
-  lucideMap,
   lucidePlugZap,
-  lucideShield,
+  lucideSlidersHorizontal,
   lucideTerminal,
   lucideTriangleAlert,
   lucideZap,
 } from '@ng-icons/lucide';
 import { AgentSettingOptionComponent } from './agent-setting-option.component';
+import { ComposerSettingsComponent } from './composer-settings.component';
 
 interface PermissionModeOption {
   id: ClaudePermissionMode;
@@ -50,10 +46,10 @@ interface PermissionModeOption {
 }
 
 const PERMISSION_MODES: PermissionModeOption[] = [
-  { id: 'auto', label: 'Auto mode', hint: 'Continuous, autonomous execution' },
-  { id: 'default', label: 'Default', hint: 'Prompt for risky tools' },
-  { id: 'acceptEdits', label: 'Accept edits', hint: 'Auto-allow file edits' },
-  { id: 'bypassPermissions', label: 'Bypass permissions', hint: 'Skip all prompts — danger' },
+  { id: 'auto', label: 'Automatic', hint: 'Continuous, autonomous execution' },
+  { id: 'default', label: 'Ask for approval', hint: 'Prompt for risky tools' },
+  { id: 'acceptEdits', label: 'Allow file edits', hint: 'Auto-allow file edits' },
+  { id: 'bypassPermissions', label: 'Unrestricted', hint: 'Skip all approval prompts' },
 ];
 
 const CODEX_PERMISSION_MODE_HINTS: Partial<Record<ClaudePermissionMode, string>> = {
@@ -62,12 +58,12 @@ const CODEX_PERMISSION_MODE_HINTS: Partial<Record<ClaudePermissionMode, string>>
 };
 
 const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: string }[] = [
-  { id: '', label: 'Default effort', hint: 'Use the provider default' },
+  { id: '', label: 'Default effort', hint: 'Agent default' },
   { id: 'low', label: 'Low', hint: 'Fastest responses' },
   { id: 'medium', label: 'Medium', hint: 'Balanced reasoning' },
   { id: 'high', label: 'High', hint: 'Deep reasoning' },
-  { id: 'xhigh', label: 'Extra high', hint: 'More depth where supported' },
-  { id: 'max', label: 'Max', hint: 'Maximum effort where supported' },
+  { id: 'xhigh', label: 'Extra high', hint: 'Extensive reasoning' },
+  { id: 'max', label: 'Max', hint: 'Maximum reasoning' },
 ];
 
 @Component({
@@ -81,11 +77,11 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
     ZardButtonComponent,
     ZardDropdownDirective,
     ZardDropdownMenuContentComponent,
-    ZardDropdownMenuItemComponent,
     ZardPopoverComponent,
     ZardPopoverDirective,
     CdkTrapFocus,
     AgentSettingOptionComponent,
+    ComposerSettingsComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
@@ -96,15 +92,11 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
     provideIcons({
       lucideChevronDown,
       lucideDownload,
-      lucideEllipsis,
-      lucideGauge,
       lucideListTodo,
       lucideLoaderCircle,
-      lucideMap,
       lucidePlugZap,
-      lucideBrain,
       lucideZap,
-      lucideShield,
+      lucideSlidersHorizontal,
       lucideTerminal,
       lucideTriangleAlert,
     }),
@@ -238,14 +230,20 @@ export class ClaudeStatusBarComponent {
 
   readonly selectedModelLabel = computed(() => {
     const id = this.selectedModel();
-    if (!id) return 'default model';
-    const m = this.availableModels().find((x) => x.id === id);
-    return m?.displayName ?? id;
+    if (!id) {
+      return (
+        this.availableModels().find((model) => model.isProviderDefault)?.displayName ??
+        'Agent default'
+      );
+    }
+    return this.selectedModelOption()?.displayName ?? id;
   });
   readonly selectedModelOption = computed(() => {
     const id = this.selectedModel();
     const models = this.availableModels();
-    return id ? models.find((m) => m.id === id) : models[0];
+    return id
+      ? models.find((m) => m.id === id)
+      : (models.find((m) => m.isProviderDefault) ?? models[0]);
   });
   readonly selectedModelSupportsEffort = computed(
     () => this.selectedModelOption()?.supportsEffort ?? false,
@@ -270,7 +268,7 @@ export class ClaudeStatusBarComponent {
   });
   readonly reasoningEffortLabel = computed(() => {
     const effort = this.reasoningEffort();
-    if (!effort) return 'default effort';
+    if (!effort) return 'Default';
     return REASONING_EFFORTS.find((option) => option.id === effort)?.label ?? effort;
   });
 
@@ -294,24 +292,11 @@ export class ClaudeStatusBarComponent {
     this.reasoningEffortChange.emit(effort || null);
   }
 
-  toggleFastMode(): void {
-    this.fastModeChange.emit(!this.fastMode());
-  }
-
   pickProvider(id: AgentProviderId): void {
     if (this.providerLocked()) return;
     if (id !== this.currentProvider()) {
       this.providerChange.emit(id);
     }
-  }
-
-  providerCapabilityHint(provider: AgentRuntimeProviderInfo): string {
-    const parts = [
-      provider.capabilities.permissions ? 'interactive permissions' : 'sandbox policy',
-      provider.capabilities.mcp ? 'MCP' : '',
-      provider.capabilities.multimodalPrompts ? 'images' : '',
-    ].filter(Boolean);
-    return parts.join(' · ');
   }
 
   pickPermissionMode(mode: ClaudePermissionMode): void {

@@ -33,6 +33,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideArrowUp,
   lucideLoaderCircle,
   lucideMessageSquare,
   lucidePaperclip,
@@ -99,6 +100,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
   },
   viewProviders: [
     provideIcons({
+      lucideArrowUp,
       lucideLoaderCircle,
       lucideMessageSquare,
       lucidePaperclip,

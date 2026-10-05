@@ -1,0 +1,106 @@
+<div class="flex flex-col gap-4">
+  <h3 class="text-sm font-semibold text-foreground">Agent settings</h3>
+
+  @if (providerLocked()) {
+    <div class="flex items-center justify-between gap-3 text-xs">
+      <span class="text-muted-foreground">Agent</span>
+      <span
+        class="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground"
+        title="The agent is fixed once the conversation starts."
+      >
+        <span class="truncate">{{ currentProviderLabel() }}</span>
+        <ng-icon
+          name="lucideLockKeyhole"
+          size="12"
+          class="shrink-0 text-muted-foreground"
+          aria-label="Agent cannot be changed after the conversation starts"
+        />
+      </span>
+    </div>
+  } @else {
+    <fieldset class="min-w-0">
+      <legend class="mb-2 text-xs font-medium text-foreground">Agent</legend>
+      <div class="grid grid-cols-2 gap-1.5">
+        @for (provider of providers(); track provider.id) {
+          <label
+            class="relative flex min-w-0 cursor-pointer items-center gap-2 rounded-lg border border-border px-2.5 py-2 text-xs text-foreground has-checked:border-ring has-checked:bg-accent has-focus-visible:ring-2 has-focus-visible:ring-ring"
+            [title]="provider.displayName"
+          >
+            <input
+              type="radio"
+              [name]="providerGroup"
+              class="sr-only"
+              [value]="provider.id"
+              [checked]="currentProvider() === provider.id"
+              (click)="pickProvider($event, provider.id)"
+            />
+            <span class="min-w-0 flex-1 truncate">{{ provider.displayName }}</span>
+            @if (currentProvider() === provider.id) {
+              <ng-icon name="lucideCheck" size="13" class="shrink-0" aria-hidden="true" />
+            }
+          </label>
+        }
+      </div>
+    </fieldset>
+  }
+
+  @if (supportsPermissions()) {
+    <fieldset class="min-w-0 border-t border-border pt-3">
+      <legend class="flex items-center gap-1.5 text-xs font-medium text-foreground">
+        <ng-icon name="lucideShield" size="13" />
+        Permissions
+      </legend>
+      <div class="flex flex-col gap-1.5">
+        @for (option of permissionOptions(); track option.id) {
+          <label
+            class="flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-2.5 py-2 transition-colors hover:bg-muted has-checked:border-border has-checked:bg-muted has-focus-visible:ring-2 has-focus-visible:ring-ring"
+            [class.text-destructive]="option.id === 'bypassPermissions'"
+          >
+            <input
+              type="radio"
+              [name]="permissionGroup"
+              class="sr-only"
+              [value]="option.id"
+              [checked]="permissionMode() === option.id"
+              (click)="pickPermissionMode($event, option.id)"
+            />
+            <span class="min-w-0 flex-1">
+              <span class="block text-xs font-medium">{{ option.label }}</span>
+              <span class="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{{
+                option.hint
+              }}</span>
+            </span>
+            @if (permissionMode() === option.id) {
+              <ng-icon name="lucideCheck" size="14" class="shrink-0" aria-hidden="true" />
+            }
+          </label>
+        }
+      </div>
+    </fieldset>
+  }
+
+  @if (supportsFastMode()) {
+    <div class="flex items-center justify-between gap-3 border-t border-border pt-3">
+      <span>
+        <span class="flex items-center gap-1.5 text-xs font-medium text-foreground">
+          <ng-icon name="lucideZap" size="13" /> Fast mode
+        </span>
+        <span class="mt-1 block text-[11px] text-muted-foreground"
+          >Faster responses, higher usage.</span
+        >
+      </span>
+      <button
+        type="button"
+        z-button
+        zSize="sm"
+        [zType]="fastMode() ? 'secondary' : 'outline'"
+        [attr.aria-pressed]="fastMode()"
+        aria-label="Fast mode"
+        (click)="fastModeChange.emit(!fastMode())"
+      >
+        {{ fastMode() ? 'On' : 'Off' }}
+      </button>
+    </div>
+  }
+  <ng-content select="[conversation-actions]" />
+</div>
