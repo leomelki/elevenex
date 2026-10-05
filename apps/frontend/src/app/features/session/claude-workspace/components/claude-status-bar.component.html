@@ -7,7 +7,7 @@
       z-button
       zType="ghost"
       type="button"
-      class="cw-sb__model-trigger h-8 min-w-0 flex-1 justify-start gap-1.5 rounded-lg px-1.5 text-left text-xs @max-[22rem]:basis-full"
+      class="cw-sb__model-trigger h-8 min-w-0 max-w-full justify-start gap-1.5 rounded-lg px-1.5 text-left text-xs"
       z-dropdown
       [zDropdownMenu]="modelMenu"
       aria-label="Configure model and thinking"
@@ -22,7 +22,6 @@
       @if (selectedModelSupportsEffort()) {
         <span class="cw-sb__thinking shrink-0 font-normal text-muted-foreground">
           <span class="mr-1.5 text-border" aria-hidden="true">/</span>{{ reasoningEffortLabel() }}
-          thinking
         </span>
       }
       <ng-icon name="lucideChevronDown" size="12" class="shrink-0 text-muted-foreground" />
