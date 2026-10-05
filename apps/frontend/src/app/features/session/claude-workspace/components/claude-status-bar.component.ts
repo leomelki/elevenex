@@ -2,6 +2,8 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import {
   ZardDropdownDirective,
   ZardDropdownMenuContentComponent,
+  ZardDropdownMenuSubContentComponent,
+  ZardDropdownMenuSubTriggerComponent,
   ZardDropdownService,
 } from '@/shared/components/dropdown';
 import { ZardPopoverComponent, ZardPopoverDirective } from '@/shared/components/popover';
@@ -30,6 +32,7 @@ import {
   lucideDownload,
   lucideListTodo,
   lucideLoaderCircle,
+  lucideLockKeyhole,
   lucidePlugZap,
   lucideSlidersHorizontal,
   lucideTerminal,
@@ -77,6 +80,8 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
     ZardButtonComponent,
     ZardDropdownDirective,
     ZardDropdownMenuContentComponent,
+    ZardDropdownMenuSubContentComponent,
+    ZardDropdownMenuSubTriggerComponent,
     ZardPopoverComponent,
     ZardPopoverDirective,
     CdkTrapFocus,
@@ -94,6 +99,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
       lucideDownload,
       lucideListTodo,
       lucideLoaderCircle,
+      lucideLockKeyhole,
       lucidePlugZap,
       lucideZap,
       lucideSlidersHorizontal,

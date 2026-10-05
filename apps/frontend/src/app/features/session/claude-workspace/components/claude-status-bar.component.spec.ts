@@ -125,6 +125,7 @@ describe('ClaudeStatusBarComponent', () => {
 
   it('navigates model choices with the keyboard, selects once and restores trigger focus', async () => {
     const fixture = await render();
+    fixture.componentRef.setInput('providerLocked', true);
     fixture.componentRef.setInput('availableModels', [
       { id: 'model-a', displayName: 'Model A', description: 'A model' },
     ]);
@@ -133,7 +134,7 @@ describe('ClaudeStatusBarComponent', () => {
     fixture.detectChanges();
 
     const trigger = fixture.nativeElement.querySelector(
-      '[aria-label="Configure model and thinking"]',
+      '[aria-label="Configure agent, model and thinking"]',
     ) as HTMLButtonElement;
     trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     fixture.detectChanges();
@@ -146,7 +147,7 @@ describe('ClaudeStatusBarComponent', () => {
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
     const menu = overlay.querySelector('[role="menu"]') as HTMLElement;
     expect(menu).not.toBeNull();
-    expect(menu.getAttribute('aria-label')).toBe('Model and thinking');
+    expect(menu.getAttribute('aria-label')).toBe('Agent, model and thinking');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
 
     menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
@@ -168,7 +169,7 @@ describe('ClaudeStatusBarComponent', () => {
     const fixture = await render();
     fixture.detectChanges();
     const trigger = fixture.nativeElement.querySelector(
-      '[aria-label="Configure model and thinking"]',
+      '[aria-label="Configure agent, model and thinking"]',
     ) as HTMLButtonElement;
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
     trigger.click();
@@ -185,6 +186,71 @@ describe('ClaudeStatusBarComponent', () => {
     expect(overlay.querySelector('[role="menu"]')).not.toBeNull();
     fixture.destroy();
     expect(overlay.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it('changes the agent from the model menu and restores focus after selection', async () => {
+    const fixture = await render();
+    const changes: string[] = [];
+    fixture.componentInstance.providerChange.subscribe((provider) => changes.push(provider));
+    fixture.detectChanges();
+    const trigger = fixture.nativeElement.querySelector(
+      '.cw-sb__model-trigger',
+    ) as HTMLButtonElement;
+    trigger.click();
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    const agentTrigger = overlay.querySelector('[aria-label="Change agent"]') as HTMLButtonElement;
+    agentTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const options = overlay.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Agent"] [role="menuitemradio"]',
+    );
+    expect(options).toHaveLength(2);
+    expect(options[0].getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(options[0]);
+    options[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(document.activeElement).toBe(options[1]);
+    options[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fixture.detectChanges();
+    expect(changes).toEqual(['codex']);
+    expect(overlay.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('explains the locked agent in the model menu while keeping models editable', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('providerLocked', true);
+    fixture.componentRef.setInput('availableModels', [
+      { id: 'model-a', displayName: 'Model A', description: '' },
+    ]);
+    const changes: string[] = [];
+    fixture.componentInstance.providerChange.subscribe((provider) => changes.push(provider));
+    fixture.detectChanges();
+    fixture.nativeElement.querySelector('.cw-sb__model-trigger').click();
+    fixture.detectChanges();
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    expect(overlay.querySelector('[aria-label="Change agent"]')).toBeNull();
+    expect(overlay.querySelector('.cw-sb__agent-header')?.textContent).toContain('Claude Code');
+    expect(
+      overlay.querySelector('[aria-label="Agent cannot be changed after the conversation starts"]'),
+    ).not.toBeNull();
+    expect(overlay.querySelectorAll('[aria-label="Model"] [role="menuitemradio"]')).toHaveLength(2);
+    fixture.componentInstance.pickProvider('codex');
+    expect(changes).toEqual([]);
+  });
+
+  it('keeps agent selection out of the settings panel', async () => {
+    const fixture = await render();
+    fixture.detectChanges();
+    fixture.nativeElement.querySelector('[aria-label="Agent settings"]').click();
+    fixture.detectChanges();
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    expect(overlay.querySelector('input[value="claude"]')).toBeNull();
+    expect(overlay.querySelector('input[value="codex"]')).toBeNull();
+    expect(overlay.querySelector('[aria-label="Change agent"]')).toBeNull();
   });
 
   it('keeps permissions editable while the agent is locked', async () => {
@@ -207,7 +273,6 @@ describe('ClaudeStatusBarComponent', () => {
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
     expect(overlay.querySelector('input[value="codex"]')).toBeNull();
     expect(overlay.querySelector('input[value="claude"]')).toBeNull();
-    expect(overlay.textContent).toContain('Claude Code');
     expect(providerChanges).toEqual([]);
     const permission = overlay.querySelector('input[value="acceptEdits"]') as HTMLInputElement;
     expect(permission.matches(':disabled')).toBe(false);
@@ -348,7 +413,7 @@ describe('ClaudeStatusBarComponent', () => {
     fixture.componentInstance.planModeChange.subscribe((value) => planChanges.push(value));
     fixture.detectChanges();
     const trigger = fixture.nativeElement.querySelector(
-      '[aria-label="Configure model and thinking"]',
+      '[aria-label="Configure agent, model and thinking"]',
     ) as HTMLButtonElement;
     trigger.click();
     fixture.detectChanges();

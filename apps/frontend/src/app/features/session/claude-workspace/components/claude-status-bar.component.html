@@ -10,7 +10,7 @@
       class="cw-sb__model-trigger h-8 min-w-0 max-w-full justify-start gap-1.5 rounded-lg px-1.5 text-left text-xs"
       z-dropdown
       [zDropdownMenu]="modelMenu"
-      aria-label="Configure model and thinking"
+      aria-label="Configure agent, model and thinking"
       [title]="
         activeProviderLabel() +
         ' · ' +
@@ -31,11 +31,55 @@
       zSide="top"
       zAlign="start"
       class="w-[22rem] max-w-[calc(100vw-2rem)] max-h-[min(24rem,calc(100dvh-2rem))] p-2"
-      aria-label="Model and thinking"
+      aria-label="Agent, model and thinking"
     >
-      <div class="mb-3 px-2 pt-1 text-sm font-semibold text-foreground">
-        {{ activeProviderLabel() }}
-      </div>
+      @if (providerLocked() || providers().length < 2) {
+        <div
+          class="cw-sb__agent-header mb-2 flex h-8 items-center gap-3 px-2 text-xs"
+          [title]="
+            providerLocked()
+              ? 'The agent can only be changed before the conversation starts.'
+              : activeProviderLabel()
+          "
+        >
+          <span class="text-muted-foreground">Agent</span>
+          <span class="min-w-0 flex-1 truncate font-medium">{{ activeProviderLabel() }}</span>
+          @if (providerLocked()) {
+            <ng-icon
+              name="lucideLockKeyhole"
+              size="12"
+              class="shrink-0 text-muted-foreground"
+              aria-label="Agent cannot be changed after the conversation starts"
+            />
+          }
+        </div>
+      } @else {
+        <button
+          type="button"
+          z-dropdown-menu-sub-trigger
+          [zSubMenu]="agentMenu"
+          class="cw-sb__agent-trigger mb-2 h-8 w-full gap-3 px-2 text-left text-xs"
+          aria-label="Change agent"
+          [title]="activeProviderLabel()"
+        >
+          <span class="text-muted-foreground">Agent</span>
+          <span class="min-w-0 flex-1 truncate font-medium">{{ activeProviderLabel() }}</span>
+        </button>
+        <z-dropdown-menu-sub-content
+          #agentMenu="zDropdownMenuSubContent"
+          class="w-48 max-w-[calc(100vw-2rem)] p-1"
+        >
+          <div role="group" aria-label="Agent">
+            @for (provider of providers(); track provider.id) {
+              <cw-setting-option
+                [label]="provider.displayName"
+                [selected]="currentProvider() === provider.id"
+                (picked)="pickProvider(provider.id)"
+              />
+            }
+          </div>
+        </z-dropdown-menu-sub-content>
+      }
       <div role="group" aria-label="Model">
         <div class="mb-1 px-2 text-xs font-medium text-muted-foreground">Model</div>
         <div class="max-h-32 overflow-y-auto">
@@ -138,15 +182,11 @@
         tabindex="-1"
       >
         <cw-composer-settings
-          [providers]="providers()"
-          [currentProvider]="currentProvider()"
-          [providerLocked]="providerLocked()"
           [supportsPermissions]="!!currentProviderCapabilities()?.permissions"
           [permissionOptions]="permissionOptions()"
           [permissionMode]="permissionMode()"
           [supportsFastMode]="selectedModelSupportsFastMode()"
           [fastMode]="fastMode()"
-          (providerChange)="pickProvider($event)"
           (permissionModeChange)="pickPermissionMode($event)"
           (fastModeChange)="fastModeChange.emit($event)"
         >

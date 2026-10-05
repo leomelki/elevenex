@@ -300,6 +300,12 @@ export class ZardDropdownMenuSubTriggerComponent implements OnDestroy {
       return;
     }
 
+    // Register this overlay with the outside-click dispatcher. Otherwise a
+    // click in the submenu is treated as outside the parent menu, which closes
+    // it before an item can restore focus to the main trigger.
+    const outsideClick = this.overlayRef!.outsidePointerEvents().subscribe(() => this.close());
+    this.cleanups.push(() => outsideClick.unsubscribe());
+
     const onEnter = () => this.cancelScheduledClose();
     const onLeave = (event: Event) => this.scheduleClose(event as MouseEvent);
     const onKeydown = (event: Event) => this.onSubmenuKeydown(event as KeyboardEvent);
