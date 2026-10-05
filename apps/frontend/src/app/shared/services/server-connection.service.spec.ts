@@ -230,4 +230,34 @@ describe('ServerConnectionService', () => {
     expect(service.state().phase).toBe('disconnected');
   });
 
+  it('blocks immediately and pauses socket retries until the paired transport returns', async () => {
+    service.start();
+    const previous = MockWebSocket.instances[0];
+    previous.emitOpen();
+    previous.emitMessage(JSON.stringify({ type: 'ready', serverTime: '2026-10-05' }));
+    service.setTransportAvailable(false);
+    expect(service.isInteractive()).toBe(false);
+    expect(service.showOverlay()).toBe(true);
+    expect(previous.readyState).toBe(MockWebSocket.CLOSED);
+    const pending = service.waitUntilInteractive();
+    vi.advanceTimersByTime(30000);
+    expect(MockWebSocket.instances.length).toBe(1);
+    service.setTransportAvailable(true);
+    const restored = MockWebSocket.instances[1];
+    restored.emitOpen();
+    expect(service.isInteractive()).toBe(false);
+    restored.emitMessage(JSON.stringify({ type: 'ready', serverTime: '2026-10-05' }));
+    vi.advanceTimersByTime(1500);
+    await pending;
+    expect(service.isInteractive()).toBe(true);
+  });
+
+  it('does not repeatedly replace a socket when an unchanged transport status is published', () => {
+    service.start();
+    service.setTransportAvailable(true);
+    const count = MockWebSocket.instances.length;
+    service.setTransportAvailable(true);
+    expect(MockWebSocket.instances.length).toBe(count);
+  });
+
 });

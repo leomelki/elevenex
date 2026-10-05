@@ -103,7 +103,13 @@ export class OnboardingStartupService {
     const generation = ++this.connectionGeneration;
     const snapshot = this.onboardingState.readSnapshot();
     if (snapshot.mode === 'paired') {
-      await this.restorePairedLink(snapshot.paired);
+      const controller = new AbortController();
+      this.controller = controller;
+      try {
+        await this.restorePairedLink(snapshot.paired, controller.signal);
+      } finally {
+        if (generation === this.connectionGeneration) this.controller = null;
+      }
       return;
     }
 
@@ -180,7 +186,7 @@ export class OnboardingStartupService {
    * equivalent of the SSH reconnect above; without it the window keeps the
    * device's name and the previous run's dead port for the rest of its life.
    */
-  private async restorePairedLink(paired: PairedDeviceState | null): Promise<void> {
+  private async restorePairedLink(paired: PairedDeviceState | null, signal: AbortSignal): Promise<void> {
     if (!paired) {
       this.onboardingState.setRemoteConnectionReady(false);
       return;
@@ -191,8 +197,9 @@ export class OnboardingStartupService {
     this.onboardingState.setRemoteConnectionReady(false);
 
     try {
-      await this.remoteLink.connect(paired.id);
-      this.navigationService.refreshTree();
+      await this.remoteLink.connect(paired.id, signal);
+      if (signal.aborted) return;
+      if (!signal.aborted) this.navigationService.refreshTree();
     } catch {
       // Nothing to retry against here — the device row in the environment
       // switcher carries the link's real status, and selecting it retries with

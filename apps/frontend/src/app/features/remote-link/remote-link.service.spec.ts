@@ -1,3 +1,5 @@
+import { signal } from '@angular/core';
+import { ServerConnectionService } from '@/shared/services/server-connection.service';
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -46,7 +48,15 @@ describe('RemoteLinkService', () => {
     }),
   };
 
+  const serverConnectionMock = {
+    setTransportAvailable: vi.fn(),
+    recheck: vi.fn(),
+    waitUntilInteractive: vi.fn(() => Promise.resolve()),
+  };
+  const snapshotState = signal({ mode: 'paired', remoteConnectionReady: true, paired: { id: 3, name: 'Studio', localPort: 51234 } });
   const onboardingStateMock = {
+    snapshotState,
+    readSnapshot: vi.fn(() => snapshotState()),
     paired: { id: 3, name: 'Studio', localPort: 51234 } as { id: number; name: string; localPort: number } | null,
     getPairedState: vi.fn(() => onboardingStateMock.paired),
     setPairedState: vi.fn(),
@@ -59,6 +69,7 @@ describe('RemoteLinkService', () => {
       providers: [
         RemoteLinkService,
         { provide: OnboardingStateService, useValue: onboardingStateMock },
+        { provide: ServerConnectionService, useValue: serverConnectionMock },
       ],
     });
     return TestBed.inject(RemoteLinkService);
@@ -68,6 +79,7 @@ describe('RemoteLinkService', () => {
     TestBed.resetTestingModule();
     vi.clearAllMocks();
     onboardingStateMock.paired = { id: 3, name: 'Studio', localPort: 51234 };
+    snapshotState.set({ mode: 'paired', remoteConnectionReady: true, paired: onboardingStateMock.paired });
     (window as unknown as { __ELEVENEX_ELECTRON__?: unknown }).__ELEVENEX_ELECTRON__ = {
       remoteLink: api,
     };
@@ -89,6 +101,7 @@ describe('RemoteLinkService', () => {
 
   it('leaves another device alone', () => {
     createService();
+    vi.clearAllMocks();
 
     emitStatus(device({ id: 9, status: 'reconnecting' }));
 
@@ -117,4 +130,57 @@ describe('RemoteLinkService', () => {
       localPort: 51234,
     });
   });
+  it('blocks requests immediately on a transport outage and rechecks after recovery', () => {
+    createService();
+    emitStatus(device({ status: 'reconnecting' }));
+    expect(serverConnectionMock.setTransportAvailable).toHaveBeenLastCalledWith(false);
+    emitStatus(device());
+    expect(serverConnectionMock.setTransportAvailable).toHaveBeenLastCalledWith(true);
+  });
+
+  it('ignores recovery from a remembered device after switching to local', () => {
+    createService();
+    snapshotState.update(snapshot => ({ ...snapshot, mode: 'local' }));
+    emitStatus(device());
+    expect(onboardingStateMock.markPairedConnected).not.toHaveBeenCalled();
+  });
+
+  it('does not reactivate a desktop when an old startup attempt finishes after cancellation', async () => {
+    let resolve!: (state: RemoteLinkDeviceState) => void;
+    api.connect.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const service = createService();
+    const controller = new AbortController();
+    const attempt = service.connect(3, controller.signal);
+    controller.abort();
+    await expect(attempt).rejects.toThrow();
+    resolve(device());
+    await Promise.resolve();
+    expect(onboardingStateMock.setPairedState).not.toHaveBeenCalled();
+    expect(service.busy()).toBe(false);
+  });
+
+  it('waits for the backend gateway before reporting a usable connection', async () => {
+    let ready!: () => void;
+    serverConnectionMock.waitUntilInteractive.mockReturnValueOnce(new Promise(resolve => { ready = resolve; }));
+    const service = createService();
+    const attempt = service.connect(3);
+    await vi.waitFor(() => expect(serverConnectionMock.waitUntilInteractive).toHaveBeenCalled());
+    expect(service.busy()).toBe(true);
+    ready();
+    await attempt;
+    expect(service.busy()).toBe(false);
+  });
+
+  it('does not overwrite a newer status event with an old list response', async () => {
+    const service = createService();
+    await service.refresh();
+    let resolve!: (devices: RemoteLinkDeviceState[]) => void;
+    api.list.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const refresh = service.refresh();
+    emitStatus(device({ status: 'reconnecting' }));
+    resolve([device()]);
+    await refresh;
+    expect(service.devices()[0].status).toBe('reconnecting');
+  });
+
 });

@@ -145,7 +145,7 @@ describe('OnboardingStartupService', () => {
 
     // The remembered port belongs to a listener that died with the last run.
     expect(onboardingStateMock.setRemoteConnectionReady).toHaveBeenCalledWith(false);
-    expect(remoteLinkMock.connect).toHaveBeenCalledWith(3);
+    expect(remoteLinkMock.connect).toHaveBeenCalledWith(3, expect.any(AbortSignal));
     expect(navigationServiceMock.refreshTree).toHaveBeenCalled();
     expect(onboardingConnectionMock.reconnect).not.toHaveBeenCalled();
   });
@@ -463,6 +463,18 @@ describe('OnboardingStartupService', () => {
     finish({ kind: 'success', localPort: 4400, installStatus: 'available' });
     await pending;
     expect(onboardingStateMock.saveServer).not.toHaveBeenCalled();
+    expect(navigationServiceMock.refreshTree).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh the workspace after a paired startup was canceled', async () => {
+    onboardingStateMock.readSnapshot.mockReturnValue({ mode: 'paired', paired: { id: 3, name: 'Studio', localPort: 51234 } });
+    let resolve!: () => void;
+    remoteLinkMock.connect.mockReturnValueOnce(new Promise<void>(done => { resolve = done; }));
+    const service = createService();
+    const startup = service.initialize();
+    service.cancelStartupConnection();
+    resolve();
+    await startup;
     expect(navigationServiceMock.refreshTree).not.toHaveBeenCalled();
   });
 

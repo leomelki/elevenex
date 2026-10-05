@@ -118,7 +118,12 @@ function createRendezvousFactory({ BrowserWindow, onError = () => {} } = {}) {
       },
     });
 
-    host.loadURL(RENDEZVOUS_URL).catch((error) => onError(error));
+    const rendererHost = host;
+    const retireHost = () => {
+      if (host === rendererHost && !rendererHost.isDestroyed()) rendererHost.destroy();
+    };
+    rendererHost.webContents.on('render-process-gone', retireHost);
+    rendererHost.loadURL(RENDEZVOUS_URL).catch(error => { onError(error); retireHost(); });
 
     const channel = new MessageChannelMain();
     port = channel.port1;
@@ -199,6 +204,7 @@ function createRendezvousFactory({ BrowserWindow, onError = () => {} } = {}) {
         return;
       }
       this.closed = true;
+      if (this.room.peers.get(this.peerId) === this) this.room.peers.delete(this.peerId);
       post({ t: 'drop', id: this.room.id, peer: this.peerId });
       this.emit('close');
     }
@@ -250,12 +256,17 @@ function createRendezvousFactory({ BrowserWindow, onError = () => {} } = {}) {
 
     shutdown(error) {
       if (error) {
+        this.closed = true;
+        rooms.delete(this.id);
+      }
+      if (error) {
         this.emitError(error);
       }
       for (const peer of [...this.peers.values()]) {
         peer.emitClose();
       }
       this.peers.clear();
+      if (error) this.emit('close');
     }
 
     close() {

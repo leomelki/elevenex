@@ -46,22 +46,33 @@ function backoffDelay(attempt) {
 
 function sleep(ms, signal) {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    if (typeof timer.unref === 'function') {
-      timer.unref();
-    }
-    signal?.addEventListener('abort', () => {
+    if (signal?.aborted) { resolve(); return; }
+    const finish = () => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
       resolve();
-    }, { once: true });
+    };
+    const timer = setTimeout(finish, ms);
+    timer.unref?.();
+    signal?.addEventListener('abort', finish, { once: true });
   });
 }
 
-// Runs the handshake and hands back a live mux session, or throws.
-async function establishSession(channel, { pairingKey, isInitiator, maxFrameBytes }) {
+async function establishSession(channel, { pairingKey, isInitiator, maxFrameBytes, signal }) {
+  if (signal?.aborted) { channel.close(); throw new Error('The link was stopped.'); }
   const secure = new SecureChannel(channel, { pairingKey, isInitiator });
-  await secure.whenReady();
-  return createMuxSession(secure, { isInitiator, ...(maxFrameBytes ? { maxFrameBytes } : {}) });
+  const onAbort = () => secure.close();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    await secure.whenReady();
+    if (signal?.aborted || secure.closed) throw new Error('The link was stopped.');
+    return createMuxSession(secure, { isInitiator, ...(maxFrameBytes ? { maxFrameBytes } : {}) });
+  } catch (error) {
+    secure.close();
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 // A rendezvous hands out every device holding the pairing key, and the same
@@ -69,6 +80,7 @@ async function establishSession(channel, { pairingKey, isInitiator, maxFrameByte
 // dropped, which costs a duplicate connection the other side then closes.
 function firstRendezvousPeer(rendezvous, { signal, timeoutMs = RENDEZVOUS_TIMEOUT_MS }) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error('The link was stopped.')); return; }
     let settled = false;
 
     const finish = (fn, value) => {
@@ -77,6 +89,8 @@ function firstRendezvousPeer(rendezvous, { signal, timeoutMs = RENDEZVOUS_TIMEOU
       }
       settled = true;
       clearTimeout(timer);
+      rendezvous.removeListener('error', onError);
+      rendezvous.removeListener('close', onClose);
       signal?.removeEventListener('abort', onAbort);
       fn(value);
     };
@@ -92,6 +106,10 @@ function firstRendezvousPeer(rendezvous, { signal, timeoutMs = RENDEZVOUS_TIMEOU
     };
 
     const onAbort = () => finish(reject, new Error('The link was stopped.'));
+    const onError = (error) => finish(reject, error);
+    const onClose = () => finish(reject, new Error('The rendezvous connection was lost.'));
+    rendezvous.on('error', onError);
+    rendezvous.once('close', onClose);
     const timer = setTimeout(
       () => finish(reject, new Error('No device answered this pairing code.')),
       timeoutMs,
@@ -156,19 +174,27 @@ class LinkHost extends EventEmitter {
     this.emit('status', this.toStatus());
   }
 
-  async start() {
+  start() {
+    if (this.stopPromise) return this.stopPromise.then(() => this.start());
+    if (this.startPromise) return this.startPromise;
+    this.startPromise = this.#start().finally(() => { this.startPromise = null; });
+    return this.startPromise;
+  }
+
+  async #start() {
     if (this.controller) {
       return this.toStatus();
     }
     this.controller = new AbortController();
+    const { signal } = this.controller;
     this.#setStatus('starting');
 
     if (this.pairing.transport === 'direct') {
       await this.#startDirect();
     } else if (this.pairing.transport === 'p2p') {
-      this.#startRendezvous();
+      this.#startRendezvous(signal);
     } else {
-      this.loop = this.#runRelayLoop();
+      this.loop = this.#runRelayLoop(signal);
     }
     return this.toStatus();
   }
@@ -176,25 +202,46 @@ class LinkHost extends EventEmitter {
   // Nothing is bound and nothing is dialled: the room is joined and devices
   // holding the pairing key turn up in it. Several may, exactly as several may
   // dial an open port, so every peer is adopted.
-  #startRendezvous() {
+  #startRendezvous(signal) {
     if (!this.openRendezvous) {
       this.#setStatus('error', 'Peer-to-peer sharing is only available in the desktop app.');
       throw new Error('Peer-to-peer sharing is not available here.');
     }
+    this.loop = this.#runRendezvousLoop(signal);
+  }
 
-    this.rendezvous = this.openRendezvous({ pairingKey: this.pairing.pairingKey });
-    this.rendezvous.on('peer', (peer) => {
-      // A peer that cannot prove it holds the pairing key is expected noise on
-      // a public broker, and must not take the room down.
-      this.#adoptChannel(new PeerChannel(peer)).catch(() => peer.close());
-    });
-    this.rendezvous.on('error', (error) => {
-      // One broker failing is survivable — the others are still listening — so
-      // this is reported without tearing the room down.
-      this.emit('forward-error', error);
-    });
-
-    this.#setStatus('waiting');
+  async #runRendezvousLoop(signal) {
+    let attempt = 0;
+    while (!signal.aborted) {
+      try {
+        const rendezvous = this.openRendezvous({ pairingKey: this.pairing.pairingKey });
+        this.rendezvous = rendezvous;
+        rendezvous.on('peer', peer => {
+          if (signal.aborted) { peer.close(); return; }
+          this.#adoptChannel(new PeerChannel(peer)).catch(() => peer.close());
+        });
+        // Broker errors are recoverable within the room; renderer death closes it.
+        rendezvous.on('error', error => this.emit('forward-error', error));
+        this.#setStatus('waiting');
+        await new Promise(resolve => {
+          const finish = () => {
+            signal.removeEventListener('abort', finish);
+            rendezvous.removeListener('close', finish);
+            rendezvous.close();
+            resolve();
+          };
+          rendezvous.once('close', finish);
+          signal.addEventListener('abort', finish, { once: true });
+          if (signal.aborted || rendezvous.closed) finish();
+        });
+        if (this.rendezvous === rendezvous) this.rendezvous = null;
+      } catch (error) {
+        if (!signal.aborted) this.emit('forward-error', error);
+      }
+      if (signal.aborted) break;
+      this.#setStatus('reconnecting', 'The rendezvous connection was lost.');
+      await sleep(backoffDelay(attempt++), signal);
+    }
   }
 
   async #startDirect() {
@@ -220,9 +267,8 @@ class LinkHost extends EventEmitter {
     }
   }
 
-  async #runRelayLoop() {
+  async #runRelayLoop(signal) {
     let attempt = 0;
-    const { signal } = this.controller;
 
     while (!signal.aborted) {
       try {
@@ -233,8 +279,8 @@ class LinkHost extends EventEmitter {
           role: 'host',
           signal,
         });
-        attempt = 0;
         await this.#adoptChannel(channel);
+        attempt = 0;
       } catch (error) {
         if (signal.aborted) {
           break;
@@ -251,6 +297,8 @@ class LinkHost extends EventEmitter {
   }
 
   async #adoptChannel(channel) {
+    const signal = this.controller?.signal;
+    if (!signal || signal.aborted) { channel.close(); return; }
     const targetPort = this.getTargetPort();
     if (!Number.isInteger(targetPort) || targetPort <= 0) {
       channel.close();
@@ -260,11 +308,13 @@ class LinkHost extends EventEmitter {
     const session = await establishSession(channel, {
       pairingKey: this.pairing.pairingKey,
       isInitiator: false,
+      signal,
       maxFrameBytes: this.pairing.transport === 'p2p' ? PEER_FRAME_BYTES : 0,
     });
 
     serveStreams(session, {
       targetPort,
+      getTargetPort: () => this.getTargetPort(),
       onError: (error) => this.emit('forward-error', error),
     });
 
@@ -301,12 +351,14 @@ class LinkHost extends EventEmitter {
       signal: this.controller?.signal,
     }).catch(() => null);
 
-    if (!direct) {
+    if (!direct || !this.controller || this.controller.signal.aborted || !relaySession.isOpen()) {
+      direct?.close();
       return;
     }
 
     serveStreams(direct, {
       targetPort,
+      getTargetPort: () => this.getTargetPort(),
       onError: (error) => this.emit('forward-error', error),
     });
     this.sessions.add(direct);
@@ -316,7 +368,15 @@ class LinkHost extends EventEmitter {
     this.sessions.delete(direct);
   }
 
-  async stop() {
+  stop() {
+    if (this.stopPromise) return this.stopPromise;
+    this.controller?.abort();
+    this.stopPromise = this.#stop().finally(() => { this.stopPromise = null; });
+    return this.stopPromise;
+  }
+
+  async #stop() {
+    await this.startPromise?.catch(() => {});
     if (!this.controller) {
       return this.toStatus();
     }
@@ -406,11 +466,19 @@ class LinkClient extends EventEmitter {
     this.emit('status', { ...this.toStatus(), rejected });
   }
 
-  async start() {
+  start() {
+    if (this.stopPromise) return this.stopPromise.then(() => this.start());
+    if (this.startPromise) return this.startPromise;
+    this.startPromise = this.#start().finally(() => { this.startPromise = null; });
+    return this.startPromise;
+  }
+
+  async #start() {
     if (this.controller) {
       return this.toStatus();
     }
     this.controller = new AbortController();
+    const { signal } = this.controller;
     this.#setStatus('starting');
 
     this.listener = createLocalListener({
@@ -429,14 +497,16 @@ class LinkClient extends EventEmitter {
       throw error;
     }
 
-    this.loop = this.#runLoop();
+    if (signal.aborted) throw new Error('The link was stopped.');
+    this.loop = this.#runLoop(signal);
     return this.toStatus();
   }
 
   // Resolves once a session is live, so callers can await a usable backend
   // rather than polling the port.
   whenConnected({ timeoutMs = 45000 } = {}) {
-    if (this.status === 'connected') {
+    if (!this.controller || this.controller.signal.aborted) return Promise.reject(new Error('The link was stopped.'));
+    if (this.status === 'connected' && this.activeSession()?.isOpen()) {
       return Promise.resolve(this.toStatus());
     }
     return new Promise((resolve, reject) => {
@@ -470,7 +540,7 @@ class LinkClient extends EventEmitter {
   async #openChannel(signal) {
     if (this.pairing.transport === 'direct') {
       const { host, port } = parseDirectEndpoint(this.pairing.endpoint);
-      return connectDirect({ host, port });
+      return connectDirect({ host, port, signal });
     }
     if (this.pairing.transport === 'p2p') {
       return this.#openRendezvousChannel(signal);
@@ -516,9 +586,8 @@ class LinkClient extends EventEmitter {
     }
   }
 
-  async #runLoop() {
+  async #runLoop(signal) {
     let attempt = 0;
-    const { signal } = this.controller;
 
     while (!signal.aborted) {
       try {
@@ -527,6 +596,7 @@ class LinkClient extends EventEmitter {
         const session = await establishSession(channel, {
           pairingKey: this.pairing.pairingKey,
           isInitiator: true,
+          signal,
           maxFrameBytes: this.pairing.transport === 'p2p' ? PEER_FRAME_BYTES : 0,
         });
 
@@ -592,7 +662,15 @@ class LinkClient extends EventEmitter {
     }
   }
 
-  async stop() {
+  stop() {
+    if (this.stopPromise) return this.stopPromise;
+    this.controller?.abort();
+    this.stopPromise = this.#stop().finally(() => { this.stopPromise = null; });
+    return this.stopPromise;
+  }
+
+  async #stop() {
+    await this.startPromise?.catch(() => {});
     if (!this.controller) {
       return this.toStatus();
     }

@@ -152,8 +152,21 @@ export class EnvironmentConnectionManagerService {
    */
   async switchToPaired(deviceId: number, label: string): Promise<{ ok: boolean; error?: string }> {
     return this.runSwitch(label, async () => {
+      const previous = this.snapshot();
       await this.stopActiveRemoteTunnel();
-      await this.remoteLink.connect(deviceId);
+      try {
+        await this.remoteLink.connect(deviceId);
+      } catch (error) {
+        const current = this.snapshot();
+        // The transport can switch origins before the backend readiness check
+        // times out. Retire the previous environment's tabs even on that path,
+        // so automatic recovery cannot revive them against another machine.
+        if (current.mode === 'paired' && current.paired?.id === deviceId
+          && (previous.mode !== 'paired' || previous.paired?.id !== deviceId)) {
+          await this.finalizeWorkspaceHandoff();
+        }
+        throw error;
+      }
       this.sshRuntimeRecovery.clearRemoteDisconnect();
       this.onboardingStartup.clearStartupFailure();
       await this.finalizeWorkspaceHandoff();

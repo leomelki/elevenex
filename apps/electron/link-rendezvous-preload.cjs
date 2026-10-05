@@ -134,22 +134,28 @@ async function join({ id, appId, room: roomId, password, strategies, rtcConfig }
         // arrive whole and in order. Awaiting each send in turn also gives back
         // the backpressure that firing and forgetting throws away.
         let queue = Promise.resolve();
-        session.send.set(key, (bytes) => {
-          queue = queue
-            .then(() => action.send(bytes, { target: peerId }))
-            .catch(() => {
-              // A failed send means the peer is going away; onPeerLeave reports
-              // it, and failing the rest of the queue would hide that.
-            });
+        const closePeer = () => {
+          try { room.getPeers()[peerId]?.close(); } catch { /* Already gone. */ }
+        };
+        const send = (bytes) => {
+          queue = queue.then(async () => {
+            if (session.send.get(key) !== send) return;
+            try {
+              await action.send(bytes, { target: peerId });
+            } catch {
+              // A lost encrypted frame invalidates the session's counters.
+              // Retire this peer immediately instead of silently losing bytes.
+              if (session.send.get(key) !== send) return;
+              session.send.delete(key);
+              session.close.delete(key);
+              closePeer();
+              post({ t: 'gone', id, peer: key });
+            }
+          });
           return queue;
-        });
-        session.close.set(key, () => {
-          try {
-            room.getPeers()[peerId]?.close();
-          } catch {
-            // Already gone.
-          }
-        });
+        };
+        session.send.set(key, send);
+        session.close.set(key, closePeer);
         post({ t: 'peer', id, peer: key });
       };
 
@@ -171,6 +177,8 @@ function leave(id) {
     return;
   }
   sessions.delete(id);
+  session.send.clear();
+  session.close.clear();
   for (const room of session.rooms) {
     try {
       room.leave();

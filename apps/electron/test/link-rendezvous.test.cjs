@@ -168,6 +168,24 @@ describe('p2p links', () => {
     assert.equal(client.toStatus().path, 'direct');
   });
 
+  it('rejoins the host room after the rendezvous renderer disappears', { timeout: 5000 }, async () => {
+    const backendPort = await startBackend('recovered room');
+    const openRendezvous = createFakeBrokers();
+    const pairing = createPairing({ transport: 'p2p' });
+    const host = createLinkHost({ pairing, getTargetPort: () => backendPort, openRendezvous });
+    await host.start();
+    cleanups.push(() => host.stop());
+    const firstRoom = openRendezvous.instances[0];
+    firstRoom.close();
+    firstRoom.emit('close');
+    const client = createLinkClient({ pairing, openRendezvous });
+    await client.start();
+    cleanups.push(() => client.stop());
+    await client.whenConnected({ timeoutMs: 4000 });
+    assert.ok(openRendezvous.instances.length >= 3, 'the host must create a replacement room');
+    assert.equal(await fetchThrough(client.localPort), 'recovered room');
+  });
+
   it('refuses a peer that does not hold the pairing key', async () => {
     const backendPort = await startBackend('should not be reachable');
     const openRendezvous = createFakeBrokers();

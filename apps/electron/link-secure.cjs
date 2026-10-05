@@ -191,7 +191,9 @@ class SecureChannel extends EventEmitter {
     }
     this.closed = true;
     clearTimeout(this.handshakeTimer);
+    if (!this.ready) this.rejectHandshake(new Error('Link closed during handshake'));
     this.channel.close();
+    this.emit('close');
   }
 
   #fail(error) {

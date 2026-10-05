@@ -99,6 +99,25 @@ describe('link manager: desktop to desktop', () => {
     assert.equal(await fetchThrough(connected.localPort), 'hello from machine A');
   });
 
+  it('coalesces concurrent connects and keeps recovering after an initial refusal', async () => {
+    const relayUrl = await startRelay();
+    const machineA = makeManager('recover-a', await startBackend('awake again'));
+    await machineA.enableSharing({ transport: 'relay', relayUrl });
+    const code = machineA.getSharingCode();
+    await machineA.disableSharing();
+    const machineB = makeManager('recover-b', 1);
+    const device = machineB.addLink({ code });
+    const attempts = await Promise.allSettled([machineB.connect(device.id), machineB.connect(device.id)]);
+    assert.ok(attempts.every(attempt => attempt.status === 'rejected'));
+    const localPort = machineB.getLinkState(device.id).localPort;
+    assert.ok(localPort > 0);
+    await machineA.enableSharing({ transport: 'relay', relayUrl });
+    await waitFor(() => machineB.getLinkState(device.id).status === 'connected', { timeoutMs: 20000 });
+    const connected = await Promise.all([machineB.connect(device.id), machineB.connect(device.id)]);
+    assert.ok(connected.every(state => state.localPort === localPort));
+    assert.equal(await fetchThrough(localPort), 'awake again');
+  });
+
   it('never exposes the pairing key through the list view', async () => {
     const relayUrl = await startRelay();
     const machineA = makeManager('redact-a', await startBackend('x'));

@@ -101,28 +101,29 @@ class FramedChannel extends EventEmitter {
   }
 }
 
-function connectDirect({ host, port, timeoutMs = DEFAULT_CONNECT_TIMEOUT_MS }) {
+function connectDirect({ host, port, timeoutMs = DEFAULT_CONNECT_TIMEOUT_MS, signal }) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error('The link was stopped.')); return; }
     const socket = net.connect({ host, port });
-    socket.setTimeout(timeoutMs);
-
-    const failOnce = (error) => {
-      socket.destroy();
-      reject(error);
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      socket.removeListener('error', fail);
     };
-
-    socket.once('timeout', () => failOnce(new Error(`Timed out connecting to ${host}:${port}`)));
-    socket.once('error', failOnce);
-    socket.once('connect', () => {
-      socket.setTimeout(0);
-      socket.removeListener('error', failOnce);
-      resolve(new FramedChannel(socket));
-    });
+    const fail = (error) => { cleanup(); socket.destroy(); reject(error); };
+    const onAbort = () => fail(new Error('The link was stopped.'));
+    const timer = setTimeout(() => fail(new Error(`Timed out connecting to ${host}:${port}`)), timeoutMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    socket.once('error', fail);
+    socket.once('connect', () => { cleanup(); resolve(new FramedChannel(socket)); });
   });
 }
 
 function createDirectServer({ host = '0.0.0.0', port, onChannel, onError }) {
+  const sockets = new Set();
   const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
     onChannel(new FramedChannel(socket));
   });
 
@@ -152,7 +153,7 @@ function createDirectServer({ host = '0.0.0.0', port, onChannel, onError }) {
         server.close(() => resolve());
         // Live link connections never end by themselves; drop them rather than
         // waiting out a shutdown that would otherwise hang.
-        server.closeAllConnections?.();
+        for (const socket of sockets) socket.destroy();
       });
     },
   };

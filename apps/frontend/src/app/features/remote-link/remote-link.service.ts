@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 
 import {
   getElectronRemoteLinkApi,
@@ -6,6 +6,8 @@ import {
   type RemoteLinkSharingState,
   type RemoteLinkTransport,
 } from '@/shared/runtime/electron-remote-link';
+import { awaitConnectionOperation } from '@/shared/runtime/connection-operation';
+import { ServerConnectionService } from '@/shared/services/server-connection.service';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
 
 const EMPTY_SHARING: RemoteLinkSharingState = {
@@ -29,6 +31,13 @@ const EMPTY_SHARING: RemoteLinkSharingState = {
 @Injectable({ providedIn: 'root' })
 export class RemoteLinkService {
   private readonly onboardingState = inject(OnboardingStateService);
+  private readonly serverConnection = inject(ServerConnectionService);
+  private connectionGeneration = 0;
+  private busyCount = 0;
+  private refreshGeneration = 0;
+  private statusRevision = 0;
+  private sharingRevision = 0;
+  private readonly deviceRevisions = new Map<number, number>();
   private readonly api = getElectronRemoteLinkApi();
 
   private readonly sharingState = signal<RemoteLinkSharingState>(EMPTY_SHARING);
@@ -45,16 +54,30 @@ export class RemoteLinkService {
       return;
     }
 
-    void this.refresh();
+    if (this.onboardingState.readSnapshot().mode === 'paired') {
+      this.onboardingState.clearPairedConnection();
+      this.serverConnection.setTransportAvailable(false);
+    }
+    effect(() => {
+      const snapshot = this.onboardingState.snapshotState();
+      const available = snapshot.mode !== 'paired' || (snapshot.remoteConnectionReady && !!snapshot.paired?.localPort);
+      untracked(() => this.serverConnection.setTransportAvailable(available));
+    });
+    void this.refresh().catch(() => {});
 
-    const unsubscribeSharing = this.api.onSharingChanged(state => this.sharingState.set(state));
+    const unsubscribeSharing = this.api.onSharingChanged(state => {
+      ++this.sharingRevision;
+      this.sharingState.set(state);
+    });
     const unsubscribeStatus = this.api.onStatusChanged(state => {
-      this.devicesState.update(devices =>
-        devices.map(device => (device.id === state.id ? state : device)),
-      );
+      this.deviceRevisions.set(state.id, ++this.statusRevision);
+      this.devicesState.update(devices => devices.some(device => device.id === state.id)
+        ? devices.map(device => device.id === state.id ? state : device)
+        : [...devices, state]);
 
-      const paired = this.onboardingState.getPairedState();
-      if (paired?.id !== state.id) {
+      const snapshot = this.onboardingState.readSnapshot();
+      const paired = snapshot.paired;
+      if (snapshot.mode !== 'paired' || paired?.id !== state.id) {
         return;
       }
 
@@ -62,6 +85,7 @@ export class RemoteLinkService {
       // port as a live backend, otherwise sockets reconnect into a dead port.
       if (state.status !== 'connected' || !state.localPort) {
         this.onboardingState.clearPairedConnection();
+        this.serverConnection.setTransportAvailable(false);
         return;
       }
 
@@ -75,6 +99,7 @@ export class RemoteLinkService {
         name: state.name,
         localPort: state.localPort,
       });
+      this.serverConnection.setTransportAvailable(true);
     });
 
     inject(DestroyRef).onDestroy(() => {
@@ -87,9 +112,16 @@ export class RemoteLinkService {
     if (!this.api) {
       return;
     }
+    const generation = ++this.refreshGeneration;
+    const revision = this.statusRevision;
+    const sharingRevision = this.sharingRevision;
     const [sharing, devices] = await Promise.all([this.api.getSharing(), this.api.list()]);
-    this.sharingState.set(sharing);
-    this.devicesState.set(devices);
+    if (generation !== this.refreshGeneration) return;
+    if (sharingRevision === this.sharingRevision) this.sharingState.set(sharing);
+    const latest = new Map(this.devicesState().map(device => [device.id, device]));
+    this.devicesState.set(devices.map(device => (this.deviceRevisions.get(device.id) ?? 0) > revision
+      ? latest.get(device.id) ?? device
+      : device));
   }
 
   /** The pairing code. Fetched on demand only — see the class comment. */
@@ -155,13 +187,16 @@ export class RemoteLinkService {
    * The main process returns a loopback port that fronts the remote backend, so
    * from here on the window is configured exactly as it is for an SSH tunnel.
    */
-  async connect(id: number): Promise<RemoteLinkDeviceState> {
+  async connect(id: number, signal?: AbortSignal): Promise<RemoteLinkDeviceState> {
     if (!this.api) {
       throw new Error('Remote links are only available in the desktop app.');
     }
 
-    return this.withBusy(async () => {
-      const device = await this.api!.connect(id);
+    const generation = ++this.connectionGeneration;
+    const device = await this.withBusy(async () => {
+      if (signal?.aborted) throw new Error('The connection was canceled.');
+      const device = await awaitConnectionOperation(this.api!.connect(id), signal);
+      if (signal?.aborted || generation !== this.connectionGeneration) throw new Error('The connection was canceled.');
       // The port outlives the session it fronts — it is opened when the link
       // starts and stays up across reconnects — so it is not on its own
       // evidence that anything is on the other end. Pointing the window at a
@@ -175,15 +210,31 @@ export class RemoteLinkService {
         name: device.name,
         localPort: device.localPort,
       });
-      await this.refresh();
+      this.serverConnection.setTransportAvailable(true);
+      // The server gateway, rather than a loopback port, gates HTTP and workspace actions.
+      this.serverConnection.recheck();
+      const verification = new AbortController();
+      const cancel = () => verification.abort(signal?.reason);
+      signal?.addEventListener('abort', cancel, { once: true });
+      const timer = setTimeout(() => verification.abort(new Error('The shared backend did not respond. Reconnection will continue automatically.')), 15000);
+      try {
+        await this.serverConnection.waitUntilInteractive(verification.signal);
+        if (signal?.aborted || generation !== this.connectionGeneration) throw new Error('The connection was canceled.');
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', cancel);
+      }
+      await this.refresh().catch(() => {});
       return device;
     });
+    return device;
   }
 
   async disconnect(id: number): Promise<void> {
     if (!this.api) {
       return;
     }
+    ++this.connectionGeneration;
     await this.api.disconnect(id);
     if (this.onboardingState.getPairedState()?.id === id) {
       this.onboardingState.clearPairedConnection();
@@ -192,11 +243,12 @@ export class RemoteLinkService {
   }
 
   private async withBusy<T>(work: () => Promise<T>): Promise<T> {
+    ++this.busyCount;
     this.busyState.set(true);
     try {
       return await work();
     } finally {
-      this.busyState.set(false);
+      this.busyState.set(--this.busyCount > 0);
     }
   }
 }

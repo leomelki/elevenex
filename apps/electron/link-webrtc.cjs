@@ -101,7 +101,12 @@ function createWebRtcPeerFactory({ BrowserWindow, onError = () => {} } = {}) {
 
     // about:blank rather than a shipped HTML file: the preload owns all the
     // logic, so there is no page content and nothing extra to package.
-    host.loadURL('about:blank').catch((error) => onError(error));
+    const rendererHost = host;
+    const retireHost = () => {
+      if (host === rendererHost && !rendererHost.isDestroyed()) rendererHost.destroy();
+    };
+    rendererHost.webContents.on('render-process-gone', retireHost);
+    rendererHost.loadURL('about:blank').catch(error => { onError(error); retireHost(); });
 
     const channel = new MessageChannelMain();
     port = channel.port1;

@@ -114,6 +114,9 @@ class WebSocketChannel extends EventEmitter {
     // see the comment there.
     socket.on('error', (error) => this.#fail(error));
     socket.on('close', () => this.#finish());
+    // Upgraded HTTP sockets allow half-open TCP. A peer disappearing without
+    // a WebSocket close frame still has to release the writable half and channel.
+    socket.on('end', () => { socket.end(); this.#finish(); });
   }
 
   // Begins reading. A server can send its first frame in the very same TCP

@@ -4945,13 +4945,19 @@ ipcMain.handle('elevenex-remote-link:connect', async (event, id) => {
     throw new Error('A saved device id is required');
   }
 
+  const requestingWindow = senderWindowEntry(event);
+  const initialEnvironment = requestingWindow ? environmentRefKey(requestingWindow.env) : null;
   const state = await linkManager.connect(linkId);
+  const currentWindow = senderWindowEntry(event);
+  if (requestingWindow && (!currentWindow || environmentRefKey(currentWindow.env) !== initialEnvironment)) {
+    throw new Error('The window changed environments while connecting to the shared device.');
+  }
   // Take the lease for the requesting window immediately. Without it a link
   // established but not yet switched to would have no holder, and the first
   // release would tear it down underneath the window that asked for it.
   const entry = senderWindowEntry(event);
   if (entry) {
-    connectionRegistry.acquire(entry.id, { mode: 'paired', serverId: linkId, label: state.name });
+    connectionRegistry.setEnvironment(entry.id, { mode: 'paired', serverId: linkId, label: state.name });
   }
   return state;
 });

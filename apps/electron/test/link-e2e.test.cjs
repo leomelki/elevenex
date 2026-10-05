@@ -5,6 +5,7 @@
 
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const net = require('node:net');
 const { randomBytes } = require('node:crypto');
 const { after, describe, it } = require('node:test');
 
@@ -22,11 +23,11 @@ after(async () => {
 
 // Stands in for the elevenex backend: a few HTTP routes plus a WebSocket
 // gateway, which is the traffic mix the link has to carry.
-async function startBackend() {
+async function startBackend(helloBody = 'hello from the shared backend') {
   const server = http.createServer((request, response) => {
     if (request.url === '/hello') {
       response.writeHead(200, { 'Content-Type': 'text/plain' });
-      response.end('hello from the shared backend');
+      response.end(helloBody);
       return;
     }
     if (request.url === '/bulk') {
@@ -82,9 +83,9 @@ async function startBackend() {
   return { server, port };
 }
 
-function httpGet(port, path) {
+function httpGet(port, path, headers = {}) {
   return new Promise((resolve, reject) => {
-    const request = http.get({ host: '127.0.0.1', port, path }, (response) => {
+    const request = http.get({ host: '127.0.0.1', port, path, headers }, (response) => {
       const chunks = [];
       response.on('data', (chunk) => chunks.push(chunk));
       response.on('end', () => resolve({
@@ -280,6 +281,73 @@ describe('remote link end to end', () => {
     const status = await reconnected;
     assert.equal(status.localPort, localPort, 'the loopback port must survive a reconnect');
     assert.equal((await httpGet(localPort, '/hello')).statusCode, 200);
+  });
+
+  it('follows a backend restart that changes its port without rebuilding the paired link', async () => {
+    const backend = await startBackend('first backend');
+    const { host, client, localPort } = await startLink({ backendPort: backend.port });
+    const initialSession = client.session;
+    const replacement = await startBackend('replacement backend');
+    host.getTargetPort = () => replacement.port;
+    const response = await httpGet(localPort, '/hello', { Connection: 'close' });
+    assert.equal(response.body.toString(), 'replacement backend');
+    assert.equal(client.session, initialSession);
+  });
+
+  it('releases stream slots after more requests than the concurrent stream limit', async () => {
+    const backend = await startBackend();
+    const { client, host, localPort } = await startLink({ backendPort: backend.port });
+    for (let batch = 0; batch < 30; batch += 1) {
+      const responses = await Promise.all(Array.from({ length: 20 }, () =>
+        httpGet(localPort, '/hello', { Connection: 'close' })));
+      assert.ok(responses.every(response => response.statusCode === 200));
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(client.session.streams.size, 0);
+    assert.equal([...host.sessions][0].streams.size, 0);
+  });
+
+  it('fails old WebSockets and restores HTTP and WebSocket traffic after repeated outages', async () => {
+    const backend = await startBackend();
+    const { client, host, localPort } = await startLink({ backendPort: backend.port });
+    for (let outage = 0; outage < 3; outage += 1) {
+      const socket = await ws.connect(`ws://127.0.0.1:${localPort}/gateway`);
+      const closed = new Promise(resolve => socket.once('close', resolve));
+      await host.stop();
+      await closed;
+      await host.start();
+      await client.whenConnected({ timeoutMs: 5000 });
+      assert.equal(client.localPort, localPort);
+      assert.equal((await httpGet(localPort, '/hello')).statusCode, 200);
+      const restored = await ws.connect(`ws://127.0.0.1:${localPort}/gateway`);
+      const echoed = new Promise(resolve => restored.once('message', resolve));
+      restored.send(Buffer.from('resumed'));
+      assert.equal((await echoed).toString(), 'echo:resumed');
+      restored.close();
+    }
+  });
+
+  it('stops a direct host while an unauthenticated socket is holding the handshake open', { timeout: 2000 }, async () => {
+    const backend = await startBackend();
+    const { host, pairing } = await startLink({ backendPort: backend.port, transport: 'direct' });
+    const socket = net.connect({ host: '127.0.0.1', port: Number(pairing.endpoint.split(':')[1]) });
+    await new Promise(resolve => socket.once('connect', resolve));
+    await host.stop();
+    socket.destroy();
+    assert.equal(host.status, 'stopped');
+    assert.equal(host.sessions.size, 0);
+  });
+
+  it('cancels startup without letting a late listener resurrect the client', { timeout: 2000 }, async () => {
+    const pairing = createPairing({ transport: 'direct', endpoint: '127.0.0.1:1' });
+    const client = createLinkClient({ pairing });
+    const started = client.start();
+    const canceled = assert.rejects(started, /stopped/i);
+    await client.stop();
+    await canceled;
+    assert.equal(client.status, 'stopped');
+    assert.equal(client.localPort, null);
+    assert.equal(client.session, null);
   });
 
   it('refuses a peer with the wrong pairing key', async () => {

@@ -88,7 +88,7 @@ async function attemptDirectUpgrade({
   timeoutMs = DEFAULT_UPGRADE_TIMEOUT_MS,
   signal,
 }) {
-  if (typeof createPeer !== 'function' || !session?.isOpen()) {
+  if (signal?.aborted || typeof createPeer !== 'function' || !session?.isOpen()) {
     return null;
   }
 
@@ -97,8 +97,10 @@ async function attemptDirectUpgrade({
   let timer = null;
   let onSessionSignal = null;
   let onSessionClose = null;
+  let onAbort = null;
 
   const cleanup = () => {
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
     if (timer) {
       clearTimeout(timer);
       timer = null;
@@ -140,7 +142,8 @@ async function attemptDirectUpgrade({
       if (typeof timer.unref === 'function') {
         timer.unref();
       }
-      signal?.addEventListener('abort', abandon, { once: true });
+      onAbort = abandon;
+      signal?.addEventListener('abort', onAbort, { once: true });
 
       onSessionClose = () => abandon();
       session.once('close', onSessionClose);
@@ -149,7 +152,7 @@ async function attemptDirectUpgrade({
       try {
         peerInstance = createPeer({ initiator: Boolean(isInitiator) });
       } catch (error) {
-        reject(error);
+        abandon();
         return;
       }
       peer = peerInstance;

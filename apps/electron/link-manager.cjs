@@ -107,7 +107,9 @@ function createLinkManager({
       openRendezvous,
     });
 
+    const running = host;
     host.on('status', (status) => {
+      if (host !== running) return;
       hostStatus = status;
       emitSharing();
     });
@@ -276,47 +278,40 @@ function createLinkManager({
       throw new Error('That saved device no longer exists.');
     }
 
-    const existing = clients.get(link.id);
-    if (existing) {
-      if (existing.status.status === 'connected') {
-        return linkView(store.getLink(id));
+    let runtime = clients.get(link.id);
+    if (!runtime) {
+      const client = createLinkClient({ pairing: link, localPort: 0, createPeer, openRendezvous });
+      runtime = { client, status: client.toStatus(), connectPromise: null };
+      clients.set(link.id, runtime);
+      client.on('status', (status) => {
+        // A stopped/replaced client must never publish over its successor.
+        if (clients.get(link.id) !== runtime) return;
+        const wasConnected = runtime.status.status === 'connected';
+        runtime.status = status;
+        if (status.status === 'connected' && !wasConnected) store.markConnected(link.id);
+        onLinkStatus(linkView(store.getLink(link.id) || link));
+      });
+      client.on('forward-error', onError);
+    }
+    if (runtime.connectPromise) return runtime.connectPromise;
+    const current = runtime;
+    current.connectPromise = (async () => {
+      try {
+        await current.client.start();
+      } catch (error) {
+        if (clients.get(link.id) === current) clients.delete(link.id);
+        await current.client.stop().catch(() => {});
+        throw error;
       }
-      // A client that is mid-reconnect is worth waiting on rather than
-      // replacing: tearing it down would drop the loopback port a window is
-      // already pointed at. The failure propagates — swallowing it would report
-      // a link that never came back as connected, and the caller would point a
-      // window at a loopback port with no session behind it.
-      await existing.client.whenConnected();
-      store.markConnected(link.id);
-      return linkView(store.getLink(id));
-    }
-
-    const client = createLinkClient({
-      pairing: link,
-      localPort: 0,
-      createPeer,
-      openRendezvous,
-    });
-    const runtime = { client, status: client.toStatus() };
-    clients.set(link.id, runtime);
-
-    client.on('status', (status) => {
-      runtime.status = status;
-      onLinkStatus({ id: link.id, ...linkView(store.getLink(link.id) || link) });
-    });
-    client.on('forward-error', (error) => onError(error));
-
-    try {
-      await client.start();
-      await client.whenConnected();
-      store.markConnected(link.id);
-    } catch (error) {
-      clients.delete(link.id);
-      await client.stop().catch(() => {});
-      throw error;
-    }
-
-    return linkView(store.getLink(link.id));
+      // A timeout/refusal fails this request, but keeps the stable listener and
+      // retry loop: a sleeping desktop can return without reopening its window.
+      await current.client.whenConnected();
+      if (clients.get(link.id) !== current || !current.client.activeSession()?.isOpen()) {
+        throw new Error('The link was stopped.');
+      }
+      return linkView(store.getLink(link.id));
+    })().finally(() => { current.connectPromise = null; });
+    return current.connectPromise;
   }
 
   async function disconnect(id) {

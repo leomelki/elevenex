@@ -153,6 +153,47 @@ describe('link mux', () => {
     assert.match(error.message, /reset/i);
   });
 
+  it('detects a silent transport outage and fails every open stream', async () => {
+    const { left, right } = createChannelPair();
+    const client = createMuxSession(left, { isInitiator: true, heartbeatIntervalMs: 15, heartbeatTimeoutMs: 15 });
+    const server = createMuxSession(right, { isInitiator: false, heartbeatIntervalMs: 0 });
+    const stream = client.open();
+    let failure;
+    stream.on('error', error => { failure = error; });
+    // No close/error event, just a carrier that stops delivering bytes.
+    left.send = () => true;
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.equal(client.isOpen(), false);
+    assert.equal(stream.destroyed, true);
+    assert.match(failure.message, /closed/i);
+    server.close();
+  });
+
+  it('keeps an idle responsive peer alive using protocol-compatible ping acknowledgements', async () => {
+    const { left, right } = createChannelPair();
+    const client = createMuxSession(left, { heartbeatIntervalMs: 15, heartbeatTimeoutMs: 30 });
+    const server = createMuxSession(right, { heartbeatIntervalMs: 0 });
+    await new Promise(resolve => setTimeout(resolve, 90));
+    assert.equal(client.isOpen(), true);
+    client.close();
+    server.close();
+  });
+
+  it('sends a reset when a half-closed stream is abandoned before its response', async () => {
+    const { left, right } = createChannelPair();
+    const client = createMuxSession(left, { isInitiator: true });
+    const server = createMuxSession(right, { isInitiator: false });
+    const accepted = new Promise(resolve => server.once('stream', resolve));
+    const stream = client.open();
+    stream.end('request');
+    const remote = await accepted;
+    const failure = new Promise(resolve => remote.once('error', resolve));
+    stream.destroy();
+    assert.match((await failure).message, /reset/i);
+    client.close();
+    server.close();
+  });
+
   it('tears every stream down when the channel closes', async () => {
     const { left, right } = createChannelPair();
     const client = createMuxSession(left, { isInitiator: true });
@@ -189,6 +230,17 @@ describe('link secure channel', () => {
     const toInitiator = new Promise((resolve) => initiator.once('message', resolve));
     responder.send(Buffer.from('host says hi'));
     assert.equal((await toInitiator).toString(), 'host says hi');
+  });
+
+  it('settles an unfinished handshake immediately when canceled', async () => {
+    const channel = new EventEmitter();
+    channel.send = () => true;
+    channel.close = () => channel.emit('close');
+    const secure = new SecureChannel(channel, { pairingKey, isInitiator: true });
+    const closed = new Promise(resolve => secure.once('close', resolve));
+    secure.close();
+    await assert.rejects(secure.whenReady(), /closed during handshake/i);
+    await closed;
   });
 
   it('rejects a peer holding a different pairing key', async () => {

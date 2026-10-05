@@ -29,6 +29,8 @@ export class ServerConnectionService implements OnDestroy {
 
   private ws: WebSocket | null = null;
   private started = false;
+  private transportAvailable = true;
+  private transportOrigin: string | null = null;
   private hasConnected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -36,7 +38,7 @@ export class ServerConnectionService implements OnDestroy {
   private waiters: Waiter[] = [];
   /** Origin the live socket was opened against, so a backend switch is detectable. */
   private readonly resumeListener = () => {
-    if (!this.started) return;
+    if (!this.started || (!this.transportAvailable && this.transportOrigin === getBackendOrigin())) return;
     if (this._state().phase !== 'connected' || Date.now() - (this._state().lastConnectedAt ?? 0) >= ServerConnectionService.HEARTBEAT_TIMEOUT_MS) this.recheck();
   };
   private connectedOrigin: string | null = null;
@@ -131,8 +133,35 @@ export class ServerConnectionService implements OnDestroy {
     this.openSocket();
   }
 
+  /** A paired transport outage invalidates readiness even while its old socket is open. */
+  setTransportAvailable(available: boolean): void {
+    const origin = getBackendOrigin();
+    if (this.transportAvailable === available && this.transportOrigin === origin) return;
+    this.transportOrigin = origin;
+    this.transportAvailable = available;
+    if (available) {
+      if (this.started) this.recheck();
+      return;
+    }
+    this.clearReconnectTimer();
+    this.clearHeartbeatTimer();
+    this.clearRestoredTimer();
+    const previous = this.ws;
+    this.ws = null;
+    if (previous) {
+      previous.onopen = previous.onmessage = previous.onclose = previous.onerror = null;
+      try { previous.close(); } catch { /* Already closing. */ }
+    }
+    this._state.update(state => ({
+      ...state,
+      phase: 'disconnected',
+      lastDisconnectedAt: state.lastDisconnectedAt ?? Date.now(),
+    }));
+  }
+
   private openSocket(): void {
     this.clearReconnectTimer();
+    if (!this.transportAvailable && this.transportOrigin === getBackendOrigin()) return;
     this.clearHeartbeatTimer();
     this.clearRestoredTimer();
 

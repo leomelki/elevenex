@@ -148,7 +148,7 @@ class MuxStream extends Duplex {
   _destroy(error, callback) {
     // A destroy before a clean FIN means the local TCP side aborted; tell the
     // peer so it can abort its own side rather than wait on a half-open stream.
-    if (!this.finSent && !this.resetSent && this.session.isOpen()) {
+    if ((!this.finSent || !this.readableEnded) && !this.resetSent && this.session.isOpen()) {
       this.resetSent = true;
       this.session.sendFrame(FRAME.DATA, FLAG.RST, this.streamId, 0, null);
     }
@@ -258,6 +258,12 @@ class MuxSession extends EventEmitter {
     this.maxConcurrentStreams = options.maxConcurrentStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS;
     this.streams = new Map();
     this.closed = false;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 10000;
+    this.heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 10000;
+    this.pendingPing = null;
+    this.pingId = 0;
+    this.lastReceivedAt = Date.now();
+    this.heartbeatTimer = null;
 
     // yamux's convention: the side that dialled owns odd stream ids, so the two
     // ends can both open streams without ever colliding.
@@ -276,6 +282,30 @@ class MuxSession extends EventEmitter {
       }
       this.close();
     });
+    this.#scheduleHeartbeat();
+  }
+
+  #scheduleHeartbeat() {
+    if (this.closed || this.heartbeatIntervalMs <= 0) return;
+    this.heartbeatTimer = setTimeout(() => {
+      if (this.pendingPing !== null) {
+        // Credit updates and responses also prove liveness. A busy transfer
+        // can queue the ping behind data without making the carrier unhealthy.
+        if (Date.now() - this.lastReceivedAt < this.heartbeatTimeoutMs) {
+          this.#scheduleHeartbeat();
+          return;
+        }
+        if (this.listenerCount('error') > 0) this.emit('error', new Error('Remote link heartbeat timed out'));
+        this.close();
+        return;
+      }
+      this.pingId = (this.pingId + 1) >>> 0;
+      this.pendingPing = this.pingId;
+      this.lastReceivedAt = Date.now();
+      this.sendFrame(FRAME.PING, 0, 0, this.pingId, null);
+      if (!this.closed) this.#scheduleHeartbeat();
+    }, this.pendingPing === null ? this.heartbeatIntervalMs : this.heartbeatTimeoutMs);
+    this.heartbeatTimer.unref?.();
   }
 
   isOpen() {
@@ -286,7 +316,11 @@ class MuxSession extends EventEmitter {
     if (this.closed) {
       return;
     }
-    this.channel.send(encodeFrame(type, flags, streamId, value, payload), { binary: true });
+    try {
+      this.channel.send(encodeFrame(type, flags, streamId, value, payload), { binary: true });
+    } catch {
+      this.close();
+    }
   }
 
   // Link-level control, not tied to a stream. See FRAME.SIGNAL.
@@ -303,6 +337,9 @@ class MuxSession extends EventEmitter {
   open() {
     if (this.closed) {
       throw new Error('Cannot open a stream on a closed link session');
+    }
+    if (this.streams.size >= this.maxConcurrentStreams) {
+      throw new Error('Too many concurrent remote link streams');
     }
     const streamId = this.nextStreamId;
     this.nextStreamId += 2;
@@ -325,8 +362,11 @@ class MuxSession extends EventEmitter {
     // Tell the peer before the transport goes, so its session ends on a GOAWAY
     // rather than on a socket error it has to guess the meaning of. Best effort:
     // if the channel is already down this is a no-op.
-    this.sendFrame(FRAME.GOAWAY, 0, 0, 0, null);
     this.closed = true;
+    clearTimeout(this.heartbeatTimer);
+    try {
+      this.channel.send(encodeFrame(FRAME.GOAWAY, 0, 0, 0, null), { binary: true });
+    } catch { /* A dead transport cannot accept a farewell. */ }
     for (const stream of [...this.streams.values()]) {
       // In-flight streams must fail, not end cleanly: a truncated response that
       // looks like a normal EOF is indistinguishable from a complete one to an
@@ -360,12 +400,18 @@ class MuxSession extends EventEmitter {
       return;
     }
 
+    this.lastReceivedAt = Date.now();
     if (frame.type === FRAME.GOAWAY) {
       this.close();
       return;
     }
 
     if (frame.type === FRAME.PING) {
+      if ((frame.flags & FLAG.ACK) !== 0 && frame.value === this.pendingPing) {
+        this.pendingPing = null;
+        clearTimeout(this.heartbeatTimer);
+        this.#scheduleHeartbeat();
+      }
       if ((frame.flags & FLAG.ACK) === 0) {
         this.sendFrame(FRAME.PING, FLAG.ACK, 0, frame.value, null);
       }

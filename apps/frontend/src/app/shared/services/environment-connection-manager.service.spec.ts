@@ -1,3 +1,4 @@
+import { RemoteLinkService } from '@/features/remote-link/remote-link.service';
 import { TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { Router } from '@angular/router';
@@ -85,6 +86,8 @@ describe('EnvironmentConnectionManagerService', () => {
     }),
     saveLastSshDefaults: vi.fn(),
   };
+
+  const remoteLinkMock = { connect: vi.fn() };
 
   const onboardingConnectionMock = {
     cancelCurrentConnection: vi.fn(),
@@ -211,6 +214,7 @@ describe('EnvironmentConnectionManagerService', () => {
     TestBed.configureTestingModule({
       providers: [
         EnvironmentConnectionManagerService,
+        { provide: RemoteLinkService, useValue: remoteLinkMock },
         { provide: OnboardingStateService, useValue: onboardingStateMock },
         { provide: OnboardingConnectionService, useValue: onboardingConnectionMock },
         { provide: OnboardingStartupService, useValue: onboardingStartupMock },
@@ -394,4 +398,24 @@ describe('EnvironmentConnectionManagerService', () => {
       expect(service.serverDeletionBlocker(server.id)).toBeNull();
     });
   });
+  it('retires old tabs when paired transport activates but backend verification fails', async () => {
+    remoteLinkMock.connect.mockImplementationOnce(async () => {
+      snapshotState.update(current => ({ ...current, mode: 'paired', paired: { id: 3, name: 'Studio', localPort: 51999 } }));
+      throw new Error('The shared backend did not respond.');
+    });
+    const service = TestBed.inject(EnvironmentConnectionManagerService);
+    const result = await service.switchToPaired(3, 'Studio');
+    expect(result.ok).toBe(false);
+    expect(tabServiceMock.resetForEnvironmentChange).toHaveBeenCalled();
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/projects']);
+  });
+
+  it('retains tabs when paired dialing fails before changing environments', async () => {
+    remoteLinkMock.connect.mockRejectedValueOnce(new Error('Device offline.'));
+    const service = TestBed.inject(EnvironmentConnectionManagerService);
+    const result = await service.switchToPaired(3, 'Studio');
+    expect(result.ok).toBe(false);
+    expect(tabServiceMock.resetForEnvironmentChange).not.toHaveBeenCalled();
+  });
+
 });
