@@ -2,8 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { GitService, isValidGitRef } from './git.service.js';
+import { clearWorktreeFingerprintCache } from './git-worktree-fingerprint.js';
 import { BadRequestException } from '@nestjs/common';
 import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 
@@ -11,6 +12,24 @@ describe('GitService', () => {
   let service: GitService;
   let tmpDir: string;
   let repoPath: string;
+
+  function createTrackedWorktree(name: string): string {
+    const relativePath = `.worktrees/${name}`;
+    const worktreePath = path.join(repoPath, relativePath);
+    execFileSync('git', ['worktree', 'add', '-b', name, worktreePath], {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    execFileSync('git', ['add', '--', relativePath], {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    execFileSync('git', ['commit', '-m', 'Track nested worktree'], {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    return worktreePath;
+  }
 
   function createMergeConflict(): void {
     const baseBranch = execSync('git branch --show-current', {
@@ -210,12 +229,9 @@ describe('GitService', () => {
       await service.stageFiles(repoPath, ['initial.txt']);
 
       const status = await service.getStatus(repoPath);
-      // After staging, the file should appear as staged
-      // It may also appear as unstaged if simple-git still reports it in modified
-      const stagedFile = status.find((f) => f.staged);
-      expect(stagedFile).toBeDefined();
-      expect(stagedFile?.path).toBe('initial.txt');
-      expect(stagedFile?.status).toBe('modified');
+      expect(status).toEqual([
+        { path: 'initial.txt', status: 'modified', staged: true },
+      ]);
     });
 
     it('should stage multiple files', async () => {
@@ -538,6 +554,93 @@ describe('GitService', () => {
   });
 
   describe('getStatusSummary', () => {
+    it('ignores internal changes in tracked worktrees across status, stats, diffs, and fingerprints', async () => {
+      const firstWorktree = createTrackedWorktree('first');
+      const secondWorktree = createTrackedWorktree('second');
+      const before = await service.getStatusSummary(repoPath);
+
+      fs.writeFileSync(path.join(firstWorktree, 'initial.txt'), 'changed\n');
+      fs.writeFileSync(path.join(secondWorktree, 'untracked.txt'), 'new\n');
+      expect(
+        execFileSync(
+          'git',
+          ['status', '--porcelain', '--ignore-submodules=none'],
+          {
+            cwd: repoPath,
+            encoding: 'utf8',
+          },
+        ),
+      ).toContain(' M .worktrees/first');
+
+      expect(await service.getStatus(repoPath)).toEqual([]);
+      clearWorktreeFingerprintCache(repoPath);
+      const after = await service.getStatusSummary(repoPath);
+      expect(after.hasChanges).toBe(false);
+      expect(after.files).toEqual([]);
+      expect(after.staged).toEqual({ files: 0, additions: 0, deletions: 0 });
+      expect(after.unstaged).toEqual({ files: 0, additions: 0, deletions: 0 });
+      expect(after.total).toEqual({ files: 0, additions: 0, deletions: 0 });
+      expect(after.worktreeFingerprint).toBe(before.worktreeFingerprint);
+      expect(await service.getDiff(repoPath, {})).toBe('');
+      expect(await service.getStatus(firstWorktree)).toEqual([
+        { path: 'initial.txt', status: 'modified', staged: false },
+      ]);
+      expect(await service.getStatus(secondWorktree)).toEqual([
+        { path: 'untracked.txt', status: 'untracked', staged: false },
+      ]);
+    });
+
+    it('keeps ordinary parent changes visible alongside dirty tracked worktrees', async () => {
+      const worktree = createTrackedWorktree('nested');
+      fs.writeFileSync(path.join(worktree, 'initial.txt'), 'nested change\n');
+      fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'parent change\n');
+      fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'note\n');
+
+      const summary = await service.getStatusSummary(repoPath);
+
+      expect(summary.files).toEqual([
+        { path: 'initial.txt', status: 'modified', staged: false },
+        { path: 'notes.txt', status: 'untracked', staged: false },
+      ]);
+      expect(summary.hasChanges).toBe(true);
+      expect(summary.total).toEqual({ files: 2, additions: 2, deletions: 1 });
+    });
+
+    it('keeps unstaged and staged gitlink commit changes visible even when the worktree is dirty', async () => {
+      const worktree = createTrackedWorktree('nested');
+      fs.writeFileSync(
+        path.join(worktree, 'initial.txt'),
+        'committed change\n',
+      );
+      execFileSync('git', ['commit', '-am', 'Update nested worktree'], {
+        cwd: worktree,
+        stdio: 'pipe',
+      });
+      fs.writeFileSync(path.join(worktree, 'initial.txt'), 'still dirty\n');
+
+      const unstaged = await service.getStatusSummary(repoPath);
+      expect(unstaged.files).toEqual([
+        { path: '.worktrees/nested', status: 'modified', staged: false },
+      ]);
+      expect(unstaged.unstaged).toEqual({
+        files: 1,
+        additions: 1,
+        deletions: 1,
+      });
+      expect(await service.getDiff(repoPath, {})).toContain(
+        'Subproject commit',
+      );
+
+      await service.stageFiles(repoPath, ['.worktrees/nested']);
+
+      const staged = await service.getStatusSummary(repoPath);
+      expect(staged.files).toEqual([
+        { path: '.worktrees/nested', status: 'modified', staged: true },
+      ]);
+      expect(staged.staged).toEqual({ files: 1, additions: 1, deletions: 1 });
+      expect(staged.unstaged).toEqual({ files: 0, additions: 0, deletions: 0 });
+    });
+
     it('should return staged and unstaged line stats', async () => {
       fs.writeFileSync(path.join(repoPath, 'staged.txt'), 'staged line\n');
       execSync('git add staged.txt', { cwd: repoPath });

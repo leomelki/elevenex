@@ -147,6 +147,12 @@ export class GitService {
   private toFileStatuses(status: StatusResult): FileStatus[] {
     const files: FileStatus[] = [];
     const conflictedPaths = new Set(status.conflicted);
+    // simple-git's modified list includes index-only changes too.
+    const stagedOnlyPaths = new Set(
+      status.files
+        .filter((file) => file.index !== ' ' && file.working_dir === ' ')
+        .map((file) => file.path),
+    );
 
     status.conflicted.forEach((path) => {
       files.push({ path, status: 'conflicted', staged: false });
@@ -164,6 +170,7 @@ export class GitService {
 
     status.modified.forEach((path) => {
       if (conflictedPaths.has(path)) return;
+      if (stagedOnlyPaths.has(path)) return;
       files.push({ path, status: 'modified', staged: false });
     });
 

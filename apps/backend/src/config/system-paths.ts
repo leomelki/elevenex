@@ -563,7 +563,13 @@ export function worktreeSimpleGit(worktreePath: string): SimpleGit {
   const env = buildAugmentedEnv(process.env, worktreePath);
   delete env.GIT_PAGER;
   delete env.PAGER;
-  return simpleGit(worktreePath).env(env);
+  // Gitlinks can point to nested worktrees as well as submodules. Changes
+  // inside them cannot be committed by the parent repository; only a change
+  // to the recorded commit can. Keep status, diffs, and fingerprints aligned
+  // without scanning their contents or changing the repository's config.
+  return simpleGit(worktreePath, {
+    config: ['diff.ignoreSubmodules=dirty'],
+  }).env(env);
 }
 
 // POSIX-compliant single-quote shell escape. Wraps the value in single quotes

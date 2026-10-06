@@ -59,6 +59,22 @@ describe('ChangeReviewService', () => {
     expect(summary.totals.additions).toBeGreaterThanOrEqual(2);
   });
 
+  it('excludes internal tracked-worktree changes from uncommitted reviews', async () => {
+    const relativePath = '.worktrees/nested';
+    const worktreePath = path.join(repoPath, relativePath);
+    git(`worktree add -b nested "${worktreePath}"`);
+    git(`add -- ${relativePath}`);
+    git('commit -m "Track nested worktree"');
+    write(`${relativePath}/README.md`, 'nested change\n');
+    write(`${relativePath}/untracked.txt`, 'new\n');
+    write('README.md', 'one\ntwo\n');
+
+    const summary = await service.getSummary(repoPath, 'uncommitted');
+
+    expect(summary.files.map((file) => file.path)).toEqual(['README.md']);
+    expect(summary.totals).toEqual({ files: 1, additions: 1, deletions: 0 });
+  });
+
   it('pauses large uncommitted change sets before loading file summaries or rows', async () => {
     for (let index = 0; index < 2_001; index += 1) {
       write(`bulk/file-${index}.txt`, '');
