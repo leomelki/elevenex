@@ -108,7 +108,8 @@ export class UserTerminalViewComponent implements AfterViewInit, OnDestroy, OnCh
         brightWhite: '#c0caf5',
       },
       allowProposedApi: true,
-      scrollback: 0,
+      // Local PTYs rely on xterm for history; remote tmux handles its own copy-mode.
+      scrollback: 10000,
       scrollSensitivity: 5,
     });
 

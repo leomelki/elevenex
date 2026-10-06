@@ -74,7 +74,7 @@
   display: none !important;
 }
 
-:host ::ng-deep .xterm-decoration-top,
+// xterm-decoration-top also marks selected text; it must remain visible.
 :host ::ng-deep .xterm-decoration-overview-ruler {
   display: none !important;
 }
