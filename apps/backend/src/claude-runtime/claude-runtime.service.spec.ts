@@ -1870,6 +1870,106 @@ describe('ClaudeRuntimeService', () => {
     await Promise.all([first, second]);
   });
 
+  it('preserves Claude-reported effort levels when refreshing the live model catalog', async () => {
+    const runtime = {
+      supportedModels: jest.fn().mockResolvedValue([
+        {
+          value: 'sonnet',
+          displayName: 'Sonnet',
+          description: '',
+          supportsEffort: true,
+          supportedEffortLevels: ['low', 'medium', 'high'],
+        },
+      ]),
+      getContextUsage: jest.fn().mockResolvedValue({
+        model: 'claude-sonnet-4-6',
+        memoryFiles: [],
+        mcpTools: [],
+      }),
+    };
+    (service as any).sessionRuntimes.set(7, runtime);
+    await (service as any).refreshRuntimeMetadata(7);
+    const state = await service.getRuntimeState(7);
+    expect(state.selectedModel).toBe('claude-sonnet-4-6');
+    expect(state.availableModels[0]).toMatchObject({
+      id: 'sonnet',
+      supportsEffort: true,
+      reasoningEfforts: ['low', 'medium', 'high'],
+    });
+  });
+
+  it('rebuilds an idle Claude session when the thinking level changes', async () => {
+    const runtime = {
+      isIdle: true,
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    (service as any).sessionRuntimes.set(7, runtime);
+    const prewarm = jest.spyOn(service, 'prewarmSession').mockResolvedValue();
+    const result = await service.setReasoningEffort(7, 'high');
+    expect(result.reasoningEffort).toBe('high');
+    expect(result.claudeSessionId).toBe('claude-session-1');
+    expect(runtime.close).toHaveBeenCalledTimes(1);
+    expect(prewarm).toHaveBeenCalledWith(7);
+  });
+
+  it.each(['high', null] as const)(
+    'applies thinking level %s on the next turn when changed during a run',
+    async (effort) => {
+      const runtime = {
+        isIdle: false,
+        reasoningEffort: 'low',
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      (service as any).sessionRuntimes.set(7, runtime);
+      (service as any).activeRuns.set(7, {});
+      const result = await service.setReasoningEffort(7, effort);
+      expect(result.reasoningEffort).toBe(effort);
+      expect(runtime.close).not.toHaveBeenCalled();
+
+      (service as any).activeRuns.delete(7);
+      runtime.isIdle = true;
+      (query as jest.Mock).mockReturnValue({
+        close: jest.fn(),
+        [Symbol.asyncIterator]: () => successfulResultIterator(),
+      });
+      const session = await sessionsService.findOne(7);
+      const state = (service as any).ensureRuntimeState(7);
+      const replacement = await (service as any).ensureSessionRuntime(
+        7,
+        session,
+        state,
+      );
+      await replacement.ensureStarted();
+      expect(runtime.close).toHaveBeenCalledTimes(1);
+      expect(query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: expect.objectContaining({
+            effort: effort ?? undefined,
+            resume: 'claude-session-1',
+          }),
+        }),
+      );
+      await replacement.close();
+    },
+  );
+
+  it('defers thinking changes while Claude background work still needs the process', async () => {
+    const runtime = {
+      isIdle: true,
+      reasoningEffort: 'low',
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    (service as any).sessionRuntimes.set(7, runtime);
+    jest.spyOn(service as any, 'isBackgroundWorkLive').mockReturnValue(true);
+    await service.setReasoningEffort(7, 'high');
+    const session = await sessionsService.findOne(7);
+    const state = (service as any).ensureRuntimeState(7);
+    expect(await (service as any).ensureSessionRuntime(7, session, state)).toBe(
+      runtime,
+    );
+    expect(runtime.close).not.toHaveBeenCalled();
+  });
+
   it('logs structured startup timing with resume diagnostics and first-visible buckets', async () => {
     sessionsService.findOne.mockResolvedValue({
       id: 7,

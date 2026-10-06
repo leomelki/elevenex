@@ -199,9 +199,7 @@ export class ClaudeStatusBarComponent {
         hint: CODEX_PERMISSION_MODE_HINTS[opt.id] ?? opt.hint,
       }));
     }
-    const modelId = this.selectedModel();
-    const models = this.availableModels();
-    const effectiveModel = modelId ? models.find((m) => m.id === modelId) : models[0];
+    const effectiveModel = this.selectedModelOption();
     const supportsAuto = effectiveModel?.supportsAutoMode ?? false;
     const current = this.permissionMode();
     return PERMISSION_MODES.filter(
@@ -247,9 +245,13 @@ export class ClaudeStatusBarComponent {
   readonly selectedModelOption = computed(() => {
     const id = this.selectedModel();
     const models = this.availableModels();
-    return id
-      ? models.find((m) => m.id === id)
-      : (models.find((m) => m.isProviderDefault) ?? models[0]);
+    if (!id) return models.find((m) => m.isProviderDefault) ?? models[0];
+    const exact = models.find((m) => m.id === id);
+    if (exact || this.currentProvider() !== 'claude') return exact;
+    // Claude's init/context messages report a resolved model ID, whereas
+    // supportedModels lists the selectable family aliases.
+    const family = /^claude-(sonnet|opus|haiku)(?:-|$)/.exec(id)?.[1];
+    return family ? models.find((m) => m.id === family) : undefined;
   });
   readonly selectedModelSupportsEffort = computed(
     () => this.selectedModelOption()?.supportsEffort ?? false,

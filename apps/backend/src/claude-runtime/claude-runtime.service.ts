@@ -1617,7 +1617,18 @@ export class ClaudeRuntimeService
   ): Promise<ClaudeSessionRuntime> {
     const existing = this.sessionRuntimes.get(sessionId);
     if (existing) {
-      return existing;
+      // A level changed during a turn cannot rebuild the process until that
+      // turn (and any background work) finishes. Apply it before reusing the
+      // persistent query for the next prompt.
+      if (
+        (existing.reasoningEffort ?? null) === state.reasoningEffort ||
+        !existing.isIdle ||
+        this.isBackgroundWorkLive(sessionId)
+      ) {
+        return existing;
+      }
+      this.sessionRuntimes.delete(sessionId);
+      await existing.close();
     }
 
     const inFlight = this.sessionRuntimeCreateInFlight.get(sessionId);
@@ -5822,6 +5833,7 @@ export class ClaudeRuntimeService
       displayName: model.displayName,
       description: model.description,
       supportsEffort: model.supportsEffort,
+      reasoningEfforts: model.supportedEffortLevels,
       supportsFastMode: model.supportsFastMode,
       supportsAutoMode: model.supportsAutoMode,
     };

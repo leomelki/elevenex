@@ -105,7 +105,7 @@
             <cw-setting-option
               [label]="m.displayName"
               [description]="m.description"
-              [selected]="selectedModel() === m.id"
+              [selected]="!!selectedModel() && selectedModelOption()?.id === m.id"
               (picked)="pickModel(m.id)"
             />
           }

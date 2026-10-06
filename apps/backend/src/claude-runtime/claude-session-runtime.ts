@@ -82,6 +82,10 @@ export class ClaudeSessionRuntime {
     return this.activeTurn === null;
   }
 
+  get reasoningEffort(): Options['effort'] {
+    return this.deps.options.effort;
+  }
+
   async ensureStarted(reason: 'prewarm' | 'turn' = 'turn'): Promise<void> {
     if (this.closed) {
       throw new Error('Claude runtime is closed.');

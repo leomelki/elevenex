@@ -407,6 +407,82 @@ describe('ClaudeStatusBarComponent', () => {
     expect(fixture.componentInstance.selectedModelLabel()).toBe('Agent default');
   });
 
+  it.each(['light', 'dark'])(
+    'keeps thinking editable after Claude resolves its model ID in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      try {
+        const fixture = await render();
+        fixture.componentRef.setInput('providerLocked', true);
+        fixture.componentRef.setInput('phase', 'running');
+        fixture.componentRef.setInput('availableModels', [
+          {
+            id: 'sonnet',
+            displayName: 'Sonnet',
+            description: '',
+            supportsEffort: true,
+            reasoningEfforts: ['low', 'medium', 'high'],
+            supportsAutoMode: true,
+          },
+          { id: 'haiku', displayName: 'Haiku', description: '', supportsEffort: false },
+        ]);
+        fixture.componentRef.setInput('selectedModel', 'claude-sonnet-4-6');
+        fixture.componentRef.setInput('reasoningEffort', 'high');
+        const changes: unknown[] = [];
+        fixture.componentInstance.reasoningEffortChange.subscribe((effort) => changes.push(effort));
+        fixture.detectChanges();
+
+        const trigger = fixture.nativeElement.querySelector(
+          '.cw-sb__model-trigger',
+        ) as HTMLButtonElement;
+        expect(trigger.textContent).toContain('Sonnet');
+        expect(trigger.textContent).toContain('High');
+        expect(
+          fixture.componentInstance.permissionOptions().some((option) => option.id === 'auto'),
+        ).toBe(true);
+        trigger.click();
+        fixture.detectChanges();
+        const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+        const modelOptions = overlay.querySelectorAll<HTMLButtonElement>(
+          '[aria-label="Model"] [role="menuitemradio"]',
+        );
+        expect(modelOptions[1].getAttribute('aria-checked')).toBe('true');
+        const options = overlay.querySelectorAll<HTMLButtonElement>(
+          '[aria-label="Thinking"] [role="menuitemradio"]',
+        );
+        expect(options).toHaveLength(4);
+        expect(options[3].getAttribute('aria-checked')).toBe('true');
+        options[1].click();
+        expect(changes).toEqual(['low']);
+
+        fixture.componentRef.setInput('reasoningEffort', 'low');
+        fixture.detectChanges();
+        expect(trigger.textContent).toContain('Low');
+        fixture.componentRef.setInput('selectedModel', 'claude-haiku-4-5-20251001');
+        fixture.detectChanges();
+        expect(fixture.componentInstance.selectedModelSupportsEffort()).toBe(false);
+        fixture.componentRef.setInput('currentProvider', 'codex');
+        fixture.componentRef.setInput('selectedModel', 'claude-sonnet-4-6');
+        fixture.detectChanges();
+        expect(fixture.componentInstance.selectedModelOption()).toBeUndefined();
+      } finally {
+        document.documentElement.classList.remove('dark');
+      }
+    },
+  );
+
+  it('uses exact Claude model capabilities before falling back to a family alias', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('availableModels', [
+      { id: 'sonnet', displayName: 'Sonnet', description: '', supportsEffort: true },
+      { id: 'claude-sonnet-4-0', displayName: 'Sonnet 4', description: '', supportsEffort: false },
+    ]);
+    fixture.componentRef.setInput('selectedModel', 'claude-sonnet-4-0');
+    fixture.detectChanges();
+    expect(fixture.componentInstance.selectedModelLabel()).toBe('Sonnet 4');
+    expect(fixture.componentInstance.selectedModelSupportsEffort()).toBe(false);
+  });
+
   it('leaves a menu with Shift+Tab without toggling plan mode', async () => {
     const fixture = await render();
     const planChanges: boolean[] = [];
