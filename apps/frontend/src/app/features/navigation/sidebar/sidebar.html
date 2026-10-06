@@ -607,13 +607,14 @@
                   }
 
                   @let hiddenCount = getHiddenSessionCount(workspace.sessions, repo.id, workspace.id);
+                  @let nextSessionCount = hiddenCount > SESSION_LIST_PAGE_SIZE ? SESSION_LIST_PAGE_SIZE : hiddenCount;
                   @if (hiddenCount > 0) {
                     <div class="session-overflow-row" [style.padding-left]="'64px'">
                       <button
                         class="session-show-more-btn"
-                        (click)="$event.stopPropagation(); toggleSessionListExpanded(repo.id, workspace.id)"
-                        [title]="'Show ' + hiddenCount + ' older session' + (hiddenCount === 1 ? '' : 's')"
-                        [attr.aria-label]="'Show ' + hiddenCount + ' older session' + (hiddenCount === 1 ? '' : 's')"
+                        (click)="$event.stopPropagation(); showMoreSessions(repo.id, workspace.id)"
+                        [title]="'Show ' + nextSessionCount + ' older session' + (nextSessionCount === 1 ? '' : 's')"
+                        [attr.aria-label]="'Show ' + nextSessionCount + ' older session' + (nextSessionCount === 1 ? '' : 's')"
                       >
                         <ng-icon name="lucideChevronDown" class="!w-3 !h-3 shrink-0" />
                         <span>{{ hiddenCount }} older</span>
@@ -625,7 +626,7 @@
                     <button
                       class="session-collapse-btn"
                       [style.padding-left]="'64px'"
-                      (click)="$event.stopPropagation(); toggleSessionListExpanded(repo.id, workspace.id)"
+                      (click)="$event.stopPropagation(); collapseSessionList(repo.id, workspace.id)"
                       title="Show fewer sessions"
                       aria-label="Show fewer sessions"
                     >

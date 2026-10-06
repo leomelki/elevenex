@@ -162,6 +162,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private static readonly SESSION_TIME_TICK_MS = 60_000;
   static readonly SESSION_LIST_MAX_VISIBLE = 8;
   readonly SESSION_LIST_MAX_VISIBLE = Sidebar.SESSION_LIST_MAX_VISIBLE;
+  readonly SESSION_LIST_PAGE_SIZE = 20;
 
   desktopMode = input(false);
   macNativeChrome = input(false);
@@ -302,7 +303,7 @@ export class Sidebar implements OnInit, OnDestroy {
   deletingSessionId = signal<number | null>(null);
   archivingSessionId = signal<number | null>(null);
   unarchivingSessionId = signal<number | null>(null);
-  expandedSessionLists = signal<Set<string>>(new Set());
+  sessionListVisibleLimits = signal<Map<string, number>>(new Map());
   private sessionDeleteEnableTimer: number | null = null;
   private sessionDeleteDismissTimer: number | null = null;
   private projectRevealTimer: number | null = null;
@@ -758,18 +759,27 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   isSessionListExpanded(repoId: number, workspaceId: number): boolean {
-    return this.expandedSessionLists().has(`${repoId}-${workspaceId}`);
+    return this.getSessionListVisibleLimit(repoId, workspaceId) > Sidebar.SESSION_LIST_MAX_VISIBLE;
   }
 
-  toggleSessionListExpanded(repoId: number, workspaceId: number): void {
+  showMoreSessions(repoId: number, workspaceId: number): void {
     const key = `${repoId}-${workspaceId}`;
-    const next = new Set(this.expandedSessionLists());
-    if (next.has(key)) {
-      next.delete(key);
-    } else {
-      next.add(key);
-    }
-    this.expandedSessionLists.set(next);
+    const next = new Map(this.sessionListVisibleLimits());
+    next.set(key, this.getSessionListVisibleLimit(repoId, workspaceId) + this.SESSION_LIST_PAGE_SIZE);
+    this.sessionListVisibleLimits.set(next);
+  }
+
+  collapseSessionList(repoId: number, workspaceId: number): void {
+    const next = new Map(this.sessionListVisibleLimits());
+    next.delete(`${repoId}-${workspaceId}`);
+    this.sessionListVisibleLimits.set(next);
+  }
+
+  private getSessionListVisibleLimit(repoId: number, workspaceId: number): number {
+    return (
+      this.sessionListVisibleLimits().get(`${repoId}-${workspaceId}`) ??
+      Sidebar.SESSION_LIST_MAX_VISIBLE
+    );
   }
 
   getVisibleSessions(
@@ -777,23 +787,15 @@ export class Sidebar implements OnInit, OnDestroy {
     repoId: number,
     workspaceId: number,
   ): SessionInTree[] {
-    if (
-      sessions.length <= Sidebar.SESSION_LIST_MAX_VISIBLE ||
-      this.isSessionListExpanded(repoId, workspaceId)
-    ) {
+    const limit = this.getSessionListVisibleLimit(repoId, workspaceId);
+    if (sessions.length <= limit) {
       return sessions;
     }
-    return sessions.slice(sessions.length - Sidebar.SESSION_LIST_MAX_VISIBLE);
+    return sessions.slice(sessions.length - limit);
   }
 
   getHiddenSessionCount(sessions: SessionInTree[], repoId: number, workspaceId: number): number {
-    if (
-      sessions.length <= Sidebar.SESSION_LIST_MAX_VISIBLE ||
-      this.isSessionListExpanded(repoId, workspaceId)
-    ) {
-      return 0;
-    }
-    return sessions.length - Sidebar.SESSION_LIST_MAX_VISIBLE;
+    return Math.max(0, sessions.length - this.getSessionListVisibleLimit(repoId, workspaceId));
   }
 
   getProjectSshStats(projectId: number) {
