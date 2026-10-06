@@ -42,6 +42,8 @@ describe('TerminalGateway', () => {
 
     mockPtyManager = {
       kill: jest.fn(),
+      detach: jest.fn(),
+      replayOutput: jest.fn(),
       resize: jest.fn(),
       write: jest.fn(),
     } as unknown as jest.Mocked<PtyManager>;
@@ -233,6 +235,7 @@ describe('TerminalGateway', () => {
       'New connection established',
     );
     expect(mockPtyManager.kill).not.toHaveBeenCalled();
+    expect(mockPtyManager.detach).not.toHaveBeenCalled();
     expect(
       (
         gateway as unknown as { sessions: Map<number, { ws: WebSocket }> }
@@ -292,4 +295,60 @@ describe('TerminalGateway', () => {
     expect(mockPtyManager.write).toHaveBeenCalledTimes(1);
     expect(mockPtyManager.write).toHaveBeenCalledWith(102, 'queued input\r');
   });
+  it.each(['close', 'error'])(
+    'detaches the UI on %s and replays output on reconnect',
+    async (event) => {
+      gateway.attachToServer(mockServer);
+      mockTerminalService.startSession.mockResolvedValue({
+        success: true,
+        resumed: true,
+      });
+      const connectionHandler = mockWss.on.mock.calls.find(
+        (call) => call[0] === 'connection',
+      )?.[1] as (
+        ws: WebSocket,
+        request: { url: string; headers: { host: string } },
+      ) => void;
+      const handlers = new Map<string, (error?: Error) => void>();
+      const firstWs = {
+        on: jest.fn((name: string, handler: (error?: Error) => void) => {
+          handlers.set(name, handler);
+          return firstWs;
+        }),
+        close: jest.fn(),
+        send: jest.fn(),
+        readyState: WebSocket.OPEN,
+      } as unknown as jest.Mocked<WebSocket>;
+      const request = {
+        url: '/terminal?sessionId=3',
+        headers: { host: 'localhost:3000' },
+      };
+      connectionHandler(firstWs, request);
+      await Promise.resolve();
+
+      handlers.get(event)?.(new Error('Connection lost'));
+      expect(mockPtyManager.detach).toHaveBeenCalledWith(3);
+      expect(mockPtyManager.kill).not.toHaveBeenCalled();
+      expect(
+        (gateway as unknown as { sessions: Map<number, unknown> }).sessions.has(
+          3,
+        ),
+      ).toBe(false);
+
+      const secondWs = {
+        on: jest.fn().mockReturnThis(),
+        close: jest.fn(),
+        send: jest.fn(),
+        readyState: WebSocket.OPEN,
+      } as unknown as jest.Mocked<WebSocket>;
+      connectionHandler(secondWs, request);
+      expect(mockPtyManager.replayOutput).toHaveBeenCalledTimes(2);
+      expect(mockPtyManager.replayOutput).toHaveBeenLastCalledWith(3);
+      expect(
+        mockPtyManager.replayOutput.mock.invocationCallOrder[1],
+      ).toBeLessThan(
+        mockTerminalService.startSession.mock.invocationCallOrder[1],
+      );
+    },
+  );
 });

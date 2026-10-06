@@ -81,6 +81,8 @@ export class UserTerminalGateway implements OnModuleDestroy {
     const isCurrentConnection = () =>
       this.connections.get(terminalId)?.ws === ws;
 
+    this.ptyManager.replayOutput(terminalId);
+
     // Start or reattach the terminal
     void this.terminalService
       .startTerminal(terminalId)
@@ -154,8 +156,8 @@ export class UserTerminalGateway implements OnModuleDestroy {
       if (!isCurrentConnection()) {
         return;
       }
-      // Kill PTY attachment but tmux session persists
-      this.ptyManager.kill(terminalId);
+      // Only remote tmux attachments end when the UI disconnects.
+      this.ptyManager.detach(terminalId);
       this.connections.delete(terminalId);
     });
 
@@ -164,7 +166,7 @@ export class UserTerminalGateway implements OnModuleDestroy {
       if (!isCurrentConnection()) {
         return;
       }
-      this.ptyManager.kill(terminalId);
+      this.ptyManager.detach(terminalId);
       this.connections.delete(terminalId);
     });
   }

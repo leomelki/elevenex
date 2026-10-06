@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import * as pty from 'node-pty';
+import { TerminalOutputBuffer } from '../terminal/terminal-output-buffer.js';
 import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -29,6 +30,7 @@ interface UserPtySession {
   tmuxSessionName: string;
   pid: number;
   useTmux: boolean;
+  output?: TerminalOutputBuffer;
 }
 
 interface TmuxResizeState {
@@ -42,6 +44,7 @@ interface TmuxResizeState {
 
 @Injectable()
 export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
+  private shuttingDown = false;
   private processes = new Map<number, UserPtySession>();
   private readonly spawnInFlight = new Map<number, Promise<pty.IPty | null>>();
   private readonly cancelledSpawns = new Set<number>();
@@ -107,6 +110,8 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     worktreePath: string,
     shell: string,
   ): Promise<pty.IPty | null> {
+    if (this.shuttingDown) return null;
+
     const inFlight = this.spawnInFlight.get(terminalId);
     if (inFlight) {
       return inFlight;
@@ -176,7 +181,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       return tmuxSession;
     }
 
-    // Fallback: direct PTY spawn (no persistence)
+    // Direct PTYs live until explicitly closed or the backend shuts down.
     return this.spawnDirect(
       terminalId,
       worktreePath,
@@ -309,6 +314,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     });
 
     const pid = ptyProcess.pid;
+    const output = new TerminalOutputBuffer();
 
     this.processes.set(terminalId, {
       pty: ptyProcess,
@@ -316,12 +322,14 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       tmuxSessionName,
       pid,
       useTmux: false,
+      output,
     });
 
     ptyProcess.onData((data) => {
       if (this.processes.get(terminalId)?.pty !== ptyProcess) {
         return;
       }
+      output.append(data);
       this.gateway.sendToTerminal(terminalId, data);
     });
 
@@ -353,6 +361,22 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
     if (session.useTmux) {
       this.queueTmuxResize(terminalId, session.tmuxSessionName, cols, rows);
+    }
+  }
+
+  /** Detach the UI without stopping a backend-owned direct PTY. */
+  detach(terminalId: number): void {
+    const session = this.processes.get(terminalId);
+    if (session?.useTmux || (!session && this.tmuxEnabled)) {
+      this.kill(terminalId);
+    }
+  }
+
+  /** Replay before starting/reusing the PTY so subsequent live output follows it. */
+  replayOutput(terminalId: number): void {
+    const output = this.processes.get(terminalId)?.output;
+    if (output) {
+      this.gateway.sendToTerminal(terminalId, '\x1bc' + output.snapshot());
     }
   }
 
@@ -452,7 +476,12 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     this.logger.log(
       `Killing ${this.processes.size} user terminal PTY processes...`,
     );
-    for (const [terminalId] of this.processes) {
+    this.shuttingDown = true;
+    const ids = new Set([
+      ...this.processes.keys(),
+      ...this.spawnInFlight.keys(),
+    ]);
+    for (const terminalId of ids) {
       this.kill(terminalId);
     }
   }

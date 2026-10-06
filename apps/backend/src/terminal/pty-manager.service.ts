@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import * as pty from 'node-pty';
+import { TerminalOutputBuffer } from './terminal-output-buffer.js';
 import { promises as fs, chmodSync, statSync } from 'fs';
 import { createRequire } from 'module';
 import * as os from 'os';
@@ -30,6 +31,7 @@ interface PtySession {
   worktreePath: string;
   pid: number;
   useTmux: boolean;
+  output?: TerminalOutputBuffer;
 }
 
 interface TmuxResizeState {
@@ -116,6 +118,7 @@ logger.log(`Using claude binary: ${CLAUDE_BIN}`);
 
 @Injectable()
 export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
+  private shuttingDown = false;
   private processes = new Map<number, PtySession>();
   private readonly spawnInFlight = new Map<number, Promise<pty.IPty | null>>();
   private readonly cancelledSpawns = new Set<number>();
@@ -142,6 +145,8 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     worktreePath: string,
     resumeSessionId?: string,
   ): Promise<pty.IPty | null> {
+    if (this.shuttingDown) return null;
+
     const inFlight = this.spawnInFlight.get(sessionId);
     if (inFlight) {
       return inFlight;
@@ -408,6 +413,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     });
 
     const pid = ptyProcess.pid;
+    const output = new TerminalOutputBuffer();
 
     this.processes.set(sessionId, {
       pty: ptyProcess,
@@ -415,6 +421,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       worktreePath,
       pid,
       useTmux: false,
+      output,
     });
 
     // Pipe PTY output to WebSocket
@@ -422,6 +429,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       if (this.processes.get(sessionId)?.pty !== ptyProcess) {
         return;
       }
+      output.append(data);
       this.gateway.sendToSession(sessionId, data);
     });
 
@@ -482,6 +490,22 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       return; // Intentional kill, don't restart
     }
     this.gateway.onUnexpectedExit(sessionId, exitCode, signal);
+  }
+
+  /** Detach the UI without stopping a backend-owned direct PTY. */
+  detach(sessionId: number): void {
+    const session = this.processes.get(sessionId);
+    if (session?.useTmux || (!session && this.tmuxManager.isTmuxAvailable())) {
+      this.kill(sessionId);
+    }
+  }
+
+  /** Replay before starting/reusing the PTY so subsequent live output follows it. */
+  replayOutput(sessionId: number): void {
+    const output = this.processes.get(sessionId)?.output;
+    if (output) {
+      this.gateway.sendToSession(sessionId, '\x1bc' + output.snapshot());
+    }
   }
 
   kill(sessionId: number): boolean {
@@ -569,7 +593,12 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
   private killAll(): void {
     this.logger.log(`Killing ${this.processes.size} Claude PTY processes...`);
-    for (const [sessionId] of this.processes) {
+    this.shuttingDown = true;
+    const ids = new Set([
+      ...this.processes.keys(),
+      ...this.spawnInFlight.keys(),
+    ]);
+    for (const sessionId of ids) {
       this.kill(sessionId);
     }
   }

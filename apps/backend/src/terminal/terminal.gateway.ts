@@ -86,6 +86,8 @@ export class TerminalGateway implements OnModuleDestroy {
     this.sessions.set(sessionId, session);
     const isCurrentConnection = () => this.sessions.get(sessionId)?.ws === ws;
 
+    this.ptyManager.replayOutput(sessionId);
+
     // Start the PTY process when WebSocket connects
     void this.terminalService
       .startSession(sessionId)
@@ -164,8 +166,8 @@ export class TerminalGateway implements OnModuleDestroy {
       if (!isCurrentConnection()) {
         return;
       }
-      // End the local direct PTY, or detach from a persistent remote tmux PTY.
-      this.ptyManager.kill(sessionId);
+      // Only remote tmux attachments end when the UI disconnects.
+      this.ptyManager.detach(sessionId);
       this.sessions.delete(sessionId);
       this.lastRestartTime.delete(sessionId);
     });
@@ -175,7 +177,7 @@ export class TerminalGateway implements OnModuleDestroy {
       if (!isCurrentConnection()) {
         return;
       }
-      this.ptyManager.kill(sessionId);
+      this.ptyManager.detach(sessionId);
       this.sessions.delete(sessionId);
     });
   }

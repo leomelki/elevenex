@@ -295,4 +295,91 @@ describe('PtyManager', () => {
       expect.any(Object),
     );
   });
+  it('keeps a direct PTY alive on UI detach and replays output produced while hidden', async () => {
+    const process = (await manager.spawn(
+      7,
+      '/repo/worktree',
+    )) as unknown as MockPty;
+    const onData = process.onData.mock.calls[0][0] as (data: string) => void;
+    onData('before hiding\r\n');
+    manager.detach(7);
+    onData('while hidden\r\n');
+    manager.replayOutput(7);
+
+    expect(process.kill).not.toHaveBeenCalled();
+    expect(manager.isAlive(7)).toBe(true);
+    expect(gateway.sendToSession).toHaveBeenLastCalledWith(
+      7,
+      '\x1bcbefore hiding\r\nwhile hidden\r\n',
+    );
+    manager.write(7, 'echo still-alive\r');
+    expect(process.write).toHaveBeenCalledWith('echo still-alive\r');
+  });
+
+  it('allows a local terminal to finish starting after the UI detaches', async () => {
+    const env = createDeferred<NodeJS.ProcessEnv>();
+    mockBuildAugmentedEnv.mockReturnValue(env.promise);
+    const spawn = manager.spawn(7, '/repo/worktree');
+    manager.detach(7);
+    env.resolve({ PATH: '/mock/bin' });
+
+    await expect(spawn).resolves.not.toBeNull();
+    expect(manager.isAlive(7)).toBe(true);
+  });
+
+  it('kills retained local PTYs and discards replay output on backend shutdown', async () => {
+    jest.useFakeTimers();
+    try {
+      const process = (await manager.spawn(
+        7,
+        '/repo/worktree',
+      )) as unknown as MockPty;
+      process.onData.mock.calls[0][0]('retained output');
+      manager.detach(7);
+      manager.onApplicationShutdown();
+      gateway.sendToSession.mockClear();
+      manager.replayOutput(7);
+
+      expect(process.kill).toHaveBeenCalledTimes(1);
+      expect(manager.isAlive(7)).toBe(false);
+      expect(gateway.sendToSession).not.toHaveBeenCalled();
+      await expect(manager.spawn(7, '/repo/worktree')).resolves.toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('cancels pending local spawns when the backend shuts down', async () => {
+    const env = createDeferred<NodeJS.ProcessEnv>();
+    const envRequested = createDeferred<void>();
+    mockBuildAugmentedEnv.mockImplementation(() => {
+      envRequested.resolve();
+      return env.promise;
+    });
+    const spawn = manager.spawn(7, '/repo/worktree');
+    await envRequested.promise;
+    manager.onModuleDestroy();
+    env.resolve({ PATH: '/mock/bin' });
+
+    await expect(spawn).resolves.toBeNull();
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('still detaches remote tmux attachments when the UI disconnects', async () => {
+    jest.useFakeTimers();
+    try {
+      tmuxManager.isTmuxAvailable.mockReturnValue(true);
+      tmuxManager.sessionExists.mockResolvedValue(true);
+      const process = (await manager.spawn(
+        7,
+        '/repo/worktree',
+      )) as unknown as MockPty;
+      manager.detach(7);
+
+      expect(process.kill).toHaveBeenCalledTimes(1);
+      expect(manager.isAlive(7)).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
