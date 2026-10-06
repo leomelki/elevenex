@@ -1,270 +1,418 @@
-<div class="grid gap-4 p-5">
-  <div class="flex flex-wrap items-start justify-between gap-3">
-    <div>
-      <div class="text-sm font-medium text-foreground">Saved setups</div>
-      <p class="mt-1 text-sm text-muted-foreground">
-        Save a setup once, launch it in one click. Your default preset starts new sessions.
-      </p>
-    </div>
-    <button
-      z-button
-      zType="outline"
-      zSize="sm"
-      type="button"
-      [zDisabled]="!canAddPreset() || appSettings.saving() || !catalog.loaded()"
-      (click)="openNewPreset()"
-    >
-      <ng-icon name="lucidePlus" size="14" />
-      <span>New preset</span>
-    </button>
-  </div>
-
+<div class="p-5 sm:p-6">
   @if (presetEditorOpen()) {
-    <form
-      class="grid gap-4 rounded-lg border border-primary/35 bg-primary/5 p-4"
-      (submit)="$event.preventDefault(); savePreset()"
-    >
+    <form class="grid gap-6" (submit)="$event.preventDefault(); savePreset()" data-preset-editor>
       <div class="flex items-center justify-between gap-3">
-        <div class="text-sm font-semibold text-foreground">
-          {{ editingPresetId() ? 'Edit preset' : 'New preset' }}
+        <div>
+          <h3 class="text-lg font-semibold tracking-tight">
+            {{ editingPresetId() ? 'Edit preset' : 'Create a preset' }}
+          </h3>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Choose a setup that fits the way you work.
+          </p>
         </div>
         <button
-          type="button"
           z-button
           zType="ghost"
           zSize="sm"
+          type="button"
           [zDisabled]="appSettings.saving()"
           (click)="presetEditorOpen.set(false)"
         >
-          Cancel
+          <ng-icon name="lucideArrowLeft" size="14" /> Back
         </button>
       </div>
-      <div class="grid gap-3 sm:grid-cols-2">
-        <label class="flex flex-col gap-1.5 sm:col-span-2">
-          <span class="text-xs font-medium text-muted-foreground"
-            >Name <span class="font-normal">(optional)</span></span
-          >
-          <input
-            z-input
-            maxlength="48"
-            [placeholder]="suggestedName()"
-            [ngModel]="presetName()"
-            (ngModelChange)="presetName.set($event)"
-            name="presetName"
-            autofocus
-          />
-        </label>
-        <div class="flex flex-col gap-1.5">
-          <span class="text-xs font-medium text-muted-foreground">Agent</span>
-          <app-option-select
-            [options]="providerOptions()"
-            [value]="presetProvider()"
-            ariaLabel="Preset agent"
-            (valueChange)="onPresetProviderChange($event)"
-          />
-        </div>
-        <div class="flex flex-col gap-1.5">
-          <span class="text-xs font-medium text-muted-foreground">Model</span>
-          <app-option-select
-            [options]="presetModelOptions()"
-            [value]="presetModel()"
-            ariaLabel="Preset model"
-            [disabled]="!presetCatalog()?.supportsModelSelection"
-            (valueChange)="onPresetModelChange($event)"
-          />
-        </div>
-        <div class="flex flex-col gap-1.5">
-          <span class="text-xs font-medium text-muted-foreground">Thinking level</span>
-          <app-option-select
-            [options]="presetEffortOptions()"
-            [value]="presetEffort()"
-            [disabled]="!presetCanChooseEffort()"
-            ariaLabel="Preset thinking level"
-            (valueChange)="presetEffort.set($event)"
-          />
-          @if (!presetCanChooseEffort()) {
-            <span class="text-xs text-muted-foreground"
-              >This model uses a fixed thinking level.</span
+
+      <div class="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_16rem]">
+        <div class="overflow-hidden rounded-xl border border-border bg-background">
+          <section class="grid gap-5 p-5" aria-labelledby="preset-agent-heading">
+            <div class="flex items-start gap-3">
+              <span
+                class="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground"
+                >1</span
+              >
+              <div>
+                <h4 id="preset-agent-heading" class="text-sm font-semibold">Choose your agent</h4>
+                <p class="mt-1 text-xs text-muted-foreground">Who should do the work?</p>
+              </div>
+            </div>
+            <div
+              class="grid grid-cols-2 gap-2 sm:grid-cols-4"
+              role="group"
+              aria-label="Preset agent"
             >
-          }
-        </div>
-        <div class="flex flex-col gap-1.5">
-          <span class="text-xs font-medium text-muted-foreground">Speed</span>
-          <div
-            class="flex min-h-9 items-center justify-between gap-3 rounded-md border border-border bg-background px-3"
+              @for (provider of providerOptions(); track provider.value) {
+                <button
+                  z-button
+                  [zType]="presetProvider() === provider.value ? 'default' : 'outline'"
+                  type="button"
+                  class="relative h-auto min-h-20 flex-col gap-2 rounded-lg px-2 py-3 text-xs"
+                  [attr.aria-pressed]="presetProvider() === provider.value"
+                  [zDisabled]="appSettings.saving()"
+                  (click)="onPresetProviderChange(provider.value)"
+                >
+                  @if (presetProvider() === provider.value) {
+                    <ng-icon name="lucideCheck" size="12" class="absolute right-2 top-2" />
+                  }
+                  <ng-icon [name]="presetIcon(provider.value)" size="20" />
+                  {{ providerLabel(provider.value) }}
+                </button>
+              }
+            </div>
+            <div class="grid gap-2">
+              <label class="text-xs font-medium text-muted-foreground" id="preset-model-label"
+                >Model</label
+              >
+              <app-option-select
+                [options]="presetModelOptions()"
+                [value]="presetModel()"
+                ariaLabel="Preset model"
+                [disabled]="!presetCatalog()?.supportsModelSelection || appSettings.saving()"
+                (valueChange)="onPresetModelChange($event)"
+              />
+              <p class="text-xs leading-relaxed text-muted-foreground">
+                {{
+                  presetCatalog()?.unavailableReason ||
+                    'Keep the agent’s default, or choose a specific model.'
+                }}
+              </p>
+            </div>
+          </section>
+
+          <section
+            class="grid gap-5 border-t border-border p-5"
+            aria-labelledby="preset-style-heading"
           >
-            <span class="text-sm">Fast mode</span>
-            <z-checkbox
-              name="presetFastMode"
-              [ngModel]="presetFastMode()"
-              (ngModelChange)="presetFastMode.set($event)"
-              [zDisabled]="!presetSupportsFastMode()"
-              >Enable</z-checkbox
+            <div class="flex items-start gap-3">
+              <span
+                class="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground"
+                >2</span
+              >
+              <div>
+                <h4 id="preset-style-heading" class="text-sm font-semibold">Tune how it works</h4>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Balance thinking time and response speed.
+                </p>
+              </div>
+            </div>
+            <div class="grid gap-2.5">
+              <span class="text-xs font-medium text-muted-foreground">Thinking level</span>
+              <div class="flex flex-wrap gap-1.5" role="group" aria-label="Preset thinking level">
+                @for (effort of presetEffortOptions(); track effort.value) {
+                  <button
+                    z-button
+                    [zType]="presetEffort() === effort.value ? 'default' : 'outline'"
+                    zSize="sm"
+                    type="button"
+                    class="rounded-lg"
+                    [class.border-primary]="presetEffort() === effort.value"
+                    [attr.aria-pressed]="presetEffort() === effort.value"
+                    [zDisabled]="!presetCanChooseEffort() || appSettings.saving()"
+                    (click)="presetEffort.set(effort.value)"
+                  >
+                    {{ effort.value ? effort.label : 'Auto' }}
+                  </button>
+                }
+              </div>
+              <p class="min-h-8 text-xs leading-relaxed text-muted-foreground">
+                {{
+                  presetCanChooseEffort()
+                    ? selectedEffortHint()
+                    : 'This model has a fixed thinking level.'
+                }}
+              </p>
+            </div>
+            <div
+              class="flex items-start justify-between gap-4 rounded-lg border border-border bg-muted/30 p-3.5"
             >
-          </div>
-          <span class="text-xs text-muted-foreground">{{
-            presetSupportsFastMode()
-              ? 'Priority responses. Additional usage costs may apply.'
-              : 'Choose a model that supports fast mode to enable it.'
-          }}</span>
+              <div class="flex items-start gap-2.5">
+                <ng-icon name="lucideZap" size="16" class="mt-0.5 shrink-0 text-muted-foreground" />
+                <div>
+                  <div class="text-sm font-medium">Fast mode</div>
+                  <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {{
+                      presetSupportsFastMode()
+                        ? 'Priority responses. May use more of your plan.'
+                        : 'Not available for this model.'
+                    }}
+                  </p>
+                </div>
+              </div>
+              <z-checkbox
+                name="presetFastMode"
+                [ngModel]="presetFastMode()"
+                (ngModelChange)="presetFastMode.set($event)"
+                [zDisabled]="!presetSupportsFastMode() || appSettings.saving()"
+                class="mt-0.5 shrink-0"
+                ><span class="sr-only">Fast mode</span></z-checkbox
+              >
+            </div>
+          </section>
         </div>
-      </div>
-      @if (presetCatalog()?.unavailableReason) {
-        <p class="text-xs text-muted-foreground">{{ presetCatalog()?.unavailableReason }}</p>
-      }
-      <div class="grid gap-3 rounded-md border border-border bg-background p-3">
-        <span class="text-xs font-medium text-muted-foreground">Default behavior</span>
-        <app-option-select
-          [options]="defaultUsageOptions()"
-          [value]="defaultUsage()"
-          ariaLabel="Preset default behavior"
-          (valueChange)="onDefaultUsageChange($event)"
-        />
-        <p class="text-xs text-muted-foreground">
-          Choosing a default replaces the previous default for this agent. Existing sessions keep
-          their settings.
-        </p>
-      </div>
-      <div class="flex items-center justify-between gap-3">
-        <span class="text-xs text-muted-foreground">{{
-          presetSummary({
-            id: '',
-            name: '',
-            provider: presetProvider(),
-            model: presetModel() || null,
-            reasoningEffort: presetEffort() || null,
-            fastMode: presetSupportsFastMode() && presetFastMode(),
-          })
-        }}</span>
-        <button
-          z-button
-          zType="default"
-          zSize="sm"
-          type="submit"
-          [zDisabled]="appSettings.saving() || !catalog.loaded()"
+
+        <aside
+          class="grid gap-5 rounded-xl border border-border bg-muted/25 p-5"
+          aria-labelledby="preset-save-heading"
         >
-          {{ appSettings.saving() ? 'Saving…' : 'Save preset' }}
-        </button>
+          <div class="flex items-start gap-3">
+            <span
+              class="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-xs font-semibold text-muted-foreground"
+              >3</span
+            >
+            <div>
+              <h4 id="preset-save-heading" class="text-sm font-semibold">Save and reuse</h4>
+              <p class="mt-1 text-xs text-muted-foreground">Name it and choose when to use it.</p>
+            </div>
+          </div>
+          <label class="grid gap-2">
+            <span class="text-xs font-medium text-muted-foreground"
+              >Preset name <span class="font-normal">· optional</span></span
+            >
+            <input
+              z-input
+              maxlength="48"
+              [placeholder]="suggestedName()"
+              [ngModel]="presetName()"
+              (ngModelChange)="presetName.set($event)"
+              name="presetName"
+              [disabled]="appSettings.saving()"
+            />
+          </label>
+          <div
+            class="grid gap-2 rounded-lg border border-border bg-background p-3.5"
+            aria-label="Preset preview"
+          >
+            <div class="flex items-center gap-2 text-xs text-muted-foreground">
+              <ng-icon [name]="presetIcon(presetProvider())" size="14" />{{ presetProviderLabel() }}
+            </div>
+            <div class="break-words text-sm font-medium">{{ selectedModelLabel() }}</div>
+            <app-preset-options-badges
+              [thinking]="effortLabel(presetEffort() || null)"
+              [fast]="presetSupportsFastMode() && presetFastMode()"
+            />
+          </div>
+          <div class="grid gap-2.5">
+            <span class="text-xs font-medium text-muted-foreground">When should it apply?</span>
+            <div class="grid gap-2" role="group" aria-label="Preset default behavior">
+              @for (usage of defaultUsageOptions(); track usage.value) {
+                <button
+                  z-button
+                  [zType]="defaultUsage() === usage.value ? 'secondary' : 'outline'"
+                  type="button"
+                  class="h-auto justify-start gap-2.5 whitespace-normal rounded-lg px-3 py-3 text-left"
+                  [attr.aria-pressed]="defaultUsage() === usage.value"
+                  [zDisabled]="appSettings.saving()"
+                  (click)="onDefaultUsageChange(usage.value)"
+                >
+                  <span
+                    class="flex size-4 shrink-0 items-center justify-center rounded-full border border-border"
+                    [class.border-primary]="defaultUsage() === usage.value"
+                    [class.bg-primary]="defaultUsage() === usage.value"
+                  >
+                    @if (defaultUsage() === usage.value) {
+                      <ng-icon name="lucideCheck" size="10" class="text-primary-foreground" />
+                    }
+                  </span>
+                  <span
+                    ><span class="block text-xs font-medium">{{ usage.label }}</span
+                    ><span
+                      class="mt-1 block text-[11px] font-normal leading-relaxed text-muted-foreground"
+                      >{{ usage.description }}</span
+                    ></span
+                  >
+                </button>
+              }
+            </div>
+          </div>
+        </aside>
+      </div>
+      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+        <p class="text-xs text-muted-foreground">You can change these settings in any session.</p>
+        <div class="flex items-center gap-2">
+          <button
+            z-button
+            zType="ghost"
+            type="button"
+            [zDisabled]="appSettings.saving()"
+            (click)="presetEditorOpen.set(false)"
+          >
+            Cancel
+          </button>
+          <button
+            z-button
+            type="submit"
+            [zDisabled]="appSettings.saving() || !catalog.loaded()"
+            [zLoading]="appSettings.saving()"
+          >
+            <ng-icon name="lucideCheck" size="14" />{{
+              appSettings.saving() ? 'Saving…' : 'Save preset'
+            }}
+          </button>
+        </div>
       </div>
     </form>
-  }
-
-  @if (appSettings.settings().agentModelPresets.length) {
-    <div class="grid gap-3">
-      @for (preset of appSettings.settings().agentModelPresets; track preset.id) {
-        <div
-          class="group flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-background p-4"
-          [class.border-primary]="isSessionDefault(preset)"
-          [class.bg-primary/5]="isSessionDefault(preset)"
-        >
-          <span
-            class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
-          >
-            <ng-icon [name]="presetIcon(preset.provider)" size="16" />
-          </span>
-          <button
-            type="button"
-            class="min-w-0 flex-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            (click)="editPreset(preset)"
-          >
-            <span class="block truncate text-sm font-medium text-foreground">{{
-              preset.name
-            }}</span>
-            <span class="mt-0.5 block truncate text-xs text-muted-foreground">{{
-              presetSummary(preset)
-            }}</span>
-          </button>
-          @if (preset.isDefault) {
-            <span class="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">{{
-              isSessionDefault(preset) ? 'Default for new sessions' : 'Agent default'
-            }}</span>
-          }
-          @if (!isSessionDefault(preset)) {
-            <button
-              z-button
-              zType="outline"
-              zSize="sm"
-              type="button"
-              [zDisabled]="appSettings.saving()"
-              (click)="makeDefault(preset)"
-            >
-              Make default
-            </button>
-          }
-          <button
-            z-button
-            zType="ghost"
-            zSize="sm"
-            type="button"
-            [zDisabled]="!canAddPreset() || appSettings.saving()"
-            (click)="duplicatePreset(preset)"
-            [attr.aria-label]="'Duplicate ' + preset.name"
-          >
-            Duplicate
-          </button>
-          <button
-            z-button
-            zType="ghost"
-            zSize="icon-sm"
-            type="button"
-            title="Edit preset"
-            [attr.aria-label]="'Edit ' + preset.name"
-            [zDisabled]="appSettings.saving()"
-            (click)="editPreset(preset)"
-          >
-            <ng-icon name="lucidePencil" size="14" />
-          </button>
-          <button
-            z-button
-            zType="ghost"
-            zSize="icon-sm"
-            type="button"
-            title="Delete preset"
-            [attr.aria-label]="'Delete ' + preset.name"
-            [zDisabled]="appSettings.saving()"
-            (click)="deletePreset(preset)"
-          >
-            <ng-icon name="lucideTrash2" size="14" class="text-destructive" />
-          </button>
-        </div>
-      }
-    </div>
-  } @else if (catalog.loading() || !catalog.loaded()) {
-    <div class="grid gap-2" aria-label="Loading agent presets" role="status">
-      <div class="h-16 animate-pulse rounded-lg bg-muted"></div>
-      <div class="h-16 animate-pulse rounded-lg bg-muted"></div>
-    </div>
-  } @else if (!presetEditorOpen()) {
-    <button
-      type="button"
-      class="rounded-lg border border-dashed border-border bg-muted/25 px-4 py-5 text-left transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      (click)="openNewPreset()"
-    >
-      <span class="block text-sm font-medium text-foreground">Create your first preset</span>
-      <span class="mt-1 block text-sm text-muted-foreground"
-        >For example: “Fast fixes” with Codex, a lightweight model, and low thinking.</span
+  } @else {
+    <div class="mb-5 flex items-center justify-between gap-4">
+      <p class="text-sm text-muted-foreground">Your setups, ready to launch.</p>
+      <button
+        z-button
+        zSize="sm"
+        type="button"
+        [zDisabled]="!canAddPreset() || appSettings.saving() || !catalog.loaded()"
+        (click)="openNewPreset()"
       >
-    </button>
-  }
-
-  <p class="text-xs text-muted-foreground">
-    New sessions use {{ defaultProviderLabel() }}. Defaults for other agents apply when you switch
-    to them.
-    @if (!canAddPreset()) {
-      <span>All 24 preset slots are in use.</span>
+        <ng-icon name="lucidePlus" size="14" />New preset
+      </button>
+    </div>
+    <div class="mb-5 flex items-center gap-3 rounded-xl border border-border bg-muted/35 p-4">
+      <span
+        class="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-background"
+        ><ng-icon name="lucideStar" size="18"
+      /></span>
+      <div class="min-w-0">
+        <div class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          New sessions start with
+        </div>
+        <div class="mt-1 truncate text-sm font-semibold">
+          {{ defaultPreset()?.name || defaultProviderLabel() }}
+        </div>
+        <p class="mt-0.5 text-xs text-muted-foreground">
+          {{
+            defaultPreset()
+              ? presetSummary(defaultPreset()!)
+              : 'Choose a preset below to make it your default.'
+          }}
+        </p>
+      </div>
+    </div>
+    @if (appSettings.settings().agentModelPresets.length) {
+      <div class="grid gap-3 sm:grid-cols-2">
+        @for (preset of appSettings.settings().agentModelPresets; track preset.id) {
+          <article
+            class="flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-background"
+            [class.border-primary]="isSessionDefault(preset)"
+          >
+            <button
+              type="button"
+              class="grid gap-3 p-4 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-60"
+              [disabled]="appSettings.saving()"
+              (click)="editPreset(preset)"
+              [attr.aria-label]="'Edit ' + preset.name"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="flex items-center gap-2 text-xs text-muted-foreground"
+                  ><ng-icon [name]="presetIcon(preset.provider)" size="15" />{{
+                    providerLabel(preset.provider)
+                  }}</span
+                >
+                @if (preset.isDefault) {
+                  <span
+                    class="rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                    >{{
+                      isSessionDefault(preset) ? 'Default for new sessions' : 'Agent default'
+                    }}</span
+                  >
+                }
+              </div>
+              <div>
+                <h3 class="truncate text-sm font-semibold">{{ preset.name }}</h3>
+                <p class="mt-1 truncate text-xs text-muted-foreground">{{ modelLabel(preset) }}</p>
+              </div>
+              <app-preset-options-badges
+                [thinking]="effortLabel(preset.reasoningEffort)"
+                [fast]="preset.fastMode ?? false"
+              />
+            </button>
+            <div
+              class="mt-auto flex items-center justify-between gap-2 border-t border-border px-3 py-2"
+            >
+              @if (isSessionDefault(preset)) {
+                <span class="flex items-center gap-1.5 px-1 text-xs text-muted-foreground"
+                  ><ng-icon name="lucideCheck" size="13" />Used by default</span
+                >
+              } @else {
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="sm"
+                  type="button"
+                  [zDisabled]="appSettings.saving()"
+                  (click)="makeDefault(preset)"
+                >
+                  <ng-icon name="lucideStar" size="13" />Make default
+                </button>
+              }
+              <div class="flex gap-1">
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="icon-sm"
+                  type="button"
+                  title="Duplicate preset"
+                  [attr.aria-label]="'Duplicate ' + preset.name"
+                  [zDisabled]="!canAddPreset() || appSettings.saving()"
+                  (click)="duplicatePreset(preset)"
+                >
+                  <ng-icon name="lucideCopy" size="14" />
+                </button>
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="icon-sm"
+                  type="button"
+                  title="Delete preset"
+                  [attr.aria-label]="'Delete ' + preset.name"
+                  [zDisabled]="appSettings.saving()"
+                  (click)="deletePreset(preset)"
+                >
+                  <ng-icon name="lucideTrash2" size="14" class="text-destructive" />
+                </button>
+              </div>
+            </div>
+          </article>
+        }
+      </div>
+    } @else if (catalog.loading() || (!catalog.loaded() && !catalog.error())) {
+      <div class="grid gap-3 sm:grid-cols-2" aria-label="Loading agent presets" role="status">
+        <div class="h-36 animate-pulse rounded-xl bg-muted"></div>
+        <div class="h-36 animate-pulse rounded-xl bg-muted"></div>
+      </div>
+    } @else {
+      <div
+        class="grid justify-items-center gap-3 rounded-xl border border-dashed border-border py-10 text-center"
+      >
+        <ng-icon name="lucideSparkles" size="24" class="text-muted-foreground" />
+        <div>
+          <div class="text-sm font-semibold">A good setup is worth saving.</div>
+          <p class="mt-1 text-xs text-muted-foreground">
+            Create one for quick fixes, deep reviews, or everyday work.
+          </p>
+        </div>
+        <button
+          z-button
+          zType="outline"
+          zSize="sm"
+          type="button"
+          [zDisabled]="!catalog.loaded()"
+          (click)="openNewPreset()"
+        >
+          Create your first preset
+        </button>
+      </div>
     }
-  </p>
-
+    @if (!canAddPreset()) {
+      <p class="mt-3 text-xs text-muted-foreground">All 24 preset slots are in use.</p>
+    }
+  }
   @if (catalog.error()) {
     <div
-      class="flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3"
+      class="mt-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3"
       role="alert"
     >
-      <span class="text-sm text-destructive">{{ catalog.error() }}</span>
-      <button z-button zType="outline" zSize="sm" type="button" (click)="reload()">Retry</button>
+      <span class="text-sm text-destructive">{{ catalog.error() }}</span
+      ><button z-button zType="outline" zSize="sm" type="button" (click)="reload()">Retry</button>
     </div>
   }
   @if (appSettings.error()) {
-    <p class="text-sm text-destructive" role="alert">{{ appSettings.error() }}</p>
+    <p class="mt-4 text-sm text-destructive" role="alert">{{ appSettings.error() }}</p>
   }
 </div>

@@ -122,7 +122,7 @@ describe('Settings', () => {
     const element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).toContain('Workspace Preferences');
     expect(element.textContent).toContain('Agent presets');
-    expect(element.textContent).toContain('New sessions use Claude Code');
+    expect(element.textContent).toContain('New sessions start with');
     expect(element.textContent).toContain('Claude UI');
     expect(element.textContent).toContain('TUI');
     expect(element.textContent).toContain('Session toolbar');
@@ -247,7 +247,7 @@ describe('Settings', () => {
       isDefault: true,
     });
     request.flush({ ...APP_SETTINGS_RESPONSE, ...request.request.body });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(editor.presetEditorOpen()).toBe(false));
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Default for new sessions');
     expect(fixture.nativeElement.textContent).toContain('Fast mode');

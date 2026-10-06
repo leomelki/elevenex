@@ -5,20 +5,26 @@ import {
   lucideFileText,
   lucideNotebookPen,
   lucideOrbit,
-  lucidePencil,
   lucidePlus,
-  lucideRefreshCw,
   lucideSparkles,
-  lucideTriangleAlert,
   lucideTrash2,
+  lucideArrowLeft,
+  lucideCheck,
+  lucideCopy,
+  lucideStar,
+  lucideZap,
 } from '@ng-icons/lucide';
-import { AGENT_PROVIDER_ICONS } from '@/shared/models/agent-provider-presentation';
+import {
+  AGENT_PROVIDER_ICONS,
+  AGENT_PROVIDER_PRESENTATIONS,
+} from '@/shared/models/agent-provider-presentation';
 import { toast } from 'ngx-sonner';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
 import { AgentModelCatalogService } from '@/shared/services/agent-model-catalog.service';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { OptionSelectComponent, OptionSelectItem } from '@/shared/components/option-select';
+import { PresetOptionsBadges } from './preset-options-badges.component';
 import { ZardCheckboxComponent } from '@/shared/components/checkbox';
 import {
   AGENT_DEFAULT_OPTION,
@@ -59,6 +65,7 @@ const EFFORT_HINTS: Record<string, string> = {
     ZardButtonComponent,
     ZardInputDirective,
     ZardCheckboxComponent,
+    PresetOptionsBadges,
   ],
   templateUrl: './agent-defaults.component.html',
   viewProviders: [
@@ -66,12 +73,14 @@ const EFFORT_HINTS: Record<string, string> = {
       lucideFileText,
       lucideNotebookPen,
       lucideOrbit,
-      lucidePencil,
       lucidePlus,
-      lucideRefreshCw,
       lucideSparkles,
-      lucideTriangleAlert,
       lucideTrash2,
+      lucideArrowLeft,
+      lucideCheck,
+      lucideCopy,
+      lucideStar,
+      lucideZap,
     }),
   ],
 })
@@ -88,23 +97,37 @@ export class AgentDefaults {
   readonly presetFastMode = signal(false);
   readonly presetIsDefault = signal(false);
   readonly presetUseForNewSessions = signal(false);
+  readonly defaultPreset = computed(() =>
+    this.appSettings.settings().agentModelPresets.find((preset) => this.isSessionDefault(preset)),
+  );
+  readonly presetProviderLabel = computed(() => this.providerLabel(this.presetProvider()));
   readonly defaultUsageOptions = computed<OptionSelectItem[]>(() => [
     {
       value: 'manual',
-      label: 'Quick launch only',
-      description: 'Choose this preset when starting a session.',
+      label: 'Only when I choose it',
+      description: 'Keep it ready in the session launcher.',
     },
     {
       value: 'agent',
-      label: 'Default for this agent',
-      description: 'Apply whenever a new session uses this agent.',
+      label: `Whenever I use ${this.presetProviderLabel()}`,
+      description: 'The default setup for this agent.',
     },
     {
       value: 'sessions',
-      label: 'Default for new sessions',
-      description: 'Start new sessions with this agent and setup.',
+      label: 'Every new session',
+      description: 'Start with this agent and this setup.',
     },
   ]);
+  readonly selectedEffortHint = computed(
+    () =>
+      this.presetEffortOptions().find((option) => option.value === this.presetEffort())
+        ?.description ?? 'Let the agent choose how much to think.',
+  );
+  readonly selectedModelLabel = computed(
+    () =>
+      this.presetModelOptions().find((option) => option.value === this.presetModel())?.label ??
+      'Agent default',
+  );
   readonly defaultUsage = computed(() =>
     this.presetUseForNewSessions() ? 'sessions' : this.presetIsDefault() ? 'agent' : 'manual',
   );
@@ -205,6 +228,7 @@ export class AgentDefaults {
   }
 
   onPresetProviderChange(provider: string): void {
+    if (provider === this.presetProvider()) return;
     this.presetProvider.set(provider);
     this.presetModel.set('');
     this.presetEffort.set('');
@@ -314,6 +338,29 @@ export class AgentDefaults {
     this.editPreset({ ...preset, name: `${preset.name.slice(0, 43)} copy`, isDefault: false });
     this.editingPresetId.set(null);
     this.presetUseForNewSessions.set(false);
+  }
+
+  providerLabel(provider: string): string {
+    return (
+      AGENT_PROVIDER_PRESENTATIONS.find((item) => item.id === provider)?.label ??
+      this.catalog.catalogs().find((item) => item.provider === provider)?.displayName ??
+      provider
+    );
+  }
+
+  modelLabel(preset: AgentModelPreset): string {
+    return (
+      this.catalog
+        .catalogs()
+        .find((item) => item.provider === preset.provider)
+        ?.models.find((item) => item.id === preset.model)?.displayName ??
+      preset.model ??
+      'Agent default'
+    );
+  }
+
+  effortLabel(effort: string | null): string {
+    return effort ? (EFFORT_LABELS[effort] ?? effort) : 'Automatic thinking';
   }
 
   suggestedName(): string {
