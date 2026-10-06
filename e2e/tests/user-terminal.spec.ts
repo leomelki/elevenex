@@ -4,6 +4,9 @@ import { expect, test } from '@playwright/test';
 // launching shells or agent processes in the user's worktrees.
 for (const theme of ['light', 'dark'] as const) {
   test(`${theme}: user terminal retains scrollback and renders selected text`, async ({ page }) => {
+    await page.route('**/vscode-static/**', (route) => route.fulfill({
+      contentType: 'text/html', body: '<!doctype html><title>Mock editor</title>',
+    }));
     await page.route('**/api/**', (route) => {
       const pathname = new URL(route.request().url()).pathname;
       let json: unknown = [];
@@ -12,7 +15,7 @@ for (const theme of ['light', 'dark'] as const) {
       } else if (pathname === '/api/sessions/17') {
         json = {
           id: 17, repoId: 1, projectId: 1, name: 'Terminal regression',
-          branchName: 'main', worktreePath: '/terminal-test', status: 'archived',
+          branchName: 'main', worktreePath: '/terminal-test', status: 'stopped',
           activeAgentProvider: 'claude', claudeSessionId: '', codexSessionId: '',
           hasInjectedWorktreeContext: false, hasUnreviewedCompletion: false,
           lastCompletionAt: null, lastCompletionKind: null, lastStateChangeAt: null,
@@ -33,7 +36,24 @@ for (const theme of ['light', 'dark'] as const) {
       }));
     }, theme);
     await page.routeWebSocket('**/*', (socket) => {
-      if (!new URL(socket.url()).pathname.endsWith('/user-terminal')) return;
+      const pathname = new URL(socket.url()).pathname;
+      // API requests wait for backend readiness. Keep that handshake alive
+      // while leaving agent sockets mocked so no real processes are launched.
+      if (pathname === '/server-connection') {
+        const sendReady = () => socket.send(JSON.stringify({
+          type: 'ready', serverTime: new Date().toISOString(),
+        }));
+        sendReady();
+        const heartbeat = setInterval(sendReady, 1000);
+        socket.onClose(() => clearInterval(heartbeat));
+        return;
+      }
+      if (pathname === '/') {
+        // Angular's dev-server socket must still receive its Vite handshake.
+        socket.connectToServer();
+        return;
+      }
+      if (pathname !== '/user-terminal') return;
       let sent = false;
       socket.onMessage((message) => {
         // Wait for fitting/resizing before sending more output than fits onscreen.
@@ -44,6 +64,8 @@ for (const theme of ['light', 'dark'] as const) {
     });
 
     await page.goto('/sessions/17');
+    if (theme === 'dark') await expect(page.locator('html')).toHaveClass(/dark/);
+    else await expect(page.locator('html')).not.toHaveClass(/dark/);
     await page.getByRole('button', { name: 'Toggle Terminal panel', exact: true }).click();
     const terminal = page.locator('app-user-terminal-view');
     const rows = terminal.locator('.xterm-rows');
@@ -55,8 +77,12 @@ for (const theme of ['light', 'dark'] as const) {
     await terminal.locator('.xterm-helper-textarea').press('Shift+PageUp');
     await expect(rows).not.toContainText('history-119');
     await terminal.locator('.xterm-screen').hover();
-    await page.mouse.wheel(0, -10000);
-    await expect(rows).toContainText('history-0');
+    // xterm limits how far each wheel event scrolls; keep exercising the real
+    // wheel path until the oldest line is rendered instead of assuming a delta.
+    await expect.poll(async () => {
+      await page.mouse.wheel(0, -10000);
+      return rows.textContent();
+    }).toContain('history-0');
 
     // xterm uses xterm-decoration-top on selected glyphs. They must stay visible.
     await terminal.locator('.xterm-helper-textarea').press('Control+Shift+KeyA');
