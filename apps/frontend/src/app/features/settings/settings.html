@@ -12,44 +12,6 @@
       </div>
     </header>
 
-    <section class="rounded-lg border border-border bg-card">
-      <div class="border-b border-border px-5 py-4">
-        <h2 class="text-sm font-semibold text-foreground">Agent</h2>
-      </div>
-
-      <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-        <div class="min-w-0">
-          <div class="text-sm font-medium text-foreground">Default agent</div>
-          <div class="mt-1 text-sm text-muted-foreground">
-            Used when new sessions are created on this backend.
-          </div>
-          @if (appSettings.error()) {
-            <div class="mt-2 text-sm text-destructive" role="alert">{{ appSettings.error() }}</div>
-          }
-        </div>
-
-        <div
-          class="inline-grid grid-cols-2 rounded-lg border border-border bg-muted p-1 sm:grid-cols-4"
-        >
-          @for (provider of agentProviders; track provider.id) {
-            <button
-              type="button"
-              class="flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-              [class.bg-background]="appSettings.settings().defaultAgentProvider === provider.id"
-              [class.text-foreground]="appSettings.settings().defaultAgentProvider === provider.id"
-              [class.shadow-sm]="appSettings.settings().defaultAgentProvider === provider.id"
-              [disabled]="appSettings.saving()"
-              [attr.aria-pressed]="appSettings.settings().defaultAgentProvider === provider.id"
-              (click)="selectAgent(provider.id)"
-            >
-              <ng-icon [name]="provider.icon" size="15" />
-              <span>{{ provider.label }}</span>
-            </button>
-          }
-        </div>
-      </div>
-    </section>
-
     @if (localComputerBash.state().supported) {
       <section class="rounded-lg border border-border bg-card">
         <div class="border-b border-border px-5 py-4">
@@ -100,9 +62,9 @@
 
     <section class="rounded-lg border border-border bg-card">
       <div class="border-b border-border px-5 py-4">
-        <h2 class="text-sm font-semibold text-foreground">Agent configurations</h2>
+        <h2 class="text-sm font-semibold text-foreground">Agent presets</h2>
         <p class="mt-1 text-sm text-muted-foreground">
-          Create quick-launch presets and choose how each agent starts by default.
+          Manage agent setups, speed, and defaults in one place.
         </p>
       </div>
 

@@ -80,7 +80,7 @@ describe('CodexRuntimeService', () => {
     planMode: false as boolean | null,
   };
 
-  function createService() {
+  function createService(defaults: { model: string | null; reasoningEffort: string | null; fastMode?: boolean } = { model: null, reasoningEffort: null }) {
     const sessionsService = {
       findOne: jest
         .fn<() => Promise<typeof session>>()
@@ -166,10 +166,7 @@ describe('CodexRuntimeService', () => {
         hooksService as never,
         titleService as never,
         {
-          getAgentProviderDefaults: () => ({
-            model: null,
-            reasoningEffort: null,
-          }),
+          getAgentProviderDefaults: () => defaults,
         } as never,
         mcpAgentTokens as never,
         db as never,
@@ -1094,6 +1091,19 @@ describe('CodexRuntimeService', () => {
     ]);
     expect(catalog.providerDefaultModelId).toBe('gpt-current');
     expect(catalog.reasoningEfforts).toEqual(['low', 'ultra']);
+  });
+
+  it('starts new sessions with the default preset fast mode', () => {
+    const { service } = createService({ model: 'gpt-5.5', reasoningEffort: 'low', fastMode: true });
+    const state = (service as any).ensureRuntimeState(7, null);
+    expect(state.selectedModel).toBe('gpt-5.5');
+    expect(state.reasoningEffort).toBe('low');
+    expect(state.fastMode).toBe(true);
+  });
+
+  it('does not enable preset fast mode for a model without support', () => {
+    const { service } = createService({ model: 'unknown-model', reasoningEffort: null, fastMode: true });
+    expect((service as any).ensureRuntimeState(7, null).fastMode).toBe(false);
   });
 
   it('does not treat remote Codex model list order as the default', async () => {

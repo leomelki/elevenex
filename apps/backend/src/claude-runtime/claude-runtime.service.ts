@@ -4836,7 +4836,10 @@ export class ClaudeRuntimeService
       lastError: null,
       selectedModel: startup.selectedModel,
       reasoningEffort: startup.reasoningEffort,
-      fastMode: false,
+      fastMode:
+        this.settingsService.getAgentProviderDefaults('claude').fastMode === true &&
+        availableModels.find((model) => model.id === startup.selectedModel)
+          ?.supportsFastMode === true,
       selectedPermissionMode: 'auto',
       planMode: false,
       availableModels,

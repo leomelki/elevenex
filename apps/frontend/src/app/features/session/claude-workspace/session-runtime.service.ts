@@ -690,6 +690,18 @@ export class SessionRuntime {
       );
       if (!this.isCurrentConversation(version) || this.sessionId !== sessionId) return;
       this.applyRuntimeState(effortState);
+      const fastMode =
+        preset.fastMode === true &&
+        this.availableModels().some(
+          (model) => model.id === this.selectedModel() && model.supportsFastMode === true,
+        );
+      if (fastMode !== this.fastMode()) {
+        const fastState = await firstValueFrom(
+          this.agentApi.setFastMode(sessionId, fastMode, preset.provider),
+        );
+        if (!this.isCurrentConversation(version) || this.sessionId !== sessionId) return;
+        this.applyRuntimeState(fastState);
+      }
       queueMicrotask(() => this.notify({ type: 'focus-composer' }));
     } catch {
       if (this.isCurrentConversation(version) && this.sessionId === sessionId)
@@ -704,7 +716,8 @@ export class SessionRuntime {
     return (
       preset.provider === this.currentProvider() &&
       preset.model === this.selectedModel() &&
-      preset.reasoningEffort === this.reasoningEffort()
+      preset.reasoningEffort === this.reasoningEffort() &&
+      (preset.fastMode ?? false) === this.fastMode()
     );
   }
 
@@ -716,6 +729,7 @@ export class SessionRuntime {
     const provider = AGENT_PROVIDER_PRESENTATIONS.find((item) => item.id === preset.provider);
     const parts = [provider?.label ?? preset.provider, preset.model ?? 'Agent default'];
     if (preset.reasoningEffort) parts.push(this.reasoningEffortLabel(preset.reasoningEffort));
+    if (preset.fastMode) parts.push('Fast mode');
     return parts.join(' · ');
   }
 

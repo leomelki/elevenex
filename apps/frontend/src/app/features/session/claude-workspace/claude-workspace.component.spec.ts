@@ -907,6 +907,27 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(composerDraftsMock.load).toHaveBeenLastCalledWith(7);
   });
 
+  it('applies and clears fast mode when switching presets', async () => {
+    const agentApi = TestBed.inject(AgentRuntimeApiService);
+    const selected = { ...runtimeState(), claudeSessionId: null, selectedModel: 'opus', reasoningEffort: 'high', availableModels: [{ id: 'opus', displayName: 'Opus', description: '', supportsFastMode: true }] };
+    vi.spyOn(agentApi, 'setSelectedModel').mockReturnValue(of(selected));
+    const effort = vi.spyOn(agentApi, 'setReasoningEffort').mockReturnValue(of(selected));
+    const fast = vi.spyOn(agentApi, 'setFastMode').mockReturnValue(of({ ...selected, fastMode: true }));
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('hasStartedAgentRuntime', false);
+    fixture.detectChanges();
+    await flushPromises();
+    const preset = { id: 'fast', name: 'Fast', provider: 'claude', model: 'opus', reasoningEffort: 'high', fastMode: true };
+    await fixture.componentInstance.runtime.applyModelPreset(preset);
+    expect(fast).toHaveBeenCalledWith(7, true, 'claude');
+    expect(fixture.componentInstance.runtime.isModelPresetSelected(preset)).toBe(true);
+    effort.mockReturnValue(of({ ...selected, fastMode: true }));
+    fast.mockReturnValue(of(selected));
+    await fixture.componentInstance.runtime.applyModelPreset({ ...preset, fastMode: false });
+    expect(fast).toHaveBeenLastCalledWith(7, false, 'claude');
+    expect(fixture.componentInstance.runtime.fastMode()).toBe(false);
+  });
+
   it('copies message content to the clipboard', async () => {
     const fixture = createWorkspace();
     fixture.detectChanges();

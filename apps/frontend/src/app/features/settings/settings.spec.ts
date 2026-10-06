@@ -3,6 +3,8 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Settings } from './settings';
+import { By } from '@angular/platform-browser';
+import { AgentDefaults } from './components/agent-defaults.component';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -17,6 +19,7 @@ const APP_SETTINGS_RESPONSE = {
   sessionToolbarButtons: null,
   defaultModelByProvider: {},
   defaultReasoningEffortByProvider: {},
+  speechToText: { provider: 'local-whisper', languages: ['en'] },
   onboardingCompletedAt: '2026-01-01T00:00:00.000Z',
   createdAt: null,
   updatedAt: null,
@@ -77,10 +80,7 @@ describe('Settings', () => {
     TestBed.resetTestingModule();
     await TestBed.configureTestingModule({
       imports: [Settings],
-      providers: [
-        provideHttpClient(),
-        provideHttpClientTesting(),
-      ],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
     }).compileComponents();
 
     httpMock = TestBed.inject(HttpTestingController);
@@ -114,18 +114,15 @@ describe('Settings', () => {
     fixture.detectChanges();
 
     httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
-    httpMock
-      .expectOne('/api/agent-providers/models')
-      .flush(MODEL_CATALOG_RESPONSE);
+    httpMock.expectOne('/api/agent-providers/models').flush(MODEL_CATALOG_RESPONSE);
     httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
     await Promise.resolve();
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
     expect(element.textContent).toContain('Workspace Preferences');
-    expect(element.textContent).toContain('Default agent');
-    expect(element.textContent).toContain('Codex');
-    expect(element.textContent).toContain('Pi');
+    expect(element.textContent).toContain('Agent presets');
+    expect(element.textContent).toContain('New sessions use Claude Code');
     expect(element.textContent).toContain('Claude UI');
     expect(element.textContent).toContain('TUI');
     expect(element.textContent).toContain('Session toolbar');
@@ -134,7 +131,9 @@ describe('Settings', () => {
     expect(element.textContent).toContain('@leomelki');
     expect(element.textContent).toContain('GitHub repository');
     expect(element.textContent).toContain('abcdef1');
-    expect((element.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('11x.png');
+    expect((element.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe(
+      '11x.png',
+    );
   });
 
   it('saves the selected Claude surface and rolls back on failure', async () => {
@@ -142,9 +141,7 @@ describe('Settings', () => {
     fixture.detectChanges();
 
     httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
-    httpMock
-      .expectOne('/api/agent-providers/models')
-      .flush(MODEL_CATALOG_RESPONSE);
+    httpMock.expectOne('/api/agent-providers/models').flush(MODEL_CATALOG_RESPONSE);
     httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
     await Promise.resolve();
     fixture.detectChanges();
@@ -152,17 +149,16 @@ describe('Settings', () => {
     const buttons = Array.from(
       fixture.nativeElement.querySelectorAll('button'),
     ) as HTMLButtonElement[];
-    const tuiButton = buttons.find(button => button.textContent?.includes('TUI'));
+    const tuiButton = buttons.find((button) => button.textContent?.includes('TUI'));
     expect(tuiButton).toBeTruthy();
 
     tuiButton?.click();
     fixture.detectChanges();
     expect(tuiButton?.getAttribute('aria-pressed')).toBe('true');
 
-    httpMock.expectOne('/api/settings').flush(
-      { message: 'Could not save settings.' },
-      { status: 500, statusText: 'Server Error' },
-    );
+    httpMock
+      .expectOne('/api/settings')
+      .flush({ message: 'Could not save settings.' }, { status: 500, statusText: 'Server Error' });
     await Promise.resolve();
     await Promise.resolve();
     fixture.detectChanges();
@@ -175,9 +171,7 @@ describe('Settings', () => {
     fixture.detectChanges();
 
     httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
-    httpMock
-      .expectOne('/api/agent-providers/models')
-      .flush(MODEL_CATALOG_RESPONSE);
+    httpMock.expectOne('/api/agent-providers/models').flush(MODEL_CATALOG_RESPONSE);
     httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
     await Promise.resolve();
     fixture.detectChanges();
@@ -207,69 +201,96 @@ describe('Settings', () => {
     await resetPromise;
   });
 
-  it('renders a model default row per provider from the catalog', async () => {
+  async function setupPresets(presets: unknown[] = []) {
     const fixture = TestBed.createComponent(Settings);
     fixture.detectChanges();
-
-    httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
+    httpMock
+      .expectOne('/api/settings')
+      .flush({ ...APP_SETTINGS_RESPONSE, agentModelPresets: presets });
     httpMock
       .expectOne('/api/agent-providers/models')
-      .flush(MODEL_CATALOG_RESPONSE);
+      .flush([
+        {
+          ...MODEL_CATALOG_RESPONSE[0],
+          models: MODEL_CATALOG_RESPONSE[0].models.map((model) => ({
+            ...model,
+            supportsFastMode: model.id === 'opus',
+          })),
+        },
+      ]);
     httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
     await Promise.resolve();
     fixture.detectChanges();
+    return {
+      fixture,
+      editor: fixture.debugElement.query(By.directive(AgentDefaults))
+        .componentInstance as AgentDefaults,
+    };
+  }
 
-    const element = fixture.nativeElement as HTMLElement;
-    expect(element.textContent).toContain('Agent configurations');
-    expect(element.textContent).toContain('Claude Code');
-    expect(
-      element.querySelector('[aria-label="Default model for Claude Code"]'),
-    ).toBeTruthy();
-    expect(
-      element.querySelector(
-        '[aria-label="Default thinking level for Claude Code"]',
-      ),
-    ).toBeTruthy();
+  it('creates a named default preset with fast mode in one save', async () => {
+    const { fixture, editor } = await setupPresets();
+    editor.openNewPreset();
+    editor.onPresetModelChange('opus');
+    editor.presetEffort.set('high');
+    editor.presetFastMode.set(true);
+    editor.presetUseForNewSessions.set(true);
+    editor.savePreset();
+    const request = httpMock.expectOne('/api/settings');
+    expect(request.request.body.defaultAgentProvider).toBe('claude');
+    expect(request.request.body.agentModelPresets[0]).toMatchObject({
+      name: 'Claude Code · Opus · Fast',
+      provider: 'claude',
+      model: 'opus',
+      reasoningEffort: 'high',
+      fastMode: true,
+      isDefault: true,
+    });
+    request.flush({ ...APP_SETTINGS_RESPONSE, ...request.request.body });
+    await Promise.resolve();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Default for new sessions');
+    expect(fixture.nativeElement.textContent).toContain('Fast mode');
   });
 
-  it('saves a picked default model for just that provider', async () => {
-    const fixture = TestBed.createComponent(Settings);
-    fixture.detectChanges();
+  it('clears fast mode and thinking when changing to a model without support', async () => {
+    const { editor } = await setupPresets();
+    editor.openNewPreset();
+    editor.onPresetModelChange('opus');
+    editor.presetFastMode.set(true);
+    editor.presetEffort.set('high');
+    editor.onPresetModelChange('haiku');
+    expect(editor.presetSupportsFastMode()).toBe(false);
+    expect(editor.presetFastMode()).toBe(false);
+    expect(editor.presetCanChooseEffort()).toBe(false);
+    expect(editor.presetEffort()).toBe('');
+  });
 
-    httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
-    httpMock
-      .expectOne('/api/agent-providers/models')
-      .flush(MODEL_CATALOG_RESPONSE);
-    httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
-    await Promise.resolve();
-    fixture.detectChanges();
-
-    const element = fixture.nativeElement as HTMLElement;
-    const trigger = element.querySelector(
-      '[aria-label="Default model for Claude Code"]',
-    ) as HTMLButtonElement;
-    trigger.click();
-    fixture.detectChanges();
-
-    const options = Array.from(
-      document.querySelectorAll('[role="option"]'),
-    ) as HTMLElement[];
-    const opus = options.find((option) => option.textContent?.includes('Opus'));
-    expect(opus).toBeTruthy();
-    opus?.click();
-    fixture.detectChanges();
-
+  it('replaces the previous default and duplicates without inheriting default status', async () => {
+    const first = {
+      id: 'first',
+      name: 'First',
+      provider: 'claude',
+      model: 'opus',
+      reasoningEffort: 'high',
+      isDefault: true,
+      fastMode: true,
+    };
+    const second = { ...first, id: 'second', name: 'Second', isDefault: false };
+    const { editor } = await setupPresets([first, second]);
+    editor.makeDefault(second);
     const request = httpMock.expectOne('/api/settings');
-    expect(request.request.body).toEqual({
-      defaultModelByProvider: { claude: 'opus' },
-    });
-    request.flush({
-      ...APP_SETTINGS_RESPONSE,
-      defaultModelByProvider: { claude: 'opus' },
-    });
-    await Promise.resolve();
-    fixture.detectChanges();
-
-    expect(trigger.textContent).toContain('Opus');
+    expect(
+      request.request.body.agentModelPresets.map(
+        (preset: { isDefault: boolean }) => preset.isDefault,
+      ),
+    ).toEqual([false, true]);
+    request.flush({ ...APP_SETTINGS_RESPONSE, ...request.request.body });
+    await vi.waitFor(() => expect(editor.appSettings.saving()).toBe(false));
+    editor.duplicatePreset(second);
+    expect(editor.editingPresetId()).toBeNull();
+    expect(editor.presetIsDefault()).toBe(false);
+    expect(editor.presetUseForNewSessions()).toBe(false);
+    expect(editor.presetFastMode()).toBe(true);
   });
 });

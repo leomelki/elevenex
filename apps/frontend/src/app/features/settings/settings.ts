@@ -31,11 +31,9 @@ import {
 import { toast } from 'ngx-sonner';
 import { AppSettingsService } from '@/shared/services/app-settings.service';
 import {
-  DefaultAgentProvider,
   DefaultClaudeSessionSurface,
   MAX_WORKTREES_PER_REPO_CEILING,
 } from '@/shared/models/app-settings.model';
-import { AGENT_PROVIDER_PRESENTATIONS } from '@/shared/models/agent-provider-presentation';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardCheckboxComponent } from '@/shared/components/checkbox';
 import { ZardInputDirective } from '@/shared/components/input';
@@ -101,7 +99,6 @@ export class Settings {
   readonly appSettings = inject(AppSettingsService);
   readonly localComputerBash = inject(LocalComputerBashService);
 
-  readonly agentProviders = AGENT_PROVIDER_PRESENTATIONS;
   readonly frontendSha = FRONTEND_GIT_SHA.slice(0, 7);
   readonly backendSha = signal('...');
   readonly maxWorktreesCeiling = MAX_WORKTREES_PER_REPO_CEILING;
@@ -134,19 +131,6 @@ export class Settings {
 
     void this.appSettings
       .saveDefaultClaudeSessionSurface(surface)
-      .catch(() => toast.error('Could not save settings.'));
-  }
-
-  selectAgent(provider: DefaultAgentProvider): void {
-    if (
-      this.appSettings.saving() ||
-      this.appSettings.settings().defaultAgentProvider === provider
-    ) {
-      return;
-    }
-
-    void this.appSettings
-      .saveDefaultAgentProvider(provider)
       .catch(() => toast.error('Could not save settings.'));
   }
 

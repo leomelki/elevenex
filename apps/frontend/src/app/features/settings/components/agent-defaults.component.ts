@@ -19,13 +19,13 @@ import { AgentModelCatalogService } from '@/shared/services/agent-model-catalog.
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { OptionSelectComponent, OptionSelectItem } from '@/shared/components/option-select';
-import { AgentProviderModelCatalog } from '@/shared/models/agent-model-catalog.model';
+import { ZardCheckboxComponent } from '@/shared/components/checkbox';
 import {
   AGENT_DEFAULT_OPTION,
   toModelOption,
   withPinnedModel,
 } from '@/shared/models/agent-model-options';
-import { AgentModelPreset } from '@/shared/models/app-settings.model';
+import { AgentModelPreset, DefaultAgentProvider } from '@/shared/models/app-settings.model';
 
 /**
  * Icons for the providers we ship. A provider the backend reports that isn't
@@ -50,24 +50,16 @@ const EFFORT_HINTS: Record<string, string> = {
   max: 'Maximum effort where supported',
 };
 
-interface ProviderRow {
-  id: string;
-  label: string;
-  icon: string;
-  modelOptions: OptionSelectItem[];
-  selectedModel: string;
-  modelSelectable: boolean;
-  modelNote: string | null;
-  effortOptions: OptionSelectItem[];
-  selectedEffort: string;
-  showEffort: boolean;
-  /** Set when the chosen model can't reason — explains the disabled picker. */
-  effortNote: string | null;
-}
-
 @Component({
   selector: 'app-agent-defaults',
-  imports: [FormsModule, NgIcon, OptionSelectComponent, ZardButtonComponent, ZardInputDirective],
+  imports: [
+    FormsModule,
+    NgIcon,
+    OptionSelectComponent,
+    ZardButtonComponent,
+    ZardInputDirective,
+    ZardCheckboxComponent,
+  ],
   templateUrl: './agent-defaults.component.html',
   viewProviders: [
     provideIcons({
@@ -87,15 +79,52 @@ export class AgentDefaults {
   readonly appSettings = inject(AppSettingsService);
   readonly catalog = inject(AgentModelCatalogService);
 
-  readonly rows = computed<ProviderRow[]>(() =>
-    this.catalog.catalogs().map((catalog) => this.toRow(catalog)),
-  );
   readonly editingPresetId = signal<string | null>(null);
   readonly presetEditorOpen = signal(false);
   readonly presetName = signal('');
   readonly presetProvider = signal('claude');
   readonly presetModel = signal('');
   readonly presetEffort = signal('');
+  readonly presetFastMode = signal(false);
+  readonly presetIsDefault = signal(false);
+  readonly presetUseForNewSessions = signal(false);
+  readonly defaultUsageOptions = computed<OptionSelectItem[]>(() => [
+    {
+      value: 'manual',
+      label: 'Quick launch only',
+      description: 'Choose this preset when starting a session.',
+    },
+    {
+      value: 'agent',
+      label: 'Default for this agent',
+      description: 'Apply whenever a new session uses this agent.',
+    },
+    {
+      value: 'sessions',
+      label: 'Default for new sessions',
+      description: 'Start new sessions with this agent and setup.',
+    },
+  ]);
+  readonly defaultUsage = computed(() =>
+    this.presetUseForNewSessions() ? 'sessions' : this.presetIsDefault() ? 'agent' : 'manual',
+  );
+  readonly defaultProviderLabel = computed(
+    () =>
+      this.catalog
+        .catalogs()
+        .find((item) => item.provider === this.appSettings.settings().defaultAgentProvider)
+        ?.displayName ?? this.appSettings.settings().defaultAgentProvider,
+  );
+  readonly presetSupportsFastMode = computed(() => {
+    const catalog = this.presetCatalog();
+    return (
+      catalog?.models.find(
+        (item) => item.id === (this.presetModel() || catalog.providerDefaultModelId),
+      )?.supportsFastMode === true
+    );
+  });
+  readonly canAddPreset = computed(() => this.appSettings.settings().agentModelPresets.length < 24);
+
   readonly providerOptions = computed<OptionSelectItem[]>(() =>
     this.catalog.catalogs().map((catalog) => ({
       value: catalog.provider,
@@ -105,9 +134,10 @@ export class AgentDefaults {
   readonly presetCatalog = computed(() =>
     this.catalog.catalogs().find((catalog) => catalog.provider === this.presetProvider()),
   );
-  readonly presetCanChooseEffort = computed(() =>
-    this.presetCatalog()?.models.find((item) => item.id === this.presetModel())
-      ?.supportsEffort !== false,
+  readonly presetCanChooseEffort = computed(
+    () =>
+      this.presetCatalog()?.models.find((item) => item.id === this.presetModel())
+        ?.supportsEffort !== false,
   );
   readonly presetModelOptions = computed<OptionSelectItem[]>(() => {
     const catalog = this.presetCatalog();
@@ -147,22 +177,14 @@ export class AgentDefaults {
     void this.catalog.refresh().catch(() => undefined);
   }
 
-  onModelChange(provider: string, value: string): void {
-    void this.appSettings
-      .saveDefaultModel(provider, value || null)
-      .catch(() => toast.error('Could not save the default model.'));
-  }
-
-  onEffortChange(provider: string, value: string): void {
-    void this.appSettings
-      .saveDefaultReasoningEffort(provider, value || null)
-      .catch(() => toast.error('Could not save the default thinking level.'));
-  }
-
   openNewPreset(): void {
-    const provider = this.catalog.catalogs()[0]?.provider ?? 'claude';
+    if (this.appSettings.saving() || !this.canAddPreset()) return;
+    const provider = this.appSettings.settings().defaultAgentProvider;
     this.editingPresetId.set(null);
     this.presetName.set('');
+    this.presetFastMode.set(false);
+    this.presetIsDefault.set(false);
+    this.presetUseForNewSessions.set(false);
     this.presetProvider.set(provider);
     this.presetModel.set('');
     this.presetEffort.set('');
@@ -170,8 +192,12 @@ export class AgentDefaults {
   }
 
   editPreset(preset: AgentModelPreset): void {
+    if (this.appSettings.saving()) return;
     this.editingPresetId.set(preset.id);
     this.presetName.set(preset.name);
+    this.presetFastMode.set(preset.fastMode ?? false);
+    this.presetIsDefault.set(preset.isDefault ?? false);
+    this.presetUseForNewSessions.set(this.isSessionDefault(preset));
     this.presetProvider.set(preset.provider);
     this.presetModel.set(preset.model ?? '');
     this.presetEffort.set(preset.reasoningEffort ?? '');
@@ -182,17 +208,31 @@ export class AgentDefaults {
     this.presetProvider.set(provider);
     this.presetModel.set('');
     this.presetEffort.set('');
+    this.presetFastMode.set(false);
+  }
+
+  onPresetModelChange(model: string): void {
+    this.presetModel.set(model);
+    this.presetEffort.set('');
+    if (!this.presetSupportsFastMode()) this.presetFastMode.set(false);
+  }
+
+  onDefaultUsageChange(value: string): void {
+    this.presetIsDefault.set(value !== 'manual');
+    this.presetUseForNewSessions.set(value === 'sessions');
   }
 
   savePreset(): void {
-    const name = this.presetName().trim();
-    if (!name || this.appSettings.saving()) return;
+    const name = this.presetName().trim() || this.suggestedName();
+    if (this.appSettings.saving() || (!this.editingPresetId() && !this.canAddPreset())) return;
     const id = this.editingPresetId() ?? crypto.randomUUID();
     const preset: AgentModelPreset = {
       id,
       name,
       provider: this.presetProvider(),
       model: this.presetModel() || null,
+      fastMode: this.presetSupportsFastMode() && this.presetFastMode(),
+      isDefault: this.presetIsDefault() || this.presetUseForNewSessions(),
       reasoningEffort: this.presetCanChooseEffort() ? this.presetEffort() || null : null,
     };
     const current = this.appSettings.settings().agentModelPresets;
@@ -200,7 +240,16 @@ export class AgentDefaults {
       ? current.map((item) => (item.id === id ? preset : item))
       : [...current, preset];
     void this.appSettings
-      .saveAgentModelPresets(next)
+      .savePresetConfiguration({
+        agentModelPresets: next.map((item) =>
+          item.id !== id && item.provider === preset.provider && preset.isDefault
+            ? { ...item, isDefault: false }
+            : item,
+        ),
+        ...(this.presetUseForNewSessions()
+          ? { defaultAgentProvider: preset.provider as DefaultAgentProvider }
+          : {}),
+      })
       .then(() => {
         this.presetEditorOpen.set(false);
       })
@@ -214,6 +263,9 @@ export class AgentDefaults {
       .agentModelPresets.filter((item) => item.id !== preset.id);
     void this.appSettings
       .saveAgentModelPresets(next)
+      .then(() => {
+        if (this.editingPresetId() === preset.id) this.presetEditorOpen.set(false);
+      })
       .catch(() => toast.error('Could not delete the preset.'));
   }
 
@@ -226,6 +278,7 @@ export class AgentDefaults {
     ];
     if (preset.reasoningEffort)
       parts.push(EFFORT_LABELS[preset.reasoningEffort] ?? preset.reasoningEffort);
+    if (preset.fastMode) parts.push('Fast mode');
     return parts.join(' · ');
   }
 
@@ -233,48 +286,46 @@ export class AgentDefaults {
     return PROVIDER_ICONS[provider] || 'lucideSparkles';
   }
 
-  private toRow(catalog: AgentProviderModelCatalog): ProviderRow {
-    const settings = this.appSettings.settings();
-    const selectedModel = settings.defaultModelByProvider[catalog.provider] ?? '';
-    const selectedEffort = settings.defaultReasoningEffortByProvider[catalog.provider] ?? '';
-
-    const models = withPinnedModel(catalog.models, selectedModel);
-    const selected = models.find((model) => model.id === selectedModel);
-
-    // A model's own list wins over the provider-wide one, so picking a model
-    // that only reasons at low/medium can't leave "Max" selectable.
-    const efforts = selected?.reasoningEfforts?.length
-      ? selected.reasoningEfforts
-      : catalog.reasoningEfforts;
-    const modelRejectsEffort = selected?.supportsEffort === false;
-
-    return {
-      id: catalog.provider,
-      label: catalog.displayName || catalog.provider,
-      icon: PROVIDER_ICONS[catalog.provider] ?? 'lucideSparkles',
-      modelOptions: [AGENT_DEFAULT_OPTION, ...models.map((model) => toModelOption(model, catalog))],
-      selectedModel,
-      modelSelectable: catalog.supportsModelSelection && (models.length > 0 || !!selectedModel),
-      modelNote: models.length
-        ? null
-        : (catalog.unavailableReason ?? `${catalog.displayName} has not reported any models.`),
-      effortOptions: [
-        AGENT_DEFAULT_OPTION,
-        ...this.withPinnedEffort(efforts, selectedEffort).map((effort) => ({
-          value: effort,
-          label: EFFORT_LABELS[effort] ?? effort,
-          description: EFFORT_HINTS[effort],
-        })),
-      ],
-      selectedEffort,
-      showEffort: efforts.length > 0 || !!selectedEffort,
-      effortNote: modelRejectsEffort
-        ? `${selected?.displayName ?? 'This model'} runs at a fixed thinking level.`
-        : null,
-    };
+  isSessionDefault(preset: AgentModelPreset): boolean {
+    return (
+      preset.isDefault === true &&
+      preset.provider === this.appSettings.settings().defaultAgentProvider
+    );
   }
 
-  private withPinnedEffort(efforts: string[], selected: string): string[] {
-    return selected && !efforts.includes(selected) ? [...efforts, selected] : efforts;
+  makeDefault(preset: AgentModelPreset): void {
+    if (this.appSettings.saving()) return;
+    void this.appSettings
+      .savePresetConfiguration({
+        defaultAgentProvider: preset.provider as DefaultAgentProvider,
+        agentModelPresets: this.appSettings
+          .settings()
+          .agentModelPresets.map((item) =>
+            item.provider === preset.provider
+              ? { ...item, isDefault: item.id === preset.id }
+              : item,
+          ),
+      })
+      .catch(() => toast.error('Could not change the default preset.'));
+  }
+
+  duplicatePreset(preset: AgentModelPreset): void {
+    if (this.appSettings.saving() || !this.canAddPreset()) return;
+    this.editPreset({ ...preset, name: `${preset.name.slice(0, 43)} copy`, isDefault: false });
+    this.editingPresetId.set(null);
+    this.presetUseForNewSessions.set(false);
+  }
+
+  suggestedName(): string {
+    const catalog = this.presetCatalog();
+    const model = catalog?.models.find((item) => item.id === this.presetModel());
+    return [
+      catalog?.displayName ?? this.presetProvider(),
+      model?.displayName,
+      this.presetFastMode() ? 'Fast' : null,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+      .slice(0, 48);
   }
 }

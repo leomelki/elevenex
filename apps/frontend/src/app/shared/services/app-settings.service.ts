@@ -164,6 +164,13 @@ export class AppSettingsService {
     );
   }
 
+  savePresetConfiguration(
+    patch: Pick<AppSettings, 'agentModelPresets'> &
+      Partial<Pick<AppSettings, 'defaultAgentProvider'>>,
+  ): Promise<AppSettings> {
+    return this.saveSettings(patch);
+  }
+
   saveAgentModelPresets(agentModelPresets: AgentModelPreset[]): Promise<AppSettings> {
     return this.saveSettings({ agentModelPresets });
   }
@@ -375,6 +382,8 @@ export class AppSettingsService {
         id: raw['id'],
         name: raw['name'],
         provider: raw['provider'],
+        ...(typeof raw['fastMode'] === 'boolean' ? { fastMode: raw['fastMode'] } : {}),
+        ...(typeof raw['isDefault'] === 'boolean' ? { isDefault: raw['isDefault'] } : {}),
         model: typeof raw['model'] === 'string' ? raw['model'] : null,
         reasoningEffort:
           typeof raw['reasoningEffort'] === 'string' ? raw['reasoningEffort'] : null,

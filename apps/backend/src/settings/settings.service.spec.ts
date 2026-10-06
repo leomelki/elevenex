@@ -556,6 +556,76 @@ describe('SettingsService', () => {
     });
   });
 
+  it('uses preset defaults at startup and resets them after deletion', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+    await service.update({ defaultModelByProvider: { codex: 'old-model' } });
+    const migrated = await service.findOne();
+    expect(migrated.agentModelPresets).toContainEqual(
+      expect.objectContaining({
+        provider: 'codex',
+        model: 'old-model',
+        isDefault: true,
+      }),
+    );
+    await service.update({
+      agentModelPresets: [
+        {
+          id: 'fast',
+          name: 'Fast',
+          provider: 'codex',
+          model: 'gpt-5.5',
+          reasoningEffort: 'low',
+          fastMode: true,
+          isDefault: true,
+        },
+      ],
+    });
+    expect(service.getAgentProviderDefaults('codex')).toEqual({
+      model: 'gpt-5.5',
+      reasoningEffort: 'low',
+      fastMode: true,
+    });
+    await service.update({ agentModelPresets: [] });
+    expect(service.getAgentProviderDefaults('codex')).toEqual({
+      model: null,
+      reasoningEffort: null,
+    });
+  });
+
+  it('keeps cached defaults unchanged when a legacy preference update is rejected', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+    await service.update({ agentModelPresets: [{ id: 'default', name: 'Default', provider: 'codex', model: 'gpt-5.5', reasoningEffort: 'high', isDefault: true }] });
+    await expect(service.update({ defaultModelByProvider: { codex: 'other' }, maxWorktreesPerRepo: -1 })).rejects.toBeInstanceOf(BadRequestException);
+    expect(service.getAgentProviderDefaults('codex').model).toBe('gpt-5.5');
+  });
+
+  it('rejects invalid preset flags and multiple defaults for the same agent', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+    const preset = {
+      id: 'fast',
+      name: 'Fast',
+      provider: 'codex',
+      model: null,
+      reasoningEffort: null,
+      isDefault: true,
+    };
+    await expect(
+      service.update({
+        agentModelPresets: [preset, { ...preset, id: 'other' }],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update({
+        agentModelPresets: [
+          { ...preset, fastMode: 'yes' as unknown as boolean },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('rejects malformed or duplicate model presets', async () => {
     const { db } = createDbMock();
     const service = new SettingsService(db);
@@ -613,6 +683,7 @@ describe('SettingsService', () => {
     expect(service.getAgentProviderDefaults('claude')).toEqual({
       model: 'opus',
       reasoningEffort: 'xhigh',
+      fastMode: false,
     });
     expect(service.getAgentProviderDefaults('codex')).toEqual({
       model: null,

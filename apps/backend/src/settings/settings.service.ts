@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   Inject,
@@ -97,6 +98,8 @@ export class SettingsService implements OnModuleInit {
    * state — no `await` on the hot session-creation path. Refreshed on every
    * read and write of the settings row.
    */
+  private defaultPresets: AgentModelPreset[] = [];
+
   private agentDefaultsCache: {
     models: AgentProviderPreferenceMap;
     reasoningEfforts: AgentProviderPreferenceMap;
@@ -189,6 +192,15 @@ export class SettingsService implements OnModuleInit {
       return NO_PROVIDER_DEFAULTS;
     }
 
+    const preset = this.defaultPresets.find(
+      (item) => item.provider === provider && item.isDefault,
+    );
+    if (preset)
+      return {
+        model: preset.model,
+        reasoningEffort: preset.reasoningEffort,
+        fastMode: preset.fastMode ?? false,
+      };
     return {
       model: this.agentDefaultsCache.models[provider] ?? null,
       reasoningEffort:
@@ -236,8 +248,45 @@ export class SettingsService implements OnModuleInit {
     );
     const agentModelPresets =
       input.agentModelPresets === undefined
-        ? current.agentModelPresets
+        ? current.agentModelPresets.map((preset) => ({ ...preset }))
         : this.normalizeAgentModelPresets(input.agentModelPresets, true);
+
+    if (
+      input.agentModelPresets === undefined &&
+      (input.defaultModelByProvider !== undefined ||
+        input.defaultReasoningEffortByProvider !== undefined)
+    ) {
+      for (const preset of agentModelPresets) {
+        if (!preset.isDefault) continue;
+        if (
+          input.defaultModelByProvider === null ||
+          Object.hasOwn(input.defaultModelByProvider ?? {}, preset.provider)
+        )
+          preset.model = defaultModelByProvider[preset.provider] ?? null;
+        if (
+          input.defaultReasoningEffortByProvider === null ||
+          Object.hasOwn(
+            input.defaultReasoningEffortByProvider ?? {},
+            preset.provider,
+          )
+        )
+          preset.reasoningEffort =
+            defaultReasoningEffortByProvider[preset.provider] ?? null;
+      }
+    }
+
+    // Once presets are edited, they own startup defaults. Clear the legacy maps
+    // so deleting a default cannot resurrect an old model preference.
+    if (input.agentModelPresets !== undefined) {
+      for (const provider of new Set(
+        [...current.agentModelPresets, ...agentModelPresets].map(
+          (item) => item.provider,
+        ),
+      )) {
+        delete defaultModelByProvider[provider];
+        delete defaultReasoningEffortByProvider[provider];
+      }
+    }
 
     const maxWorktreesPerRepo =
       input.maxWorktreesPerRepo === undefined
@@ -359,6 +408,46 @@ export class SettingsService implements OnModuleInit {
       reasoningEfforts: defaultReasoningEffortByProvider,
     };
 
+    const agentModelPresets = this.parseAgentModelPresets(
+      row.agentModelPresets,
+    );
+    // Expose old defaults through the same editor without requiring a schema migration.
+    for (const provider of new Set([
+      ...Object.keys(defaultModelByProvider),
+      ...Object.keys(defaultReasoningEffortByProvider),
+    ])) {
+      if (
+        agentModelPresets.some(
+          (preset) => preset.provider === provider && preset.isDefault,
+        )
+      )
+        continue;
+      const model = defaultModelByProvider[provider] ?? null;
+      const reasoningEffort =
+        defaultReasoningEffortByProvider[provider] ?? null;
+      const matching = agentModelPresets.find(
+        (preset) =>
+          preset.provider === provider &&
+          preset.model === model &&
+          preset.reasoningEffort === reasoningEffort,
+      );
+      if (matching) matching.isDefault = true;
+      else if (agentModelPresets.length < MAX_AGENT_MODEL_PRESETS) {
+        let id = `default-${provider}`;
+        while (agentModelPresets.some((preset) => preset.id === id))
+          id = `d-${randomUUID()}`;
+        agentModelPresets.push({
+          id,
+          name: `${provider} default`,
+          provider,
+          model,
+          reasoningEffort,
+          isDefault: true,
+          fastMode: false,
+        });
+      }
+    }
+    this.defaultPresets = agentModelPresets;
     const speechToText = this.parseSpeechToTextSettings(row.speechToText);
     const envKey = this.resolveApiKeyFromEnv(speechToText.provider);
 
@@ -370,7 +459,7 @@ export class SettingsService implements OnModuleInit {
       ),
       defaultModelByProvider,
       defaultReasoningEffortByProvider,
-      agentModelPresets: this.parseAgentModelPresets(row.agentModelPresets),
+      agentModelPresets,
       maxWorktreesPerRepo: this.parseMaxWorktreesPerRepo(
         row.maxWorktreesPerRepo,
       ),
@@ -606,6 +695,7 @@ export class SettingsService implements OnModuleInit {
       return fail();
     const result: AgentModelPreset[] = [];
     const ids = new Set<string>();
+    const defaultProviders = new Set<string>();
     for (const item of value) {
       if (!item || typeof item !== 'object' || Array.isArray(item))
         return fail();
@@ -626,6 +716,9 @@ export class SettingsService implements OnModuleInit {
         !name ||
         name.length > MAX_AGENT_MODEL_PRESET_NAME_LENGTH ||
         !AGENT_PROVIDER_KEY_PATTERN.test(provider) ||
+        (raw.fastMode !== undefined && typeof raw.fastMode !== 'boolean') ||
+        (raw.isDefault !== undefined && typeof raw.isDefault !== 'boolean') ||
+        (raw.isDefault === true && defaultProviders.has(provider)) ||
         model === undefined ||
         reasoningEffort === undefined ||
         (model?.length ?? 0) > MAX_AGENT_PREFERENCE_VALUE_LENGTH ||
@@ -633,7 +726,20 @@ export class SettingsService implements OnModuleInit {
       )
         return fail();
       ids.add(id);
-      result.push({ id, name, provider, model, reasoningEffort });
+      if (raw.isDefault === true) defaultProviders.add(provider);
+      result.push({
+        id,
+        name,
+        provider,
+        model,
+        reasoningEffort,
+        ...(raw.fastMode !== undefined
+          ? { fastMode: raw.fastMode as boolean }
+          : {}),
+        ...(raw.isDefault !== undefined
+          ? { isDefault: raw.isDefault as boolean }
+          : {}),
+      });
     }
     return result;
   }

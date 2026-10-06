@@ -1008,7 +1008,10 @@ export class AntigravityRuntimeService
       lastError: null,
       selectedModel: startup.selectedModel,
       reasoningEffort: startup.reasoningEffort,
-      fastMode: false,
+      fastMode:
+        this.settingsService.getAgentProviderDefaults('antigravity').fastMode === true &&
+        catalog.models.find((model) => model.id === startup.selectedModel)
+          ?.supportsFastMode === true,
       // `agy` has no headless approval channel and no "auto" posture: outside
       // `--dangerously-skip-permissions` every write/command tool call is
       // auto-denied and the turn ends empty (verified: `--mode accept-edits`

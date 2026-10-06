@@ -60,6 +60,8 @@ export interface AgentModelPreset {
   provider: string;
   model: string | null;
   reasoningEffort: string | null;
+  fastMode?: boolean;
+  isDefault?: boolean;
 }
 
 export const MAX_AGENT_MODEL_PRESETS = 24;
@@ -69,6 +71,7 @@ export const MAX_AGENT_MODEL_PRESET_NAME_LENGTH = 48;
 export interface AgentProviderDefaults {
   model: string | null;
   reasoningEffort: string | null;
+  fastMode?: boolean;
 }
 
 /** Keys must look like provider ids; values are provider-defined identifiers. */

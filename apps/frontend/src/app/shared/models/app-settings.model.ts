@@ -24,6 +24,8 @@ export interface AgentModelPreset {
   provider: string;
   model: string | null;
   reasoningEffort: string | null;
+  fastMode?: boolean;
+  isDefault?: boolean;
 }
 
 export const SPEECH_TO_TEXT_PROVIDERS = [

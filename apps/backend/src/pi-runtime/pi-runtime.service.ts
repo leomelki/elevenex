@@ -1473,7 +1473,10 @@ export class PiRuntimeService
       lastError: null,
       selectedModel: startup.selectedModel,
       reasoningEffort: startup.reasoningEffort,
-      fastMode: false,
+      fastMode:
+        this.settingsService.getAgentProviderDefaults('pi').fastMode === true &&
+        availableModels.find((model) => model.id === startup.selectedModel)
+          ?.supportsFastMode === true,
       availableModels,
       contextUsage: null,
       sessionMetadata: null,

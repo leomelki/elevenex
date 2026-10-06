@@ -1698,7 +1698,10 @@ export class CodexRuntimeService
       lastError: null,
       selectedModel: startup.selectedModel,
       reasoningEffort: startup.reasoningEffort,
-      fastMode: false,
+      fastMode:
+        this.settingsService.getAgentProviderDefaults('codex').fastMode === true &&
+        availableModels.find((model) => model.id === startup.selectedModel)
+          ?.supportsFastMode === true,
       selectedPermissionMode: 'auto',
       planMode: persistedPlanMode ?? false,
       availableModels,
