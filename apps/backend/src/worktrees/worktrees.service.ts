@@ -3,6 +3,7 @@ import { SimpleGit } from 'simple-git';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { isMissingWorktreePath } from './worktree-path.js';
 
 export interface BranchLastCommit {
   hash: string;
@@ -54,7 +55,12 @@ export class WorktreesService {
     }
 
     const output = await git.raw(['worktree', 'list', '--porcelain']);
-    return this.parsePorcelainOutput(output);
+    const worktrees = this.parsePorcelainOutput(output);
+    // Git retains registrations for manually deleted directories until prune.
+    const missing = await Promise.all(
+      worktrees.map((worktree) => isMissingWorktreePath(worktree.path)),
+    );
+    return worktrees.filter((_, index) => !missing[index]);
   }
 
   async createWorktree(

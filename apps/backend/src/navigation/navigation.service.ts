@@ -4,6 +4,7 @@ import { ReposService } from '../repos/repos.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorkspacesService } from '../workspaces/workspaces.service.js';
 import { SessionFoldersService } from '../sessions/session-folders.service.js';
+import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
 
 export interface SessionInTree {
   id: number;
@@ -116,12 +117,13 @@ export class NavigationService {
               this.sessionsService.findByRepo(repo.id),
               this.sessionFoldersService.listByRepo(repo.id),
             ]);
-            const workspacesWithSessions = this.attachSessionsToWorkspaces(
-              repo.id,
-              workspaces,
-              sessions,
-              folders,
-            );
+            const workspacesWithSessions =
+              await this.attachSessionsToWorkspaces(
+                repo.id,
+                workspaces,
+                sessions,
+                folders,
+              );
 
             return {
               id: repo.id,
@@ -174,12 +176,13 @@ export class NavigationService {
                 this.sessionFoldersService.listByRepo(repo.id),
               ]);
 
-              const workspacesWithSessions = this.attachSessionsToWorkspaces(
-                repo.id,
-                workspaces,
-                sessions,
-                folders,
-              );
+              const workspacesWithSessions =
+                await this.attachSessionsToWorkspaces(
+                  repo.id,
+                  workspaces,
+                  sessions,
+                  folders,
+                );
 
               return {
                 id: repo.id,
@@ -216,7 +219,7 @@ export class NavigationService {
     return tree;
   }
 
-  private attachSessionsToWorkspaces(
+  private async attachSessionsToWorkspaces(
     repoId: number,
     workspaces: Omit<
       WorkspaceInTree,
@@ -228,7 +231,7 @@ export class NavigationService {
     >[],
     sessions: Awaited<ReturnType<SessionsService['findByRepo']>>,
     folders: Awaited<ReturnType<SessionFoldersService['listByRepo']>>,
-  ): WorkspaceInTree[] {
+  ): Promise<WorkspaceInTree[]> {
     const workspaceMap = new Map<number, WorkspaceInTree>(
       workspaces.map((workspace) => [
         workspace.id,
@@ -245,6 +248,28 @@ export class NavigationService {
     const workspaceByPath = new Map<string, WorkspaceInTree>();
     for (const workspace of workspaceMap.values()) {
       workspaceByPath.set(workspace.path, workspace);
+    }
+
+    const defaultWorkspace = [...workspaceMap.values()].find(
+      (workspace) => workspace.isDefault,
+    );
+    const missingPaths = new Set<string>();
+    if (defaultWorkspace) {
+      const unmatchedPaths = new Set(
+        sessions
+          .filter(
+            (session) =>
+              !workspaceByPath.has(session.worktreePath) &&
+              (!session.workspaceId || !workspaceMap.has(session.workspaceId)),
+          )
+          .map((session) => session.worktreePath),
+      );
+      await Promise.all(
+        [...unmatchedPaths].map(async (worktreePath) => {
+          if (await isMissingWorktreePath(worktreePath))
+            missingPaths.add(worktreePath);
+        }),
+      );
     }
 
     const virtualWorkspaceByPath = new Map<string, WorkspaceInTree>();
@@ -270,6 +295,11 @@ export class NavigationService {
           ? workspaceMap.get(session.workspaceId)
           : undefined) ??
         workspaceByPath.get(session.worktreePath) ??
+        // Keep session history accessible without resurrecting a deleted
+        // worktree as a virtual sidebar entry. Its original path stays in DB.
+        (missingPaths.has(session.worktreePath)
+          ? defaultWorkspace
+          : undefined) ??
         this.getOrCreateVirtualWorkspace(
           repoId,
           session,

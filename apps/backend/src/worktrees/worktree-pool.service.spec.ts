@@ -14,6 +14,11 @@ import {
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
+import { isMissingWorktreePath } from './worktree-path.js';
+
+jest.mock('./worktree-path.js', () => ({
+  isMissingWorktreePath: jest.fn(),
+}));
 
 /**
  * Absolute paths resolved for the host platform: the service normalizes every
@@ -87,6 +92,7 @@ describe('WorktreePoolService', () => {
   };
 
   beforeEach(async () => {
+    jest.mocked(isMissingWorktreePath).mockReset().mockResolvedValue(false);
     const testDb = createTestDb();
     db = testDb.db;
     sqliteConn = testDb.sqlite;
@@ -186,6 +192,112 @@ describe('WorktreePoolService', () => {
     expect(linked.poolWorktreeId).toBe(pool.id);
     expect(linked.linkStatus).toBe('linked');
     expect(gitMock.raw).toHaveBeenCalledWith(['checkout', 'feature']);
+  });
+
+  it.each([true, false])(
+    'removes deleted worktrees and workspace links across projects (still registered: %s)',
+    async (stillRegistered) => {
+      await service.reconcileRepo(repo);
+      const pool = (await db.select().from(schema.repoWorktrees)).find(
+        (row) => row.path === FEATURE_PATH,
+      )!;
+      const [workspace] = await db
+        .insert(schema.workspaces)
+        .values({
+          repoId: repo.id,
+          name: 'feature',
+          path: FEATURE_PATH,
+          poolWorktreeId: pool.id,
+        })
+        .returning();
+      await db.insert(schema.workspaces).values([
+        {
+          repoId: otherRepo.id,
+          name: 'feature',
+          path: FEATURE_PATH,
+          poolWorktreeId: pool.id,
+        },
+        { repoId: repo.id, name: 'legacy', path: DETACHED_PATH },
+        { repoId: repo.id, name: 'Default', path: REPO_PATH, isDefault: true },
+      ]);
+      const [session] = await db
+        .insert(schema.sessions)
+        .values({
+          repoId: repo.id,
+          workspaceId: workspace.id,
+          branchName: 'feature',
+          worktreePath: FEATURE_PATH,
+        })
+        .returning();
+      jest
+        .mocked(isMissingWorktreePath)
+        .mockImplementation(async (value) => value !== REPO_PATH);
+      if (!stillRegistered)
+        worktreesServiceMock.listWorktrees.mockResolvedValue([mainWorktree]);
+
+      const items = await service.listForRepo(repo);
+      expect(items.map((item) => item.path)).toEqual([REPO_PATH]);
+      expect(
+        (await db.select().from(schema.repoWorktrees)).map((row) => row.path),
+      ).toEqual([REPO_PATH]);
+      expect(
+        (await db.select().from(schema.workspaces)).map((row) => row.path),
+      ).toEqual([REPO_PATH]);
+      expect(await db.select().from(schema.sessions)).toEqual([
+        { ...session, workspaceId: null },
+      ]);
+      expect(await service.getWorktreeQuota(repo)).toMatchObject({ count: 0 });
+
+      const streamed: WorktreePoolItem[] = [];
+      expect(
+        await service.streamProgressivelyForRepo(repo, (item) => {
+          streamed.push(item);
+        }),
+      ).toBe(1);
+      expect(streamed.every((item) => item.path === REPO_PATH)).toBe(true);
+    },
+  );
+
+  it('preserves existing directories when Git no longer lists them', async () => {
+    await service.reconcileRepo(repo);
+    worktreesServiceMock.listWorktrees.mockResolvedValue([mainWorktree]);
+
+    await service.reconcileRepo(repo);
+
+    expect(
+      (await db.select().from(schema.repoWorktrees)).map((row) => row.path),
+    ).toContain(FEATURE_PATH);
+  });
+
+  it('preserves saved state when the repository cannot be listed', async () => {
+    await service.reconcileRepo(repo);
+    const before = await db.select().from(schema.repoWorktrees);
+    jest.mocked(isMissingWorktreePath).mockResolvedValue(true);
+    worktreesServiceMock.listWorktrees.mockRejectedValue(
+      new Error('repository unavailable'),
+    );
+
+    await service.reconcileRepo(repo);
+
+    expect(await db.select().from(schema.repoWorktrees)).toEqual(before);
+  });
+
+  it('coalesces concurrent reconciliation for the same repository root', async () => {
+    jest.spyOn(service as any, 'realPathOrRaw').mockImplementation(async (value) => path.resolve(value as string));
+    let finish!: (worktrees: WorktreeInfo[]) => void;
+    worktreesServiceMock.listWorktrees.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const pending = [
+      service.reconcileRepo(repo),
+      service.reconcileRepo(otherRepo),
+    ];
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(worktreesServiceMock.listWorktrees).toHaveBeenCalledTimes(1);
+    finish([mainWorktree, featureWorktree]);
+    await Promise.all(pending);
   });
 
   it('renames a pool worktree, moving it and repointing its workspace and context row', async () => {

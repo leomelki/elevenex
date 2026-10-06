@@ -1,5 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import Database from 'better-sqlite3';
+import * as path from 'node:path';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { WorkspacesService } from './workspaces.service.js';
 import * as schema from '../database/schema/index.js';
@@ -10,86 +12,20 @@ import {
 import { SessionsService } from '../sessions/sessions.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { WorktreePoolService } from '../worktrees/worktree-pool.service.js';
+import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
+
+jest.mock('../worktrees/worktree-path.js', () => ({
+  isMissingWorktreePath: jest.fn(),
+}));
 
 function createTestDb() {
   const sqlite = new Database(':memory:');
   sqlite.pragma('foreign_keys = ON');
-  sqlite.exec(`
-    CREATE TABLE projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      archived_at TEXT
-    );
-    CREATE TABLE repos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      color TEXT,
-      preferred_context_root_ref TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(project_id, path)
-    );
-    CREATE TABLE repo_worktrees (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_root_path TEXT NOT NULL,
-      path TEXT NOT NULL,
-      name TEXT NOT NULL,
-      created_from_ref TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(repo_root_path, path)
-    );
-    CREATE TABLE workspaces (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      pool_worktree_id INTEGER REFERENCES repo_worktrees(id) ON DELETE SET NULL,
-      is_default INTEGER NOT NULL DEFAULT 0,
-      created_from_ref TEXT,
-      link_status TEXT NOT NULL DEFAULT 'linked',
-      desired_branch TEXT,
-      unlinked_at TEXT,
-      unlinked_by_project_id INTEGER,
-      pending_stash_commit TEXT,
-      pending_stash_message TEXT,
-      pending_stash_created_at TEXT,
-      pending_stash_status TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(repo_id, name),
-      UNIQUE(repo_id, path)
-    );
-    CREATE TABLE sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-      workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
-      folder_id INTEGER,
-      branch_name TEXT NOT NULL,
-      worktree_path TEXT NOT NULL,
-      name TEXT,
-      surface TEXT NOT NULL DEFAULT 'session',
-      is_temporary INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'created',
-      archived_by_folder INTEGER NOT NULL DEFAULT 0,
-      plan_mode INTEGER,
-      active_agent_provider TEXT NOT NULL DEFAULT 'claude',
-      claude_session_id TEXT DEFAULT '-1',
-      codex_session_id TEXT DEFAULT '-1',
-      pi_session_path TEXT DEFAULT '-1',
-      has_injected_worktree_context INTEGER NOT NULL DEFAULT 0,
-      has_unreviewed_completion INTEGER NOT NULL DEFAULT 0,
-      last_completion_at TEXT,
-      last_completion_kind TEXT,
-      last_state_change_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-  return { db: drizzle(sqlite, { schema }), sqlite };
+  const db = drizzle(sqlite, { schema });
+  migrate(db, {
+    migrationsFolder: path.resolve(__dirname, '..', '..', 'drizzle'),
+  });
+  return { db, sqlite };
 }
 
 describe('WorkspacesService', () => {
@@ -130,6 +66,7 @@ describe('WorkspacesService', () => {
   };
 
   beforeEach(async () => {
+    jest.mocked(isMissingWorktreePath).mockReset().mockResolvedValue(false);
     const testDb = createTestDb();
     db = testDb.db;
     sqliteConn = testDb.sqlite;
@@ -180,13 +117,35 @@ describe('WorkspacesService', () => {
     expect(workspaces[0].isDefault).toBe(true);
   });
 
+  it('does not recreate deleted workspaces from historical sessions on repeated listings', async () => {
+    const [session] = await db
+      .insert(schema.sessions)
+      .values({
+        repoId: repo.id,
+        branchName: 'feature',
+        worktreePath: '/tmp/deleted-worktree',
+      })
+      .returning();
+    sessionsServiceMock.findByRepo.mockResolvedValue([session] as never);
+    jest
+      .mocked(isMissingWorktreePath)
+      .mockImplementation(async (value) => value === session.worktreePath);
+
+    for (let i = 0; i < 2; i++) {
+      expect(
+        (await service.listForRepo(repo)).map((workspace) => workspace.path),
+      ).toEqual(['/tmp/repo']);
+    }
+    expect(await db.select().from(schema.sessions)).toEqual([session]);
+  });
+
   it('attaches an existing git worktree only when requested explicitly', async () => {
     const attached = await service.attachExistingWorkspace(repo, {
       path: '/tmp/repo-feature',
     });
 
     expect(attached.path).toBe('/tmp/repo-feature');
-    expect(attached.name).toBe('feature');
+    expect(attached.name).toBe('repo-feature');
 
     const workspaces = await service.listForRepo(repo);
     expect(workspaces.map((workspace) => workspace.path)).toEqual([

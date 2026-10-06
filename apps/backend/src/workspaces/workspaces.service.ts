@@ -17,6 +17,7 @@ import {
 } from '../worktrees/worktrees.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
+import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
 import {
   PendingStashStatus,
   WorktreeLinkStatus,
@@ -499,6 +500,9 @@ export class WorkspacesService {
     }
 
     for (const [worktreePath, pathSessions] of sessionsByPath) {
+      // Historical sessions must not recreate a workspace after its directory
+      // has been deleted and reconciliation removed the workspace record.
+      if (await isMissingWorktreePath(worktreePath)) continue;
       const first = pathSessions[0];
       const name = await this.uniqueWorkspaceName(
         repo.id,

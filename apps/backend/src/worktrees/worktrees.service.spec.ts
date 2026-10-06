@@ -45,6 +45,18 @@ describe('WorktreesService', () => {
   });
 
   describe('listWorktrees', () => {
+    it('omits a manually deleted worktree even while Git retains its registration', async () => {
+      const worktreePath = path.join(tmpDir, 'deleted-wt');
+      await service.createWorktree(mainRepoPath, 'feature-branch', worktreePath);
+      await fs.promises.rm(worktreePath, { recursive: true, force: true });
+      const registered = execSync('git worktree list --porcelain', { cwd: mainRepoPath, encoding: 'utf8' });
+      expect(registered).toContain('deleted-wt');
+
+      const worktrees = await service.listWorktrees(mainRepoPath);
+
+      expect(worktrees).toHaveLength(1);
+      expect(worktrees[0].branch).toBe('main');
+    });
     it('should return main worktree info', async () => {
       const worktrees = await service.listWorktrees(mainRepoPath);
 

@@ -8,6 +8,11 @@ import {
   WorkspaceSnapshot,
 } from '../workspaces/workspaces.service.js';
 import { SessionFoldersService } from '../sessions/session-folders.service.js';
+import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
+
+jest.mock('../worktrees/worktree-path.js', () => ({
+  isMissingWorktreePath: jest.fn(),
+}));
 
 describe('NavigationService', () => {
   let service: NavigationService;
@@ -42,6 +47,15 @@ describe('NavigationService', () => {
     lockReason: null,
     isMissing: false,
     isDirty: false,
+    hasConflicts: false,
+    linkStatus: 'linked',
+    desiredBranch: null,
+    unlinkedAt: null,
+    unlinkedByProjectId: null,
+    pendingStashCommit: null,
+    pendingStashMessage: null,
+    pendingStashCreatedAt: null,
+    pendingStashStatus: null,
     branchCheckedOutElsewhere: false,
     checkedOutElsewherePath: null,
     ...patch,
@@ -73,6 +87,7 @@ describe('NavigationService', () => {
     }) as Awaited<ReturnType<SessionsService['findByRepo']>>[number];
 
   beforeEach(async () => {
+    jest.mocked(isMissingWorktreePath).mockReset().mockResolvedValue(false);
     mockProjectsService = {
       findAll: jest.fn(),
     } as unknown as jest.Mocked<ProjectsService>;
@@ -261,6 +276,55 @@ describe('NavigationService', () => {
     expect(legacyWorkspaces).toHaveLength(1);
     expect(legacyWorkspaces[0].sessions.map((item) => item.id)).toEqual([4, 5]);
   });
+
+  it.each(['getNavigationTree', 'getNavigationTreeLight'] as const)(
+    'keeps deleted worktree sessions under the default workspace in %s',
+    async (method) => {
+      mockProjectsService.findAll.mockResolvedValue([
+        {
+          id: 1,
+          name: 'Project 1',
+          createdAt: '2024-01-01',
+          updatedAt: '2024-01-01',
+        },
+      ]);
+      mockReposService.findByProject.mockResolvedValue([repo]);
+      mockWorkspacesService.listForRepo.mockResolvedValue([workspace({})]);
+      mockWorkspacesService.listCachedForRepo.mockResolvedValue([
+        workspace({}),
+      ]);
+      mockSessionsService.findByRepo.mockResolvedValue([
+        session({
+          id: 4,
+          workspaceId: null,
+          worktreePath: '/path/deleted',
+          branchName: 'feature',
+          status: 'archived',
+        }),
+        // Navigation can read sessions before reconciliation nulls their FK.
+        session({
+          id: 5,
+          workspaceId: 42,
+          worktreePath: '/path/deleted',
+          branchName: 'feature',
+        }),
+      ]);
+      jest.mocked(isMissingWorktreePath).mockResolvedValue(true);
+
+      const result = await service[method]();
+
+      expect(result[0].repos[0].workspaces).toHaveLength(1);
+      expect(
+        result[0].repos[0].workspaces[0].archivedSessions.map(
+          (item) => item.id,
+        ),
+      ).toEqual([4]);
+      expect(
+        result[0].repos[0].workspaces[0].sessions.map((item) => item.id),
+      ).toEqual([5]);
+      expect(isMissingWorktreePath).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('uses cached workspace data for the light tree', async () => {
     mockProjectsService.findAll.mockResolvedValue([

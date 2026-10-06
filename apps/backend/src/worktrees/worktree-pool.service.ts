@@ -17,6 +17,7 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { UNLIMITED_WORKTREES_PER_REPO } from '../settings/settings.types.js';
 import { WorktreeInfo, WorktreesService } from './worktrees.service.js';
+import { isMissingWorktreePath } from './worktree-path.js';
 
 export type WorktreeLinkStatus = 'linked' | 'unlinked';
 export type PendingStashStatus = 'pending' | 'applied' | 'apply_conflicted';
@@ -101,6 +102,8 @@ const NO_SESSION_ACTIVITY: SessionActivity = {
 
 @Injectable()
 export class WorktreePoolService {
+  private readonly reconciliations = new Map<string, Promise<void>>();
+
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly worktreesService: WorktreesService,
@@ -604,8 +607,94 @@ export class WorktreePoolService {
 
   async reconcileRepo(repo: typeof schema.repos.$inferSelect) {
     const root = await this.realPathOrRaw(repo.path);
-    const worktrees = await this.safeListWorktrees(repo.path);
+    const existing = this.reconciliations.get(root);
+    if (existing) return existing;
+
+    const pending = this.reconcileRoot(repo, root);
+    this.reconciliations.set(root, pending);
+    try {
+      await pending;
+    } finally {
+      this.reconciliations.delete(root);
+    }
+  }
+
+  private async reconcileRoot(
+    repo: typeof schema.repos.$inferSelect,
+    root: string,
+  ) {
+    let worktrees: WorktreeInfo[];
+    try {
+      worktrees = await this.worktreesService.listWorktrees(repo.path);
+    } catch {
+      // An unavailable repository is not evidence that its worktrees were deleted.
+      return;
+    }
+    if (worktrees.length === 0) return;
+
+    const reposForRoot = await this.findReposForRoot(root);
+    const poolRows = await this.db
+      .select()
+      .from(schema.repoWorktrees)
+      .where(eq(schema.repoWorktrees.repoRootPath, root));
+    const workspaceRows = (
+      await Promise.all(
+        reposForRoot.map((rootRepo) =>
+          this.db
+            .select()
+            .from(schema.workspaces)
+            .where(eq(schema.workspaces.repoId, rootRepo.id)),
+        ),
+      )
+    ).flat();
+    const paths = new Set([
+      ...worktrees.map((worktree) => worktree.path),
+      ...poolRows.map((pool) => pool.path),
+      ...workspaceRows
+        .filter((workspace) => !workspace.isDefault)
+        .map((workspace) => workspace.path),
+    ]);
+    const missingPaths = new Set<string>();
+    await Promise.all(
+      [...paths].map(async (worktreePath) => {
+        if (
+          worktreePath !== root &&
+          (await isMissingWorktreePath(worktreePath))
+        ) {
+          missingPaths.add(worktreePath);
+        }
+      }),
+    );
+
+    // Filesystem checks stay outside the synchronous SQLite transaction.
+    // Explicitly detach references: older migrations lack ON DELETE SET NULL.
+    this.db.transaction((tx) => {
+      for (const workspace of workspaceRows) {
+        if (!workspace.isDefault && missingPaths.has(workspace.path)) {
+          tx.update(schema.sessions)
+            .set({ workspaceId: null })
+            .where(eq(schema.sessions.workspaceId, workspace.id))
+            .run();
+          tx.delete(schema.workspaces)
+            .where(eq(schema.workspaces.id, workspace.id))
+            .run();
+        }
+      }
+      for (const pool of poolRows) {
+        if (missingPaths.has(pool.path)) {
+          tx.update(schema.workspaces)
+            .set({ poolWorktreeId: null })
+            .where(eq(schema.workspaces.poolWorktreeId, pool.id))
+            .run();
+          tx.delete(schema.repoWorktrees)
+            .where(eq(schema.repoWorktrees.id, pool.id))
+            .run();
+        }
+      }
+    });
+
     for (const worktree of worktrees) {
+      if (missingPaths.has(worktree.path)) continue;
       await this.upsertPoolWorktree(
         {
           repoRootPath: root,
@@ -617,7 +706,6 @@ export class WorktreePoolService {
       );
     }
 
-    const reposForRoot = await this.findReposForRoot(root);
     for (const rootRepo of reposForRoot) {
       await this.backfillRepoWorkspaces(rootRepo, root);
     }
@@ -1182,7 +1270,9 @@ export class WorktreePoolService {
   }
 
   private async samePath(left: string, right: string): Promise<boolean> {
-    return (await this.realPathOrRaw(left)) === (await this.realPathOrRaw(right));
+    return (
+      (await this.realPathOrRaw(left)) === (await this.realPathOrRaw(right))
+    );
   }
 
   private async realPathOrRaw(value: string): Promise<string> {

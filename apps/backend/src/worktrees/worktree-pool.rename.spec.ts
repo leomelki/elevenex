@@ -256,6 +256,7 @@ describe('WorktreePoolService.rename (real git)', () => {
   it('keeps the workspace name unique when another workspace already has it', async () => {
     const source = path.join(projectRoot, '.worktrees', 'repo', 'feature');
     const pool = await addWorktree(source, 'feature');
+    await fs.mkdir(path.join(projectRoot, 'somewhere-else'));
     await db.insert(schema.workspaces).values({
       repoId: repo.id,
       name: 'fix-login-timeout',
@@ -280,6 +281,55 @@ describe('WorktreePoolService.rename (real git)', () => {
       .where(eq(schema.workspaces.id, workspace.id));
     expect(updated.name).toBe('fix-login-timeout 2');
   });
+
+  it.each(['git', 'filesystem'] as const)(
+    'cleans up a worktree deleted through %s while retaining its sessions',
+    async (method) => {
+      const source = path.join(projectRoot, '.worktrees', 'repo', 'feature');
+      const pool = await addWorktree(source, 'feature');
+      const [workspace] = await db
+        .insert(schema.workspaces)
+        .values({
+          repoId: repo.id,
+          name: 'feature',
+          path: pool.path,
+          poolWorktreeId: pool.id,
+        })
+        .returning();
+      const [folder] = await db
+        .insert(schema.sessionFolders)
+        .values({
+          repoId: repo.id,
+          workspaceId: workspace.id,
+          name: 'History',
+        })
+        .returning();
+      const [session] = await db
+        .insert(schema.sessions)
+        .values({
+          repoId: repo.id,
+          workspaceId: workspace.id,
+          folderId: folder.id,
+          branchName: 'feature',
+          worktreePath: pool.path,
+          status: 'archived',
+        })
+        .returning();
+      if (method === 'git') {
+        await new WorktreesService().removeWorktree(repo.path, source);
+      } else {
+        await fs.rm(source, { recursive: true, force: true });
+      }
+
+      const items = await service.listForRepo(repo);
+
+      expect(items.map((item) => item.path)).toEqual([repoPath]);
+      expect(await db.select().from(schema.workspaces)).toEqual([]);
+      expect(await db.select().from(schema.sessions)).toEqual([
+        { ...session, workspaceId: null, folderId: null },
+      ]);
+    },
+  );
 
   it('rejects renaming the main working tree with an actionable message', async () => {
     await service.reconcileRepo(repo);
